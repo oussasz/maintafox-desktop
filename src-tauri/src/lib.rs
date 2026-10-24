@@ -618,6 +618,7 @@ pub fn run() {
         commands::inventory_negative_stock::list_negative_stock_reviews,
         commands::inventory_negative_stock::get_negative_stock_summary,
         commands::inventory_negative_stock::resolve_negative_stock_by_count,
+        commands::inventory_negative_stock::approve_negative_stock_count,
         commands::inventory::reserve_inventory_stock,
         commands::inventory::issue_inventory_stock,
         commands::inventory::return_inventory_stock,

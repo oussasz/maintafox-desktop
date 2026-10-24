@@ -350,6 +350,11 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ),
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
+    // A count line's approver and counter are the same generic account (one parent row per
+    // reference): within the four-eyes tolerance and not a self-approval, as such a line must be
+    // (`inventory::count_four_eyes::inbound_count_line_check`).
+    ("inventory_count_lines", "is_critical", "0"),
+    ("inventory_count_lines", "self_approved", "0"),
     // The next run is computed from it on every device.
     ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
     // Only tenant settings are synchronised (device settings stay on the device).

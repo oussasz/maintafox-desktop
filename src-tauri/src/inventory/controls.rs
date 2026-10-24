@@ -79,7 +79,11 @@ async fn ensure_lookup_variance_reason_active<C: ConnectionTrait>(db: &C, code: 
     Ok(())
 }
 
-async fn get_balance<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i64) -> AppResult<(i64, f64)> {
+pub(crate) async fn get_balance<C: ConnectionTrait>(
+    db: &C,
+    article_id: i64,
+    location_id: i64,
+) -> AppResult<(i64, f64)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -385,6 +389,25 @@ pub async fn transition_count_session(
     ensure_count_session(db, input.session_id).await
 }
 
+/// The audit target of a count session: its sync id (the same on every PC, as
+/// `inventory::count_sync` names it); a session of a database without capture has none and is
+/// named by its local id.
+async fn session_audit_target<C: ConnectionTrait>(db: &C, session_id: i64) -> AppResult<String> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(NULLIF(TRIM(entity_sync_id), ''), CAST(id AS TEXT)) AS target
+             FROM inventory_count_sessions WHERE id = ?",
+            [session_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "inventory_count_sessions".to_string(),
+            id: session_id.to_string(),
+        })?;
+    Ok(row.try_get("", "target")?)
+}
+
 /// Refusal of a count line entered or approved against a version that is no longer the one on
 /// record (another entry was made in between).
 fn count_line_changed_elsewhere() -> AppError {
@@ -533,8 +556,8 @@ pub async fn upsert_count_line(
         &tx,
         crate::audit::writer::AuditEventInput {
             action_code: "inventory.count.line_entered".to_string(),
-            target_type: Some("inventory_count_session".to_string()),
-            target_id: Some(session.id.to_string()),
+            target_type: Some("inventory_count_sessions".to_string()),
+            target_id: Some(session_audit_target(&tx, session.id).await?),
             actor_id: input.actor_id,
             auth_context: "session".to_string(),
             result: "success".to_string(),
@@ -627,8 +650,8 @@ pub async fn approve_count_line(
         &tx,
         crate::audit::writer::AuditEventInput {
             action_code: "inventory.count.line_approved".to_string(),
-            target_type: Some("inventory_count_session".to_string()),
-            target_id: Some(line.session_id.to_string()),
+            target_type: Some("inventory_count_sessions".to_string()),
+            target_id: Some(session_audit_target(&tx, line.session_id).await?),
             actor_id: Some(input.reviewer_id),
             auth_context: "session".to_string(),
             result: "success".to_string(),
@@ -969,23 +992,44 @@ pub(crate) struct LocationCount<'a> {
     pub mark: (&'a str, &'a str),
 }
 
-/// What [`record_location_count_in`] wrote.
+/// What [`record_location_count_in`] (or [`approve_location_count_in`]) wrote.
 pub(crate) struct PostedLocationCount {
     pub session_id: i64,
     pub session_code: String,
     pub line_id: i64,
     pub system_qty: f64,
     pub variance_qty: f64,
-    /// The count movement (none when the count equals the stock on record).
+    /// The count movement (none when the count equals the stock on record, or while it waits for
+    /// its approval).
     pub transaction_id: Option<i64>,
+    /// The variance is above the four-eyes tolerance (`count_four_eyes`).
+    pub above_tolerance: bool,
+    /// Approved by its counter under the site's opt-out ("auto-approbation").
+    pub self_approved: bool,
+    /// Counted, not posted: it waits for a second person's approval.
+    pub pending_approval: bool,
+    /// The tolerance applied, as kept in the audit (at the count).
+    pub tolerance_json: serde_json::Value,
 }
 
-/// Records a count of one article at one location as a posted count session, in the caller's
-/// transaction: a session of that location with one line, counted, approved (the evidence is the
-/// approval note) and posted by the same person, the `COUNT_ADJUST` movement of the variance and
-/// its audit link — the rows of the count workflow, so the count reaches the other PCs and shows in
-/// the count history like any posted count. Used where a count is the resolution of a review
-/// (`inventory::negative_stock`); the caller checks the right and the reason.
+/// The pending list counts of an article and location (counted, waiting for a second person):
+/// a new count of the pair from the list replaces them (their sessions are cancelled).
+const PENDING_LIST_COUNT_SESSIONS: &str = "SELECT cl.session_id FROM inventory_count_lines cl
+     JOIN inventory_count_sessions cs ON cs.id = cl.session_id
+     WHERE cl.article_id = ? AND cl.location_id = ? AND cl.count_path = 'reconciliation'
+       AND cl.approved_by_id IS NULL AND cs.status = 'submitted'";
+
+/// Records a count of one article at one location as a count session of that location with one
+/// line, in the caller's transaction — the rows of the count workflow, so the count reaches the
+/// other PCs and shows in the count history like any count. Used where a count is the resolution
+/// of a review (`inventory::negative_stock`); the caller checks the right and the reason.
+///
+/// Within the four-eyes tolerance (or without variance), and above it under the opt-out of the
+/// organisation's only site (flagged "auto-approbation"), the count is approved (the evidence is
+/// the approval note) and posted by the person counting at once: the `COUNT_ADJUST` movement of
+/// the variance and its audit link. Above it elsewhere, the count is saved as counted (session
+/// `submitted`, line not approved, no movement): a second person approves and posts it
+/// ([`approve_location_count_in`], D11 Q4a). A count of the pair still waiting is replaced.
 pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     tx: &C,
     count: &LocationCount<'_>,
@@ -1004,23 +1048,57 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     let verdict =
         crate::inventory::count_four_eyes::evaluate(tx, count.article_id, count.location_id, variance_qty, system_qty)
             .await?;
+    let above_tolerance = has_variance && verdict.above_tolerance;
+    let (self_approved, pending_approval) = if above_tolerance {
+        let allowed = crate::inventory::count_four_eyes::store_rule(tx).await?.rule
+            == crate::reliability::study::decisions::SelfApprovalRule::Allowed;
+        (allowed, !allowed)
+    } else {
+        (false, false)
+    };
     let now = now_iso();
+    let pending_sessions = tx
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            PENDING_LIST_COUNT_SESSIONS,
+            [count.article_id.into(), count.location_id.into()],
+        ))
+        .await?;
+    for row in pending_sessions {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_sessions SET status = 'cancelled', row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND status = 'submitted'",
+            [now.clone().into(), row.try_get::<i64>("", "session_id")?.into()],
+        ))
+        .await?;
+    }
     let session_code = next_doc("CC");
+    let posted_by = if pending_approval {
+        Value::BigInt(None)
+    } else {
+        Value::from(count.actor_id)
+    };
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
             (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
              submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'posted', NULL, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
         [
             session_code.clone().into(),
             warehouse_id.into(),
             count.location_id.into(),
+            (if pending_approval { "submitted" } else { "posted" }).into(),
             count.actor_id.into(),
             count.actor_id.into(),
             now.clone().into(),
-            count.actor_id.into(),
-            now.clone().into(),
+            posted_by.clone(),
+            if pending_approval {
+                Value::String(None)
+            } else {
+                Value::from(now.clone())
+            },
             now.clone().into(),
             now.clone().into(),
         ],
@@ -1049,12 +1127,19 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
             },
             i64::from(verdict.above_tolerance).into(),
             i64::from(has_variance).into(),
+            posted_by,
+            if pending_approval {
+                Value::String(None)
+            } else {
+                Value::from(now.clone())
+            },
+            if pending_approval {
+                Value::String(None)
+            } else {
+                Value::from(count.evidence)
+            },
             count.actor_id.into(),
-            now.clone().into(),
-            count.evidence.into(),
-            count.actor_id.into(),
-            // The person counting approves at once: above the tolerance that is a self-approval.
-            i64::from(verdict.above_tolerance).into(),
+            i64::from(self_approved).into(),
             now.clone().into(),
             now.clone().into(),
             count.mark.0.into(),
@@ -1064,45 +1149,29 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     ))
     .await?;
     let line_id = last_insert_id(tx).await?;
-    let mut transaction_id = None;
-    if has_variance {
-        upsert_balance(tx, count.article_id, warehouse_id, count.location_id, count.counted_qty).await?;
-        let (tx_id, tx_sync_id) = insert_count_transaction(
-            tx,
-            count.article_id,
-            warehouse_id,
-            count.location_id,
-            variance_qty,
-            "COUNT_ADJUST",
-            session_id,
-            &session_code,
-            Some(count.variance_reason_code),
-            Some(count.actor_id),
+    let transaction_id = if has_variance && !pending_approval {
+        Some(
+            post_location_line_in(
+                tx,
+                &LocationLinePosting {
+                    session_id,
+                    session_code: &session_code,
+                    line_id,
+                    article_id: count.article_id,
+                    warehouse_id,
+                    location_id: count.location_id,
+                    counted_qty: count.counted_qty,
+                    variance_qty,
+                    variance_reason_code: count.variance_reason_code,
+                    approver_id: count.actor_id,
+                    evidence: count.evidence,
+                },
+            )
+            .await?,
         )
-        .await?;
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE inventory_count_lines SET posted_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
-            [tx_id.into(), now.clone().into(), line_id.into()],
-        ))
-        .await?;
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO inventory_mutation_audit_links
-                (entity_sync_id, transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
-             VALUES (?, ?, 'inventory_count_line', ?, ?, ?, ?)",
-            [
-                count_audit_link_sync_id(&tx_sync_id).into(),
-                tx_id.into(),
-                line_id.into(),
-                count.actor_id.into(),
-                count.evidence.into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
-        transaction_id = Some(tx_id);
-    }
+    } else {
+        None
+    };
     Ok(PostedLocationCount {
         session_id,
         session_code,
@@ -1110,6 +1179,209 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         system_qty,
         variance_qty,
         transaction_id,
+        above_tolerance,
+        self_approved,
+        pending_approval,
+        tolerance_json: verdict.audit_json(),
+    })
+}
+
+/// The posting of one list count's variance.
+struct LocationLinePosting<'a> {
+    session_id: i64,
+    session_code: &'a str,
+    line_id: i64,
+    article_id: i64,
+    warehouse_id: i64,
+    location_id: i64,
+    counted_qty: f64,
+    variance_qty: f64,
+    variance_reason_code: &'a str,
+    approver_id: i64,
+    evidence: &'a str,
+}
+
+/// Moves the stock of a list count to its counted quantity: the `COUNT_ADJUST` movement of its
+/// variance, the line's link to it and the movement's audit link (who approved, with what note).
+/// Returns the movement's id.
+async fn post_location_line_in<C: ConnectionTrait>(tx: &C, posting: &LocationLinePosting<'_>) -> AppResult<i64> {
+    let now = now_iso();
+    upsert_balance(
+        tx,
+        posting.article_id,
+        posting.warehouse_id,
+        posting.location_id,
+        posting.counted_qty,
+    )
+    .await?;
+    let (tx_id, tx_sync_id) = insert_count_transaction(
+        tx,
+        posting.article_id,
+        posting.warehouse_id,
+        posting.location_id,
+        posting.variance_qty,
+        "COUNT_ADJUST",
+        posting.session_id,
+        posting.session_code,
+        Some(posting.variance_reason_code),
+        Some(posting.approver_id),
+    )
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_lines SET posted_transaction_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+        [tx_id.into(), now.clone().into(), posting.line_id.into()],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_mutation_audit_links
+            (entity_sync_id, transaction_id, source_entity_type, source_entity_id, reviewer_id, reviewer_evidence, created_at)
+         VALUES (?, ?, 'inventory_count_line', ?, ?, ?, ?)",
+        [
+            count_audit_link_sync_id(&tx_sync_id).into(),
+            tx_id.into(),
+            posting.line_id.into(),
+            posting.approver_id.into(),
+            posting.evidence.into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    Ok(tx_id)
+}
+
+/// A list count waiting for its approval ([`record_location_count_in`]), as read for its approval.
+pub(crate) struct PendingLocationCount {
+    pub line_id: i64,
+    pub row_version: i64,
+    pub session_id: i64,
+    pub session_code: String,
+    pub article_id: i64,
+    pub warehouse_id: i64,
+    pub location_id: i64,
+    pub system_qty: f64,
+    pub counted_qty: f64,
+    pub variance_qty: f64,
+    pub variance_reason_code: Option<String>,
+    pub is_critical: bool,
+    pub counted_by_id: Option<i64>,
+}
+
+/// The list count of this line when it is still waiting for its approval (session `submitted`,
+/// line not approved), `None` otherwise.
+pub(crate) async fn pending_location_count_in<C: ConnectionTrait>(
+    tx: &C,
+    line_id: i64,
+) -> AppResult<Option<PendingLocationCount>> {
+    let row = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT cl.id, cl.row_version, cl.session_id, cs.session_code, cl.article_id, cl.warehouse_id,
+                    cl.location_id, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
+                    cl.is_critical, cl.counted_by_id
+             FROM inventory_count_lines cl
+             JOIN inventory_count_sessions cs ON cs.id = cl.session_id
+             WHERE cl.id = ? AND cl.count_path = 'reconciliation' AND cl.approved_by_id IS NULL
+               AND cs.status = 'submitted'",
+            [line_id.into()],
+        ))
+        .await?;
+    row.map(|r| -> AppResult<PendingLocationCount> {
+        Ok(PendingLocationCount {
+            line_id: r.try_get("", "id")?,
+            row_version: r.try_get("", "row_version")?,
+            session_id: r.try_get("", "session_id")?,
+            session_code: r.try_get("", "session_code")?,
+            article_id: r.try_get("", "article_id")?,
+            warehouse_id: r.try_get("", "warehouse_id")?,
+            location_id: r.try_get("", "location_id")?,
+            system_qty: r.try_get("", "system_qty")?,
+            counted_qty: r.try_get("", "counted_qty")?,
+            variance_qty: r.try_get("", "variance_qty")?,
+            variance_reason_code: r.try_get("", "variance_reason_code")?,
+            is_critical: r.try_get::<i64>("", "is_critical")? != 0,
+            counted_by_id: r.try_get("", "counted_by_id")?,
+        })
+    })
+    .transpose()
+}
+
+/// Approves and posts a list count waiting for its approval, in the caller's transaction: the line
+/// approved by `approver_id` with `evidence` (flagged "auto-approbation" when `self_approved`), the
+/// stock moved to the counted quantity and the session posted. The caller checks the right, the
+/// note, four-eyes and that the stock on record is still the one the count was set against.
+pub(crate) async fn approve_location_count_in<C: ConnectionTrait>(
+    tx: &C,
+    pending: &PendingLocationCount,
+    approver_id: i64,
+    evidence: &str,
+    self_approved: bool,
+) -> AppResult<PostedLocationCount> {
+    let now = now_iso();
+    let written = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines
+             SET approved_by_id = ?, approved_at = ?, approval_note = ?, self_approved = ?,
+                 row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND row_version = ? AND approved_by_id IS NULL",
+            [
+                approver_id.into(),
+                now.clone().into(),
+                evidence.into(),
+                i64::from(self_approved).into(),
+                now.clone().into(),
+                pending.line_id.into(),
+                pending.row_version.into(),
+            ],
+        ))
+        .await?;
+    if written.rows_affected() != 1 {
+        return Err(count_line_changed_elsewhere());
+    }
+    let reason_code = pending.variance_reason_code.clone().unwrap_or_default();
+    let transaction_id = post_location_line_in(
+        tx,
+        &LocationLinePosting {
+            session_id: pending.session_id,
+            session_code: &pending.session_code,
+            line_id: pending.line_id,
+            article_id: pending.article_id,
+            warehouse_id: pending.warehouse_id,
+            location_id: pending.location_id,
+            counted_qty: pending.counted_qty,
+            variance_qty: pending.variance_qty,
+            variance_reason_code: &reason_code,
+            approver_id,
+            evidence,
+        },
+    )
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_sessions
+         SET status = 'posted', posted_by_id = ?, posted_at = ?, row_version = row_version + 1, updated_at = ?
+         WHERE id = ? AND status = 'submitted'",
+        [
+            approver_id.into(),
+            now.clone().into(),
+            now.into(),
+            pending.session_id.into(),
+        ],
+    ))
+    .await?;
+    Ok(PostedLocationCount {
+        session_id: pending.session_id,
+        session_code: pending.session_code.clone(),
+        line_id: pending.line_id,
+        system_qty: pending.system_qty,
+        variance_qty: pending.variance_qty,
+        transaction_id: Some(transaction_id),
+        above_tolerance: pending.is_critical,
+        self_approved,
+        pending_approval: false,
+        tolerance_json: serde_json::Value::Null,
     })
 }
 

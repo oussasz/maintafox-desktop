@@ -23,12 +23,19 @@
 //! applies four-eyes ([`store_rule`]). Under the opt-out the counter's approval is flagged
 //! `self_approved` ("auto-approbation"), shown on screen and in the audit. A line whose counter was
 //! not recorded (entered before this version) cannot show the separation and is entered again.
+//!
+//! Synchronisation. A count line received from another PC is judged again here
+//! ([`inbound_count_line_check`], as `permit::sync_check` judges a permit's approval): approved by its
+//! counter above the tolerance and not flagged — or flagged where this PC's store rule is four-eyes —
+//! is a sync conflict for a person to decide; while a change of the site's opt-out is still in the
+//! inbox the line waits for it.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::study::decisions::SelfApprovalRule;
+use crate::settings::site::InboundVerdict;
 
 /// Plant setting (optional decimal, plant currency): a variance whose value is above it needs a
 /// second person.
@@ -42,6 +49,14 @@ pub const REFUSED_SELF_APPROVAL: &str = "GATE_INV_COUNT_SELF_APPROVAL";
 /// Refusal: a variance above the tolerance whose counter was not recorded (entered before the
 /// update): the separation cannot be shown, the line is entered again.
 pub const REFUSED_COUNTER_UNKNOWN: &str = "GATE_INV_COUNT_COUNTER_UNKNOWN";
+
+/// Sync conflict: a received count line approved by its counter above the tolerance, not flagged as
+/// a self-approval, or flagged where four-eyes applies on this PC.
+pub const SYNC_SELF_APPROVAL: &str = "COUNT_SELF_APPROVAL";
+/// Sync conflict: a received count line whose approval record contradicts itself.
+pub const SYNC_APPROVAL_RECORD_INVALID: &str = "COUNT_APPROVAL_RECORD_INVALID";
+
+const LINES: &str = "inventory_count_lines";
 
 /// Quantities closer than this are no variance.
 const QTY_TOLERANCE: f64 = 1e-9;
@@ -197,6 +212,109 @@ pub async fn check_approval<C: ConnectionTrait>(
         "{REFUSED_SELF_APPROVAL}: you counted this variance, which is above the four-eyes tolerance: another \
          person approves it."
     )]))
+}
+
+fn field<'a>(p: &'a serde_json::Map<String, serde_json::Value>, key: &str) -> Option<&'a str> {
+    crate::permit::sync_check::field(p, key)
+}
+
+fn flag(p: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
+    match p.get(key) {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Number(n)) => n.as_i64().is_some_and(|v| v != 0),
+        _ => false,
+    }
+}
+
+fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerdict>> {
+    Ok(Some(InboundVerdict::Conflict { code, message }))
+}
+
+/// Four-eyes on a count line received by synchronisation (see the module documentation), judged on
+/// the received row completed by the copy held here:
+/// - a line approved by its counter (both recorded, the same person) above the tolerance is accepted
+///   only flagged `self_approved` and where this PC's store rule is the opt-out of the only site;
+///   a change of that site's opt-out still in the inbox makes it wait (either way);
+/// - `self_approved` is set only on such a line (never without an approver, by a second person, or
+///   within the tolerance);
+/// - a line whose counter or approver is not recorded (entered on a PC before the update) passes;
+/// - an approval held here as received passes (judged when it arrived).
+pub(crate) async fn inbound_count_line_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    let local = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await?;
+    let line = crate::permit::sync_check::overlay(local.as_ref(), received);
+    let approver = field(&line, "approved_by_sync_id");
+    let counter = field(&line, "counted_by_sync_id");
+    let self_approved = flag(&line, "self_approved");
+    let above = flag(&line, "is_critical");
+    if let Some(l) = &local {
+        let same = ["approved_by_sync_id", "approved_at", "counted_by_sync_id"]
+            .iter()
+            .all(|k| field(l, k) == field(&line, k))
+            && flag(l, "self_approved") == self_approved
+            && flag(l, "is_critical") == above;
+        if same {
+            return Ok(None);
+        }
+    }
+    let by_counter = approver.is_some() && counter.is_some() && approver == counter;
+    if !(by_counter && above) {
+        if self_approved {
+            return conflict(
+                SYNC_APPROVAL_RECORD_INVALID,
+                format!(
+                    "count line {entity_sync_id} is flagged as a self-approval but was not approved by its counter \
+                     above the four-eyes tolerance"
+                ),
+            );
+        }
+        return Ok(None);
+    }
+    let approved_at = field(&line, "approved_at").unwrap_or("?");
+    if !self_approved {
+        return conflict(
+            SYNC_SELF_APPROVAL,
+            format!(
+                "count line {entity_sync_id} was approved on {approved_at} by the person who counted it, above the \
+                 four-eyes tolerance, without being recorded as a self-approval"
+            ),
+        );
+    }
+    let store = store_rule(conn).await?;
+    match (store.rule, store.site_id) {
+        (SelfApprovalRule::Allowed, Some(site)) => {
+            if crate::permit::sync_check::site_rule_change_waiting(conn, site, false).await? {
+                return Ok(Some(InboundVerdict::Defer(format!(
+                    "count line {entity_sync_id}: self-approved; the site's return to four-eyes is still arriving"
+                ))));
+            }
+            Ok(None)
+        }
+        (SelfApprovalRule::FourEyes, Some(site)) => {
+            if crate::permit::sync_check::site_rule_change_waiting(conn, site, true).await? {
+                return Ok(Some(InboundVerdict::Defer(format!(
+                    "count line {entity_sync_id}: self-approved; the site's four-eyes opt-out is still arriving"
+                ))));
+            }
+            conflict(
+                SYNC_SELF_APPROVAL,
+                format!(
+                    "count line {entity_sync_id} was self-approved on {approved_at}; the site's setting on this PC \
+                     now: four-eyes (self-approval not allowed)"
+                ),
+            )
+        }
+        _ => conflict(
+            SYNC_SELF_APPROVAL,
+            format!(
+                "count line {entity_sync_id} was self-approved on {approved_at}; this organisation does not have \
+                 exactly one site, so four-eyes applies to the stores"
+            ),
+        ),
+    }
 }
 
 #[cfg(test)]

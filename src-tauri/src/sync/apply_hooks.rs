@@ -200,6 +200,10 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
         }
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        // Four-eyes on a count variance above the tolerance (D11, `inventory::count_four_eyes`).
+        "inventory_count_lines" => {
+            Some(crate::inventory::count_four_eyes::inbound_count_line_check(conn, entity_sync_id, payload).await?)
+        }
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }

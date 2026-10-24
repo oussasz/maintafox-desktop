@@ -170,6 +170,9 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "PERMIT_APPROVER_MISSING",
   "PERMIT_APPROVAL_RECORD_CHANGED",
   "PERMIT_APPROVAL_RECORD_INVALID",
+  // Four-eyes on a stock count variance above the tolerance (D11).
+  "COUNT_SELF_APPROVAL",
+  "COUNT_APPROVAL_RECORD_INVALID",
   // The notice of a safety rule changed on another PC cannot be muted or re-routed by sync.
   "NOTIFICATION_CATEGORY_LOCKED",
   "LAST_ADMINISTRATOR_REQUIRED",

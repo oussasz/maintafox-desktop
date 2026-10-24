@@ -180,6 +180,37 @@ pub(super) async fn second_person(db: &DatabaseConnection, user: i32) -> i32 {
     i32::try_from(admin).expect("id")
 }
 
+/// [`negative_stock::resolve_by_count`] by `user`, then — when the count waits for a second person
+/// (above the four-eyes tolerance, D11 Q4a; at a location below zero every variance is) — its
+/// approval by [`second_person`].
+pub(super) async fn resolve_approved(
+    db: &DatabaseConnection,
+    user: i32,
+    input: ResolveNegativeStockInput,
+) -> Result<negative_stock::NegativeStockResolution, AppError> {
+    let resolution = negative_stock::resolve_by_count(db, user, input).await?;
+    if !resolution.pending_approval {
+        return Ok(resolution);
+    }
+    let pending = negative_stock::list_reviews(db, false)
+        .await?
+        .pending_counts
+        .into_iter()
+        .find(|p| p.session_code == resolution.session_code)
+        .expect("the count waits for its approval");
+    let approver = second_person(db, user).await;
+    negative_stock::approve_pending_count(
+        db,
+        approver,
+        negative_stock::ApprovePendingCountInput {
+            line_id: pending.line_id,
+            expected_row_version: pending.row_version,
+            reason: "Comptage vérifié par un second".into(),
+        },
+    )
+    .await
+}
+
 pub(super) fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> ResolveNegativeStockInput {
     ResolveNegativeStockInput {
         article_id,
@@ -511,7 +542,7 @@ async fn two_pcs_issuing_the_last_units_leave_one_item_that_a_count_closes_on_bo
     assert_eq!(on_a.2, on_b.2, "the same notice on both PCs");
     assert_eq!(notified(&a, manager).await, 1, "the inv.manage holder is told");
 
-    let resolved = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté : bac vide"))
+    let resolved = resolve_approved(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté : bac vide"))
         .await
         .expect("count resolves");
     let closed = resolved.review.expect("the negative item");
@@ -535,7 +566,7 @@ async fn two_pcs_issuing_the_last_units_leave_one_item_that_a_count_closes_on_bo
             &a,
             "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions cs ON cs.id = cl.session_id
              WHERE cs.status = 'posted' AND cl.article_id = ? AND cl.location_id = ?
-               AND cl.counted_qty = 0 AND cl.variance_qty = 5 AND cl.approval_note = 'Recompté : bac vide'
+               AND cl.counted_qty = 0 AND cl.variance_qty = 5 AND cl.approval_note = 'Comptage vérifié par un second'
                AND cl.count_follows_json = '[]' AND cl.count_replica_id = ?
                AND cl.count_path = 'reconciliation'",
             vec![
@@ -853,7 +884,7 @@ async fn a_count_entered_before_the_other_pcs_count_arrived_is_a_double_count() 
 
     let entered = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
     assert_eq!((entered.1.system_qty, entered.1.variance_qty), (-5.0, 5.0));
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -911,13 +942,13 @@ async fn a_zero_variance_count_does_not_hide_an_earlier_count_below_zero() {
     let (art_a, loc_a) = pairs[0];
     let (art_c, loc_c) = pairs[2];
 
-    negative_stock::resolve_by_count(a, manager_a, resolution(art_a, loc_a, 0.0, "Comptage poste A"))
+    resolve_approved(a, manager_a, resolution(art_a, loc_a, 0.0, "Comptage poste A"))
         .await
         .expect("A1 at −5");
     let cycle = enter_count(a, manager_a, art_a, loc_a, 0.0).await;
     assert_eq!((cycle.1.system_qty, cycle.1.variance_qty), (0.0, 0.0), "A2 at 0");
     post_count(a, manager_a, cycle).await;
-    negative_stock::resolve_by_count(c, manager_c, resolution(art_c, loc_c, 0.0, "Comptage poste C"))
+    resolve_approved(c, manager_c, resolution(art_c, loc_c, 0.0, "Comptage poste C"))
         .await
         .expect("C1 at −5, offline");
     for _ in 0..2 {
@@ -939,7 +970,7 @@ async fn a_zero_variance_count_does_not_hide_an_earlier_count_below_zero() {
         );
     }
 
-    negative_stock::resolve_by_count(a, manager_a, resolution(art_a, loc_a, 0.0, "Recomptage commun"))
+    resolve_approved(a, manager_a, resolution(art_a, loc_a, 0.0, "Recomptage commun"))
         .await
         .expect("a count that knows both");
     sync_clean(&mut server, "A", a).await;
@@ -1240,7 +1271,7 @@ async fn a_list_count_and_a_count_session_on_two_pcs_are_a_double_count() {
     sync_clean(&mut server, "B", &b).await;
     sync_clean(&mut server, "A", &a).await;
 
-    negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+    resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Comptage depuis la liste"))
         .await
         .expect("A reconciles from the list");
     // B counts the location through the count workflow.
@@ -1328,10 +1359,10 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
     sync_clean(&mut server, "A", &a).await;
 
     // Offline, each PC counts 0 and resolves its item.
-    negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Comptage poste A"))
+    resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Comptage poste A"))
         .await
         .expect("A resolves");
-    negative_stock::resolve_by_count(&b, manager_b, resolution(art_b, loc_b, 0.0, "Comptage poste B"))
+    resolve_approved(&b, manager_b, resolution(art_b, loc_b, 0.0, "Comptage poste B"))
         .await
         .expect("B resolves");
     watch(&a).await;
@@ -1374,11 +1405,11 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
         );
     }
 
-    let short = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recompt"))
+    let short = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recompt"))
         .await
         .expect_err("7 characters");
     assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
-    let closed = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
+    let closed = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
         .await
         .expect("a new count closes it");
     assert!(closed.review.is_none(), "no negative item was open");
@@ -1395,7 +1426,7 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
             "{pc}"
         );
     }
-    let again = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
+    let again = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
         .await
         .expect_err("nothing left");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -1441,12 +1472,12 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     assert!(issued.is_err(), "issue of the stock reserved before refused");
     assert_eq!(on_hand_milli(&a, art, loc).await, -4000, "nothing moved");
 
-    let denied = negative_stock::resolve_by_count(&a, viewer, resolution(art, loc, 0.0, "Recompté bac"))
+    let denied = resolve_approved(&a, viewer, resolution(art, loc, 0.0, "Recompté bac"))
         .await
         .expect_err("inv.view only");
     assert!(matches!(denied, AppError::PermissionDenied(_)), "{denied:?}");
     for short in ["", "        ", "abcdefg", "  abcd  "] {
-        let err = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 0.0, short))
+        let err = resolve_approved(&a, manager, resolution(art, loc, 0.0, short))
             .await
             .expect_err("short reason");
         assert_eq!(refusal_code(err), REFUSED_REASON_SHORT, "{short:?}");
@@ -1455,7 +1486,7 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     assert_eq!(on_hand_milli(&a, art, loc).await, -4000, "refusals write nothing");
 
     // Counted 0 while 1 is still reserved: the item closes, the reservation shows as a warning.
-    let resolved = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 0.0, " abcdefgh "))
+    let resolved = resolve_approved(&a, manager, resolution(art, loc, 0.0, " abcdefgh "))
         .await
         .expect("eight characters once trimmed");
     let closed = resolved.review.expect("the negative item");
@@ -1467,7 +1498,7 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     let list = negative_stock::list_reviews(&a, false).await.expect("list");
     assert!(list.items.is_empty());
     assert_eq!(list.over_reservations.len(), 1, "over-reservation warning");
-    let again = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 2.0, "Recompté bac"))
+    let again = resolve_approved(&a, manager, resolution(art, loc, 2.0, "Recompté bac"))
         .await
         .expect_err("nothing left to reconcile");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -1506,7 +1537,7 @@ async fn a_count_whose_movement_is_not_here_is_not_followed() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let counter_b = user_with(b, "negunappliedb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -1548,7 +1579,7 @@ async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count(
     let counter_b = user_with(b, "negreenterb", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (session, first) = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
     assert_eq!(first.system_qty, -5.0);
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -1591,7 +1622,7 @@ async fn a_session_counted_after_another_count_on_the_same_pc_is_refused() {
     let counter_b = user_with(b, "negstalesession", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art, loc) = pairs[1];
     let stale = enter_count(b, counter_b, art, loc, 0.0).await;
-    negative_stock::resolve_by_count(b, counter_b, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+    resolve_approved(b, counter_b, resolution(art, loc, 0.0, "Comptage depuis la liste"))
         .await
         .expect("a count posted from the list on the same PC");
     assert_eq!(on_hand_milli(b, art, loc).await, 0);
@@ -1700,14 +1731,14 @@ async fn reversing_one_of_the_two_counts_closes_the_double_count() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let manager_b = user_with(b, "negrevdoubleb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    let resolved_a = negative_stock::resolve_by_count(
+    let resolved_a = resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
     )
     .await
     .expect("A1");
-    negative_stock::resolve_by_count(
+    resolve_approved(
         b,
         manager_b,
         resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
@@ -1789,7 +1820,7 @@ async fn the_notice_says_when_the_shortage_opened_and_a_new_shortage_reopens_it_
         .expect("dated");
     assert_eq!(params().await["opened_at"], serde_json::json!(first_crossing));
 
-    negative_stock::resolve_by_count(a, manager, resolution(art, loc, 0.0, "Comptage poste A"))
+    resolve_approved(a, manager, resolution(art, loc, 0.0, "Comptage poste A"))
         .await
         .expect("count");
     assert_eq!(watch(a).await.resolved, 1);
@@ -1830,14 +1861,14 @@ async fn a_double_count_closed_by_a_reversal_leaves_the_negative_item_open() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let manager_b = user_with(b, "negrevopenb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    let resolved_a = negative_stock::resolve_by_count(
+    let resolved_a = resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
     )
     .await
     .expect("A1");
-    negative_stock::resolve_by_count(
+    resolve_approved(
         b,
         manager_b,
         resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
@@ -2520,14 +2551,13 @@ async fn a_count_posted_twice_is_an_item_that_a_new_count_closes() {
     }
 
     // A reason under 8 characters is refused; a new count with its reason closes it.
-    let short = negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "court"))
+    let short = resolve_approved(&a, user, resolution(art, loc, 7.0, "court"))
         .await
         .expect_err("short reason");
     assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
-    let resolved =
-        negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "Recompté après double passage"))
-            .await
-            .expect("a new count");
+    let resolved = resolve_approved(&a, user, resolution(art, loc, 7.0, "Recompté après double passage"))
+        .await
+        .expect("a new count");
     assert!(
         (resolved.variance_qty - 3.0).abs() < 1e-9,
         "the stock is set to the count"
@@ -2735,7 +2765,7 @@ async fn a_count_posted_on_two_pcs_with_different_quantities_converges_and_is_li
 
     // A new count on B (reason of at least 8 characters) closes it.
     let counter_b = user_with(&b, "au100divergent", &[crate::rbac::permissions::INV_MANAGE]).await;
-    negative_stock::resolve_by_count(
+    resolve_approved(
         &b,
         counter_b,
         resolution(pair_b.0, pair_b.1, 7.0, "Recompté après comptage divergent"),
@@ -3001,4 +3031,266 @@ async fn a_divergent_count_reversed_on_the_pc_that_lost_goes_back_once() {
             "{pc}: the reversal undoes the kept movement"
         );
     }
+}
+
+// ── Four-eyes on a count from the list (D11 Q4a) ─────────────────────────────────────────────
+
+fn gate(err: AppError) -> String {
+    match err {
+        AppError::ValidationFailed(messages) => messages[0].split(':').next().unwrap_or_default().to_string(),
+        other => refusal_code(other),
+    }
+}
+
+/// D11 Q4a: a count from the list above the four-eyes tolerance (at a location below zero every
+/// variance is) is saved as counted and moves nothing; the item stays open and shows it waiting.
+/// Its counter cannot approve it; a second person does, with a note of 8 characters at least, and
+/// that posts the movement and closes the item in one step.
+#[tokio::test]
+async fn a_list_count_above_the_tolerance_waits_for_a_second_person() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyeslistcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyeslistapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+
+    let counted = negative_stock::resolve_by_count(db, counter, resolution(art, loc, 2.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    assert!(counted.pending_approval && !counted.self_approved);
+    assert_eq!(on_hand_milli(db, art, loc).await, -5000, "nothing moved");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "the item stays open");
+    let pending = list.pending_counts.first().expect("waiting for approval").clone();
+    assert_eq!(
+        (pending.article_id, pending.location_id, pending.counted_by_id),
+        (art, loc, Some(i64::from(counter)))
+    );
+    assert!((pending.variance_qty - 7.0).abs() < 1e-9);
+
+    let approve = |user: i32, reason: &str| {
+        negative_stock::approve_pending_count(
+            db,
+            user,
+            negative_stock::ApprovePendingCountInput {
+                line_id: pending.line_id,
+                expected_row_version: pending.row_version,
+                reason: reason.into(),
+            },
+        )
+    };
+    assert_eq!(
+        gate(
+            approve(counter, "Je confirme mon comptage")
+                .await
+                .expect_err("the counter")
+        ),
+        crate::inventory::count_four_eyes::REFUSED_SELF_APPROVAL
+    );
+    assert_eq!(
+        refusal_code(approve(approver, " court ").await.expect_err("short")),
+        REFUSED_REASON_SHORT
+    );
+    let done = approve(approver, "Recompté avec le magasinier")
+        .await
+        .expect("approved");
+    assert!(!done.pending_approval);
+    assert_eq!(
+        on_hand_milli(db, art, loc).await,
+        2000,
+        "posted at the counted quantity"
+    );
+    assert_eq!(done.review.expect("item").status, "closed");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert!(list.items.is_empty() && list.pending_counts.is_empty());
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE id = ? AND approved_by_id = ? AND counted_by_id = ?
+               AND self_approved = 0 AND posted_transaction_id IS NOT NULL",
+            vec![pending.line_id.into(), approver.into(), counter.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.negative_stock.count_approved' AND actor_id = ?",
+            vec![approver.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        refusal_code(
+            approve(approver, "Recompté avec le magasinier")
+                .await
+                .expect_err("twice")
+        ),
+        negative_stock::REFUSED_COUNT_NOT_PENDING
+    );
+}
+
+/// D11 Q4a: the stock on record moved after the count waiting for approval: approving it would no
+/// longer bring the stock to what was counted — refused, the location is counted again; a new count
+/// of the pair replaces the waiting one.
+#[tokio::test]
+async fn a_waiting_list_count_is_refused_once_the_stock_moved_and_replaced_by_a_new_count() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesstalecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyesstaleapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    let first = negative_stock::list_reviews(db, false)
+        .await
+        .expect("list")
+        .pending_counts[0]
+        .clone();
+    adjust_noted(db, art, loc, 1.0, "Retour trouvé au comptage")
+        .await
+        .expect("entry");
+    let stale = negative_stock::approve_pending_count(
+        db,
+        approver,
+        negative_stock::ApprovePendingCountInput {
+            line_id: first.line_id,
+            expected_row_version: first.row_version,
+            reason: "Recompté avec le magasinier".into(),
+        },
+    )
+    .await
+    .expect_err("the stock moved");
+    assert_eq!(refusal_code(stale), negative_stock::REFUSED_COUNT_STALE);
+    assert_eq!(on_hand_milli(db, art, loc).await, -4000);
+
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.0, "Second comptage du bac"))
+        .await
+        .expect("counted again");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert_eq!(list.pending_counts.len(), 1, "the new count replaces the waiting one");
+    assert_ne!(list.pending_counts[0].line_id, first.line_id);
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_sessions WHERE session_code = ? AND status = 'cancelled'",
+            vec![first.session_code.clone().into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// D11 Q4a: under the four-eyes opt-out of the organisation's only site, a count from the list above
+/// the tolerance posts at once, flagged "auto-approbation".
+#[tokio::test]
+async fn under_the_sites_opt_out_a_list_count_posts_at_once_flagged() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(7), true).await;
+    let counter = user_with(db, "foureyesoptoutcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done = negative_stock::resolve_by_count(db, counter, resolution(art, loc, 0.0, "Comptage du bac"))
+        .await
+        .expect("posted");
+    assert!(!done.pending_approval && done.self_approved);
+    assert_eq!(on_hand_milli(db, art, loc).await, 0);
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE count_path = 'reconciliation' AND self_approved = 1
+               AND approved_by_id = ? AND counted_by_id = ?",
+            vec![counter.into(), counter.into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// D11: a count line received from another PC approved by its counter above the tolerance is a
+/// conflict unless flagged and the site opted out here; a flag on a line approved by a second
+/// person is a conflict; a line approved by a second person applies.
+#[tokio::test]
+async fn a_received_count_line_approved_by_its_counter_is_judged_by_four_eyes() {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyessynccounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let other = user_with(db, "foureyessyncother", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(db, counter, art, loc, 2.0).await;
+    assert_eq!(line.is_critical, 1);
+    let line_sync = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await
+    .expect("line sync id");
+    let user_sync = |id: i32| {
+        crate::sync::test_support::scalar_opt_text(
+            db,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            vec![id.into()],
+        )
+    };
+    let (counter_sync, other_sync) = (
+        user_sync(counter).await.expect("counter"),
+        user_sync(other).await.expect("other"),
+    );
+    let held = crate::permit::sync_check::local_wire(db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    let approved = |by: &str, flag: i64| {
+        let mut p = held.clone();
+        p.insert("approved_by_sync_id".into(), serde_json::json!(by));
+        p.insert("approved_at".into(), serde_json::json!("2026-10-23T10:00:00Z"));
+        p.insert("approval_note".into(), serde_json::json!("Recompté avec le magasinier"));
+        p.insert("self_approved".into(), serde_json::json!(flag));
+        p.insert("row_version".into(), serde_json::json!(line.row_version + 1));
+        p
+    };
+    let apply = |payload: serde_json::Map<String, serde_json::Value>| {
+        let line_sync = line_sync.clone();
+        async move {
+            let layout = crate::sync::row_layout::layout(db, "inventory_count_lines")
+                .await
+                .expect("layout");
+            let tx = db.begin().await.expect("begin");
+            let outcome = crate::sync::row_codec::apply_row(
+                &tx,
+                &layout,
+                &line_sync,
+                "upsert",
+                &serde_json::to_string(&payload).expect("json"),
+            )
+            .await
+            .expect("apply");
+            tx.rollback().await.expect("rollback");
+            outcome
+        }
+    };
+    let code = |outcome: &ApplyOutcome| match outcome {
+        ApplyOutcome::Conflict { code, .. } => code.clone(),
+        other => format!("{other:?}"),
+    };
+    for flag in [0, 1] {
+        let outcome = apply(approved(&counter_sync, flag)).await;
+        assert_eq!(code(&outcome), "COUNT_SELF_APPROVAL", "flag {flag}: {outcome:?}");
+    }
+    let outcome = apply(approved(&other_sync, 1)).await;
+    assert_eq!(code(&outcome), "COUNT_APPROVAL_RECORD_INVALID", "{outcome:?}");
+    let outcome = apply(approved(&other_sync, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(7), true).await;
+    let outcome = apply(approved(&counter_sync, 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "opted out here: {outcome:?}");
+    let outcome = apply(approved(&counter_sync, 0)).await;
+    assert_eq!(code(&outcome), "COUNT_SELF_APPROVAL", "not flagged: {outcome:?}");
 }
