@@ -1,6 +1,7 @@
 /**
- * The plant rule that made a work order "permit required" when it was converted from a request
- * (Données de référence › Règles d'exigence de permis), and how that flag was cleared.
+ * The plant rule that made a work order "permit required" when it was created, whatever created it
+ * (Données de référence › Règles d'exigence de permis; owner decision D2 (a)), and how that flag
+ * was cleared.
  *
  * Clearing it is not an edit of the work order: it needs the permit-issue right (`ptw.issue`) and
  * a reason of at least 10 characters, before execution starts; it is confirmed first and kept on

@@ -74,19 +74,7 @@ async fn admin(db: &DatabaseConnection) -> i64 {
 
 /// A rule of the plant's list (published set), as the editor would have saved it.
 async fn add_rule(db: &DatabaseConnection, code: &str, metadata: serde_json::Value) {
-    rules::ensure_permit_requirement_rules(db).await.expect("list");
-    let checked = rules::checked_rule_metadata(db, code, Some(&metadata.to_string()))
-        .await
-        .expect("valid rule");
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, metadata_json) \
-         SELECT rs.id, ?, ?, 1, 1, ? FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
-          WHERE d.code = ? AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
-        [code.into(), code.into(), checked.into(), rules::DOMAIN.into()],
-    ))
-    .await
-    .expect("rule");
+    rules::add_published_rule(db, code, metadata).await;
 }
 
 /// An approved request on the pump, converted to a work order.
@@ -717,7 +705,7 @@ async fn a_manual_work_order_from_a_safety_request_is_protected() {
     .expect("create");
     assert!(wo.requires_permit, "forced by the safety request");
     assert!(wo.permit_from_safety_di);
-    assert_eq!(wo.permit_rule_code, None, "no plant rule on a manual create (AU-04)");
+    assert_eq!(wo.permit_rule_code, None, "no plant rule configured");
     let err = req::set_permit_requirement(
         &db,
         WoPermitRequirementInput {
@@ -1232,4 +1220,138 @@ async fn a_request_flagged_after_its_work_order_was_linked_protects_it() {
         !kept.requires_permit && !kept.permit_from_safety_di,
         "started: left as it is"
     );
+}
+
+/// A work order on the pump created directly (the form), with the explicit tick given.
+fn direct_input(actor: i64, requires_permit: Option<bool>) -> crate::wo::domain::WoCreateInput {
+    crate::wo::domain::WoCreateInput {
+        type_code: "corrective".into(),
+        equipment_id: Some(1),
+        location_id: None,
+        source_di_id: None,
+        source_inspection_anomaly_id: None,
+        source_ram_ishikawa_diagram_id: None,
+        source_ishikawa_flow_node_id: None,
+        source_rca_cause_text: None,
+        entity_id: Some(1),
+        planner_id: None,
+        urgency_code: Some("normal".into()),
+        subtype_code: None,
+        title: "Fuite pompe".into(),
+        description: None,
+        notes: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: None,
+        creator_id: actor,
+        requires_permit,
+    }
+}
+
+/// Owner decision D2 (a), audit finding AU-04: a work order created directly gets the plant's rule
+/// like a converted request, whatever the form's tick says, and the rule's protection applies.
+#[tokio::test]
+async fn a_work_order_created_directly_gets_the_plant_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let wo = crate::wo::queries::create_work_order(&db, direct_input(actor, Some(false)))
+        .await
+        .expect("create");
+    assert!(wo.requires_permit, "the rule requires it, the form left it unticked");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+    assert!(!wo.permit_from_safety_di);
+
+    // The protection of a rule flag: no start without a permit, no clearing by the general edit.
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id)
+        .await
+        .expect_err("needs a permit");
+    assert_eq!(code_of(&err), "PERMIT_REQUIRED_TO_START");
+    let err = req::set_permit_requirement(
+        &db,
+        WoPermitRequirementInput {
+            wo_id: wo.id,
+            expected_row_version: wo.row_version,
+            requires_permit: false,
+        },
+        actor,
+    )
+    .await
+    .expect_err("edit cannot clear");
+    assert_eq!(code_of(&err), req::CODE_RULE_FLAG_NEEDS_CLEAR);
+}
+
+/// A rule only adds a requirement: an explicit tick stands when no rule matches, and the work is
+/// not flagged when nothing asks for a permit.
+#[tokio::test]
+async fn a_rule_never_removes_an_explicit_requirement() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let plain = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    assert!(!plain.requires_permit, "no rule, no tick: no permit");
+    assert_eq!(plain.permit_rule_code, None);
+
+    add_rule(
+        &db,
+        "VALVES_HOT_WORK",
+        serde_json::json!({ "equipment_class_code": "VALVE", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let ticked = crate::wo::queries::create_work_order(&db, direct_input(actor, Some(true)))
+        .await
+        .expect("create");
+    assert!(ticked.requires_permit, "the tick stands when no rule matches");
+    assert_eq!(ticked.permit_rule_code, None);
+
+    add_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        serde_json::json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let both = crate::wo::queries::create_work_order(&db, direct_input(actor, Some(true)))
+        .await
+        .expect("create");
+    assert!(both.requires_permit);
+    assert_eq!(
+        both.permit_rule_code.as_deref(),
+        Some("CORRECTIVE_LOTO"),
+        "matched on the work type"
+    );
+}
+
+/// A work order created from a request flagged "sécurité" gets both origins: the plant's rule and
+/// the request's safety flag (AU-01).
+#[tokio::test]
+async fn a_manual_work_order_from_a_safety_request_gets_the_rule_too() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let di = safety_request(&db, actor).await;
+    let wo = crate::wo::queries::create_work_order(
+        &db,
+        crate::wo::domain::WoCreateInput {
+            source_di_id: Some(di),
+            ..direct_input(actor, Some(false))
+        },
+    )
+    .await
+    .expect("create");
+    assert!(wo.requires_permit);
+    assert!(wo.permit_from_safety_di);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
 }

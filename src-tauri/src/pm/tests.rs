@@ -2330,3 +2330,28 @@ async fn pm_reasons_and_severities_come_from_the_reference_lists() {
         .expect("known reason");
     assert_eq!(done.occurrence.deferral_reason.as_deref(), Some("material_missing"));
 }
+
+/// Owner decision D2 (a), audit finding AU-04: the work order a PM occurrence generates gets the
+/// plant's permit rule (here on the preventive work type) on top of the PM version's permit flag.
+#[tokio::test]
+async fn generated_work_order_gets_the_plant_permit_rule() {
+    let db = setup_db().await;
+    let preventive =
+        crate::wo::types::default_type_for_nature(&db, crate::wo::types::MaintenanceNature::PreventivePredetermined)
+            .await
+            .expect("preventive type");
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "PREVENTIVE_LOTO",
+        serde_json::json!({ "work_type_code": preventive.code, "permit_type_code": "loto" }),
+    )
+    .await;
+    let occ = occurrence_with_generated_wo(&db, "PM-WO-RULE").await;
+    let wo = crate::wo::queries::get_work_order(&db, occ.linked_work_order_id.expect("linked OT"))
+        .await
+        .expect("get OT")
+        .expect("OT exists");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("PREVENTIVE_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+}

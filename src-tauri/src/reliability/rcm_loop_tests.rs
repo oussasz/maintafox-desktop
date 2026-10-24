@@ -417,3 +417,36 @@ async fn criticality_number_from_inputs_and_from_history() {
     assert!((c.analysis_criticality - 0.03).abs() < 1e-12);
     assert_eq!(c.row_version, 2);
 }
+
+/// Owner decision D2 (a), audit finding AU-04: a work order raised from a reliability action gets
+/// the plant's permit rule like any other.
+#[tokio::test]
+async fn a_work_order_from_a_reliability_action_gets_the_plant_permit_rule() {
+    let f = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &f.db,
+        "CORRECTIVE_LOTO",
+        serde_json::json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let admin = scalar(&f.db, "SELECT id FROM user_accounts WHERE username = 'admin'").await;
+    let action = create_wo_from_source(
+        &f.db,
+        WoFromSourceInput {
+            source_type: "fmeca_item".into(),
+            source_id: f.item_id,
+            type_code: "corrective".into(),
+            title: None,
+        },
+        admin,
+    )
+    .await
+    .expect("wo");
+    let wo = crate::wo::queries::get_work_order(&f.db, action.work_order_id.expect("wo id"))
+        .await
+        .expect("get")
+        .expect("wo");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("CORRECTIVE_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+}

@@ -1,5 +1,10 @@
-//! Which work needs a permit — the plant's rules, applied when a request (DI) becomes a work order
-//! (owner decision: requests carry no permit field; the work order is flagged at conversion).
+//! Which work needs a permit — the plant's rules, applied to every work order when it is created,
+//! whatever creates it: a request (DI) converted, a direct creation, a PM occurrence, an inspection
+//! anomaly or a reliability action (owner decision D2 (a), audit finding AU-04: the hazard comes
+//! from the equipment and the job, not from how the work order was created). Requests carry no
+//! permit field; the work order is flagged (`di::conversion`, `wo::queries::create_work_order_in`).
+//! A received work order new here that one of these rules flags here but that arrives without the
+//! flag is re-checked (`permit::sync_check::inbound_permit_rule_check`).
 //!
 //! `PERMIT.REQUIREMENT_RULES` is a COMPANY list of Données de référence. Each value is one rule;
 //! its `metadata_json` says what it matches and which permit it calls for:
@@ -211,7 +216,10 @@ async fn equipment_class_code(db: &impl ConnectionTrait, equipment_id: i64) -> A
         .and_then(|r| r.try_get::<Option<String>>("", "code").ok().flatten()))
 }
 
-/// Apply the plant's rules to the work a request becomes: its equipment and work type.
+/// Apply the plant's rules to a new work order: its equipment and work type. The single evaluation
+/// for every origin (conversion, direct creation, PM, inspection anomaly, reliability action) and
+/// for the re-check of a received work order. `safety_flag` (the source request's) keeps the
+/// requirement whatever the rules say: a rule only adds one.
 pub async fn evaluate(
     db: &impl ConnectionTrait,
     equipment_id: Option<i64>,
@@ -284,6 +292,25 @@ pub async fn evaluate(
         }
     }
     Ok(outcome)
+}
+
+/// A rule added to the plant's published list, as the editor would have saved it (tests of every
+/// work-order origin).
+#[cfg(test)]
+pub(crate) async fn add_published_rule(db: &impl ConnectionTrait, code: &str, metadata: serde_json::Value) {
+    ensure_permit_requirement_rules(db).await.expect("rules list");
+    let checked = checked_rule_metadata(db, code, Some(&metadata.to_string()))
+        .await
+        .expect("valid rule");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values (set_id, code, label, sort_order, is_active, metadata_json) \
+         SELECT rs.id, ?, ?, 1, 1, ? FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+          WHERE d.code = ? AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
+        [code.into(), code.into(), checked.into(), DOMAIN.into()],
+    ))
+    .await
+    .expect("rule");
 }
 
 #[cfg(test)]

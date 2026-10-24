@@ -1775,3 +1775,93 @@ fn finding_severity_maps_to_governed_urgency_codes() {
         ["low", "normal", "high", "urgent", "emergency"]
     );
 }
+
+/// An open anomaly on PMP-101 (bearing temperature beyond its warning limit): its id and version.
+async fn hot_bearing_anomaly(db: &DatabaseConnection, r: &InspectionRound) -> (i64, i64) {
+    let tech = technician(db).await;
+    let temp = checkpoint_id(db, "TEMP-BRG").await;
+    let hot = record_inspection_result(
+        db,
+        RecordInspectionResultInput {
+            numeric_value: Some(88.0),
+            comment: Some("Hot".into()),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("record");
+    open_anomaly(db, &format!("result_id = {}", hot.id)).await
+}
+
+/// The anomaly marked "revue permis requise": its new version.
+async fn require_permit_review(db: &DatabaseConnection, anomaly_id: i64) -> i64 {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_anomalies SET requires_permit_review = 1, row_version = row_version + 1 WHERE id = ?",
+        [anomaly_id.into()],
+    ))
+    .await
+    .expect("review flag");
+    scalar_i64(
+        db,
+        &format!("SELECT row_version FROM inspection_anomalies WHERE id = {anomaly_id}"),
+    )
+    .await
+}
+
+/// AU-72: the anomaly's "revue permis requise" requires the permit on the work order raised from it.
+#[tokio::test]
+async fn a_work_order_from_an_anomaly_keeps_its_permit_review() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    let rv = require_permit_review(&db, anomaly_id).await;
+    let (wo, _) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    assert!(wo.requires_permit, "the anomaly's permit review");
+    assert_eq!(wo.permit_rule_code, None, "no plant rule configured");
+}
+
+/// Owner decision D2 (a), audit finding AU-04 (with AU-72): the work order raised from an anomaly
+/// gets the plant's permit rule as well as the anomaly's permit review; both apply.
+#[tokio::test]
+async fn a_work_order_from_an_anomaly_gets_the_plant_rule_and_the_permit_review() {
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        serde_json::json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    let rv = require_permit_review(&db, anomaly_id).await;
+    let (wo, anomaly) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    assert!(anomaly.requires_permit_review, "the review flag is kept");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("CORRECTIVE_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+}
+
