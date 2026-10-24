@@ -2771,7 +2771,8 @@ pub enum PolicyRefreshResult {
         message: Option<String>,
         details: Option<String>,
     },
-    /// The server answered 2xx with a body that is not a licence claim. Nothing was recorded.
+    /// The server answered 2xx with a body that is not a licence claim, or an answer too large to
+    /// read (`RAW_ANSWER_MAX_BYTES`), or the request could not be built. Nothing was recorded.
     InvalidResponse { message: String },
     /// No answer from the server (offline, connection refused, interrupted).
     NetworkError { message: String },
@@ -3041,6 +3042,17 @@ pub(crate) async fn refresh_product_activation_policy_in(
         .await
     {
         Ok(answer) => answer,
+        // An answer too large to read (`RAW_ANSWER_MAX_BYTES`), or a request that could not be
+        // built: no licence answer, but not the network either.
+        Err(e @ crate::sync::transport::client::TransportError::Contract(_)) => {
+            let message = without_token(e.message(), &token);
+            tracing::warn!(
+                event = "desktop_policy_refresh_invalid_answer",
+                error = %message,
+                "Licence policy refresh answer could not be read"
+            );
+            return Ok(PolicyRefreshResult::InvalidResponse { message });
+        }
         Err(e) => {
             let message = without_token(e.message(), &token);
             tracing::warn!(
@@ -3053,9 +3065,15 @@ pub(crate) async fn refresh_product_activation_policy_in(
     };
     if !(200..300).contains(&status) {
         let (code, message) = policy_refresh_error_fields(&body);
-        let details = Some(body.trim())
-            .filter(|b| !b.is_empty())
-            .map(|b| without_token(b.chars().take(POLICY_REFRESH_DETAILS_MAX_CHARS).collect(), &token));
+        let code = code.map(|c| without_token(c, &token));
+        let message = message.map(|m| without_token(m, &token));
+        // Redacted before it is shortened: a token cut at the limit would no longer be found.
+        let details = Some(body.trim()).filter(|b| !b.is_empty()).map(|b| {
+            without_token(b.to_string(), &token)
+                .chars()
+                .take(POLICY_REFRESH_DETAILS_MAX_CHARS)
+                .collect::<String>()
+        });
         tracing::warn!(
             event = "desktop_policy_refresh_refused",
             status,
@@ -3064,8 +3082,8 @@ pub(crate) async fn refresh_product_activation_policy_in(
         );
         return Ok(PolicyRefreshResult::HttpError {
             status,
-            code: code.map(|c| without_token(c, &token)),
-            message: message.map(|m| without_token(m, &token)),
+            code,
+            message,
             details,
         });
     }

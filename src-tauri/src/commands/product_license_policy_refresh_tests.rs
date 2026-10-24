@@ -122,6 +122,31 @@ async fn activated_pc() -> DatabaseConnection {
     db
 }
 
+/// `activated_pc` once its first administrator exists: licence changes then need one.
+async fn administered_pc() -> DatabaseConnection {
+    let db = activated_pc().await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
+    bootstrap_initial_tenant_admin_in(
+        &db,
+        BootstrapInitialAdminInput {
+            username: "chef".into(),
+            email: "chef@plant.example".into(),
+            password: "Chef-Usine-2026!Sûr".into(),
+            display_name: None,
+        },
+    )
+    .await
+    .expect("first administrator");
+    db
+}
+
+fn refusal_code(err: &AppError) -> Option<String> {
+    match err {
+        AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()),
+        _ => None,
+    }
+}
+
 /// The refresh answer of the activation stored here, without an activation token.
 fn renewed_claim() -> Value {
     json!({
@@ -346,31 +371,101 @@ async fn a_success_answer_that_is_not_a_claim_records_nothing() {
 
 #[tokio::test]
 async fn a_refused_licence_change_is_returned_as_the_refusal() {
-    let db = activated_pc().await;
-    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
-    bootstrap_initial_tenant_admin_in(
-        &db,
-        BootstrapInitialAdminInput {
-            username: "chef".into(),
-            email: "chef@plant.example".into(),
-            password: "Chef-Usine-2026!Sûr".into(),
-            display_name: None,
-        },
-    )
-    .await
-    .expect("first administrator");
+    let db = administered_pc().await;
     let mut answer = renewed_claim();
     answer["tenant_id"] = json!("another-tenant");
     let stub = start_stub(200, answer.to_string()).await;
     let err = refresh_product_activation_policy_in(&db, SIGNED_OUT, &stub.base_url, None)
         .await
         .expect_err("another organisation needs an administrator");
-    let code = match &err {
-        AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()),
-        _ => None,
-    };
-    assert_eq!(code.as_deref(), Some("LICENSE_RECONCILE_ADMIN_REQUIRED"), "{err:?}");
+    assert_eq!(
+        refusal_code(&err).as_deref(),
+        Some("LICENSE_RECONCILE_ADMIN_REQUIRED"),
+        "{err:?}"
+    );
     assert!(!format!("{err:?}").contains(STORED_TOKEN));
+}
+
+#[tokio::test]
+async fn a_rotated_token_not_bound_here_is_refused_signed_out_and_nothing_recorded() {
+    let db = administered_pc().await;
+    let before = load_state_record_from_db(&db)
+        .await
+        .expect("record")
+        .expect("stored record")
+        .reconciliation
+        .last_attempt_at;
+    let mut answer = renewed_claim();
+    answer["activation_token"] = json!("rotated-token-from-elsewhere");
+    let stub = start_stub(200, answer.to_string()).await;
+    let err = refresh_product_activation_policy_in(&db, SIGNED_OUT, &stub.base_url, None)
+        .await
+        .expect_err("a token not bound to this activation needs an administrator");
+    assert_eq!(
+        refusal_code(&err).as_deref(),
+        Some("LICENSE_RECONCILE_ADMIN_REQUIRED"),
+        "{err:?}"
+    );
+    let text = format!("{err:?}");
+    assert!(
+        !text.contains(STORED_TOKEN) && !text.contains("rotated-token-from-elsewhere"),
+        "{text}"
+    );
+    let claim = get_activation_claim_record(&db)
+        .await
+        .expect("claim")
+        .expect("stored claim");
+    assert_eq!(claim.activation_token, STORED_TOKEN, "the stored token is kept");
+    let after = load_state_record_from_db(&db)
+        .await
+        .expect("record")
+        .expect("stored record")
+        .reconciliation
+        .last_attempt_at;
+    assert_eq!(before, after, "nothing recorded");
+}
+
+#[tokio::test]
+async fn a_token_echoed_across_the_details_limit_is_never_returned() {
+    let db = activated_pc().await;
+    // The token starts a few characters before the 4000-character limit of the details.
+    let body = format!("{}{STORED_TOKEN} and more", "x".repeat(3990));
+    let stub = start_stub(400, body).await;
+    let result = refresh_product_activation_policy_in(&db, SIGNED_OUT, &stub.base_url, None)
+        .await
+        .expect("refresh");
+    let PolicyRefreshResult::HttpError { details, message, .. } = &result else {
+        panic!("expected http_error, got {result:?}");
+    };
+    let details = details.as_deref().expect("details");
+    assert_eq!(details.chars().count(), 4000);
+    assert!(
+        !details.contains("stored-act"),
+        "a prefix of the token leaked: {details}"
+    );
+    assert!(message.as_deref().is_some_and(|m| m.contains("[activation token]")));
+    assert_no_token(&result);
+}
+
+#[tokio::test]
+async fn an_oversized_answer_is_cut_off_and_records_nothing() {
+    let db = activated_pc().await;
+    let mut answer = renewed_claim();
+    answer["padding"] = json!("p".repeat(crate::sync::transport::client::RAW_ANSWER_MAX_BYTES));
+    let stub = start_stub(200, answer.to_string()).await;
+    let result = refresh_product_activation_policy_in(&db, SIGNED_OUT, &stub.base_url, None)
+        .await
+        .expect("refresh");
+    let PolicyRefreshResult::InvalidResponse { message } = &result else {
+        panic!("expected invalid_response, got {result:?}");
+    };
+    assert!(message.contains("larger than"), "{message}");
+    assert_no_token(&result);
+    let record = load_state_record_from_db(&db)
+        .await
+        .expect("record")
+        .expect("stored record");
+    assert!(record.reconciliation.last_success_at.is_none(), "nothing recorded");
 }
 
 #[test]
