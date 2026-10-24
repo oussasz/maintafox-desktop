@@ -1713,3 +1713,53 @@ async fn the_catch_up_after_a_restart_flags_the_open_work_orders_a_rule_matches(
     // Run again: nothing more.
     assert_eq!(rules::catch_up(&db).await, 0);
 }
+
+/// R3-N3: one work order the catch-up cannot write does not hold back the others; it is flagged by
+/// the next run once it can be written.
+#[tokio::test]
+async fn a_failing_work_order_does_not_stop_the_catch_up_and_is_retried() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let blocked = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    let other = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "CREATE TRIGGER test_catch_up_fails BEFORE UPDATE OF permit_rule_code ON work_orders \
+             WHEN OLD.id = {} BEGIN SELECT RAISE(ABORT, 'test: cannot write'); END",
+            blocked.id
+        ),
+    )
+    .await;
+    assert_eq!(rules::catch_up(&db).await, 1, "the other work order is flagged");
+    let rule_of = |id: i64| {
+        let db = db.clone();
+        async move {
+            crate::wo::queries::get_work_order(&db, id)
+                .await
+                .expect("q")
+                .expect("wo")
+                .permit_rule_code
+        }
+    };
+    assert_eq!(rule_of(other.id).await.as_deref(), Some("PUMPS_LOTO"));
+    assert_eq!(rule_of(blocked.id).await, None);
+    assert_eq!(
+        scalar(&db, "SELECT COUNT(*) FROM sync_capture_suppression").await,
+        0,
+        "capture back on after the failure"
+    );
+    exec(&db, "DROP TRIGGER test_catch_up_fails").await;
+    assert_eq!(rules::catch_up(&db).await, 1, "retried by the next run");
+    assert_eq!(rule_of(blocked.id).await.as_deref(), Some("PUMPS_LOTO"));
+}

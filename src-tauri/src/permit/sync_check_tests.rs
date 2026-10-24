@@ -7575,3 +7575,44 @@ async fn a_status_moved_back_does_not_let_another_rule_through() {
     assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
     assert_eq!(rule_state(&db, "wo-r3-3").await, ruled("CORRECTIVE_LOTO", "loto"));
 }
+
+/// R3-N4: a row that says origin 0 for a work order not started whose request is flagged here, and
+/// carries a clearing by someone without the right, is applied (the origin is derived here), then
+/// protected in the same apply: origin 1, the permit required, the clearing withdrawn. Never stored
+/// cleared.
+#[tokio::test]
+async fn an_origin_0_row_with_an_unauthorised_clearing_ends_protected() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-N4-1").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let flagged = request_on_site_1(&db, "EQ-SYNC-N4-DI", true).await;
+    let row = with(
+        template,
+        &[
+            ("code", json!("OT-N4-1")),
+            ("source_di_sync_id", json!(flagged)),
+            ("status_sync_id", status_sync(&db, "planning").await),
+            ("actual_start", Value::Null),
+            ("permit_from_safety_di", json!(0)),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-n4-origin-0", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) || '|' || \
+             COALESCE(permit_rule_cleared_at, 'none') FROM work_orders WHERE entity_sync_id = 'wo-n4-origin-0'"
+        )
+        .await
+        .as_deref(),
+        Some("1|1|none"),
+        "protected, the clearing withdrawn"
+    );
+}

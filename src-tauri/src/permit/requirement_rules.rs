@@ -594,6 +594,21 @@ pub async fn stamp_open_work_orders(
     if rules.is_empty() {
         return Ok(Vec::new());
     }
+    let ids = open_unruled_work_orders(conn).await?;
+    let mut flagged = Vec::new();
+    for id in ids {
+        if stamp_matching_rule_with(conn, &rules, id, actor_id, cause)
+            .await?
+            .is_some()
+        {
+            flagged.push(id);
+        }
+    }
+    Ok(flagged)
+}
+
+/// The work orders not started yet (draft, planning, ready) that have no plant rule, by id.
+async fn open_unruled_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let marks = vec!["?"; not_started.len()].join(",");
     let rows = conn
@@ -606,17 +621,9 @@ pub async fn stamp_open_work_orders(
             not_started.iter().map(|c| sea_orm::Value::from(*c)).collect::<Vec<_>>(),
         ))
         .await?;
-    let mut flagged = Vec::new();
-    for row in rows {
-        let id: i64 = row.try_get("", "id")?;
-        if stamp_matching_rule_with(conn, &rules, id, actor_id, cause)
-            .await?
-            .is_some()
-        {
-            flagged.push(id);
-        }
-    }
-    Ok(flagged)
+    rows.iter()
+        .map(|r| r.try_get::<i64>("", "id").map_err(Into::into))
+        .collect()
 }
 
 /// The durable catch-up of [`stamp_open_work_orders`] (audit finding AU-04 R2-S2), like
@@ -624,29 +631,73 @@ pub async fn stamp_open_work_orders(
 /// not started yet, without a rule, that a rule of the list here matches now gets it (a stamp a
 /// failed or older run missed, an equipment whose class changed since). Each PC derives the same
 /// from the same work order and list, so it is written with capture suppressed and never sent, like
-/// a stamp made while applying received rows. Its own transaction; idempotent; a failure is logged
-/// and retried by the next run. Returns the work orders flagged.
+/// a stamp made while applying received rows. The work orders due are found by reads only; each one
+/// a rule matches is then stamped in its own short transaction, so the write lock is held only for
+/// that work order, and one that fails is logged and retried by the next run without holding back
+/// the others (audit finding AU-04 R3-N3). Idempotent. Returns the work orders flagged.
 pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
     use sea_orm::TransactionTrait;
-    let run = async {
-        let txn = db.begin().await?;
-        crate::sync::capture::begin_suppression(&txn).await?;
-        let flagged = stamp_open_work_orders(&txn, None, stamp_causes::CATCH_UP).await?;
-        crate::sync::capture::end_suppression(&txn).await?;
-        txn.commit().await?;
-        AppResult::Ok(flagged.len())
+    let due = async {
+        let rules = PublishedRules::load(db).await?;
+        if rules.is_empty() {
+            return AppResult::Ok((rules, Vec::new()));
+        }
+        let ids = open_unruled_work_orders(db).await?;
+        Ok((rules, ids))
     };
-    match run.await {
-        Ok(flagged) => flagged,
+    let (rules, ids) = match due.await {
+        Ok(found) => found,
         Err(err) => {
             tracing::error!(
                 target: "maintafox::sync",
                 error = %err,
-                "permit rules catch-up failed; retried at the next run"
+                "permit rules catch-up not read; retried at the next run"
             );
-            0
+            return 0;
+        }
+    };
+    let mut flagged = 0;
+    for wo_id in ids {
+        let one = async {
+            // Read first: a work order no rule matches takes no write lock.
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT equipment_id, type_id FROM work_orders WHERE id = ? AND permit_rule_code IS NULL",
+                    [wo_id.into()],
+                ))
+                .await?;
+            let Some(row) = row else {
+                return AppResult::Ok(false);
+            };
+            let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+            let type_id: i64 = row.try_get("", "type_id")?;
+            if evaluate_with(db, &rules, equipment, type_id, false)
+                .await?
+                .rule_code
+                .is_none()
+            {
+                return Ok(false);
+            }
+            let txn = db.begin().await?;
+            crate::sync::capture::begin_suppression(&txn).await?;
+            let stamped = stamp_matching_rule_with(&txn, &rules, wo_id, None, stamp_causes::CATCH_UP).await?;
+            crate::sync::capture::end_suppression(&txn).await?;
+            txn.commit().await?;
+            Ok(stamped.is_some())
+        };
+        match one.await {
+            Ok(true) => flagged += 1,
+            Ok(false) => {}
+            Err(err) => tracing::error!(
+                target: "maintafox::sync",
+                work_order_id = wo_id,
+                error = %err,
+                "permit rule not applied to this work order by the catch-up; retried at the next run"
+            ),
         }
     }
+    flagged
 }
 
 /// Whether the reference set `set_id` belongs to the plant's rule list.
