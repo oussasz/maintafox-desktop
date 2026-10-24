@@ -690,6 +690,7 @@ async fn a_suspension_holding_work_with_a_responsible_does_not_use_the_fallback(
 async fn a_suspension_stages_the_work_order_hold_before_the_permit() {
     let db = setup().await;
     let (wo_id, wp) = running_work(&db, "EQ-N7-1").await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
     for sql in ["DELETE FROM sync_capture_journal", "DELETE FROM sync_outbox"] {
         db.execute_unprepared(sql).await.expect("clear");
     }
@@ -831,21 +832,37 @@ async fn a_timed_closure_after_the_start_received_while_the_work_runs_is_raised_
 #[tokio::test]
 async fn a_received_end_left_waiting_raises_nothing_until_it_applies() {
     let db = setup().await;
-    let (_, wp) = running_work(&db, "EQ-S5-3").await;
+    let (wo_id, wp) = running_work(&db, "EQ-S5-3").await;
+    // A suspension received with the closure, waiting for its author (not received yet): the
+    // closure is judged with it (its group) and waits with it.
+    suspend(&db, &wp, "Alarme gaz").await;
+    suspension_as_received(&db, &wp, None).await;
+    for sql in [
+        format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {wo_id}"
+        ),
+        format!("DELETE FROM work_order_delay_segments WHERE work_order_id = {wo_id}"),
+        "UPDATE sync_inbox SET payload_json = json_set(payload_json, '$.suspended_by_sync_id', 'user-not-received-yet') \
+         WHERE entity_type = 'permit_suspensions'"
+            .to_string(),
+    ] {
+        db.execute_unprepared(&sql).await.expect("as received");
+    }
     let closed = with(
         wire(&db, "work_permits", &wp.entity_sync_id).await,
         &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
     );
-    let waiting = with(
-        closed.clone(),
-        &[("created_by_sync_id", json!("user-not-received-yet"))],
-    );
-    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &waiting).await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &closed).await;
     assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
     assert_eq!(reread(&db, &wp).await.status, "active");
     assert!(review_conflicts(&db, &wp.entity_sync_id).await.is_empty());
     assert_eq!(notices(&db, "permit_ended_under_work").await, 0);
 
+    // Once nothing waits, the same row applies: raised and told.
+    db.execute_unprepared("DELETE FROM sync_inbox WHERE entity_type = 'permit_suspensions'")
+        .await
+        .expect("received elsewhere");
     let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &closed).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
