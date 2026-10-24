@@ -1355,3 +1355,210 @@ async fn a_manual_work_order_from_a_safety_request_gets_the_rule_too() {
     assert!(wo.permit_from_safety_di);
     assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
 }
+
+// ── Review of AU-04: draft edits (B1) and unreadable rules (S1) ───────────────────────────────
+
+/// A draft edit that changes nothing but what `change` sets.
+fn draft_edit(wo: &crate::wo::domain::WorkOrder) -> crate::wo::domain::WoDraftUpdateInput {
+    crate::wo::domain::WoDraftUpdateInput {
+        id: wo.id,
+        expected_row_version: wo.row_version,
+        title: None,
+        type_code: None,
+        equipment_id: None,
+        location_id: None,
+        description: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: None,
+        notes: None,
+        urgency_code: None,
+        subtype_code: None,
+        requires_permit: None,
+    }
+}
+
+/// A second equipment on the site, without a class (no rule on a class matches it).
+async fn plain_equipment(db: &DatabaseConnection) -> i64 {
+    exec(
+        db,
+        "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+         created_at, updated_at) VALUES (2, 'pr-eq-2', 'PR-TANK', 'Tank', 'active_in_service', 1, datetime('now'), \
+         datetime('now'))",
+    )
+    .await;
+    2
+}
+
+async fn action_events(db: &DatabaseConnection, wo_id: i64, action: &str) -> i64 {
+    scalar(
+        db,
+        &format!("SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {wo_id} AND action_code = '{action}'"),
+    )
+    .await
+}
+
+/// B1: a draft moved to an equipment a rule covers gets the rule, even when the same save sends the
+/// permit unticked; the start gate then asks for the permit. Moved back, the rule stays (adds only).
+#[tokio::test]
+async fn a_draft_moved_to_a_ruled_equipment_gets_the_rule_and_keeps_it() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let tank = plain_equipment(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let wo = crate::wo::queries::create_work_order(
+        &db,
+        crate::wo::domain::WoCreateInput {
+            equipment_id: Some(tank),
+            ..direct_input(actor, None)
+        },
+    )
+    .await
+    .expect("create");
+    assert_eq!(wo.permit_rule_code, None, "no rule on the tank");
+
+    let moved = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            equipment_id: Some(1),
+            requires_permit: Some(false),
+            ..draft_edit(&wo)
+        },
+        Some(actor),
+    )
+    .await
+    .expect("move to the pump");
+    assert!(moved.requires_permit);
+    assert_eq!(moved.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
+    assert_eq!(moved.permit_rule_permit_type.as_deref(), Some("loto"));
+    assert_eq!(
+        action_events(&db, wo.id, "permit_rule_applied").await,
+        1,
+        "in its history"
+    );
+    let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo.id)
+        .await
+        .expect_err("needs a permit");
+    assert_eq!(code_of(&err), "PERMIT_REQUIRED_TO_START");
+
+    let back = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            equipment_id: Some(tank),
+            ..draft_edit(&moved)
+        },
+        Some(actor),
+    )
+    .await
+    .expect("move back");
+    assert!(back.requires_permit, "a rule only adds");
+    assert_eq!(back.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
+}
+
+/// B1: a draft whose work type changes to one a rule covers gets the rule.
+#[tokio::test]
+async fn a_draft_whose_work_type_changes_gets_the_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let tank = plain_equipment(&db).await;
+    add_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        serde_json::json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let wo = crate::wo::queries::create_work_order(
+        &db,
+        crate::wo::domain::WoCreateInput {
+            type_code: "preventive".into(),
+            equipment_id: Some(tank),
+            ..direct_input(actor, None)
+        },
+    )
+    .await
+    .expect("create");
+    assert_eq!(wo.permit_rule_code, None);
+    let changed = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            type_code: Some("corrective".into()),
+            ..draft_edit(&wo)
+        },
+        Some(actor),
+    )
+    .await
+    .expect("type change");
+    assert!(changed.requires_permit);
+    assert_eq!(changed.permit_rule_code.as_deref(), Some("CORRECTIVE_LOTO"));
+}
+
+/// S1: a published rule that matches but names a permit type not held here still flags the work
+/// order (fail closed, its permit type as written); one whose settings do not read is not applied.
+/// Both are recorded in the work order's history and audit trail.
+#[tokio::test]
+async fn rules_that_do_not_resolve_flag_and_unreadable_ones_are_recorded() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_NEW_PERMIT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    add_rule(
+        &db,
+        "BROKEN",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    // As received from a PC where the permit type exists, and a rule damaged since.
+    exec(
+        &db,
+        "UPDATE reference_values SET metadata_json = '{\"equipment_class_code\":\"PUMP\",\
+         \"permit_type_code\":\"confined_space_new\"}' WHERE code = 'PUMPS_NEW_PERMIT'",
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_values SET metadata_json = 'not json' WHERE code = 'BROKEN'",
+    )
+    .await;
+
+    let wo = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    assert!(wo.requires_permit, "fail closed");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_NEW_PERMIT"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("confined_space_new"));
+    assert_eq!(action_events(&db, wo.id, "permit_rules_unreadable").await, 1);
+    let details = text_of(
+        &db,
+        &format!(
+            "SELECT payload_json FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_rules_unreadable'",
+            wo.id
+        ),
+    )
+    .await;
+    assert!(
+        details.contains("BROKEN") && details.contains("PUMPS_NEW_PERMIT"),
+        "{details}"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {} AND action = 'permit_rules_unreadable'",
+                wo.id
+            ),
+        )
+        .await,
+        1,
+        "audited"
+    );
+}

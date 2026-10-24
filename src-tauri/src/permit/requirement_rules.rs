@@ -197,8 +197,15 @@ pub struct PermitFlagOutcome {
     pub permit_type_code: Option<String>,
     /// The request was flagged as a safety concern (this flags the work order too, as before).
     pub safety_flag: bool,
-    /// Published rules that could not be read or name codes that no longer exist: not applied.
+    /// Published rules whose settings do not read (no class or work type, no permit type, not
+    /// JSON): not applied. Logged and recorded in the work order's history and audit trail.
     pub unreadable_rule_codes: Vec<String>,
+    /// Published rules that read but name a code not held here (an equipment class or work type not
+    /// in its published list, a permit type not received yet): applied as written, so a rule that
+    /// matches flags the work order (fail closed; the start gate asks for its permit type once it is
+    /// here). Recorded in the work order's history and audit trail so they are fixed.
+    #[serde(default)]
+    pub unresolved_rule_codes: Vec<String>,
 }
 
 /// The equipment's class code: its `EQUIPMENT.CLASS` value, else its legacy class.
@@ -220,6 +227,9 @@ async fn equipment_class_code(db: &impl ConnectionTrait, equipment_id: i64) -> A
 /// for every origin (conversion, direct creation, PM, inspection anomaly, reliability action) and
 /// for the re-check of a received work order. `safety_flag` (the source request's) keeps the
 /// requirement whatever the rules say: a rule only adds one.
+///
+/// The first matching rule in the list's order (its sort order, then its code: the same on every PC
+/// holding the same list, never a local id) is the one recorded.
 pub async fn evaluate(
     db: &impl ConnectionTrait,
     equipment_id: Option<i64>,
@@ -236,7 +246,7 @@ pub async fn evaluate(
                 AND rs.id = (SELECT rs2.id FROM reference_sets rs2 \
                               WHERE rs2.domain_id = d.id AND rs2.status = 'published' \
                               ORDER BY rs2.version_no DESC LIMIT 1) \
-              ORDER BY rv.sort_order ASC, rv.id ASC",
+              ORDER BY rv.sort_order ASC, rv.code ASC",
             [DOMAIN.into()],
         ))
         .await?;
@@ -247,6 +257,7 @@ pub async fn evaluate(
         permit_type_code: None,
         safety_flag,
         unreadable_rule_codes: Vec::new(),
+        unresolved_rule_codes: Vec::new(),
     };
     if rows.is_empty() {
         return Ok(outcome);
@@ -269,13 +280,13 @@ pub async fn evaluate(
     for row in rows {
         let code: String = row.try_get("", "code")?;
         let metadata: Option<String> = row.try_get("", "metadata_json")?;
-        if rule_problem(db, metadata.as_deref()).await?.is_some() {
+        let Ok(rule) = parse_rule(metadata.as_deref()) else {
             outcome.unreadable_rule_codes.push(code);
             continue;
-        }
-        let Ok(rule) = parse_rule(metadata.as_deref()) else {
-            continue;
         };
+        if rule_problem(db, metadata.as_deref()).await?.is_some() {
+            outcome.unresolved_rule_codes.push(code.clone());
+        }
         let class_ok = rule
             .equipment_class_code
             .as_ref()
@@ -292,6 +303,203 @@ pub async fn evaluate(
         }
     }
     Ok(outcome)
+}
+
+/// Rules that did not read, or that name a code not held here, when they are evaluated for a work
+/// order (`PermitFlagOutcome::unreadable_rule_codes` / `unresolved_rule_codes`): logged, and recorded
+/// in the work order's history (`permit_rules_unreadable`) and audit trail, so the work order can be
+/// checked and the rules fixed. Nothing when every rule read.
+pub async fn record_rule_problems(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    outcome: &PermitFlagOutcome,
+) -> AppResult<()> {
+    if outcome.unreadable_rule_codes.is_empty() && outcome.unresolved_rule_codes.is_empty() {
+        return Ok(());
+    }
+    tracing::warn!(
+        target: "maintafox",
+        wo_id,
+        unreadable = ?outcome.unreadable_rule_codes,
+        unresolved = ?outcome.unresolved_rule_codes,
+        "permit rules: published rules that do not read were not applied; rules naming codes not held here were \
+         applied as written"
+    );
+    let (status, _, _) = crate::wo::workflow::transition::load_wo_status(conn, wo_id).await?;
+    let payload = serde_json::json!({
+        "unreadable_rule_codes": outcome.unreadable_rule_codes,
+        "unresolved_rule_codes": outcome.unresolved_rule_codes,
+        "applied_rule_code": outcome.rule_code,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_rules_unreadable",
+        actor_id,
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    let mut summary = String::from("Règles de permis à corriger");
+    if !outcome.unreadable_rule_codes.is_empty() {
+        summary.push_str(&format!(
+            " — illisibles, non appliquées : {}",
+            outcome.unreadable_rule_codes.join(", ")
+        ));
+    }
+    if !outcome.unresolved_rule_codes.is_empty() {
+        summary.push_str(&format!(
+            " — codes inconnus ici, appliquées telles qu'écrites : {}",
+            outcome.unresolved_rule_codes.join(", ")
+        ));
+    }
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_rules_unreadable".into(),
+            actor_id,
+            summary: Some(summary),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// Why a plant rule was recorded on a work order that already existed ([`stamp_matching_rule`]).
+pub mod stamp_causes {
+    /// Its equipment or work type changed in a draft edit (`wo::queries::update_wo_draft_fields`).
+    pub const DRAFT_EDIT: &str = "draft_edit";
+    /// The plant's rule list changed on this PC (a rule added, changed or published).
+    pub const RULES_CHANGED: &str = "rules_changed";
+    /// The plant's rule list was received by synchronisation.
+    pub const RULES_RECEIVED: &str = "rules_received";
+    /// The work order was received (new here, or changed) without the rule that matches it here.
+    pub const WORK_ORDER_RECEIVED: &str = "work_order_received";
+}
+
+/// The version of the published rule list (recorded with a rule written on an existing work order).
+async fn published_rule_set_version(conn: &impl ConnectionTrait) -> AppResult<Option<i64>> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rs.version_no FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE UPPER(TRIM(d.code)) = ? AND rs.status = 'published' ORDER BY rs.version_no DESC LIMIT 1",
+            [DOMAIN.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "version_no").ok()))
+}
+
+/// A work order that exists, has no plant rule and has not started (draft, planning, ready): when a
+/// rule of the published list matches its equipment and work type now, that rule is recorded on it
+/// (`requires_permit = 1`, `permit_rule_code`, `permit_rule_permit_type`), with the protection of a
+/// rule flag (owner decision D2 (a), audit findings AU-04 B1/B2). It only adds: a rule already
+/// recorded is never replaced or removed, and a work order already started is left as it is (its
+/// start was judged where it started). A clearing it carried (a safety request's, decided without
+/// this rule) is withdrawn: the rule's stricter clearing applies.
+///
+/// The same function on every PC, from the same work order and the same list, gives the same rule
+/// (the list's order never depends on a local id): called on a local change (draft edit, rule list
+/// changed here: written like the change, and sent with it) and on a received work order or rule
+/// list (in the apply's transaction: each PC derives it, like the safety-request origin,
+/// `permit_requirement::raise_work_orders_of_safety_request`). Recorded in the work order's history
+/// (`permit_rule_applied`, with the cause and the list's version) and audit trail. Returns the rule
+/// recorded.
+pub async fn stamp_matching_rule(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    cause: &str,
+) -> AppResult<Option<String>> {
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wo.equipment_id, wo.type_id, wo.requires_permit, wo.permit_rule_code, st.code AS status, \
+                    wo.permit_rule_cleared_by_id, wo.permit_rule_cleared_at, wo.permit_rule_clear_reason \
+               FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let held: Option<String> = row.try_get("", "permit_rule_code")?;
+    let status: String = row.try_get("", "status")?;
+    if held.is_some() || !not_started.contains(&status.as_str()) {
+        return Ok(None);
+    }
+    let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+    let type_id: i64 = row.try_get("", "type_id")?;
+    let outcome = evaluate(conn, equipment, type_id, false).await?;
+    let (Some(rule), Some(permit_type)) = (outcome.rule_code.clone(), outcome.permit_type_code.clone()) else {
+        return Ok(None);
+    };
+    let previous_requires: i64 = row.try_get("", "requires_permit")?;
+    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+    let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
+    let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    let written = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 1, permit_rule_code = ?, permit_rule_permit_type = ?, \
+                    permit_rule_cleared_by_id = NULL, permit_rule_cleared_at = NULL, \
+                    permit_rule_clear_reason = NULL, row_version = row_version + 1 \
+              WHERE id = ? AND permit_rule_code IS NULL",
+            [rule.clone().into(), permit_type.clone().into(), wo_id.into()],
+        ))
+        .await?;
+    if written.rows_affected() == 0 {
+        return Ok(None);
+    }
+    let payload = serde_json::json!({
+        "requires_permit": true,
+        "origin": "rule",
+        "cause": cause,
+        "rule_code": rule,
+        "permit_type_code": permit_type,
+        "rule_set_version": published_rule_set_version(conn).await?,
+        "actor_sync_id": crate::wo::workflow::actions::permit_requirement::user_sync_id(conn, actor_id).await?,
+        "previous_requires_permit": previous_requires != 0,
+        "withdrawn_cleared_by_id": cleared_by,
+        "withdrawn_cleared_by_sync_id":
+            crate::wo::workflow::actions::permit_requirement::user_sync_id(conn, cleared_by).await?,
+        "withdrawn_cleared_at": cleared_at,
+        "withdrawn_clear_reason": reason,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_rule_applied",
+        actor_id,
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_rule_applied".into(),
+            actor_id,
+            summary: Some(format!("Permis exigé : la règle {rule} de l'usine s'applique à cet OT")),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    record_rule_problems(conn, wo_id, actor_id, &outcome).await?;
+    Ok(Some(rule))
 }
 
 /// A rule added to the plant's published list, as the editor would have saved it (tests of every

@@ -235,7 +235,7 @@ pub(crate) async fn may_clear_protected_requirement(
 
 /// The sync id of a person here (the payloads keep it next to the local id, which another PC does
 /// not share).
-async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
+pub(crate) async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
     let Some(id) = user_id else {
         return Ok(None);
     };

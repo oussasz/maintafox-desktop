@@ -726,14 +726,9 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
 
     // The plant's permit rules (equipment class / work type → permit type), for every origin. A rule
     // only adds to an explicit "requires permit" and to the source request's safety flag.
+    // Rules that do not read, or name codes not held here, are recorded on the work order once it
+    // exists (`record_rule_problems`, below).
     let permit_flag = crate::permit::requirement_rules::evaluate(txn, equipment_id, type_id, from_safety_di).await?;
-    if !permit_flag.unreadable_rule_codes.is_empty() {
-        tracing::warn!(
-            target: "maintafox",
-            rules = ?permit_flag.unreadable_rule_codes,
-            "create_work_order: published permit rules that do not read were not applied"
-        );
-    }
     let requires_permit = permit_flag.requires_permit || input.requires_permit.unwrap_or(false);
 
     let code = generate_wo_code(txn).await?;
@@ -896,6 +891,7 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
         &now,
     )
     .await?;
+    crate::permit::requirement_rules::record_rule_problems(txn, wo.id, Some(input.creator_id), &permit_flag).await?;
 
     Ok(wo)
 }
@@ -1146,6 +1142,18 @@ pub async fn update_wo_draft_fields(
         )
         .await?;
     }
+
+    // A plant rule that matches the draft's equipment and work type now is recorded on it (it only
+    // adds: owner decision D2 (a), audit finding AU-04 B1): a draft moved to another equipment or
+    // work type gets the rule's protection like one created with them. An untick sent in the same
+    // save gives way to the rule.
+    crate::permit::requirement_rules::stamp_matching_rule(
+        &txn,
+        input.id,
+        actor_id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
 
     // 5. Re-fetch and return updated row
     let wo = get_work_order(&txn, input.id)
