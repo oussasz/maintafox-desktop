@@ -74,6 +74,13 @@ pub const FORCED_REMOVAL_CATEGORY: &str = "loto_forced_removal";
 /// that receives the second one, kept until each acknowledges it, like the other locked notices.
 pub const PM_CONCURRENT_VERSIONS_CATEGORY: &str = "pm_concurrent_versions";
 
+/// Notification category of a running work order put on hold by the suspension of its permit
+/// (owner decision D5): told to the work order's responsible, on the PC where the permit was
+/// suspended and on each PC that applies the suspension while holding the work order on hold
+/// ([`announce_work_held_by_suspension_of`]).
+pub const PERMIT_SUSPENDED_WORK_HELD_CATEGORY: &str = "permit_suspended_work_held";
+
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
@@ -81,6 +88,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
     RECEIVED_RULE_CATEGORY,
     FORCED_REMOVAL_CATEGORY,
     PM_CONCURRENT_VERSIONS_CATEGORY,
+    PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
 ];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
@@ -88,7 +96,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
 #[macro_export]
 macro_rules! safety_notice_categories_sql {
     () => {
-        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions')"
+        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held')"
     };
 }
 
@@ -372,6 +380,10 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         (RECEIVED_RULE_CATEGORY, "Safety rule changed on another PC"),
         (FORCED_REMOVAL_CATEGORY, "Lock taken off by a forced removal"),
         (PM_CONCURRENT_VERSIONS_CATEGORY, "Concurrent PM plan versions"),
+        (
+            PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+            "Work order put on hold by its permit's suspension",
+        ),
     ] {
         ensure_category_rows(conn, category, label).await?;
     }
@@ -991,4 +1003,90 @@ async fn received_forced_removal(
         reason: text(&row, "forced_reason").unwrap_or_default().to_string(),
     };
     send_forced_removal(conn, entity_sync_id, notice).await
+}
+
+/// Writes a notice of a permit's work in a savepoint, logged when it cannot be written: the change it
+/// tells of (a suspension that stops the work, a received permit end) is never held back by its
+/// notice — it makes the plant safer, and a received end is a fact (its review conflict is kept).
+async fn send_permit_work_notice(
+    conn: &impl ConnectionTrait,
+    route: &NoticeRoute<'_>,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT permit_work_notice").await?;
+        match emit_notice(conn, route, title, body, "/permits", &message).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE permit_work_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO permit_work_notice").await?;
+                conn.execute_unprepared("RELEASE permit_work_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            category = route.category,
+            entity_type = route.entity_type,
+            entity_sync_id = route.entity_sync_id,
+            error = %err,
+            "permit work notice not written; the change it tells of is kept"
+        );
+    }
+}
+
+/// A running work order put on hold because its permit was suspended (owner decision D5), in the
+/// transaction of the suspension (or of its apply here): its responsible is told, and kept told
+/// until they acknowledge it. `permit_id` is the permit's local id (its work order and site route
+/// the notice).
+pub(crate) async fn announce_work_held_by_suspension_of(
+    conn: &impl ConnectionTrait,
+    permit_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+    wo_code: &str,
+    reason: &str,
+) {
+    let route = NoticeRoute {
+        category: PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+        source_module: "permit",
+        source_record_id: permit_id.to_string(),
+        entity_type: "work_permits",
+        entity_sync_id: permit_sync_id,
+        org_node_id: None,
+    };
+    send_permit_work_notice(
+        conn,
+        &route,
+        format!(
+            "OT {wo_code} mis en attente : permis {permit_code} suspendu / Work order {wo_code} on hold: permit \
+             {permit_code} suspended"
+        ),
+        format!(
+            "Le permis {permit_code} a été suspendu (motif : {reason}). Le travail de l'OT {wo_code} est arrêté et ne \
+             reprendra qu'après la remise en vigueur du permis. / Permit {permit_code} was suspended (reason: \
+             {reason}). Work on {wo_code} is stopped until the permit is reinstated."
+        ),
+        NotificationMessage::new(
+            PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+            json!({ "permit": permit_code, "work_order": wo_code, "reason": reason }),
+        ),
+    )
+    .await;
+}
+
+/// [`announce_work_held_by_suspension_of`] for a suspension made on this PC.
+pub(crate) async fn announce_work_held_by_suspension(
+    conn: &impl ConnectionTrait,
+    permit: &crate::permit::domain::WorkPermit,
+    wo_code: &str,
+    reason: &str,
+) {
+    announce_work_held_by_suspension_of(conn, permit.id, &permit.entity_sync_id, &permit.code, wo_code, reason).await;
 }

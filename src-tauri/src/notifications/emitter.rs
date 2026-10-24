@@ -17,7 +17,7 @@
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-use crate::notifications::catalog::{always_delivered_audience, normalize_severity, rule_audiences};
+use crate::notifications::catalog::{always_delivered_audiences, normalize_severity, rule_audiences};
 use crate::notifications::{delivery, router, Result};
 use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
@@ -269,41 +269,41 @@ pub(crate) async fn emit(
 
     // A category that cannot be muted or re-routed goes to its fixed audience; its rule row and the
     // recipients' preferences are not read (`catalog::ALWAYS_DELIVERED`).
-    let fixed = always_delivered_audience(&input.category_code);
-    let audiences = match &fixed {
-        Some(audience) => vec![audience.clone()],
-        None => {
-            let rule = pool
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT routing_mode, audiences_json
+    let fixed_audiences = always_delivered_audiences(&input.category_code);
+    let fixed = !fixed_audiences.is_empty();
+    let audiences = if fixed {
+        fixed_audiences
+    } else {
+        let rule = pool
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT routing_mode, audiences_json
              FROM notification_rules
              WHERE category_code = ?
                AND is_active = 1
              LIMIT 1",
-                    [input.category_code.clone().into()],
-                ))
-                .await?;
+                [input.category_code.clone().into()],
+            ))
+            .await?;
 
-            let Some(rule_row) = rule else {
-                tracing::warn!(
-                    category = input.category_code,
-                    "notifications::emit_event no active routing rule found"
-                );
-                return Ok(Some(event_id));
-            };
+        let Some(rule_row) = rule else {
+            tracing::warn!(
+                category = input.category_code,
+                "notifications::emit_event no active routing rule found"
+            );
+            return Ok(Some(event_id));
+        };
 
-            let routing_mode = rule_row
-                .try_get::<Option<String>>("", "routing_mode")?
-                .unwrap_or_else(|| "manual".to_string());
-            let audiences_json = rule_row.try_get::<Option<String>>("", "audiences_json")?;
-            rule_audiences(audiences_json.as_deref(), &routing_mode)
-        }
+        let routing_mode = rule_row
+            .try_get::<Option<String>>("", "routing_mode")?
+            .unwrap_or_else(|| "manual".to_string());
+        let audiences_json = rule_row.try_get::<Option<String>>("", "audiences_json")?;
+        rule_audiences(audiences_json.as_deref(), &routing_mode)
     };
     let recipients = router::resolve_audiences(pool, &audiences, &ctx).await?;
 
     for recipient in recipients {
-        if fixed.is_none() && unsubscribed(pool, recipient.user_id, &input.category_code).await? {
+        if !fixed && unsubscribed(pool, recipient.user_id, &input.category_code).await? {
             continue;
         }
         let Some(notification_id) = insert_notification_for(

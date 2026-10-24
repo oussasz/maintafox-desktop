@@ -51,6 +51,8 @@ export const MESSAGE_KEYS = [
   // Two concurrent versions of a PM plan, or a due date planned twice by them (PM planners).
   "pm_concurrent_versions",
   "pm_duplicate_occurrence",
+  // A running work order put on hold by its permit's suspension (its responsible).
+  "permit_suspended_work_held",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

@@ -188,6 +188,7 @@
     "safety_rule_received": "Règle de sécurité modifiée sur un autre poste",
     "loto_forced_removal": "Cadenas retiré par un retrait forcé",
     "pm_concurrent_versions": "Versions concurrentes d’un plan préventif",
+    "permit_suspended_work_held": "OT mis en attente par la suspension de son permis",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation"
   },
   "messages": {
@@ -306,6 +307,10 @@
       "title": "Deux versions concurrentes du plan {{plan}} — vérifier la version en vigueur",
       "body": "{{title}} : v{{version}} ({{version_status}}, créée le {{version_created_at}}) et v{{other_version}} ({{other_status}}, créée le {{other_created_at}}) ont été créées sur deux PC avant leur synchronisation, toutes deux numérotées {{stored_number}}. Chaque PC les affiche v{{version}} et v{{other_version}} ; la version en vigueur est la version publiée (Préventif › plan)."
     },
+    "permit_suspended_work_held": {
+      "title": "OT {{work_order}} mis en attente : permis {{permit}} suspendu",
+      "body": "Le permis {{permit}} a été suspendu (motif : {{reason}}). Le travail de l’OT {{work_order}} est arrêté : il ne pourra reprendre qu’après la remise en vigueur du permis."
+    },
     "pm_duplicate_occurrence": {
       "title": "Deux versions concurrentes du plan {{plan}} — échéance planifiée deux fois",
       "body": "{{title}} : les versions v{{version}} et v{{other_version}} ont chacune une échéance le {{due_at}} ({{due_basis}}), OT {{work_order}} et {{other_work_order}}. Rien n’a été annulé : gardez-en une et annulez l’autre vous-même."
@@ -376,7 +381,8 @@
       "daily_digest": "Envoyé à chaque personne qui a choisi le résumé quotidien.",
       "safety_rule_received": "Toujours les administrateurs des paramètres de toute l’usine.",
       "loto_forced_removal": "Toujours les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
-      "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan."
+      "pm_concurrent_versions": "Toujours les personnes qui détiennent le droit de planification préventive (pm.edit) sur tout le site industriel, et celles qui le détiennent sur le site de l’équipement du plan.",
+      "permit_suspended_work_held": "Toujours le responsable de l’OT lié au permis."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",

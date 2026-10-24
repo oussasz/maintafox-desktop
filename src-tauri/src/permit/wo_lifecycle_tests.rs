@@ -272,3 +272,185 @@ async fn mechanical_completion_is_not_held_by_an_open_permit() {
         "no permit gate on completion: {gates:?}"
     );
 }
+
+// ── AU-03 / D5: a permit's end waits for its running work; a suspension holds it ────
+
+/// An active hot-work permit (no isolation) linked to a started work order.
+async fn running_work(db: &DatabaseConnection, asset_code: &str) -> (i64, crate::permit::domain::WorkPermit) {
+    let asset = insert_equipment(db, asset_code).await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(db, asset).await;
+    let wp = advance_to_issued(db, create_from_wo(db, "hot_work", wo_id).await.expect("permit")).await;
+    let wp = set_status(db, &wp, "active").await.expect("active");
+    start(db, wo_id, rv).await.expect("started");
+    (wo_id, wp)
+}
+
+async fn reread(db: &DatabaseConnection, wp: &crate::permit::domain::WorkPermit) -> crate::permit::domain::WorkPermit {
+    queries::get_work_permit(db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit")
+}
+
+async fn pause(db: &DatabaseConnection, wo_id: i64) {
+    let reason = scalar_i64(
+        db,
+        "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+         JOIN reference_domains rd ON rd.id = rs.domain_id \
+         WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' AND rv.code = 'other' AND rs.status = 'published' LIMIT 1",
+    )
+    .await;
+    crate::wo::execution::pause_wo(
+        db,
+        crate::wo::execution::WoPauseInput {
+            wo_id,
+            actor_id: admin_id(db).await,
+            expected_row_version: wo_row_version(db, wo_id).await,
+            delay_reason_id: reason,
+            comment: None,
+        },
+    )
+    .await
+    .expect("pause");
+}
+
+async fn suspend(db: &DatabaseConnection, wp: &crate::permit::domain::WorkPermit, reason: &str) {
+    queries::suspend_work_permit(
+        db,
+        crate::permit::domain::PermitSuspendInput {
+            permit_id: wp.id,
+            expected_row_version: reread(db, wp).await.row_version,
+            reason: reason.into(),
+            reactivation_conditions: None,
+        },
+        admin_id(db).await,
+    )
+    .await
+    .expect("suspend");
+}
+
+async fn notices(db: &DatabaseConnection, category: &str) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = '{category}'"
+        ),
+    )
+    .await
+}
+
+async fn notices_to(db: &DatabaseConnection, category: &str, user_id: i64) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = '{category}' AND n.recipient_user_id = {user_id}"
+        ),
+    )
+    .await
+}
+
+async fn resume(db: &DatabaseConnection, wo_id: i64) -> Result<(), AppError> {
+    crate::wo::execution::resume_wo(
+        db,
+        crate::wo::execution::WoResumeInput {
+            wo_id,
+            actor_id: admin_id(db).await,
+            expected_row_version: wo_row_version(db, wo_id).await,
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+#[tokio::test]
+async fn a_permit_is_neither_closed_nor_cancelled_while_its_work_runs() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-AU03-1").await;
+
+    let msgs = messages(set_status(&db, &wp, "closed").await.expect_err("close refused"));
+    assert_eq!(msgs, vec!["GATE_PERMIT_CLOSE_WORK_IN_PROGRESS".to_string()]);
+    let msgs = messages(set_status(&db, &wp, "cancelled").await.expect_err("cancel refused"));
+    assert_eq!(msgs, vec!["GATE_PERMIT_CANCEL_WORK_IN_PROGRESS".to_string()]);
+    assert_eq!(reread(&db, &wp).await.status, "active", "nothing written");
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+
+    // The work paused first: the permit closes.
+    pause(&db, wo_id).await;
+    set_status(&db, &reread(&db, &wp).await, "closed")
+        .await
+        .expect("closed once the work is paused");
+}
+
+#[tokio::test]
+async fn suspending_a_permit_holds_its_running_work_until_the_permit_is_reinstated() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-D5-1").await;
+    // Hidden from the hold screen by the plant: the suspension still holds the work with it.
+    db.execute_unprepared("UPDATE reference_values SET is_active = 0 WHERE code = 'permit_suspended'")
+        .await
+        .expect("hide the reason");
+
+    suspend(&db, &wp, "Détection de gaz").await;
+    assert_eq!(reread(&db, &wp).await.status, "suspended");
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold", "held in the same transaction");
+    let segment = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.code, s.hold_kind, s.comment FROM work_order_delay_segments s \
+             JOIN reference_values rv ON rv.id = s.delay_reason_id WHERE s.work_order_id = ? AND s.ended_at IS NULL",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("open delay segment");
+    assert_eq!(
+        segment.try_get_by_index::<String>(0).expect("code"),
+        crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON
+    );
+    assert_eq!(segment.try_get_by_index::<String>(1).expect("kind"), "prerequisite");
+    assert!(segment
+        .try_get_by_index::<String>(2)
+        .expect("comment")
+        .contains("Détection de gaz"));
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_state_transition_log WHERE wo_id = {wo_id} AND to_status = 'on_hold' \
+                 AND reason_code = 'permit_suspended'"
+            )
+        )
+        .await,
+        1
+    );
+    // Its responsible (the work order's) is told.
+    let responsible = admin_id(&db).await;
+    assert_eq!(notices_to(&db, "permit_suspended_work_held", responsible).await, 1);
+
+    // Resume refused while the permit is suspended.
+    let msgs = messages(resume(&db, wo_id).await.expect_err("resume refused"));
+    assert_eq!(msgs, vec!["PERMIT_SUSPENDED".to_string()]);
+
+    // Reinstated: the work resumes.
+    let wp = set_status(&db, &reread(&db, &wp).await, "revalidation_required")
+        .await
+        .expect("revalidation");
+    set_status(&db, &wp, "active").await.expect("reinstated");
+    resume(&db, wo_id).await.expect("resumed");
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+}
+
+#[tokio::test]
+async fn suspending_a_permit_without_running_work_changes_no_work_order() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-D5-2").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    let wp = set_status(&db, &wp, "active").await.expect("active");
+    suspend(&db, &wp, "Vent fort").await;
+    assert_eq!(wo_status(&db, wo_id).await, "ready");
+    assert_eq!(notices(&db, "permit_suspended_work_held").await, 0);
+}

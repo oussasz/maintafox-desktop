@@ -2209,6 +2209,27 @@ async fn set_work_permit_status_in(
     let to = input.status.as_str();
     assert_transition_set_status(from, to)?;
 
+    // AU-03 (owner decision D5): a permit is neither closed nor cancelled while its work order is
+    // being executed: the work is paused or completed first (a suspension puts it on hold itself).
+    // Refused before anything is written; a close or cancellation received by synchronisation over
+    // running work here is applied and raised for review (`permit::ended_under_work`).
+    if matches!(to, "closed" | "cancelled") {
+        if let Some((_, wo_code)) = linked_work_running(db, &current).await? {
+            let (code, message) = if to == "closed" {
+                (
+                    "GATE_PERMIT_CLOSE_WORK_IN_PROGRESS",
+                    "Work on the linked work order is still in progress; pause or complete it before closing the permit.",
+                )
+            } else {
+                (
+                    "GATE_PERMIT_CANCEL_WORK_IN_PROGRESS",
+                    "Work on the linked work order is still in progress; pause or complete it before cancelling the permit.",
+                )
+            };
+            return Err(refused(code, message, &[("work_order", wo_code)]));
+        }
+    }
+
     // Four-eyes (migration 244): who submitted and who approved, recorded with the status.
     let mut self_approved = None;
     match (from, to) {
@@ -2380,6 +2401,16 @@ async fn suspend_work_permit_in(
         ]));
     }
 
+    // Owner decision D5: the running work stops with its permit, in this transaction. Written before
+    // the permit's own change, so another PC receives the work order on hold before the suspension.
+    let held = match linked_work_running(db, &current).await? {
+        Some((wo_id, _)) => Some(
+            crate::wo::execution::hold_for_permit_suspension(db, wo_id, actor_id, &current.code, input.reason.trim())
+                .await?,
+        ),
+        None => None,
+    };
+
     let sync_id = Uuid::new_v4().to_string();
     let suspended_at = now_ts();
     let react = input.reactivation_conditions.unwrap_or_default();
@@ -2422,6 +2453,10 @@ async fn suspend_work_permit_in(
 
     let suspension = get_permit_suspension(db, sid).await?;
     let wp = require_work_permit(db, input.permit_id).await?;
+    // Its responsible is told the work was put on hold (a safety notice they acknowledge).
+    if let Some(wo) = held {
+        crate::settings::received_notice::announce_work_held_by_suspension(db, &wp, &wo.code, &suspension.reason).await;
+    }
     Ok((wp, suspension))
 }
 
@@ -3066,26 +3101,37 @@ async fn cancel_permit_isolation_in(
     Ok((after, cancelled))
 }
 
-/// Locks must never come off under running work: removal is refused while the linked
-/// work order is still being executed.
-async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &WorkPermit) -> AppResult<()> {
+/// The linked work order of `permit` when it is being executed (`in_progress`): its id and code.
+pub(crate) async fn linked_work_running(
+    db: &impl ConnectionTrait,
+    permit: &WorkPermit,
+) -> AppResult<Option<(i64, String)>> {
     let Some(wo_id) = permit.linked_work_order_id else {
-        return Ok(());
+        return Ok(None);
     };
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wos.code AS status_code FROM work_orders wo              JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE wo.id = ?",
+            "SELECT wos.code AS status_code, wo.code AS wo_code FROM work_orders wo              JOIN work_order_statuses wos ON wos.id = wo.status_id WHERE wo.id = ?",
             [wo_id.into()],
         ))
         .await?;
     let Some(row) = row else {
-        return Ok(());
+        return Ok(None);
     };
     let status: String = row
         .try_get("", "status_code")
         .map_err(|e| decode_err("status_code", e))?;
-    if crate::wo::domain::WoStatus::try_from_str(&status).is_ok_and(|s| s == crate::wo::domain::WoStatus::InProgress) {
+    let code: Option<String> = row.try_get("", "wo_code").map_err(|e| decode_err("wo_code", e))?;
+    let running =
+        crate::wo::domain::WoStatus::try_from_str(&status).is_ok_and(|s| s == crate::wo::domain::WoStatus::InProgress);
+    Ok(running.then(|| (wo_id, code.unwrap_or_default())))
+}
+
+/// Locks must never come off under running work: removal is refused while the linked
+/// work order is still being executed.
+async fn ensure_linked_work_not_running(db: &impl ConnectionTrait, permit: &WorkPermit) -> AppResult<()> {
+    if linked_work_running(db, permit).await?.is_some() {
         return Err(refused(
             "PERMIT_REMOVAL_WORK_IN_PROGRESS",
             "Work on the linked work order is still in progress; pause or complete it before removing locks.",

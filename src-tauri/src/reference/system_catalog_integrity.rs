@@ -543,7 +543,23 @@ const WORK_DELAY_REASONS: &[SeedValue] = &[
     seed("no_access", "Access to Equipment Denied", 8, "access"),
     seed("diagnosis", "Awaiting Diagnosis Result", 9, "diagnosis"),
     seed("other", "Other (see notes)", 10, "other"),
+    // Written by the backend when a permit's suspension puts its running work order on hold
+    // (`wo::execution::PERMIT_SUSPENDED_DELAY_REASON`, owner decision D5).
+    seed("permit_suspended", "Permit Suspended", 11, "permit"),
 ];
+
+/// Makes sure the plant's `WORK.DELAY_REASONS` list holds the reason a permit's suspension puts its
+/// work order on hold with (`wo::execution::hold_for_permit_suspension`), in the caller's
+/// transaction: the same seeded row as at start-up (left untouched when present, in any set).
+pub(crate) async fn ensure_permit_suspended_delay_reason(db: &impl ConnectionTrait) -> AppResult<()> {
+    let at = WORK_DELAY_REASONS
+        .iter()
+        .position(|r| r.code == crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON)
+        .ok_or_else(|| {
+            crate::errors::AppError::Internal(anyhow::anyhow!("permit_suspended delay reason not seeded"))
+        })?;
+    insert_seed_values(db, "WORK.DELAY_REASONS", &WORK_DELAY_REASONS[at..=at]).await
+}
 
 async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
     ensure_domain(

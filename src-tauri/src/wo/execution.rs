@@ -384,7 +384,7 @@ async fn hold_wo(
 ) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
 
-    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    let (_, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Hold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::OnHold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
@@ -415,7 +415,73 @@ async fn hold_wo(
         }
     };
 
-    let on_hold_status_id = resolve_status_id(&txn, "on_hold").await?;
+    let wo = hold_wo_in(&txn, &input, &reason_code, hold_kind).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// The fixed delay reason of a work order put on hold by the suspension of its permit (owner
+/// decision D5). A value of the plant's `WORK.DELAY_REASONS` list (reference data, seeded by
+/// `reference::system_catalog_integrity`, its label editable there); its code is fixed because the
+/// backend writes it itself on the suspension, never chosen on screen.
+pub const PERMIT_SUSPENDED_DELAY_REASON: &str = "permit_suspended";
+
+/// Puts work order `wo_id`, running, on hold because its permit `permit_code` was suspended (owner
+/// decision D5), in the caller's transaction (the suspension's): a delay segment of the fixed reason
+/// [`PERMIT_SUSPENDED_DELAY_REASON`] waiting for a prerequisite, the status change and its history
+/// row recorded as `actor_id`'s, the same writes as a hold made on screen. The reason is found by its
+/// code whatever its active flag (a plant hiding it from the hold screen never blocks a suspension);
+/// it is created first when the plant's list lacks it.
+pub(crate) async fn hold_for_permit_suspension(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: i64,
+    permit_code: &str,
+    suspension_reason: &str,
+) -> AppResult<WorkOrder> {
+    crate::reference::system_catalog_integrity::ensure_permit_suspended_delay_reason(txn).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id AS id FROM reference_values rv              INNER JOIN reference_sets rs ON rs.id = rv.set_id              INNER JOIN reference_domains rd ON rd.id = rs.domain_id              WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS'              ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
+            [PERMIT_SUSPENDED_DELAY_REASON.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "WORK.DELAY_REASONS has no '{PERMIT_SUSPENDED_DELAY_REASON}' value and none could be created"
+            ))
+        })?;
+    let delay_reason_id: i64 = row.try_get("", "id").map_err(|e| decode_err("delay reason id", e))?;
+    let (_, _, row_version) = load_wo_status(txn, wo_id).await?;
+    hold_wo_in(
+        txn,
+        &WoPauseInput {
+            wo_id,
+            actor_id,
+            expected_row_version: row_version,
+            delay_reason_id,
+            comment: Some(format!("Permis {permit_code} suspendu : {suspension_reason}")),
+        },
+        PERMIT_SUSPENDED_DELAY_REASON,
+        crate::wo::lifecycle::HoldKind::Prerequisite,
+    )
+    .await
+}
+
+/// The writes of a hold (in_progress → on_hold) in the caller's transaction, the delay reason
+/// already resolved (`reason_code`: its code, recorded on the history row).
+async fn hold_wo_in(
+    txn: &impl ConnectionTrait,
+    input: &WoPauseInput,
+    reason_code: &str,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
+    let (from_code, current_status, _rv) = load_wo_status(txn, input.wo_id).await?;
+    assert_action_allowed(&current_status, WoAction::Hold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::OnHold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let on_hold_status_id = resolve_status_id(txn, "on_hold").await?;
     let now = now_utc_z();
 
     // Open delay segment
@@ -458,20 +524,20 @@ async fn hold_wo(
     check_concurrency(result.rows_affected())?;
 
     log_transition(
-        &txn,
+        txn,
         input.wo_id,
         &from_code,
         "on_hold",
         "hold",
         input.actor_id,
-        Some(&reason_code),
+        Some(reason_code),
         input.comment.as_deref(),
         &now,
     )
     .await?;
 
     emit_action_event(
-        &txn,
+        txn,
         input.wo_id,
         "held",
         Some(input.actor_id),
@@ -481,14 +547,12 @@ async fn hold_wo(
     )
     .await?;
 
-    let wo = queries::get_work_order(&txn, input.wo_id)
+    queries::get_work_order(txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })?;
-    txn.commit().await?;
-    Ok(wo)
+        })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -151,6 +151,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "safety_rule_received",
     "loto_forced_removal",
     "pm_concurrent_versions",
+    "permit_suspended_work_held",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -170,14 +171,24 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     ("loto_forced_removal", "permission:ptw.close"),
     // Two concurrent versions of a PM plan (`pm::version_clash`): the PM planners.
     ("pm_concurrent_versions", "permission:pm.edit"),
+    // A running work order put on hold by the suspension of its permit (owner decision D5): its
+    // responsible (the permit's work order routes `assignee` to it).
+    ("permit_suspended_work_held", "assignee"),
 ];
 
-/// The fixed audience of an [`ALWAYS_DELIVERED`] category.
+/// The fixed audience of an [`ALWAYS_DELIVERED`] category (its first, when it has several).
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {
+    always_delivered_audiences(category).into_iter().next()
+}
+
+/// Every fixed audience of an [`ALWAYS_DELIVERED`] category (empty: the category is routed by its
+/// rule).
+pub fn always_delivered_audiences(category: &str) -> Vec<Audience> {
     ALWAYS_DELIVERED
         .iter()
-        .find(|(c, _)| *c == category)
-        .and_then(|(_, a)| parse_audience(a))
+        .filter(|(c, _)| *c == category)
+        .filter_map(|(_, a)| parse_audience(a))
+        .collect()
 }
 
 #[cfg(test)]
