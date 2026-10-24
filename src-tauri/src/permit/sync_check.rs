@@ -2444,8 +2444,9 @@ pub(crate) async fn wo_children_with(
 ///   recorded once as a safety finding.
 ///
 /// A received row that names another rule, or another permit type for the rule, is refused once the
-/// work order has started; before (two PCs that derived different rules), it is applied and both
-/// PCs keep the same rule (`requirement_rules::converge_received_rule`, audit finding AU-04 R2-S1).
+/// work order has started, here or in the row; before (two PCs that derived different rules), it
+/// is applied and each PC keeps the rule its own list gives (`requirement_rules::
+/// converge_received_rule`, audit findings AU-04 R2-S1, R3-B1).
 /// The safety origin is never turned off by a received row. A work order new here sent by a PC
 /// without migration 255 (no `permit_from_safety_di` in the row) is judged with the safety flag of
 /// its source request here, and gets that origin when it is applied (`sync::apply_hooks::
@@ -2485,14 +2486,18 @@ pub(crate) async fn inbound_permit_rule_check(
                     format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
                 )
             };
-            let Some(status_sync) = field(&wo, "status_sync_id") else {
-                return changed();
-            };
-            let Some(status) = status_code(conn, status_sync).await? else {
-                return wait(format!("work-order status {status_sync} is not applied yet"));
-            };
-            if !requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str()) {
-                return changed();
+            // Started on either side (here, or in the row): refused. A row that moves the status
+            // back to "ready" does not make a started work order not started (R3-B1).
+            for side in [l, &wo] {
+                let Some(status_sync) = field(side, "status_sync_id") else {
+                    return changed();
+                };
+                let Some(status) = status_code(conn, status_sync).await? else {
+                    return wait(format!("work-order status {status_sync} is not applied yet"));
+                };
+                if !requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str()) {
+                    return changed();
+                }
             }
         }
     }

@@ -7322,8 +7322,45 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
         )
         .await
         .as_deref(),
-        Some("2"),
-        "each rule kept over the received one is recorded"
+        Some("1"),
+        "the one change of the rule held here is recorded; keeping it is not a change"
+    );
+    let change: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-s1-1' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged'",
+        )
+        .await
+        .expect("change"),
+    )
+    .expect("json");
+    assert_eq!(
+        (
+            &change["previous_rule_code"],
+            &change["previous_permit_type_code"],
+            &change["rule_code"],
+            &change["permit_type_code"],
+        ),
+        (
+            &json!("CORRECTIVE_LOTO"),
+            &json!("loto"),
+            &json!("A_FIRST"),
+            &json!("hot_work")
+        )
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+             WHERE wo.entity_sync_id = 'wo-s1-1' AND c.action = 'permit_rule_applied' \
+               AND json_extract(c.details_json, '$.cause') = 'rules_converged'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "audited"
     );
     assert_eq!(
         text(
@@ -7421,4 +7458,120 @@ async fn the_finding_notice_reaches_the_permit_issuers_of_the_site() {
         "fallback"
     );
     assert_eq!(notices_to(&db, here, "wo-s3-2").await.as_deref(), Some("0"));
+}
+
+// ── AU-04 round 3: the received row never chooses the rule (R3-B1) ─────────────────────────────
+
+/// The local id of a work order.
+async fn wo_id_of(db: &DatabaseConnection, wo_sync: &str) -> i64 {
+    text(
+        db,
+        &format!("SELECT CAST(id AS TEXT) FROM work_orders WHERE entity_sync_id = '{wo_sync}'"),
+    )
+    .await
+    .expect("id")
+    .parse()
+    .expect("id")
+}
+
+/// R3-B1: a received rule listed here that sorts first but does not match the work order here never
+/// replaces the rule held here: LOTO stays, nothing is recorded, and a live hot-work permit does not
+/// satisfy the start gate.
+#[tokio::test]
+async fn a_received_rule_that_does_not_match_here_never_wins() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-1", "wo-r3-1").await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "R0_WELD",
+        json!({ "work_type_code": "preventive", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'R0_WELD'").await;
+    let swap = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("R0_WELD")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r3-1", &swap).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r3-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r3-1' AND json_extract(e.payload_json, '$.cause') = 'rules_converged'"
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "the rule held here is kept: no change"
+    );
+    // A live hot-work permit: the start gate still asks for a LOTO permit.
+    let wo_id = wo_id_of(&db, "wo-r3-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(
+        format!("{gate:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {gate:?}"
+    );
+}
+
+/// R3-B1: with the rule held here retired (nothing matches here), a received made-up code, or the
+/// same code with a made-up permit type, never wins: the rule held here and its type are kept.
+#[tokio::test]
+async fn a_made_up_rule_or_type_never_replaces_a_retired_rule_held_here() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-2", "wo-r3-2").await;
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'CORRECTIVE_LOTO'",
+    )
+    .await;
+    for (code, permit_type) in [("AAA", "a_forged"), ("CORRECTIVE_LOTO", "a_forged")] {
+        let forged = wo_row(
+            &planning,
+            &[
+                ("permit_rule_code", json!(code)),
+                ("permit_rule_permit_type", json!(permit_type)),
+                ("requires_permit", json!(1)),
+            ],
+        );
+        let outcome = apply(&db, "work_orders", "wo-r3-2", &forged).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{code}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-r3-2").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{code} / {permit_type}"
+        );
+    }
+}
+
+/// R3-B1: a row that names another rule and moves a work order started here back to a status not
+/// started is refused: started on either side counts.
+#[tokio::test]
+async fn a_status_moved_back_does_not_let_another_rule_through() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-3", "wo-r3-3").await;
+    exec(
+        &db,
+        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), \
+         actual_start = '2026-10-01T08:00:00Z' WHERE entity_sync_id = 'wo-r3-3'",
+    )
+    .await;
+    let back = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("A_OTHER")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r3-3", &back).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r3-3").await, ruled("CORRECTIVE_LOTO", "loto"));
 }
