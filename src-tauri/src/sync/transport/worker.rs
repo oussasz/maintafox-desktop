@@ -822,6 +822,9 @@ impl SyncWorker {
     /// told apart from "not received yet" (`plant_join::record_complete_pull`). Nothing is recorded
     /// when the activation changed during the cycle: the pull ran for another organisation.
     async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
+        // Grants still waiting for an author or for rights that a complete pull did not bring wait
+        // no longer (`sync::grant_check`).
+        crate::sync::grant_check::release_after_complete_pull(&self.db).await?;
         let Some(tenant_id) = pulled_for else {
             return Ok(());
         };
