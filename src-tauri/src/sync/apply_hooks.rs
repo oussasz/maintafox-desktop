@@ -455,6 +455,10 @@ pub(crate) async fn upsert_group(
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
     match layout.def.entity_type {
         "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
+        // A held count adjustment released with its reversal: one transaction (CMMS Advisor Q8).
+        "inventory_transactions" => {
+            crate::inventory::count_four_eyes::count_movement_group(conn, entity_sync_id, payload).await
+        }
         // A start (or resume, reopen) brings its permits, waits and status changes; every status
         // change (and a work order new here) brings its close-out children too: one group.
         "work_orders" => {

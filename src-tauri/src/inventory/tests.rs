@@ -3575,3 +3575,170 @@ async fn a_line_entered_again_by_another_person_changes_its_counter_and_drops_th
     assert_eq!(again.counted_by_id, Some(reviewer));
     assert_eq!((again.self_approved, again.approved_by_id), (0, None));
 }
+
+/// The session of `line`, moved through counting, submitted and approved, then posted by user 1.
+async fn post_line_session(
+    db: &DatabaseConnection,
+    line: &crate::inventory::domain::InventoryCountLine,
+) -> crate::inventory::domain::InventoryCountLine {
+    let session_now = || async {
+        controls::list_count_sessions(db)
+            .await
+            .expect("sessions")
+            .into_iter()
+            .find(|s| s.id == line.session_id)
+            .expect("session")
+    };
+    for next in ["counting", "submitted", "approved"] {
+        let session = session_now().await;
+        controls::transition_count_session(
+            db,
+            TransitionInventoryCountSessionInput {
+                session_id: session.id,
+                expected_row_version: session.row_version,
+                next_status: next.to_string(),
+                reason: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect(next);
+    }
+    let session = session_now().await;
+    controls::post_count_session(
+        db,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("posted");
+    controls::list_count_lines(db, line.session_id).await.expect("lines")[0].clone()
+}
+
+/// Reverses the posted session of `line` (user 1).
+async fn reverse_line_session(
+    db: &DatabaseConnection,
+    line: &crate::inventory::domain::InventoryCountLine,
+) -> crate::inventory::domain::InventoryCountLine {
+    let session = controls::list_count_sessions(db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == line.session_id)
+        .expect("session");
+    controls::reverse_count_session(
+        db,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Feuille de comptage erronée".to_string(),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("reversed");
+    controls::list_count_lines(db, line.session_id).await.expect("lines")[0].clone()
+}
+
+/// CMMS Advisor Q8 (review of a9c38354): a second approval needs the count-approval right
+/// (`inv.manage`) and a note of at least 8 characters, and only a posted, unreversed line whose
+/// variance above the tolerance its counter approved needs one — not before posting, not after the
+/// count's reversal, not within the tolerance, not when someone else approved it.
+#[tokio::test]
+async fn a_second_approval_needs_the_right_a_note_and_a_posted_self_approval() {
+    let db = setup_db().await;
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    single_site_opting_out(&db, &mut factory, true).await;
+    let manager = i64::from(
+        crate::inventory::negative_stock_tests::user_with(
+            &db,
+            "secondapprovalmanager",
+            &[crate::rbac::permissions::INV_MANAGE],
+        )
+        .await,
+    );
+    let viewer = i64::from(
+        crate::inventory::negative_stock_tests::user_with(
+            &db,
+            "secondapprovalviewer",
+            &[crate::rbac::permissions::INV_VIEW],
+        )
+        .await,
+    );
+    let second = |line: crate::inventory::domain::InventoryCountLine, by: i64, note: &'static str| {
+        let db = &db;
+        async move {
+            controls::second_approve_count_line(
+                db,
+                crate::inventory::domain::SecondApproveInventoryCountLineInput {
+                    line_id: line.id,
+                    expected_row_version: line.row_version,
+                    reviewer_id: by,
+                    reviewer_evidence: note.to_string(),
+                },
+            )
+            .await
+        }
+    };
+    let note = "Comptage vérifié par un second";
+    let not_needed = controls::REFUSED_SECOND_APPROVAL_NOT_NEEDED;
+
+    // Self-approved by its counter (under the opt-out), not posted yet.
+    let line = counted_line(&db, "INV-2A-SELF", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, 1))
+        .await
+        .expect("self-approval under the opt-out");
+    assert_eq!(approved.self_approved, 1);
+    assert_eq!(
+        gate_code(second(approved.clone(), manager, note).await.expect_err("not posted")),
+        not_needed
+    );
+    // Posted: the right, then the note.
+    let posted = post_line_session(&db, &approved).await;
+    let denied = second(posted.clone(), viewer, note).await.expect_err("inv.view only");
+    assert!(matches!(denied, AppError::PermissionDenied(_)), "{denied:?}");
+    for short in ["", "court", "  abcdefg  "] {
+        assert_eq!(
+            gate_code(second(posted.clone(), manager, short).await.expect_err(short)),
+            "GATE_INV_COUNT_EVIDENCE",
+            "{short:?}"
+        );
+    }
+    // Reversed: nothing it moved is kept, nothing to approve a second time.
+    let reversed = reverse_line_session(&db, &posted).await;
+    assert_eq!(
+        gate_code(second(reversed, manager, note).await.expect_err("reversed")),
+        not_needed
+    );
+
+    // Approved by someone other than its counter.
+    let other = counted_line(&db, "INV-2A-OTHER", 6.0, Some(1)).await;
+    let other = controls::approve_count_line(&db, approval(&other, count_reviewer(&db).await))
+        .await
+        .expect("a second person approves");
+    let other = post_line_session(&db, &other).await;
+    assert_eq!(
+        gate_code(
+            second(other, manager, note)
+                .await
+                .expect_err("approved by another person")
+        ),
+        not_needed
+    );
+
+    // Within the tolerance: the counter's approval is no self-approval.
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "50").await;
+    let within = counted_line(&db, "INV-2A-WITHIN", 8.0, Some(1)).await;
+    assert_eq!(within.is_critical, 0);
+    let within = controls::approve_count_line(&db, approval(&within, 1))
+        .await
+        .expect("the counter approves within the tolerance");
+    let within = post_line_session(&db, &within).await;
+    assert_eq!(
+        gate_code(second(within, manager, note).await.expect_err("within the tolerance")),
+        not_needed
+    );
+}

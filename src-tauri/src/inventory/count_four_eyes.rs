@@ -353,10 +353,11 @@ pub(crate) async fn inbound_count_line_check(
             return Ok(None);
         }
     }
-    // A count reversed (its reversal movement is applied before the line, a reference it needs):
-    // nothing it moved is kept, four-eyes has nothing to hold.
-    if field(&line, "reversed_transaction_sync_id").is_some() {
-        return Ok(None);
+    // A count reversed (its reversal movement is applied before the line, a reference it needs, or
+    // with its held adjustment, [`count_movement_group`]): nothing it moved is kept, four-eyes has
+    // nothing to hold — once the movement it names is shown to be the reversal of this count.
+    if let Some(reversal) = field(&line, "reversed_transaction_sync_id") {
+        return reversal_check(conn, entity_sync_id, &line, reversal).await;
     }
     // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
     // quantities: a received flag can make a line stricter, never more lenient.
@@ -567,20 +568,6 @@ async fn count_adjusted_here(
     .await
 }
 
-/// Whether this PC holds the count line of the received movement's count session, article and
-/// location.
-async fn count_line_held_here(
-    conn: &impl ConnectionTrait,
-    received: &serde_json::Map<String, serde_json::Value>,
-) -> AppResult<bool> {
-    held_here(
-        conn,
-        received,
-        "SELECT 1 AS a FROM inventory_count_lines WHERE session_id = ? AND article_id = ? AND location_id = ? LIMIT 1",
-    )
-    .await
-}
-
 /// Whether `sql` (bound to the local session, article and location of a received count movement)
 /// finds a row here; `false` when one of them is not here.
 async fn held_here(
@@ -611,31 +598,119 @@ async fn held_here(
         .is_some())
 }
 
-/// Whether a movement is here or waiting in the inbox.
-async fn movement_here_or_waiting(conn: &impl ConnectionTrait, movement_sync_id: &str) -> AppResult<bool> {
-    if crate::permit::sync_check::local_id(conn, "inventory_transactions", movement_sync_id)
-        .await?
-        .is_some()
-    {
-        return Ok(true);
-    }
-    Ok(conn
+/// The latest version of a movement waiting in the inbox: `(inbox id, payload)`.
+async fn waiting_movement(
+    conn: &impl ConnectionTrait,
+    movement_sync_id: &str,
+) -> AppResult<Option<(i64, serde_json::Map<String, serde_json::Value>)>> {
+    let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
-               AND apply_status IN ('pending', 'deferred') LIMIT 1",
+            "SELECT id, payload_json FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
+               AND apply_status IN ('pending', 'deferred') AND operation NOT IN ('delete', 'archive')
+             ORDER BY row_version DESC, id DESC LIMIT 1",
             [movement_sync_id.into()],
         ))
-        .await?
-        .is_some())
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let id: i64 = row.try_get("", "id")?;
+    let payload: String = row.try_get("", "payload_json")?;
+    match serde_json::from_str::<serde_json::Value>(&payload)? {
+        serde_json::Value::Object(map) => Ok(Some((id, map))),
+        _ => Ok(None),
+    }
+}
+
+/// The movement a received count line names as its reversal (`reversed_transaction_sync_id`) must
+/// be the reversal of that count: a `COUNT_REVERSAL` of a count session, of the line's session,
+/// article and location — here, or waiting in the inbox to be applied with it. Otherwise the
+/// record contradicts itself (a line naming any other movement would release its held adjustment
+/// without a real reversal); not arrived yet, the line waits for it.
+async fn reversal_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    line: &serde_json::Map<String, serde_json::Value>,
+    reversal: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    let movement = match crate::permit::sync_check::local_wire(conn, "inventory_transactions", reversal).await? {
+        Some(here) => here,
+        None => match waiting_movement(conn, reversal).await? {
+            Some((_, waiting)) => waiting,
+            None => {
+                return Ok(Some(InboundVerdict::Defer(format!(
+                    "count line {entity_sync_id}: its reversal {reversal} has not arrived yet"
+                ))))
+            }
+        },
+    };
+    let same = |movement_key: &str, line_key: &str| {
+        field(line, line_key).is_some() && field(&movement, movement_key) == field(line, line_key)
+    };
+    let reverses_this_count = field(&movement, "movement_type") == Some("COUNT_REVERSAL")
+        && field(&movement, "source_type") == Some("COUNT_SESSION")
+        && same("source_sync_id", "session_sync_id")
+        && same("article_sync_id", "article_sync_id")
+        && same("location_sync_id", "location_sync_id");
+    if !reverses_this_count {
+        return conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!(
+                "count line {entity_sync_id} names movement {reversal} as its reversal, but it is not the reversal \
+                 of this count (session, article and location)"
+            ),
+        );
+    }
+    Ok(None)
+}
+
+/// A received count adjustment whose line arrives reversed is applied together with its reversal,
+/// in one transaction (as a permit and its parts, `permit::sync_check::apply_group`): the reversal
+/// waiting in the inbox is applied right after it; if the reversal cannot be applied (it waits for
+/// another row, or is refused), nothing of the two is kept and both wait. The stock never moves by
+/// the adjustment alone.
+pub(crate) async fn count_movement_group(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::Group>> {
+    if field(received, "movement_type") != Some("COUNT_ADJUST")
+        || field(received, "source_type") != Some("COUNT_SESSION")
+    {
+        return Ok(None);
+    }
+    let Some((_, line)) = waiting_line_naming(conn, "posted_transaction_sync_id", entity_sync_id).await? else {
+        return Ok(None);
+    };
+    let Some(reversal) = field(&line, "reversed_transaction_sync_id") else {
+        return Ok(None);
+    };
+    let Some((inbox_id, _)) = waiting_movement(conn, reversal).await? else {
+        return Ok(None);
+    };
+    Ok(Some(crate::permit::sync_check::Group::new(
+        entity_sync_id.to_string(),
+        None,
+        vec![crate::permit::sync_check::GroupRow::new(
+            "inventory_transactions",
+            inbox_id,
+        )],
+        true,
+        None,
+    )))
 }
 
 /// A received stock movement of a count (`COUNT_ADJUST`, `COUNT_REVERSAL` of a count session) is
-/// held with its count line (CMMS Advisor Q8, see the module documentation): it waits while the
-/// latest received version of its line is refused or waits here; a reversal waits for the
-/// adjustment it undoes; an adjustment whose line arrives reversed is applied with its reversal
-/// (net zero). A movement already here (a replay, the same posting received twice) is not held; a
-/// movement whose line has not arrived yet waits for it.
+/// held with its count line (CMMS Advisor Q8, see the module documentation). It is applied only
+/// with a received version of its line that NAMES it (posted / reversed movement) and passes the
+/// four-eyes check here; otherwise it waits — even when an earlier version of that line is here
+/// (entered, approved: it says nothing of this movement, and the version naming it may still be
+/// refused). A line here cannot name a movement not applied yet (it refers to it), so the version
+/// naming it always comes from the inbox, with it or after it. A reversal waits for the adjustment
+/// it undoes; an adjustment whose line arrives reversed is applied with its reversal, in one
+/// transaction ([`count_movement_group`], net zero). A movement already here (a replay, the same
+/// posting received twice) is not held.
 pub(crate) async fn inbound_count_movement_hold(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -664,13 +739,11 @@ pub(crate) async fn inbound_count_movement_hold(
         "reversed_transaction_sync_id"
     };
     let Some((line_sync_id, line)) = waiting_line_naming(conn, key, entity_sync_id).await? else {
-        // No received version names it, but the count's line is held here (judged when it arrived,
-        // or entered and approved on this PC): the movement is applied as before.
-        if count_line_held_here(conn, received).await? {
-            return Ok(None);
-        }
+        // No received version of its line names it yet (a page of the exchange can end between the
+        // movement and the line version naming it): it waits for that version, judged with it.
         return Ok(Some(InboundVerdict::Defer(format!(
-            "count movement {entity_sync_id}: its count line has not arrived yet (held with it, four-eyes)"
+            "count movement {entity_sync_id}: the version of its count line naming it has not arrived yet (held \
+             with it, four-eyes)"
         ))));
     };
     if !adjust {
@@ -687,11 +760,8 @@ pub(crate) async fn inbound_count_movement_hold(
             ))
         }));
     }
-    if let Some(reversal) = field(&line, "reversed_transaction_sync_id") {
-        if movement_here_or_waiting(conn, reversal).await? {
-            return Ok(None);
-        }
-    }
+    // Its line judged here: a line arriving reversed passes once its reversal is shown to be this
+    // count's (`reversal_check`), and the adjustment is then applied with it (`count_movement_group`).
     Ok(match inbound_count_line_check(conn, &line_sync_id, &line).await? {
         None => None,
         Some(InboundVerdict::Defer(why)) => Some(InboundVerdict::Defer(format!(
@@ -799,8 +869,9 @@ async fn device_notice(
 }
 
 /// After a received count line's conflict was recorded (`sync::materialize`): a count held back
-/// for a second approval tells the count-approval holders, once per count (its line's sync id names
-/// the notice on every PC, a later refusal of the same line refreshes it).
+/// for a second approval tells the count-approval holders, once per count — its session's sync id
+/// names the notice on every PC, so several lines of one count held back, or the same line refused
+/// again (judged again on a later pass, "retry later"), never raise another one.
 pub(crate) async fn after_count_conflict_recorded(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -822,11 +893,12 @@ pub(crate) async fn after_count_conflict_recorded(
             .unwrap_or("?")
             .to_string()
     };
+    let count = field(&line, "session_sync_id").unwrap_or(entity_sync_id);
     device_notice(
         conn,
         SECOND_APPROVAL_CATEGORY,
         SECOND_APPROVAL_CATEGORY,
-        &format!("count-held|{entity_sync_id}"),
+        &format!("count-held|{count}"),
         None,
         params.clone(),
         format!("Comptage retenu — {} à {}", text("code"), text("location")),

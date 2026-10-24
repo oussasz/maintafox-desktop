@@ -732,6 +732,27 @@ pub async fn second_approve_count_line(
     db: &DatabaseConnection,
     input: crate::inventory::domain::SecondApproveInventoryCountLineInput,
 ) -> AppResult<InventoryCountLine> {
+    // The count-approval right (`inv.manage`, plant-wide: stores have no site) of the second
+    // approver, checked here too (the command checks it for the signed-in user): this is the right a
+    // PC holding the count back checks when the second approval arrives.
+    let holds_right = match i32::try_from(input.reviewer_id) {
+        Ok(user_id) => {
+            crate::auth::rbac::check_permission(
+                db,
+                user_id,
+                crate::rbac::permissions::INV_MANAGE,
+                &crate::auth::rbac::PermissionScope::Global,
+            )
+            .await?
+        }
+        Err(_) => false,
+    };
+    if !holds_right {
+        return Err(AppError::PermissionDenied(format!(
+            "Permission requise : {}",
+            crate::rbac::permissions::INV_MANAGE
+        )));
+    }
     let note = input.reviewer_evidence.trim();
     if note.chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
         return Err(AppError::ValidationFailed(vec![
