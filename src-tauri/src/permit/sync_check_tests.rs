@@ -7773,6 +7773,62 @@ async fn a_started_new_work_order_naming_a_weaker_type_raises_the_finding() {
         .as_deref(),
         Some("1")
     );
+    // R5-S2: the notice and the audit name both rules and both types, never "without the rule".
+    let (key, params) = (
+        text(
+            &db,
+            "SELECT message_key FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'",
+        )
+        .await,
+        text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'",
+        )
+        .await
+        .expect("params"),
+    );
+    assert_eq!(key.as_deref(), Some("wo_permit_rule_other_on_arrival"));
+    let params: Value = serde_json::from_str(&params).expect("json");
+    assert_eq!(
+        (
+            &params["rule"],
+            &params["permit_type"],
+            &params["received_rule"],
+            &params["received_permit_type"]
+        ),
+        (
+            &json!("CORRECTIVE_LOTO"),
+            &json!("loto"),
+            &json!("CORRECTIVE_LOTO"),
+            &json!("hot_work")
+        )
+    );
+    let stored = text(
+        &db,
+        "SELECT n.title || ' ' || COALESCE(n.body, '') FROM notifications n \
+           JOIN notification_events e ON e.id = n.notification_event_id \
+          WHERE e.category_code = 'wo_permit_rule_missing' \
+            AND json_extract(e.payload_json, '$.entity_sync_id') = 'wo-r4-4' LIMIT 1",
+    )
+    .await
+    .expect("notice");
+    assert!(
+        stored.contains("hot_work") && stored.contains("loto") && !stored.contains("without permit rule"),
+        "{stored}"
+    );
+    let summary = text(
+        &db,
+        "SELECT c.summary FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+         WHERE wo.entity_sync_id = 'wo-r4-4' AND c.action = 'permit_rule_missing_on_arrival'",
+    )
+    .await
+    .expect("audit");
+    assert!(
+        summary.contains("hot_work") && summary.contains("loto") && summary.contains("avec la règle"),
+        "{summary}"
+    );
 }
 
 /// R4-S1: a clearing held here, withdrawn by a row naming another rule while the convergence keeps
@@ -7815,4 +7871,222 @@ async fn a_clearing_withdrawn_by_the_convergence_is_recorded() {
             &json!("Consignation faite par l'exploitant")
         )
     );
+}
+
+// ── AU-04 round 5: a rule kept as received is recorded and re-checked (R5-S1); test gaps ────────
+
+/// Events of a work order with this cause, as JSON.
+async fn rule_events_with_cause(db: &DatabaseConnection, wo_sync: &str, cause: &str) -> Vec<Value> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = '{wo_sync}' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = '{cause}' ORDER BY e.id"
+        ),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+    .collect()
+}
+
+/// R5-S1: a rule kept as received because nothing here matched is recorded (once); when the list
+/// here later matches the work order, the catch-up gives it this PC's rule and type, recorded.
+#[tokio::test]
+async fn a_rule_kept_as_received_is_recorded_and_rechecked_when_the_list_matches() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R5S1-1", "wo-r5-1", "CORRECTIVE_LOTO", "hot_work", false).await;
+    for _ in 0..2 {
+        let outcome = apply(&db, "work_orders", "wo-r5-1", &row).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(rule_state(&db, "wo-r5-1").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5-1", "rule_received_unmatched")
+            .await
+            .len(),
+        1,
+        "recorded once"
+    );
+    // The list arrives here: the catch-up applies this PC's type.
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    // This one, and the template work order of the fixture (planned here with no rule).
+    assert_eq!(crate::permit::requirement_rules::catch_up(&db).await, 2);
+    assert_eq!(rule_state(&db, "wo-r5-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = rule_events_with_cause(&db, "wo-r5-1", "catch_up").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(crate::permit::requirement_rules::catch_up(&db).await, 0, "once");
+}
+
+/// R5-S1: a work order received started with a weaker type (a finding), then received back in a
+/// status not started, gets this PC's rule and type.
+#[tokio::test]
+async fn a_started_arrival_back_to_planning_gets_this_pcs_rule() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-R5S1-2", "wo-r5-2", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5-2", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5-2").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    let outcome = apply(&db, "work_orders", "wo-r5-2", &planning).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5-2", "work_order_received")
+            .await
+            .len(),
+        1,
+        "recorded"
+    );
+}
+
+/// R5-N5: a work order that exists here with no rule yet, received naming the rule here with a
+/// weaker type, gets the rule's type here.
+#[tokio::test]
+async fn an_unstamped_work_order_here_naming_a_weaker_type_gets_the_rule_type_here() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N5-1", "wo-r5n5-1", "CORRECTIVE_LOTO", "hot_work", false).await;
+    let unruled = wo_row(
+        &named,
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n5-1", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-r5n5-1", "permit_rule_code").await,
+        None,
+        "nothing here yet"
+    );
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let outcome = apply(&db, "work_orders", "wo-r5n5-1", &named).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n5-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+}
+
+/// R5-N5: a made-up permit type kept as received (nothing matches here) is recorded, asks for its
+/// permit at the start, and a permit issuer can lift it before the start.
+#[tokio::test]
+async fn a_made_up_type_kept_as_received_is_recorded_and_can_be_lifted() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R5N5-2", "wo-r5n5-2", "SOME_RULE", "made_up", false).await;
+    let outcome = apply(&db, "work_orders", "wo-r5n5-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n5-2").await, ruled("SOME_RULE", "made_up"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5n5-2", "rule_received_unmatched")
+            .await
+            .len(),
+        1
+    );
+    let wo_id = wo_id_of(&db, "wo-r5n5-2").await;
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(gate.is_err(), "its permit is asked for: {gate:?}");
+    let row_version: i64 = text(
+        &db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    let cleared = crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(
+        &db,
+        crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput {
+            wo_id,
+            expected_row_version: row_version,
+            reason: "Type de permis inconnu ici, travail sans risque".into(),
+        },
+        APPLIER,
+    )
+    .await
+    .expect("lifted by a permit issuer");
+    assert!(!cleared.requires_permit);
+}
+
+/// R5-N3: a clearing held here, replaced by a row naming the rule this PC's list now gives (kept as
+/// received, no rewrite), is recorded; a clearing a new row carried for a rule this PC replaces is
+/// recorded too.
+#[tokio::test]
+async fn both_clearing_withdrawals_of_the_convergence_are_recorded() {
+    let db = setup().await;
+    // Held clearing, the received rule kept (it is this PC's first match).
+    let planning = ruled_work_order(&db, "EQ-R5N3-1", "wo-r5n3-1").await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 0, permit_rule_cleared_by_id = {APPLIER}, \
+             permit_rule_cleared_at = '2026-10-01T07:00:00Z', permit_rule_clear_reason = 'Consignation faite par l''exploitant' \
+             WHERE entity_sync_id = 'wo-r5n3-1'"
+        ),
+    )
+    .await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "A_FIRST",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_FIRST'").await;
+    let first = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("A_FIRST")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n3-1", &first).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n3-1").await, ruled("A_FIRST", "hot_work"));
+    let events = converged_events(&db, "wo-r5n3-1").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["withdrawn_cleared_at"], json!("2026-10-01T07:00:00Z"));
+
+    // A new row with a valid clearing for a weaker type: this PC's type, the clearing withdrawn.
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N3-2", "wo-r5n3-2", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let cleared_at = now();
+    let cleared = wo_row(
+        &named,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+            ("permit_rule_cleared_at", json!(cleared_at)),
+            ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n3-2", &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n3-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r5n3-2").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["received_withdrawn_cleared_at"], json!(cleared_at));
 }

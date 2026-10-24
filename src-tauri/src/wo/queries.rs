@@ -1154,6 +1154,14 @@ pub async fn update_wo_draft_fields(
         crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
     )
     .await?;
+    // A rule that came from another PC and was not derived here is judged again by the list here
+    // (audit finding AU-04 R5-S1).
+    crate::permit::requirement_rules::recheck_received_rule(
+        &txn,
+        input.id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
 
     // 5. Re-fetch and return updated row
     let wo = get_work_order(&txn, input.id)

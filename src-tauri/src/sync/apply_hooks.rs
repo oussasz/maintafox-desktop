@@ -783,12 +783,33 @@ async fn after_received_work_order(
     // work order not started: each PC keeps the rule its own list gives (R2-S1, R3-B1, R4-B1).
     match held_rule {
         Some(HeldRule::Differs { held }) => {
-            crate::permit::requirement_rules::converge_received_rule(conn, wo_id, Some(held)).await?;
+            crate::permit::requirement_rules::converge_received_rule(
+                conn,
+                wo_id,
+                Some(held),
+                crate::permit::requirement_rules::stamp_causes::RULES_CONVERGED,
+            )
+            .await?;
         }
         Some(HeldRule::Received) => {
-            crate::permit::requirement_rules::converge_received_rule(conn, wo_id, None).await?;
+            crate::permit::requirement_rules::converge_received_rule(
+                conn,
+                wo_id,
+                None,
+                crate::permit::requirement_rules::stamp_causes::RULES_CONVERGED,
+            )
+            .await?;
         }
-        _ => {}
+        // The same rule as here: one that came from another PC and was not derived here is judged
+        // again by the list here (a work order received back in a status not started, R5-S1).
+        _ => {
+            crate::permit::requirement_rules::recheck_received_rule(
+                conn,
+                wo_id,
+                crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+            )
+            .await?;
+        }
     }
     crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
     crate::permit::requirement_rules::stamp_matching_rule(

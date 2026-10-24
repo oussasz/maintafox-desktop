@@ -447,6 +447,12 @@ pub mod stamp_causes {
     /// The work order was received naming another rule than the one held here, while not started:
     /// both PCs keep the same rule ([`super::converge_received_rule`], audit finding AU-04 R2-S1).
     pub const RULES_CONVERGED: &str = "rules_converged";
+    /// The work order was received naming a rule while nothing held here and nothing in the list
+    /// here matched it: kept as received (it only adds), and re-checked later
+    /// ([`super::recheck_received_rule`], audit finding AU-04 R5-S1).
+    pub const RULE_RECEIVED_UNMATCHED: &str = "rule_received_unmatched";
+    /// The work order returned to a status not started (reopened to planning).
+    pub const REOPENED: &str = "reopened";
 }
 
 /// The version of the published rule list (recorded with a rule written on an existing work order).
@@ -645,7 +651,17 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
         let ids = open_unruled_work_orders(db).await?;
         Ok((rules, ids))
     };
-    let (rules, ids) = match due.await {
+    let (rules, ids, received) = match async {
+        let (rules, ids) = due.await?;
+        let received = if rules.is_empty() {
+            Vec::new()
+        } else {
+            received_rule_work_orders(db).await?
+        };
+        AppResult::Ok((rules, ids, received))
+    }
+    .await
+    {
         Ok(found) => found,
         Err(err) => {
             tracing::error!(
@@ -694,6 +710,48 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
                 work_order_id = wo_id,
                 error = %err,
                 "permit rule not applied to this work order by the catch-up; retried at the next run"
+            ),
+        }
+    }
+    // Rules that came from another PC and were not derived here: judged again by the list here
+    // (R5-S1), each in its own short transaction, only when the list gives another rule or type.
+    for wo_id in received {
+        let one = async {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT equipment_id, type_id, permit_rule_code, permit_rule_permit_type FROM work_orders WHERE id = ?",
+                    [wo_id.into()],
+                ))
+                .await?;
+            let Some(row) = row else {
+                return AppResult::Ok(false);
+            };
+            let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+            let type_id: i64 = row.try_get("", "type_id")?;
+            let current: (Option<String>, Option<String>) = (
+                row.try_get("", "permit_rule_code")?,
+                row.try_get("", "permit_rule_permit_type")?,
+            );
+            let outcome = evaluate_with(db, &rules, equipment, type_id, false).await?;
+            if outcome.rule_code.is_none() || (outcome.rule_code, outcome.permit_type_code) == current {
+                return Ok(false);
+            }
+            let txn = db.begin().await?;
+            crate::sync::capture::begin_suppression(&txn).await?;
+            let changed = recheck_received_rule(&txn, wo_id, stamp_causes::CATCH_UP).await?;
+            crate::sync::capture::end_suppression(&txn).await?;
+            txn.commit().await?;
+            Ok(changed.is_some())
+        };
+        match one.await {
+            Ok(true) => flagged += 1,
+            Ok(false) => {}
+            Err(err) => tracing::error!(
+                target: "maintafox::sync",
+                work_order_id = wo_id,
+                error = %err,
+                "received permit rule not re-checked by the catch-up; retried at the next run"
             ),
         }
     }
@@ -833,10 +891,19 @@ pub async fn finding_for_started_without_rule(
             wo_id: Some(wo_id),
             action: "permit_rule_missing_on_arrival".into(),
             actor_id: None,
-            summary: Some(format!(
-                "Constat sécurité : OT reçu déjà démarré sans la règle {rule} que l'usine applique ici \
-                 (permis {permit_type})"
-            )),
+            summary: Some(match &received_rule {
+                // Received with a rule, but not the one (or not the permit type) the plant applies
+                // here (R5-S2): both named.
+                Some((named, named_type)) => format!(
+                    "Constat sécurité : OT reçu déjà démarré avec la règle {named} (permis {}) alors que l'usine \
+                     applique ici la règle {rule} (permis {permit_type})",
+                    named_type.as_deref().unwrap_or("?")
+                ),
+                None => format!(
+                    "Constat sécurité : OT reçu déjà démarré sans la règle {rule} que l'usine applique ici \
+                     (permis {permit_type})"
+                ),
+            }),
             details_json: Some(payload),
             requires_step_up: false,
             apply_result: "applied".into(),
@@ -851,6 +918,9 @@ pub async fn finding_for_started_without_rule(
         &rule,
         &permit_type,
         requires,
+        received_rule
+            .as_ref()
+            .map(|(named, named_type)| (named.as_str(), named_type.as_deref())),
     )
     .await?;
     Ok(Some(rule))
@@ -889,6 +959,7 @@ pub async fn converge_received_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     held: Option<&HeldTrace>,
+    cause: &str,
 ) -> AppResult<Option<String>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let Some(row) = conn
@@ -916,6 +987,7 @@ pub async fn converge_received_rule(
     let first_match = evaluate_with(conn, &rules, equipment, type_id, false).await?;
     let received = (received_code.clone(), received_type.clone());
     let before = held.map_or_else(|| received.clone(), |h| (h.code.clone(), h.permit_type.clone()));
+    let matched_here = first_match.rule_code.is_some();
     let kept = match (first_match.rule_code, first_match.permit_type_code) {
         (Some(code), Some(permit_type)) => (code, Some(permit_type)),
         _ => before.clone(),
@@ -941,6 +1013,53 @@ pub async fn converge_received_rule(
         ))
         .await?;
     }
+    // A rule kept as received because nothing here matches (and none was held): recorded once, so
+    // the reason of a start blocked on its permit type is shown and it is re-checked when the list
+    // here matches it later (R5-S1).
+    let kept_as_received = held.is_none() && !matched_here;
+    if kept_as_received && !rule_changed && held_withdrawn.is_none() && !row_withdrawn {
+        if received_unmatched_recorded(conn, wo_id, &kept.0, kept.1.as_deref()).await? {
+            return Ok(None);
+        }
+        let payload = serde_json::json!({
+            "requires_permit": true,
+            "origin": "rule",
+            "cause": stamp_causes::RULE_RECEIVED_UNMATCHED,
+            "rule_code": kept.0,
+            "permit_type_code": kept.1,
+            "rule_set_version": published_rule_set_version(conn).await?,
+        })
+        .to_string();
+        crate::wo::workflow::events::emit_action_event(
+            conn,
+            wo_id,
+            "permit_rule_applied",
+            None,
+            Some(&status),
+            Some(&status),
+            Some(&payload),
+        )
+        .await?;
+        crate::wo::audit::insert_wo_change_event(
+            conn,
+            &crate::wo::audit::WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "permit_rule_applied".into(),
+                actor_id: None,
+                summary: Some(format!(
+                    "Permis exigé : la règle {} (permis {}) reçue est gardée telle quelle ; aucune règle de l'usine \
+                     ne correspond ici à cet OT",
+                    kept.0,
+                    kept.1.as_deref().unwrap_or("?"),
+                )),
+                details_json: Some(payload),
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await?;
+        return Ok(Some(kept.0));
+    }
     if !rule_changed && held_withdrawn.is_none() && !row_withdrawn {
         return Ok(None);
     }
@@ -953,7 +1072,7 @@ pub async fn converge_received_rule(
     let payload = serde_json::json!({
         "requires_permit": true,
         "origin": "rule",
-        "cause": stamp_causes::RULES_CONVERGED,
+        "cause": cause,
         "rule_code": kept.0,
         "permit_type_code": kept.1,
         "previous_rule_code": before.0,
@@ -1007,6 +1126,99 @@ pub async fn converge_received_rule(
     )
     .await?;
     Ok(Some(kept.0))
+}
+
+/// SQL (on `wo`, a work order) of a rule that came from another PC and was not derived here: kept
+/// as received because nothing here matched it (`rule_received_unmatched`), or received with a
+/// started work order while the list here gives another rule or type (a finding naming the
+/// received rule). Either mark matches only while the work order still carries that rule and type.
+const RECEIVED_RULE_MARK_SQL: &str = "EXISTS (SELECT 1 FROM wo_action_events e WHERE e.wo_id = wo.id AND ( \
+       (e.action_code = 'permit_rule_applied' \
+        AND json_extract(e.payload_json, '$.cause') = 'rule_received_unmatched' \
+        AND json_extract(e.payload_json, '$.rule_code') = wo.permit_rule_code \
+        AND IFNULL(json_extract(e.payload_json, '$.permit_type_code'), '') = IFNULL(wo.permit_rule_permit_type, '')) \
+    OR (e.action_code = 'permit_rule_missing_on_arrival' \
+        AND json_extract(e.payload_json, '$.received_rule_code') = wo.permit_rule_code \
+        AND IFNULL(json_extract(e.payload_json, '$.received_permit_type_code'), '') \
+            = IFNULL(wo.permit_rule_permit_type, ''))))";
+
+/// Whether the rule `code` / `permit_type` was already recorded as kept as received.
+async fn received_unmatched_recorded(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    code: &str,
+    permit_type: Option<&str>,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM wo_action_events e WHERE e.wo_id = ? AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rule_received_unmatched' \
+               AND json_extract(e.payload_json, '$.rule_code') = ? \
+               AND IFNULL(json_extract(e.payload_json, '$.permit_type_code'), '') = ?",
+            [wo_id.into(), code.into(), permit_type.unwrap_or("").into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// A work order not started whose rule came from another PC and was not derived here (see
+/// [`RECEIVED_RULE_MARK_SQL`]) is judged again by this PC's list, as [`converge_received_rule`] does
+/// with its rule as the one held: the first rule of the list here that matches it now replaces it
+/// (with the list's permit type), recorded with `cause`; with none, it stays (audit finding AU-04
+/// R5-S1). Run by the catch-up, on a local edit of its equipment or work type, on a reopening to
+/// planning and on each received row. Nothing for a rule this PC derived or held. Returns the rule
+/// written, if any.
+pub async fn recheck_received_rule(conn: &impl ConnectionTrait, wo_id: i64, cause: &str) -> AppResult<Option<String>> {
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let marks = vec!["?"; not_started.len()].join(",");
+    let mut values: Vec<sea_orm::Value> = vec![wo_id.into()];
+    values.extend(not_started.iter().map(|c| sea_orm::Value::from(*c)));
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
+                        wo.permit_rule_cleared_at, wo.permit_rule_clear_reason \
+                   FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.id = ? AND wo.permit_rule_code IS NOT NULL AND st.code IN ({marks}) \
+                    AND {RECEIVED_RULE_MARK_SQL}"
+            ),
+            values,
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+    let current = HeldTrace {
+        code: row.try_get("", "permit_rule_code")?,
+        permit_type: row.try_get("", "permit_rule_permit_type")?,
+        cleared_by_sync_id: crate::wo::workflow::actions::permit_requirement::user_sync_id(conn, cleared_by).await?,
+        cleared_at: row.try_get("", "permit_rule_cleared_at")?,
+        clear_reason: row.try_get("", "permit_rule_clear_reason")?,
+    };
+    converge_received_rule(conn, wo_id, Some(&current), cause).await
+}
+
+/// The work orders not started whose rule came from another PC and was not derived here, by id.
+async fn received_rule_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let marks = vec!["?"; not_started.len()].join(",");
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.permit_rule_code IS NOT NULL AND st.code IN ({marks}) AND {RECEIVED_RULE_MARK_SQL} \
+                  ORDER BY wo.id"
+            ),
+            not_started.iter().map(|c| sea_orm::Value::from(*c)).collect::<Vec<_>>(),
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| r.try_get::<i64>("", "id").map_err(Into::into))
+        .collect()
 }
 
 /// A rule added to the plant's published list, as the editor would have saved it (tests of every

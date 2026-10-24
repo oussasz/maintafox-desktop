@@ -1896,6 +1896,17 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
     )
     .await?;
 
+    // Back to planning: a rule that came from another PC and was not derived here is judged again by
+    // the list here before the work is planned again (audit finding AU-04 R5-S1).
+    if target == WoStatus::Planning {
+        crate::permit::requirement_rules::recheck_received_rule(
+            &txn,
+            input.wo_id,
+            crate::permit::requirement_rules::stamp_causes::REOPENED,
+        )
+        .await?;
+    }
+
     // Reverse the cost settlement of the closed cycle (nothing to do when reopened from completed).
     crate::finance::settlement::reverse_work_order_settlement(&txn, input.wo_id, input.actor_id, &input.reason).await?;
 

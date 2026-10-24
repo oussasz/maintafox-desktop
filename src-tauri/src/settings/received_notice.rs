@@ -828,23 +828,50 @@ pub(crate) async fn notify_work_order_without_rule(
     rule: &str,
     permit_type: &str,
     requires_permit: bool,
+    received: Option<(&str, Option<&str>)>,
 ) -> AppResult<()> {
     let (required_fr, required_en) = if requires_permit {
         ("avec un permis exigé", "with a permit required")
     } else {
         ("sans permis exigé", "with no permit required")
     };
-    let title = format!(
-        "OT {wo_code} reçu démarré sans la règle de permis {rule} / Work order {wo_code} received started without \
-         permit rule {rule}"
-    );
-    let body = format!(
-        "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, sans la règle {rule} que l'usine \
-         applique ici (un permis {permit_type} pour son équipement et son travail). Vérifiez comment ce travail a été \
-         protégé. / Received by sync: work order {wo_code} was received started {required_en}, without plant rule \
-         {rule} that applies here (a {permit_type} permit for its equipment and work). Check how this work was \
-         protected."
-    );
+    // Received with a rule, but not the one (or not the permit type) the plant applies here: both
+    // are named (audit finding AU-04 R5-S2), never "without the rule".
+    let (title, body, key) = match received {
+        Some((named, named_type)) => {
+            let named_type = named_type.unwrap_or("?");
+            (
+                format!(
+                    "OT {wo_code} reçu démarré avec la règle {named} (permis {named_type}) au lieu de {rule} (permis \
+                     {permit_type}) / Work order {wo_code} received started with rule {named} ({named_type} permit) \
+                     instead of {rule} ({permit_type} permit)"
+                ),
+                format!(
+                    "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, avec la règle {named} \
+                     (permis {named_type}), alors que l'usine applique ici la règle {rule} (permis {permit_type}) pour \
+                     son équipement et son travail. Vérifiez comment ce travail a été protégé. / Received by sync: \
+                     work order {wo_code} was received started {required_en}, with rule {named} ({named_type} permit), \
+                     while the plant applies rule {rule} ({permit_type} permit) here for its equipment and work. Check \
+                     how this work was protected."
+                ),
+                "wo_permit_rule_other_on_arrival",
+            )
+        }
+        None => (
+            format!(
+                "OT {wo_code} reçu démarré sans la règle de permis {rule} / Work order {wo_code} received started \
+                 without permit rule {rule}"
+            ),
+            format!(
+                "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, sans la règle {rule} que \
+                 l'usine applique ici (un permis {permit_type} pour son équipement et son travail). Vérifiez comment ce \
+                 travail a été protégé. / Received by sync: work order {wo_code} was received started {required_en}, \
+                 without plant rule {rule} that applies here (a {permit_type} permit for its equipment and work). \
+                 Check how this work was protected."
+            ),
+            "wo_permit_rule_missing_on_arrival",
+        ),
+    };
     let route = NoticeRoute {
         category: WO_PERMIT_RULE_MISSING_CATEGORY,
         // The work order's site routes the permit-issue right holders (`notifications::router`).
@@ -855,12 +882,14 @@ pub(crate) async fn notify_work_order_without_rule(
         org_node_id: None,
     };
     let message = NotificationMessage::new(
-        "wo_permit_rule_missing_on_arrival",
+        key,
         json!({
             "code": wo_code,
             "rule": rule,
             "permit_type": permit_type,
             "requires_permit": requires_permit,
+            "received_rule": received.map(|r| r.0),
+            "received_permit_type": received.and_then(|r| r.1),
         }),
     );
     send_logged_notice(
