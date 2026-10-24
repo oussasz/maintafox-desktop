@@ -115,7 +115,7 @@ describe("notification text", () => {
       s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => p[k] ?? `{{${k}}}`);
     const params = {
       people: "A. Martin",
-      rights: "adm.users",
+      rights: P.ADM_USERS,
       since: "2026-10-20T08:00:00Z",
       grants: "x",
       count: 2,

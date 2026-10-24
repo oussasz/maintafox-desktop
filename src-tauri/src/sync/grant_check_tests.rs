@@ -5,6 +5,7 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::{Map, Value};
 
+use crate::rbac::permissions::{OT_CREATE, OT_EDIT, OT_VIEW};
 use crate::sync::grant_check::GRANT_BY_UNAUTHORISED_ADMIN;
 use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
 
@@ -207,7 +208,7 @@ async fn plant() -> Plant {
     .await;
     let manager_assignment = assign(&db, "manager-role", manager, manager_role, Some(chef), &now()).await;
     let worker = user(&db, "worker").await;
-    let operator = custom_role(&db, "field-operators", &["ot.view"]).await;
+    let operator = custom_role(&db, "field-operators", &[OT_VIEW]).await;
     Plant {
         db,
         chef,
@@ -391,7 +392,7 @@ async fn a_role_permission_is_checked_against_its_author() {
         let mut row = Payload::new();
         row.insert("_sync_format".into(), format.clone());
         row.insert("role_sync_id".into(), role.into());
-        row.insert("permission_key".into(), "ot.edit".into());
+        row.insert("permission_key".into(), OT_EDIT.into());
         row.insert("granted_at".into(), now().into());
         row.insert(
             "granted_by_sync_id".into(),
@@ -595,7 +596,7 @@ async fn a_first_pull_replays_old_grants_of_authors_who_lost_the_right() {
     .await
     .expect("disabled");
     let legacy = user(&p.db, "legacy").await;
-    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    let old_managers = custom_role(&p.db, "old-managers", &[OT_VIEW]).await;
     assign(
         &p.db,
         "legacy-role",
@@ -725,7 +726,7 @@ async fn widening_a_held_assignment_is_checked() {
         vec![stamp(chrono::Duration::days(3)).into()],
     )
     .await;
-    let night_role = custom_role(&p.db, "night-cover", &["ot.view"]).await;
+    let night_role = custom_role(&p.db, "night-cover", &[OT_VIEW]).await;
     exec(
         &p.db,
         "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, assigned_by_id, \
@@ -1051,7 +1052,7 @@ async fn after_a_complete_pull_a_grant_waits_for_its_authors_own_role() {
 async fn a_grant_for_review_is_listed_once_and_only_when_applied() {
     let p = plant().await;
     let legacy = user(&p.db, "legacy").await;
-    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    let old_managers = custom_role(&p.db, "old-managers", &[OT_VIEW]).await;
     assign(&p.db, "legacy-role", legacy, old_managers, Some(p.chef), &now()).await;
     assign(&p.db, "held", p.worker, p.operator, Some(legacy), &now()).await;
     let mut widened = payload(&p.db, "user_scope_assignments", "held").await;
@@ -1104,7 +1105,7 @@ async fn a_grant_for_review_is_listed_once_and_only_when_applied() {
 async fn role_permission_review_and_never_held() {
     let p = plant().await;
     let legacy = user(&p.db, "legacy").await;
-    let old_managers = custom_role(&p.db, "old-managers", &["ot.view"]).await;
+    let old_managers = custom_role(&p.db, "old-managers", &[OT_VIEW]).await;
     assign(&p.db, "legacy-role", legacy, old_managers, Some(p.chef), &now()).await;
     let layout = crate::sync::row_layout::layout(&p.db, "role_permissions")
         .await
@@ -1128,17 +1129,17 @@ async fn role_permission_review_and_never_held() {
         let db = &p.db;
         async move { receive(db, "role_permissions", &sync_id, "upsert", row).await }
     };
-    let outcome = send(permission("ot.edit", "legacy-sync")).await;
+    let outcome = send(permission(OT_EDIT, "legacy-sync")).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "loss unknown: {outcome:?}");
     let notices = review_notices(&p.db).await;
     assert_eq!(notices.len(), 1);
     assert!(
-        notices[0].contains("ot.edit") && notices[0].contains("legacy"),
+        notices[0].contains(OT_EDIT) && notices[0].contains("legacy"),
         "{}",
         notices[0]
     );
 
-    let outcome = send(permission("ot.create", "worker-sync")).await;
+    let outcome = send(permission(OT_CREATE, "worker-sync")).await;
     assert!(is_grant_conflict(&outcome), "never held: {outcome:?}");
 }
 
