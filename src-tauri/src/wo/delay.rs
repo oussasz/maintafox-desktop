@@ -223,6 +223,10 @@ pub async fn open_downtime_segment(db: &DatabaseConnection, input: OpenDowntimeI
     Ok(segment)
 }
 
+/// Refusal of a downtime end while a lock is fitted under the work order's permits (by hand here;
+/// the integrity repair says the same, `data_integrity::repair`).
+pub(crate) const DOWNTIME_HELD_BY_LOCKS: &str = "GATE_DOWNTIME_HELD_BY_LOCKS: Le temps d'arrêt d'un OT dont un cadenas est encore posé sous ses permis se termine à la vérification de la dépose du dernier cadenas. (The downtime of a work order with a lock still fitted under its permits ends when the removal of its last lock is verified.)";
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) close_downtime_segment
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -235,16 +239,16 @@ pub async fn close_downtime_segment(
 ) -> AppResult<WoDowntimeSegment> {
     let close_ts = ended_at.unwrap_or_else(now_utc_z);
 
-    // "Déconsignation à faire": a mechanically complete work order with a lock still fitted keeps
-    // its equipment down; its downtime ends when the removal of the last lock is verified (owner
-    // decision D4, `wo::execution::end_downtime_after_lock_removal`), never by hand before.
+    // A lock still fitted under the work order's permits keeps its equipment isolated, so down,
+    // whatever the work order's status: its downtime ends when the removal of the last lock is
+    // verified (owner decision D4, `wo::execution::end_downtime_after_lock_removal`), never by hand
+    // before.
     let held = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT {} AS held FROM work_order_downtime_segments s JOIN work_orders wo ON wo.id = s.work_order_id \
-                 WHERE s.id = ?",
-                crate::permit::wo_gate::deisolation_pending_sql("wo")
+                "SELECT {} AS held FROM work_order_downtime_segments s WHERE s.id = ?",
+                crate::permit::wo_gate::downtime_held_by_locks_sql("s.work_order_id")
             ),
             [segment_id.into()],
         ))
@@ -254,12 +258,7 @@ pub async fn close_downtime_segment(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("downtime lock check decode: {e}")))?
         .unwrap_or(0);
     if held != 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_DOWNTIME_HELD_BY_LOCKS: Le temps d'arrêt d'un OT terminé dont un cadenas est encore posé se \
-             termine à la vérification de la dépose du dernier cadenas. (The downtime of a completed work order \
-             with a lock still fitted ends when the removal of its last lock is verified.)"
-                .to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(vec![DOWNTIME_HELD_BY_LOCKS.to_string()]));
     }
 
     let result = db

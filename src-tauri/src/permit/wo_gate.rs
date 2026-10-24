@@ -444,13 +444,24 @@ fn fitted_locks_from(wo: &str) -> String {
 /// read, never stored: the work order whose row is aliased `wo` is mechanically complete
 /// ("Terminé") and a lock is still fitted under one of its permits. It stays so until the removal of
 /// its last lock is verified; its downtime ends at that moment, not at "Terminé"
-/// (`wo::execution::end_downtime_after_lock_removal`). SQL boolean (0 / 1).
+/// (`wo::execution::end_downtime_after_lock_removal`). SQL boolean (0 / 1). Locks under a permit
+/// linked to another work order on the same equipment do not count: downtime is per work order.
 pub(crate) fn deisolation_pending_sql(wo: &str) -> String {
     format!(
         "((SELECT dps.code FROM work_order_statuses dps WHERE dps.id = {wo}.status_id) = 'completed' \
          AND EXISTS (SELECT 1 {}))",
         fitted_locks_from(&format!("{wo}.id"))
     )
+}
+
+/// A lock is still fitted under one of the permits of the work order whose id is the SQL expression
+/// `wo` (SQL boolean): its equipment is isolated, so its downtime cannot end — not by hand, not by
+/// the integrity repair, not by a received row — whatever the work order's status (owner decision
+/// D4, condition 2). It ends when the removal of the last lock is verified
+/// (`wo::execution::end_downtime_after_lock_removal`). Locks under a permit linked to another work
+/// order on the same equipment do not hold this one: downtime is recorded per work order.
+pub(crate) fn downtime_held_by_locks_sql(wo: &str) -> String {
+    format!("EXISTS (SELECT 1 {})", fitted_locks_from(wo))
 }
 
 /// The [`PermitHolds`] of work order `wo_id`, on the state held here.

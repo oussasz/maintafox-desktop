@@ -2,21 +2,28 @@
 //! AU-101, option B; owner decision D4, condition 2), and how two PCs doing it at once converge.
 //!
 //! The apply of a received row never writes a change of this PC's own (`sync::materialize`: the
-//! received row is applied, checked and raised for review in its own transaction). After the pass
-//! that applied them has committed, with capture active again, [`after_sync_pass`] looks at the
-//! permit and isolation rows it applied, each in its own local transaction, written and sent like
-//! any local change. A failure is logged, never returned: the received rows, their review conflicts
-//! and their notices are already kept.
+//! received row is applied, checked and raised for review in its own transaction). The local
+//! consequences are written by [`sweep`], derived from the state stored here — never from what a
+//! pass held in memory — so a stop or a failure between a pass and its sweep is caught up by the
+//! next one: it runs after every materialize pass (`sync::materialize`) and once at start-up
+//! (`startup`). Each consequence is its own local transaction, written and sent like any local
+//! change; a failure is logged, never returned (the received rows, their review conflicts and their
+//! notices are already kept), and retried at the next sweep.
 //!
-//! - A permit received as ended (closed, handed back, cancelled) or suspended (or waiting for
-//!   revalidation) while its work order runs here: the work order is put on hold, recorded as the
-//!   system (`wo::execution::hold_for_permit_ended_elsewhere`). Nothing when it is not running here
-//!   (already on hold, completed, closed): idempotent. Resume stays refused by the permit gates.
-//! - A lock removal verified on another PC: when it was the last lock fitted under the permits of
-//!   a mechanically complete work order, its downtime ends at that verification
-//!   (`wo::execution::end_downtime_after_lock_removal`). The PC that verified it already ended the
-//!   downtime in the verification's transaction when the work order was complete there, and that
-//!   change arrives with it; this covers a work order completed here only (the same end time on
+//! - Hold: a work order running here (`in_progress`) with an open review conflict
+//!   `PERMIT_ENDED_DURING_WORK` or `PERMIT_ENDED_BEFORE_START` on one of its permits
+//!   (`permit::ended_under_work`, raised only when a received row moved the permit from a status
+//!   that protected the work to an ended one), raised since the work order's last start, resume or
+//!   reopening here, and that permit still ended (closed, handed back, cancelled, suspended,
+//!   waiting for revalidation): put on hold, recorded as the system
+//!   (`wo::execution::hold_for_permit_ended_elsewhere`). Never on a permit's status alone: a permit
+//!   already ended here and handed back elsewhere while the work runs under another permit holds
+//!   nothing. A work order a person resumed after the conflict was raised is not held again.
+//! - Downtime: a mechanically complete work order with open downtime, no lock fitted under its
+//!   permits any more and at least one verified removal: its downtime ends at the last verification
+//!   (`wo::execution::end_downtime_after_lock_removal`). The PC that verified the last removal
+//!   already ended it in the verification's transaction when the work order was complete there;
+//!   this covers a removal verified elsewhere over a work order completed here (the same end time on
 //!   both: the row then settles as the same change).
 //!
 //! Two PCs receiving the same permit end both hold the work order. The first hold the server
@@ -32,17 +39,8 @@ use serde_json::{Map, Value};
 
 use crate::errors::{AppError, AppResult};
 
-/// Entity types whose applied rows [`after_sync_pass`] looks at.
-pub(crate) const AFTER_SYNC_TYPES: &[&str] = &["work_permits", "permit_isolations"];
-
-/// Permit statuses received that put running work on hold here.
-const HOLDING_ENDS: &[&str] = &[
-    "closed",
-    "handed_back",
-    "cancelled",
-    "suspended",
-    "revalidation_required",
-];
+/// Permit statuses that put running work on hold here (with their review conflict).
+const HOLDING_ENDS_SQL: &str = "('closed', 'handed_back', 'cancelled', 'suspended', 'revalidation_required')";
 
 /// Outbox and conflict code of this PC's own hold closed because the same hold reached the server
 /// first from another PC.
@@ -52,132 +50,185 @@ fn sync_err(e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("permit end after sync: {e}"))
 }
 
-/// After a materialize pass has committed: the local consequences of the permit and isolation rows
-/// it applied (module documentation). Best effort, each in its own transaction.
-pub async fn after_sync_pass(db: &DatabaseConnection, applied: &[(String, String)]) {
-    for (entity_type, sync_id) in applied {
-        let done = match entity_type.as_str() {
-            "work_permits" => match hold_work_of_ended_permit(db, sync_id).await {
-                // Its isolations may have come with it (judged as its group, not listed here).
-                Ok(()) => end_downtime_of_permit_work(db, sync_id).await,
-                Err(err) => Err(err),
-            },
-            "permit_isolations" => end_downtime_after_received_removal(db, sync_id).await,
-            _ => Ok(()),
-        };
-        if let Err(err) = done {
-            tracing::error!(
-                target: "maintafox::sync",
-                entity_type = %entity_type,
-                entity_sync_id = %sync_id,
-                error = %err,
-                "local consequence of a received permit row not written; the received row is kept"
-            );
-        }
-    }
+/// What one [`sweep`] wrote.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SweepReport {
+    pub work_orders_held: u32,
+    pub downtimes_ended: u32,
+    pub failures: u32,
 }
 
-/// A received permit that ended (or is suspended) with its work order running here: the work order
-/// is put on hold (module documentation).
-pub(crate) async fn hold_work_of_ended_permit(db: &DatabaseConnection, permit_sync_id: &str) -> AppResult<()> {
-    let Some(row) = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT p.code, p.status, p.linked_work_order_id FROM work_permits p WHERE p.entity_sync_id = ?",
-            [permit_sync_id.into()],
-        ))
-        .await?
-    else {
-        return Ok(());
-    };
-    let status: String = row.try_get("", "status").map_err(sync_err)?;
-    let Some(wo_id) = row
-        .try_get::<Option<i64>>("", "linked_work_order_id")
-        .map_err(sync_err)?
-    else {
-        return Ok(());
-    };
-    if !HOLDING_ENDS.contains(&status.as_str()) {
-        return Ok(());
+/// The local consequences of received permit rows, derived from the stored state (module
+/// documentation). Best effort, each in its own transaction; idempotent.
+pub async fn sweep(db: &DatabaseConnection) -> SweepReport {
+    let mut report = SweepReport::default();
+    match holds_due(db).await {
+        Ok(due) => {
+            for d in due {
+                match hold_one(db, &d).await {
+                    Ok(true) => report.work_orders_held += 1,
+                    Ok(false) => {}
+                    Err(err) => {
+                        report.failures += 1;
+                        tracing::error!(
+                            target: "maintafox::sync",
+                            work_order_id = d.wo_id,
+                            permit = %d.permit_code,
+                            error = %err,
+                            "work order not put on hold for its permit ended elsewhere; retried at the next sweep"
+                        );
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            report.failures += 1;
+            tracing::error!(target: "maintafox::sync", error = %err, "permit-end hold sweep not read");
+        }
     }
-    let code: String = row.try_get("", "code").map_err(sync_err)?;
+    match downtimes_due(db).await {
+        Ok(due) => {
+            for (wo_id, verified_at, isolation_sync_id) in due {
+                let ended = async {
+                    let txn = db.begin().await?;
+                    let n = crate::wo::execution::end_downtime_after_lock_removal(
+                        &txn,
+                        wo_id,
+                        &verified_at,
+                        None,
+                        &isolation_sync_id,
+                    )
+                    .await?;
+                    txn.commit().await?;
+                    Ok::<u64, AppError>(n)
+                }
+                .await;
+                match ended {
+                    Ok(n) if n > 0 => report.downtimes_ended += 1,
+                    Ok(_) => {}
+                    Err(err) => {
+                        report.failures += 1;
+                        tracing::error!(
+                            target: "maintafox::sync",
+                            work_order_id = wo_id,
+                            error = %err,
+                            "downtime not ended after the last lock removal; retried at the next sweep"
+                        );
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            report.failures += 1;
+            tracing::error!(target: "maintafox::sync", error = %err, "downtime-end sweep not read");
+        }
+    }
+    report
+}
+
+/// A work order to hold for a permit ended elsewhere.
+struct HoldDue {
+    wo_id: i64,
+    permit_sync_id: String,
+    permit_code: String,
+    permit_status: String,
+}
+
+/// Running work orders with an open permit-ended review raised since their last start here, on a
+/// permit still ended (module documentation).
+async fn holds_due(db: &DatabaseConnection) -> AppResult<Vec<HoldDue>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT DISTINCT w.id AS wo_id, p.entity_sync_id AS permit_sync_id, p.code AS permit_code, \
+                        p.status AS permit_status \
+                 FROM sync_conflicts c \
+                 JOIN work_permits p ON p.entity_sync_id = c.entity_sync_id \
+                 JOIN work_orders w ON w.id = p.linked_work_order_id \
+                 JOIN work_order_statuses s ON s.id = w.status_id \
+                 WHERE c.entity_type = 'work_permits' \
+                   AND c.conflict_type IN ('{during}', '{before}') \
+                   AND c.status IN ('new', 'triaged', 'escalated') \
+                   AND s.code = 'in_progress' \
+                   AND p.status IN {HOLDING_ENDS_SQL} \
+                   AND c.created_at >= COALESCE((SELECT MAX(t.acted_at) FROM wo_state_transition_log t \
+                                                  WHERE t.wo_id = w.id AND t.to_status = 'in_progress'), '') \
+                 ORDER BY w.id",
+                during = crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
+                before = crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
+            ),
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(HoldDue {
+                wo_id: r.try_get("", "wo_id").map_err(sync_err)?,
+                permit_sync_id: r.try_get("", "permit_sync_id").map_err(sync_err)?,
+                permit_code: r.try_get("", "permit_code").map_err(sync_err)?,
+                permit_status: r.try_get("", "permit_status").map_err(sync_err)?,
+            })
+        })
+        .collect()
+}
+
+async fn hold_one(db: &DatabaseConnection, d: &HoldDue) -> AppResult<bool> {
     let txn = db.begin().await?;
-    let held =
-        crate::wo::execution::hold_for_permit_ended_elsewhere(&txn, wo_id, permit_sync_id, &code, &status).await?;
+    let held = crate::wo::execution::hold_for_permit_ended_elsewhere(
+        &txn,
+        d.wo_id,
+        &d.permit_sync_id,
+        &d.permit_code,
+        &d.permit_status,
+    )
+    .await?;
     txn.commit().await?;
     if held {
         tracing::warn!(
             target: "maintafox::sync",
-            permit = %code,
-            permit_status = %status,
-            work_order_id = wo_id,
+            permit = %d.permit_code,
+            permit_status = %d.permit_status,
+            work_order_id = d.wo_id,
             "work order put on hold: its permit ended on another PC"
         );
     }
-    Ok(())
+    Ok(held)
 }
 
-/// The work order and the time of its last lock removal verification, of the permit (or the
-/// isolation) received: `FROM` part over `p` (the permit).
-const LAST_VERIFICATION_SQL: &str = "SELECT p.linked_work_order_id AS wo_id, \
-     (SELECT MAX(x.removal_verified_at) FROM permit_isolations x \
-        JOIN work_permits xp ON xp.id = x.permit_id \
-       WHERE xp.linked_work_order_id = p.linked_work_order_id) AS last_verified_at";
-
-/// A received lock removal verification: the downtime of a completed work order ends when no lock
-/// is fitted under its permits any more (module documentation), at the last verification's time.
-pub(crate) async fn end_downtime_after_received_removal(
-    db: &DatabaseConnection,
-    isolation_sync_id: &str,
-) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
+/// Completed work orders with open downtime, no fitted lock and a verified removal: the work order,
+/// its last verification and the isolation it is on.
+async fn downtimes_due(db: &DatabaseConnection) -> AppResult<Vec<(i64, String, String)>> {
+    let rows = db
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            format!(
-                "{LAST_VERIFICATION_SQL} FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
-                 WHERE pi.entity_sync_id = ? AND pi.removal_verified_at IS NOT NULL"
-            ),
-            [isolation_sync_id.into()],
+            "SELECT w.id AS wo_id, last.removal_verified_at AS verified_at, last.entity_sync_id AS isolation_sync_id \
+             FROM work_orders w \
+             JOIN work_order_statuses s ON s.id = w.status_id \
+             JOIN permit_isolations last ON last.id = ( \
+                 SELECT x.id FROM permit_isolations x JOIN work_permits xp ON xp.id = x.permit_id \
+                  WHERE xp.linked_work_order_id = w.id AND x.removal_verified_at IS NOT NULL \
+                  ORDER BY x.removal_verified_at DESC, x.id DESC LIMIT 1) \
+             WHERE s.code = 'completed' \
+               AND EXISTS (SELECT 1 FROM work_order_downtime_segments d \
+                            WHERE d.work_order_id = w.id AND d.ended_at IS NULL) \
+               AND NOT EXISTS (SELECT 1 FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
+                                WHERE p.linked_work_order_id = w.id AND pi.applied_at IS NOT NULL \
+                                  AND pi.removal_verified_at IS NULL) \
+             ORDER BY w.id"
+                .to_string(),
         ))
         .await?;
-    end_downtime_at_last_verification(db, row, isolation_sync_id).await
-}
-
-/// [`end_downtime_after_received_removal`] for the work order of a received permit row: its
-/// isolations may have been applied with it (its group), not listed on their own.
-async fn end_downtime_of_permit_work(db: &DatabaseConnection, permit_sync_id: &str) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("{LAST_VERIFICATION_SQL} FROM work_permits p WHERE p.entity_sync_id = ?"),
-            [permit_sync_id.into()],
-        ))
-        .await?;
-    end_downtime_at_last_verification(db, row, permit_sync_id).await
-}
-
-/// Ends the downtime (`wo::execution::end_downtime_after_lock_removal`, which does nothing unless
-/// the work order is complete with no lock fitted and downtime open) of the work order of `row` at
-/// its last verification, in its own transaction; `origin_sync_id`: the received row.
-async fn end_downtime_at_last_verification(
-    db: &DatabaseConnection,
-    row: Option<sea_orm::QueryResult>,
-    origin_sync_id: &str,
-) -> AppResult<()> {
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let (Some(wo_id), Some(verified_at)) = (
-        row.try_get::<Option<i64>>("", "wo_id").map_err(sync_err)?,
-        row.try_get::<Option<String>>("", "last_verified_at")
-            .map_err(sync_err)?,
-    ) else {
-        return Ok(());
-    };
-    let txn = db.begin().await?;
-    crate::wo::execution::end_downtime_after_lock_removal(&txn, wo_id, &verified_at, None, origin_sync_id).await?;
-    txn.commit().await?;
-    Ok(())
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get("", "wo_id").map_err(sync_err)?,
+                r.try_get("", "verified_at").map_err(sync_err)?,
+                r.try_get::<Option<String>>("", "isolation_sync_id")
+                    .map_err(sync_err)?
+                    .unwrap_or_default(),
+            ))
+        })
+        .collect()
 }
 
 // ── Two PCs holding the same work order for the same permit end ─────────────────────────────
@@ -383,4 +434,80 @@ pub(crate) async fn settle_crossed_hold_inbound(
     }
     close_own_hold(conn, entity_type, entity_sync_id, None).await?;
     Ok(true)
+}
+
+// ── A downtime end received while a lock is fitted here ─────────────────────────────────────
+
+/// Conflict code: a downtime end received while a lock is fitted here under the work order's
+/// permits (owner decision D4, condition 2, re-checked on arrival).
+pub(crate) const DOWNTIME_END_LOCKS_FITTED: &str = "WO_DOWNTIME_END_LOCKS_FITTED";
+
+/// A received downtime segment that ends one still open here, while a lock is fitted here under
+/// its work order's permits (`permit::wo_gate::downtime_held_by_locks_sql`, the rule of the hand
+/// end): it waits when the removal verification of those locks is received and still to apply (the
+/// other PC verified them and ended the downtime in the same transaction; they arrive together),
+/// else it is a conflict for a person. `None`: nothing to judge.
+pub(crate) async fn inbound_downtime_end_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Map<String, Value>,
+) -> AppResult<Option<crate::settings::site::InboundVerdict>> {
+    use crate::permit::sync_check::{field, local_wire};
+    use crate::settings::site::InboundVerdict;
+    if field(received, "ended_at").is_none() {
+        return Ok(None);
+    }
+    let Some(local) = local_wire(conn, "work_order_downtime_segments", entity_sync_id).await? else {
+        return Ok(None);
+    };
+    if field(&local, "ended_at").is_some() {
+        return Ok(None);
+    }
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT s.work_order_id AS wo_id, {} AS held FROM work_order_downtime_segments s \
+                 WHERE s.entity_sync_id = ?",
+                crate::permit::wo_gate::downtime_held_by_locks_sql("s.work_order_id")
+            ),
+            [entity_sync_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let wo_id: i64 = row.try_get("", "wo_id").map_err(sync_err)?;
+    if row.try_get::<i64>("", "held").map_err(sync_err)? == 0 {
+        return Ok(None);
+    }
+    let verification_waiting = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS w FROM sync_inbox i \
+             WHERE i.entity_type = 'permit_isolations' AND i.apply_status IN ('pending', 'deferred') \
+               AND json_extract(i.payload_json, '$.removal_verified_at') IS NOT NULL \
+               AND i.entity_sync_id IN ( \
+                   SELECT pi.entity_sync_id FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
+                    WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL \
+                      AND pi.removal_verified_at IS NULL) \
+             LIMIT 1",
+            [wo_id.into()],
+        ))
+        .await?
+        .is_some();
+    let message = format!(
+        "downtime segment {entity_sync_id} received as ended while a lock is still fitted here under work order \
+         {wo_id}'s permits"
+    );
+    Ok(Some(if verification_waiting {
+        InboundVerdict::Defer(format!(
+            "{message}: waits for the lock removal verification received with it"
+        ))
+    } else {
+        InboundVerdict::Conflict {
+            code: DOWNTIME_END_LOCKS_FITTED,
+            message,
+        }
+    }))
 }

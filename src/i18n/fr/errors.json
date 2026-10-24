@@ -222,7 +222,7 @@
     "GATE_COMPLETE_PARTS_UNCONFIRMED": "Complétion bloquée : les pièces réellement utilisées ne sont pas confirmées. Ajoutez une pièce consommée ou indiquez qu'aucune pièce n'a été utilisée.",
     "GATE_COMPLETE_OPEN_DOWNTIME": "Complétion bloquée : clôturez d'abord les arrêts ouverts.",
     "GATE_CLOSEOUT_OPEN_DOWNTIME": "Clôture bloquée : un arrêt de cet OT est encore ouvert. Il se termine à la vérification de la dépose du dernier cadenas, sinon clôturez-le d'abord.",
-    "GATE_DOWNTIME_HELD_BY_LOCKS": "L'arrêt d'un OT terminé dont un cadenas est encore posé se termine à la vérification de la dépose du dernier cadenas.",
+    "GATE_DOWNTIME_HELD_BY_LOCKS": "L'arrêt d'un OT dont un cadenas est encore posé sous ses permis se termine à la vérification de la dépose du dernier cadenas.",
     "GATE_COMPLETE_SYMPTOM_REQUIRED": "Complétion bloquée : le symptôme est obligatoire.",
     "GATE_COMPLETE_FAILURE_MODE_REQUIRED": "Complétion bloquée : le mode de défaillance est obligatoire.",
     "GATE_COMPLETE_ROOT_CAUSE_REQUIRED": "Complétion bloquée : le résumé de la cause racine est obligatoire.",

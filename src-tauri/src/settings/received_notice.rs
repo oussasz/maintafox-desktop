@@ -1157,6 +1157,22 @@ pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait
                 ),
             )
         }
+        (k, Some(end)) if k == codes::NOTICE_SUSPENDED_DURING_WORK => {
+            let until = n.until.unwrap_or("?");
+            (
+                format!(
+                    "Travail en cours pendant une suspension du permis {permit} (OT {wo}) / Work running while \
+                     permit {permit} was suspended ({wo})"
+                ),
+                format!(
+                    "Reçu par synchronisation : le permis {permit} a été suspendu sur un autre poste du {end} au \
+                     {until}, alors que le travail de l'OT {wo} était en cours ici (depuis le {start}). Le permis \
+                     est de nouveau en vigueur : examinez le conflit de synchronisation. / Received by sync: permit \
+                     {permit} was suspended on another PC from {end} to {until}, while work on {wo} was running here \
+                     (since {start}). The permit is in force again: review the sync conflict."
+                ),
+            )
+        }
         (k, Some(end)) if k == codes::NOTICE_BEFORE_START => (
             format!(
                 "Travail commencé sous un permis déjà terminé : {permit} (OT {wo}) / Work started under an ended \

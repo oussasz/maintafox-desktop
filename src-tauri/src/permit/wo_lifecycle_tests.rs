@@ -8,8 +8,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use serde_json::{json, Map, Value};
 
 use super::tests::{
-    action, add_isolation, admin_id, advance_to_issued, apply_and_verify, assigned_wo_requiring_permit, create_from_wo,
-    insert_equipment, scalar_i64, set_status, setup, start, take_off, APPLIER, VERIFIER,
+    action, add_handover_role, add_isolation, admin_id, advance_to_issued, apply_and_verify,
+    assigned_wo_requiring_permit, create_from_wo, insert_equipment, scalar_i64, set_status, setup, start, take_off,
+    APPLIER, VERIFIER,
 };
 use crate::errors::AppError;
 use crate::permit::queries;
@@ -1249,9 +1250,8 @@ async fn a_closure_received_over_running_work_puts_it_on_hold_after_the_apply() 
 
     // Idempotent: the same end looked at again writes nothing more.
     let version = wo_row_version(&db, wo_id).await;
-    crate::permit::ended_hold::hold_work_of_ended_permit(&db, &wp.entity_sync_id)
-        .await
-        .expect("again");
+    let again = crate::permit::ended_hold::sweep(&db).await;
+    assert_eq!(again.work_orders_held, 0);
     assert_eq!(wo_row_version(&db, wo_id).await, version);
     assert_eq!(
         scalar_i64(
@@ -1283,9 +1283,7 @@ async fn a_suspension_received_over_running_work_puts_it_on_hold_with_the_suspen
         apply(&db, "work_permits", &wp.entity_sync_id, &suspended).await,
         ApplyOutcome::Applied
     ));
-    crate::permit::ended_hold::hold_work_of_ended_permit(&db, &wp.entity_sync_id)
-        .await
-        .expect("hold");
+    assert_eq!(crate::permit::ended_hold::sweep(&db).await.work_orders_held, 1);
     assert_eq!(wo_status(&db, wo_id).await, "on_hold");
     assert_eq!(
         open_hold(&db, wo_id).await.0,
@@ -1380,38 +1378,77 @@ async fn an_untimed_cancellation_over_running_work_is_raised_and_holds_it() {
     assert_eq!(wo_status(&db, wo_id).await, "on_hold");
 }
 
+/// A suspension of `target` made and lifted on another PC from `from` to `until`, as received:
+/// its sync id and its row. Built from a suspension made here on another permit whose work does not
+/// run (so nothing of `target`'s work order is touched).
+async fn lifted_suspension(
+    db: &DatabaseConnection,
+    target: &crate::permit::domain::WorkPermit,
+    tag: &str,
+    from: &str,
+    until: &str,
+) -> (String, Payload) {
+    let asset = insert_equipment(db, &format!("EQ-{tag}-OTHER")).await;
+    let (other_wo, _) = assigned_wo_requiring_permit(db, asset).await;
+    let other = advance_to_issued(db, create_from_wo(db, "hot_work", other_wo).await.expect("permit")).await;
+    let other = set_status(db, &other, "active").await.expect("active");
+    suspend(db, &other, "Vent fort").await;
+    let (_, _, suspension) = suspension_as_received(db, &other, None).await;
+    db.execute_unprepared("DELETE FROM sync_inbox WHERE entity_type = 'permit_suspensions'")
+        .await
+        .expect("not waiting");
+    let sync = crate::sync::identity::new_entity_sync_id();
+    let mut changes = vec![
+        ("permit_sync_id", json!(target.entity_sync_id)),
+        ("suspended_at", json!(from)),
+        ("reinstated_at", json!(until)),
+    ];
+    if suspension.contains_key("entity_sync_id") {
+        changes.push(("entity_sync_id", json!(sync)));
+    }
+    (sync.clone(), with(suspension, &changes))
+}
+
+/// The review conflicts recorded on a received suspension (one per window, G4).
+async fn suspension_conflicts(db: &DatabaseConnection, suspension_sync: &str) -> Vec<(String, String)> {
+    db.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT conflict_type, status FROM sync_conflicts WHERE entity_type = 'permit_suspensions' \
+         AND entity_sync_id = ? ORDER BY id",
+        [suspension_sync.into()],
+    ))
+    .await
+    .expect("conflicts")
+    .iter()
+    .map(|r| {
+        (
+            r.try_get_by_index::<String>(0).expect("type"),
+            r.try_get_by_index::<String>(1).expect("status"),
+        )
+    })
+    .collect()
+}
+
+fn in_minutes(minutes: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::minutes(minutes))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
 /// C3 (S3): a suspension made and lifted on another PC whose window covers the start here: raised
-/// for review on the permit and told; the permit is active again, nothing is held.
+/// for review (on the suspension) and told; the permit is active again, nothing is held. A window
+/// before the work: nothing.
 #[tokio::test]
 async fn a_suspension_lifted_elsewhere_around_a_start_here_is_raised_for_review() {
     for covers in [true, false] {
         let db = setup().await;
         let (wo_id, wp) = running_work(&db, if covers { "EQ-C3-1" } else { "EQ-C3-2" }).await;
-        suspend(&db, &wp, "Vent fort").await;
-        let (sync, _, suspension) = suspension_as_received(&db, &wp, None).await;
-        for sql in [
-            format!(
-                "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
-                 WHERE id = {wo_id}"
-            ),
-            format!("DELETE FROM work_order_delay_segments WHERE work_order_id = {wo_id}"),
-        ] {
-            db.execute_unprepared(&sql).await.expect("undo the hold");
-        }
         let (from, until) = if covers {
-            (
-                ago(10),
-                (chrono::Utc::now() + chrono::Duration::minutes(5))
-                    .format("%Y-%m-%dT%H:%M:%SZ")
-                    .to_string(),
-            )
+            (ago(10), in_minutes(5))
         } else {
             (ago(120), ago(60))
         };
-        let lifted = with(
-            suspension,
-            &[("suspended_at", json!(from)), ("reinstated_at", json!(until))],
-        );
+        let (sync, lifted) = lifted_suspension(&db, &wp, if covers { "C3-1" } else { "C3-2" }, &from, &until).await;
         let outcome = apply(&db, "permit_suspensions", &sync, &lifted).await;
         assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
         let expected = if covers {
@@ -1422,11 +1459,7 @@ async fn a_suspension_lifted_elsewhere_around_a_start_here_is_raised_for_review(
         } else {
             vec![]
         };
-        assert_eq!(
-            review_conflicts(&db, &wp.entity_sync_id).await,
-            expected,
-            "covers: {covers}"
-        );
+        assert_eq!(suspension_conflicts(&db, &sync).await, expected, "covers: {covers}");
         assert_eq!(
             notice_keys(&db, "permit_ended_under_work").await,
             if covers {
@@ -1435,14 +1468,71 @@ async fn a_suspension_lifted_elsewhere_around_a_start_here_is_raised_for_review(
                 vec![]
             }
         );
+        crate::permit::ended_hold::sweep(&db).await;
         assert_eq!(wo_status(&db, wo_id).await, "in_progress", "the permit is active again");
         // The same row again: known here now, nothing more.
         apply(&db, "permit_suspensions", &sync, &lifted).await;
-        assert_eq!(
-            review_conflicts(&db, &wp.entity_sync_id).await.len(),
-            usize::from(covers)
-        );
+        assert_eq!(suspension_conflicts(&db, &sync).await.len(), usize::from(covers));
     }
+}
+
+/// G3: work already running here when the window began (started before it, not held since):
+/// raised as during the work, with its own notice; nothing held.
+#[tokio::test]
+async fn a_suspension_lifted_elsewhere_while_the_work_ran_here_is_raised_for_review() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-G3-1").await;
+    let (sync, lifted) = lifted_suspension(&db, &wp, "G3-1", &in_minutes(1), &in_minutes(5)).await;
+    let outcome = apply(&db, "permit_suspensions", &sync, &lifted).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        suspension_conflicts(&db, &sync).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_DURING_WORK.to_string(),
+            "new".to_string()
+        )]
+    );
+    assert_eq!(
+        notice_keys(&db, "permit_ended_under_work").await,
+        vec![crate::permit::ended_under_work::codes::NOTICE_SUSPENDED_DURING_WORK.to_string()]
+    );
+    crate::permit::ended_hold::sweep(&db).await;
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "the permit is active again");
+
+    // Paused before the window: the work did not run through it.
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-G3-2").await;
+    pause(&db, wo_id).await;
+    let (sync, lifted) = lifted_suspension(&db, &wp, "G3-2", &in_minutes(1), &in_minutes(5)).await;
+    apply(&db, "permit_suspensions", &sync, &lifted).await;
+    assert!(suspension_conflicts(&db, &sync).await.is_empty());
+}
+
+/// G4: each lifted window has its own review: a second window, received after the first was
+/// dismissed, is a new open conflict.
+#[tokio::test]
+async fn each_lifted_suspension_window_has_its_own_review() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-G4-1").await;
+    let (first, row) = lifted_suspension(&db, &wp, "G4-1", &ago(10), &in_minutes(5)).await;
+    apply(&db, "permit_suspensions", &first, &row).await;
+    let first_id = scalar_i64(
+        &db,
+        &format!("SELECT id FROM sync_conflicts WHERE entity_sync_id = '{first}'"),
+    )
+    .await;
+    resolve(&db, first_id, "dismiss").await.expect("dismissed");
+
+    let (second, row) = lifted_suspension(&db, &wp, "G4-2", &ago(9), &in_minutes(6)).await;
+    apply(&db, "permit_suspensions", &second, &row).await;
+    assert_eq!(suspension_conflicts(&db, &first).await[0].1, "dismissed");
+    assert_eq!(
+        suspension_conflicts(&db, &second).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_BEFORE_START.to_string(),
+            "new".to_string()
+        )]
+    );
 }
 
 /// D4 condition 2 on arrival: a lock removal verified on another PC ends the downtime of a work
@@ -1460,14 +1550,10 @@ async fn a_received_last_removal_ends_the_downtime_of_a_completed_work_order() {
     ))
     .await
     .expect("as received");
-    crate::permit::ended_hold::end_downtime_after_received_removal(&db, &locks[0].entity_sync_id)
-        .await
-        .expect("after sync");
+    assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 1);
     assert_eq!(segment_end(&db, segment).await.as_deref(), Some(verified_at.as_str()));
     // Again: nothing more.
-    crate::permit::ended_hold::end_downtime_after_received_removal(&db, &locks[0].entity_sync_id)
-        .await
-        .expect("again");
+    assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 0);
     assert_eq!(
         scalar_i64(
             &db,
@@ -1480,23 +1566,6 @@ async fn a_received_last_removal_ends_the_downtime_of_a_completed_work_order() {
         2,
         "the local verification's, then the one after sync"
     );
-
-    // The isolation received with its permit (the permit's group): the permit row's pass ends it.
-    db.execute_unprepared(&format!(
-        "UPDATE work_order_downtime_segments SET ended_at = NULL WHERE id = {segment}"
-    ))
-    .await
-    .expect("as received");
-    let permit_sync = text_of(
-        &db,
-        &format!(
-            "SELECT entity_sync_id FROM work_permits WHERE id = {}",
-            locks[0].permit_id
-        ),
-    )
-    .await;
-    crate::permit::ended_hold::after_sync_pass(&db, &[("work_permits".to_string(), permit_sync)]).await;
-    assert_eq!(segment_end(&db, segment).await.as_deref(), Some(verified_at.as_str()));
 }
 
 // ── Two PCs holding the same work order for the same permit end (C1) ─────────────────────
@@ -1740,4 +1809,227 @@ async fn the_same_hold_received_while_this_pcs_own_is_unsent_is_settled_without_
             assert_eq!(concurrent, 1, "a person decides on the other change");
         }
     }
+}
+
+// ── Review round 2: F1, F2, F5, G1, G2 ────────────────────────────────────────────────
+
+/// G1: permit P1 closed while the work was on hold, the work resumed under P2, then P1 handed back
+/// on another PC: no review (P1 ended before), and no hold (never on a permit's status alone).
+#[tokio::test]
+async fn a_hand_back_received_for_a_permit_closed_under_held_work_holds_nothing() {
+    let db = setup().await;
+    let (wo_id, p1) = running_work(&db, "EQ-G1-1").await;
+    pause(&db, wo_id).await;
+    let p1 = set_status(&db, &reread(&db, &p1).await, "closed")
+        .await
+        .expect("closed while the work is on hold");
+    let p2 = advance_to_issued(
+        &db,
+        create_from_wo(&db, "hot_work", wo_id).await.expect("second permit"),
+    )
+    .await;
+    set_status(&db, &p2, "active").await.expect("P2 active");
+    resume(&db, wo_id).await.expect("resumed under P2");
+
+    // P1's hand-back as the other PC sends it (made here to get its row, then taken back).
+    add_handover_role(&db, "Maintenance").await;
+    add_handover_role(&db, "Operations").await;
+    queries::append_permit_handover_log(
+        &db,
+        crate::permit::domain::PermitHandoverLogInput {
+            permit_id: p1.id,
+            handed_from_role: "Maintenance".into(),
+            handed_to_role: "Operations".into(),
+            confirmation_note: "Zone propre".into(),
+            received_by_id: None,
+        },
+        APPLIER,
+    )
+    .await
+    .expect("handover log");
+    set_status(&db, &p1, "handed_back").await.expect("handed back");
+    let handed_back = wire(&db, "work_permits", &p1.entity_sync_id).await;
+    db.execute_unprepared(&format!(
+        "UPDATE work_permits SET status = 'closed', handed_back_at = NULL WHERE id = {}",
+        p1.id
+    ))
+    .await
+    .expect("closed here");
+
+    receive(&db, "work_permits", &p1.entity_sync_id, &handed_back).await;
+    assert_eq!(reread(&db, &p1).await.status, "handed_back");
+    assert!(review_conflicts(&db, &p1.entity_sync_id).await.is_empty());
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "no false hold");
+}
+
+/// G2: the pass that applied a permit end committed and the PC stopped before its sweep: the next
+/// pass (even with nothing received) or the start-up catch-up holds the work (stored state).
+#[tokio::test]
+async fn a_hold_not_written_before_a_stop_is_caught_up() {
+    for at_start_up in [false, true] {
+        let db = setup().await;
+        let (wo_id, wp) = running_work(&db, if at_start_up { "EQ-G2-1" } else { "EQ-G2-2" }).await;
+        let closed = with(
+            wire(&db, "work_permits", &wp.entity_sync_id).await,
+            &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+        );
+        // Applied and committed (row, review, notice); the sweep never ran.
+        assert!(matches!(
+            apply(&db, "work_permits", &wp.entity_sync_id, &closed).await,
+            ApplyOutcome::Applied
+        ));
+        assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+        if at_start_up {
+            // What the start-up runs (`startup`, phase 4a permits).
+            assert_eq!(crate::permit::ended_hold::sweep(&db).await.work_orders_held, 1);
+        } else {
+            crate::sync::materialize::materialize_inbox_batch(&db, None)
+                .await
+                .expect("an empty pass");
+        }
+        assert_eq!(wo_status(&db, wo_id).await, "on_hold", "start-up: {at_start_up}");
+    }
+}
+
+/// F1: while a lock is fitted under the work order's permits, its downtime is not ended by hand
+/// (work running), is not an integrity defect, and the integrity repair refuses to end it.
+#[tokio::test]
+async fn downtime_is_not_ended_by_hand_or_by_the_repair_while_a_lock_is_fitted() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-F1-1", &["MCC-F1-1"]).await;
+    let segment = open_downtime(&db, wo_id).await;
+    let msgs = messages(
+        crate::wo::delay::close_downtime_segment(&db, segment, None)
+            .await
+            .expect_err("work running, lock fitted"),
+    );
+    assert!(has(&msgs, "GATE_DOWNTIME_HELD_BY_LOCKS"), "{msgs:?}");
+
+    let unclosed = format!(
+        "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_UNCLOSED' \
+         AND record_id = {segment} AND status = 'open'"
+    );
+    crate::data_integrity::run_data_integrity_detectors(&db)
+        .await
+        .expect("detectors");
+    assert_eq!(scalar_i64(&db, &unclosed).await, 0, "not a defect while isolated");
+
+    // A finding raised while no lock was fitted, the lock fitted again since: the repair refuses.
+    let lock = locks[0].id;
+    for sql in [
+        format!("UPDATE permit_isolations SET removal_verified_at = '2026-01-01T00:00:00Z' WHERE id = {lock}"),
+        String::new(),
+        format!("UPDATE permit_isolations SET removal_verified_at = NULL WHERE id = {lock}"),
+    ] {
+        if sql.is_empty() {
+            crate::data_integrity::run_data_integrity_detectors(&db)
+                .await
+                .expect("detectors");
+        } else {
+            db.execute_unprepared(&sql).await.expect("lock state");
+        }
+    }
+    assert_eq!(scalar_i64(&db, &unclosed).await, 1);
+    let finding = scalar_i64(
+        &db,
+        &format!(
+            "SELECT id FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_UNCLOSED' \
+             AND record_id = {segment}"
+        ),
+    )
+    .await;
+    let version = scalar_i64(
+        &db,
+        &format!("SELECT row_version FROM data_integrity_findings WHERE id = {finding}"),
+    )
+    .await;
+    let msgs = messages(
+        crate::data_integrity::apply_data_integrity_repair(
+            &db,
+            crate::data_integrity::ApplyDataIntegrityRepairInput {
+                finding_id: finding,
+                expected_row_version: version,
+                repair_kind: "close_downtime_at_start".into(),
+            },
+            admin_id(&db).await,
+        )
+        .await
+        .expect_err("repair refused"),
+    );
+    assert!(has(&msgs, "GATE_DOWNTIME_HELD_BY_LOCKS"), "{msgs:?}");
+    assert_eq!(segment_end(&db, segment).await, None);
+}
+
+/// F2: a downtime end received while a lock is fitted here is a conflict; it waits when the
+/// removal verification of that lock is received with it and still to apply.
+#[tokio::test]
+async fn a_downtime_end_received_while_a_lock_is_fitted_here_is_not_applied() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-F2-1", &["MCC-F2-1"]).await;
+    // Rows get their sync identity as on a device (capture).
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    let segment = open_downtime(&db, wo_id).await;
+    let segment_sync = text_of(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_order_downtime_segments WHERE id = {segment}"),
+    )
+    .await;
+    let ended = with(
+        wire(&db, "work_order_downtime_segments", &segment_sync).await,
+        &[("ended_at", json!(now()))],
+    );
+    let outcome = apply(&db, "work_order_downtime_segments", &segment_sync, &ended).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some(crate::permit::ended_hold::DOWNTIME_END_LOCKS_FITTED),
+        "{outcome:?}"
+    );
+    assert_eq!(segment_end(&db, segment).await, None);
+
+    // The removal verification of that lock received with it, still to apply: the end waits.
+    let verified = with(
+        wire(&db, "permit_isolations", &locks[0].entity_sync_id).await,
+        &[("removal_verified_at", json!(now()))],
+    );
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) VALUES ('b-f2', 'c-f2', 'permit_isolations', ?, \
+         'upsert', 9000, ?, 'h-f2', 'deferred')",
+        [
+            locks[0].entity_sync_id.clone().into(),
+            serde_json::to_string(&verified).expect("json").into(),
+        ],
+    ))
+    .await
+    .expect("inbox");
+    let outcome = apply(&db, "work_order_downtime_segments", &segment_sync, &ended).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(segment_end(&db, segment).await, None);
+}
+
+/// F5: two permits on the work order; the downtime ends only when the last lock of BOTH is verified
+/// off (here the last one is under the first, cancelled, permit).
+#[tokio::test]
+async fn the_downtime_waits_for_the_last_lock_of_every_permit_of_the_work_order() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-F5-1").await;
+    let (wo_id, rv) = assigned_wo_requiring_permit(&db, asset).await;
+    let p1 = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("P1")).await;
+    let lock1 = apply_and_verify(&db, &add_isolation(&db, p1.id, "MCC-F5-1").await).await;
+    // P1 cancelled with its lock still fitted (the lock stays on the plant).
+    set_status(&db, &p1, "cancelled").await.expect("P1 cancelled");
+    let p2 = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("P2")).await;
+    let lock2 = apply_and_verify(&db, &add_isolation(&db, p2.id, "MCC-F5-2").await).await;
+    set_status(&db, &p2, "active").await.expect("P2 active");
+    start(&db, wo_id, rv).await.expect("started");
+    let segment = open_downtime(&db, wo_id).await;
+    complete(&db, wo_id).await.expect("completed with locks fitted");
+
+    verify_removal(&db, &lock2).await;
+    assert_eq!(segment_end(&db, segment).await, None, "P1's lock is still fitted");
+    assert!(deisolation_pending(&db, wo_id).await);
+    let last = verify_removal(&db, &lock1).await;
+    assert_eq!(segment_end(&db, segment).await.as_deref(), Some(last.as_str()));
+    assert!(!deisolation_pending(&db, wo_id).await);
 }

@@ -379,9 +379,6 @@ async fn materialize_pass(
     let pass = db.begin().await?;
     // Rows that can change a settled OT's cost (finance late costs, swept after the commit).
     let mut late_cost_rows: Vec<(String, String)> = Vec::new();
-    // Permit and isolation rows whose local consequences are written after the commit
-    // (`permit::ended_hold`: the hold of running work, the end of downtime).
-    let mut permit_rows: Vec<(String, String)> = Vec::new();
     // Rows waiting for a parent are retried in the same run as long as other rows were applied,
     // so a child that arrived before its parent in the same run does not wait for the next one.
     let mut queue = items;
@@ -395,9 +392,6 @@ async fn materialize_pass(
                     progressed = true;
                     if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
                         late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
-                    }
-                    if crate::permit::ended_hold::AFTER_SYNC_TYPES.contains(&item.entity_type.as_str()) {
-                        permit_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
                     }
                 }
                 ApplyOutcome::Unchanged => {
@@ -438,10 +432,10 @@ async fn materialize_pass(
     if !late_cost_rows.is_empty() {
         crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
     }
-    // After the commit, in their own transactions: a failure never refuses the received rows.
-    if !permit_rows.is_empty() {
-        crate::permit::ended_hold::after_sync_pass(db, &permit_rows).await;
-    }
+    // After the commit, from the stored state, in their own transactions: the local consequences
+    // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
+    // refuses the received rows and is retried by the next pass (and at start-up).
+    crate::permit::ended_hold::sweep(db).await;
 
     Ok(result)
 }

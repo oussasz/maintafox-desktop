@@ -60,6 +60,7 @@ export const MESSAGE_KEYS = [
   "permit_ended_before_start_untimed",
   "permit_ended_during_work_untimed",
   "permit_suspended_around_start",
+  "permit_suspended_during_work",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

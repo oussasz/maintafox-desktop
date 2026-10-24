@@ -328,6 +328,10 @@
       "title": "Permit ended during the work: {{permit}} (work order {{work_order}})",
       "body": "Received by sync: permit {{permit}} was cancelled on another PC (time not known) while work on {{work_order}} runs here since {{start_at}}. Stop the work and review the sync conflict."
     },
+    "permit_suspended_during_work": {
+      "title": "Work running while permit {{permit}} was suspended (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was suspended on another PC from {{end_at}} to {{reinstated_at}}, while work on {{work_order}} was running here (since {{start_at}}). The permit is in force again: review the sync conflict."
+    },
     "permit_suspended_around_start": {
       "title": "Work started while permit {{permit}} was suspended (work order {{work_order}})",
       "body": "Received by sync: permit {{permit}} was suspended on another PC from {{end_at}} to {{reinstated_at}}, and work on {{work_order}} started here on {{start_at}}, during that suspension. The permit is in force again: review the sync conflict."

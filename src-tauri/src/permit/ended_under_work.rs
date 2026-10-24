@@ -34,10 +34,11 @@
 //! held by the suspension, as on the PC that suspended it (D5).
 //!
 //! A permit suspended and reinstated on another PC, both before this PC receives either, arrives
-//! `active` as held here; its suspension row arrives already lifted. When that suspension window
-//! covers a start (or resume, or reopening) of the work order recorded here
-//! ([`after_suspension_check`]), the same review conflict ([`codes::ENDED_BEFORE_START`]) and a
-//! notice are raised; the permit is active again, so nothing is held.
+//! `active` as held here; its suspension row arrives already lifted. When work recorded here
+//! overlaps that suspension window ([`after_suspension_check`]) — a start (or resume, or
+//! reopening) inside it ([`codes::ENDED_BEFORE_START`]), or work already running when it began
+//! ([`codes::ENDED_DURING_WORK`]) — a review conflict and a notice are raised, one per window
+//! (recorded on the suspension row); the permit is active again, so nothing is held.
 //!
 //! Known limit (two clocks): the end time is the sending PC's clock, the start time this PC's. When
 //! the sender's clock runs ahead of this one by more than the gap between them, an end really
@@ -67,6 +68,8 @@ pub(crate) mod codes {
     pub const NOTICE_DURING_WORK_UNTIMED: &str = "permit_ended_during_work_untimed";
     /// A suspension made and lifted on another PC whose window covers a start here.
     pub const NOTICE_SUSPENDED_AROUND_START: &str = "permit_suspended_around_start";
+    /// A suspension made and lifted on another PC while the work was already running here.
+    pub const NOTICE_SUSPENDED_DURING_WORK: &str = "permit_suspended_during_work";
 }
 
 /// Statuses in which a permit no longer protects work: ended for good, or suspended.
@@ -317,11 +320,13 @@ async fn suspension_reason(conn: &impl ConnectionTrait, sync_id: &str) -> AppRes
 }
 
 /// A received suspension of a permit, new here and already lifted (suspended and reinstated on
-/// another PC before this PC received either), before it is written (same transaction): when its
-/// window covers a start, resume or reopening of the permit's work order recorded here, the work
-/// ran under a suspended permit — the same review conflict as an end before the start
-/// ([`codes::ENDED_BEFORE_START`], on the permit) and a notice to the same people. The permit is
-/// active again: nothing is held (CMMS Advisor answer to S3).
+/// another PC before this PC received either), before it is written (same transaction): when work
+/// of the permit's work order recorded here overlaps its window, the work ran under a suspended
+/// permit. A start, resume or reopening inside the window: [`codes::ENDED_BEFORE_START`]; work
+/// already running when the window began (its last status change before is a start, or, with no
+/// change recorded, its actual start is before): [`codes::ENDED_DURING_WORK`]. The conflict is
+/// recorded on the suspension row (one review per window) and the same people are told. The permit
+/// is active again: nothing is held (CMMS Advisor answer to S3; review round 2, G3 and G4).
 pub(crate) async fn after_suspension_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -352,26 +357,71 @@ pub(crate) async fn after_suspension_check(
     let Some(wo_id) = local_id(conn, "work_orders", wo_sync).await? else {
         return Ok(());
     };
-    let starts = conn
+    // Every status change of the work order recorded here, in order: a start inside the window, or
+    // work already running when the window began (its last change before is a start).
+    let changes = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT t.acted_at, w.code FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
-             WHERE t.wo_id = ? AND t.to_status = 'in_progress' ORDER BY t.acted_at, t.id",
+            "SELECT t.acted_at, t.to_status FROM wo_state_transition_log t WHERE t.wo_id = ? \
+             ORDER BY t.acted_at, t.id",
             [wo_id.into()],
         ))
         .await?;
-    let mut covered: Option<(String, String)> = None;
-    for row in &starts {
+    let mut started_inside: Option<String> = None;
+    let mut last_before: Option<(String, String)> = None;
+    let mut any_change = false;
+    for row in &changes {
         let acted: String = row.try_get("", "acted_at").map_err(sync_err)?;
-        if instant(&acted).is_some_and(|s| from_at <= s && s < until_at) {
-            let code: Option<String> = row.try_get("", "code").map_err(sync_err)?;
-            covered = Some((acted, code.unwrap_or_default()));
-            break;
+        let to: String = row.try_get("", "to_status").map_err(sync_err)?;
+        let Some(at) = instant(&acted) else {
+            continue;
+        };
+        any_change = true;
+        if at <= from_at {
+            last_before = Some((acted, to));
+        } else if at < until_at && to == "in_progress" && started_inside.is_none() {
+            started_inside = Some(acted);
         }
     }
-    let Some((start, wo_code)) = covered else {
-        return Ok(());
+    let running_at_start = match last_before {
+        Some((acted, to)) if to == "in_progress" => Some(acted),
+        Some(_) => None,
+        // No change recorded before the window: its actual start, when nothing else is recorded.
+        None if !any_change => field(
+            &local_wire(conn, "work_orders", wo_sync).await?.unwrap_or_default(),
+            "actual_start",
+        )
+        .filter(|s| instant(s).is_some_and(|s| s <= from_at))
+        .map(str::to_string),
+        None => None,
     };
+    let (code, notice_key, start, how) = match (started_inside, running_at_start) {
+        (Some(start), _) => (
+            codes::ENDED_BEFORE_START,
+            codes::NOTICE_SUSPENDED_AROUND_START,
+            start,
+            "started here inside that window",
+        ),
+        (None, Some(since)) => (
+            codes::ENDED_DURING_WORK,
+            codes::NOTICE_SUSPENDED_DURING_WORK,
+            since,
+            "was running here when that window began",
+        ),
+        (None, None) => return Ok(()),
+    };
+    let wo_code = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "code"))
+        .transpose()
+        .map_err(sync_err)?
+        .flatten()
+        .unwrap_or_default();
     let permit_code = field(&permit, "code").unwrap_or(permit_sync).to_string();
     crate::sync::queries::record_sync_conflict(
         conn,
@@ -379,12 +429,14 @@ pub(crate) async fn after_suspension_check(
             source_scope: "inbound",
             source_batch_id: None,
             linked_outbox_id: None,
-            // Not linked to its inbox row: the row is applied (the permit's review, as above).
+            // Not linked to its inbox row: the row is applied. Recorded on the suspension itself, so
+            // each window has its own review (a later window never merges into an earlier one, open
+            // or dismissed); the permit is the record shown.
             linked_inbox_id: None,
-            entity_type: "work_permits".to_string(),
-            entity_sync_id: permit_sync.to_string(),
+            entity_type: "permit_suspensions".to_string(),
+            entity_sync_id: entity_sync_id.to_string(),
             operation: "upsert".to_string(),
-            conflict_type: codes::ENDED_BEFORE_START.to_string(),
+            conflict_type: code.to_string(),
             local_payload_json: Some(serde_json::to_string(&permit)?),
             inbound_payload_json: Some(serde_json::to_string(received)?),
             checkpoint_token: None,
@@ -392,7 +444,7 @@ pub(crate) async fn after_suspension_check(
             inbound_row_version: None,
             detail_message: Some(format!(
                 "permit {permit_code} was suspended on another PC from {from} to {until} (suspension {entity_sync_id}); \
-                 work order {wo_code} started here on {start}, inside that window: applied, to review"
+                 work order {wo_code} {how} ({start}): applied, to review"
             )),
         },
     )
@@ -401,7 +453,8 @@ pub(crate) async fn after_suspension_check(
         permit = %permit_code,
         work_order = %wo_code,
         work_order_id = wo_id,
-        "work started here inside a suspension made and lifted elsewhere: raised for review"
+        code,
+        "work here under a suspension made and lifted elsewhere: raised for review"
     );
     crate::settings::received_notice::announce_permit_ended_under_work(
         conn,
@@ -410,7 +463,7 @@ pub(crate) async fn after_suspension_check(
             permit_sync_id: permit_sync,
             permit_code: &permit_code,
             wo_code: &wo_code,
-            key: codes::NOTICE_SUSPENDED_AROUND_START,
+            key: notice_key,
             status: "suspended",
             end_at: Some(from),
             until: Some(until),

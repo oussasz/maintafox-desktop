@@ -218,6 +218,10 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
         }
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
+        "work_order_downtime_segments" => {
+            Some(crate::permit::ended_hold::inbound_downtime_end_check(conn, entity_sync_id, payload).await?)
+        }
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }

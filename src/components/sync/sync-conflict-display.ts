@@ -44,6 +44,7 @@ export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "org_structure_models",
   "permit_types",
   "permit_isolations",
+  "permit_suspensions",
   "library_documents",
   "reference_values",
   "lookup_values",
@@ -136,6 +137,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",
+  // A downtime end received while a lock is fitted here (D4, condition 2).
+  "WO_DOWNTIME_END_LOCKS_FITTED",
   "WO_TASK_AFTER_COMPLETION",
   "WO_FAILURE_DETAIL_AFTER_CLOSE",
   "WO_LABOUR_AFTER_CLOSE",

@@ -328,6 +328,10 @@
       "title": "Permis terminé pendant le travail : {{permit}} (OT {{work_order}})",
       "body": "Reçu par synchronisation : le permis {{permit}} a été annulé sur un autre poste (heure non connue) alors que le travail de l’OT {{work_order}} est en cours ici depuis le {{start_at}}. Arrêtez le travail et examinez le conflit de synchronisation."
     },
+    "permit_suspended_during_work": {
+      "title": "Travail en cours pendant une suspension du permis {{permit}} (OT {{work_order}})",
+      "body": "Reçu par synchronisation : le permis {{permit}} a été suspendu sur un autre poste du {{end_at}} au {{reinstated_at}}, alors que le travail de l’OT {{work_order}} était en cours ici (depuis le {{start_at}}). Le permis est de nouveau en vigueur : examinez le conflit de synchronisation."
+    },
     "permit_suspended_around_start": {
       "title": "Travail commencé pendant une suspension du permis {{permit}} (OT {{work_order}})",
       "body": "Reçu par synchronisation : le permis {{permit}} a été suspendu sur un autre poste du {{end_at}} au {{reinstated_at}}, et le travail de l’OT {{work_order}} a commencé ici le {{start_at}}, pendant cette suspension. Le permis est de nouveau en vigueur : examinez le conflit de synchronisation."
