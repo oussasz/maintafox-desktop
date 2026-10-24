@@ -372,7 +372,7 @@ impl SyncWorkerHandle {
 pub async fn pause_sync(db: &DatabaseConnection, handle: &SyncWorkerHandle, minutes: u32) -> AppResult<String> {
     if minutes == 0 || minutes > SYNC_MAX_PAUSE_MINUTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
+            "GATE_SYNC_PAUSE_RANGE:max={SYNC_MAX_PAUSE_MINUTES}: Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
         )]));
     }
     let until = (chrono::Utc::now() + chrono::Duration::minutes(i64::from(minutes)))
