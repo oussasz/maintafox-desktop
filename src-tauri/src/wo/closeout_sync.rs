@@ -49,9 +49,10 @@
 //! closed at another time (reopened and completed or closed again elsewhere), is judged as coming
 //! back from execution (`in_progress` before the change): its re-recorded children come with it,
 //! and R3 / R4 run. A child that R5 / R6 / R7 would refuse waits for that return instead only when
-//! a reopening has actually been received here (the work order's log holds more `reopen`
-//! transitions than this PC's `reopen_count`) and the row was recorded after this PC's completion
-//! or close; anything else is refused as before. Such a row waits until the return arrives; one
+//! a reopening of this PC's completion or close has been received here (a `reopen` transition
+//! from the status held here, dated at or after this PC's completion or close stamp; each local
+//! completion or close resets it) and the row was recorded after that stamp; anything else is
+//! refused as before. Such a row waits until the return arrives; one
 //! whose return never comes waits for good, deferred with its reason.
 //!
 //! A mandatory task received cancelled, deferred or NOK without evidence from a PC that has not
