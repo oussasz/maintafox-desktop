@@ -1730,10 +1730,8 @@ async fn the_same_hold_received_while_this_pcs_own_is_unsent_is_settled_without_
             assert_eq!(
                 scalar_i64(
                     &db,
-                    &format!(
-                        "SELECT COUNT(*) FROM sync_outbox WHERE status IN ('pending', 'in_flight', 'conflict') \
-                         AND entity_type IN ('work_orders', 'work_order_delay_segments')"
-                    )
+                    "SELECT COUNT(*) FROM sync_outbox WHERE status IN ('pending', 'in_flight', 'conflict') \
+                     AND entity_type IN ('work_orders', 'work_order_delay_segments')"
                 )
                 .await,
                 0
