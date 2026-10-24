@@ -754,7 +754,12 @@
     "GATE_DI_CANCEL_OWN_STATUS_INVALID": "Cancellation refused: the requester can only cancel a request while it is submitted or returned for information.",
     "GATE_DI_DEFER_STATUS_INVALID": "Deferral refused: a request can only be deferred while it is in review, awaiting approval or approved.",
     "GATE_DI_ILLEGAL_TRANSITION": "Status change refused: the request cannot go to that status from its current one. Reload the request and check its status.",
-    "GATE_SLA_TARGET_HOURS_INVALID": "Rule refused: the response delay, the resolution delay and the escalation threshold must each be greater than zero."
+    "GATE_SLA_TARGET_HOURS_INVALID": "Rule refused: the response delay, the resolution delay and the escalation threshold must each be greater than zero.",
+    "GATE_QUAL_PROFILE_PERMIT_CODES_UNREADABLE": "Qualification check impossible: qualification profile no. {{profile_id}} is damaged (its list of covered permit types cannot be read). An administrator must correct this profile.",
+    "GATE_QUAL_PROFILE_CERT_TYPES_UNREADABLE": "Qualification check impossible: qualification profile no. {{profile_id}} is damaged (its list of required certification types cannot be read). An administrator must correct this profile.",
+    "GATE_QUAL_CREW_PERMIT_TYPE_REQUIRED": "Check impossible: the work order requires a permit, but no permit is linked to it. Link a permit to the work order, or choose the permit type to check against.",
+    "GATE_DI_RESUBMIT_NOT_SUBMITTER": "Resubmission refused: only the requester can answer the reviewer and resubmit their request.",
+    "GATE_DI_CANCEL_OWN_NOT_SUBMITTER": "Cancellation refused: only the requester can cancel their own request."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
