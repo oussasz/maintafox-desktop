@@ -196,6 +196,28 @@ impl ControlPlaneClient {
             .map_err(|e| TransportError::Contract(format!("{path} answer does not follow the sync contract: {e}")))
     }
 
+    /// `POST {path}` with the bearer token, answering the status and body as received, for a caller
+    /// that reads the server's answer, error bodies included, by its own contract (the licence
+    /// policy refresh, `commands::product_license::refresh_product_activation_policy_in`). Only a
+    /// request that produced no answer is an error.
+    pub async fn post_json_raw(&self, path: &str, token: &str, body: String) -> Result<(u16, String), TransportError> {
+        let response = self
+            .http
+            .post(format!("{}{path}", self.base_url))
+            .bearer_auth(token)
+            .header(CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| map_send_error(&e))?;
+        let status = response.status().as_u16();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| TransportError::Interrupted(format!("Control API answer interrupted: {e}")))?;
+        Ok((status, text))
+    }
+
     /// `POST /api/v1/sync/exchange` with an already serialized v2 body (the exact bytes stored
     /// before sending).
     pub async fn exchange(&self, token: &str, body: &str) -> Result<ExchangeResponse, TransportError> {

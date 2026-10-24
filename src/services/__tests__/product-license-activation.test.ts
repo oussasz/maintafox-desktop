@@ -11,7 +11,6 @@ import {
   claimProductActivation,
   getActivationLicenseMetadata,
   getActivationTenantStatus,
-  getProductActivationToken,
   getProductLicenseDiagnostics,
   markActivationTenantInitialized,
   previewProductActivation,
@@ -255,11 +254,10 @@ describe("user-facing activation errors", () => {
   });
 });
 
-describe("tenant status, initialisation and policy refresh", () => {
+describe("tenant status and initialisation", () => {
   it("refuses an empty activation token before calling the server", async () => {
     await expect(getActivationTenantStatus("  ")).rejects.toThrow(/token is required/);
     await expect(markActivationTenantInitialized("")).rejects.toThrow(/token is required/);
-    await expect(refreshProductActivationPolicy(" ")).rejects.toThrow(/token is required/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -292,41 +290,87 @@ describe("tenant status, initialisation and policy refresh", () => {
       technicalDetails: "database down",
     });
   });
+});
 
-  it("keeps the current token when the policy refresh does not return one", async () => {
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, plan: "pro" }));
-    expect(await refreshProductActivationPolicy("tok-1")).toMatchObject({
-      activation_token: "tok-1",
-      license_tier: "pro",
-    });
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, activation_token: "tok-2" }));
-    expect((await refreshProductActivationPolicy("tok-1")).activation_token).toBe("tok-2");
-    fetchMock.mockResolvedValue(respond(403, { error: "license_revoked" }));
-    await expect(refreshProductActivationPolicy("tok-1")).rejects.toMatchObject({
-      code: "license_revoked",
-    });
+describe("policy refresh (sent from Rust with the stored activation token)", () => {
+  const STATE = {
+    complete: true,
+    status: "active",
+    pending_online_validation: false,
+    retry_attempt: 0,
+  };
+
+  beforeEach(() => {
+    ipc.invoke.mockReset();
   });
 
-  it("sends the running app version with the policy refresh only when it is well formed", async () => {
-    const sentBody = (call: number): unknown =>
-      JSON.parse(String((fetchMock.mock.calls[call]?.[1] as RequestInit).body)) as unknown;
-    fetchMock.mockImplementation(async () => respond(200, { ...BASE }));
+  it("asks Rust with the app version only, never with a token, and returns the recorded state", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "refreshed", state: STATE });
+    expect(await refreshProductActivationPolicy("0.9.2")).toEqual({
+      kind: "refreshed",
+      state: STATE,
+    });
+    expect(ipc.invoke).toHaveBeenCalledWith("refresh_product_activation_policy", {
+      appVersion: "0.9.2",
+    });
+    await refreshProductActivationPolicy();
+    expect(ipc.invoke).toHaveBeenLastCalledWith("refresh_product_activation_policy", {
+      appVersion: null,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
-    await refreshProductActivationPolicy("tok-1", "0.4.0-dev");
-    expect(sentBody(0)).toEqual({ app_version: "0.4.0-dev" });
-    await refreshProductActivationPolicy("tok-1", " 1.2.3 ");
-    expect(sentBody(1)).toEqual({ app_version: "1.2.3" });
+  it("says when this PC holds no activation token", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "no_token" });
+    expect(await refreshProductActivationPolicy("0.9.2")).toEqual({ kind: "no_token" });
+  });
 
-    // Unknown or malformed: nothing is sent, so the server applies a forced update as it would
-    // to a PC that does not say its version.
-    await refreshProductActivationPolicy("tok-1");
-    expect(sentBody(2)).toEqual({});
-    await refreshProductActivationPolicy("tok-1", "1.2");
-    expect(sentBody(3)).toEqual({});
-    await refreshProductActivationPolicy("tok-1", "v1.2.3");
-    expect(sentBody(4)).toEqual({});
-    await refreshProductActivationPolicy("tok-1", `1.2.3-${"a".repeat(30)}`);
-    expect(sentBody(5)).toEqual({});
+  it("throws the server's error answer as every activation call does", async () => {
+    ipc.invoke.mockResolvedValue({
+      kind: "http_error",
+      status: 403,
+      code: "license_revoked",
+      message: "Revoked",
+      details: '{"error":"license_revoked","message":"Revoked"}',
+    });
+    await expect(refreshProductActivationPolicy("0.9.2")).rejects.toMatchObject({
+      code: "license_revoked",
+      status: 403,
+      message: "Revoked",
+      technicalDetails: '{"error":"license_revoked","message":"Revoked"}',
+    });
+
+    ipc.invoke.mockResolvedValue({
+      kind: "http_error",
+      status: 409,
+      code: null,
+      message: null,
+      details: null,
+    });
+    const slot = (await refreshProductActivationPolicy().catch((e: unknown) => e)) as Error &
+      Record<string, unknown>;
+    expect(slot["code"]).toBe("slot_limit_reached");
+    expect(slot.message).toMatch(/device slot/i);
+    expect(slot["technicalDetails"]).toBe("Policy refresh HTTP 409");
+
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 503 });
+    const down = (await refreshProductActivationPolicy().catch((e: unknown) => e)) as Error &
+      Record<string, unknown>;
+    expect(down.message).toBe("Policy refresh failed (503)");
+    expect(down["code"]).toBeUndefined();
+    expect(down["status"]).toBe(503);
+  });
+
+  it("throws a plain error, with neither code nor status, when no usable answer came", async () => {
+    for (const kind of ["network_error", "invalid_response"] as const) {
+      ipc.invoke.mockResolvedValue({ kind, message: "Cannot reach the control API" });
+      const err = (await refreshProductActivationPolicy().catch((e: unknown) => e)) as Error &
+        Record<string, unknown>;
+      expect(err.message).toBe("Cannot reach the control API");
+      expect(err["code"]).toBeUndefined();
+      expect(err["status"]).toBeUndefined();
+      expect(toUserFacingActivationError(err).referenceCode).toBe("network_unreachable");
+    }
   });
 });
 
@@ -358,10 +402,5 @@ describe("claim stored on the device", () => {
     ipc.invoke.mockResolvedValue(null);
     expect(await getActivationLicenseMetadata()).toBeNull();
     expect(await getProductLicenseDiagnostics()).toBeNull();
-    expect(await getProductActivationToken()).toBeNull();
-    ipc.invoke.mockResolvedValue("   ");
-    expect(await getProductActivationToken()).toBeNull();
-    ipc.invoke.mockResolvedValue("tok");
-    expect(await getProductActivationToken()).toBe("tok");
   });
 });
