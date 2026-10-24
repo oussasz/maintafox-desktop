@@ -56,7 +56,7 @@ pub async fn list_limits(db: &DatabaseConnection) -> AppResult<Vec<ProcurementAp
 fn ensure_document_type(value: &str) -> AppResult<()> {
     if value != DOC_REQUISITION && value != DOC_PURCHASE_ORDER {
         return Err(AppError::ValidationFailed(vec![
-            "document_type must be REQUISITION or PURCHASE_ORDER.".to_string(),
+            "GATE_INV_APPROVAL_DOC_TYPE: document_type must be REQUISITION or PURCHASE_ORDER.".to_string(),
         ]));
     }
     Ok(())
@@ -71,7 +71,8 @@ pub async fn upsert_limit(
     if let Some(max) = input.max_amount {
         if !max.is_finite() || max < 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "The approval limit must be 0 or more (leave empty for unlimited).".to_string(),
+                "GATE_INV_APPROVAL_LIMIT_NEGATIVE: The approval limit must be 0 or more (leave empty for unlimited)."
+                    .to_string(),
             ]));
         }
     }
@@ -318,7 +319,7 @@ pub async fn ensure_can_approve<C: ConnectionTrait>(
 ) -> AppResult<()> {
     let Some(approver) = approver_id else {
         return Err(AppError::ValidationFailed(vec![
-            "An approval needs a signed-in approver.".to_string(),
+            "GATE_INV_APPROVER_REQUIRED: An approval needs a signed-in approver.".to_string(),
         ]));
     };
     if author_id == Some(approver) {

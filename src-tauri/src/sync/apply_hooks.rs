@@ -49,6 +49,14 @@
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
 //!   (`after_received_work_order`, recorded in its history and audit trail);
+//! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
+//!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
+//!   `completed` or `closed`, then judged by the local completion and close gates on the written
+//!   state; `work_order_tasks` / `work_order_failure_details` / `work_order_interveners` /
+//!   `work_order_tools` / `work_order_verifications` (changes and deletes): refused after the
+//!   completion or close here, a task result outside execution and a mandatory task removed past
+//!   planning refused, and a verification keeps the self-verification rules
+//!   (`wo::closeout_sync`); snapshot history is applied, not judged;
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -56,6 +64,10 @@
 //! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
 //!   accepted by those checks is announced to the settings administrators in the same transaction
 //!   (`settings::received_notice`);
+//! - `work_permits`: a permit received closed, handed back, cancelled or suspended while its work
+//!   order runs here, or dated before the work order's last start here, is applied and raised for
+//!   review (`PERMIT_ENDED_DURING_WORK` / `PERMIT_ENDED_BEFORE_START`), its work order's responsible
+//!   and the site's permit close-right holders told (`permit::ended_under_work`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -176,6 +188,12 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
+    // A suspension made and lifted on another PC around a start here: raised for review and told
+    // (`permit::ended_under_work::after_suspension_check`, CMMS Advisor answer to S3). Rolled back
+    // with the row when it is then refused or left waiting.
+    if layout.def.entity_type == "permit_suspensions" {
+        crate::permit::ended_under_work::after_suspension_check(conn, entity_sync_id, payload).await?;
+    }
     let safety_check = match layout.def.entity_type {
         "site_settings" => {
             Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
@@ -204,6 +222,10 @@ pub(crate) async fn before_upsert_checked(
         "inventory_count_lines" => {
             Some(crate::inventory::count_four_eyes::inbound_count_line_check(conn, entity_sync_id, payload).await?)
         }
+        // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
+        "work_order_downtime_segments" => {
+            Some(crate::permit::ended_hold::inbound_downtime_end_check(conn, entity_sync_id, payload).await?)
+        }
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }
@@ -216,7 +238,11 @@ pub(crate) async fn before_upsert_checked(
                 None => {
                     let permit_gate =
                         crate::permit::sync_check::inbound_work_order_check(conn, entity_sync_id, payload).await?;
-                    match permit_gate {
+                    let closeout = match permit_gate {
+                        Some(verdict) => Some(verdict),
+                        None => crate::wo::closeout_sync::inbound_closeout_check(conn, entity_sync_id, payload).await?,
+                    };
+                    match closeout {
                         Some(verdict) => Some(verdict),
                         None => {
                             crate::org::site_assignment::inbound_site_assignment_check(
@@ -253,6 +279,21 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // A task, failure coding, labour line, tool or verification changed after its work order's
+        // completion or close here (`wo::closeout_sync`, R5-R7).
+        "work_order_tasks"
+        | "work_order_failure_details"
+        | "work_order_interveners"
+        | "work_order_tools"
+        | "work_order_verifications" => Some(
+            crate::wo::closeout_sync::inbound_closeout_child_check(
+                conn,
+                layout.def.entity_type,
+                entity_sync_id,
+                payload,
+            )
+            .await?,
+        ),
         crate::auth::recovery_code::NOTICE_ENTITY => {
             Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
         }
@@ -274,6 +315,11 @@ pub(crate) async fn before_upsert_checked(
                 payload,
             )
             .await?;
+            // A permit ended on another PC while its work ran here, or before it started here:
+            // applied, raised for review and told (`permit::ended_under_work`, AU-101, D9).
+            if layout.def.entity_type == "work_permits" {
+                crate::permit::ended_under_work::after_permit_check(conn, entity_sync_id, payload).await?;
+            }
         }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
@@ -400,18 +446,36 @@ pub(crate) async fn upsert_group(
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
     match layout.def.entity_type {
         "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
-        "work_orders" => crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await,
+        // A start (or resume, reopen) brings its permits, waits and status changes; every status
+        // change (and a work order new here) brings its close-out children too: one group.
+        "work_orders" => {
+            let start = crate::permit::sync_check::work_order_group(conn, entity_sync_id, payload).await?;
+            let closeout = crate::wo::closeout_sync::closeout_group(conn, entity_sync_id, payload).await?;
+            Ok(match (start, closeout) {
+                (Some(start), Some(closeout)) => Some(start.followed_by(closeout)),
+                (start, closeout) => start.or(closeout),
+            })
+        }
         _ => Ok(None),
     }
 }
 
-/// Applies a group (`upsert_group`) after its row was written; `Some` (a conflict) makes the caller
-/// roll the whole transaction back: nothing of the group is kept.
+/// Applies a group (`upsert_group`) after its row was written, then, for a received work-order
+/// completion or close, judges it on the written state (`wo::closeout_sync::judge_closeout`);
+/// `Some` (a conflict, or a child that waits) makes the caller roll the whole transaction back:
+/// nothing of the group is kept.
 pub(crate) async fn after_upsert_group(
     conn: &impl ConnectionTrait,
     group: crate::permit::sync_check::Group,
 ) -> AppResult<Option<crate::sync::materialize::ApplyOutcome>> {
-    crate::permit::sync_check::apply_group(conn, group).await
+    let closeout = group.closeout.clone();
+    if let Some(outcome) = crate::permit::sync_check::apply_group(conn, group).await? {
+        return Ok(Some(outcome));
+    }
+    match closeout {
+        Some(entry) => crate::wo::closeout_sync::judge_closeout(conn, &entry).await,
+        None => Ok(None),
+    }
 }
 
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit
@@ -459,6 +523,16 @@ pub(crate) async fn before_delete_checked(
                 None,
             )
             .await?
+        }
+        // A task, failure coding, labour line, tool or verification of a work order completed or
+        // closed here is kept (`wo::closeout_sync`, R5 / R7).
+        "work_order_tasks"
+        | "work_order_failure_details"
+        | "work_order_interveners"
+        | "work_order_tools"
+        | "work_order_verifications" => {
+            crate::wo::closeout_sync::inbound_closeout_child_delete_check(conn, layout.def.entity_type, entity_sync_id)
+                .await?
         }
         _ => None,
     };

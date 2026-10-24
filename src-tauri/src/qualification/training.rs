@@ -52,7 +52,7 @@ fn validate_attendance_status(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "attendance_status must be one of {:?}",
+            "GATE_QUAL_ATTENDANCE_STATUS_INVALID: attendance_status must be one of {:?}",
             ATT_STATUSES
         )]))
     }
@@ -250,24 +250,32 @@ pub async fn upsert_training_session(
     input: TrainingSessionUpsertInput,
 ) -> AppResult<TrainingSession> {
     if input.course_code.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["course_code is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_QUAL_COURSE_CODE_REQUIRED: course_code is required.".into(),
+        ]));
     }
     let min_pass = input.min_pass_score.unwrap_or(70).clamp(0, 100);
     let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_QUAL_ID_INVALID: id must be positive.".into(),
+            ]));
         }
-        let ev = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
+        let ev = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required for update.".into(),
+            ])
+        })?;
         let current = get_session_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "TrainingSession".into(),
             id: id.to_string(),
         })?;
         if current.row_version != ev {
-            return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Row version mismatch.".into(),
+            ]));
         }
         let new_rv = current.row_version + 1;
         let affected = txn
@@ -292,7 +300,7 @@ pub async fn upsert_training_session(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on training_sessions.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on training_sessions.".into(),
             ]));
         }
         let updated = get_session_by_id(&txn, id).await?.expect("row");
@@ -392,11 +400,15 @@ pub async fn upsert_training_attendance(
 
     if let Some(id) = input.id {
         if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_QUAL_ID_INVALID: id must be positive.".into(),
+            ]));
         }
-        let ev = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
+        let ev = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required for update.".into(),
+            ])
+        })?;
         let current = get_attendance_by_id(&txn, id)
             .await?
             .ok_or_else(|| AppError::NotFound {
@@ -404,7 +416,9 @@ pub async fn upsert_training_attendance(
                 id: id.to_string(),
             })?;
         if current.row_version != ev {
-            return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Row version mismatch.".into(),
+            ]));
         }
         let new_rv = current.row_version + 1;
         let affected = txn
@@ -427,7 +441,7 @@ pub async fn upsert_training_attendance(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on training_attendance.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on training_attendance.".into(),
             ]));
         }
         let updated = get_attendance_by_id(&txn, id).await?.expect("row");
@@ -517,20 +531,24 @@ pub async fn upsert_document_acknowledgement(
 ) -> AppResult<DocumentAcknowledgement> {
     if input.document_version_id <= 0 || input.personnel_id <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "personnel_id and document_version_id must be positive.".into(),
+            "GATE_QUAL_ACK_IDS_INVALID: personnel_id and document_version_id must be positive.".into(),
         ]));
     }
 
     if let Some(id) = input.id {
-        let ev = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
+        let ev = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required for update.".into(),
+            ])
+        })?;
         let current = get_ack_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "DocumentAcknowledgement".into(),
             id: id.to_string(),
         })?;
         if current.row_version != ev {
-            return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Row version mismatch.".into(),
+            ]));
         }
         let new_rv = current.row_version + 1;
         let affected = db
@@ -550,7 +568,7 @@ pub async fn upsert_document_acknowledgement(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on document_acknowledgements.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on document_acknowledgements.".into(),
             ]));
         }
         return Ok(get_ack_by_id(db, id).await?.expect("row"));

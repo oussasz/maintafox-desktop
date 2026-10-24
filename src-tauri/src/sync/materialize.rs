@@ -432,6 +432,10 @@ async fn materialize_pass(
     if !late_cost_rows.is_empty() {
         crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
     }
+    // After the commit, from the stored state, in their own transactions: the local consequences
+    // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
+    // refuses the received rows and is retried by the next pass (and at start-up).
+    crate::permit::ended_hold::sweep(db).await;
 
     Ok(result)
 }
@@ -611,7 +615,41 @@ async fn latest_local_change(
 }
 
 /// Decide whether an inbound row may be applied, then apply it.
+/// Prefix of the inbox batch id of a snapshot this PC asked for (`sync::transport::worker` names
+/// its snapshots `snapshot-<scope>-<uuid>`).
+pub(crate) const SNAPSHOT_BATCH_PREFIX: &str = "snapshot-";
+
+/// The inbox batch id an exchange answer is stored under: the server's id, never one that reads as
+/// a snapshot of this PC (`snapshot-…` becomes `delta-snapshot-…`).
+pub(crate) fn exchange_batch_id(server_batch_id: &str) -> String {
+    if server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX) {
+        format!("delta-{server_batch_id}")
+    } else {
+        server_batch_id.to_string()
+    }
+}
+
+tokio::task_local! {
+    /// While an inbox row is applied: whether it came with a snapshot this PC asked for.
+    static APPLYING_SNAPSHOT_ROW: bool;
+}
+
+/// Whether the inbox row being applied came with a snapshot this PC asked for (`false` outside an
+/// inbox apply: a "take theirs", a test applying a payload directly).
+pub(crate) fn applying_snapshot_row() -> bool {
+    APPLYING_SNAPSHOT_ROW.try_with(|s| *s).unwrap_or(false)
+}
+
 async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    APPLYING_SNAPSHOT_ROW
+        .scope(
+            item.server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX),
+            Box::pin(evaluate_and_apply_row(conn, item)),
+        )
+        .await
+}
+
+async fn evaluate_and_apply_row(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
     let Some(def) = registry::entity(&item.entity_type) else {
         return Ok(ApplyOutcome::Deferred {
             code: DEFER_UNKNOWN_ENTITY_TYPE.into(),
@@ -635,6 +673,15 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
         &item.entity_type,
         &item.entity_sync_id,
         item.row_version,
+        &item.payload_json,
+    )
+    .await?;
+    // This PC's own hold of a work order for a permit ended elsewhere, crossed by the same hold
+    // from another PC (`permit::ended_hold`): closed, the received version is applied.
+    crate::permit::ended_hold::settle_crossed_hold_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
         &item.payload_json,
     )
     .await?;

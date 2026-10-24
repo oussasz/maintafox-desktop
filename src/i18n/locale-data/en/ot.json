@@ -500,6 +500,18 @@
     "reservations": "Stock reservations",
     "releaseReservation": "Release",
     "taskDone": "Done",
+    "taskMandatory": "Mandatory",
+    "taskFindingNote": "Finding",
+    "taskFindingNotePlaceholder": "What was found",
+    "taskFollowUp": "Follow-up WO",
+    "taskFollowUpPlaceholder": "Follow-up WO number (optional)",
+    "taskFollowUpNotFound": "No work order \"{{code}}\"",
+    "taskNokEvidenceHint": "Mandatory NOK task: enter the finding or the follow-up WO.",
+    "reopenTask": "Reopen task",
+    "reopenTaskComment": "Reason for reopening",
+    "reopenTaskCommentPlaceholder": "Why the task is reopened",
+    "reopenTaskConfirm": "Reopen",
+    "reopenTaskCancel": "Cancel",
     "downtimeType": "Type",
     "downtimeOpen": "Open",
     "validationHint": "When execution is complete, use Mark complete in the footer.",
@@ -558,6 +570,7 @@
     "reasonFallback": "Reason #{{id}}",
     "error": {
       "startWo": "Unable to start work order.",
+      "reopenTask": "Could not reopen the task.",
       "resumeWo": "Unable to resume work order.",
       "submitDelay": "Unable to submit delay action.",
       "intervenerId": "Intervener ID is required.",
@@ -709,6 +722,7 @@
       "taskAdded": "Task added: {{label}}",
       "taskCompleted": "Task completed: {{label}}",
       "taskCancelled": "Task cancelled: {{label}}",
+      "taskReopened": "Task reopened: {{label}} (previous result: {{previous_result}})",
       "downtimeOpened": "Downtime opened",
       "downtimeClosed": "Downtime closed",
       "toolAdded": "Tool added: {{label}}",
@@ -812,6 +826,9 @@
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
     "actions": {
+      "task_reopened": "Task reopened",
+      "labor_closed_by_cancellation": "Open labour closed by the cancellation",
+      "labor_closed_by_closeout": "Open labour closed by the close-out",
       "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
@@ -1110,6 +1127,10 @@
     "totalCost": "Total",
     "button": "Print",
     "title": "WO Print Sheet"
+  },
+  "deisolation": {
+    "badge": "De-isolation to do",
+    "title": "Completed with a lock still fitted under its permits: the equipment stays down and its downtime runs until the removal of the last lock is verified."
   },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",

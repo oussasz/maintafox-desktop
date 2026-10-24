@@ -504,6 +504,9 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).
     ("work_orders", "planned_crew_size", "2"),
+    // A mandatory task is deleted by sync only while its work order is a draft or in planning
+    // (`wo::closeout_sync`); the generic work order has a generic status, so its task is optional.
+    ("work_order_tasks", "is_mandatory", "0"),
     ("pm_plan_versions", "planned_crew_size", "2"),
     ("schedule_candidates", "planned_crew_size", "2"),
     // Timetables (migrations 192, 197): calendar days, a weekly cycle, percentages in range.

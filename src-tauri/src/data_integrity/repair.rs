@@ -332,6 +332,27 @@ pub async fn apply_data_integrity_repair(
                     id: seg_id.to_string(),
                 })?;
             let s: String = row.try_get("", "started_at").map_err(|e| map_err("started_at", e))?;
+            // Never while a lock is fitted under the work order's permits (a finding raised before
+            // the lock was fitted): the downtime ends with the last removal (owner decision D4).
+            let held = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT {} AS held FROM work_order_downtime_segments s WHERE s.id = ?",
+                        crate::permit::wo_gate::downtime_held_by_locks_sql("s.work_order_id")
+                    ),
+                    [seg_id.into()],
+                ))
+                .await?
+                .map(|r| r.try_get::<i64>("", "held"))
+                .transpose()
+                .map_err(|e| map_err("held", e))?
+                .unwrap_or(0);
+            if held != 0 {
+                return Err(AppError::ValidationFailed(vec![
+                    crate::wo::delay::DOWNTIME_HELD_BY_LOCKS.to_string(),
+                ]));
+            }
             let before_row = json!({ "started_at": s, "ended_at": Option::<String>::None });
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,

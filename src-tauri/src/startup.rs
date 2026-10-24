@@ -404,6 +404,17 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: stock reservations upkeep (non-fatal): {error}");
     }
 
+    // Phase 4a (permits): local consequences of received permit ends and lock removals not written
+    // before the last stop (`permit::ended_hold::sweep`: running work held, downtime ended), with
+    // capture on. Never blocks the startup; a failure is logged and retried by the next sync pass.
+    let permit_sweep = crate::permit::ended_hold::sweep(&app_state.db).await;
+    info!(
+        held = permit_sweep.work_orders_held,
+        downtimes_ended = permit_sweep.downtimes_ended,
+        failures = permit_sweep.failures,
+        "startup: permit-end catch-up"
+    );
+
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.
     start_sync_worker(&app, &app_state).await;

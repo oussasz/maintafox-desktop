@@ -2,7 +2,7 @@
  * How a sync conflict is named on screen: a translated record type and the record's own number
  * and name taken from its payload — never the uuid or the table name.
  */
-import type { SyncConflictRecord } from "@shared/ipc-types";
+import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
 
 /**
  * Shortest reason the server accepts for a choice on a conflict: `MIN_REASON_CHARS` in
@@ -44,6 +44,7 @@ export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "org_structure_models",
   "permit_types",
   "permit_isolations",
+  "permit_suspensions",
   "library_documents",
   "reference_values",
   "lookup_values",
@@ -128,6 +129,24 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_PERMIT_RULE_CLEAR_INVALID",
   "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
   "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+  // Close-out gates re-judged on a received completion or close (AU-99).
+  "WO_COMPLETION_GATE",
+  "WO_CLOSE_GATE",
+  // A cancellation received while a permit or a lock of the work order holds the plant here (AU-02).
+  "WO_CANCEL_PERMIT_GATE",
+  // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
+  "PERMIT_ENDED_BEFORE_START",
+  "PERMIT_ENDED_DURING_WORK",
+  // A downtime end received while a lock is fitted here (D4, condition 2).
+  "WO_DOWNTIME_END_LOCKS_FITTED",
+  "WO_TASK_AFTER_COMPLETION",
+  "WO_FAILURE_DETAIL_AFTER_CLOSE",
+  "WO_LABOUR_AFTER_CLOSE",
+  "WO_TOOL_AFTER_CLOSE",
+  "WO_VERIFICATION_WRONG_STATUS",
+  "WO_SELF_VERIFICATION",
+  "WO_VERIFIER_RECORDED_LABOUR",
+  "WO_MANDATORY_TASK_REMOVED",
   "PERMIT_TYPE_REQUIRED_TO_START",
   "WO_PERMIT_RULE_CHANGED",
   "PERMIT_THREE_PERSON_REMOVAL",
@@ -266,6 +285,37 @@ export const KNOWN_WAIT_REASONS = new Set([
   "NO_MATERIALIZER",
   "UNKNOWN_ENTITY_TYPE",
 ]);
+
+/**
+ * Conflicts raised for review over a received row that was applied (a permit ended on another PC
+ * under work held here, AU-101): nothing to keep or take. The server accepts only "dismiss" and
+ * "escalate" on them (`REVIEW_ONLY_CONFLICTS` in `src-tauri/src/sync/queries.rs`).
+ */
+export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
+  "PERMIT_ENDED_BEFORE_START",
+  "PERMIT_ENDED_DURING_WORK",
+]);
+
+/**
+ * The choices offered on a conflict, in order. `withTriage`: also "retry later" and "escalate"
+ * (Settings → sync diagnostics); a review-only conflict always offers "escalate".
+ */
+export function conflictActions(
+  conflictType: string,
+  withTriage: boolean,
+): ResolveSyncConflictInput["action"][] {
+  if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  // A username created on two PCs: no merge tool (CMMS Advisor decision). One account is renamed
+  // on the PC that created it; here the received account is then taken (refused, with the reason,
+  // while its username is still used here). No local version to keep.
+  const primary: ResolveSyncConflictInput["action"][] =
+    conflictType === "CODE_CLASH"
+      ? ["renumber_local"]
+      : conflictType === "USERNAME_CLASH"
+        ? ["accept_remote"]
+        : ["accept_local", "accept_remote"];
+  return [...primary, ...(withTriage ? (["retry_later", "escalate"] as const) : []), "dismiss"];
+}
 
 /** The number a received record carries (`code` or `employee_code`) — for CODE_CLASH. */
 export function clashingNumber(c: SyncConflictRecord): string | null {

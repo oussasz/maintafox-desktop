@@ -73,7 +73,7 @@ async fn ensure_lookup_variance_reason_active<C: ConnectionTrait>(db: &C, code: 
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "variance_reason_code '{code}' is not active."
+            "GATE_FIN_REFERENCE_VALUE_INACTIVE:code={code}: variance_reason_code '{code}' is not active."
         )]));
     }
     Ok(())
@@ -268,7 +268,9 @@ async fn insert_count_transaction<C: ConnectionTrait>(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Could not read transaction id.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Could not read transaction id.".to_string()])
+        })?;
     Ok((tx_row.try_get("", "id")?, entity_sync_id))
 }
 
@@ -299,7 +301,9 @@ pub async fn create_count_session(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Session creation failed.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Session creation failed.".to_string()])
+        })?;
     ensure_count_session(db, row.try_get("", "id")?).await
 }
 
@@ -339,8 +343,9 @@ pub async fn transition_count_session(
     };
     if !allowed.iter().any(|x| *x == input.next_status) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid count-session transition: {} -> {}",
-            current.status, input.next_status
+            "GATE_INV_COUNT_TRANSITION:from={from},to={to}: Invalid count-session transition: {from} -> {to}",
+            from = current.status,
+            to = input.next_status
         )]));
     }
     if input.next_status == "approved" {
@@ -421,9 +426,9 @@ pub async fn upsert_count_line(
     input: UpsertInventoryCountLineInput,
 ) -> AppResult<InventoryCountLine> {
     if input.counted_qty < 0.0 {
-        return Err(AppError::ValidationFailed(
-            vec!["counted_qty must be >= 0.".to_string()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_COUNTED_NEGATIVE: counted_qty must be >= 0.".to_string(),
+        ]));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.status != "draft" && session.status != "counting" {
@@ -438,7 +443,7 @@ pub async fn upsert_count_line(
     let (warehouse_id, system_qty) = get_balance(&tx, input.article_id, input.location_id).await?;
     if warehouse_id != session.warehouse_id {
         return Err(AppError::ValidationFailed(vec![
-            "Count line location must belong to session warehouse.".to_string(),
+            "GATE_INV_COUNT_LOCATION_WAREHOUSE: Count line location must belong to session warehouse.".to_string(),
         ]));
     }
     let variance_qty = input.counted_qty - system_qty;
@@ -591,7 +596,9 @@ pub async fn upsert_count_line(
             ],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to upsert count line.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Unable to upsert count line.".to_string()])
+        })?;
     get_count_line(db, row.try_get("", "id")?).await
 }
 
@@ -612,7 +619,7 @@ pub async fn approve_count_line(
     }
     if line.approval_required == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Approval is not required for zero variance lines.".to_string(),
+            "GATE_INV_COUNT_NO_APPROVAL_NEEDED: Approval is not required for zero variance lines.".to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -890,7 +897,12 @@ pub async fn reverse_count_session(
                 [posted_transaction_id.into()],
             ))
             .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec![format!("Line {} has no posted movement.", line.id)]))?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![format!(
+                    "GATE_INV_COUNT_LINE_NO_MOVEMENT:line={id}: Line {id} has no posted movement.",
+                    id = line.id
+                )])
+            })?
             .try_get("", "quantity")?;
         if posted_qty.abs() <= f64::EPSILON {
             continue;
@@ -1035,9 +1047,9 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     count: &LocationCount<'_>,
 ) -> AppResult<PostedLocationCount> {
     if !count.counted_qty.is_finite() || count.counted_qty < 0.0 {
-        return Err(AppError::ValidationFailed(
-            vec!["counted_qty must be >= 0.".to_string()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_COUNTED_NEGATIVE: counted_qty must be >= 0.".to_string(),
+        ]));
     }
     let (warehouse_id, system_qty) = get_balance(tx, count.article_id, count.location_id).await?;
     let variance_qty = count.counted_qty - system_qty;
@@ -1392,7 +1404,9 @@ async fn last_insert_id<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Could not read the new row id.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Could not read the new row id.".to_string()])
+        })?;
     Ok(row.try_get("", "id")?)
 }
 
@@ -1424,7 +1438,11 @@ pub async fn run_reconciliation(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create reconciliation run.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_SAVE_FAILED: Unable to create reconciliation run.".to_string()
+            ])
+        })?;
     let run_id: i64 = run_id_row.try_get("", "id")?;
 
     // The expected on-hand is the sum of the movements' on-hand effect, from the one table the

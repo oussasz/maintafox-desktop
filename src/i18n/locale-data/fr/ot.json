@@ -500,6 +500,18 @@
     "reservations": "Réservations stock",
     "releaseReservation": "Libérer",
     "taskDone": "Terminée",
+    "taskMandatory": "Obligatoire",
+    "taskFindingNote": "Constat",
+    "taskFindingNotePlaceholder": "Ce qui a été constaté",
+    "taskFollowUp": "OT de suivi",
+    "taskFollowUpPlaceholder": "N° de l'OT de suivi (facultatif)",
+    "taskFollowUpNotFound": "Aucun OT « {{code}} »",
+    "taskNokEvidenceHint": "Tâche obligatoire NOK : saisissez le constat ou l'OT de suivi.",
+    "reopenTask": "Rouvrir la tâche",
+    "reopenTaskComment": "Motif de réouverture",
+    "reopenTaskCommentPlaceholder": "Pourquoi la tâche est rouverte",
+    "reopenTaskConfirm": "Rouvrir",
+    "reopenTaskCancel": "Annuler",
     "downtimeType": "Type",
     "downtimeOpen": "En cours",
     "validationHint": "Lorsque l'exécution est terminée, utilisez Marquer terminé dans le pied de page.",
@@ -558,6 +570,7 @@
     "reasonFallback": "Raison #{{id}}",
     "error": {
       "startWo": "Impossible de démarrer l'ordre de travail.",
+      "reopenTask": "Impossible de rouvrir la tâche.",
       "resumeWo": "Impossible de reprendre l'ordre de travail.",
       "submitDelay": "Impossible de soumettre l'action de délai.",
       "intervenerId": "L'ID intervenant est requis.",
@@ -709,6 +722,7 @@
       "taskAdded": "Tâche ajoutée : {{label}}",
       "taskCompleted": "Tâche terminée : {{label}}",
       "taskCancelled": "Tâche annulée : {{label}}",
+      "taskReopened": "Tâche rouverte : {{label}} (résultat précédent : {{previous_result}})",
       "downtimeOpened": "Arrêt ouvert",
       "downtimeClosed": "Arrêt fermé",
       "toolAdded": "Outil ajouté : {{label}}",
@@ -812,6 +826,9 @@
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
     "actions": {
+      "task_reopened": "Tâche rouverte",
+      "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",
+      "labor_closed_by_closeout": "Main-d'œuvre ouverte clôturée par la clôture",
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
@@ -1110,6 +1127,10 @@
     "totalCost": "Total",
     "button": "Imprimer",
     "title": "Fiche d'impression OT"
+  },
+  "deisolation": {
+    "badge": "Déconsignation à faire",
+    "title": "Terminé avec un cadenas encore posé sous ses permis : l'équipement reste à l'arrêt et le temps d'arrêt continue jusqu'à la vérification de la dépose du dernier cadenas."
   },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",

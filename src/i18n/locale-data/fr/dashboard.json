@@ -174,7 +174,9 @@
         "today": "Aujourd'hui",
         "byUrgency": "Mes OT par urgence",
         "listAria": "Mes OT les plus urgents",
-        "empty": "Aucun OT ne vous est attribué."
+        "empty": "Aucun OT ne vous est attribué.",
+        "deisolation": "Déconsignation à faire",
+        "deisolationAria": "Mes OT terminés dont un cadenas est encore posé"
       },
       "di": {
         "title": "Mes demandes",
@@ -339,6 +341,7 @@
       "myWoOpen": "OT dont vous êtes le responsable principal et dont le travail reste à faire (brouillon, planification, prêt, en cours, en attente).",
       "woOverdue": "OT dont le travail reste à faire (brouillon à en attente) et dont la fin planifiée est dépassée — la règle unique du module OT.",
       "myWoToday": "OT dont la période planifiée comprend aujourd'hui (jour local) et qui ne sont pas en retard.",
+      "myWoDeisolation": "OT terminés dont un cadenas est encore posé sous leurs permis, dont vous êtes responsable ou dont vous avez posé un cadenas : ils restent ici jusqu'à la vérification de la dépose du dernier cadenas.",
       "myDiOpen": "Demandes que vous avez soumises, ni clôturées ni transformées en OT (file « Mes demandes »).",
       "myDiAwaiting": "Vos demandes renvoyées pour complément : elles attendent votre réponse.",
       "roundOverdue": "Tournées qui vous sont attribuées, à faire (planifiée, lancée, en cours) et dont l'heure prévue est passée (même règle que le module Inspections).",

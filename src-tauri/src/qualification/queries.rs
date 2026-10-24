@@ -42,10 +42,15 @@ fn validate_cert_date(field: &str, value: Option<&str>) -> AppResult<Option<Naiv
     let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
         return Ok(None);
     };
+    let code = if field == "issued_at" {
+        "GATE_QUAL_CERT_ISSUED_AT_INVALID"
+    } else {
+        "GATE_QUAL_CERT_EXPIRES_AT_INVALID"
+    };
     let day = NaiveDate::parse_from_str(raw, "%Y-%m-%d")
         .ok()
         .or_else(|| chrono::DateTime::parse_from_rfc3339(raw).ok().map(|d| d.date_naive()))
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{field} must be a date (YYYY-MM-DD).")]))?;
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{code}: {field} must be a date (YYYY-MM-DD).")]))?;
     Ok(Some(day))
 }
 
@@ -176,19 +181,22 @@ fn validate_verification(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "verification_status must be one of: {:?}",
+            "GATE_QUAL_VERIFICATION_STATUS_INVALID: verification_status must be one of: {:?}",
             VERIFICATION
         )]))
     }
 }
 
 fn validate_profile_json_ids(raw: &str) -> AppResult<()> {
-    let v: Vec<i64> =
-        serde_json::from_str(raw).map_err(|e| AppError::ValidationFailed(vec![format!("JSON array of i64: {e}")]))?;
+    let v: Vec<i64> = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_QUAL_PROFILE_CERT_TYPES_INVALID: JSON array of i64: {e}"
+        )])
+    })?;
     for i in v {
         if i <= 0 {
             return Err(AppError::ValidationFailed(vec![
-                "certification type ids must be positive.".into(),
+                "GATE_QUAL_PROFILE_CERT_TYPE_ID_INVALID: certification type ids must be positive.".into(),
             ]));
         }
     }
@@ -196,12 +204,15 @@ fn validate_profile_json_ids(raw: &str) -> AppResult<()> {
 }
 
 fn validate_profile_json_codes(raw: &str) -> AppResult<()> {
-    let v: Vec<String> = serde_json::from_str(raw)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("JSON array of string: {e}")]))?;
+    let v: Vec<String> = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_QUAL_PROFILE_PERMIT_CODES_INVALID: JSON array of string: {e}"
+        )])
+    })?;
     for c in v {
         if c.trim().is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "permit type codes must be non-empty.".into()
+                "GATE_QUAL_PROFILE_PERMIT_CODE_EMPTY: permit type codes must be non-empty.".into(),
             ]));
         }
     }
@@ -445,7 +456,9 @@ pub async fn upsert_qualification_requirement_profile(
     input: QualificationRequirementProfileUpsertInput,
 ) -> AppResult<QualificationRequirementProfile> {
     if input.profile_name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["profile_name is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_QUAL_PROFILE_NAME_REQUIRED: profile_name is required.".into(),
+        ]));
     }
     validate_profile_json_ids(&input.required_certification_type_ids_json)?;
     validate_profile_json_codes(&input.applies_to_permit_type_codes_json)?;
@@ -453,7 +466,9 @@ pub async fn upsert_qualification_requirement_profile(
 
     if let Some(id) = input.id {
         if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_QUAL_ID_INVALID: id must be positive.".into(),
+            ]));
         }
         let current = get_profile_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "QualificationRequirementProfile".into(),
@@ -478,7 +493,7 @@ pub async fn upsert_qualification_requirement_profile(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on qualification_requirement_profiles.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on qualification_requirement_profiles.".into(),
             ]));
         }
         let updated = get_profile_by_id(&txn, id).await?.expect("row");
@@ -592,7 +607,7 @@ where
     if let (Some(i), Some(e)) = (issued, expires) {
         if e < i {
             return Err(AppError::ValidationFailed(vec![
-                "expires_at must not be before issued_at.".into(),
+                "GATE_QUAL_CERT_EXPIRES_BEFORE_ISSUED: expires_at must not be before issued_at.".into(),
             ]));
         }
     }
@@ -600,11 +615,15 @@ where
 
     if let Some(id) = input.id {
         if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_QUAL_ID_INVALID: id must be positive.".into(),
+            ]));
         }
-        let ev = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
+        let ev = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required for update.".into(),
+            ])
+        })?;
         let current = get_personnel_cert_by_id(&txn, id)
             .await?
             .ok_or_else(|| AppError::NotFound {
@@ -612,7 +631,9 @@ where
                 id: id.to_string(),
             })?;
         if current.row_version != ev {
-            return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Row version mismatch.".into(),
+            ]));
         }
         let new_rv = current.row_version + 1;
         let affected = txn
@@ -638,7 +659,7 @@ where
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on personnel_certifications.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on personnel_certifications.".into(),
             ]));
         }
         let updated = get_personnel_cert_by_id(&txn, id).await?.expect("row");

@@ -32,6 +32,8 @@ export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   SAFETY_NOTICE_CATEGORY,
   "loto_forced_removal",
   "pm_concurrent_versions",
+  "permit_suspended_work_held",
+  "permit_ended_under_work",
 ]);
 /** Message keys of the PM planning notices (not safety): shown with a planning icon. */
 const PM_NOTICE_KEYS: ReadonlySet<string> = new Set([

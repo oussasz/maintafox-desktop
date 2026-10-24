@@ -777,7 +777,7 @@ pub async fn update_sla_rule(db: &impl ConnectionTrait, input: SlaRuleUpdateInpu
 
     if input.target_response_hours <= 0 || input.target_resolution_hours <= 0 || input.escalation_threshold_hours <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Les heures cibles doivent être supérieures à zéro.".into(),
+            "GATE_SLA_TARGET_HOURS_INVALID: Les heures cibles doivent être supérieures à zéro.".into(),
         ]));
     }
 

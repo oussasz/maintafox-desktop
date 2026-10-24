@@ -1254,6 +1254,12 @@ fn parse_json_int_setting(json: &str, default: i64) -> i64 {
 
 /// Tenant-configurable FMECA RPN threshold for spare-line / inventory checks (`app_settings`).
 pub async fn fmeca_rpn_critical_threshold_i64(db: &DatabaseConnection) -> AppResult<i64> {
+    fmeca_rpn_critical_threshold_i64_in(db).await
+}
+
+/// The same setting read on any connection (a transaction included: the re-check of a received
+/// close runs inside the apply transaction, `wo::closeout_sync`).
+pub(crate) async fn fmeca_rpn_critical_threshold_i64_in(db: &impl ConnectionTrait) -> AppResult<i64> {
     let row = settings::get_setting(db, SETTING_KEY_FMECA_RPN_CRITICAL, "tenant").await?;
     let Some(s) = row else {
         return Ok(DEFAULT_FMECA_RPN_CRITICAL);

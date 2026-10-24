@@ -610,7 +610,7 @@ pub fn guard_transition(from: &DiStatus, to: &DiStatus) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Illegal DI state transition: '{}' -> '{}'",
+            "GATE_DI_ILLEGAL_TRANSITION: Illegal DI state transition: '{}' -> '{}'",
             from.as_str(),
             to.as_str()
         ))
