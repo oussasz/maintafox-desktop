@@ -166,6 +166,20 @@ pub(super) async fn user_with(db: &DatabaseConnection, name: &str, permissions: 
     user
 }
 
+/// Someone other than `user` who approves a count variance on `db` (four-eyes above the
+/// tolerance, D11; the tests' tolerance is blank, so every variance is above it): the seeded
+/// administrator account, the same on every PC (a test account made on one PC only would take
+/// local ids another PC also uses).
+pub(super) async fn second_person(db: &DatabaseConnection, user: i32) -> i32 {
+    let admin = scalar_i64(
+        db,
+        "SELECT id FROM user_accounts WHERE username = 'admin' AND id <> ?",
+        vec![user.into()],
+    )
+    .await;
+    i32::try_from(admin).expect("id")
+}
+
 pub(super) fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> ResolveNegativeStockInput {
     ResolveNegativeStockInput {
         article_id,
@@ -303,6 +317,7 @@ pub(super) async fn enter_count(
             counted_qty: counted,
             variance_reason_code: Some("COUNT_ERROR".into()),
             expected_row_version: None,
+            actor_id: Some(i64::from(user)),
         },
     )
     .await
@@ -333,7 +348,8 @@ pub(super) async fn post_count(
         crate::inventory::domain::InventoryCountLine,
     ),
 ) -> crate::inventory::domain::InventoryCountSession {
-    post_count_approved_by(db, user, user, counted).await
+    let approver = second_person(db, user).await;
+    post_count_approved_by(db, user, approver, counted).await
 }
 
 /// [`post_count`], the line's variance approved by `approver`.
@@ -1550,6 +1566,7 @@ async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count(
             counted_qty: 0.0,
             variance_reason_code: Some("COUNT_ERROR".into()),
             expected_row_version: Some(first.row_version),
+            actor_id: Some(i64::from(counter_b)),
         },
     )
     .await
@@ -1588,7 +1605,7 @@ async fn a_session_counted_after_another_count_on_the_same_pc_is_refused() {
         crate::inventory::domain::ApproveInventoryCountLineInput {
             line_id: stale.1.id,
             expected_row_version: stale.1.row_version,
-            reviewer_id: i64::from(counter_b),
+            reviewer_id: i64::from(second_person(b, counter_b).await),
             reviewer_evidence: "Bac vérifié au comptage".into(),
         },
     )
@@ -1880,7 +1897,7 @@ async fn approve_count(
         crate::inventory::domain::ApproveInventoryCountLineInput {
             line_id: line.id,
             expected_row_version: line.row_version,
-            reviewer_id: i64::from(user),
+            reviewer_id: i64::from(second_person(db, user).await),
             reviewer_evidence: "Bac vérifié au comptage".into(),
         },
     )

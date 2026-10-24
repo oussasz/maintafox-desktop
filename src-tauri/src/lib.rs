@@ -650,6 +650,7 @@ pub fn run() {
         commands::inventory::create_inventory_count_session,
         commands::inventory::transition_inventory_count_session,
         commands::inventory::upsert_inventory_count_line,
+        commands::inventory::get_inventory_count_tolerance,
         commands::inventory::approve_inventory_count_line,
         commands::inventory::post_inventory_count_session,
         commands::inventory::reverse_inventory_count_session,

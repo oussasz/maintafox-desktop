@@ -2274,23 +2274,26 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     for def in crate::settings::catalog::SETTINGS_CATALOG {
         let (setting_key, category, setting_scope, setting_value_json) =
             (&def.key, &def.category, &def.scope, &def.shipped_value_json);
-        // Insert missing rows; do not overwrite tenant-customized values.
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT OR IGNORE INTO app_settings
+        // Insert missing rows; do not overwrite tenant-customized values. An optional setting is
+        // never seeded: no row is its blank value.
+        if crate::settings::catalog::is_seeded(def) {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT OR IGNORE INTO app_settings
                    (setting_key, category, setting_scope, setting_value_json,
                     setting_risk, validation_status, last_modified_at)
                VALUES (?, ?, ?, ?, ?, 'valid', ?)",
-            [
-                (*setting_key).into(),
-                (*category).into(),
-                (*setting_scope).into(),
-                (*setting_value_json).into(),
-                def.risk.into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
+                [
+                    (*setting_key).into(),
+                    (*category).into(),
+                    (*setting_scope).into(),
+                    (*setting_value_json).into(),
+                    def.risk.into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+        }
 
         // Repair category drift from older seeds so Settings tab filters keep matching.
         db.execute(Statement::from_sql_and_values(
@@ -3005,8 +3008,10 @@ mod tests {
             crate::settings::catalog::SETTINGS_CATALOG.len(),
             // +locale.currency_code, +ram.fmeca_rpn_critical_threshold, +wo.reopen_window_days,
             // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month,
-            // +inventory.count_critical_variance, +inventory.reconciliation_drift_break (migration 232)
-            22,
+            // +inventory.count_critical_variance, +inventory.reconciliation_drift_break (migration 232),
+            // -inventory.count_critical_variance, +inventory.count_four_eyes_value_threshold,
+            // +inventory.count_four_eyes_percent_threshold (migration 259, not seeded)
+            23,
             "Default settings count changed; update migration and verification checks"
         );
     }

@@ -19,6 +19,7 @@ import type {
   InventoryIssueInput,
   InventoryCountLine,
   InventoryCountSession,
+  InventoryCountTolerance,
   InventoryReconciliationFinding,
   InventoryReconciliationRun,
   InventoryStateEvent,
@@ -981,7 +982,7 @@ const InventoryCountSessionSchema = z.object({
   warehouse_id: z.number(),
   location_id: z.number().nullable(),
   status: z.string(),
-  critical_abs_threshold: z.number(),
+  critical_abs_threshold: z.number().nullable(),
   submitted_by_id: z.number().nullable(),
   submitted_at: z.string().nullable(),
   posted_by_id: z.number().nullable(),
@@ -1013,11 +1014,19 @@ const InventoryCountLineSchema = z.object({
   approved_by_name: z.string().nullable(),
   approved_at: z.string().nullable(),
   approval_note: z.string().nullable(),
+  counted_by_id: z.number().nullable(),
+  counted_by_name: z.string().nullable(),
+  self_approved: z.number(),
   posted_transaction_id: z.number().nullable(),
   reversed_transaction_id: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const InventoryCountToleranceSchema = z.object({
+  value_threshold: z.number().nullable(),
+  percent_threshold: z.number().nullable(),
 });
 
 /** Count line with the display name of the reviewer who approved its variance. */
@@ -1537,6 +1546,11 @@ export function upsertInventoryCountLine(
   input: UpsertInventoryCountLineInput,
 ): Promise<InventoryCountLine> {
   return invokeParsed("upsert_inventory_count_line", { input }, InventoryCountLineSchema);
+}
+
+/** The plant's four-eyes tolerance of a count variance (blank thresholds are null). */
+export function getInventoryCountTolerance(): Promise<InventoryCountTolerance> {
+  return invokeParsed("get_inventory_count_tolerance", {}, InventoryCountToleranceSchema);
 }
 
 export function approveInventoryCountLine(

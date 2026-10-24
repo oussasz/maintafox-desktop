@@ -271,6 +271,37 @@ pub async fn set_setting_recorded(
     let new_hash = sha256_hex(value_json);
     let now = chrono::Utc::now().to_rfc3339();
     let (category, risk) = catalog::definition(key).map_or(("general", "low"), |d| (d.category, d.risk));
+    // An optional setting set blank (`null`) has no row: blank is never stored as a value.
+    let blank = value_json.trim() == "null"
+        && catalog::definition(key).is_some_and(|d| matches!(d.kind, catalog::SettingKind::OptionalDecimal { .. }));
+    if blank {
+        if old_value.is_none() {
+            // Already blank: nothing changes, nothing to record.
+            return Ok(());
+        }
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [key.into(), scope.into()],
+        ))
+        .await?;
+        insert_change_event(
+            &tx,
+            key,
+            change_summary,
+            old_value.as_deref(),
+            None,
+            old_hash,
+            None,
+            changed_by_id.map(i64::from),
+            &now,
+            required_step_up,
+        )
+        .await?;
+        tx.commit().await?;
+        tracing::info!(setting_key = key, scope = scope, actor = ?changed_by_id, "setting cleared");
+        return Ok(());
+    }
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -420,6 +451,7 @@ pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u6
         .filter(|k| catalog::is_plant_parameter(k))
         .collect();
     allowed.extend_from_slice(catalog::POLICY_DOMAINS_WITH_VALUE_HISTORY);
+    allowed.extend_from_slice(catalog::RETIRED_PLANT_PARAMETERS);
     let placeholders = vec!["?"; allowed.len()].join(",");
     let sql = format!(
         "UPDATE settings_change_events SET old_value_json = NULL, new_value_json = NULL \
@@ -1243,7 +1275,9 @@ mod tests {
         let audit_count = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM settings_change_events;".to_string(),
+                // Migrations write their own history rows (the retired count tolerance, migration 259).
+                "SELECT COUNT(*) AS cnt FROM settings_change_events WHERE setting_key_or_domain = 'appearance.color_mode';"
+                    .to_string(),
             ))
             .await
             .expect("audit count query should succeed")

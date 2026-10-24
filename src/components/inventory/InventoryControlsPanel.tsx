@@ -545,16 +545,18 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   tone={toneOf(COUNT_SESSION_STATUS_TONE, selectedSession.status)}
                   dot
                 />
-                <span
-                  className="text-xs text-text-secondary"
-                  data-testid="inv-cc-session-threshold"
-                >
-                  {t("controls.sessions.criticalThresholdOfSession", {
-                    value: formatNumber(selectedSession.critical_abs_threshold, {
-                      maximumFractionDigits: 6,
-                    }),
-                  })}
-                </span>
+                {selectedSession.critical_abs_threshold != null ? (
+                  <span
+                    className="text-xs text-text-secondary"
+                    data-testid="inv-cc-session-threshold"
+                  >
+                    {t("controls.sessions.criticalThresholdOfSession", {
+                      value: formatNumber(selectedSession.critical_abs_threshold, {
+                        maximumFractionDigits: 6,
+                      }),
+                    })}
+                  </span>
+                ) : null}
                 {selectedSession.status === "draft" ? (
                   <Button
                     variant="outline"

@@ -1118,7 +1118,15 @@ export interface SettingDefinitionView {
   key: string;
   category: string;
   scope: string;
-  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
+  kind:
+    | "choice"
+    | "integer"
+    | "decimal"
+    | "optional_decimal"
+    | "currency"
+    | "month"
+    | "document_header"
+    | "module";
   options: string[];
   /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: number | null;
@@ -3349,8 +3357,11 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
-  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
-  critical_abs_threshold: number;
+  /**
+   * Critical variance (a quantity) the session was opened with before the four-eyes tolerance
+   * (migration 259): history only; null for sessions opened since.
+   */
+  critical_abs_threshold: number | null;
   submitted_by_id: number | null;
   submitted_at: string | null;
   posted_by_id: number | null;
@@ -3376,16 +3387,28 @@ export interface InventoryCountLine {
   counted_qty: number;
   variance_qty: number;
   variance_reason_code: string | null;
+  /** 1: the variance is above the plant's four-eyes tolerance (judged when it was entered). */
   is_critical: number;
   approval_required: number;
   approved_by_id: number | null;
   approved_at: string | null;
   approval_note: string | null;
+  /** Who entered the counted quantity (null for lines entered before the four-eyes update). */
+  counted_by_id: number | null;
+  counted_by_name: string | null;
+  /** 1: approved by its counter above the tolerance under the site's opt-out ("auto-approbation"). */
+  self_approved: number;
   posted_transaction_id: number | null;
   reversed_transaction_id: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
+}
+
+/** The plant's four-eyes tolerance of a count variance (Settings › Inventory); null = blank. */
+export interface InventoryCountTolerance {
+  value_threshold: number | null;
+  percent_threshold: number | null;
 }
 
 export interface CreateInventoryCountSessionInput {

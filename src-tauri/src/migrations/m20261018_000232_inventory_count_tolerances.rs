@@ -81,11 +81,18 @@ mod tests {
 
     use crate::migrations::Migrator;
 
-    /// The seeded values equal the catalog's shipped values, a plant's own value is kept, and a
-    /// second run changes nothing.
+    /// The seeded values equal the catalog's shipped values (a key retired since is out of the
+    /// catalog, migration 259), a plant's own value is kept, and a second run changes nothing.
     #[tokio::test]
     async fn seeds_the_screen_values_and_keeps_a_plant_value() {
         for (key, value) in super::SEEDED {
+            if crate::settings::catalog::RETIRED_PLANT_PARAMETERS.contains(key) {
+                assert!(
+                    crate::settings::catalog::definition(key).is_none(),
+                    "{key}: retired, out of the catalog"
+                );
+                continue;
+            }
             let def = crate::settings::catalog::definition(key).expect("in the catalog");
             assert_eq!(def.shipped_value_json, *value, "{key}: migration and catalog agree");
         }
@@ -107,9 +114,10 @@ mod tests {
         ))
         .await
         .expect("plant value");
-        Migrator::up(&db, None).await.expect("232");
+        // 232 alone (259 later retires the count tolerance).
+        Migrator::up(&db, Some(1)).await.expect("232");
         Migrator::down(&db, Some(1)).await.expect("down 232");
-        Migrator::up(&db, None).await.expect("232 again");
+        Migrator::up(&db, Some(1)).await.expect("232 again");
 
         let value = |key: &'static str| {
             let db = &db;

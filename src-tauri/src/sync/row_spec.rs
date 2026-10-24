@@ -1264,7 +1264,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("reversed_by_id", USER),
         ],
     ),
-    spec("inventory_count_lines", &[r("approved_by_id", USER)]),
+    spec(
+        "inventory_count_lines",
+        &[r("approved_by_id", USER), r("counted_by_id", USER)],
+    ),
     spec(
         "inventory_document_links",
         &[

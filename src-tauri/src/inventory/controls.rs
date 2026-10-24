@@ -26,9 +26,6 @@ pub const REFUSED_COUNT_STATUS_BY_POSTING_ONLY: &str = "COUNT_SESSION_STATUS_POS
 /// reviewer's approval has it.
 pub const REFUSED_COUNT_LINE_NOT_APPROVED: &str = "COUNT_LINE_NOT_APPROVED";
 
-/// Tenant setting (catalog, decimal): a counted line whose variance is at least this much is
-/// critical. Each count session keeps the value it was opened with.
-pub const SETTING_COUNT_CRITICAL_VARIANCE: &str = "inventory.count_critical_variance";
 /// Tenant setting (catalog, decimal): a ledger / balance gap of at least this much is a
 /// reconciliation break.
 pub const SETTING_RECONCILIATION_DRIFT_BREAK: &str = "inventory.reconciliation_drift_break";
@@ -275,18 +272,17 @@ pub async fn create_count_session(
     db: &DatabaseConnection,
     input: CreateInventoryCountSessionInput,
 ) -> AppResult<InventoryCountSession> {
-    // The tolerance is the tenant setting (Settings > Inventory), kept on the session.
-    let critical_abs_threshold = crate::settings::catalog::decimal_setting(db, SETTING_COUNT_CRITICAL_VARIANCE).await?;
+    // A variance is judged against the plant's four-eyes tolerance when it is entered
+    // (`count_four_eyes`); the session records no tolerance of its own (migration 259).
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
             (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id, created_at, updated_at)
-         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)",
+         VALUES (?, ?, ?, 'draft', NULL, ?, ?, ?)",
         [
             next_doc("CC").into(),
             input.warehouse_id.into(),
             input.location_id.map_or(Value::BigInt(None), Value::from),
-            critical_abs_threshold.into(),
             input.actor_id.map_or(Value::BigInt(None), Value::from),
             now_iso().into(),
             now_iso().into(),
@@ -431,7 +427,12 @@ pub async fn upsert_count_line(
     if let Some(code) = input.variance_reason_code.as_deref() {
         ensure_lookup_variance_reason_active(&tx, code).await?;
     }
-    let is_critical = i64::from(variance_qty.abs() >= session.critical_abs_threshold);
+    // Above the four-eyes tolerance ("critique"), judged now, with the stock the variance is set
+    // against; the thresholds used go to the line's audit.
+    let verdict =
+        crate::inventory::count_four_eyes::evaluate(&tx, input.article_id, input.location_id, variance_qty, system_qty)
+            .await?;
+    let is_critical = i64::from(verdict.above_tolerance);
     let approval_required = i64::from(variance_qty.abs() > f64::EPSILON);
     // The count's mark is taken now, with the stock on record its variance is set against: the
     // counts this PC knows at this moment, not at posting, so a count received in between still
@@ -465,8 +466,8 @@ pub async fn upsert_count_line(
             DbBackend::Sqlite,
             "UPDATE inventory_count_lines SET
                  counted_qty = ?, system_qty = ?, variance_qty = ?, variance_reason_code = ?,
-                 is_critical = ?, approval_required = ?,
-                 approved_by_id = NULL, approved_at = NULL, approval_note = NULL,
+                 is_critical = ?, approval_required = ?, counted_by_id = ?,
+                 approved_by_id = NULL, approved_at = NULL, approval_note = NULL, self_approved = 0,
                  count_replica_id = ?, count_follows_json = ?, count_path = ?,
                  row_version = row_version + 1, updated_at = ?
              WHERE session_id = ? AND article_id = ? AND location_id = ? AND row_version = ?",
@@ -480,6 +481,7 @@ pub async fn upsert_count_line(
                     .map_or(Value::String(None), Value::from),
                 is_critical.into(),
                 approval_required.into(),
+                input.actor_id.map_or(Value::BigInt(None), Value::from),
                 replica_id.into(),
                 follows_json.into(),
                 crate::inventory::negative_stock::COUNT_PATH_COUNT_SESSION.into(),
@@ -496,9 +498,9 @@ pub async fn upsert_count_line(
             DbBackend::Sqlite,
             "INSERT INTO inventory_count_lines
                 (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
-                 variance_reason_code, is_critical, approval_required, created_at, updated_at,
+                 variance_reason_code, is_critical, approval_required, counted_by_id, created_at, updated_at,
                  count_replica_id, count_follows_json, count_path)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_id, article_id, location_id) DO NOTHING",
             [
                 input.session_id.into(),
@@ -514,6 +516,7 @@ pub async fn upsert_count_line(
                     .map_or(Value::String(None), Value::from),
                 is_critical.into(),
                 approval_required.into(),
+                input.actor_id.map_or(Value::BigInt(None), Value::from),
                 now.clone().into(),
                 now.clone().into(),
                 replica_id.into(),
@@ -526,6 +529,31 @@ pub async fn upsert_count_line(
     if written.rows_affected() != 1 {
         return Err(count_line_changed_elsewhere());
     }
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: "inventory.count.line_entered".to_string(),
+            target_type: Some("inventory_count_session".to_string()),
+            target_id: Some(session.id.to_string()),
+            actor_id: input.actor_id,
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "Counted quantity entered",
+                "count_session_code": session.session_code,
+                "article_id": input.article_id,
+                "location_id": input.location_id,
+                "system_qty": system_qty,
+                "counted_qty": input.counted_qty,
+                "variance_qty": variance_qty,
+                "four_eyes_tolerance": verdict.audit_json(),
+            })),
+        },
+    )
+    .await?;
     tx.commit().await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -564,20 +592,64 @@ pub async fn approve_count_line(
             "Approval is not required for zero variance lines.".to_string(),
         ]));
     }
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inventory_count_lines
-         SET approved_by_id = ?, approved_at = ?, approval_note = ?, row_version = row_version + 1, updated_at = ?
-         WHERE id = ?",
-        [
-            input.reviewer_id.into(),
-            now_iso().into(),
-            input.reviewer_evidence.into(),
-            now_iso().into(),
-            input.line_id.into(),
-        ],
-    ))
+    let tx = db.begin().await?;
+    // Above the four-eyes tolerance, someone other than the counter approves, unless the site
+    // opted out (then it is an "auto-approbation", flagged).
+    let self_approved = crate::inventory::count_four_eyes::check_approval(
+        &tx,
+        line.is_critical == 1,
+        line.counted_by_id,
+        input.reviewer_id,
+    )
     .await?;
+    let written = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines
+             SET approved_by_id = ?, approved_at = ?, approval_note = ?, self_approved = ?,
+                 row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND row_version = ?",
+            [
+                input.reviewer_id.into(),
+                now_iso().into(),
+                input.reviewer_evidence.trim().into(),
+                i64::from(self_approved).into(),
+                now_iso().into(),
+                input.line_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if written.rows_affected() != 1 {
+        return Err(count_line_changed_elsewhere());
+    }
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: "inventory.count.line_approved".to_string(),
+            target_type: Some("inventory_count_session".to_string()),
+            target_id: Some(line.session_id.to_string()),
+            actor_id: Some(input.reviewer_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": if self_approved { "Count variance self-approved (site opt-out)" } else { "Count variance approved" },
+                "count_line_id": line.id,
+                "article_id": line.article_id,
+                "location_id": line.location_id,
+                "variance_qty": line.variance_qty,
+                "above_tolerance": line.is_critical == 1,
+                "counted_by_id": line.counted_by_id,
+                "self_approved": self_approved,
+                "note": input.reviewer_evidence.trim(),
+            })),
+        },
+    )
+    .await?;
+    tx.commit().await?;
     get_count_line(db, input.line_id).await
 }
 
@@ -929,7 +1001,9 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     if has_variance {
         ensure_lookup_variance_reason_active(tx, count.variance_reason_code).await?;
     }
-    let critical_abs_threshold = crate::settings::catalog::decimal_setting(tx, SETTING_COUNT_CRITICAL_VARIANCE).await?;
+    let verdict =
+        crate::inventory::count_four_eyes::evaluate(tx, count.article_id, count.location_id, variance_qty, system_qty)
+            .await?;
     let now = now_iso();
     let session_code = next_doc("CC");
     tx.execute(Statement::from_sql_and_values(
@@ -937,12 +1011,11 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         "INSERT INTO inventory_count_sessions
             (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
              submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, 'posted', NULL, ?, ?, ?, ?, ?, ?, ?)",
         [
             session_code.clone().into(),
             warehouse_id.into(),
             count.location_id.into(),
-            critical_abs_threshold.into(),
             count.actor_id.into(),
             count.actor_id.into(),
             now.clone().into(),
@@ -959,8 +1032,8 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
              variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
-             created_at, updated_at, count_replica_id, count_follows_json, count_path)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             counted_by_id, self_approved, created_at, updated_at, count_replica_id, count_follows_json, count_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             session_id.into(),
             count.article_id.into(),
@@ -974,11 +1047,14 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
             } else {
                 Value::String(None)
             },
-            i64::from(variance_qty.abs() >= critical_abs_threshold).into(),
+            i64::from(verdict.above_tolerance).into(),
             i64::from(has_variance).into(),
             count.actor_id.into(),
             now.clone().into(),
             count.evidence.into(),
+            count.actor_id.into(),
+            // The person counting approves at once: above the tolerance that is a self-approval.
+            i64::from(verdict.above_tolerance).into(),
             now.clone().into(),
             now.clone().into(),
             count.mark.0.into(),
@@ -1168,11 +1244,13 @@ pub async fn list_count_lines(db: &DatabaseConnection, session_id: i64) -> AppRe
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
                     cl.is_critical, cl.approval_required, cl.approved_by_id,
                     COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
+                    cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
              LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
+             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
              WHERE cl.session_id = ?
              ORDER BY cl.id ASC",
             [session_id.into()],
@@ -1224,11 +1302,13 @@ async fn get_count_line(db: &DatabaseConnection, line_id: i64) -> AppResult<Inve
                     sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
                     cl.is_critical, cl.approval_required, cl.approved_by_id,
                     COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
+                    cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
              LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
+             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
              WHERE cl.id = ?",
             [line_id.into()],
         ))
@@ -1298,6 +1378,9 @@ fn map_count_line(row: sea_orm::QueryResult) -> AppResult<InventoryCountLine> {
         approved_by_name: row.try_get("", "approved_by_name").ok().flatten(),
         approved_at: row.try_get("", "approved_at")?,
         approval_note: row.try_get("", "approval_note")?,
+        counted_by_id: row.try_get("", "counted_by_id")?,
+        counted_by_name: row.try_get("", "counted_by_name").ok().flatten(),
+        self_approved: row.try_get("", "self_approved")?,
         posted_transaction_id: row.try_get("", "posted_transaction_id")?,
         reversed_transaction_id: row.try_get("", "reversed_transaction_id")?,
         row_version: row.try_get("", "row_version")?,
