@@ -2429,10 +2429,12 @@ pub(crate) async fn wo_children_with(
 /// wait. A state already held here (same clearing) passes. A different complete clearing received
 /// over one recorded here is judged the same way; a removed or partial one is refused.
 ///
-/// Both origins are written once, at conversion: a received row that blanks or changes the rule, or
-/// turns the safety origin off, is refused. A work order new here sent by a PC without migration 255
-/// (no `permit_from_safety_di` in the row) is judged with the safety flag of its source request here,
-/// and gets that origin when it is applied (`sync::apply_hooks::after_upsert`).
+/// Both origins are written once, when the work order is created: a received row that blanks or
+/// changes the rule, or turns the safety origin off, is refused. A work order new here that a plant
+/// rule flags here but that arrives without a rule is refused (`received_without_its_rule`). A work
+/// order new here sent by a PC without migration 255 (no `permit_from_safety_di` in the row) is
+/// judged with the safety flag of its source request here, and gets that origin when it is applied
+/// (`sync::apply_hooks::after_upsert`).
 pub(crate) async fn inbound_permit_rule_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2442,8 +2444,14 @@ pub(crate) async fn inbound_permit_rule_check(
     let local = local_wire(conn, "work_orders", entity_sync_id).await?;
     let wo = overlay(local.as_ref(), received);
     let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
-    // The rule trace is written once, at conversion, and never changes (`di::conversion`): a received
-    // row that blanks or changes it is refused, and the local trace is the one judged.
+    if local.is_none() && field(&wo, "permit_rule_code").is_none() {
+        if let Some(verdict) = received_without_its_rule(conn, &wo, &code).await? {
+            return Ok(Some(verdict));
+        }
+    }
+    // The rule trace is written once, at creation, and never changes (`wo::queries::
+    // create_work_order_in`, `di::conversion`): a received row that blanks or changes it is refused,
+    // and the local trace is the one judged.
     if let Some(l) = local.as_ref().filter(|l| field(l, "permit_rule_code").is_some()) {
         let trace = |p: &Payload| {
             (
@@ -2679,6 +2687,68 @@ pub(crate) async fn inbound_permit_rule_check(
 
 /// The column that records a permit requirement carried from a request flagged "sécurité".
 pub(crate) const SAFETY_ORIGIN: &str = "permit_from_safety_di";
+
+/// A work order new here that arrives without a plant rule (`permit_rule_code` empty): the plant's
+/// rules are applied here to its equipment and work type, as at creation (owner decision D2 (a),
+/// audit finding AU-04, `permit::requirement_rules::evaluate`). When one matches, the work order was
+/// created where that rule was not held (yet): it is refused (`WO_PERMIT_RULE_MISSING`), never
+/// stored without the rule's protection, and the sync centre shows it. A rule's flag cannot be
+/// written here on arrival instead: it is written once, at creation, on the PC that creates the work
+/// order, and the next row from that PC would carry no rule again.
+///
+/// Except a work order already started with its permit required: its start was judged on the PC
+/// that started it, with the permit required, and the requirement is frozen once execution started.
+/// Plant history received by a snapshot (`sync::materialize::applying_snapshot_row`) is not judged,
+/// like the close-out gates (AU-99). Its status, equipment or work type not applied here yet: it
+/// waits.
+async fn received_without_its_rule(
+    conn: &impl ConnectionTrait,
+    wo: &Payload,
+    code: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    if crate::sync::materialize::applying_snapshot_row() {
+        return Ok(None);
+    }
+    let started = match field(wo, "status_sync_id") {
+        Some(status_sync) => {
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            !crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str())
+                || time(wo, "actual_start").is_some()
+        }
+        None => time(wo, "actual_start").is_some(),
+    };
+    if started && flag(wo, "requires_permit") {
+        return Ok(None);
+    }
+    let Some(type_sync) = field(wo, "type_sync_id") else {
+        return Ok(None);
+    };
+    let Some(type_id) = local_id(conn, "reference_values", type_sync).await? else {
+        return wait(format!(
+            "work order {code}: its work type {type_sync} is not applied yet"
+        ));
+    };
+    let equipment = match field(wo, "equipment_sync_id") {
+        Some(eq_sync) => match local_id(conn, "equipment", eq_sync).await? {
+            Some(id) => Some(id),
+            None => return wait(format!("work order {code}: its equipment {eq_sync} is not applied yet")),
+        },
+        None => None,
+    };
+    let outcome = crate::permit::requirement_rules::evaluate(conn, equipment, type_id, false).await?;
+    let Some(rule) = outcome.rule_code else {
+        return Ok(None);
+    };
+    conflict(
+        "WO_PERMIT_RULE_MISSING",
+        format!(
+            "work order {code}: the plant rule {rule} requires a permit for its equipment and work here, and it \
+             arrived without that rule"
+        ),
+    )
+}
 
 /// Whether the source request of a received work order (`source_di_sync_id`) is flagged "sécurité"
 /// here: `Some(false)` when it has none, `None` when it is not applied here yet.

@@ -44,6 +44,9 @@
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
 //!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
 //!   migration 255: the right at its site), and that origin is never turned off by a received row;
+//!   a work order new here that a plant rule flags here (its equipment and work type) but that
+//!   arrives without the rule is refused, unless it started with its permit required
+//!   (`WO_PERMIT_RULE_MISSING`, owner decision D2 (a), audit finding AU-04);
 //! - `work_orders` / `intervention_requests`: after the apply, a request flagged "sécurité" here
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a

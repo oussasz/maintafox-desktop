@@ -6617,3 +6617,162 @@ async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_ga
     assert_eq!(conflicts, 0);
     assert_eq!(text(&db, &applied_status).await.as_deref(), Some("completed"));
 }
+
+// ── AU-04: plant permit rules on every work-order origin ──────────────────────────────────────
+
+/// Owner decision D2 (a), audit finding AU-04: a work order new here that a plant rule held here
+/// flags (its equipment and work type) but that arrives without the rule is refused, never stored
+/// without the rule's protection; unless it started with its permit required. Its equipment not
+/// applied yet: it waits.
+#[tokio::test]
+async fn a_new_work_order_without_the_rule_held_here_is_refused() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    // The rule is held here; the PC that created the work orders below did not hold it.
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let mut statuses = std::collections::HashMap::new();
+    for status in ["planning", "on_hold"] {
+        let sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM work_order_statuses WHERE code = '{status}'"),
+        )
+        .await
+        .expect("status sync id");
+        statuses.insert(status, sync);
+    }
+    let new_row = |code: &str, status: &str, requires: i64, changes: &[(&str, Value)]| {
+        let p = with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("status_sync_id", json!(statuses[status])),
+                ("requires_permit", json!(requires)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", Value::Null),
+            ],
+        );
+        with(p, changes)
+    };
+
+    // Not started, without the permit: refused.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-missing-1",
+        &new_row("OT-RM-1", "planning", 0, &[]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_MISSING"), "{outcome:?}");
+    // Not started, the permit ticked by hand: refused too (the rule's protection would be missing).
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-missing-2",
+        &new_row("OT-RM-2", "planning", 1, &[]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_MISSING"), "{outcome:?}");
+    // Started without the permit: refused.
+    let started = [("actual_start", json!("2026-10-01T08:00:00Z"))];
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-missing-3",
+        &new_row("OT-RM-3", "on_hold", 0, &started),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_MISSING"), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM work_orders WHERE code IN ('OT-RM-1', 'OT-RM-2', 'OT-RM-3')"
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "nothing stored"
+    );
+
+    // Carrying the rule: applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-carried",
+        &new_row(
+            "OT-RM-4",
+            "planning",
+            1,
+            &[
+                ("permit_rule_code", json!("CORRECTIVE_LOTO")),
+                ("permit_rule_permit_type", json!("loto")),
+            ],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Started with its permit required: its start was judged where it started; applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-started",
+        &new_row("OT-RM-5", "on_hold", 1, &started),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    // Its equipment not applied here yet: it waits.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-waits",
+        &new_row(
+            "OT-RM-6",
+            "planning",
+            0,
+            &[("equipment_sync_id", json!("eq-sync-not-here-yet"))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+
+    // A rule that does not match its work type: applied as sent.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-other-type",
+        &new_row(
+            "OT-RM-7",
+            "planning",
+            0,
+            &[("type_sync_id", template_type_other(&db).await)],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// The sync id of a work type other than "corrective".
+async fn template_type_other(db: &DatabaseConnection) -> Value {
+    json!(text(
+        db,
+        "SELECT v.entity_sync_id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id \
+         WHERE d.code = 'WORK.ORDER_TYPES' AND s.status = 'published' AND v.code = 'preventive'"
+    )
+    .await
+    .expect("preventive type"))
+}
