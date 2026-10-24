@@ -4669,6 +4669,11 @@ export interface PermitFlagOutcome {
   safety_flag: boolean;
   /** Published rules that do not read (ignored, to fix in Données de référence). */
   unreadable_rule_codes: string[];
+  /**
+   * Published rules that read but name a code not held here: applied as written (a match flags
+   * the work order), to fix in Données de référence.
+   */
+  unresolved_rule_codes?: string[];
 }
 
 export interface WoConversionResult {

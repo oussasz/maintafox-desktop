@@ -151,8 +151,10 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_MANDATORY_TASK_REMOVED",
   "PERMIT_TYPE_REQUIRED_TO_START",
   "WO_PERMIT_RULE_CHANGED",
-  // A work order new here that a plant rule flags here, received without the rule (AU-04).
-  "WO_PERMIT_RULE_MISSING",
+  // A received inspection finding that breaks the decision rules (AU-72).
+  "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
+  "INSP_ANOMALY_LINK_CHANGED",
+  "INSP_ANOMALY_DECISION_INVALID",
   "PERMIT_THREE_PERSON_REMOVAL",
   // A lock taken off, forced removal and the worker told (migration 249).
   "PERMIT_LOCK_REMOVAL_INVALID",

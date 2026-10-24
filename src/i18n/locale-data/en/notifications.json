@@ -304,6 +304,10 @@
       "title": "Forced lock removal: {{point}} (permit {{permit}})",
       "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
     },
+    "wo_permit_rule_missing_on_arrival": {
+      "title": "Work order {{code}} received started without permit rule {{rule}}",
+      "body": "Work order {{code}} was started on another PC that did not apply plant rule {{rule}}: a {{permit_type}} permit is required for its equipment and work. Check how this work was protected."
+    },
     "pm_concurrent_versions": {
       "title": "Two concurrent versions of plan {{plan}} — check the version in force",
       "body": "{{title}}: v{{version}} ({{version_status}}, created {{version_created_at}}) and v{{other_version}} ({{other_status}}, created {{other_created_at}}) were created on two PCs before they synchronised, both numbered {{stored_number}}. Every PC shows them as v{{version}} and v{{other_version}}; the version in force is the published one (PM › plan)."

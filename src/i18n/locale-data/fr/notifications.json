@@ -304,6 +304,10 @@
       "title": "Retrait forcé d’un cadenas : {{point}} (permis {{permit}})",
       "body": "{{authorised_by}} a autorisé {{removed_by}} à retirer le cadenas de {{worker}}, absent, le {{removed_at}} — motif : {{reason}}. Le travailleur doit en être informé (Permis de travail › retraits forcés à suivre)."
     },
+    "wo_permit_rule_missing_on_arrival": {
+      "title": "OT {{code}} reçu démarré sans la règle de permis {{rule}}",
+      "body": "L'OT {{code}} a été démarré sur un autre poste qui n'appliquait pas la règle {{rule}} de l'usine : un permis {{permit_type}} est exigé pour son équipement et son travail. Vérifiez comment ce travail a été protégé."
+    },
     "pm_concurrent_versions": {
       "title": "Deux versions concurrentes du plan {{plan}} — vérifier la version en vigueur",
       "body": "{{title}} : v{{version}} ({{version_status}}, créée le {{version_created_at}}) et v{{other_version}} ({{other_status}}, créée le {{other_created_at}}) ont été créées sur deux PC avant leur synchronisation, toutes deux numérotées {{stored_number}}. Chaque PC les affiche v{{version}} et v{{other_version}} ; la version en vigueur est la version publiée (Préventif › plan)."
