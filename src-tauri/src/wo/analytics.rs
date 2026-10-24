@@ -234,7 +234,7 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
 
     if status_code != "closed" && !is_technically_verified {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le snapshot analytique n'est disponible que pour les OT clotures ou verifies \
+            "GATE_WO_ANALYTICS_STATUS:status={status_code}: Le snapshot analytique n'est disponible que pour les OT clotures ou verifies \
              techniquement. Statut actuel : '{status_code}'."
         )]));
     }

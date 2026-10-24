@@ -780,16 +780,16 @@ pub async fn resolve_work_order_type_id_by_code(conn: &impl ConnectionTrait, typ
     let normalized = type_code.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le type d'OT est obligatoire (type_code).".into(),
+            "GATE_WO_TYPE_REQUIRED: Le type d'OT est obligatoire (type_code).".into(),
         ]));
     }
     let found = type_by(conn, "LOWER(TRIM(t.code)) = ?", normalized.clone().into()).await?;
     match found {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT introuvable (type_code='{normalized}')."
+            "GATE_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_code='{normalized}')."
         )])),
         Some(t) if !t.is_active => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT inactif (type_code='{normalized}')."
+            "GATE_WO_TYPE_INACTIVE: Type d'OT inactif (type_code='{normalized}')."
         )])),
         Some(t) => Ok(t.id),
     }
@@ -799,10 +799,10 @@ pub async fn resolve_work_order_type_id_by_code(conn: &impl ConnectionTrait, typ
 pub async fn resolve_work_order_type_code_by_id(conn: &impl ConnectionTrait, type_id: i64) -> AppResult<String> {
     match type_by(conn, "t.id = ?", type_id.into()).await? {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT introuvable (type_id={type_id})."
+            "GATE_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_id={type_id})."
         )])),
         Some(t) if !t.is_active => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT inactif (type_id={type_id})."
+            "GATE_WO_TYPE_INACTIVE: Type d'OT inactif (type_id={type_id})."
         )])),
         Some(t) => Ok(t.code),
     }

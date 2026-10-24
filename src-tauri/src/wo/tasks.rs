@@ -250,12 +250,12 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
     // `generated` reserved for PM — reject client writes for now.
     if origin == "generated" {
         return Err(AppError::ValidationFailed(vec![
-            "origin 'generated' est réservé à la génération PM.".into(),
+            "GATE_WO_TASK_ORIGIN_RESERVED: origin 'generated' est réservé à la génération PM.".into(),
         ]));
     }
     if !matches!(origin.as_str(), "planned" | "execution_added") {
         return Err(AppError::ValidationFailed(vec![
-            "origin invalide (planned|execution_added).".into(),
+            "GATE_WO_ORIGIN_INVALID: origin invalide (planned|execution_added).".into(),
         ]));
     }
 
@@ -264,14 +264,14 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         ("in_progress" | "on_hold", "execution_added") => {}
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Impossible d'ajouter une tâche ({origin}) au statut '{status_code}'."
+                "GATE_WO_TASK_ADD_STATUS:origin={origin},status={status_code}: Impossible d'ajouter une tâche ({origin}) au statut '{status_code}'."
             )]));
         }
     }
 
     if input.task_description.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La description de la tâche est obligatoire.".to_string(),
+            "GATE_WO_TASK_DESCRIPTION_REQUIRED: La description de la tâche est obligatoire.".to_string(),
         ]));
     }
 

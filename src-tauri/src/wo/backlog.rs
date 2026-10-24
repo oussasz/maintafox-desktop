@@ -213,12 +213,13 @@ pub async fn get_wo_backlog_heatmap_in_scope(
     };
     if !(1..=MAX_WEEKS).contains(&input.weeks) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "weeks must be between 1 and {MAX_WEEKS}."
+            "GATE_WO_BACKLOG_WEEKS_RANGE:max={MAX_WEEKS}: weeks must be between 1 and {MAX_WEEKS}."
         )]));
     }
     let start = match input.start_date.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(raw) => NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-            .map_err(|_| AppError::ValidationFailed(vec!["start_date must be YYYY-MM-DD.".into()]))?,
+        Some(raw) => NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
+            AppError::ValidationFailed(vec!["GATE_WO_BACKLOG_START_DATE: start_date must be YYYY-MM-DD.".into()])
+        })?,
         None => Utc::now().date_naive(),
     };
     let days: Vec<NaiveDate> = (0..input.weeks * 7).map(|i| start + Duration::days(i)).collect();

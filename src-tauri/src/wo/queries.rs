@@ -271,7 +271,7 @@ pub async fn list_work_orders_in_scope(
             for st in states {
                 if crate::wo::lifecycle::LifecycleState::try_from_str(st).is_none() {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Unknown lifecycle state '{st}'."
+                        "GATE_WO_LIFECYCLE_STATE_UNKNOWN: Unknown lifecycle state '{st}'."
                     )]));
                 }
             }
@@ -545,7 +545,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         .await?;
     if creator_ok.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Utilisateur introuvable (creator_id={}).",
+            "GATE_WO_CREATOR_UNKNOWN:creator_id={0}: Utilisateur introuvable (creator_id={0}).",
             input.creator_id
         )]));
     }
@@ -567,18 +567,18 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             }
         } else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Équipement introuvable ou supprimé (equipment_id={eid})."
+                "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={eid}: Équipement introuvable ou supprimé (equipment_id={eid})."
             )]));
         }
     }
     if equipment_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
+            "GATE_WO_EQUIPMENT_REQUIRED: equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
         ]));
     }
     if entity_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+            "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
              Affectez l'équipement à une entité organisationnelle avant de créer un OT."
                 .into(),
         ]));
@@ -593,7 +593,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if node_ok.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
+                "GATE_WO_ENTITY_UNKNOWN:entity_id={nid}: Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
             )]));
         }
     }
@@ -624,7 +624,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         let Some(di_row) = di_row else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "DI introuvable (source_di_id={di_id})."
+                "GATE_WO_DI_UNKNOWN:di_id={di_id}: DI introuvable (source_di_id={di_id})."
             )]));
         };
         from_safety_di = di_row.try_get::<i64>("", "safety_flag")? != 0;
@@ -646,7 +646,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
             let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
             return Err(AppError::ValidationFailed(vec![format!(
-                "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
+                "GATE_WO_DI_ALREADY_CONVERTED:wo_id={existing_id},wo_code={existing_code}: Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
             )]));
         }
     }
@@ -661,7 +661,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if a_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Anomalie d'inspection introuvable (source_inspection_anomaly_id={aid})."
+                "GATE_WO_ANOMALY_UNKNOWN:anomaly_id={aid}: Anomalie d'inspection introuvable (source_inspection_anomaly_id={aid})."
             )]));
         }
     }
@@ -676,7 +676,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if d_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Diagramme Ishikawa introuvable (source_ram_ishikawa_diagram_id={did})."
+                "GATE_WO_ISHIKAWA_UNKNOWN:diagram_id={did}: Diagramme Ishikawa introuvable (source_ram_ishikawa_diagram_id={did})."
             )]));
         }
     }
@@ -806,9 +806,13 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un code OT en doublon a été généré. Veuillez réessayer.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_WO_CODE_DUPLICATE: Un code OT en doublon a été généré. Veuillez réessayer.".into(),
+            ])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec![format!("Référence invalide (contrainte FK). Détail SQLite: {e}")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_WO_REFERENCE_INVALID: Référence invalide (contrainte FK). Détail SQLite: {e}"
+            )])
         } else {
             AppError::Database(e)
         }
@@ -838,7 +842,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
     .map_err(|e| {
         if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![format!(
-                "Profil de clôture invalide (closeout_validation_profile_id). Détail: {e}"
+                "GATE_WO_CLOSEOUT_PROFILE_INVALID: Profil de clôture invalide (closeout_validation_profile_id). Détail: {e}"
             )])
         } else {
             AppError::Database(e)
@@ -900,7 +904,7 @@ async fn refuse_equipment_change_with_old_items(
     let mut errors = Vec::new();
     if location_changes && reservations > 0 {
         errors.push(format!(
-            "Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs (le magasin appartient à son site)."
+            "GATE_WO_SITE_MOVE_RESERVATIONS:count={reservations}: Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs (le magasin appartient à son site)."
         ));
     }
     if permits > 0 {
@@ -942,7 +946,7 @@ pub async fn update_wo_draft_fields(
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
     if status_code != "draft" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Les champs ne peuvent être modifiés qu'au statut 'draft'. \
+            "GATE_WO_DRAFT_ONLY:status={status_code}: Les champs ne peuvent être modifiés qu'au statut 'draft'. \
              Statut actuel : '{status_code}'."
         )]));
     }
@@ -998,7 +1002,7 @@ pub async fn update_wo_draft_fields(
                 .await?
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![format!(
-                        "Équipement introuvable ou supprimé (equipment_id={equipment_id})."
+                        "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={equipment_id}: Équipement introuvable ou supprimé (equipment_id={equipment_id})."
                     )])
                 })?
                 .try_get::<Option<i64>>("", "installed_at_node_id")
@@ -1006,7 +1010,7 @@ pub async fn update_wo_draft_fields(
                 .filter(|&n| n > 0)
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+                        "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
                          Affectez l'équipement à une entité organisationnelle avant de le choisir."
                             .into(),
                     ])
@@ -1096,7 +1100,7 @@ pub async fn update_wo_draft_fields(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -1132,7 +1136,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     // Validate cancel_reason is not empty
     if input.cancel_reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le motif d'annulation est obligatoire.".into(),
+            "GATE_WO_CANCEL_REASON_REQUIRED: Le motif d'annulation est obligatoire.".into(),
         ]));
     }
 
@@ -1209,7 +1213,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
