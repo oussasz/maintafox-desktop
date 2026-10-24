@@ -592,7 +592,7 @@ pub async fn resubmit_returned_di(db: &DatabaseConnection, input: DiResubmitInpu
 
     if di.submitter_id != input.actor_id {
         return Err(AppError::ValidationFailed(vec![
-            "Seul le demandeur peut répondre et renvoyer sa demande.".into(),
+            "GATE_DI_RESUBMIT_NOT_SUBMITTER: Seul le demandeur peut répondre et renvoyer sa demande.".into(),
         ]));
     }
     if current_status != DiStatus::ReturnedForClarification {
@@ -803,7 +803,7 @@ pub async fn cancel_own_di(db: &DatabaseConnection, input: DiCancelOwnInput) -> 
 
     if di.submitter_id != input.actor_id {
         return Err(AppError::ValidationFailed(vec![
-            "Seul le demandeur peut annuler sa propre DI.".into(),
+            "GATE_DI_CANCEL_OWN_NOT_SUBMITTER: Seul le demandeur peut annuler sa propre DI.".into(),
         ]));
     }
 

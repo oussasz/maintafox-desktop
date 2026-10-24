@@ -741,7 +741,12 @@
     "GATE_DI_CANCEL_OWN_STATUS_INVALID": "Annulation impossible : le demandeur ne peut annuler sa demande que lorsqu'elle est soumise ou retournée pour information.",
     "GATE_DI_DEFER_STATUS_INVALID": "Report impossible : une demande ne se reporte que lorsqu'elle est en examen, en attente d'approbation ou approuvée.",
     "GATE_DI_ILLEGAL_TRANSITION": "Changement de statut refusé : la demande ne peut pas passer à ce statut depuis son statut actuel. Rechargez la demande et vérifiez son statut.",
-    "GATE_SLA_TARGET_HOURS_INVALID": "Règle refusée : le délai de réponse, le délai de résolution et le seuil d'escalade doivent chacun être supérieurs à zéro."
+    "GATE_SLA_TARGET_HOURS_INVALID": "Règle refusée : le délai de réponse, le délai de résolution et le seuil d'escalade doivent chacun être supérieurs à zéro.",
+    "GATE_QUAL_PROFILE_PERMIT_CODES_UNREADABLE": "Évaluation des qualifications impossible : le profil de qualification n° {{profile_id}} est endommagé (sa liste de types de permis concernés est illisible). Un administrateur doit corriger ce profil.",
+    "GATE_QUAL_PROFILE_CERT_TYPES_UNREADABLE": "Évaluation des qualifications impossible : le profil de qualification n° {{profile_id}} est endommagé (sa liste de types de certification exigés est illisible). Un administrateur doit corriger ce profil.",
+    "GATE_QUAL_CREW_PERMIT_TYPE_REQUIRED": "Évaluation impossible : l'ordre de travail exige un permis, mais aucun permis n'y est lié. Liez un permis à l'ordre de travail ou choisissez le type de permis à évaluer.",
+    "GATE_DI_RESUBMIT_NOT_SUBMITTER": "Renvoi impossible : seul le demandeur peut répondre au réviseur et renvoyer sa demande.",
+    "GATE_DI_CANCEL_OWN_NOT_SUBMITTER": "Annulation impossible : seul le demandeur peut annuler sa propre demande."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

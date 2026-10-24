@@ -41,8 +41,8 @@ fn cert_acceptable_for_requirement(pc: &PersonnelCertification) -> bool {
 fn profile_codes(p: &QualificationRequirementProfile) -> AppResult<Vec<String>> {
     serde_json::from_str(&p.applies_to_permit_type_codes_json).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Qualification profile '{}' has unreadable permit type codes: {e}",
-            p.profile_name
+            "GATE_QUAL_PROFILE_PERMIT_CODES_UNREADABLE:profile_id={}: Qualification profile '{}' has unreadable permit type codes: {e}",
+            p.id, p.profile_name
         )])
     })
 }
@@ -50,8 +50,8 @@ fn profile_codes(p: &QualificationRequirementProfile) -> AppResult<Vec<String>> 
 fn profile_required_ids(p: &QualificationRequirementProfile) -> AppResult<Vec<i64>> {
     serde_json::from_str(&p.required_certification_type_ids_json).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Qualification profile '{}' has unreadable certification types: {e}",
-            p.profile_name
+            "GATE_QUAL_PROFILE_CERT_TYPES_UNREADABLE:profile_id={}: Qualification profile '{}' has unreadable certification types: {e}",
+            p.id, p.profile_name
         )])
     })
 }
@@ -229,7 +229,8 @@ pub async fn evaluate_crew_permit_skill_gaps(
         });
     } else {
         return Err(AppError::ValidationFailed(vec![
-            "Work order requires a permit but none is linked; pass permit_type_code.".into(),
+            "GATE_QUAL_CREW_PERMIT_TYPE_REQUIRED: Work order requires a permit but none is linked; pass permit_type_code."
+                .into(),
         ]));
     };
 
