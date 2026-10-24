@@ -2065,3 +2065,99 @@ async fn a_received_anomaly_keeps_the_decision_rules() {
         "{outcome:?}"
     );
 }
+
+/// AU-72 R2-S4: a deferred anomaly routed on another PC (allowed here too: routing checks only the
+/// link) is applied; its link, once set, is never removed or replaced by a received row
+/// (`INSP_ANOMALY_LINK_CHANGED`); a deferred anomaly is never cancelled or reopened.
+#[tokio::test]
+async fn a_received_route_of_a_deferred_anomaly_is_applied_and_its_link_kept() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let deferred = routing::defer_inspection_anomaly(&db, anomaly_id, rv)
+        .await
+        .expect("defer");
+    // Routed while deferred, as this PC allows: the row as the routing PC sends it.
+    let (_, routed) = routing::route_inspection_anomaly_to_di(
+        &db,
+        anomaly_id,
+        deferred.row_version,
+        admin,
+        Some("Bearing too hot on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route a deferred anomaly");
+    assert_eq!(routed.resolution_status, "triaged");
+    let sync_id = routed.entity_sync_id.clone();
+    let sent = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    assert!(
+        sent.get("linked_di_sync_id").and_then(Value::as_str).is_some(),
+        "{sent:?}"
+    );
+    // This PC still holds it deferred.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_anomalies SET resolution_status = 'deferred', routing_decision = 'defer', \
+         linked_di_id = NULL WHERE id = ?",
+        [anomaly_id.into()],
+    ))
+    .await
+    .expect("held deferred");
+    let held = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let with = |base: &serde_json::Map<String, Value>, changes: &[(&str, Value)]| {
+        let mut p = base.clone();
+        for (k, v) in changes {
+            p.insert((*k).to_string(), v.clone());
+        }
+        p
+    };
+    // A deferred anomaly cancelled or reopened elsewhere: refused.
+    for status in ["cancelled", "open"] {
+        let moved = with(
+            &held,
+            &[("resolution_status", json!(status)), ("routing_decision", Value::Null)],
+        );
+        let outcome = apply_received_anomaly(&db, &sync_id, &moved).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("INSP_ANOMALY_DECISION_INVALID"),
+            "{status}: {outcome:?}"
+        );
+    }
+    // Routed elsewhere: applied, with its link.
+    let outcome = apply_received_anomaly(&db, &sync_id, &sent).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'triaged' \
+                 AND linked_di_id IS NOT NULL"
+            )
+        )
+        .await,
+        1
+    );
+    // The link, once set, is never replaced or removed.
+    for link in [json!("another-request"), Value::Null] {
+        let changed = with(&sent, &[("linked_di_sync_id", link.clone())]);
+        let outcome = apply_received_anomaly(&db, &sync_id, &changed).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("INSP_ANOMALY_LINK_CHANGED"),
+            "{link:?}: {outcome:?}"
+        );
+    }
+}
