@@ -37,6 +37,7 @@ import {
   type InventoryCountLineRow,
   approveInventoryCountLine,
   createInventoryCountSession,
+  getInventoryCountTolerance,
   listInventoryArticles,
   listInventoryCountLines,
   listInventoryCountSessions,
@@ -53,6 +54,7 @@ import {
 } from "@/services/inventory-service";
 import type {
   InventoryCountSession,
+  InventoryCountTolerance,
   InventoryReconciliationFinding,
   InventoryReconciliationRun,
   InventoryTransaction,
@@ -79,7 +81,7 @@ export interface InventoryControlsPanelProps {
 export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPanelProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
-  const { formatDateTime, formatNumber } = useFormatters();
+  const { formatCurrency, formatDateTime, formatNumber } = useFormatters();
   const { info } = useSession();
   const varianceReasons = useLookupOptions("inventory.variance_reason");
   const movementReasons = useLookupOptions("inventory.movement_type");
@@ -87,6 +89,8 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [articles, setArticles] = useState<InventoryArticleRow[]>([]);
   const [sessions, setSessions] = useState<InventoryCountSession[]>([]);
+  /** The plant's four-eyes tolerance (Settings › Inventory); null until loaded. */
+  const [tolerance, setTolerance] = useState<InventoryCountTolerance | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [lines, setLines] = useState<InventoryCountLineRow[]>([]);
   const [linesError, setLinesError] = useState<unknown>(null);
@@ -134,7 +138,7 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows] =
+      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows, toleranceRow] =
         await Promise.all([
           listInventoryWarehouses(),
           listInventoryLocations(null),
@@ -142,7 +146,9 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
           listInventoryCountSessions(),
           listInventoryReconciliationRuns(),
           listInventoryTransactions({ source_type: "COUNT_SESSION", limit: COUNT_TRACE_LIMIT }),
+          getInventoryCountTolerance(),
         ]);
+      setTolerance(toleranceRow);
       setWarehouses(warehouseRows.filter((row) => row.is_active === 1));
       setLocations(locationRows.filter((row) => row.is_active === 1));
       setArticles(articleRows.filter((row) => row.is_active === 1));
@@ -244,6 +250,27 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
     setApprovalEvidence("");
   };
 
+  /** The four-eyes tolerance in words: the thresholds set, or "not set: every variance". */
+  const toleranceText = (() => {
+    if (!tolerance) return "";
+    const parts: string[] = [];
+    if (tolerance.value_threshold != null) {
+      parts.push(
+        t("controls.fourEyes.value", { value: formatCurrency(tolerance.value_threshold) }),
+      );
+    }
+    if (tolerance.percent_threshold != null) {
+      parts.push(
+        t("controls.fourEyes.percent", {
+          value: formatNumber(tolerance.percent_threshold, { maximumFractionDigits: 6 }),
+        }),
+      );
+    }
+    return parts.length > 0
+      ? t("controls.fourEyes.set", { thresholds: parts.join(t("controls.fourEyes.or")) })
+      : t("controls.fourEyes.notSet");
+  })();
+
   const pendingApprovals = lines.filter(
     (line) => line.approval_required === 1 && line.approved_by_id === null,
   ).length;
@@ -290,10 +317,21 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
       header: t("controls.lines.columns.critical"),
       cell: ({ row }) =>
         row.original.is_critical === 1 ? (
-          <StatusChip label={t("controls.lines.critical")} tone="danger" />
+          <span title={t("controls.lines.criticalMeaning")}>
+            <StatusChip label={t("controls.lines.critical")} tone="danger" />
+          </span>
         ) : (
           <StatusChip label={t("controls.lines.normal")} tone="neutral" />
         ),
+    },
+    {
+      id: "counted_by",
+      header: t("controls.lines.columns.countedBy"),
+      cell: ({ row }) => (
+        <span className="text-xs">
+          {row.original.counted_by_name ?? t("controls.lines.counterNotRecorded")}
+        </span>
+      ),
     },
     {
       id: "review",
@@ -302,11 +340,19 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
         const line = row.original;
         if (line.approved_by_id !== null) {
           return (
-            <span className="text-xs" title={line.approval_note ?? undefined}>
+            <span
+              className="flex flex-wrap items-center gap-1 text-xs"
+              title={line.approval_note ?? undefined}
+            >
               {t("controls.lines.approvedBy", {
                 name: line.approved_by_name ?? t("controls.lines.unknownReviewer"),
                 date: line.approved_at ? formatDateTime(line.approved_at) : "—",
               })}
+              {line.self_approved === 1 ? (
+                <span title={t("controls.lines.selfApprovedMeaning")}>
+                  <StatusChip label={t("controls.lines.selfApproved")} tone="warning" />
+                </span>
+              ) : null}
             </span>
           );
         }
@@ -442,11 +488,14 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
         <section className="rounded-md border p-4">
           <h3 className="mb-1 text-sm font-semibold">{t("controls.sessions.title")}</h3>
           <p className="mb-1 text-xs text-text-muted">{t("controls.sessions.hint")}</p>
-          <p className="mb-3 text-xs text-text-muted">
+          <p className="mb-1 text-xs text-text-muted">
             {t("controls.sessions.criticalFromSettings")}{" "}
             <Link to={INVENTORY_SETTINGS_PATH} className="underline underline-offset-2">
               {t("controls.setInSettings")}
             </Link>
+          </p>
+          <p className="mb-3 text-xs text-text-secondary" data-testid="inv-cc-four-eyes-tolerance">
+            {toleranceText}
           </p>
           <div className="grid gap-2 md:grid-cols-3">
             <div className="space-y-1">
@@ -887,13 +936,21 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
             <DialogTitle>{t("controls.approval.title")}</DialogTitle>
             <DialogDescription>
               {approvalLine
-                ? t("controls.approval.description", {
+                ? `${t("controls.approval.description", {
                     article: `${approvalLine.article_code} — ${approvalLine.article_name}`,
                     location: approvalLine.location_code,
                     system: qty(approvalLine.system_qty),
                     counted: qty(approvalLine.counted_qty),
                     variance: qty(approvalLine.variance_qty),
-                  })
+                  })} ${t(
+                    approvalLine.is_critical === 1
+                      ? "controls.approval.aboveTolerance"
+                      : "controls.approval.withinTolerance",
+                    {
+                      counter:
+                        approvalLine.counted_by_name ?? t("controls.lines.counterNotRecorded"),
+                    },
+                  )}`
                 : ""}
             </DialogDescription>
           </DialogHeader>

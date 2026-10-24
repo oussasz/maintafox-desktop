@@ -53,7 +53,9 @@ import {
   type NegativeStockReviewList,
   type OverQuantityMovement,
   type OverQuantityReview,
+  type PendingReconciliationCount,
   type ReconciliationCount,
+  approvePendingNegativeStockCount,
   listNegativeStockReviews,
   resolveNegativeStockByCount,
 } from "@/services/negative-stock-service";
@@ -90,6 +92,11 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** The count waiting for approval being approved, with the approver's note. */
+  const [approving, setApproving] = useState<PendingReconciliationCount | null>(null);
+  const [approvalNote, setApprovalNote] = useState("");
+  /** A count just recorded above the tolerance: it waits for a second person. */
+  const [countWaiting, setCountWaiting] = useState(false);
 
   const qty = useCallback(
     (value: number) => formatNumber(value, { maximumFractionDigits: 3 }),
@@ -214,13 +221,14 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     setSaving(true);
     setSaveError(null);
     try {
-      await resolveNegativeStockByCount({
+      const resolution = await resolveNegativeStockByCount({
         article_id: counting.article_id,
         location_id: counting.location_id,
         counted_qty: counted,
         variance_reason_code: varianceReason,
         reason: reason.trim(),
       });
+      setCountWaiting(resolution.pending_approval);
       setCounting(null);
       await load();
     } catch (err) {
@@ -229,6 +237,35 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
       setSaving(false);
     }
   };
+
+  const approvalValid = approvalNote.trim().length >= NEGATIVE_STOCK_REASON_MIN_CHARS;
+  const approvePending = async () => {
+    if (!approving || !approvalValid || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await approvePendingNegativeStockCount({
+        line_id: approving.line_id,
+        expected_row_version: approving.row_version,
+        reason: approvalNote.trim(),
+      });
+      setApproving(null);
+      setCountWaiting(false);
+      await load();
+    } catch (err) {
+      setSaveError(appErrorReason(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** "Comptage en attente d'approbation" on an item whose article and location has one. */
+  const pendingChip = (item: Pick<CountTarget, "article_id" | "location_id">) =>
+    list?.pending_counts.some(
+      (p) => p.article_id === item.article_id && p.location_id === item.location_id,
+    ) ? (
+      <StatusChip label={t("negativeStock.pending.flag")} tone="info" />
+    ) : null;
 
   if (loadError && !list) {
     return (
@@ -265,6 +302,59 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
         </label>
       </div>
 
+      {countWaiting ? (
+        <p className={`${mfAlert.info} mb-2`} role="status">
+          {t("negativeStock.pending.recorded")}
+        </p>
+      ) : null}
+
+      {list.pending_counts.length > 0 ? (
+        <ul className="mb-2 space-y-2" aria-label={t("negativeStock.pending.list")}>
+          {list.pending_counts.map((p) => (
+            <li
+              key={p.line_id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary-bg/60 px-3 py-2"
+            >
+              <div className="min-w-0 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip label={t("negativeStock.pending.flag")} tone="info" />
+                  <span className="font-medium">
+                    {p.article_code} — {p.article_name}
+                  </span>
+                  <span className="text-text-muted">
+                    {p.warehouse_code}/{p.location_code}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t("negativeStock.pending.line", {
+                    who: p.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
+                    date: formatDateTime(p.counted_at),
+                    session: p.session_code,
+                    system: qty(p.system_qty),
+                    counted: qty(p.counted_qty),
+                    variance: qty(p.variance_qty),
+                  })}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">{t("negativeStock.pending.rule")}</p>
+              </div>
+              <PermissionGate permission={P.INV_MANAGE}>
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  onClick={() => {
+                    setApproving(p);
+                    setApprovalNote("");
+                    setSaveError(null);
+                  }}
+                >
+                  {t("negativeStock.pending.approve")}
+                </Button>
+              </PermissionGate>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {open.length === 0 &&
       list.double_counts.length === 0 &&
       list.double_postings.length === 0 &&
@@ -280,6 +370,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
               <div className="min-w-0 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip label={t("negativeStock.flag")} tone="danger" icon={AlertTriangle} />
+                  {pendingChip(item)}
                   <span className="font-medium">
                     {item.article_code} — {item.article_name}
                   </span>
@@ -324,6 +415,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                     tone="warning"
                     icon={AlertTriangle}
                   />
+                  {pendingChip(item)}
                   <span className="font-medium">
                     {item.article_code} — {item.article_name}
                   </span>
@@ -364,6 +456,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                     tone="warning"
                     icon={AlertTriangle}
                   />
+                  {pendingChip(item)}
                   <span className="font-medium">
                     {item.article_code} — {item.article_name}
                   </span>
@@ -409,6 +502,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
                     tone="warning"
                     icon={AlertTriangle}
                   />
+                  {pendingChip(item)}
                   <span className="font-medium">
                     {item.article_code} — {item.article_name}
                   </span>
@@ -604,6 +698,67 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
             </Button>
             <Button className="h-11" disabled={!canSave} onClick={() => void recordCount()}>
               {t("negativeStock.dialog.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* A count waiting for approval: a second person approves it with a note (four-eyes). */}
+      <Dialog
+        open={approving !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !saving) setApproving(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("negativeStock.pending.dialogTitle")}</DialogTitle>
+            <DialogDescription>
+              {approving
+                ? t("negativeStock.pending.dialogDescription", {
+                    article: `${approving.article_code} — ${approving.article_name}`,
+                    location: `${approving.warehouse_code}/${approving.location_code}`,
+                    who: approving.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
+                    counted: qty(approving.counted_qty),
+                    variance: qty(approving.variance_qty),
+                  })
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="inv-neg-approval-note">{t("negativeStock.pending.note")}</Label>
+              <Textarea
+                id="inv-neg-approval-note"
+                rows={3}
+                value={approvalNote}
+                onChange={(e) => setApprovalNote(e.target.value)}
+                placeholder={t("negativeStock.dialog.reasonPlaceholder", {
+                  count: NEGATIVE_STOCK_REASON_MIN_CHARS,
+                })}
+              />
+            </div>
+            {saveError ? (
+              <p className={mfAlert.danger} role="alert">
+                {saveError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={saving}
+              onClick={() => setApproving(null)}
+            >
+              {tc("action.cancel")}
+            </Button>
+            <Button
+              className="h-11"
+              disabled={!approvalValid || saving}
+              onClick={() => void approvePending()}
+            >
+              {t("negativeStock.pending.confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

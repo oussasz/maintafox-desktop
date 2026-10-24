@@ -65,6 +65,7 @@ function reviewList(overrides: Record<string, unknown> = {}): Record<string, unk
     over_quantities: [],
     closed_over_quantities: [overIssue()],
     over_reservations: [],
+    pending_counts: [],
     ...overrides,
   };
 }

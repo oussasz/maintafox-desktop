@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   runInventoryReconciliation: vi.fn(),
   transitionInventoryCountSession: vi.fn(),
   upsertInventoryCountLine: vi.fn(),
+  getInventoryCountTolerance: vi.fn(),
 }));
 
 const lookupMocks = vi.hoisted(() => ({ getLookupValues: vi.fn() }));
@@ -84,6 +85,9 @@ function countLine(overrides: Record<string, unknown> = {}) {
     approved_by_name: null,
     approved_at: null,
     approval_note: null,
+    counted_by_id: 7,
+    counted_by_name: "Samir",
+    self_approved: 0,
     posted_transaction_id: null,
     reversed_transaction_id: null,
     row_version: 1,
@@ -157,6 +161,10 @@ describe("InventoryControlsPanel", () => {
     mocks.listInventoryTransactions.mockResolvedValue([]);
     mocks.createInventoryCountSession.mockResolvedValue(session());
     mocks.approveInventoryCountLine.mockResolvedValue(countLine());
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: null,
+    });
   });
 
   it("creates a count session with the chosen scope; the tolerance comes from the settings", async () => {
@@ -192,7 +200,7 @@ describe("InventoryControlsPanel", () => {
     await selectSession("CC-100 (Draft)");
     expect(await screen.findByTestId("inv-cc-session-threshold")).toHaveTextContent(
       // Number formatted in the plant's locale (the formatter's locale here is French).
-      /This session's critical variance: 2[.,]5$/,
+      /former rule \(a quantity\): 2[.,]5$/,
     );
   });
 
@@ -307,6 +315,44 @@ describe("InventoryControlsPanel", () => {
         expect.objectContaining({ article_id: 21, location_id: 10, expected_row_version: 4 }),
       ),
     );
+  });
+
+  it("states the four-eyes tolerance: blank is 'not set', never zero", async () => {
+    renderPanel();
+    expect(await screen.findByTestId("inv-cc-four-eyes-tolerance")).toHaveTextContent(
+      "Four-eyes tolerance: not set — every variance needs a second person.",
+    );
+  });
+
+  it("states the thresholds that are set", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: 5,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("inv-cc-four-eyes-tolerance")).toHaveTextContent(
+        "a variance is critical when it is above 5 % of the system quantity.",
+      ),
+    );
+  });
+
+  it("names the counter and flags a self-approval", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "approved" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({
+        approved_by_id: 7,
+        approved_by_name: "Samir",
+        approved_at: TS,
+        approval_note: "Recounted twice",
+        self_approved: 1,
+      }),
+    ]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Approved)");
+    expect(await screen.findByText("Self-approval")).toBeInTheDocument();
+    expect(screen.getAllByText("Samir").length).toBeGreaterThan(0);
   });
 
   it("asks for confirmation before reversing a posted count", async () => {
