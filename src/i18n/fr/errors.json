@@ -123,6 +123,7 @@
     "GATE_FIN_COST_CENTER_INACTIVE": "Centre de coût inconnu ou inactif.",
     "GATE_FIN_ESTIMATE_CHANGED": "L'estimation a été modifiée entre-temps : rechargez-la.",
     "GATE_FIN_FISCAL_START_LOCKED": "Changement refusé : des réalisés ou des périodes clôturées existent déjà. Modifier le mois de début de l'exercice déplacerait toutes les imputations passées vers d'autres mois.",
+    "GATE_INSP_ANOMALY_CANCELLED": "Cette anomalie a été annulée (sa lecture a été corrigée) : elle ne peut plus être orientée ni reportée. Une nouvelle anomalie est créée si le défaut revient.",
     "GATE_INSP_TEMPLATE_NO_CHECK": "Check-list refusée : ajoutez au moins un contrôle.",
     "GATE_INSP_CHECK_SEQUENCE_DUPLICATE": "Check-list refusée : deux contrôles ont la même position.",
     "GATE_INSP_CHECK_CODE_REQUIRED": "Check-list refusée : un contrôle n'a pas de code.",
