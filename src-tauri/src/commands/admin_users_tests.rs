@@ -1155,6 +1155,43 @@ async fn a_revoked_session_row_ends_the_live_session() {
     assert!(state.session.read().await.current.is_none());
 }
 
+/// AU-36: an administrator never resets their own password here (it would close their session
+/// before the temporary password is shown); the profile changes it, with the current one.
+#[tokio::test]
+async fn an_administrator_cannot_reset_their_own_password() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let refused = admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: i64::from(admin.user_id),
+            temporary_password: None,
+        },
+    )
+    .await;
+    match refused {
+        Err(AppError::ValidationFailed(issues)) => {
+            assert!(
+                issues.iter().any(|i| i.starts_with("GATE_ADMIN_RESET_SELF:")),
+                "{issues:?}"
+            );
+        }
+        other => panic!("expected the self-reset refusal, got {other:?}"),
+    }
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT force_password_change AS v FROM user_accounts WHERE id = ?",
+            vec![i64::from(admin.user_id).into()],
+        )
+        .await,
+        0,
+        "no reset was made (a reset forces the change at the next sign-in)"
+    );
+}
+
 #[tokio::test]
 async fn a_password_reset_closes_sessions_and_forces_the_change_first() {
     let db = crate::db::test_db::seeded().await;

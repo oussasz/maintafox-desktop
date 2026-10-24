@@ -3070,6 +3070,16 @@ async fn admin_set_user_password_impl(
     admin: &AuthenticatedUser,
     input: AdminSetUserPasswordInput,
 ) -> AppResult<AdminSetUserPasswordResult> {
+    // A reset closes every session of the account, the caller's own included: the temporary
+    // password would never be seen and the old one no longer works (AU-36). Your own password is
+    // changed in your profile, with the current one.
+    if input.user_id == i64::from(admin.user_id) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ADMIN_RESET_SELF: Your own password is changed in your profile (Profil → changer le mot de passe), \
+             not reset here."
+                .into(),
+        ]));
+    }
     ensure_may_manage_account(&state.db, admin, input.user_id).await?;
     let row = state
         .db
