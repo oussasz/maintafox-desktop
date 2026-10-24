@@ -1162,6 +1162,15 @@ async fn an_administrator_cannot_reset_their_own_password() {
     let db = crate::db::test_db::seeded().await;
     let state = AppState::new(db.clone());
     let admin = admin_caller(&db).await;
+    let version = || async {
+        scalar_i64(
+            &db,
+            "SELECT row_version AS v FROM user_accounts WHERE id = ?",
+            vec![i64::from(admin.user_id).into()],
+        )
+        .await
+    };
+    let before = version().await;
     let refused = admin_set_user_password_impl(
         &state,
         &admin,
@@ -1180,16 +1189,7 @@ async fn an_administrator_cannot_reset_their_own_password() {
         }
         other => panic!("expected the self-reset refusal, got {other:?}"),
     }
-    assert_eq!(
-        scalar_i64(
-            &db,
-            "SELECT force_password_change AS v FROM user_accounts WHERE id = ?",
-            vec![i64::from(admin.user_id).into()],
-        )
-        .await,
-        0,
-        "no reset was made (a reset forces the change at the next sign-in)"
-    );
+    assert_eq!(version().await, before, "the account is left as it was");
 }
 
 #[tokio::test]

@@ -3075,7 +3075,7 @@ async fn admin_set_user_password_impl(
     // changed in your profile, with the current one.
     if input.user_id == i64::from(admin.user_id) {
         return Err(AppError::ValidationFailed(vec![
-            "GATE_ADMIN_RESET_SELF: Your own password is changed in your profile (Profil → changer le mot de passe), \
+            "GATE_ADMIN_RESET_SELF: Your own password is changed in your profile (My profile → Change Password), \
              not reset here."
                 .into(),
         ]));
