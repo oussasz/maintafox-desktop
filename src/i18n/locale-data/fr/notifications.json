@@ -317,6 +317,14 @@
     "stock_double_count": {
       "title": "{{code}} compté deux fois à {{location}}",
       "body": "{{title}} : {{count}} comptages enregistrés sur des postes différents. Vérifiez le stock et enregistrez un nouveau comptage."
+    },
+    "admin_grants_to_review": {
+      "title": "Droits d’administration retirés : attributions à revoir",
+      "body": "{{people}} n’a plus {{rights}} (retiré le {{since}}). {{count}} attribution(s) faites depuis par cette personne sont présentes sur ce poste : {{grants}}. Rien n’a été retiré automatiquement ; vérifiez-les."
+    },
+    "grants_from_former_authors": {
+      "title": "Droits reçus d’une personne qui n’a plus ce droit",
+      "body": "{{count}} attribution(s) reçues d’un autre poste ont été appliquées, mais leur auteur n’a plus le droit de les accorder et ce poste ne sait pas depuis quand : {{grants}}. Vérifiez-les."
     }
   },
   "audience": {

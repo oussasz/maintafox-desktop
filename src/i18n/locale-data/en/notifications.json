@@ -317,6 +317,14 @@
     "stock_double_count": {
       "title": "{{code}} counted twice at {{location}}",
       "body": "{{title}}: {{count}} counts recorded on different PCs. Check the stock and record a new count."
+    },
+    "admin_grants_to_review": {
+      "title": "Administration rights removed: grants to review",
+      "body": "{{people}} no longer holds {{rights}} (removed on {{since}}). {{count}} grant(s) made by this person since then are present on this PC: {{grants}}. Nothing was withdrawn automatically; please check them."
+    },
+    "grants_from_former_authors": {
+      "title": "Rights received from someone who no longer holds the right",
+      "body": "{{count}} grant(s) received from another PC were applied, but their author no longer has the right to grant them and this PC does not know since when: {{grants}}. Please check them."
     }
   },
   "audience": {

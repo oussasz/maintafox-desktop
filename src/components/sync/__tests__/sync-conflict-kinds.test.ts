@@ -54,6 +54,7 @@ describe("sync conflict kinds", () => {
       "SYNC_STATE_TIME_MISSING",
       "WO_PART_LINE_HAS_USE",
       "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+      "GRANT_BY_UNAUTHORISED_ADMIN",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }

@@ -51,6 +51,9 @@ export const MESSAGE_KEYS = [
   // Two concurrent versions of a PM plan, or a due date planned twice by them (PM planners).
   "pm_concurrent_versions",
   "pm_duplicate_occurrence",
+  // Grants received by sync from an author who lost the right (administrators).
+  "admin_grants_to_review",
+  "grants_from_former_authors",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;
