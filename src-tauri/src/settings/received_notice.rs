@@ -94,6 +94,12 @@ pub const PERMIT_ENDED_UNDER_WORK_CATEGORY: &str = "permit_ended_under_work";
 /// applies it ([`notify_work_order_without_rule`]).
 pub const WO_PERMIT_RULE_MISSING_CATEGORY: &str = "wo_permit_rule_missing";
 
+/// Notification category of an inspection anomaly cancelled after it was routed to a request or a
+/// work order (its reading corrected; CMMS Advisor decision on AU-72, option B): told to the
+/// follow-up's responsible, on the PC that cancelled it and on each PC that applies the cancel
+/// ([`announce_anomaly_origin_cancelled`]).
+pub const ANOMALY_ORIGIN_CANCELLED_CATEGORY: &str = "insp_anomaly_origin_cancelled";
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
@@ -104,6 +110,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
     PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
     PERMIT_ENDED_UNDER_WORK_CATEGORY,
     WO_PERMIT_RULE_MISSING_CATEGORY,
+    ANOMALY_ORIGIN_CANCELLED_CATEGORY,
 ];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
@@ -112,7 +119,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
 macro_rules! safety_notice_categories_sql {
     () => {
         "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held', \
-         'permit_ended_under_work', 'wo_permit_rule_missing')"
+         'permit_ended_under_work', 'wo_permit_rule_missing', 'insp_anomaly_origin_cancelled')"
     };
 }
 
@@ -170,6 +177,7 @@ pub(crate) async fn notify_received_rule_change(
         "site_settings" => site_rule(conn, entity_sync_id, received).await,
         "permit_types" => three_person(conn, entity_sync_id, received).await,
         "permit_isolations" => received_forced_removal(conn, entity_sync_id, received).await,
+        "inspection_anomalies" => received_anomaly_cancel(conn, entity_sync_id, received).await,
         _ => Ok(()),
     }
 }
@@ -407,6 +415,10 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         (
             WO_PERMIT_RULE_MISSING_CATEGORY,
             "Work order received started without its plant permit rule",
+        ),
+        (
+            ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+            "Originating inspection anomaly cancelled",
         ),
     ] {
         ensure_category_rows(conn, category, label).await?;
@@ -851,25 +863,38 @@ pub(crate) async fn notify_work_order_without_rule(
             "requires_permit": requires_permit,
         }),
     );
+    send_logged_notice(
+        conn,
+        &route,
+        title,
+        body,
+        &format!("/work-orders?openWo={wo_id}"),
+        &message,
+    )
+    .await;
+    Ok(())
+}
+
+/// Writes a notice in a savepoint of the caller's transaction; a notice that cannot be written is
+/// logged and the change it tells of is kept (it is never held back by its notice).
+async fn send_logged_notice(
+    conn: &impl ConnectionTrait,
+    route: &NoticeRoute<'_>,
+    title: String,
+    body: String,
+    action_url: &str,
+    message: &NotificationMessage,
+) {
     let written = async {
-        conn.execute_unprepared("SAVEPOINT wo_permit_rule_notice").await?;
-        match emit_notice(
-            conn,
-            &route,
-            title,
-            body,
-            &format!("/work-orders?openWo={wo_id}"),
-            &message,
-        )
-        .await
-        {
+        conn.execute_unprepared("SAVEPOINT safety_notice").await?;
+        match emit_notice(conn, route, title, body, action_url, message).await {
             Ok(()) => {
-                conn.execute_unprepared("RELEASE wo_permit_rule_notice").await?;
+                conn.execute_unprepared("RELEASE safety_notice").await?;
                 Ok(())
             }
             Err(err) => {
-                conn.execute_unprepared("ROLLBACK TO wo_permit_rule_notice").await?;
-                conn.execute_unprepared("RELEASE wo_permit_rule_notice").await?;
+                conn.execute_unprepared("ROLLBACK TO safety_notice").await?;
+                conn.execute_unprepared("RELEASE safety_notice").await?;
                 Err(err)
             }
         }
@@ -878,10 +903,118 @@ pub(crate) async fn notify_work_order_without_rule(
     if let Err(err) = written {
         tracing::error!(
             category = route.category,
-            entity_sync_id = wo_sync_id,
+            entity_type = route.entity_type,
+            entity_sync_id = route.entity_sync_id,
             error = %err,
-            "permit rule finding notice not written; the work order and its finding are kept"
+            "safety notice not written; the change it tells of is kept"
         );
+    }
+}
+
+/// An inspection anomaly routed to a request or a work order whose condition is gone (its reading
+/// corrected or its photo added: cancelled by `inspection::results::sync_auto_anomaly`, here or on
+/// the PC that cancelled it): its follow-up is left as it is, and the follow-up's responsible is told,
+/// until they acknowledge it ([`ANOMALY_ORIGIN_CANCELLED_CATEGORY`]: the work order's responsible, or
+/// the responsible of the work order a request was converted to; nobody: the work order's planner,
+/// or the request's reviewer). A "revue permis requise" on the work order stays: it is cleared only
+/// through its own path. `anomaly_id` is the anomaly's local id. A notice that cannot be written is
+/// logged.
+pub(crate) async fn announce_anomaly_origin_cancelled(conn: &impl ConnectionTrait, anomaly_id: i64) {
+    let found = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.entity_sync_id, a.description, a.linked_di_id, a.linked_work_order_id, \
+                    wo.code AS wo_code, di.code AS di_code \
+               FROM inspection_anomalies a \
+               LEFT JOIN work_orders wo ON wo.id = a.linked_work_order_id \
+               LEFT JOIN intervention_requests di ON di.id = a.linked_di_id \
+              WHERE a.id = ?",
+            [anomaly_id.into()],
+        ))
+        .await;
+    let row = match found {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::error!(anomaly_id, error = %err, "cancelled anomaly notice: anomaly not read");
+            return;
+        }
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten();
+    let id = |c: &str| row.try_get::<Option<i64>>("", c).ok().flatten();
+    let anomaly_sync = get("entity_sync_id").unwrap_or_default();
+    let description = get("description").unwrap_or_default();
+    let (module, record, kind, code, action_url) = match (id("linked_work_order_id"), id("linked_di_id")) {
+        (Some(wo), _) => (
+            "work_orders",
+            wo,
+            "wo",
+            get("wo_code").unwrap_or_else(|| wo.to_string()),
+            format!("/work-orders?openWo={wo}"),
+        ),
+        (None, Some(di)) => (
+            "di",
+            di,
+            "di",
+            get("di_code").unwrap_or_else(|| di.to_string()),
+            format!("/requests?openDi={di}"),
+        ),
+        (None, None) => return,
+    };
+    let route = NoticeRoute {
+        category: ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+        // The follow-up routes its responsible, planner or reviewer (`notifications::router`).
+        source_module: module,
+        source_record_id: record.to_string(),
+        entity_type: "inspection_anomalies",
+        entity_sync_id: &anomaly_sync,
+        org_node_id: None,
+    };
+    send_logged_notice(
+        conn,
+        &route,
+        format!("Anomalie d'origine annulée : {code} / Originating anomaly cancelled: {code}"),
+        format!(
+            "L'anomalie d'inspection à l'origine de {code} a été annulée : la lecture a été corrigée ({description}). \
+             {code} n'est pas modifié : vérifiez s'il reste nécessaire. Une revue permis requise reste en place. / \
+             The inspection anomaly {code} was raised from was cancelled: the reading was corrected ({description}). \
+             {code} is not changed: check whether it is still needed. A required permit review stays in place."
+        ),
+        &action_url,
+        &NotificationMessage::new(
+            ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+            json!({ "code": code, "kind": kind, "anomaly": description }),
+        ),
+    )
+    .await;
+}
+
+/// A received cancel of an anomaly routed here (`inspection::sync_check` accepted it): its
+/// follow-up's responsible here is told, as on the PC that cancelled it.
+async fn received_anomaly_cancel(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<()> {
+    let Some(local) = crate::permit::sync_check::local_wire(conn, "inspection_anomalies", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let row = crate::permit::sync_check::overlay(Some(&local), received);
+    if text(&local, "resolution_status") != Some("triaged") || text(&row, "resolution_status") != Some("cancelled") {
+        return Ok(());
+    }
+    let id = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM inspection_anomalies WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "id"))
+        .transpose()
+        .map_err(hook_err)?;
+    if let Some(id) = id {
+        announce_anomaly_origin_cancelled(conn, id).await;
     }
     Ok(())
 }

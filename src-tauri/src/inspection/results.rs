@@ -598,10 +598,16 @@ pub async fn record_inspection_result(
     Ok(out)
 }
 
-/// Keeps the automatic anomaly of one kind in line with the latest reading of a result, without
-/// ever touching an anomaly someone already acted on (routed to a DI/WO, deferred, resolved):
-/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending;
-/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly.
+/// Keeps the automatic anomaly of one kind in line with the latest reading of a result:
+/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending (an
+///   anomaly someone acted on, routed or deferred, covers it; a cancelled one does not, so a
+///   condition back after a correction opens a new anomaly);
+/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly; an anomaly
+///   already routed to a request or a work order is cancelled too, its decision and link kept and its
+///   follow-up left as it is (a "revue permis requise" on the work order stays, cleared only through
+///   its own path), and the follow-up's responsible is told (`settings::received_notice::
+///   announce_anomaly_origin_cancelled`, CMMS Advisor decision on AU-72, option B). A deferred
+///   anomaly is left as it is.
 pub(crate) async fn sync_auto_anomaly(
     db: &impl ConnectionTrait,
     round_id: i64,
@@ -620,6 +626,7 @@ pub(crate) async fn sync_auto_anomaly(
         ))
         .await?;
     let mut open_unrouted: Vec<i64> = Vec::new();
+    let mut routed: Vec<i64> = Vec::new();
     let mut acted_on = false;
     for r in &rows {
         let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
@@ -639,6 +646,9 @@ pub(crate) async fn sync_auto_anomaly(
             open_unrouted.push(id);
         } else if status != "cancelled" {
             acted_on = true;
+            if status == "triaged" && (di.is_some() || wo.is_some()) {
+                routed.push(id);
+            }
         }
     }
     if active {
@@ -682,6 +692,19 @@ pub(crate) async fn sync_auto_anomaly(
                 [id.into()],
             ))
             .await?;
+        }
+        for id in routed {
+            let cancelled = db
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE inspection_anomalies SET resolution_status = 'cancelled', row_version = row_version + 1 \
+                     WHERE id = ? AND resolution_status = 'triaged'",
+                    [id.into()],
+                ))
+                .await?;
+            if cancelled.rows_affected() > 0 {
+                crate::settings::received_notice::announce_anomaly_origin_cancelled(db, id).await;
+            }
         }
     }
     Ok(())

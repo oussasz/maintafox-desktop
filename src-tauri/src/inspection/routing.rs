@@ -70,7 +70,18 @@ async fn link_follow_up(
     load_anomaly(txn, anomaly_id).await
 }
 
+/// An anomaly can be routed to a request or a work order, or deferred, only while it has no link
+/// and is not cancelled: a cancelled anomaly's condition is gone (its reading was corrected), and a
+/// recurrence opens a new anomaly (`results::sync_auto_anomaly`). Deferring a cancelled one would
+/// hide that recurrence from the round review (CMMS Advisor decision on AU-72 R3-S1, option B).
 fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
+    if a.resolution_status == "cancelled" {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INSP_ANOMALY_CANCELLED: this anomaly was cancelled (its reading was corrected); a new anomaly is \
+             raised if the condition comes back."
+                .into(),
+        ]));
+    }
     if a.linked_di_id.is_some() || a.linked_work_order_id.is_some() {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INSP_ANOMALY_ALREADY_ROUTED: this anomaly is already linked to a request or a work order.".into(),

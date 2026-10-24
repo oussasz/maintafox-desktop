@@ -2161,3 +2161,224 @@ async fn a_received_route_of_a_deferred_anomaly_is_applied_and_its_link_kept() {
         );
     }
 }
+
+// ── AU-72, CMMS Advisor decision (option B): a cancelled anomaly is never routed or deferred; a
+// routed anomaly whose condition is gone is cancelled, its follow-up kept, its responsible told ──
+
+/// The bearing reading of the round corrected into tolerance.
+async fn correct_bearing_reading(db: &DatabaseConnection, r: &InspectionRound) {
+    let tech = technician(db).await;
+    let temp = checkpoint_id(db, "TEMP-BRG").await;
+    record_inspection_result(
+        db,
+        RecordInspectionResultInput {
+            numeric_value: Some(60.0),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("corrected");
+}
+
+/// Safety notices of the "originating anomaly cancelled" category to `user`.
+async fn origin_cancelled_notices(db: &DatabaseConnection, user: i64) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = 'insp_anomaly_origin_cancelled' AND n.recipient_user_id = {user}"
+        ),
+    )
+    .await
+}
+
+/// Option B: a cancelled anomaly (its reading corrected) can be neither routed nor deferred; the
+/// condition back opens a new open anomaly, which holds the round review.
+#[tokio::test]
+async fn a_cancelled_anomaly_is_never_routed_or_deferred_and_a_recurrence_opens_a_new_one() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    correct_bearing_reading(&db, &r).await;
+    let rv = scalar_i64(
+        &db,
+        &format!(
+            "SELECT row_version FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled'"
+        ),
+    )
+    .await;
+    assert_validation(
+        routing::defer_inspection_anomaly(&db, anomaly_id, rv).await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Bearing".into()), None).await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Bearing".into()),
+            None,
+        )
+        .await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    // The condition back (a corrected reading still out of tolerance): its own new open anomaly.
+    let (again, _) = hot_bearing_anomaly(&db, &r).await;
+    assert_ne!(again, anomaly_id, "a new anomaly");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE round_id = {} AND resolution_status = 'open'",
+                r.id
+            ),
+        )
+        .await,
+        1,
+        "it holds the round review"
+    );
+}
+
+/// Option B: an anomaly routed to a work order whose reading is then corrected is cancelled, its
+/// decision and link kept; the work order is not changed (its permit review stays) and its
+/// responsible is told; with no responsible, its planner.
+#[tokio::test]
+async fn a_routed_anomaly_cancelled_keeps_its_work_order_and_tells_its_responsible() {
+    for case in ["responsible", "planner"] {
+        let db = setup().await;
+        let admin = admin_user(&db).await;
+        let responsible = i64::from(crate::auth::scope_tests::user(&db, "insp_wo_responsible").await);
+        let planner = i64::from(crate::auth::scope_tests::user(&db, "insp_wo_planner").await);
+        let (responsible_of_wo, told, not_told) = if case == "responsible" {
+            (Some(responsible), responsible, Some(planner))
+        } else {
+            (None, planner, None)
+        };
+        let planner_of_wo = Some(planner);
+        let r = scheduled_round(&db).await;
+        let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+        let rv = require_permit_review(&db, anomaly_id).await;
+        let (wo, _) = routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Replace drive-end bearing on PMP-101".into()),
+            None,
+        )
+        .await
+        .expect("route to WO");
+        assert!(wo.requires_permit);
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET primary_responsible_id = ?, planner_id = ? WHERE id = ?",
+            [responsible_of_wo.into(), planner_of_wo.into(), wo.id.into()],
+        ))
+        .await
+        .expect("people of the work order");
+        let before = origin_cancelled_notices(&db, told).await;
+        let wo_version = scalar_i64(
+            &db,
+            &format!("SELECT row_version FROM work_orders WHERE id = {}", wo.id),
+        )
+        .await;
+        correct_bearing_reading(&db, &r).await;
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled' \
+                     AND routing_decision = 'wo' AND linked_work_order_id = {} AND requires_permit_review = 1",
+                    wo.id
+                ),
+            )
+            .await,
+            1,
+            "{case}: cancelled, its decision, link and permit review kept"
+        );
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM work_orders WHERE id = {} AND requires_permit = 1 AND row_version = {wo_version}",
+                    wo.id
+                ),
+            )
+            .await,
+            1,
+            "{case}: the work order is not changed"
+        );
+        assert_eq!(origin_cancelled_notices(&db, told).await, before + 1, "{case}: told");
+        if let Some(other) = not_told {
+            assert_eq!(
+                origin_cancelled_notices(&db, other).await,
+                0,
+                "only the responsible when there is one"
+            );
+        }
+    }
+}
+
+/// Option B on arrival: a received route or deferral of an anomaly cancelled here is refused; a
+/// received cancel of an anomaly routed here (its link kept) is applied and its responsible here told.
+#[tokio::test]
+async fn a_received_cancel_of_a_routed_anomaly_is_applied_and_a_route_of_a_cancelled_one_refused() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let responsible = i64::from(crate::auth::scope_tests::user(&db, "insp_rx_responsible").await);
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let (wo, routed) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET primary_responsible_id = ? WHERE id = ?",
+        [responsible.into(), wo.id.into()],
+    ))
+    .await
+    .expect("responsible");
+    let sync_id = routed.entity_sync_id.clone();
+    let routed_row = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let mut cancelled = routed_row.clone();
+    cancelled.insert("resolution_status".into(), json!("cancelled"));
+    let outcome = apply_received_anomaly(&db, &sync_id, &cancelled).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    assert_eq!(origin_cancelled_notices(&db, responsible).await, 1, "told here too");
+    // Cancelled here: a received route (back to triaged) or deferral is refused.
+    let mut deferred = cancelled.clone();
+    deferred.insert("resolution_status".into(), json!("deferred"));
+    deferred.insert("routing_decision".into(), json!("defer"));
+    deferred.insert("linked_work_order_sync_id".into(), Value::Null);
+    for (row, expected) in [
+        (routed_row, "INSP_ANOMALY_DECISION_INVALID"),
+        (deferred, "INSP_ANOMALY_LINK_CHANGED"),
+    ] {
+        let outcome = apply_received_anomaly(&db, &sync_id, &row).await;
+        assert_eq!(conflict_code(&outcome), Some(expected), "{outcome:?}");
+    }
+}

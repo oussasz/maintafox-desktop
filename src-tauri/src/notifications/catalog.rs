@@ -154,6 +154,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "permit_suspended_work_held",
     "permit_ended_under_work",
     "wo_permit_rule_missing",
+    "insp_anomaly_origin_cancelled",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -184,6 +185,9 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // A work order received started without the plant permit rule that concerns it here (owner
     // decision D2 (a), audit finding AU-04 R2-S3): the permit-issue right holders of its site.
     ("wo_permit_rule_missing", "permission:ptw.issue"),
+    // An inspection anomaly cancelled after it was routed (CMMS Advisor decision on AU-72, option B):
+    // the responsible of its work order (or of the work order its request was converted to).
+    ("insp_anomaly_origin_cancelled", "assignee"),
 ];
 
 /// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
@@ -195,6 +199,10 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
 pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
     ("permit_suspended_work_held", "permission:ptw.close"),
     ("wo_permit_rule_missing", "permission:adm.settings"),
+    // No responsible: the work order's planner, or the request's reviewer (its node's responsibles
+    // when it has none).
+    ("insp_anomaly_origin_cancelled", "planner"),
+    ("insp_anomaly_origin_cancelled", "reviewer"),
 ];
 
 /// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).

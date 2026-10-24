@@ -3,21 +3,25 @@
 //!
 //! An anomaly is decided here only by routing it to a request or a work order
 //! (`inspection::routing`: `triaged`, with that decision and that one link), by deferring it
-//! (`deferred`, decision `defer`, no link), or, while it is open and nobody acted on it, cancelled by a
-//! corrected reading (`inspection::results::sync_auto_anomaly`: `cancelled`, no decision, no link).
-//! Routing and deferring check only that the anomaly has no link yet (`routing::assert_routable`):
-//! an anomaly deferred or cancelled here can still be routed (to `triaged`) or deferred, and the
-//! received row of such a change is accepted the same way ([`allowed_move`], audit finding AU-72
-//! R2-S4). Nothing here closes an anomaly without a decision ("resolved" is never written), reopens
-//! a decided one, changes a link once set, or clears "revue permis requise" (it requires the permit
-//! on the work order raised from the anomaly, `routing::route_inspection_anomaly_to_wo`). A received
-//! row that does any of these is refused as a sync conflict, for a person to decide:
+//! (`deferred`, decision `defer`, no link), or cancelled by a corrected reading
+//! (`inspection::results::sync_auto_anomaly`: `cancelled`; while open, with no decision and no link;
+//! once routed, its decision and link kept). Routing and deferring need an anomaly with no link that
+//! is not cancelled (`routing::assert_routable`, CMMS Advisor decision on AU-72, option B): an open
+//! or deferred anomaly can be routed or deferred, and the received row of such a change is accepted
+//! the same way ([`allowed_move`], audit finding AU-72 R2-S4). Nothing here closes an anomaly without
+//! a decision ("resolved" is never written), routes, defers or reopens a cancelled one, changes a
+//! link once set, or clears "revue permis requise" (it requires the permit on the work order raised
+//! from the anomaly, `routing::route_inspection_anomaly_to_wo`). A received row that does any of
+//! these is refused as a sync conflict, for a person to decide:
 //! - `INSP_ANOMALY_PERMIT_REVIEW_CLEARED`: "revue permis requise" held here, cleared;
 //! - `INSP_ANOMALY_LINK_CHANGED`: the request or work order linked here, removed or replaced;
 //! - `INSP_ANOMALY_DECISION_INVALID`: a status that does not match its decision and link, "resolved"
-//!   or an unknown status, or a status change that is not one of the moves made here: open, deferred
-//!   or cancelled to triaged or deferred, open to cancelled (a triaged anomaly never moves; a
-//!   deferred or cancelled one is never reopened).
+//!   or an unknown status, or a status change that is not one of the moves made here: open or
+//!   deferred to triaged or deferred, open or triaged to cancelled (a cancelled anomaly never moves;
+//!   a triaged one is only cancelled; a deferred one is never reopened or cancelled).
+//!
+//! A received cancel of an anomaly routed here is applied and the follow-up's responsible here is
+//! told, as on the PC that cancelled it (`settings::received_notice::notify_received_rule_change`).
 
 use serde_json::{Map, Value};
 
@@ -38,27 +42,33 @@ fn on(p: &Payload, key: &str) -> bool {
 
 /// Whether a status, its decision and its links agree, as this PC writes them.
 fn consistent(status: &str, decision: Option<&str>, di: bool, wo: bool) -> bool {
+    let routed = || match decision {
+        Some("di") => di && !wo,
+        Some("wo") => wo && !di,
+        _ => false,
+    };
     match status {
-        "open" | "cancelled" => decision.is_none() && !di && !wo,
-        "triaged" => match decision {
-            Some("di") => di && !wo,
-            Some("wo") => wo && !di,
-            _ => false,
-        },
+        "open" => decision.is_none() && !di && !wo,
+        // Cancelled while open (no decision, no link), or after it was routed (its decision and
+        // link kept, `results::sync_auto_anomaly`).
+        "cancelled" => (decision.is_none() && !di && !wo) || routed(),
+        "triaged" => routed(),
         "deferred" => decision == Some("defer") && !di && !wo,
         _ => false,
     }
 }
 
 /// Whether a status held here may become `to` by a decision made as this PC makes it: routing or
-/// deferring an anomaly without a link (`routing::assert_routable`: open, deferred or cancelled), or
-/// the automatic cancel of an open one (`results::sync_auto_anomaly`). The link itself is judged
-/// apart (never removed or replaced).
+/// deferring an anomaly without a link that is not cancelled (`routing::assert_routable`: open or
+/// deferred), or the automatic cancel of an open anomaly, or of a routed one whose condition is
+/// gone (`results::sync_auto_anomaly`). A cancelled anomaly is never routed, deferred or reopened
+/// (CMMS Advisor decision on AU-72, option B). The link itself is judged apart (never removed or
+/// replaced).
 fn allowed_move(from: &str, to: &str) -> bool {
     from == to
         || matches!(
             (from, to),
-            ("open" | "deferred" | "cancelled", "triaged" | "deferred") | ("open", "cancelled")
+            ("open" | "deferred", "triaged" | "deferred") | ("open" | "triaged", "cancelled")
         )
 }
 
@@ -117,19 +127,21 @@ mod tests {
 
     #[test]
     fn a_status_moves_only_as_a_decision_here_moves_it() {
-        for from in ["open", "deferred", "cancelled"] {
+        for from in ["open", "deferred"] {
             assert!(allowed_move(from, "triaged"), "{from} routed");
             assert!(allowed_move(from, "deferred"), "{from} deferred");
         }
         assert!(allowed_move("open", "cancelled"), "automatic cancel");
+        assert!(allowed_move("triaged", "cancelled"), "routed, its condition gone");
         assert!(allowed_move("triaged", "triaged"));
         for (from, to) in [
             ("triaged", "open"),
             ("triaged", "deferred"),
-            ("triaged", "cancelled"),
             ("deferred", "open"),
             ("deferred", "cancelled"),
             ("cancelled", "open"),
+            ("cancelled", "triaged"),
+            ("cancelled", "deferred"),
             ("open", "resolved"),
         ] {
             assert!(!allowed_move(from, to), "{from} -> {to}");
@@ -140,6 +152,11 @@ mod tests {
     fn a_status_matches_its_decision_and_link() {
         assert!(consistent("open", None, false, false));
         assert!(consistent("cancelled", None, false, false));
+        assert!(
+            consistent("cancelled", Some("wo"), false, true),
+            "cancelled after it was routed"
+        );
+        assert!(!consistent("cancelled", Some("wo"), false, false));
         assert!(consistent("triaged", Some("di"), true, false));
         assert!(consistent("triaged", Some("wo"), false, true));
         assert!(consistent("deferred", Some("defer"), false, false));
