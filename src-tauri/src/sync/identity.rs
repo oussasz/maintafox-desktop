@@ -39,6 +39,28 @@ pub fn seeded_entity_sync_id(entity_type: &str, natural_key: &str) -> String {
     uuid::Builder::from_custom_bytes(bytes).into_uuid().to_string()
 }
 
+/// Domain separator for derived ids ([`derived_entity_sync_id`]).
+const DERIVED_ID_NAMESPACE: &str = "maintafox.sync.derived-entity.v1";
+
+/// Identity of a row that two replicas may each create by themselves for the same fact, so both
+/// create the same row (and sync settles it as one), never two: `fact_key` names the fact
+/// completely (for example the work order, the permit and the end received that put the work order
+/// on hold, `wo::execution::hold_for_permit_ended_elsewhere`). A name-based UUID (version 5 layout,
+/// SHA-256 truncated), distinct from the seeded ids (version 8), which capture leaves out of a
+/// device's first baseline.
+pub fn derived_entity_sync_id(entity_type: &str, fact_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(DERIVED_ID_NAMESPACE.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(entity_type.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(fact_key.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Builder::from_sha1_bytes(bytes).into_uuid().to_string()
+}
+
 /// Read a row's `entity_sync_id` and fail when it is missing.
 ///
 /// Stagers use this instead of falling back to a code or a fresh UUID: a row without identity is a

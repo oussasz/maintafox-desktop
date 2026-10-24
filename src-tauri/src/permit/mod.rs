@@ -1,6 +1,7 @@
 pub mod access;
 pub mod contact_methods;
 pub mod domain;
+pub(crate) mod ended_hold;
 pub(crate) mod ended_under_work;
 pub mod energy_reference;
 pub mod handover_roles;

@@ -15,24 +15,29 @@
 //! - [`codes::ENDED_DURING_WORK`] (`PERMIT_ENDED_DURING_WORK`): the work order runs here
 //!   (`in_progress`) and the permit ended after its last start here, or at a time the row does not
 //!   give (a cancellation carries no time) — what the local close, cancel and suspension rules
-//!   prevent on a single PC (AU-03, D5), received from a PC that did not know the work had started.
+//!   prevent on a single PC (AU-03, D5), received from a PC that did not know the work had started;
+//! - a cancellation (no time) over a work order started here and not closed — on hold or completed
+//!   — is raised as [`codes::ENDED_BEFORE_START`] too: its order with the start cannot be proved
+//!   (CMMS Advisor answer to S4); its notice says the time is not known.
 //!
 //! Each is a sync conflict for a person (the received permit row, with the copy held here before it
-//! and the received version), never a refusal: "take theirs" applies the same row again (nothing
-//! changes), "keep mine" sends the permit's current state again (the received end, nothing goes
-//! back), "dismiss" closes the review with its reason. The work order's responsible and the permit
-//! close-right holders of the permit's site get a safety notice they acknowledge
-//! (`settings::received_notice::PERMIT_ENDED_UNDER_WORK_CATEGORY`). Nothing of the work order is
-//! changed here: it is the people told who stop the work (this PC never writes a change of its own
-//! while applying a received row).
+//! and the received version), never a refusal, and only "dismiss" (with its reason, once the work is
+//! stopped) or "escalate" are accepted on it (`sync::queries::REVIEW_ONLY_CONFLICTS`). The work
+//! order's responsible and the permit close-right holders of the permit's site get a safety notice
+//! they acknowledge (`settings::received_notice::PERMIT_ENDED_UNDER_WORK_CATEGORY`). Nothing of the
+//! work order is written in the apply's transaction (this PC never writes a change of its own
+//! while applying a received row): a work order still running here is put on hold afterwards, in
+//! its own local transaction, by `permit::ended_hold` (CMMS Advisor answer, option B).
 //!
 //! A suspension received while the work order is on hold here (normally the hold made with it on
 //! the other PC, received first) is not a conflict: the work order's responsible is told the work is
 //! held by the suspension, as on the PC that suspended it (D5).
 //!
-//! Not covered (known limit): a permit suspended and reinstated on another PC, both before this PC
-//! receives either, arrives `active` as held here; the suspension rows are applied without a check
-//! of the work recorded here meanwhile.
+//! A permit suspended and reinstated on another PC, both before this PC receives either, arrives
+//! `active` as held here; its suspension row arrives already lifted. When that suspension window
+//! covers a start (or resume, or reopening) of the work order recorded here
+//! ([`after_suspension_check`]), the same review conflict ([`codes::ENDED_BEFORE_START`]) and a
+//! notice are raised; the permit is active again, so nothing is held.
 //!
 //! Known limit (two clocks): the end time is the sending PC's clock, the start time this PC's. When
 //! the sender's clock runs ahead of this one by more than the gap between them, an end really
@@ -56,6 +61,12 @@ pub(crate) mod codes {
     /// Message keys of the notice (`notifications:messages.*`).
     pub const NOTICE_BEFORE_START: &str = "permit_ended_before_start";
     pub const NOTICE_DURING_WORK: &str = "permit_ended_during_work";
+    /// The same, for an end the received row gives no time of (a cancellation carries none): the
+    /// notice says so instead of showing an empty time.
+    pub const NOTICE_BEFORE_START_UNTIMED: &str = "permit_ended_before_start_untimed";
+    pub const NOTICE_DURING_WORK_UNTIMED: &str = "permit_ended_during_work_untimed";
+    /// A suspension made and lifted on another PC whose window covers a start here.
+    pub const NOTICE_SUSPENDED_AROUND_START: &str = "permit_suspended_around_start";
 }
 
 /// Statuses in which a permit no longer protects work: ended for good, or suspended.
@@ -184,10 +195,30 @@ pub(crate) async fn after_permit_check(
     let (end_at, start_at) = (at(end.as_deref()), at(work.last_start.as_deref()));
     let started_after_end =
         STARTED.contains(&work.status.as_str()) && matches!((end_at, start_at), (Some(e), Some(s)) if e < s);
-    let kind = if started_after_end {
-        Some((codes::ENDED_BEFORE_START, codes::NOTICE_BEFORE_START))
+    // A cancellation carries no time: over work started here and not closed, its order with the
+    // start cannot be proved, so it is raised for review (CMMS Advisor answer to S4).
+    let untimed_cancel_over_started_work = to == "cancelled"
+        && end_at.is_none()
+        && matches!(work.status.as_str(), "on_hold" | "completed")
+        && work.last_start.is_some();
+    let kind = if started_after_end || untimed_cancel_over_started_work {
+        Some((
+            codes::ENDED_BEFORE_START,
+            if end_at.is_some() {
+                codes::NOTICE_BEFORE_START
+            } else {
+                codes::NOTICE_BEFORE_START_UNTIMED
+            },
+        ))
     } else if work.status == "in_progress" {
-        Some((codes::ENDED_DURING_WORK, codes::NOTICE_DURING_WORK))
+        Some((
+            codes::ENDED_DURING_WORK,
+            if end_at.is_some() {
+                codes::NOTICE_DURING_WORK
+            } else {
+                codes::NOTICE_DURING_WORK_UNTIMED
+            },
+        ))
     } else {
         None
     };
@@ -261,7 +292,8 @@ pub(crate) async fn after_permit_check(
             wo_code: &work.code,
             key: notice_key,
             status: to,
-            end_at: end.as_deref(),
+            end_at: end_at.and(end.as_deref()),
+            until: None,
             start_at: work.last_start.as_deref(),
         },
     )
@@ -282,4 +314,109 @@ async fn suspension_reason(conn: &impl ConnectionTrait, sync_id: &str) -> AppRes
         })
         .max_by_key(|(i, _)| *i)
         .and_then(|(_, r)| r.map(str::to_string)))
+}
+
+/// A received suspension of a permit, new here and already lifted (suspended and reinstated on
+/// another PC before this PC received either), before it is written (same transaction): when its
+/// window covers a start, resume or reopening of the permit's work order recorded here, the work
+/// ran under a suspended permit — the same review conflict as an end before the start
+/// ([`codes::ENDED_BEFORE_START`], on the permit) and a notice to the same people. The permit is
+/// active again: nothing is held (CMMS Advisor answer to S3).
+pub(crate) async fn after_suspension_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<()> {
+    // Known here already: this PC saw the permit suspended, the permit's own arrival judged it.
+    if local_wire(conn, "permit_suspensions", entity_sync_id).await?.is_some() {
+        return Ok(());
+    }
+    let (Some(from), Some(until)) = (field(received, "suspended_at"), field(received, "reinstated_at")) else {
+        return Ok(());
+    };
+    let (Some(from_at), Some(until_at)) = (instant(from), instant(until)) else {
+        return Ok(());
+    };
+    let Some(permit_sync) = field(received, "permit_sync_id") else {
+        return Ok(());
+    };
+    let Some(permit) = local_wire(conn, "work_permits", permit_sync).await? else {
+        return Ok(());
+    };
+    let Some(permit_id) = local_id(conn, "work_permits", permit_sync).await? else {
+        return Ok(());
+    };
+    let Some(wo_sync) = field(&permit, "linked_work_order_sync_id") else {
+        return Ok(());
+    };
+    let Some(wo_id) = local_id(conn, "work_orders", wo_sync).await? else {
+        return Ok(());
+    };
+    let starts = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT t.acted_at, w.code FROM wo_state_transition_log t JOIN work_orders w ON w.id = t.wo_id \
+             WHERE t.wo_id = ? AND t.to_status = 'in_progress' ORDER BY t.acted_at, t.id",
+            [wo_id.into()],
+        ))
+        .await?;
+    let mut covered: Option<(String, String)> = None;
+    for row in &starts {
+        let acted: String = row.try_get("", "acted_at").map_err(sync_err)?;
+        if instant(&acted).is_some_and(|s| from_at <= s && s < until_at) {
+            let code: Option<String> = row.try_get("", "code").map_err(sync_err)?;
+            covered = Some((acted, code.unwrap_or_default()));
+            break;
+        }
+    }
+    let Some((start, wo_code)) = covered else {
+        return Ok(());
+    };
+    let permit_code = field(&permit, "code").unwrap_or(permit_sync).to_string();
+    crate::sync::queries::record_sync_conflict(
+        conn,
+        crate::sync::queries::NewSyncConflict {
+            source_scope: "inbound",
+            source_batch_id: None,
+            linked_outbox_id: None,
+            // Not linked to its inbox row: the row is applied (the permit's review, as above).
+            linked_inbox_id: None,
+            entity_type: "work_permits".to_string(),
+            entity_sync_id: permit_sync.to_string(),
+            operation: "upsert".to_string(),
+            conflict_type: codes::ENDED_BEFORE_START.to_string(),
+            local_payload_json: Some(serde_json::to_string(&permit)?),
+            inbound_payload_json: Some(serde_json::to_string(received)?),
+            checkpoint_token: None,
+            local_row_version: None,
+            inbound_row_version: None,
+            detail_message: Some(format!(
+                "permit {permit_code} was suspended on another PC from {from} to {until} (suspension {entity_sync_id}); \
+                 work order {wo_code} started here on {start}, inside that window: applied, to review"
+            )),
+        },
+    )
+    .await?;
+    tracing::warn!(
+        permit = %permit_code,
+        work_order = %wo_code,
+        work_order_id = wo_id,
+        "work started here inside a suspension made and lifted elsewhere: raised for review"
+    );
+    crate::settings::received_notice::announce_permit_ended_under_work(
+        conn,
+        &crate::settings::received_notice::PermitEndedNotice {
+            permit_id,
+            permit_sync_id: permit_sync,
+            permit_code: &permit_code,
+            wo_code: &wo_code,
+            key: codes::NOTICE_SUSPENDED_AROUND_START,
+            status: "suspended",
+            end_at: Some(from),
+            until: Some(until),
+            start_at: Some(&start),
+        },
+    )
+    .await;
+    Ok(())
 }

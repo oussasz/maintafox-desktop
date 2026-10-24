@@ -320,6 +320,18 @@
       "title": "Permis terminé pendant le travail : {{permit}} (OT {{work_order}})",
       "body": "Reçu par synchronisation : le permis {{permit}} a été clôturé, annulé ou suspendu sur un autre poste (le {{end_at}}) alors que le travail de l’OT {{work_order}} est en cours ici depuis le {{start_at}}. Arrêtez le travail et examinez le conflit de synchronisation."
     },
+    "permit_ended_before_start_untimed": {
+      "title": "Permis terminé sur un autre poste, travail commencé ici : {{permit}} (OT {{work_order}})",
+      "body": "Reçu par synchronisation : le permis {{permit}} a été annulé sur un autre poste, à une heure que la synchronisation ne donne pas ; le travail de l’OT {{work_order}} a commencé ici le {{start_at}}. L’ordre ne peut être établi : vérifiez que le travail est arrêté et examinez le conflit de synchronisation."
+    },
+    "permit_ended_during_work_untimed": {
+      "title": "Permis terminé pendant le travail : {{permit}} (OT {{work_order}})",
+      "body": "Reçu par synchronisation : le permis {{permit}} a été annulé sur un autre poste (heure non connue) alors que le travail de l’OT {{work_order}} est en cours ici depuis le {{start_at}}. Arrêtez le travail et examinez le conflit de synchronisation."
+    },
+    "permit_suspended_around_start": {
+      "title": "Travail commencé pendant une suspension du permis {{permit}} (OT {{work_order}})",
+      "body": "Reçu par synchronisation : le permis {{permit}} a été suspendu sur un autre poste du {{end_at}} au {{reinstated_at}}, et le travail de l’OT {{work_order}} a commencé ici le {{start_at}}, pendant cette suspension. Le permis est de nouveau en vigueur : examinez le conflit de synchronisation."
+    },
     "pm_duplicate_occurrence": {
       "title": "Deux versions concurrentes du plan {{plan}} — échéance planifiée deux fois",
       "body": "{{title}} : les versions v{{version}} et v{{other_version}} ont chacune une échéance le {{due_at}} ({{due_basis}}), OT {{work_order}} et {{other_work_order}}. Rien n’a été annulé : gardez-en une et annulez l’autre vous-même."

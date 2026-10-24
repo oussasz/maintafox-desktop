@@ -56,6 +56,10 @@ export const MESSAGE_KEYS = [
   // A permit ended on another PC before or while its work ran here (responsible, close-right holders).
   "permit_ended_before_start",
   "permit_ended_during_work",
+  // The same when the end has no time (a cancellation), and a suspension lifted around a start.
+  "permit_ended_before_start_untimed",
+  "permit_ended_during_work_untimed",
+  "permit_suspended_around_start",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

@@ -1110,13 +1110,16 @@ pub(crate) struct PermitEndedNotice<'a> {
     pub permit_sync_id: &'a str,
     pub permit_code: &'a str,
     pub wo_code: &'a str,
-    /// The message key: `permit_ended_before_start` or `permit_ended_during_work`.
+    /// The message key (`permit::ended_under_work::codes::NOTICE_*`): ended before the start or
+    /// during the work, each with or without the time of the end; or suspended around a start.
     pub key: &'static str,
     /// The permit's status received (`closed`, `handed_back`, `cancelled`, `suspended`,
     /// `revalidation_required`).
     pub status: &'a str,
-    /// When the permit ended there, when the row says it.
+    /// When the permit ended there, when the row says it (`None`: a cancellation, no time).
     pub end_at: Option<&'a str>,
+    /// When a suspension made and lifted there was lifted (`permit_suspended_around_start`).
+    pub until: Option<&'a str>,
     /// When the work last started (or resumed, or was reopened) here.
     pub start_at: Option<&'a str>,
 }
@@ -1134,10 +1137,27 @@ pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait
         org_node_id: None,
     };
     let (permit, wo, status) = (n.permit_code, n.wo_code, n.status);
-    let end = n.end_at.unwrap_or("?");
     let start = n.start_at.unwrap_or("?");
-    let (title, body) = if n.key == crate::permit::ended_under_work::codes::NOTICE_BEFORE_START {
-        (
+    use crate::permit::ended_under_work::codes;
+    let (title, body) = match (n.key, n.end_at) {
+        (k, Some(end)) if k == codes::NOTICE_SUSPENDED_AROUND_START => {
+            let until = n.until.unwrap_or("?");
+            (
+                format!(
+                    "Travail commencé pendant une suspension du permis {permit} (OT {wo}) / Work started while \
+                     permit {permit} was suspended ({wo})"
+                ),
+                format!(
+                    "Reçu par synchronisation : le permis {permit} a été suspendu sur un autre poste du {end} au \
+                     {until}, et le travail de l'OT {wo} a commencé ici le {start}, pendant cette suspension. Le \
+                     permis est de nouveau en vigueur : examinez le conflit de synchronisation. / Received by sync: \
+                     permit {permit} was suspended on another PC from {end} to {until}, and work on {wo} started \
+                     here on {start}, during that suspension. The permit is in force again: review the sync \
+                     conflict."
+                ),
+            )
+        }
+        (k, Some(end)) if k == codes::NOTICE_BEFORE_START => (
             format!(
                 "Travail commencé sous un permis déjà terminé : {permit} (OT {wo}) / Work started under an ended \
                  permit: {permit} ({wo})"
@@ -1148,9 +1168,8 @@ pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait
                  synchronisation. / Received by sync: permit {permit} became '{status}' on {end} on another PC, \
                  before work on {wo} started here on {start}. Stop the work and review the sync conflict."
             ),
-        )
-    } else {
-        (
+        ),
+        (_, Some(end)) => (
             format!(
                 "Permis terminé pendant le travail : {permit} (OT {wo}) / Permit ended during the work: {permit} \
                  ({wo})"
@@ -1161,7 +1180,35 @@ pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait
                  conflit de synchronisation. / Received by sync: permit {permit} became '{status}' (on {end}) on \
                  another PC while work on {wo} runs here since {start}. Stop the work and review the sync conflict."
             ),
-        )
+        ),
+        // No time of the end (a cancellation): said so, never an empty time.
+        (k, None) if k == codes::NOTICE_DURING_WORK_UNTIMED => (
+            format!(
+                "Permis terminé pendant le travail : {permit} (OT {wo}) / Permit ended during the work: {permit} \
+                 ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » sur un autre poste (heure non \
+                 connue) alors que le travail de l'OT {wo} est en cours ici depuis le {start}. Arrêtez le travail et \
+                 examinez le conflit de synchronisation. / Received by sync: permit {permit} became '{status}' on \
+                 another PC (time not known) while work on {wo} runs here since {start}. Stop the work and review \
+                 the sync conflict."
+            ),
+        ),
+        (_, None) => (
+            format!(
+                "Permis terminé sur un autre poste, travail commencé ici : {permit} (OT {wo}) / Permit ended on \
+                 another PC, work started here: {permit} ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » sur un autre poste, à une heure \
+                 que la synchronisation ne donne pas ; le travail de l'OT {wo} a commencé ici le {start}. L'ordre ne \
+                 peut être établi : vérifiez que le travail est arrêté et examinez le conflit de synchronisation. / \
+                 Received by sync: permit {permit} became '{status}' on another PC, at a time sync does not give; \
+                 work on {wo} started here on {start}. The order cannot be established: make sure the work is \
+                 stopped and review the sync conflict."
+            ),
+        ),
     };
     send_permit_work_notice(
         conn,
@@ -1175,6 +1222,7 @@ pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait
                 "work_order": wo,
                 "status": status,
                 "end_at": n.end_at,
+                "reinstated_at": n.until,
                 "start_at": n.start_at,
             }),
         ),

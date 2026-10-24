@@ -1415,6 +1415,11 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         if crate::inventory::count_sync::settle_count_server_conflict(&tx, conflict, linked_outbox_id).await? {
             continue;
         }
+        // The same hold of a work order (its permit ended elsewhere) pushed first by another PC:
+        // settled, no item for a person (`permit::ended_hold`).
+        if crate::permit::ended_hold::settle_crossed_hold_server_conflict(&tx, conflict).await? {
+            continue;
+        }
         if let Some(outbox_id) = linked_outbox_id {
             let base_label = conflict
                 .local_base_row_version

@@ -546,18 +546,19 @@ const WORK_DELAY_REASONS: &[SeedValue] = &[
     // Written by the backend when a permit's suspension puts its running work order on hold
     // (`wo::execution::PERMIT_SUSPENDED_DELAY_REASON`, owner decision D5).
     seed("permit_suspended", "Permit Suspended", 11, "permit"),
+    // Written by the backend when a permit closed, handed back or cancelled on another PC is
+    // received while its work order runs here: the work order is put on hold after the apply
+    // (`wo::execution::PERMIT_ENDED_DELAY_REASON`, CMMS Advisor answer to AU-101, option B).
+    seed("permit_ended", "Permit Ended Elsewhere", 12, "permit"),
 ];
 
-/// Makes sure the plant's `WORK.DELAY_REASONS` list holds the reason a permit's suspension puts its
-/// work order on hold with (`wo::execution::hold_for_permit_suspension`), in the caller's
+/// Makes sure the plant's `WORK.DELAY_REASONS` list holds the system reason `code` the backend
+/// writes itself (`permit_suspended`, `permit_ended`: `wo::execution`), in the caller's
 /// transaction: the same seeded row as at start-up (left untouched when present, in any set).
-pub(crate) async fn ensure_permit_suspended_delay_reason(db: &impl ConnectionTrait) -> AppResult<()> {
-    let at = WORK_DELAY_REASONS
-        .iter()
-        .position(|r| r.code == crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON)
-        .ok_or_else(|| {
-            crate::errors::AppError::Internal(anyhow::anyhow!("permit_suspended delay reason not seeded"))
-        })?;
+pub(crate) async fn ensure_system_delay_reason(db: &impl ConnectionTrait, code: &str) -> AppResult<()> {
+    let at = WORK_DELAY_REASONS.iter().position(|r| r.code == code).ok_or_else(|| {
+        crate::errors::AppError::Internal(anyhow::anyhow!("delay reason '{code}' is not a seeded system reason"))
+    })?;
     insert_seed_values(db, "WORK.DELAY_REASONS", &WORK_DELAY_REASONS[at..=at]).await
 }
 

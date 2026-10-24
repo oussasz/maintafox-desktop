@@ -188,6 +188,12 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
+    // A suspension made and lifted on another PC around a start here: raised for review and told
+    // (`permit::ended_under_work::after_suspension_check`, CMMS Advisor answer to S3). Rolled back
+    // with the row when it is then refused or left waiting.
+    if layout.def.entity_type == "permit_suspensions" {
+        crate::permit::ended_under_work::after_suspension_check(conn, entity_sync_id, payload).await?;
+    }
     let safety_check = match layout.def.entity_type {
         "site_settings" => {
             Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)

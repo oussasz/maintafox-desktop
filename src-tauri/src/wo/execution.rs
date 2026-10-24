@@ -444,24 +444,7 @@ pub(crate) async fn hold_for_permit_suspension(
     permit_code: &str,
     suspension_reason: &str,
 ) -> AppResult<WorkOrder> {
-    crate::reference::system_catalog_integrity::ensure_permit_suspended_delay_reason(txn).await?;
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT rv.id AS id FROM reference_values rv \
-             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
-             INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
-             WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' \
-             ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
-            [PERMIT_SUSPENDED_DELAY_REASON.into()],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "WORK.DELAY_REASONS has no '{PERMIT_SUSPENDED_DELAY_REASON}' value and none could be created"
-            ))
-        })?;
-    let delay_reason_id: i64 = row.try_get("", "id").map_err(|e| decode_err("delay reason id", e))?;
+    let delay_reason_id = system_delay_reason_id(txn, PERMIT_SUSPENDED_DELAY_REASON).await?;
     let (_, _, row_version) = load_wo_status(txn, wo_id).await?;
     hold_wo_in(
         txn,
@@ -478,11 +461,186 @@ pub(crate) async fn hold_for_permit_suspension(
     .await
 }
 
+/// The fixed delay reason of a running work order put on hold because its permit was closed,
+/// handed back or cancelled on another PC (CMMS Advisor answer to AU-101, option B). A value of the
+/// plant's `WORK.DELAY_REASONS` list (reference data, seeded by
+/// `reference::system_catalog_integrity`, its label editable there); its code is fixed because the
+/// backend writes it itself after applying the received permit, never chosen on screen.
+pub const PERMIT_ENDED_DELAY_REASON: &str = "permit_ended";
+
+/// Audit action: a running work order put on hold because its permit ended on another PC
+/// ("permis terminé ailleurs"), recorded as the system.
+pub const AUDIT_HELD_PERMIT_ENDED_ELSEWHERE: &str = "wo.held_permit_ended_elsewhere";
+
+/// The id of the system delay reason `code` of `WORK.DELAY_REASONS`, made sure of first (created
+/// when the plant's list lacks it), found whatever its active flag (a plant hiding it from the hold
+/// screen never blocks the hold the backend writes).
+async fn system_delay_reason_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<i64> {
+    crate::reference::system_catalog_integrity::ensure_system_delay_reason(txn, code).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id AS id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+             WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' \
+             ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
+            [code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "WORK.DELAY_REASONS has no '{code}' value and none could be created"
+            ))
+        })?;
+    row.try_get("", "id").map_err(|e| decode_err("delay reason id", e))
+}
+
+/// A permit of work order `wo_id` received from another PC as ended (`permit_status`: closed,
+/// handed back, cancelled; or suspended, waiting for revalidation) while the work order runs here:
+/// the work order is put on hold, in the caller's transaction — its own, opened after the received
+/// permit row was applied and committed (`permit::ended_hold::after_sync_pass`), so a failure here
+/// never refuses the permit row, its review conflict or its notices. CMMS Advisor answer to AU-101,
+/// option B.
+///
+/// The same writes as a hold made on screen, recorded as the system (no person: the history row and
+/// the delay segment carry no actor), with the fixed reason [`PERMIT_SUSPENDED_DELAY_REASON`] or
+/// [`PERMIT_ENDED_DELAY_REASON`], waiting for a prerequisite; audited
+/// ([`AUDIT_HELD_PERMIT_ENDED_ELSEWHERE`], "permis terminé ailleurs", with the permit's sync id).
+/// Sent to the other PCs as any local change. Nothing is written when the work order is not running
+/// here (already on hold, completed, closed): `false`.
+///
+/// Two PCs receiving the same end each hold the work order: the delay segment's identity is derived
+/// from the fact (work order, permit, status received, last start), so both write the same segment,
+/// and the crossing of the two holds is settled by sync without a person
+/// (`permit::ended_hold::settle_crossed_hold_*`).
+pub(crate) async fn hold_for_permit_ended_elsewhere(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+    permit_status: &str,
+) -> AppResult<bool> {
+    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
+    if status != WoStatus::InProgress {
+        return Ok(false);
+    }
+    let suspended = matches!(permit_status, "suspended" | "revalidation_required");
+    let reason_code = if suspended {
+        PERMIT_SUSPENDED_DELAY_REASON
+    } else {
+        PERMIT_ENDED_DELAY_REASON
+    };
+    let delay_reason_id = system_delay_reason_id(txn, reason_code).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT w.entity_sync_id AS sync_id, \
+                    COALESCE((SELECT t.acted_at FROM wo_state_transition_log t \
+                              WHERE t.wo_id = w.id AND t.to_status = 'in_progress' \
+                              ORDER BY t.acted_at DESC, t.id DESC LIMIT 1), w.actual_start) AS last_start \
+             FROM work_orders w WHERE w.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let wo_sync: Option<String> = row.try_get("", "sync_id").map_err(|e| decode_err("wo sync id", e))?;
+    let last_start: Option<String> = row.try_get("", "last_start").map_err(|e| decode_err("last start", e))?;
+    let segment_sync_id = crate::sync::identity::derived_entity_sync_id(
+        "work_order_delay_segments",
+        &format!(
+            "permit-ended-hold|{}|{permit_sync_id}|{permit_status}|{}",
+            wo_sync.as_deref().unwrap_or_default(),
+            last_start.as_deref().unwrap_or_default()
+        ),
+    );
+    let comment = if suspended {
+        format!("Permis {permit_code} suspendu sur un autre poste")
+    } else {
+        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
+    };
+    hold_writes(
+        txn,
+        &HoldWrites {
+            wo_id,
+            expected_row_version: row_version,
+            delay_reason_id,
+            comment: Some(comment),
+            actor_id: None,
+            segment_sync_id: Some(segment_sync_id.clone()),
+        },
+        reason_code,
+        crate::wo::lifecycle::HoldKind::Prerequisite,
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE.to_string(),
+            target_type: Some("work_order".to_string()),
+            target_id: Some(wo_id.to_string()),
+            actor_id: None,
+            auth_context: "system".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "permis terminé ailleurs",
+                "permit_sync_id": permit_sync_id,
+                "permit_code": permit_code,
+                "permit_status": permit_status,
+                "delay_reason": reason_code,
+                "delay_segment_sync_id": segment_sync_id,
+            })),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
+/// The writes of a hold, the delay reason already resolved.
+struct HoldWrites {
+    wo_id: i64,
+    expected_row_version: i64,
+    delay_reason_id: i64,
+    comment: Option<String>,
+    /// Who holds; `None`: the system (a hold the application makes by itself).
+    actor_id: Option<i64>,
+    /// The delay segment's identity, when it is derived from the fact (`None`: a new one).
+    segment_sync_id: Option<String>,
+}
+
 /// The writes of a hold (in_progress → on_hold) in the caller's transaction, the delay reason
 /// already resolved (`reason_code`: its code, recorded on the history row).
 async fn hold_wo_in(
     txn: &impl ConnectionTrait,
     input: &WoPauseInput,
+    reason_code: &str,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
+    hold_writes(
+        txn,
+        &HoldWrites {
+            wo_id: input.wo_id,
+            expected_row_version: input.expected_row_version,
+            delay_reason_id: input.delay_reason_id,
+            comment: input.comment.clone(),
+            actor_id: Some(input.actor_id),
+            segment_sync_id: None,
+        },
+        reason_code,
+        hold_kind,
+    )
+    .await
+}
+
+async fn hold_writes(
+    txn: &impl ConnectionTrait,
+    input: &HoldWrites,
     reason_code: &str,
     hold_kind: crate::wo::lifecycle::HoldKind,
 ) -> AppResult<WorkOrder> {
@@ -497,19 +655,16 @@ async fn hold_wo_in(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_delay_segments \
-         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind) \
-         VALUES (?, ?, NULL, ?, ?, ?, ?)",
+         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind, entity_sync_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             now.clone().into(),
             input.delay_reason_id.into(),
-            input
-                .comment
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input.comment.clone().into(),
             input.actor_id.into(),
             hold_kind.as_str().into(),
+            input.segment_sync_id.clone().into(),
         ],
     ))
     .await?;
@@ -532,24 +687,41 @@ async fn hold_wo_in(
         .await?;
     check_concurrency(result.rows_affected())?;
 
-    log_transition(
-        txn,
-        input.wo_id,
-        &from_code,
-        "on_hold",
-        "hold",
-        input.actor_id,
-        Some(reason_code),
-        input.comment.as_deref(),
-        &now,
-    )
-    .await?;
+    match input.actor_id {
+        Some(actor_id) => {
+            log_transition(
+                txn,
+                input.wo_id,
+                &from_code,
+                "on_hold",
+                "hold",
+                actor_id,
+                Some(reason_code),
+                input.comment.as_deref(),
+                &now,
+            )
+            .await?;
+        }
+        None => {
+            crate::wo::workflow::transition::log_system_transition(
+                txn,
+                input.wo_id,
+                &from_code,
+                "on_hold",
+                "hold",
+                Some(reason_code),
+                input.comment.as_deref(),
+                &now,
+            )
+            .await?;
+        }
+    }
 
     emit_action_event(
         txn,
         input.wo_id,
         "held",
-        Some(input.actor_id),
+        input.actor_id,
         Some(&from_code),
         Some("on_hold"),
         None,

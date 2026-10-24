@@ -379,6 +379,9 @@ async fn materialize_pass(
     let pass = db.begin().await?;
     // Rows that can change a settled OT's cost (finance late costs, swept after the commit).
     let mut late_cost_rows: Vec<(String, String)> = Vec::new();
+    // Permit and isolation rows whose local consequences are written after the commit
+    // (`permit::ended_hold`: the hold of running work, the end of downtime).
+    let mut permit_rows: Vec<(String, String)> = Vec::new();
     // Rows waiting for a parent are retried in the same run as long as other rows were applied,
     // so a child that arrived before its parent in the same run does not wait for the next one.
     let mut queue = items;
@@ -392,6 +395,9 @@ async fn materialize_pass(
                     progressed = true;
                     if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
                         late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
+                    }
+                    if crate::permit::ended_hold::AFTER_SYNC_TYPES.contains(&item.entity_type.as_str()) {
+                        permit_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
                     }
                 }
                 ApplyOutcome::Unchanged => {
@@ -431,6 +437,10 @@ async fn materialize_pass(
     // After the commit, with capture active: late-cost deltas are local writes, pushed like any other.
     if !late_cost_rows.is_empty() {
         crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
+    }
+    // After the commit, in their own transactions: a failure never refuses the received rows.
+    if !permit_rows.is_empty() {
+        crate::permit::ended_hold::after_sync_pass(db, &permit_rows).await;
     }
 
     Ok(result)
@@ -669,6 +679,15 @@ async fn evaluate_and_apply_row(conn: &impl ConnectionTrait, item: &InboxRow) ->
         &item.entity_type,
         &item.entity_sync_id,
         item.row_version,
+        &item.payload_json,
+    )
+    .await?;
+    // This PC's own hold of a work order for a permit ended elsewhere, crossed by the same hold
+    // from another PC (`permit::ended_hold`): closed, the received version is applied.
+    crate::permit::ended_hold::settle_crossed_hold_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
         &item.payload_json,
     )
     .await?;

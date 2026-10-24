@@ -1127,3 +1127,619 @@ async fn a_terminated_work_order_with_a_lock_fitted_stays_on_its_permit_holders_
         .expect("their work");
     assert_eq!(theirs.deisolation_pending, 1);
 }
+
+// ── CMMS Advisor answer to AU-101: hold on arrival (C1), untimed cancellation (C2, S4),
+//    suspension lifted around a start (C3, S3) ─────────────────────────────────────────
+
+/// Receives `payload` through the inbox and applies it as the sync worker does (the after-pass
+/// consequences included). This PC's own changes are taken as sent (nothing unsent to cross).
+async fn receive(db: &DatabaseConnection, entity_type: &str, sync_id: &str, payload: &Payload) {
+    for sql in ["DELETE FROM sync_capture_journal", "DELETE FROM sync_outbox"] {
+        db.execute_unprepared(sql).await.expect("taken as sent");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) VALUES (?, 'c1', ?, ?, 'upsert', 9000, ?, ?, 'pending')",
+        [
+            format!("b-recv-{sync_id}").into(),
+            entity_type.into(),
+            sync_id.into(),
+            serde_json::to_string(payload).expect("json").into(),
+            format!("h-recv-{sync_id}").into(),
+        ],
+    ))
+    .await
+    .expect("inbox");
+    let result = crate::sync::materialize::materialize_inbox_batch(db, None)
+        .await
+        .expect("materialize");
+    crate::sync::row_codec::clear_ref_cache();
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+}
+
+async fn open_hold(db: &DatabaseConnection, wo_id: i64) -> (String, Option<i64>, String) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.code, s.entered_by_id, s.entity_sync_id FROM work_order_delay_segments s \
+             JOIN reference_values rv ON rv.id = s.delay_reason_id WHERE s.work_order_id = ? AND s.ended_at IS NULL",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("open delay segment");
+    (
+        row.try_get_by_index(0).expect("code"),
+        row.try_get_by_index(1).expect("by"),
+        row.try_get_by_index(2).expect("sync id"),
+    )
+}
+
+async fn notice_keys(db: &DatabaseConnection, category: &str) -> Vec<String> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT message_key FROM notification_events WHERE category_code = '{category}' ORDER BY id"),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| r.try_get_by_index::<String>(0).expect("key"))
+    .collect()
+}
+
+/// C1: a closure received while the work runs here: the permit row, its review conflict and its
+/// notices are applied; then the work order is put on hold in its own transaction, as the system,
+/// with the reason "permit_ended", audited with the permit's sync id, and staged for the other PCs.
+#[tokio::test]
+async fn a_closure_received_over_running_work_puts_it_on_hold_after_the_apply() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-C1-1").await;
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    let closed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+    );
+    receive(&db, "work_permits", &wp.entity_sync_id, &closed).await;
+    assert_eq!(reread(&db, &wp).await.status, "closed");
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
+    assert_eq!(notices(&db, "permit_ended_under_work").await, 1);
+
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    let (reason, by, _) = open_hold(&db, wo_id).await;
+    assert_eq!(reason, crate::wo::execution::PERMIT_ENDED_DELAY_REASON);
+    assert_eq!(by, None, "recorded as the system");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_state_transition_log WHERE wo_id = {wo_id} AND to_status = 'on_hold' \
+                 AND actor_id IS NULL AND reason_code = 'permit_ended'"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND actor_id IS NULL \
+                 AND details_json LIKE '%{}%'",
+                crate::wo::execution::AUDIT_HELD_PERMIT_ENDED_ELSEWHERE,
+                wp.entity_sync_id
+            )
+        )
+        .await,
+        1
+    );
+    // A local change like any other: sent to the other PCs.
+    crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+    let staged = scalar_i64(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'work_orders' AND entity_sync_id = '{}'",
+            wo_sync(&db, wo_id).await
+        ),
+    )
+    .await;
+    assert_eq!(staged, 1);
+    // Resume stays refused by the permit gates.
+    assert!(resume(&db, wo_id).await.is_err());
+
+    // Idempotent: the same end looked at again writes nothing more.
+    let version = wo_row_version(&db, wo_id).await;
+    crate::permit::ended_hold::hold_work_of_ended_permit(&db, &wp.entity_sync_id)
+        .await
+        .expect("again");
+    assert_eq!(wo_row_version(&db, wo_id).await, version);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!("SELECT COUNT(*) FROM work_order_delay_segments WHERE work_order_id = {wo_id}")
+        )
+        .await,
+        1
+    );
+}
+
+/// C1: a suspension received over running work holds it with the reason "permit_suspended".
+#[tokio::test]
+async fn a_suspension_received_over_running_work_puts_it_on_hold_with_the_suspension_reason() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-C1-2").await;
+    suspend(&db, &wp, "Alarme gaz").await;
+    let (_, suspended, _) = suspension_as_received(&db, &wp, Some(ago(60))).await;
+    for sql in [
+        format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {wo_id}"
+        ),
+        format!("DELETE FROM work_order_delay_segments WHERE work_order_id = {wo_id}"),
+    ] {
+        db.execute_unprepared(&sql).await.expect("undo the hold");
+    }
+    assert!(matches!(
+        apply(&db, "work_permits", &wp.entity_sync_id, &suspended).await,
+        ApplyOutcome::Applied
+    ));
+    crate::permit::ended_hold::hold_work_of_ended_permit(&db, &wp.entity_sync_id)
+        .await
+        .expect("hold");
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    assert_eq!(
+        open_hold(&db, wo_id).await.0,
+        crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON
+    );
+}
+
+/// C1: a hold that cannot be written never refuses the received permit: the row, its review
+/// conflict and its notices are kept; the work order stays as it was.
+#[tokio::test]
+async fn a_hold_that_fails_after_the_apply_keeps_the_received_permit_and_its_review() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-C1-3").await;
+    db.execute_unprepared(
+        "CREATE TRIGGER test_refuse_delay BEFORE INSERT ON work_order_delay_segments \
+         BEGIN SELECT RAISE(ABORT, 'test: hold refused'); END",
+    )
+    .await
+    .expect("trigger");
+    let cancelled = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("cancelled"))],
+    );
+    receive(&db, "work_permits", &wp.entity_sync_id, &cancelled).await;
+    assert_eq!(reread(&db, &wp).await.status, "cancelled");
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
+    assert_eq!(notices(&db, "permit_ended_under_work").await, 1);
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "nothing half-written");
+}
+
+/// C2 (S4): a cancellation (no time) over work started here and not running — on hold, or
+/// completed — is raised for review and told, with a text that gives no time.
+#[tokio::test]
+async fn an_untimed_cancellation_over_held_or_completed_work_is_raised_for_review() {
+    for completed in [false, true] {
+        let db = setup().await;
+        let (wo_id, wp) = running_work(&db, if completed { "EQ-C2-2" } else { "EQ-C2-1" }).await;
+        if completed {
+            complete(&db, wo_id).await.expect("completed");
+        } else {
+            pause(&db, wo_id).await;
+        }
+        let cancelled = with(
+            wire(&db, "work_permits", &wp.entity_sync_id).await,
+            &[("status", json!("cancelled"))],
+        );
+        let version = wo_row_version(&db, wo_id).await;
+        receive(&db, "work_permits", &wp.entity_sync_id, &cancelled).await;
+        assert_eq!(
+            review_conflicts(&db, &wp.entity_sync_id).await,
+            vec![(
+                crate::permit::ended_under_work::codes::ENDED_BEFORE_START.to_string(),
+                "new".to_string()
+            )],
+            "completed: {completed}"
+        );
+        assert_eq!(
+            notice_keys(&db, "permit_ended_under_work").await,
+            vec![crate::permit::ended_under_work::codes::NOTICE_BEFORE_START_UNTIMED.to_string()]
+        );
+        assert_eq!(wo_row_version(&db, wo_id).await, version, "not running: nothing held");
+    }
+}
+
+/// C2: the same cancellation over running work: during the work, untimed text, and the hold.
+#[tokio::test]
+async fn an_untimed_cancellation_over_running_work_is_raised_and_holds_it() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-C2-3").await;
+    let cancelled = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("cancelled"))],
+    );
+    receive(&db, "work_permits", &wp.entity_sync_id, &cancelled).await;
+    assert_eq!(
+        notice_keys(&db, "permit_ended_under_work").await,
+        vec![crate::permit::ended_under_work::codes::NOTICE_DURING_WORK_UNTIMED.to_string()]
+    );
+    let body = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT n.body FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = 'permit_ended_under_work' LIMIT 1"
+                .to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("notice")
+        .try_get_by_index::<String>(0)
+        .expect("body");
+    assert!(!body.contains('?'), "no empty time shown: {body}");
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+}
+
+/// C3 (S3): a suspension made and lifted on another PC whose window covers the start here: raised
+/// for review on the permit and told; the permit is active again, nothing is held.
+#[tokio::test]
+async fn a_suspension_lifted_elsewhere_around_a_start_here_is_raised_for_review() {
+    for covers in [true, false] {
+        let db = setup().await;
+        let (wo_id, wp) = running_work(&db, if covers { "EQ-C3-1" } else { "EQ-C3-2" }).await;
+        suspend(&db, &wp, "Vent fort").await;
+        let (sync, _, suspension) = suspension_as_received(&db, &wp, None).await;
+        for sql in [
+            format!(
+                "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+                 WHERE id = {wo_id}"
+            ),
+            format!("DELETE FROM work_order_delay_segments WHERE work_order_id = {wo_id}"),
+        ] {
+            db.execute_unprepared(&sql).await.expect("undo the hold");
+        }
+        let (from, until) = if covers {
+            (
+                ago(10),
+                (chrono::Utc::now() + chrono::Duration::minutes(5))
+                    .format("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string(),
+            )
+        } else {
+            (ago(120), ago(60))
+        };
+        let lifted = with(
+            suspension,
+            &[("suspended_at", json!(from)), ("reinstated_at", json!(until))],
+        );
+        let outcome = apply(&db, "permit_suspensions", &sync, &lifted).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+        let expected = if covers {
+            vec![(
+                crate::permit::ended_under_work::codes::ENDED_BEFORE_START.to_string(),
+                "new".to_string(),
+            )]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            review_conflicts(&db, &wp.entity_sync_id).await,
+            expected,
+            "covers: {covers}"
+        );
+        assert_eq!(
+            notice_keys(&db, "permit_ended_under_work").await,
+            if covers {
+                vec![crate::permit::ended_under_work::codes::NOTICE_SUSPENDED_AROUND_START.to_string()]
+            } else {
+                vec![]
+            }
+        );
+        assert_eq!(wo_status(&db, wo_id).await, "in_progress", "the permit is active again");
+        // The same row again: known here now, nothing more.
+        apply(&db, "permit_suspensions", &sync, &lifted).await;
+        assert_eq!(
+            review_conflicts(&db, &wp.entity_sync_id).await.len(),
+            usize::from(covers)
+        );
+    }
+}
+
+/// D4 condition 2 on arrival: a lock removal verified on another PC ends the downtime of a work
+/// order completed here when it was the last fitted lock, at the last verification's time.
+#[tokio::test]
+async fn a_received_last_removal_ends_the_downtime_of_a_completed_work_order() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-D4C-5", &["MCC-D4C-5"]).await;
+    let segment = open_downtime(&db, wo_id).await;
+    complete(&db, wo_id).await.expect("completed");
+    let verified_at = verify_removal(&db, &locks[0]).await;
+    // As received: the verification is here, the downtime not ended by it yet.
+    db.execute_unprepared(&format!(
+        "UPDATE work_order_downtime_segments SET ended_at = NULL WHERE id = {segment}"
+    ))
+    .await
+    .expect("as received");
+    crate::permit::ended_hold::end_downtime_after_received_removal(&db, &locks[0].entity_sync_id)
+        .await
+        .expect("after sync");
+    assert_eq!(segment_end(&db, segment).await.as_deref(), Some(verified_at.as_str()));
+    // Again: nothing more.
+    crate::permit::ended_hold::end_downtime_after_received_removal(&db, &locks[0].entity_sync_id)
+        .await
+        .expect("again");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND target_id = '{wo_id}'",
+                crate::wo::execution::AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL
+            )
+        )
+        .await,
+        2,
+        "the local verification's, then the one after sync"
+    );
+
+    // The isolation received with its permit (the permit's group): the permit row's pass ends it.
+    db.execute_unprepared(&format!(
+        "UPDATE work_order_downtime_segments SET ended_at = NULL WHERE id = {segment}"
+    ))
+    .await
+    .expect("as received");
+    let permit_sync = text_of(
+        &db,
+        &format!(
+            "SELECT entity_sync_id FROM work_permits WHERE id = {}",
+            locks[0].permit_id
+        ),
+    )
+    .await;
+    crate::permit::ended_hold::after_sync_pass(&db, &[("work_permits".to_string(), permit_sync)]).await;
+    assert_eq!(segment_end(&db, segment).await.as_deref(), Some(verified_at.as_str()));
+}
+
+// ── Two PCs holding the same work order for the same permit end (C1) ─────────────────────
+
+async fn device_with_verifier() -> DatabaseConnection {
+    let db = crate::sync::test_support::started_device_db().await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_accounts (id, entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) VALUES (?, 'user-sync-ptw-verifier', \
+         'ptw_verifier', 'PTW Verifier', 'local', 1, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [VERIFIER.into()],
+    ))
+    .await
+    .expect("verifier");
+    db
+}
+
+async fn id_of(db: &DatabaseConnection, table: &str, sync_id: &str) -> i64 {
+    scalar_i64(
+        db,
+        &format!("SELECT id FROM {table} WHERE entity_sync_id = '{sync_id}'"),
+    )
+    .await
+}
+
+async fn open_conflict_kinds(db: &DatabaseConnection) -> Vec<String> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT conflict_type FROM sync_conflicts WHERE status IN ('new', 'triaged', 'escalated') ORDER BY id"
+            .to_string(),
+    ))
+    .await
+    .expect("conflicts")
+    .iter()
+    .map(|r| r.try_get_by_index::<String>(0).expect("type"))
+    .collect()
+}
+
+/// PC3 closes the permit while PC1 starts the work (PC2 follows PC1). PC1 and PC2 both receive the
+/// closure and both hold the work order; their holds cross on the server. The first one kept, the
+/// other PC's own hold is settled without a person: both converge on one hold (one delay segment),
+/// with nothing left to send and no conflict but the permit's review; no ping-pong afterwards.
+#[tokio::test]
+async fn two_pcs_holding_the_same_work_order_for_the_same_permit_end_converge() {
+    use crate::sync::test_support::TestServer;
+    let pc1 = device_with_verifier().await;
+    let pc2 = crate::sync::test_support::started_device_db().await;
+    let pc3 = crate::sync::test_support::started_device_db().await;
+    let mut server = TestServer::new();
+
+    let asset = insert_equipment(&pc1, "EQ-C1-X").await;
+    let (wo1, rv) = assigned_wo_requiring_permit(&pc1, asset).await;
+    let wp1 = advance_to_issued(&pc1, create_from_wo(&pc1, "hot_work", wo1).await.expect("permit")).await;
+    let wp1 = set_status(&pc1, &wp1, "active").await.expect("active");
+    let wo_sync_id = wo_sync(&pc1, wo1).await;
+    for (name, db) in [("PC1", &pc1), ("PC2", &pc2), ("PC3", &pc3)] {
+        server.exchange(name, db).await;
+    }
+
+    // PC3 closes the permit (the work is not running there); PC1 then starts the work.
+    let wp3 = queries::get_work_permit(&pc3, id_of(&pc3, "work_permits", &wp1.entity_sync_id).await)
+        .await
+        .expect("read")
+        .expect("permit on PC3");
+    set_status(&pc3, &wp3, "closed").await.expect("closed on PC3");
+    start(&pc1, wo1, rv).await.expect("started on PC1");
+    server.exchange("PC1", &pc1).await;
+    server.exchange("PC2", &pc2).await;
+    let wo2 = id_of(&pc2, "work_orders", &wo_sync_id).await;
+    assert_eq!(wo_status(&pc2, wo2).await, "in_progress");
+    server.exchange("PC3", &pc3).await;
+
+    // Both receive the closure and hold the work order, PC1 some minutes before PC2 (its own
+    // clock: the two holds differ by their times).
+    server.exchange("PC1", &pc1).await;
+    for sql in [
+        format!("UPDATE work_orders SET updated_at = '{}' WHERE id = {wo1}", ago(7)),
+        format!(
+            "UPDATE work_order_delay_segments SET started_at = '{}' WHERE work_order_id = {wo1} AND ended_at IS NULL",
+            ago(7)
+        ),
+    ] {
+        pc1.execute_unprepared(&sql).await.expect("PC1's clock");
+    }
+    server.exchange("PC2", &pc2).await;
+    assert_eq!(wo_status(&pc1, wo1).await, "on_hold");
+    assert_eq!(wo_status(&pc2, wo2).await, "on_hold");
+
+    // The holds cross: PC1's reaches the server first, PC2's is settled.
+    for _ in 0..2 {
+        server.exchange("PC1", &pc1).await;
+        server.exchange("PC2", &pc2).await;
+    }
+    for (name, db, wo_id) in [("PC1", &pc1, wo1), ("PC2", &pc2, wo2)] {
+        assert_eq!(wo_status(db, wo_id).await, "on_hold", "{name}");
+        assert_eq!(
+            scalar_i64(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM work_order_delay_segments WHERE work_order_id = {wo_id} AND ended_at IS NULL"
+                )
+            )
+            .await,
+            1,
+            "{name}: one hold"
+        );
+        // Closed and started within the same second here: before the start or during the work.
+        let kinds = open_conflict_kinds(db).await;
+        assert!(
+            kinds.len() == 1 && kinds[0].starts_with("PERMIT_ENDED_"),
+            "{name}: only the permit's review: {kinds:?}"
+        );
+        assert_eq!(
+            scalar_i64(
+                db,
+                "SELECT COUNT(*) FROM sync_outbox WHERE status IN ('pending', 'in_flight', 'conflict')"
+            )
+            .await,
+            0,
+            "{name}: nothing left to send"
+        );
+    }
+    assert_eq!(
+        open_hold(&pc1, wo1).await.2,
+        open_hold(&pc2, wo2).await.2,
+        "the same segment"
+    );
+    // PC2's own hold crossed PC1's on the server and was closed without a person.
+    for entity in ["work_orders", "work_order_delay_segments"] {
+        assert_eq!(
+            scalar_i64(
+                &pc2,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = '{entity}' AND status = 'superseded' \
+                     AND rejection_code = '{}'",
+                    crate::permit::ended_hold::CROSSED_HOLD_KEPT
+                )
+            )
+            .await,
+            1,
+            "{entity}"
+        );
+    }
+    // No ping-pong.
+    for (name, db) in [("PC1", &pc1), ("PC2", &pc2)] {
+        let report = server.exchange(name, db).await;
+        assert_eq!((report.sent, report.received), (0, 0), "{name}");
+    }
+}
+
+/// Puts `payload` in the inbox (this PC's unsent changes kept) and applies it.
+async fn receive_keeping_own(db: &DatabaseConnection, entity_type: &str, sync_id: &str, payload: &Payload) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) VALUES (?, 'c2', ?, ?, 'upsert', 9500, ?, ?, 'pending')",
+        [
+            format!("b-own-{sync_id}").into(),
+            entity_type.into(),
+            sync_id.into(),
+            serde_json::to_string(payload).expect("json").into(),
+            format!("h-own-{sync_id}").into(),
+        ],
+    ))
+    .await
+    .expect("inbox");
+    crate::sync::materialize::materialize_inbox_batch(db, None)
+        .await
+        .expect("materialize");
+    crate::sync::row_codec::clear_ref_cache();
+}
+
+/// The other PC's same hold received while this PC's own is still unsent: this PC's change is
+/// closed and the received version applied, no conflict for a person; a received work order that
+/// differs by more than its time is left to a person.
+#[tokio::test]
+async fn the_same_hold_received_while_this_pcs_own_is_unsent_is_settled_without_a_person() {
+    for same in [true, false] {
+        let db = setup().await;
+        let (wo_id, wp) = running_work(&db, if same { "EQ-C1-4" } else { "EQ-C1-5" }).await;
+        crate::sync::capture::install_capture(&db).await.expect("capture");
+        let closed = with(
+            wire(&db, "work_permits", &wp.entity_sync_id).await,
+            &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+        );
+        receive(&db, "work_permits", &wp.entity_sync_id, &closed).await;
+        assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+        crate::sync::capture::drain_capture_journal(&db).await.expect("drain");
+
+        let wo_sync_id = wo_sync(&db, wo_id).await;
+        let (_, _, segment_sync) = open_hold(&db, wo_id).await;
+        let mut theirs = with(
+            wire(&db, "work_orders", &wo_sync_id).await,
+            &[("updated_at", json!(ago(7)))],
+        );
+        if !same {
+            theirs = with(theirs, &[("title", json!("Titre changé sur l'autre poste"))]);
+        }
+        let their_segment = with(
+            wire(&db, "work_order_delay_segments", &segment_sync).await,
+            &[("started_at", json!(ago(7)))],
+        );
+        receive_keeping_own(&db, "work_order_delay_segments", &segment_sync, &their_segment).await;
+        receive_keeping_own(&db, "work_orders", &wo_sync_id, &theirs).await;
+
+        let concurrent = scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'CONCURRENT_EDIT' AND status = 'new'",
+        )
+        .await;
+        let segment_started = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT started_at FROM work_order_delay_segments WHERE entity_sync_id = ?",
+                [segment_sync.clone().into()],
+            ))
+            .await
+            .expect("query")
+            .expect("segment")
+            .try_get_by_index::<String>(0)
+            .expect("started_at");
+        assert_eq!(
+            Some(segment_started.as_str()),
+            their_segment.get("started_at").and_then(Value::as_str),
+            "the other PC's segment is kept"
+        );
+        if same {
+            assert_eq!(concurrent, 0, "settled without a person");
+            assert_eq!(
+                scalar_i64(
+                    &db,
+                    &format!(
+                        "SELECT COUNT(*) FROM sync_outbox WHERE status IN ('pending', 'in_flight', 'conflict') \
+                         AND entity_type IN ('work_orders', 'work_order_delay_segments')"
+                    )
+                )
+                .await,
+                0
+            );
+        } else {
+            assert_eq!(concurrent, 1, "a person decides on the other change");
+        }
+    }
+}
