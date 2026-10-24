@@ -239,6 +239,10 @@ function readNestedString(obj: Record<string, unknown>, path: string[]): string 
   return typeof cur === "string" ? cur : undefined;
 }
 
+/**
+ * The field spellings servers send for a claim or preview. The policy refresh answer is read in
+ * Rust with the same rules (`policy_refresh_claim` in product_license.rs): change both together.
+ */
 function normalizeActivationPayload(raw: Record<string, unknown>): Record<string, unknown> {
   return {
     ...raw,
@@ -299,6 +303,36 @@ function normalizeActivationPayload(raw: Record<string, unknown>): Record<string
   };
 }
 
+type ActivationHttpError = Error & {
+  status?: number;
+  code?: string;
+  technicalDetails?: string;
+};
+
+/**
+ * The error an activation call throws for an HTTP error answer: the server's `code` and
+ * `message` (a 409 is a slot limit unless the server says otherwise), and the body as details.
+ */
+function activationHttpError(
+  status: number,
+  scope: string,
+  fromBody: { code: string | undefined; message: string | undefined },
+  bodyText: string | undefined,
+): ActivationHttpError {
+  let { code, message } = fromBody;
+  if (status === 409) {
+    code = code ?? "slot_limit_reached";
+    message =
+      message ??
+      "No device slot is available for this license. Ask your administrator to free a seat, then try again.";
+  }
+  const err = new Error(message ?? `${scope} failed (${status})`) as ActivationHttpError;
+  err.status = status;
+  if (code !== undefined) err.code = code;
+  err.technicalDetails = bodyText?.trim() || `${scope} HTTP ${status}`;
+  return err;
+}
+
 function throwActivationHttpError(
   res: Response,
   scope: string,
@@ -328,21 +362,7 @@ function throwActivationHttpError(
       message = bodyText.trim();
     }
   }
-  if (res.status === 409) {
-    code = code ?? "slot_limit_reached";
-    message =
-      message ??
-      "No device slot is available for this license. Ask your administrator to free a seat, then try again.";
-  }
-  const err = new Error(message ?? `${scope} failed (${res.status})`) as Error & {
-    status?: number;
-    code?: string;
-    technicalDetails?: string;
-  };
-  err.status = res.status;
-  if (code !== undefined) err.code = code;
-  err.technicalDetails = bodyText?.trim() || `${scope} HTTP ${res.status}`;
-  throw err;
+  throw activationHttpError(res.status, scope, { code, message }, bodyText);
 }
 
 /** Map raw activation/control-plane errors to user-facing copy (never show raw backend text as primary). */
@@ -491,9 +511,11 @@ export async function getProductLicenseOnboardingState(): Promise<ProductLicense
 }
 
 /**
- * Control-plane API origin for activation and licence calls. The Rust sync worker resolves the
- * same value at build time (`src-tauri/build.rs`): `VITE_ADMIN_API_BASE_URL`, else the shared
- * default in `shared/control-plane.json`.
+ * Control-plane API origin for the activation calls made from the webview (preview, claim, tenant
+ * status). Rust resolves the same value at build time (`src-tauri/build.rs`):
+ * `VITE_ADMIN_API_BASE_URL`, else the shared default in `shared/control-plane.json`; sync, updates
+ * and the licence policy refresh use it there, with the activation token stored in Rust.
+ * Known follow-up: claim, tenant status and initialisation still run here, not in Rust.
  */
 export function controlPlaneApiBase(): string {
   const fromEnv = (import.meta.env["VITE_ADMIN_API_BASE_URL"] as string | undefined)?.trim();
@@ -842,57 +864,62 @@ export async function applyProductLicenseReconciliation(
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-/**
- * A version the licence server compares against a forced-update minimum: MAJOR.MINOR.PATCH with an
- * optional pre-release ("0.4.0-dev" is below "0.4.0"), at most 32 characters as the server accepts.
- */
-const STRICT_APP_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const PolicyRefreshResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("no_token") }),
+  z.object({ kind: z.literal("refreshed"), state: ProductLicenseOnboardingStateSchema }),
+  z.object({
+    kind: z.literal("http_error"),
+    status: z.number().int(),
+    code: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+    details: z.string().nullable().optional(),
+  }),
+  z.object({ kind: z.literal("invalid_response"), message: z.string() }),
+  z.object({ kind: z.literal("network_error"), message: z.string() }),
+]);
+
+/** A licence policy refresh that got an answer it could use. */
+export type PolicyRefreshOutcome =
+  | { kind: "no_token" }
+  | { kind: "refreshed"; state: ProductLicenseOnboardingState };
 
 /**
- * Refresh edition capabilities without consuming a new device slot.
+ * Refresh the licence without consuming a new device slot (`refresh_product_activation_policy`).
+ * The request is sent from Rust with the activation token stored there, which never reaches the
+ * webview; Rust also records a renewed licence as a successful reconciliation.
  *
  * `appVersion` is the version this PC is running, so a forced update releases a PC that is
  * already up to date. It is sent only when well formed; without it the server applies the forced
  * update as if the PC were out of date.
+ *
+ * Resolves `no_token` when this PC holds no activation (nothing was sent), or `refreshed` with the
+ * recorded state. Throws, as the other activation calls do: the server's error answer (`status`,
+ * `code`, `technicalDetails`), a plain error when no usable answer came, or this PC's refusal of
+ * the licence change (an administrator or a step-up needed).
  */
 export async function refreshProductActivationPolicy(
-  activationToken: string,
   appVersion?: string,
-): Promise<ProductActivationClaim> {
-  const token = activationToken.trim();
-  if (!token) throw new Error("Activation token is required.");
-  const version = appVersion?.trim();
-  const sentVersion =
-    version && version.length <= 32 && STRICT_APP_VERSION.test(version) ? version : undefined;
-  const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/policy-refresh`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(sentVersion ? { app_version: sentVersion } : {}),
+): Promise<PolicyRefreshOutcome> {
+  const raw = await invoke<unknown>("refresh_product_activation_policy", {
+    appVersion: appVersion ?? null,
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => undefined);
-    throwActivationHttpError(res, "Policy refresh", text);
+  const result = PolicyRefreshResultSchema.parse(raw);
+  switch (result.kind) {
+    case "no_token":
+      return { kind: "no_token" };
+    case "refreshed":
+      return { kind: "refreshed", state: result.state };
+    case "http_error":
+      throw activationHttpError(
+        result.status,
+        "Policy refresh",
+        { code: result.code ?? undefined, message: result.message ?? undefined },
+        result.details ?? undefined,
+      );
+    case "invalid_response":
+    case "network_error":
+      throw new Error(result.message);
   }
-  const raw = (await res.json()) as Record<string, unknown>;
-  const normalized = normalizeActivationPayload(raw);
-  // Control plane may omit activation_token on refresh; reuse the bearer we already hold.
-  if (
-    typeof normalized["activation_token"] !== "string" ||
-    !String(normalized["activation_token"]).trim()
-  ) {
-    normalized["activation_token"] = token;
-  }
-  return ActivationClaimSchema.parse(normalized);
-}
-
-/** Local activation bearer token (no session required — device-scoped onboarding state). */
-export async function getProductActivationToken(): Promise<string | null> {
-  const raw = await invoke<unknown>("get_product_activation_token");
-  return typeof raw === "string" && raw.trim() ? raw : null;
 }
 
 export async function getProductLicenseDiagnostics(): Promise<ProductLicenseDiagnostics | null> {

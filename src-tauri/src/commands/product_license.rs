@@ -27,7 +27,7 @@ const TENANT_BOOTSTRAP_SCOPE: &str = "device";
 /// that connection would wait on itself. One process writes the record (single-instance app).
 static LICENCE_RECORD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ProductLicenseOnboardingState {
     pub complete: bool,
     pub status: ProductLicenseActivationStatus,
@@ -2703,8 +2703,11 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
 }
 
 /// Bearer token from the last successful activation claim (`/api/v1/activation/claim`) for the
-/// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
+/// Rust sync worker. No command returns the stored token: sync, updates and the licence policy
+/// refresh (`refresh_product_activation_policy`) all read it here, in Rust. `None` unless the
 /// activation is currently active.
+/// Known follow-up: the activation claim, tenant status and tenant initialisation still run from
+/// the webview (`product-license-service.ts`), with the token the claim just returned to it.
 pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
     activation_bearer_token_when(db, &[ProductLicenseActivationStatus::Active]).await
 }
@@ -2743,17 +2746,384 @@ async fn activation_bearer_token_when(
     Ok(rec.activation_claim.map(|c| c.activation_token))
 }
 
-/// Device-local activation token for policy refresh before/without an app session.
-#[tauri::command]
-pub async fn get_product_activation_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
-        return Ok(None);
-    };
-    if !record_has_valid_activation_claim(&rec) {
-        return Ok(None);
+/// Licence policy refresh on the control API: the stored activation renewed without taking a
+/// device slot.
+const POLICY_REFRESH_PATH: &str = "/api/v1/activation/policy-refresh";
+/// Longest app version the licence server accepts.
+const APP_VERSION_MAX_LEN: usize = 32;
+/// Longest server error body kept in a policy-refresh result (the technical details on screen).
+const POLICY_REFRESH_DETAILS_MAX_CHARS: usize = 4000;
+
+/// What one licence policy refresh gave (`refresh_product_activation_policy`). Never carries the
+/// activation token: the request is sent from here and the token stays in Rust.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PolicyRefreshResult {
+    /// No valid activation claim is stored on this PC: nothing was sent.
+    NoToken,
+    /// The server renewed the activation; its claim was recorded as a successful reconciliation.
+    Refreshed { state: ProductLicenseOnboardingState },
+    /// The server answered an error status. `code` and `message` are read from its body as the
+    /// webview reads every activation error (`throwActivationHttpError`); `details` is the body.
+    HttpError {
+        status: u16,
+        code: Option<String>,
+        message: Option<String>,
+        details: Option<String>,
+    },
+    /// The server answered 2xx with a body that is not a licence claim, or an answer too large to
+    /// read (`RAW_ANSWER_MAX_BYTES`), or the request could not be built. Nothing was recorded.
+    InvalidResponse { message: String },
+    /// No answer from the server (offline, connection refused, interrupted).
+    NetworkError { message: String },
+}
+
+/// The version sent to the licence server, compared there against a forced-update minimum:
+/// MAJOR.MINOR.PATCH with an optional pre-release ("0.4.0-dev" is below "0.4.0"), at most 32
+/// characters as the server accepts.
+fn well_formed_app_version(version: &str) -> bool {
+    if version.len() > APP_VERSION_MAX_LEN {
+        return false;
     }
-    Ok(rec.activation_claim.map(|c| c.activation_token))
+    let (core, pre_release) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && pre_release
+            .is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+}
+
+/// The stored token removed from a text that leaves this function's caller (result, logs).
+fn without_token(text: String, token: &str) -> String {
+    if token.is_empty() {
+        text
+    } else {
+        text.replace(token, "[activation token]")
+    }
+}
+
+/// The first of `keys` present and not null, as JavaScript's `a ?? b` reads them.
+fn first_present(raw: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<serde_json::Value> {
+    keys.iter().find_map(|k| raw.get(*k).filter(|v| !v.is_null()).cloned())
+}
+
+/// The value at `path` inside nested objects.
+fn nested_value<'a>(
+    raw: &'a serde_json::Map<String, serde_json::Value>,
+    path: &[&str],
+) -> Option<&'a serde_json::Value> {
+    let (first, rest) = path.split_first()?;
+    let mut current = raw.get(*first)?;
+    for segment in rest {
+        current = current.as_object()?.get(*segment)?;
+    }
+    Some(current)
+}
+
+/// `readNestedString`: a string at `path`.
+fn nested_string(raw: &serde_json::Map<String, serde_json::Value>, path: &[&str]) -> Option<serde_json::Value> {
+    nested_value(raw, path)
+        .and_then(serde_json::Value::as_str)
+        .map(serde_json::Value::from)
+}
+
+/// `readNestedNumber`: a number at `path`, or a string JavaScript's `Number()` reads as a finite
+/// number (an empty string reads as 0, as there).
+fn nested_number(raw: &serde_json::Map<String, serde_json::Value>, path: &[&str]) -> Option<serde_json::Value> {
+    match nested_value(raw, path)? {
+        serde_json::Value::Number(n) => Some(serde_json::Value::Number(n.clone())),
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            let parsed = if trimmed.is_empty() {
+                0.0
+            } else {
+                trimmed.parse::<f64>().ok().filter(|n| n.is_finite())?
+            };
+            // An integral value stays an integer, so it reads into the claim's integer fields.
+            if parsed.fract() == 0.0 && parsed.abs() < 9.0e15 {
+                Some(serde_json::Value::from(parsed as i64))
+            } else {
+                serde_json::Number::from_f64(parsed).map(serde_json::Value::Number)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The claim a policy-refresh answer gives, in the canonical shape of
+/// `ProductActivationClaimRecord`: the fields and fallbacks of `normalizeActivationPayload`
+/// followed by `toDesktopActivationClaimRecord` (product-license-service.ts), which the webview
+/// applied to this answer before the refresh moved here. An omitted or empty `activation_token` is
+/// the stored one (the server may leave it out of a refresh).
+fn policy_refresh_claim(
+    raw: &serde_json::Map<String, serde_json::Value>,
+    stored_token: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let get = |key: &str| first_present(raw, &[key]);
+    let edition = first_present(raw, &["edition", "license_tier", "license_plan", "tier", "plan"])
+        .or_else(|| nested_string(raw, &["claim", "tier"]))
+        .or_else(|| nested_string(raw, &["entitlement", "tier"]));
+    let activation_token = raw
+        .get("activation_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+        .map_or_else(|| stored_token.to_string(), str::to_string);
+    let fields = [
+        ("tenant_id", get("tenant_id")),
+        ("license_id", get("license_id")),
+        ("machine_fingerprint", get("machine_fingerprint")),
+        ("activation_token", Some(serde_json::Value::from(activation_token))),
+        ("expires_at", get("expires_at")),
+        ("force_min_app_version", get("force_min_app_version")),
+        ("force_update_required", get("force_update_required")),
+        ("update_channel", get("update_channel")),
+        ("offline_grace_hours", get("offline_grace_hours")),
+        (
+            "trust_revocation_disconnects_immediately",
+            get("trust_revocation_disconnects_immediately"),
+        ),
+        (
+            "reconnect_requires_fresh_heartbeat",
+            get("reconnect_requires_fresh_heartbeat"),
+        ),
+        (
+            "tenant_display_name",
+            first_present(
+                raw,
+                &[
+                    "tenant_display_name",
+                    "company_display_name",
+                    "company_name",
+                    "tenant_name",
+                ],
+            )
+            .or_else(|| nested_string(raw, &["tenant", "display_name"]))
+            .or_else(|| nested_string(raw, &["tenant", "name"]))
+            .or_else(|| nested_string(raw, &["company", "display_name"])),
+        ),
+        (
+            "tenant_slug",
+            first_present(raw, &["tenant_slug", "slug"]).or_else(|| nested_string(raw, &["tenant", "slug"])),
+        ),
+        (
+            "device_limit",
+            first_present(
+                raw,
+                &["device_limit", "slot_limit", "seat_limit", "deviceLimit", "slotLimit"],
+            )
+            .or_else(|| nested_number(raw, &["claim", "slot_limit"]))
+            .or_else(|| nested_number(raw, &["entitlement", "slot_limit"]))
+            .or_else(|| nested_number(raw, &["license", "slot_limit"])),
+        ),
+        ("license_tier", edition.clone()),
+        ("license_plan", edition),
+        // As `normalizeActivationPayload`: a 2xx answer that states no licence status is active.
+        (
+            "license_status",
+            Some(get("license_status").unwrap_or_else(|| serde_json::Value::from("active"))),
+        ),
+        (
+            "activated_device_count",
+            first_present(raw, &["activated_device_count", "active_device_count"])
+                .or_else(|| nested_number(raw, &["limits", "activated"])),
+        ),
+        (
+            "has_demo_data",
+            first_present(raw, &["has_demo_data", "demo_data", "is_demo"]),
+        ),
+        (
+            "is_initialized",
+            get("is_initialized").or_else(|| {
+                nested_value(raw, &["tenant", "is_initialized"])
+                    .filter(|v| !v.is_null())
+                    .cloned()
+            }),
+        ),
+    ];
+    fields
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.unwrap_or(serde_json::Value::Null)))
+        .collect()
+}
+
+/// The reconciliation outcome (`apply_product_license_reconciliation_in`) of a 2xx policy-refresh
+/// answer, or why the answer is not a licence claim.
+fn policy_refresh_outcome_json(body: &str, stored_token: &str, app_version: Option<&str>) -> Result<String, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("The policy refresh answer is not JSON: {e}"))?;
+    let raw = value
+        .as_object()
+        .ok_or_else(|| "The policy refresh answer is not a JSON object.".to_string())?;
+    let envelope = match raw.get("entitlement_envelope").filter(|v| !v.is_null()) {
+        Some(v) => Some(
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(v.clone())
+                .map_err(|e| format!("The policy refresh answer has an invalid entitlement envelope: {e}"))?,
+        ),
+        None => None,
+    };
+    let claim: ProductActivationClaimRecord =
+        serde_json::from_value(serde_json::Value::Object(policy_refresh_claim(raw, stored_token)))
+            .map_err(|e| format!("The policy refresh answer is not a licence claim: {e}"))?;
+    Ok(serde_json::json!({
+        "kind": "success",
+        "claim": claim,
+        "entitlement_envelope": envelope,
+        "app_version": app_version,
+    })
+    .to_string())
+}
+
+/// The code and message of an error answer, read as `throwActivationHttpError` reads them: `code`,
+/// else `error` when a string, else `error.code`; `message`, else `detail`, `error_description`,
+/// `error.message`; a body that is not JSON is the message. What a status means when the body says
+/// nothing (a 409 is a slot limit) is decided by the webview, as for every activation error.
+fn policy_refresh_error_fields(body: &str) -> (Option<String>, Option<String>) {
+    let text = |v: Option<&serde_json::Value>| v.and_then(serde_json::Value::as_str).map(str::to_string);
+    let mut code = None;
+    let mut message = None;
+    let trimmed = body.trim();
+    if !trimmed.is_empty() {
+        match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(serde_json::Value::Object(obj)) => {
+                let nested = obj.get("error").and_then(serde_json::Value::as_object);
+                code = text(obj.get("code"))
+                    .or_else(|| text(obj.get("error")))
+                    .or_else(|| nested.and_then(|n| text(n.get("code"))));
+                message = text(obj.get("message"))
+                    .or_else(|| text(obj.get("detail")))
+                    .or_else(|| text(obj.get("error_description")))
+                    .or_else(|| nested.and_then(|n| text(n.get("message"))));
+            }
+            // JSON `null` fails there too (reading a field of null), so the body is the message.
+            Ok(serde_json::Value::Null) | Err(_) => message = Some(trimmed.to_string()),
+            Ok(_) => {}
+        }
+    }
+    (code, message)
+}
+
+/// Licence policy refresh from Rust: sends the stored activation token to the control API at
+/// `api_base`, then records a 2xx answer as a successful reconciliation for `caller` (refusals of
+/// that change, such as `LICENSE_RECONCILE_ADMIN_REQUIRED` or a step-up, are returned as errors).
+/// `app_version` is sent only when well formed (`well_formed_app_version`); without it the server
+/// applies a forced update as if this PC were out of date.
+pub(crate) async fn refresh_product_activation_policy_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    api_base: &str,
+    app_version: Option<&str>,
+) -> AppResult<PolicyRefreshResult> {
+    let Some(record) = load_state_record_from_db(db).await? else {
+        return Ok(PolicyRefreshResult::NoToken);
+    };
+    if !record_has_valid_activation_claim(&record) {
+        return Ok(PolicyRefreshResult::NoToken);
+    }
+    let Some(token) = record.activation_claim.map(|c| c.activation_token.trim().to_string()) else {
+        return Ok(PolicyRefreshResult::NoToken);
+    };
+    let version = app_version.map(str::trim).filter(|v| !v.is_empty());
+    let request_body = match version.filter(|v| well_formed_app_version(v)) {
+        Some(v) => serde_json::json!({ "app_version": v }),
+        None => serde_json::json!({}),
+    };
+    let client = crate::sync::transport::client::ControlPlaneClient::new(
+        api_base,
+        crate::sync::transport::SyncTiming::production().timeouts,
+    )
+    .map_err(AppError::SyncError)?;
+    let (status, body) = match client
+        .post_json_raw(POLICY_REFRESH_PATH, &token, request_body.to_string())
+        .await
+    {
+        Ok(answer) => answer,
+        // An answer too large to read (`RAW_ANSWER_MAX_BYTES`), or a request that could not be
+        // built: no licence answer, but not the network either.
+        Err(e @ crate::sync::transport::client::TransportError::Contract(_)) => {
+            let message = without_token(e.message(), &token);
+            tracing::warn!(
+                event = "desktop_policy_refresh_invalid_answer",
+                error = %message,
+                "Licence policy refresh answer could not be read"
+            );
+            return Ok(PolicyRefreshResult::InvalidResponse { message });
+        }
+        Err(e) => {
+            let message = without_token(e.message(), &token);
+            tracing::warn!(
+                event = "desktop_policy_refresh_unreachable",
+                error = %message,
+                "Licence policy refresh got no answer"
+            );
+            return Ok(PolicyRefreshResult::NetworkError { message });
+        }
+    };
+    if !(200..300).contains(&status) {
+        let (code, message) = policy_refresh_error_fields(&body);
+        let code = code.map(|c| without_token(c, &token));
+        let message = message.map(|m| without_token(m, &token));
+        // Redacted before it is shortened: a token cut at the limit would no longer be found.
+        let details = Some(body.trim()).filter(|b| !b.is_empty()).map(|b| {
+            without_token(b.to_string(), &token)
+                .chars()
+                .take(POLICY_REFRESH_DETAILS_MAX_CHARS)
+                .collect::<String>()
+        });
+        tracing::warn!(
+            event = "desktop_policy_refresh_refused",
+            status,
+            code = code.as_deref().unwrap_or(""),
+            "Licence policy refresh answered an error"
+        );
+        return Ok(PolicyRefreshResult::HttpError {
+            status,
+            code,
+            message,
+            details,
+        });
+    }
+    let outcome_json = match policy_refresh_outcome_json(&body, &token, version) {
+        Ok(json) => json,
+        Err(why) => {
+            let message = without_token(why, &token);
+            tracing::warn!(
+                event = "desktop_policy_refresh_invalid_answer",
+                error = %message,
+                "Licence policy refresh answer is not a licence claim"
+            );
+            return Ok(PolicyRefreshResult::InvalidResponse { message });
+        }
+    };
+    let state = apply_product_license_reconciliation_in(db, caller, &outcome_json).await?;
+    tracing::info!(
+        event = "desktop_policy_refresh_applied",
+        status = ?state.status,
+        "Licence policy refresh recorded"
+    );
+    Ok(PolicyRefreshResult::Refreshed { state })
+}
+
+/// Renews this PC's licence with the control API (policy refresh, no device slot taken) and records
+/// the answer. Runs before sign-in (the licence gate); the activation token never leaves Rust. The
+/// control API origin is the one sync and updates use (`build.rs`).
+#[tauri::command]
+pub async fn refresh_product_activation_policy(
+    app_version: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<PolicyRefreshResult> {
+    let caller = caller_of(&state).await?;
+    refresh_product_activation_policy_in(
+        &state.db,
+        caller,
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        app_version.as_deref(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2984,3 +3354,7 @@ pub(crate) async fn record_activation_claim_for_tests(
 #[cfg(test)]
 #[path = "product_license_first_start_tests.rs"]
 mod first_start_tests;
+
+#[cfg(test)]
+#[path = "product_license_policy_refresh_tests.rs"]
+mod policy_refresh_tests;
