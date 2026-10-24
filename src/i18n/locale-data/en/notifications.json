@@ -189,6 +189,7 @@
     "loto_forced_removal": "Lock taken off by a forced removal",
     "pm_concurrent_versions": "Concurrent PM plan versions",
     "permit_suspended_work_held": "Work order put on hold by its permit’s suspension",
+    "permit_ended_under_work": "Permit ended on another PC during or before the work",
     "stock_to_reconcile": "Stock to reconcile after sync"
   },
   "messages": {
@@ -311,6 +312,14 @@
       "title": "Work order {{work_order}} on hold: permit {{permit}} suspended",
       "body": "Permit {{permit}} was suspended (reason: {{reason}}). Work on {{work_order}} is stopped: it can resume only once the permit is reinstated."
     },
+    "permit_ended_before_start": {
+      "title": "Work started under an ended permit: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was closed, cancelled or suspended on another PC on {{end_at}}, before work on {{work_order}} started here on {{start_at}}. Stop the work and review the sync conflict."
+    },
+    "permit_ended_during_work": {
+      "title": "Permit ended during the work: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was closed, cancelled or suspended on another PC (on {{end_at}}) while work on {{work_order}} runs here since {{start_at}}. Stop the work and review the sync conflict."
+    },
     "pm_duplicate_occurrence": {
       "title": "Two concurrent versions of plan {{plan}} — due date planned twice",
       "body": "{{title}}: versions v{{version}} and v{{other_version}} each have an occurrence due {{due_at}} ({{due_basis}}), work orders {{work_order}} and {{other_work_order}}. Nothing was cancelled: keep one and cancel the other yourself."
@@ -382,7 +391,8 @@
       "safety_rule_received": "Always the plant-wide settings administrators.",
       "loto_forced_removal": "Always the people holding the permit close right at the permit's site.",
       "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit) plant-wide, and those holding it at the site of the plan's equipment.",
-      "permit_suspended_work_held": "Always the responsible of the permit’s work order."
+      "permit_suspended_work_held": "Always the responsible of the permit’s work order.",
+      "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

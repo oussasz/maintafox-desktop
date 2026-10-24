@@ -454,3 +454,183 @@ async fn suspending_a_permit_without_running_work_changes_no_work_order() {
     assert_eq!(wo_status(&db, wo_id).await, "ready");
     assert_eq!(notices(&db, "permit_suspended_work_held").await, 0);
 }
+
+// ── AU-101 / D9: a permit ended elsewhere under work held here ─────────────────
+
+fn ago(minutes: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::minutes(minutes))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+async fn review_conflicts(db: &DatabaseConnection, permit_sync: &str) -> Vec<(String, String)> {
+    db.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT conflict_type, status FROM sync_conflicts WHERE entity_type = 'work_permits' AND entity_sync_id = ? \
+         ORDER BY id",
+        [permit_sync.into()],
+    ))
+    .await
+    .expect("conflicts")
+    .iter()
+    .map(|r| {
+        (
+            r.try_get_by_index::<String>(0).expect("type"),
+            r.try_get_by_index::<String>(1).expect("status"),
+        )
+    })
+    .collect()
+}
+
+/// The open suspension of `wp` as the other PC sends it (`suspended_at` moved to `at`), and the
+/// permit's suspended row; then taken back here, so this PC holds the permit active again.
+async fn suspension_as_received(
+    db: &DatabaseConnection,
+    wp: &crate::permit::domain::WorkPermit,
+    at: Option<String>,
+) -> (String, Payload, Payload) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM permit_suspensions WHERE permit_id = ?",
+            [wp.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("suspension");
+    let sync: String = row.try_get_by_index(0).expect("sync id");
+    let suspended = wire(db, "work_permits", &wp.entity_sync_id).await;
+    let mut suspension = wire(db, "permit_suspensions", &sync).await;
+    if let Some(at) = at {
+        suspension = with(suspension, &[("suspended_at", json!(at))]);
+    }
+    for sql in [
+        format!("DELETE FROM permit_suspensions WHERE permit_id = {}", wp.id),
+        format!("UPDATE work_permits SET status = 'active' WHERE id = {}", wp.id),
+    ] {
+        db.execute_unprepared(&sql).await.expect("undo");
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) VALUES (?, 'c1', 'permit_suspensions', ?, \
+         'upsert', 2, ?, ?, 'pending')",
+        [
+            format!("b-{sync}").into(),
+            sync.clone().into(),
+            serde_json::to_string(&suspension).expect("json").into(),
+            format!("h-{sync}").into(),
+        ],
+    ))
+    .await
+    .expect("inbox");
+    (sync, suspended, suspension)
+}
+
+#[tokio::test]
+async fn a_permit_closed_elsewhere_before_the_work_started_here_is_applied_and_raised() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-D9-1").await;
+    // Closed on another PC an hour before the start recorded here (it did not have the start).
+    let closed = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &closed).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "the fact converges: {outcome:?}"
+    );
+    assert_eq!(reread(&db, &wp).await.status, "closed");
+    assert_eq!(
+        wo_status(&db, wo_id).await,
+        "in_progress",
+        "the work order is not changed here"
+    );
+    assert_eq!(
+        review_conflicts(&db, &wp.entity_sync_id).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_BEFORE_START.to_string(),
+            "new".to_string()
+        )]
+    );
+    // The work order's responsible is told (the permit close-right holders of the site too).
+    let responsible = admin_id(&db).await;
+    assert_eq!(notices_to(&db, "permit_ended_under_work", responsible).await, 1);
+
+    // The same row again: already applied, nothing more raised.
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &closed).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{outcome:?}"
+    );
+    assert_eq!(review_conflicts(&db, &wp.entity_sync_id).await.len(), 1);
+    assert_eq!(notices_to(&db, "permit_ended_under_work", responsible).await, 1);
+}
+
+#[tokio::test]
+async fn a_permit_cancelled_elsewhere_while_the_work_runs_here_is_applied_and_raised() {
+    let db = setup().await;
+    let (_, wp) = running_work(&db, "EQ-D9-2").await;
+    let cancelled = with(
+        wire(&db, "work_permits", &wp.entity_sync_id).await,
+        &[("status", json!("cancelled"))],
+    );
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &cancelled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(reread(&db, &wp).await.status, "cancelled");
+    assert_eq!(
+        review_conflicts(&db, &wp.entity_sync_id).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_DURING_WORK.to_string(),
+            "new".to_string()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_permit_suspended_elsewhere_before_the_work_started_here_is_applied_and_raised() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-D9-3").await;
+    // Made here to get its rows (it holds the work), then taken back: this PC holds the permit
+    // active and the work running, and receives the suspension dated an hour before the start.
+    suspend(&db, &wp, "Alarme gaz").await;
+    let (_, suspended, _) = suspension_as_received(&db, &wp, Some(ago(60))).await;
+    for sql in [
+        format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress') \
+             WHERE id = {wo_id}"
+        ),
+        format!("DELETE FROM work_order_delay_segments WHERE work_order_id = {wo_id}"),
+    ] {
+        db.execute_unprepared(&sql).await.expect("undo the hold");
+    }
+
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &suspended).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(reread(&db, &wp).await.status, "suspended");
+    assert_eq!(
+        review_conflicts(&db, &wp.entity_sync_id).await,
+        vec![(
+            crate::permit::ended_under_work::codes::ENDED_BEFORE_START.to_string(),
+            "new".to_string()
+        )]
+    );
+}
+
+/// The normal order: the other PC suspended the permit with the work running there, so the work
+/// order arrives on hold first; the suspension then arrives over held work: no review, the
+/// responsible is told the work is held (D5).
+#[tokio::test]
+async fn a_suspension_received_over_held_work_is_not_a_conflict() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-D9-4").await;
+    pause(&db, wo_id).await;
+    suspend(&db, &wp, "Alarme incendie").await;
+    let (_, suspended, _) = suspension_as_received(&db, &wp, None).await;
+    let before = notices(&db, "permit_suspended_work_held").await;
+    let outcome = apply(&db, "work_permits", &wp.entity_sync_id, &suspended).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(review_conflicts(&db, &wp.entity_sync_id).await.is_empty());
+    assert_eq!(notices(&db, "permit_suspended_work_held").await, before + 1);
+}

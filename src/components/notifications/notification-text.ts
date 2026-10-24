@@ -53,6 +53,9 @@ export const MESSAGE_KEYS = [
   "pm_duplicate_occurrence",
   // A running work order put on hold by its permit's suspension (its responsible).
   "permit_suspended_work_held",
+  // A permit ended on another PC before or while its work ran here (responsible, close-right holders).
+  "permit_ended_before_start",
+  "permit_ended_during_work",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

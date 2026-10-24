@@ -80,6 +80,11 @@ pub const PM_CONCURRENT_VERSIONS_CATEGORY: &str = "pm_concurrent_versions";
 /// ([`announce_work_held_by_suspension_of`]).
 pub const PERMIT_SUSPENDED_WORK_HELD_CATEGORY: &str = "permit_suspended_work_held";
 
+/// Notification category of a permit closed, cancelled or suspended on another PC before, or while,
+/// its work order ran here (owner decision D9, AU-101; `permit::ended_under_work`): told to the work
+/// order's responsible and to the permit close-right holders of the permit's site, on each PC that
+/// applies it ([`announce_permit_ended_under_work`]).
+pub const PERMIT_ENDED_UNDER_WORK_CATEGORY: &str = "permit_ended_under_work";
 
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
@@ -89,6 +94,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
     FORCED_REMOVAL_CATEGORY,
     PM_CONCURRENT_VERSIONS_CATEGORY,
     PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+    PERMIT_ENDED_UNDER_WORK_CATEGORY,
 ];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
@@ -96,7 +102,8 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
 #[macro_export]
 macro_rules! safety_notice_categories_sql {
     () => {
-        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held')"
+        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held', \
+         'permit_ended_under_work')"
     };
 }
 
@@ -383,6 +390,10 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
         (
             PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
             "Work order put on hold by its permit's suspension",
+        ),
+        (
+            PERMIT_ENDED_UNDER_WORK_CATEGORY,
+            "Permit ended on another PC before or during the work",
         ),
     ] {
         ensure_category_rows(conn, category, label).await?;
@@ -1089,4 +1100,82 @@ pub(crate) async fn announce_work_held_by_suspension(
     reason: &str,
 ) {
     announce_work_held_by_suspension_of(conn, permit.id, &permit.entity_sync_id, &permit.code, wo_code, reason).await;
+}
+
+/// What a received permit end raised for review (`permit::ended_under_work`).
+pub(crate) struct PermitEndedNotice<'a> {
+    pub permit_id: i64,
+    pub permit_sync_id: &'a str,
+    pub permit_code: &'a str,
+    pub wo_code: &'a str,
+    /// The message key: `permit_ended_before_start` or `permit_ended_during_work`.
+    pub key: &'static str,
+    /// The permit's status received (`closed`, `handed_back`, `cancelled`, `suspended`,
+    /// `revalidation_required`).
+    pub status: &'a str,
+    /// When the permit ended there, when the row says it.
+    pub end_at: Option<&'a str>,
+    /// When the work last started (or resumed, or was reopened) here.
+    pub start_at: Option<&'a str>,
+}
+
+/// A permit ended on another PC before, or while, its work order ran here (owner decision D9):
+/// the work order's responsible and the permit close-right holders of the permit's site are told,
+/// in the apply's transaction, each until they acknowledge it.
+pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait, n: &PermitEndedNotice<'_>) {
+    let route = NoticeRoute {
+        category: PERMIT_ENDED_UNDER_WORK_CATEGORY,
+        source_module: "permit",
+        source_record_id: n.permit_id.to_string(),
+        entity_type: "work_permits",
+        entity_sync_id: n.permit_sync_id,
+        org_node_id: None,
+    };
+    let (permit, wo, status) = (n.permit_code, n.wo_code, n.status);
+    let end = n.end_at.unwrap_or("?");
+    let start = n.start_at.unwrap_or("?");
+    let (title, body) = if n.key == crate::permit::ended_under_work::codes::NOTICE_BEFORE_START {
+        (
+            format!(
+                "Travail commencé sous un permis déjà terminé : {permit} (OT {wo}) / Work started under an ended \
+                 permit: {permit} ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » le {end} sur un autre poste, avant \
+                 le début du travail de l'OT {wo} ici le {start}. Arrêtez le travail et examinez le conflit de \
+                 synchronisation. / Received by sync: permit {permit} became '{status}' on {end} on another PC, \
+                 before work on {wo} started here on {start}. Stop the work and review the sync conflict."
+            ),
+        )
+    } else {
+        (
+            format!(
+                "Permis terminé pendant le travail : {permit} (OT {wo}) / Permit ended during the work: {permit} \
+                 ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » (le {end}) sur un autre poste alors \
+                 que le travail de l'OT {wo} est en cours ici depuis le {start}. Arrêtez le travail et examinez le \
+                 conflit de synchronisation. / Received by sync: permit {permit} became '{status}' (on {end}) on \
+                 another PC while work on {wo} runs here since {start}. Stop the work and review the sync conflict."
+            ),
+        )
+    };
+    send_permit_work_notice(
+        conn,
+        &route,
+        title,
+        body,
+        NotificationMessage::new(
+            n.key,
+            json!({
+                "permit": permit,
+                "work_order": wo,
+                "status": status,
+                "end_at": n.end_at,
+                "start_at": n.start_at,
+            }),
+        ),
+    )
+    .await;
 }

@@ -152,6 +152,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "loto_forced_removal",
     "pm_concurrent_versions",
     "permit_suspended_work_held",
+    "permit_ended_under_work",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -174,6 +175,10 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // A running work order put on hold by the suspension of its permit (owner decision D5): its
     // responsible (the permit's work order routes `assignee` to it).
     ("permit_suspended_work_held", "assignee"),
+    // A permit ended on another PC before, or while, its work ran here (owner decision D9): the
+    // work order's responsible and the permit close-right holders of the permit's site.
+    ("permit_ended_under_work", "assignee"),
+    ("permit_ended_under_work", "permission:ptw.close"),
 ];
 
 /// The fixed audience of an [`ALWAYS_DELIVERED`] category (its first, when it has several).

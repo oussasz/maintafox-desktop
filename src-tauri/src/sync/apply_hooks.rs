@@ -64,6 +64,10 @@
 //! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
 //!   accepted by those checks is announced to the settings administrators in the same transaction
 //!   (`settings::received_notice`);
+//! - `work_permits`: a permit received closed, handed back, cancelled or suspended while its work
+//!   order runs here, or dated before the work order's last start here, is applied and raised for
+//!   review (`PERMIT_ENDED_DURING_WORK` / `PERMIT_ENDED_BEFORE_START`), its work order's responsible
+//!   and the site's permit close-right holders told (`permit::ended_under_work`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -297,6 +301,11 @@ pub(crate) async fn before_upsert_checked(
                 payload,
             )
             .await?;
+            // A permit ended on another PC while its work ran here, or before it started here:
+            // applied, raised for review and told (`permit::ended_under_work`, AU-101, D9).
+            if layout.def.entity_type == "work_permits" {
+                crate::permit::ended_under_work::after_permit_check(conn, entity_sync_id, payload).await?;
+            }
         }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
