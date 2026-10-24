@@ -8661,15 +8661,6 @@ export interface AddInspectionEvidenceInput {
   expected_row_version?: number | null;
 }
 
-export interface UpdateInspectionAnomalyInput {
-  id: number;
-  resolution_status: string;
-  linked_di_id?: number | null;
-  linked_work_order_id?: number | null;
-  requires_permit_review?: boolean | null;
-  expected_row_version: number;
-}
-
 export interface InspectionResultsFilter {
   round_id?: number | null;
 }

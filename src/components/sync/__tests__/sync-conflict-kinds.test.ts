@@ -57,6 +57,7 @@ describe("sync conflict kinds", () => {
       "WO_PART_LINE_HAS_USE",
       "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
       "GRANT_BY_UNAUTHORISED_ADMIN",
+      "WO_PERMIT_RULE_MISSING",
       "WO_COMPLETION_GATE",
       "WO_CLOSE_GATE",
       "WO_TASK_AFTER_COMPLETION",

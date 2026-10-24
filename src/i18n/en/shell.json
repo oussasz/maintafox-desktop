@@ -164,6 +164,7 @@
       "WO_MANDATORY_TASK_REMOVED": "Mandatory task deleted or made optional on another PC after planning here",
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
+      "WO_PERMIT_RULE_MISSING": "A work order created on another PC arrived without the permit a plant rule here requires for its equipment and work (that PC did not have the rule yet)",
       "PERMIT_THREE_PERSON_REMOVAL": "A lock removal verified by the isolation's verifier, where the permit type requires a third person",
       "PERMIT_LOCK_REMOVAL_INVALID": "A lock taken off without who or when, at an unreadable time or in the future",
       "PERMIT_LOCK_REMOVAL_NOT_APPLIER": "A lock removal recorded by someone other than the person who fitted the lock (not a forced removal)",

@@ -164,6 +164,7 @@
       "WO_MANDATORY_TASK_REMOVED": "Tâche obligatoire supprimée ou rendue facultative sur un autre poste alors que l'OT a dépassé la planification ici",
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
+      "WO_PERMIT_RULE_MISSING": "Un OT créé sur un autre poste est arrivé sans le permis qu'une règle de l'usine exige ici pour son équipement et son travail (ce poste n'avait pas encore la règle)",
       "PERMIT_THREE_PERSON_REMOVAL": "Un retrait de cadenas vérifié par la personne qui avait vérifié l'isolement, alors que le type de permis exige une troisième personne",
       "PERMIT_LOCK_REMOVAL_INVALID": "Un cadenas retiré sans indiquer qui ni quand, à une heure illisible ou dans le futur",
       "PERMIT_LOCK_REMOVAL_NOT_APPLIER": "Un retrait de cadenas enregistré par une autre personne que celle qui l'a posé (hors retrait forcé)",

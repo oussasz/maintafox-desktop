@@ -247,18 +247,6 @@ pub async fn add_inspection_evidence(
     results::add_inspection_evidence(&state.db, input, pid).await
 }
 
-/// Removed (audit finding AU-72): it closed an anomaly without a decision and cleared its
-/// "revue permis requise". An anomaly is decided by routing it to a request or a work order, or by
-/// deferring it (`inspection::routing`). Kept only while the command list (`lib.rs`) still names it:
-/// it changes nothing.
-#[tauri::command]
-pub async fn update_inspection_anomaly(state: State<'_, AppState>) -> AppResult<()> {
-    let _user = require_session!(state);
-    Err(AppError::PermissionDenied(
-        "update_inspection_anomaly was removed: route or defer the anomaly instead".into(),
-    ))
-}
-
 #[tauri::command]
 pub async fn list_inspection_round_summaries(
     filter: InspectionRoundSummaryFilter,
