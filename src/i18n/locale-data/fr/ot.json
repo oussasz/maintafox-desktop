@@ -1128,6 +1128,10 @@
     "button": "Imprimer",
     "title": "Fiche d'impression OT"
   },
+  "deisolation": {
+    "badge": "Déconsignation à faire",
+    "title": "Terminé avec un cadenas encore posé sous ses permis : l'équipement reste à l'arrêt et le temps d'arrêt continue jusqu'à la vérification de la dépose du dernier cadenas."
+  },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",
     "draft": "Brouillon",

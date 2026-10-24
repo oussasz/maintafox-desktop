@@ -1128,6 +1128,10 @@
     "button": "Print",
     "title": "WO Print Sheet"
   },
+  "deisolation": {
+    "badge": "De-isolation to do",
+    "title": "Completed with a lock still fitted under its permits: the equipment stays down and its downtime runs until the removal of the last lock is verified."
+  },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",
     "draft": "Draft",

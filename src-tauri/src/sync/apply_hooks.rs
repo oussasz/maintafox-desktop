@@ -64,6 +64,10 @@
 //! - `site_settings` (the four-eyes opt-out) / `permit_types` (the three-person setting): a change
 //!   accepted by those checks is announced to the settings administrators in the same transaction
 //!   (`settings::received_notice`);
+//! - `work_permits`: a permit received closed, handed back, cancelled or suspended while its work
+//!   order runs here, or dated before the work order's last start here, is applied and raised for
+//!   review (`PERMIT_ENDED_DURING_WORK` / `PERMIT_ENDED_BEFORE_START`), its work order's responsible
+//!   and the site's permit close-right holders told (`permit::ended_under_work`);
 //! - `permit_handover_logs`: a hand-over received by the person who signed it is refused as a
 //!   conflict (`permit::sync_check::inbound_handover_check`); one without a signer is accepted;
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
@@ -184,6 +188,12 @@ pub(crate) async fn before_upsert_checked(
                 },
             }));
     }
+    // A suspension made and lifted on another PC around a start here: raised for review and told
+    // (`permit::ended_under_work::after_suspension_check`, CMMS Advisor answer to S3). Rolled back
+    // with the row when it is then refused or left waiting.
+    if layout.def.entity_type == "permit_suspensions" {
+        crate::permit::ended_under_work::after_suspension_check(conn, entity_sync_id, payload).await?;
+    }
     let safety_check = match layout.def.entity_type {
         "site_settings" => {
             Some(crate::settings::site::inbound_site_setting_check(conn, entity_sync_id, payload).await?)
@@ -208,6 +218,10 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
         }
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
+        "work_order_downtime_segments" => {
+            Some(crate::permit::ended_hold::inbound_downtime_end_check(conn, entity_sync_id, payload).await?)
+        }
         "permit_isolations" => {
             Some(crate::permit::sync_check::inbound_isolation_check(conn, entity_sync_id, payload).await?)
         }
@@ -297,6 +311,11 @@ pub(crate) async fn before_upsert_checked(
                 payload,
             )
             .await?;
+            // A permit ended on another PC while its work ran here, or before it started here:
+            // applied, raised for review and told (`permit::ended_under_work`, AU-101, D9).
+            if layout.def.entity_type == "work_permits" {
+                crate::permit::ended_under_work::after_permit_check(conn, entity_sync_id, payload).await?;
+            }
         }
         return Ok(verdict.map(|v| match v {
             InboundVerdict::Defer(message) => ApplyOutcome::Deferred {

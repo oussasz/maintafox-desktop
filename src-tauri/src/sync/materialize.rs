@@ -432,6 +432,10 @@ async fn materialize_pass(
     if !late_cost_rows.is_empty() {
         crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
     }
+    // After the commit, from the stored state, in their own transactions: the local consequences
+    // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
+    // refuses the received rows and is retried by the next pass (and at start-up).
+    crate::permit::ended_hold::sweep(db).await;
 
     Ok(result)
 }
@@ -669,6 +673,15 @@ async fn evaluate_and_apply_row(conn: &impl ConnectionTrait, item: &InboxRow) ->
         &item.entity_type,
         &item.entity_sync_id,
         item.row_version,
+        &item.payload_json,
+    )
+    .await?;
+    // This PC's own hold of a work order for a permit ended elsewhere, crossed by the same hold
+    // from another PC (`permit::ended_hold`): closed, the received version is applied.
+    crate::permit::ended_hold::settle_crossed_hold_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
         &item.payload_json,
     )
     .await?;

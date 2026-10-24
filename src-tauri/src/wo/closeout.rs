@@ -1487,6 +1487,34 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // (g) Nothing of its permits still holds the plant (AU-02, owner decision D4): every permit
+    // closed, handed back, cancelled or expired, and every lock fitted under them with its removal
+    // verified.
+    let holds = crate::permit::wo_gate::permit_holds(conn, wo_id).await?;
+    for refusal in crate::permit::wo_gate::end_of_work_refusals(holds, crate::permit::wo_gate::WorkOrderEnd::Close) {
+        preflight.add(refusal);
+    }
+
+    // (h) Its downtime has ended (owner decision D4, CMMS Advisor condition 2): completion may leave
+    // it open while a lock is fitted, until the removal of the last lock is verified; a work order
+    // is never closed with its equipment still recorded down.
+    let open_downtime = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM work_order_downtime_segments WHERE work_order_id = ? AND ended_at IS NULL",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("open downtime count")))?
+        .try_get::<i64>("", "cnt")
+        .map_err(|e| decode_err("open downtime cnt", e))?;
+    if open_downtime > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_OPEN_DOWNTIME: Clôture bloquée : {open_downtime} segment(s) de temps d'arrêt encore \
+             ouvert(s). ({open_downtime} downtime segment(s) still open.)"
+        ));
+    }
+
     Ok((preflight.errors, profile_id, signer_password_checked))
 }
 

@@ -681,7 +681,7 @@ async fn children_with(
     })
 }
 
-async fn permit_children(
+pub(crate) async fn permit_children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     permit_sync_id: &str,
@@ -697,7 +697,7 @@ async fn permit_children(
     .await
 }
 
-fn payloads(c: &Children) -> Vec<&Payload> {
+pub(crate) fn payloads(c: &Children) -> Vec<&Payload> {
     c.rows.iter().map(|(_, p)| p).collect()
 }
 

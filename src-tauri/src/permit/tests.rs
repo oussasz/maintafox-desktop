@@ -1104,7 +1104,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
     (wo.id, wo.row_version)
 }
 
-async fn start(db: &DatabaseConnection, wo_id: i64, rv: i64) -> Result<(), AppError> {
+pub(super) async fn start(db: &DatabaseConnection, wo_id: i64, rv: i64) -> Result<(), AppError> {
     let actor = admin_id(db).await;
     execution::start_wo(
         db,

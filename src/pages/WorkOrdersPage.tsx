@@ -41,6 +41,7 @@ import { WoCalendarView } from "@/components/wo/WoCalendarView";
 import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoContextMenu } from "@/components/wo/WoContextMenu";
 import { WoDashboardView } from "@/components/wo/WoDashboardView";
+import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
@@ -596,6 +597,7 @@ export function WorkOrdersPage() {
               {isWoLifecycleState(lc) ? (
                 <span className="text-[10px] text-text-muted">{t(`lifecycle.${lc}`)}</span>
               ) : null}
+              <WoDeisolationBadge wo={row.original} />
             </div>
           );
         },

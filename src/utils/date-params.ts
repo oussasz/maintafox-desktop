@@ -27,6 +27,8 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   // When two concurrent versions of a PM plan were created (notifications).
   "version_created_at",
   "other_created_at",
+  // When a suspension made on another PC was lifted (permit suspended around a start, notices).
+  "reinstated_at",
 ]);
 
 /**

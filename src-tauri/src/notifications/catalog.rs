@@ -151,6 +151,8 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "safety_rule_received",
     "loto_forced_removal",
     "pm_concurrent_versions",
+    "permit_suspended_work_held",
+    "permit_ended_under_work",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -170,14 +172,44 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     ("loto_forced_removal", "permission:ptw.close"),
     // Two concurrent versions of a PM plan (`pm::version_clash`): the PM planners.
     ("pm_concurrent_versions", "permission:pm.edit"),
+    // A running work order put on hold by the suspension of its permit (owner decision D5): its
+    // responsible (the permit's work order routes `assignee` to it); nobody there: the fallback
+    // ([`ALWAYS_DELIVERED_FALLBACK`]).
+    ("permit_suspended_work_held", "assignee"),
+    // A permit ended on another PC before, or while, its work ran here (owner decision D9): the
+    // work order's responsible and the permit close-right holders of the permit's site.
+    ("permit_ended_under_work", "assignee"),
+    ("permit_ended_under_work", "permission:ptw.close"),
 ];
 
-/// The fixed audience of an [`ALWAYS_DELIVERED`] category.
+/// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
+/// safety notice must reach someone. A running work order held by its permit's suspension (D5)
+/// whose responsible is unset, or not an active user here, goes to the permit close-right holders of
+/// the permit's site, the audience of a permit ended under work (D9).
+pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[("permit_suspended_work_held", "permission:ptw.close")];
+
+/// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).
+pub fn always_delivered_fallback(category: &str) -> Vec<Audience> {
+    ALWAYS_DELIVERED_FALLBACK
+        .iter()
+        .filter(|(c, _)| *c == category)
+        .filter_map(|(_, a)| parse_audience(a))
+        .collect()
+}
+
+/// The fixed audience of an [`ALWAYS_DELIVERED`] category (its first, when it has several).
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {
+    always_delivered_audiences(category).into_iter().next()
+}
+
+/// Every fixed audience of an [`ALWAYS_DELIVERED`] category (empty: the category is routed by its
+/// rule).
+pub fn always_delivered_audiences(category: &str) -> Vec<Audience> {
     ALWAYS_DELIVERED
         .iter()
-        .find(|(c, _)| *c == category)
-        .and_then(|(_, a)| parse_audience(a))
+        .filter(|(c, _)| *c == category)
+        .filter_map(|(_, a)| parse_audience(a))
+        .collect()
 }
 
 #[cfg(test)]

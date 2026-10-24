@@ -443,8 +443,9 @@ pub async fn list_work_orders_in_scope(
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let data_sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE {where_sql} \
@@ -471,8 +472,9 @@ pub async fn list_work_orders_in_scope(
 
 pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let (join_cols, joins) = (wo_join_cols(), wo_joins());
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE wo.id = ?"
@@ -885,15 +887,16 @@ async fn refuse_equipment_change_with_old_items(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT (SELECT COUNT(*) FROM stock_reservations r WHERE r.source_id = ? AND r.source_type IN ({wo_sources}) AND LOWER(r.status) IN ('active', 'partial')) AS reservations, (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS locks"
+                "SELECT COUNT(*) AS reservations FROM stock_reservations r WHERE r.source_id = ? AND r.source_type IN ({wo_sources}) AND LOWER(r.status) IN ('active', 'partial')"
             ),
-            [wo_id.into(), wo_id.into(), wo_id.into()],
+            [wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("site move check returned no row")))?;
     let reservations: i64 = row.try_get("", "reservations")?;
-    let permits: i64 = row.try_get("", "permits")?;
-    let locks: i64 = row.try_get("", "locks")?;
+    // The same reading as the close and the cancellation of a work order (AU-02).
+    let holds = crate::permit::wo_gate::permit_holds(db, wo_id).await?;
+    let (permits, locks) = (holds.open_permits, holds.fitted_locks);
     let mut errors = Vec::new();
     if location_changes && reservations > 0 {
         errors.push(format!(
@@ -1148,6 +1151,15 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     let from_status = WoStatus::try_from_str(from_code)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}")))?;
     guard_wo_transition(&from_status, &WoStatus::Cancelled).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    // 2b. Nothing of its permits still holds the plant (AU-02, owner decision D4): refused before
+    // anything is written. The same rule judges a cancellation received by synchronisation
+    // (`wo::closeout_sync`).
+    let holds = crate::permit::wo_gate::permit_holds(&txn, input.id).await?;
+    let refusals = crate::permit::wo_gate::end_of_work_refusals(holds, crate::permit::wo_gate::WorkOrderEnd::Cancel);
+    if !refusals.is_empty() {
+        return Err(AppError::ValidationFailed(refusals));
+    }
 
     // 3. Resolve cancelled status_id
     let cancelled_row = txn
