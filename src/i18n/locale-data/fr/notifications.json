@@ -310,6 +310,10 @@
       "title": "Anomalie d'origine annulée : {{code}}",
       "body": "L'anomalie d'inspection à l'origine de {{code}} a été annulée : son défaut n'est plus détecté ({{anomaly}}). {{code}} n'est pas modifié : vérifiez s'il reste nécessaire. Une revue permis requise reste en place."
     },
+    "wo_permit_rule_other_on_arrival": {
+      "title": "OT {{code}} reçu démarré avec la règle {{received_rule}} (permis {{received_permit_type}}) au lieu de {{rule}} (permis {{permit_type}})",
+      "body": "L'OT {{code}} a été reçu démarré avec la règle {{received_rule}} (permis {{received_permit_type}}), alors que l'usine applique ici la règle {{rule}} (permis {{permit_type}}) pour son équipement et son travail. Vérifiez comment ce travail a été protégé."
+    },
     "wo_permit_rule_missing_on_arrival": {
       "title": "OT {{code}} reçu démarré sans la règle de permis {{rule}}",
       "body": "L'OT {{code}} a été reçu démarré sans la règle {{rule}} que l'usine applique ici : un permis {{permit_type}} pour son équipement et son travail. Vérifiez comment ce travail a été protégé."

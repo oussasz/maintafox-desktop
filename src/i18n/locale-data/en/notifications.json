@@ -310,6 +310,10 @@
       "title": "Originating anomaly cancelled: {{code}}",
       "body": "The inspection anomaly {{code}} was raised from was cancelled: its condition is no longer detected ({{anomaly}}). {{code}} is not changed: check whether it is still needed. A required permit review stays in place."
     },
+    "wo_permit_rule_other_on_arrival": {
+      "title": "Work order {{code}} received started with rule {{received_rule}} ({{received_permit_type}} permit) instead of {{rule}} ({{permit_type}} permit)",
+      "body": "Work order {{code}} was received started with rule {{received_rule}} ({{received_permit_type}} permit), while the plant applies rule {{rule}} ({{permit_type}} permit) here for its equipment and work. Check how this work was protected."
+    },
     "wo_permit_rule_missing_on_arrival": {
       "title": "Work order {{code}} received started without permit rule {{rule}}",
       "body": "Work order {{code}} was received started without plant rule {{rule}} that applies here: a {{permit_type}} permit for its equipment and work. Check how this work was protected."
