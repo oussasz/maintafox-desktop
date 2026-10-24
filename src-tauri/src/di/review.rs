@@ -339,7 +339,7 @@ async fn insert_transition_log(
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -397,7 +397,7 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
             .await?;
         if ref_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Code de classification introuvable (classification_code_id={}).",
+                "GATE_DI_CLASSIFICATION_NOT_FOUND:id={0}: Code de classification introuvable (classification_code_id={0}).",
                 cid
             )]));
         }
@@ -491,7 +491,7 @@ pub async fn return_di_for_clarification(
     // Validate required field
     if input.reviewer_note.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La note du réviseur est obligatoire pour retourner une DI.".into(),
+            "GATE_DI_REVIEWER_NOTE_REQUIRED: La note du réviseur est obligatoire pour retourner une DI.".into(),
         ]));
     }
     let reason = super::reference_catalog::validate_di_decision_reason(
@@ -583,7 +583,7 @@ pub async fn resubmit_returned_di(db: &DatabaseConnection, input: DiResubmitInpu
     let answer = input.response_note.trim().to_string();
     if answer.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La réponse au réviseur est obligatoire pour renvoyer la demande.".into(),
+            "GATE_DI_RESPONSE_REQUIRED: La réponse au réviseur est obligatoire pour renvoyer la demande.".into(),
         ]));
     }
 
@@ -597,7 +597,7 @@ pub async fn resubmit_returned_di(db: &DatabaseConnection, input: DiResubmitInpu
     }
     if current_status != DiStatus::ReturnedForClarification {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seule une demande retournée pour information peut être renvoyée. Statut actuel : '{}'.",
+            "GATE_DI_RESUBMIT_STATUS_INVALID: Seule une demande retournée pour information peut être renvoyée. Statut actuel : '{}'.",
             current_status.as_str()
         )]));
     }
@@ -687,7 +687,7 @@ pub async fn close_di(db: &DatabaseConnection, input: DiCloseInput) -> AppResult
         DiStatus::InReview | DiStatus::AwaitingApproval | DiStatus::Approved => {}
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                "GATE_DI_CLOSE_STATUS_INVALID: La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
                  Statut actuel : '{}'.",
                 other.as_str()
             )]));
@@ -811,7 +811,7 @@ pub async fn cancel_own_di(db: &DatabaseConnection, input: DiCancelOwnInput) -> 
         DiStatus::Submitted | DiStatus::ReturnedForClarification => {}
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "L'annulation demandeur n'est possible qu'aux statuts 'submitted' ou \
+                "GATE_DI_CANCEL_OWN_STATUS_INVALID: L'annulation demandeur n'est possible qu'aux statuts 'submitted' ou \
                  'returned_for_clarification'. Statut actuel : '{}'.",
                 other.as_str()
             )]));
@@ -1021,7 +1021,7 @@ pub async fn approve_di(db: &DatabaseConnection, input: DiApproveInput) -> AppRe
 pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult<InterventionRequest> {
     if input.reason_code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le motif de report est obligatoire.".into()
+            "GATE_DI_DEFER_REASON_REQUIRED: Le motif de report est obligatoire.".into(),
         ]));
     }
     let reason = super::reference_catalog::validate_di_decision_reason(
@@ -1035,17 +1035,19 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
     let until = input.deferred_until.trim();
     if until.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La date de report (deferred_until) est obligatoire.".into(),
+            "GATE_DI_DEFER_DATE_REQUIRED: La date de report (deferred_until) est obligatoire.".into(),
         ]));
     }
     let today = Utc::now().date_naive();
     let date_part = until.get(..10).unwrap_or(until);
     let until_date = chrono::NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|_| {
-        AppError::ValidationFailed(vec!["Format de date de report invalide (attendu YYYY-MM-DD).".into()])
+        AppError::ValidationFailed(vec![
+            "GATE_DI_DEFER_DATE_INVALID: Format de date de report invalide (attendu YYYY-MM-DD).".into(),
+        ])
     })?;
     if until_date <= today {
         return Err(AppError::ValidationFailed(vec![
-            "La date de report doit être une date future (strictement après aujourd'hui).".into(),
+            "GATE_DI_DEFER_DATE_NOT_FUTURE: La date de report doit être une date future (strictement après aujourd'hui).".into(),
         ]));
     }
 
@@ -1058,7 +1060,7 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
         DiStatus::InReview | DiStatus::AwaitingApproval | DiStatus::Approved => {}
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Le report n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                "GATE_DI_DEFER_STATUS_INVALID: Le report n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
                  Statut actuel : '{}'.",
                 other.as_str()
             )]));
@@ -1152,7 +1154,7 @@ pub async fn reactivate_deferred_di(
 
     if current_status != DiStatus::Deferred {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seule une DI reportée peut être réactivée. Statut actuel : '{}'.",
+            "GATE_DI_REACTIVATE_STATUS_INVALID: Seule une DI reportée peut être réactivée. Statut actuel : '{}'.",
             current_status.as_str()
         )]));
     }
@@ -1238,12 +1240,14 @@ pub async fn archive_di(db: &DatabaseConnection, input: DiArchiveInput) -> AppRe
 
     if current_status != DiStatus::Closed {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seules les DI clôturées peuvent être archivées. Statut actuel : '{}'.",
+            "GATE_DI_ARCHIVE_STATUS_INVALID: Seules les DI clôturées peuvent être archivées. Statut actuel : '{}'.",
             current_status.as_str()
         )]));
     }
     if di.archived_at.is_some() {
-        return Err(AppError::ValidationFailed(vec!["Cette DI est déjà archivée.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_ALREADY_ARCHIVED: Cette DI est déjà archivée.".into(),
+        ]));
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

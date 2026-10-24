@@ -83,7 +83,7 @@ fn queue_predicate(queue: &str) -> AppResult<Option<String>> {
         "mine" => format!("ir.status NOT IN {}", super::stats::TERMINAL_STATUSES_SQL),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "File de travail inconnue : '{other}'."
+                "GATE_DI_QUEUE_UNKNOWN: File de travail inconnue : '{other}'."
             )]))
         }
     };
@@ -672,10 +672,12 @@ pub async fn create_intervention_request(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un code DI en doublon a été généré. Veuillez réessayer.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_DI_CODE_DUPLICATE: Un code DI en doublon a été généré. Veuillez réessayer.".into(),
+            ])
         } else if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![
-                "Référence invalide (equipment_id, org_node_id, ou submitter_id).".into()
+                "GATE_DI_REFERENCE_INVALID: Référence invalide (equipment_id, org_node_id, ou submitter_id).".into(),
             ])
         } else {
             AppError::Database(e)
@@ -768,7 +770,7 @@ pub async fn update_di_draft_fields(
     // 2. Guard: only allow draft edits on mutable intake states
     if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Les champs ne peuvent être modifiés qu'au statut 'submitted' ou \
+            "GATE_DI_EDIT_STATUS_INVALID: Les champs ne peuvent être modifiés qu'au statut 'submitted' ou \
              'returned_for_clarification'. Statut actuel : '{}'.",
             current.status
         )]));
@@ -794,7 +796,9 @@ pub async fn update_di_draft_fields(
     if let Some(ref symptom_code_id) = input.symptom_code_id {
         match symptom_code_id {
             None => {
-                return Err(AppError::ValidationFailed(vec!["Le symptôme est obligatoire.".into()]));
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into(),
+                ]));
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
@@ -866,7 +870,7 @@ pub async fn update_di_draft_fields(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -913,7 +917,7 @@ pub async fn triage_submitted_di(
 
     if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seules les demandes au statut « soumis » ou « retourné pour clarification » \
+            "GATE_DI_SUBMIT_STATUS_INVALID: Seules les demandes au statut « soumis » ou « retourné pour clarification » \
              peuvent être (re)soumises vers la revue. \
              Statut actuel : '{}'.",
             current.status
@@ -942,7 +946,7 @@ pub async fn triage_submitted_di(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
