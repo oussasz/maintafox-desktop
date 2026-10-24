@@ -64,6 +64,9 @@ describe("sync conflict kinds", () => {
       "WO_SELF_VERIFICATION",
       "WO_VERIFIER_RECORDED_LABOUR",
       "WO_MANDATORY_TASK_REMOVED",
+      "WO_CANCEL_PERMIT_GATE",
+      "PERMIT_ENDED_BEFORE_START",
+      "PERMIT_ENDED_DURING_WORK",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
     }

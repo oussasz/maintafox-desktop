@@ -131,6 +131,11 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   // Close-out gates re-judged on a received completion or close (AU-99).
   "WO_COMPLETION_GATE",
   "WO_CLOSE_GATE",
+  // A cancellation received while a permit or a lock of the work order holds the plant here (AU-02).
+  "WO_CANCEL_PERMIT_GATE",
+  // A permit ended on another PC before or while its work ran here: applied, to review (AU-101, D9).
+  "PERMIT_ENDED_BEFORE_START",
+  "PERMIT_ENDED_DURING_WORK",
   "WO_TASK_AFTER_COMPLETION",
   "WO_FAILURE_DETAIL_AFTER_CLOSE",
   "WO_LABOUR_AFTER_CLOSE",
