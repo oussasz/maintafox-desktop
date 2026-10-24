@@ -42,7 +42,6 @@ import {
   checkProductLicenseKeyEntry,
   claimProductActivation,
   getActivationBootstrapState,
-  getProductActivationToken,
   getProductLicenseDiagnostics,
   getProductLicenseOnboardingState,
   markActivationTenantInitialized,
@@ -222,6 +221,19 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     }
   }, [loading, licenseComplete, location.pathname, navigate]);
 
+  /** Shows a licence state just recorded; a success may have changed the entitlements. */
+  const showRecordedState = useCallback(
+    async (next: ProductLicenseOnboardingState, succeeded: boolean) => {
+      setState(next);
+      const latest = await getProductLicenseDiagnostics();
+      setDiagnostics(latest);
+      if (succeeded) {
+        notifyEntitlementsUpdated();
+      }
+    },
+    [],
+  );
+
   const recordOutcome = useCallback(
     async (
       outcome:
@@ -234,16 +246,22 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         ...outcome,
         app_version: appVersion,
       });
-      setState(next);
-      const latest = await getProductLicenseDiagnostics();
-      setDiagnostics(latest);
-      if (outcome.kind === "success") {
-        notifyEntitlementsUpdated();
-      }
+      await showRecordedState(next, outcome.kind === "success");
       return next;
     },
-    [appVersion],
+    [appVersion, showRecordedState],
   );
+
+  /**
+   * Policy refresh (no device slot taken), sent from Rust with the activation token stored there;
+   * Rust records a renewed licence itself. Null when this PC holds no activation token.
+   */
+  const refreshPolicy = useCallback(async () => {
+    const outcome = await refreshProductActivationPolicy(runningAppVersion);
+    if (outcome.kind === "no_token") return null;
+    await showRecordedState(outcome.state, true);
+    return outcome.state;
+  }, [runningAppVersion, showRecordedState]);
 
   const recordOutcomeSafely = useCallback(
     async (
@@ -307,29 +325,37 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       let claim: ProductActivationClaim | null = null;
       try {
         // Prefer policy-refresh (no slot consumption) when a local activation token exists.
-        const existingToken = await getProductActivationToken().catch(() => null);
-        if (existingToken) {
-          try {
-            claim = await refreshProductActivationPolicy(existingToken, runningAppVersion);
-          } catch (refreshErr) {
-            // Re-claim only when the token itself is unusable; a revocation or other denial must
-            // surface as a denial, never be retried as a fresh claim.
-            const refreshCode = (refreshErr as { code?: string }).code;
-            if (!refreshCode || !CLAIM_FALLBACK_TOKEN_ERRORS.has(refreshCode)) {
-              throw refreshErr;
-            }
-            const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
-            if (!cachedKey || cachedKey.length < 8) {
-              throw refreshErr;
-            }
-            claim = await claimProductActivation({
-              license_key: cachedKey,
-              machine_fingerprint: deviceFingerprint,
-              machine_label: deviceName.trim() || defaultDeviceName(),
-              app_version: appVersion,
-            });
+        let refreshed: ProductLicenseOnboardingState | null;
+        try {
+          refreshed = await refreshPolicy();
+        } catch (refreshErr) {
+          // Re-claim only when the token itself is unusable; a revocation or other denial must
+          // surface as a denial, never be retried as a fresh claim.
+          const refreshCode = (refreshErr as { code?: string }).code;
+          if (!refreshCode || !CLAIM_FALLBACK_TOKEN_ERRORS.has(refreshCode)) {
+            throw refreshErr;
           }
-        } else {
+          const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
+          if (!cachedKey || cachedKey.length < 8) {
+            throw refreshErr;
+          }
+          claim = await claimProductActivation({
+            license_key: cachedKey,
+            machine_fingerprint: deviceFingerprint,
+            machine_label: deviceName.trim() || defaultDeviceName(),
+            app_version: appVersion,
+          });
+          refreshed = null;
+        }
+        if (refreshed) {
+          // Rust already recorded the renewed licence (and `refreshPolicy` showed it).
+          if (refreshed.status === "active") {
+            setWarning(null);
+          }
+          return;
+        }
+        if (!claim) {
+          // No activation token on this PC: claim with the cached key, if any.
           const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
           if (!cachedKey || cachedKey.length < 8) {
             if (stateRef.current?.status === "pending_online_validation") {
@@ -351,10 +377,15 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       } catch (err) {
         // This PC refused to apply the claim (a licence change needs an administrator signed
         // in): say what to do, record nothing (it is not a network or server failure). The same
-        // claim is applied again once the administrator confirms their identity.
+        // claim is applied again once the administrator confirms their identity; a refusal of
+        // the policy refresh (no claim here: Rust applies it) runs the refresh again.
         const refusedClaim = claim;
         const reapply = async () => {
-          if (refusedClaim) await recordOutcome({ kind: "success", claim: refusedClaim });
+          if (refusedClaim) {
+            await recordOutcome({ kind: "success", claim: refusedClaim });
+          } else {
+            await refreshPolicy();
+          }
         };
         if (showLicenceRefusal(err, reapply)) {
           return;
@@ -396,7 +427,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       keyCacheStorage,
       recordOutcome,
       recordOutcomeSafely,
-      runningAppVersion,
+      refreshPolicy,
       showLicenceRefusal,
       t,
     ],
