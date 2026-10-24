@@ -87,6 +87,9 @@
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
+//! - `inspection_anomalies`: an anomaly is decided here only by routing or deferring it; a received
+//!   row that closes it without a decision, reopens a decided one, changes its link or clears its
+//!   "revue permis requise" is refused as a conflict (`inspection::sync_check`, audit finding AU-72);
 //! - `user_accounts`: the built-in "admin" account received with its password never changed is
 //!   disabled on arrival when this PC has another administrator or did not have the account
 //!   (`auth::builtin_admin::after_inbound_user_account`).
@@ -295,6 +298,11 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // An anomaly closed without a decision, reopened, its link changed or its "revue permis
+        // requise" cleared (`inspection::sync_check`, audit finding AU-72).
+        "inspection_anomalies" => {
+            Some(crate::inspection::sync_check::inbound_anomaly_check(conn, entity_sync_id, payload).await?)
+        }
         // A task, failure coding, labour line, tool or verification changed after its work order's
         // completion or close here (`wo::closeout_sync`, R5-R7).
         "work_order_tasks"

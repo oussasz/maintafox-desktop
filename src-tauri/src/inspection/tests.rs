@@ -1955,3 +1955,113 @@ async fn a_stale_anomaly_keeps_no_follow_up() {
         "the anomaly is untouched and open"
     );
 }
+
+// ── AU-72 S4: received anomalies keep the decision rules ─────────────────────────────────────
+
+/// Applies a received anomaly row as the inbox pass does (kept only when applied).
+async fn apply_received_anomaly(
+    db: &DatabaseConnection,
+    sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> crate::sync::materialize::ApplyOutcome {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let layout = crate::sync::row_layout::layout(db, "inspection_anomalies")
+        .await
+        .expect("layout");
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        sync_id,
+        "upsert",
+        &serde_json::to_string(payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
+}
+
+fn conflict_code(outcome: &crate::sync::materialize::ApplyOutcome) -> Option<&str> {
+    match outcome {
+        crate::sync::materialize::ApplyOutcome::Conflict { code, .. } => Some(code.as_str()),
+        _ => None,
+    }
+}
+
+/// A received anomaly row is refused when it clears "revue permis requise", closes the anomaly
+/// without a decision, or reopens a decided one; a decision made as this PC makes it is applied.
+#[tokio::test]
+async fn a_received_anomaly_keeps_the_decision_rules() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    require_permit_review(&db, anomaly_id).await;
+    let sync_id: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT entity_sync_id FROM inspection_anomalies WHERE id = {anomaly_id}"),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "entity_sync_id")
+        .expect("sync id");
+    let held = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let with = |changes: &[(&str, Value)]| {
+        let mut p = held.clone();
+        for (k, v) in changes {
+            p.insert((*k).to_string(), v.clone());
+        }
+        p
+    };
+    for (changes, expected) in [
+        (
+            vec![("requires_permit_review", json!(0))],
+            "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
+        ),
+        (
+            vec![("resolution_status", json!("resolved"))],
+            "INSP_ANOMALY_DECISION_INVALID",
+        ),
+        (
+            vec![
+                ("resolution_status", json!("triaged")),
+                ("routing_decision", json!("wo")),
+            ],
+            "INSP_ANOMALY_DECISION_INVALID",
+        ),
+    ] {
+        let outcome = apply_received_anomaly(&db, &sync_id, &with(&changes)).await;
+        assert_eq!(conflict_code(&outcome), Some(expected), "{changes:?}: {outcome:?}");
+    }
+    // Deferred as here: applied; then reopened elsewhere: refused.
+    let deferred = with(&[
+        ("resolution_status", json!("deferred")),
+        ("routing_decision", json!("defer")),
+    ]);
+    let outcome = apply_received_anomaly(&db, &sync_id, &deferred).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    let mut reopened = deferred.clone();
+    reopened.insert("resolution_status".into(), json!("open"));
+    reopened.insert("routing_decision".into(), Value::Null);
+    let outcome = apply_received_anomaly(&db, &sync_id, &reopened).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("INSP_ANOMALY_DECISION_INVALID"),
+        "{outcome:?}"
+    );
+}

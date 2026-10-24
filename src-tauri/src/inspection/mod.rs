@@ -7,6 +7,7 @@ pub mod runner;
 pub mod scheduler;
 pub mod scheduling;
 pub mod signals;
+pub(crate) mod sync_check;
 
 #[cfg(test)]
 mod tests;
