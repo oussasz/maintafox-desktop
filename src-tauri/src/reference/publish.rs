@@ -293,7 +293,7 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
 pub async fn publish_reference_set(
     db: &DatabaseConnection,
     set_id: i64,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferencePublishResult> {
     let set_probe = sets::get_reference_set(db, set_id).await?;
     let domain_probe = domains::get_reference_domain(db, set_probe.domain_id).await?;
@@ -362,6 +362,9 @@ pub async fn publish_reference_set(
 
     txn.commit().await?;
 
+    // A permit rule list published: the work orders not started yet that it matches get it
+    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(db, set_id, Some(actor_id)).await?;
     let published_set = sets::get_reference_set(db, set_id).await?;
 
     Ok(ReferencePublishResult {

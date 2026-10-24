@@ -44,9 +44,16 @@
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
 //!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
 //!   migration 255: the right at its site), and that origin is never turned off by a received row;
-//!   a work order new here that a plant rule flags here (its equipment and work type) but that
-//!   arrives without the rule is refused, unless it started with its permit required
-//!   (`WO_PERMIT_RULE_MISSING`, owner decision D2 (a), audit finding AU-04);
+//!   a received work order that names another rule than the one held here is refused; one that
+//!   carries no rule is applied (see the plant rules below);
+//! - `work_orders` / `reference_values` / `reference_sets`: after the apply, the plant's permit rules
+//!   held here are applied to a received work order not started yet that has no rule, and to every
+//!   such work order when the rule list is received (`permit::requirement_rules::stamp_matching_rule`,
+//!   owner decision D2 (a), audit finding AU-04: each PC derives the same rule from the same work order
+//!   and list); a received work order already started without the rule that matches it here is
+//!   applied and recorded once as a safety finding, the settings administrators told
+//!   (`requirement_rules::finding_for_started_without_rule`; not for plant history received by a
+//!   snapshot);
 //! - `work_orders` / `intervention_requests`: after the apply, a request flagged "sécurité" here
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
@@ -606,8 +613,37 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
             crate::pm::version_clash::after_received_occurrence(conn, id).await
         }
+        // The plant's permit rule list received: its rules apply to the work orders not started yet
+        // here (`permit::requirement_rules::stamp_open_work_orders`).
+        "reference_values" | "reference_sets" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "reference row not found after apply"))?;
+            let set_id = if layout.def.entity_type == "reference_sets" {
+                id
+            } else {
+                conn.query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT set_id FROM reference_values WHERE id = ?",
+                    [id.into()],
+                ))
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "reference value vanished"))?
+                .try_get::<i64>("", "set_id")
+                .map_err(|e| hook_err(layout.table(), e))?
+            };
+            if crate::permit::requirement_rules::is_rules_set(conn, set_id).await? {
+                crate::permit::requirement_rules::stamp_open_work_orders(
+                    conn,
+                    None,
+                    crate::permit::requirement_rules::stamp_causes::RULES_RECEIVED,
+                )
+                .await?;
+            }
+            Ok(())
+        }
         // The permit protection a request flagged "sécurité" gives its work orders, derived here from
-        // the request here (`after_received_work_order`).
+        // the request here, and the plant's permit rules (`after_received_work_order`).
         "work_orders" => {
             let id = located_row_id(conn, layout, row)
                 .await?
@@ -673,7 +709,13 @@ pub(crate) async fn after_upsert(
 /// - new here, sent by a PC without migration 255 (`sent_without_origin`: no `permit_from_safety_di`
 ///   in the row), already started, its request flagged: it carries that origin;
 /// - protected, required again but still carrying its clearing (a re-tick made by an older build):
-///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`).
+///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`);
+/// - not started yet with no plant rule: the rule of the list here that matches its equipment and work
+///   type is recorded on it (`requirement_rules::stamp_matching_rule`; a row that changed them is
+///   judged the same way, audit finding AU-04 S3);
+/// - already started with no plant rule while one here matches it: recorded once as a safety finding
+///   (`requirement_rules::finding_for_started_without_rule`), not for plant history received by a
+///   snapshot.
 async fn after_received_work_order(
     conn: &impl ConnectionTrait,
     wo_id: i64,
@@ -702,6 +744,16 @@ async fn after_received_work_order(
         .await?;
     }
     crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
+    crate::permit::requirement_rules::stamp_matching_rule(
+        conn,
+        wo_id,
+        None,
+        crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+    )
+    .await?;
+    if !crate::sync::materialize::applying_snapshot_row() {
+        crate::permit::requirement_rules::finding_for_started_without_rule(conn, wo_id).await?;
+    }
     Ok(())
 }
 

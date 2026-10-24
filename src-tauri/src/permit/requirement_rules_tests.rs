@@ -1562,3 +1562,76 @@ async fn rules_that_do_not_resolve_flag_and_unreadable_ones_are_recorded() {
         "audited"
     );
 }
+
+/// B2: a rule published here flags the work orders not started yet that it matches (written as local
+/// changes, sent to the other PCs); started ones are left as they are.
+#[tokio::test]
+async fn a_rule_published_here_flags_the_open_work_orders_it_matches() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let open = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    let started = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), \
+             actual_start = '2026-10-01T08:00:00Z' WHERE id = {}",
+            started.id
+        ),
+    )
+    .await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let set: i64 = scalar(
+        &db,
+        &format!(
+            "SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = '{}' AND rs.status = 'published'",
+            rules::DOMAIN
+        ),
+    )
+    .await;
+    // Capture on (as on a PC that synchronises); only the stamp's capture is counted below.
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    exec(
+        &db,
+        "DELETE FROM sync_capture_journal WHERE entity_type = 'work_orders'",
+    )
+    .await;
+    rules::after_rule_list_change(&db, set, Some(actor))
+        .await
+        .expect("stamp");
+    let open = crate::wo::queries::get_work_order(&db, open.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(open.requires_permit);
+    assert_eq!(open.permit_rule_code.as_deref(), Some("PUMPS_LOTO"));
+    let started = crate::wo::queries::get_work_order(&db, started.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(started.permit_rule_code, None, "a started work order is left as it is");
+    // Written as a local change: captured, to be sent to the other PCs.
+    let open_sync = open.entity_sync_id.clone().expect("sync id");
+    assert!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = 'work_orders' \
+                 AND entity_sync_id = '{open_sync}'"
+            ),
+        )
+        .await
+            >= 1,
+        "captured to be sent"
+    );
+}

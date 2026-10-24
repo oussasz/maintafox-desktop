@@ -788,6 +788,56 @@ pub(crate) async fn send_grant_review_notice(
     .await
 }
 
+/// A work order received already started without the plant rule that matches it here
+/// (`permit::requirement_rules::finding_for_started_without_rule`): the settings administrators are
+/// told, like a safety rule changed on another PC. The work order is applied whatever happens to the
+/// notice (its history is never held back): a notice that cannot be written is logged.
+pub(crate) async fn notify_work_order_without_rule(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    wo_sync_id: &str,
+    wo_code: &str,
+    rule: &str,
+    permit_type: &str,
+    requires_permit: bool,
+) -> AppResult<()> {
+    let (required_fr, required_en) = if requires_permit {
+        ("avec un permis exigé", "with a permit required")
+    } else {
+        ("sans permis exigé", "with no permit required")
+    };
+    let title = format!(
+        "OT {wo_code} reçu démarré sans la règle de permis {rule} / Work order {wo_code} received started without \
+         permit rule {rule}"
+    );
+    let body = format!(
+        "Reçu par synchronisation : l'OT {wo_code} a été démarré sur un autre poste {required_fr}, alors que la règle \
+         {rule} de l'usine exige ici un permis {permit_type} pour son équipement et son travail. Vérifiez comment ce \
+         travail a été protégé. / Received by sync: work order {wo_code} was started on another PC {required_en}, \
+         while plant rule {rule} here requires a {permit_type} permit for its equipment and work. Check how this work \
+         was protected."
+    );
+    send(
+        conn,
+        "work_orders",
+        wo_sync_id,
+        true,
+        title,
+        body,
+        &format!("/work-orders?openWo={wo_id}"),
+        NotificationMessage::new(
+            "wo_permit_rule_missing_on_arrival",
+            json!({
+                "code": wo_code,
+                "rule": rule,
+                "permit_type": permit_type,
+                "requires_permit": requires_permit,
+            }),
+        ),
+    )
+    .await
+}
+
 /// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
 /// of the received row. A notice that cannot be written is logged and the row still applies: a
 /// version or an occurrence is never held back by its notice (nothing is changed by either).

@@ -502,6 +502,152 @@ pub async fn stamp_matching_rule(
     Ok(Some(rule))
 }
 
+/// [`stamp_matching_rule`] on every work order of this PC that has no plant rule and has not
+/// started: when the plant's rule list changes here or is received. Returns the work orders flagged.
+pub async fn stamp_open_work_orders(
+    conn: &impl ConnectionTrait,
+    actor_id: Option<i64>,
+    cause: &str,
+) -> AppResult<Vec<i64>> {
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let marks = vec!["?"; not_started.len()].join(",");
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.permit_rule_code IS NULL AND st.code IN ({marks}) ORDER BY wo.id"
+            ),
+            not_started.iter().map(|c| sea_orm::Value::from(*c)).collect::<Vec<_>>(),
+        ))
+        .await?;
+    let mut flagged = Vec::new();
+    for row in rows {
+        let id: i64 = row.try_get("", "id")?;
+        if stamp_matching_rule(conn, id, actor_id, cause).await?.is_some() {
+            flagged.push(id);
+        }
+    }
+    Ok(flagged)
+}
+
+/// Whether the reference set `set_id` belongs to the plant's rule list.
+pub async fn is_rules_set(conn: &impl ConnectionTrait, set_id: i64) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE rs.id = ? AND UPPER(TRIM(d.code)) = ?",
+            [set_id.into(), DOMAIN.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// After a change of the plant's rule list on this PC (a rule added, changed or reactivated, a set
+/// published; `reference::values`, `reference::sets`, `reference::publish`): the work orders not
+/// started yet that a rule now matches are flagged, in one transaction, written as local changes
+/// (sent to the other PCs, which derive the same). Nothing for another list.
+pub async fn after_rule_list_change(
+    db: &sea_orm::DatabaseConnection,
+    set_id: i64,
+    actor_id: Option<i64>,
+) -> AppResult<()> {
+    use sea_orm::TransactionTrait;
+    if !is_rules_set(db, set_id).await? {
+        return Ok(());
+    }
+    let txn = db.begin().await?;
+    stamp_open_work_orders(&txn, actor_id, stamp_causes::RULES_CHANGED).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// A work order received started (past ready, or cancelled after its start), with no plant rule,
+/// that a rule of the list here matches (its equipment and work type): it is applied as received
+/// (its history is kept, never refused), and recorded once as a safety finding in its history
+/// (`permit_rule_missing_on_arrival`) and audit trail, with the settings administrators told
+/// (`settings::received_notice`): its work was done without the rule's protection (whether its
+/// permit was required, and of which type, is in the finding). Returns the rule.
+pub async fn finding_for_started_without_rule(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<String>> {
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wo.code, wo.entity_sync_id, wo.equipment_id, wo.type_id, wo.requires_permit, wo.permit_rule_code, \
+                    wo.actual_start, st.code AS status, \
+                    (SELECT COUNT(*) FROM wo_action_events e WHERE e.wo_id = wo.id \
+                      AND e.action_code = 'permit_rule_missing_on_arrival') AS found \
+               FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let held: Option<String> = row.try_get("", "permit_rule_code")?;
+    let status: String = row.try_get("", "status")?;
+    let actual_start: Option<String> = row.try_get("", "actual_start")?;
+    let found: i64 = row.try_get("", "found")?;
+    let started = !not_started.contains(&status.as_str()) && (status != "cancelled" || actual_start.is_some());
+    if held.is_some() || !started || found > 0 {
+        return Ok(None);
+    }
+    let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+    let type_id: i64 = row.try_get("", "type_id")?;
+    let outcome = evaluate(conn, equipment, type_id, false).await?;
+    let (Some(rule), Some(permit_type)) = (outcome.rule_code, outcome.permit_type_code) else {
+        return Ok(None);
+    };
+    let code: String = row.try_get("", "code")?;
+    let wo_sync: String = row.try_get("", "entity_sync_id")?;
+    let requires: i64 = row.try_get("", "requires_permit")?;
+    let payload = serde_json::json!({
+        "rule_code": rule,
+        "permit_type_code": permit_type,
+        "rule_set_version": published_rule_set_version(conn).await?,
+        "status": status,
+        "requires_permit": requires != 0,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_rule_missing_on_arrival",
+        None,
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_rule_missing_on_arrival".into(),
+            actor_id: None,
+            summary: Some(format!(
+                "Constat sécurité : OT reçu déjà démarré sans la règle {rule} de l'usine (permis {permit_type})"
+            )),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    crate::settings::received_notice::notify_work_order_without_rule(
+        conn,
+        wo_id,
+        &wo_sync,
+        &code,
+        &rule,
+        &permit_type,
+        requires != 0,
+    )
+    .await?;
+    Ok(Some(rule))
+}
+
 /// A rule added to the plant's published list, as the editor would have saved it (tests of every
 /// work-order origin).
 #[cfg(test)]

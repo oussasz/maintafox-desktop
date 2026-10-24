@@ -533,7 +533,7 @@ pub async fn get_value(db: &DatabaseConnection, value_id: i64) -> AppResult<Refe
 pub async fn create_value(
     db: &DatabaseConnection,
     payload: CreateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
@@ -626,6 +626,9 @@ pub async fn create_value(
 
     let created = map_value(&row)?;
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it
+    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(db, created.set_id, Some(actor_id)).await?;
     Ok(created)
 }
 
@@ -641,7 +644,7 @@ pub async fn create_value(
 pub async fn create_operational_value(
     db: &DatabaseConnection,
     payload: CreateOperationalReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let domain_code = normalize_code(&payload.domain_code);
     if domain_code.is_empty() {
@@ -752,6 +755,9 @@ pub async fn create_operational_value(
 
     // Schedule details hang off the committed value; the helper runs on the pool connection.
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it
+    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(db, created.set_id, Some(actor_id)).await?;
     Ok(created)
 }
 
@@ -761,7 +767,7 @@ pub async fn update_value(
     db: &DatabaseConnection,
     value_id: i64,
     payload: UpdateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
@@ -870,6 +876,9 @@ pub async fn update_value(
 
     let updated = get_value_by_id(&txn, value_id).await?;
     txn.commit().await?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it
+    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(db, updated.set_id, Some(actor_id)).await?;
     Ok(updated)
 }
 
@@ -909,7 +918,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
 /// Reactivates a previously deactivated reference value.
 ///
 /// Same mutation gate as `deactivate_value`.
-pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id: i64) -> AppResult<ReferenceValue> {
+pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, actor_id: i64) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -930,6 +939,9 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     ))
     .await?;
 
+    // A permit rule added or changed: the work orders not started yet that it matches get it
+    // (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(db, existing.set_id, Some(actor_id)).await?;
     get_value_by_id(db, value_id).await
 }
 
