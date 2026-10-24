@@ -16,7 +16,6 @@ use crate::inspection::domain::{
     InspectionRoundSummaryFilter, InspectionScheduleSummary, InspectionTemplate, InspectionTemplateVersion,
     InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
     RefreshInspectionReliabilitySignalsInput, SaveInspectionScheduleInput, ScheduleInspectionRoundInput,
-    UpdateInspectionAnomalyInput,
 };
 use crate::inspection::insights;
 use crate::inspection::queries;
@@ -248,19 +247,16 @@ pub async fn add_inspection_evidence(
     results::add_inspection_evidence(&state.db, input, pid).await
 }
 
+/// Removed (audit finding AU-72): it closed an anomaly without a decision and cleared its
+/// "revue permis requise". An anomaly is decided by routing it to a request or a work order, or by
+/// deferring it (`inspection::routing`). Kept only while the command list (`lib.rs`) still names it:
+/// it changes nothing.
 #[tauri::command]
-pub async fn update_inspection_anomaly(
-    input: UpdateInspectionAnomalyInput,
-    state: State<'_, AppState>,
-) -> AppResult<InspectionAnomaly> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INS_EXECUTE,
-        PermissionScope::Global
-    );
-    results::update_inspection_anomaly(&state.db, input).await
+pub async fn update_inspection_anomaly(state: State<'_, AppState>) -> AppResult<()> {
+    let _user = require_session!(state);
+    Err(AppError::PermissionDenied(
+        "update_inspection_anomaly was removed: route or defer the anomaly instead".into(),
+    ))
 }
 
 #[tauri::command]

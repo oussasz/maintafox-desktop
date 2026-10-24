@@ -9,7 +9,6 @@ use crate::errors::{AppError, AppResult};
 use super::domain::{
     AddInspectionEvidenceInput, InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionEvidence,
     InspectionEvidenceFilter, InspectionResult, InspectionResultsFilter, InspectionRound, RecordInspectionResultInput,
-    UpdateInspectionAnomalyInput,
 };
 use super::queries::{
     get_inspection_checkpoint_by_id, get_inspection_round_by_id, get_inspection_template_version_by_id,
@@ -33,11 +32,6 @@ pub(crate) const ANOMALY_MISSING_PHOTO: &str = "missing_mandatory_photo";
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("inspection_results decode '{field}': {err}"))
-}
-
-fn opt_i64(v: Option<i64>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>))
 }
 
 fn opt_string(v: Option<String>) -> sea_orm::Value {
@@ -770,63 +764,4 @@ pub async fn add_inspection_evidence(
 
     txn.commit().await?;
     Ok(ev)
-}
-
-pub async fn update_inspection_anomaly(
-    db: &DatabaseConnection,
-    input: UpdateInspectionAnomalyInput,
-) -> AppResult<InspectionAnomaly> {
-    if !ANOMALY_STATUSES.contains(&input.resolution_status.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_INSP_ANOMALY_STATUS_INVALID: resolution_status must be one of {ANOMALY_STATUSES:?}"
-        )]));
-    }
-    let txn = db.begin().await?;
-    let cur = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "InspectionAnomaly".into(),
-            id: input.id.to_string(),
-        })?;
-    let rv: i64 = cur
-        .try_get("", "row_version")
-        .map_err(|e| decode_err("row_version", e))?;
-    if rv != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
-        ]));
-    }
-    let new_rv = rv + 1;
-    let rpr = input.requires_permit_review.unwrap_or(false);
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inspection_anomalies SET resolution_status = ?, linked_di_id = ?, linked_work_order_id = ?, \
-         requires_permit_review = ?, row_version = ? WHERE id = ?",
-        [
-            input.resolution_status.into(),
-            opt_i64(input.linked_di_id),
-            opt_i64(input.linked_work_order_id),
-            (if rpr { 1 } else { 0 }).into(),
-            new_rv.into(),
-            input.id.into(),
-        ],
-    ))
-    .await?;
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, round_id, result_id, anomaly_type, severity, description, linked_di_id, linked_work_order_id, \
-             requires_permit_review, resolution_status, routing_decision, entity_sync_id, row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .expect("row");
-    let an = map_anomaly(&row)?;
-    txn.commit().await?;
-    Ok(an)
 }
