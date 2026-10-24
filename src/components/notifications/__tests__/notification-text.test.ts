@@ -139,7 +139,7 @@ describe("notification text", () => {
         fmt,
       );
       expect(unknown.body).toContain('"since":"—"');
-      expect(render(messages.admin_grants_to_review.body, { since: "—" })).toContain("—");
+      expect(render(messages["admin_grants_to_review"]?.body ?? "", { since: "—" })).toContain("—");
     });
 
     it("has every parameter the backend sends, and none left unfilled", () => {
