@@ -887,7 +887,7 @@ mod tests {
         // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
         // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
         // and the required / optional switch (`set_planned_part_required`).
-        assert_eq!(wo_lines.len(), 74, "invoke_handler must contain exactly 74 WO commands");
+        assert_eq!(wo_lines.len(), 75, "invoke_handler must contain exactly 75 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

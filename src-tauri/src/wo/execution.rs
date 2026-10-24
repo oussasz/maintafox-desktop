@@ -636,7 +636,10 @@ pub struct WoCompletionGate {
     pub detail: Option<String>,
 }
 
-async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoCompletionGate>> {
+pub(crate) async fn collect_completion_gates(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Vec<WoCompletionGate>> {
     let mut gates = Vec::new();
 
     // ── Labor: no open entries ────────────────────────────────────────────
@@ -666,21 +669,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         },
     });
 
-    // ── Tasks: mandatory completed ────────────────────────────────────────
-    let incomplete_tasks = conn
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT task_description \
-             FROM work_order_tasks \
-             WHERE work_order_id = ? AND is_mandatory = 1 AND is_completed = 0 \
-             ORDER BY sequence_order ASC",
-            [wo_id.into()],
-        ))
-        .await?;
-    let incomplete_descs: Vec<String> = incomplete_tasks
-        .iter()
-        .filter_map(|r| r.try_get::<String>("", "task_description").ok())
-        .collect();
+    // ── Tasks: every mandatory task closed with an accepted result (D3) ────
+    let incomplete_descs = crate::wo::tasks::open_mandatory_tasks(conn, wo_id).await?;
     gates.push(WoCompletionGate {
         code: "TASKS".into(),
         passed: incomplete_descs.is_empty(),

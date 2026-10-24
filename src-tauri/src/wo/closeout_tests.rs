@@ -9,7 +9,7 @@
 //!      verification evidence; refused once the window has passed.
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
@@ -29,11 +29,11 @@ mod tests {
     // Setup
     // ═══════════════════════════════════════════════════════════════════════
 
-    async fn setup() -> sea_orm::DatabaseConnection {
+    pub(crate) async fn setup() -> sea_orm::DatabaseConnection {
         crate::db::test_db::seeded().await
     }
 
-    async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
+    pub(crate) async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
         let row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -45,7 +45,7 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
-    async fn create_second_user(db: &sea_orm::DatabaseConnection) -> i64 {
+    pub(crate) async fn create_second_user(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -71,7 +71,7 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
-    async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
+    pub(crate) async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
         // Ensure org scaffolding for installed_at_node_id FK
         let _ = db
             .execute(Statement::from_string(
@@ -127,7 +127,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    pub(crate) async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -163,7 +163,7 @@ mod tests {
     }
 
     /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
-    async fn clear_rams_for_close_gate(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    pub(crate) async fn clear_rams_for_close_gate(db: &sea_orm::DatabaseConnection, wo_id: i64) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM work_order_failure_details WHERE work_order_id = ?",
@@ -181,7 +181,7 @@ mod tests {
     }
 
     /// Create a corrective WO and advance it to in_progress via Option B lifecycle.
-    async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+    pub(crate) async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
         seed_test_equipment(db).await;
         let actor = admin_id(db).await;
 
@@ -297,7 +297,7 @@ mod tests {
     /// Advance a WO from in_progress to completed+verified with all quality gates satisfied.
     /// In Option B, save_verification does NOT change WO status — stays completed.
     /// Returns the updated row_version.
-    async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
+    pub(crate) async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_second_user(db).await;
 

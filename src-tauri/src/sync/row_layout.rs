@@ -199,12 +199,27 @@ fn entity_target(entity_type: &str) -> AppResult<Target> {
 /// Layout of an entity synchronised by the generic engine. The schema is the same for every
 /// database of one app version, so the layout is computed once per process.
 pub(crate) async fn layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResult<Arc<EntityLayout>> {
-    if let Some(found) = layouts()
+    let cached = layouts()
         .lock()
         .map_err(|_| AppError::SyncError("sync layout cache poisoned".into()))?
         .get(entity_type)
-    {
-        return Ok(found.clone());
+        .cloned();
+    if let Some(found) = cached {
+        // Tests also build databases from before a migration (upgrade tests): a layout cached from
+        // one of them is not used on a database of another schema (built again, not cached).
+        #[cfg(test)]
+        {
+            let columns = conn
+                .query_all(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!("SELECT name FROM pragma_table_info('{}')", found.def.table),
+                ))
+                .await?;
+            if columns.len() != found.columns.len() {
+                return Ok(Arc::new(build_layout(conn, entity_type).await?));
+            }
+        }
+        return Ok(found);
     }
     let built = Arc::new(build_layout(conn, entity_type).await?);
     layouts()

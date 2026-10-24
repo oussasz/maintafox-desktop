@@ -6485,3 +6485,135 @@ async fn a_received_site_move_does_not_carry_a_safety_clearing() {
         "in force again"
     );
 }
+
+/// N4 (AU-99 review): a work order this PC holds ready, received completed (its start made on
+/// another PC on the way), is judged by the permit gate at its recorded start, as a received start
+/// is; with a valid permit chain it is applied (the completion checks then pass on the state held
+/// here).
+#[tokio::test]
+async fn a_completion_received_from_ready_passes_the_permit_gate() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-N4").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let completed = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'completed'",
+    )
+    .await
+    .expect("status sync id");
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    let status_of = || text(&db, &status_sql);
+    let ready = status_of().await;
+    // What the completion checks read here (corrective work): failure coding and no parts used.
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_failure_details (work_order_id, symptom_id, cause_not_determined, notes, \
+             is_temporary_repair, is_permanent_repair) VALUES ({wo_id}, {symptom}, 1, 'Cause not found on site', 0, 1)"
+        ),
+    )
+    .await;
+    let base = wire(&db, "work_orders", &wo_sync).await;
+    let received = |start: String| {
+        let row = with(
+            base.clone(),
+            &[
+                ("status_sync_id", json!(completed)),
+                ("actual_start", json!(start)),
+                ("mechanically_completed_at", json!(now())),
+                ("parts_actuals_confirmed", json!(1)),
+                ("root_cause_summary", json!("Breaker contacts worn")),
+            ],
+        );
+        async move { row }
+    };
+
+    // No permit received yet: waits (it may still be coming), nothing written.
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    // A linked permit never active: refused with the start gate's code, nothing written.
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-N4 breaker").await).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert_eq!(code(&outcome), Some("PERMIT_NOT_ACTIVE"), "{outcome:?}");
+    assert_eq!(status_of().await, ready);
+
+    // Active with its isolation verified, started after the activation: applied.
+    set_status(&db, &wp, "active").await.expect("activate");
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(status_of().await.as_deref(), Some("completed"));
+}
+
+/// N4: a completed work order new here received by a snapshot (plant history) is not judged by
+/// the permit gate; the same row received as a change waits for its permit.
+#[tokio::test]
+async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_gate() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-N4S").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let completed = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'completed'",
+    )
+    .await
+    .expect("status sync id");
+    let row = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[
+            ("status_sync_id", json!(completed)),
+            ("actual_start", json!(now())),
+            ("mechanically_completed_at", json!(now())),
+        ],
+    );
+    // This PC never held it: removed here with what refers to it.
+    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    for table in ["wo_state_transition_log WHERE wo_id", "wo_change_events WHERE wo_id"] {
+        exec(&db, &format!("DELETE FROM {table} = {wo_id}")).await;
+    }
+    exec(&db, &format!("DELETE FROM work_orders WHERE id = {wo_id}")).await;
+    exec(&db, "PRAGMA foreign_keys = ON").await;
+    let insert = |batch: &str, version: i64| {
+        format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+             row_version, payload_json, payload_hash, apply_status) VALUES ('{batch}', 'c1', 'work_orders', '{wo_sync}', \
+             'upsert', {version}, '{}', 'h-{batch}', 'pending')",
+            serde_json::to_string(&row).expect("json").replace('\'', "''")
+        )
+    };
+    let applied_status = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id \
+         WHERE w.entity_sync_id = '{wo_sync}'"
+    );
+
+    // As a change: waits for its permit, not written.
+    exec(&db, &insert("b-n4-delta", 5)).await;
+    let (_, conflicts) = inbox_pass(&db).await;
+    assert_eq!(conflicts, 0);
+    assert_eq!(text(&db, &applied_status).await, None, "waits for its permit");
+    exec(&db, "DELETE FROM sync_inbox WHERE server_batch_id = 'b-n4-delta'").await;
+
+    // By a snapshot this PC asked for: applied as the plant holds it.
+    exec(&db, &insert("snapshot-all-n4", 6)).await;
+    let (_, conflicts) = inbox_pass(&db).await;
+    assert_eq!(conflicts, 0);
+    assert_eq!(text(&db, &applied_status).await.as_deref(), Some("completed"));
+}
