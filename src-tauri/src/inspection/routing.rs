@@ -1,12 +1,12 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
-use crate::di::queries::{create_intervention_request, DiCreateInput};
+use crate::di::queries::{create_intervention_request_in, DiCreateInput};
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::InspectionAnomaly;
 use crate::inspection::queries::get_inspection_checkpoint_by_id;
 use crate::inspection::results::map_anomaly;
 use crate::wo::domain::WoCreateInput;
-use crate::wo::queries::create_work_order;
+use crate::wo::queries::create_work_order_in;
 
 async fn load_anomaly(db: &impl ConnectionTrait, id: i64) -> AppResult<InspectionAnomaly> {
     let row = db
@@ -38,6 +38,38 @@ fn required_title(title: Option<String>) -> AppResult<String> {
         })
 }
 
+/// The anomaly changed since it was read (or another follow-up was written from it meanwhile).
+fn changed_elsewhere() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
+    ])
+}
+
+/// Links the follow-up to the anomaly, in the transaction that wrote the follow-up: the anomaly is
+/// still at the version read (else nothing is kept, audit finding AU-71).
+async fn link_follow_up(
+    txn: &impl ConnectionTrait,
+    anomaly_id: i64,
+    expected_row_version: i64,
+    set_sql: &str,
+    follow_up_id: i64,
+) -> AppResult<InspectionAnomaly> {
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "UPDATE inspection_anomalies SET {set_sql}, resolution_status = 'triaged', \
+                 row_version = row_version + 1 WHERE id = ? AND row_version = ?"
+            ),
+            [follow_up_id.into(), anomaly_id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(changed_elsewhere());
+    }
+    load_anomaly(txn, anomaly_id).await
+}
+
 fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
     if a.linked_di_id.is_some() || a.linked_work_order_id.is_some() {
         return Err(AppError::ValidationFailed(vec![
@@ -55,11 +87,11 @@ pub async fn route_inspection_anomaly_to_di(
     title_override: Option<String>,
     description_override: Option<String>,
 ) -> AppResult<(crate::di::domain::InterventionRequest, InspectionAnomaly)> {
-    let a = load_anomaly(db, anomaly_id).await?;
+    // The request and its link to the anomaly commit together (audit finding AU-71).
+    let txn = db.begin().await?;
+    let a = load_anomaly(&txn, anomaly_id).await?;
     if a.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
-        ]));
+        return Err(changed_elsewhere());
     }
     assert_routable(&a)?;
     let Some(rid) = a.result_id else {
@@ -67,7 +99,7 @@ pub async fn route_inspection_anomaly_to_di(
             "GATE_INSP_ANOMALY_NO_RESULT: the anomaly is not attached to a recorded result.".into(),
         ]));
     };
-    let res_row = db
+    let res_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT checkpoint_id FROM inspection_results WHERE id = ?",
@@ -78,7 +110,7 @@ pub async fn route_inspection_anomaly_to_di(
     let checkpoint_id: i64 = res_row
         .try_get("", "checkpoint_id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}")))?;
-    let cp = get_inspection_checkpoint_by_id(db, checkpoint_id)
+    let cp = get_inspection_checkpoint_by_id(&txn, checkpoint_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InspectionCheckpoint".into(),
@@ -90,7 +122,7 @@ pub async fn route_inspection_anomaly_to_di(
             cp.checkpoint_code
         )]));
     };
-    let node_row = db
+    let node_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT installed_at_node_id FROM equipment WHERE id = ?",
@@ -116,7 +148,7 @@ pub async fn route_inspection_anomaly_to_di(
 
     let reported_urgency = severity_urgency_code(a.severity);
 
-    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
+    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(&txn, &a.anomaly_type).await?;
 
     let di_in = DiCreateInput {
         equipment_id: asset_id,
@@ -138,25 +170,15 @@ pub async fn route_inspection_anomaly_to_di(
         source_inspection_anomaly_id: Some(anomaly_id),
     };
 
-    // create_intervention_request commits the DI together with its own outbox entry.
-    let di = create_intervention_request(db, di_in).await?;
-
-    let txn = db.begin().await?;
-    let new_rv = a.row_version + 1;
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inspection_anomalies SET linked_di_id = ?, routing_decision = 'di', resolution_status = 'triaged', \
-         row_version = ? WHERE id = ? AND row_version = ?",
-        [
-            di.id.into(),
-            new_rv.into(),
-            anomaly_id.into(),
-            expected_row_version.into(),
-        ],
-    ))
+    let di = create_intervention_request_in(&txn, di_in).await?;
+    let updated = link_follow_up(
+        &txn,
+        anomaly_id,
+        expected_row_version,
+        "linked_di_id = ?, routing_decision = 'di'",
+        di.id,
+    )
     .await?;
-
-    let updated = load_anomaly(&txn, anomaly_id).await?;
     txn.commit().await?;
     Ok((di, updated))
 }
@@ -170,15 +192,15 @@ pub async fn route_inspection_anomaly_to_wo(
     title_override: Option<String>,
     description_override: Option<String>,
 ) -> AppResult<(crate::wo::domain::WorkOrder, InspectionAnomaly)> {
-    let a = load_anomaly(db, anomaly_id).await?;
+    // The work order and its link to the anomaly commit together (audit finding AU-71).
+    let txn = db.begin().await?;
+    let a = load_anomaly(&txn, anomaly_id).await?;
     if a.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
-        ]));
+        return Err(changed_elsewhere());
     }
     assert_routable(&a)?;
 
-    let open = db
+    let open = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -200,7 +222,7 @@ pub async fn route_inspection_anomaly_to_wo(
             "GATE_INSP_ANOMALY_NO_RESULT: the anomaly is not attached to a recorded result.".into(),
         ]));
     };
-    let res_row = db
+    let res_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT checkpoint_id FROM inspection_results WHERE id = ?",
@@ -211,7 +233,7 @@ pub async fn route_inspection_anomaly_to_wo(
     let checkpoint_id: i64 = res_row
         .try_get("", "checkpoint_id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}")))?;
-    let cp = get_inspection_checkpoint_by_id(db, checkpoint_id)
+    let cp = get_inspection_checkpoint_by_id(&txn, checkpoint_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InspectionCheckpoint".into(),
@@ -253,28 +275,20 @@ pub async fn route_inspection_anomaly_to_wo(
         shift: None,
         expected_duration_hours: None,
         creator_id: creator_user_id,
+        // The anomaly's "revue permis requise"; the plant's permit rules are applied on top of it
+        // when the work order is created (`wo::queries::create_work_order_in`, AU-04).
         requires_permit: Some(a.requires_permit_review),
     };
 
-    // create_work_order commits the WO together with its own outbox entry.
-    let wo = create_work_order(db, wo_in).await?;
-
-    let txn = db.begin().await?;
-    let new_rv = a.row_version + 1;
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inspection_anomalies SET linked_work_order_id = ?, routing_decision = 'wo', resolution_status = 'triaged', \
-         row_version = ? WHERE id = ? AND row_version = ?",
-        [
-            wo.id.into(),
-            new_rv.into(),
-            anomaly_id.into(),
-            expected_row_version.into(),
-        ],
-    ))
+    let wo = create_work_order_in(&txn, wo_in).await?;
+    let updated = link_follow_up(
+        &txn,
+        anomaly_id,
+        expected_row_version,
+        "linked_work_order_id = ?, routing_decision = 'wo'",
+        wo.id,
+    )
     .await?;
-
-    let updated = load_anomaly(&txn, anomaly_id).await?;
     txn.commit().await?;
     Ok((wo, updated))
 }

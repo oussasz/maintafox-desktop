@@ -1865,3 +1865,93 @@ async fn a_work_order_from_an_anomaly_gets_the_plant_rule_and_the_permit_review(
     assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
 }
 
+// ── AU-71: a follow-up and its link to the anomaly are written together ──────────────────────
+
+async fn follow_ups_of(db: &DatabaseConnection, anomaly_id: i64) -> (i64, i64) {
+    (
+        scalar_i64(
+            db,
+            &format!("SELECT COUNT(*) FROM intervention_requests WHERE source_inspection_anomaly_id = {anomaly_id}"),
+        )
+        .await,
+        scalar_i64(
+            db,
+            &format!("SELECT COUNT(*) FROM work_orders WHERE source_inspection_anomaly_id = {anomaly_id}"),
+        )
+        .await,
+    )
+}
+
+/// The same anomaly sent twice at once (a double click, two screens): one request, linked; the
+/// other submission is refused as changed elsewhere.
+#[tokio::test]
+async fn a_double_submit_writes_one_request() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let submit =
+        || routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Hot bearing".into()), None);
+    let (first, second) = tokio::join!(submit(), submit());
+    let (ok, refused) = match (first, second) {
+        (Ok(done), Err(e)) | (Err(e), Ok(done)) => (done, e),
+        other => panic!("expected one request and one refusal, got {other:?}"),
+    };
+    assert_validation::<()>(Err(refused), "GATE_RECORD_CHANGED_ELSEWHERE");
+    assert_eq!(follow_ups_of(&db, anomaly_id).await, (1, 0), "one request");
+    assert_eq!(ok.1.linked_di_id, Some(ok.0.id));
+    assert_eq!(ok.1.resolution_status, "triaged");
+}
+
+/// The anomaly changed between its read and its link (here by a trigger standing for another
+/// writer): nothing is kept, neither the follow-up nor a half link, and the version error is
+/// returned; the anomaly stays open.
+#[tokio::test]
+async fn a_stale_anomaly_keeps_no_follow_up() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+
+    // A version already stale when sent.
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv - 1, admin, Some("Hot".into()), None).await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+
+    // Changed by another writer while the follow-up is written.
+    for sql in [
+        "CREATE TRIGGER au71_di AFTER INSERT ON intervention_requests WHEN NEW.source_inspection_anomaly_id IS NOT NULL \
+         BEGIN UPDATE inspection_anomalies SET row_version = row_version + 1 WHERE id = NEW.source_inspection_anomaly_id; END",
+        "CREATE TRIGGER au71_wo AFTER INSERT ON work_orders WHEN NEW.source_inspection_anomaly_id IS NOT NULL \
+         BEGIN UPDATE inspection_anomalies SET row_version = row_version + 1 WHERE id = NEW.source_inspection_anomaly_id; END",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("trigger");
+    }
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Hot".into()), None).await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Hot".into()),
+            None,
+        )
+        .await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+    assert_eq!(follow_ups_of(&db, anomaly_id).await, (0, 0), "nothing kept");
+    let (still_open, same_rv) = open_anomaly(&db, &format!("id = {anomaly_id}")).await;
+    assert_eq!(
+        (still_open, same_rv),
+        (anomaly_id, rv),
+        "the anomaly is untouched and open"
+    );
+}
