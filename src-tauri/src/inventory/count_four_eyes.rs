@@ -37,6 +37,20 @@
 //! without a new entry (another counted or system quantity) — `COUNT_APPROVAL_RECORD_CHANGED`. A
 //! re-entry by another person of the same quantity on another PC is therefore a conflict for a
 //! person to decide, the safe direction.
+//!
+//! Held with its stock movement (CMMS Advisor Q8). Where this PC judges a received count line
+//! four-eyes (its current site rule; under the opt-out here it is accepted on arrival, flagged), the
+//! line is a `COUNT_SELF_APPROVAL` conflict AND the count's stock movements wait with it
+//! ([`inbound_count_movement_hold`]): its `COUNT_ADJUST` and a `COUNT_REVERSAL` of it are not applied,
+//! so the stock here does not move. The conflict is settled where the count is applied, never by
+//! "keep mine" / "take theirs" here (refused, `sync::queries`):
+//! - a second approval by someone other than the counter, holding the count-approval right
+//!   (`controls::second_approve_count_line`): when that version arrives the line passes, its
+//!   movement is applied with it and the conflict closes ([`after_count_line_applied`]);
+//! - or the count's reversal: the held adjustment and its reversal are applied together (net zero),
+//!   the conflict closes and the counter is told to count again.
+//! When the conflict opens, the count-approval holders are told once per count
+//! ([`after_count_conflict_recorded`]).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -64,8 +78,12 @@ pub const SYNC_SELF_APPROVAL: &str = "COUNT_SELF_APPROVAL";
 /// Sync conflict: a received count line whose approval record contradicts itself.
 pub const SYNC_APPROVAL_RECORD_INVALID: &str = "COUNT_APPROVAL_RECORD_INVALID";
 /// Sync conflict: a received count line clears or changes the counter held here, or lowers its
-/// "above the tolerance" flag, without a new entry.
+/// "above the tolerance" flag, without a new entry; or changes the second approval held here.
 pub const SYNC_APPROVAL_RECORD_CHANGED: &str = "COUNT_APPROVAL_RECORD_CHANGED";
+
+/// Notification category: a count held back here for a second approval (migration 259), to the
+/// count-approval holders, once per count.
+pub const SECOND_APPROVAL_CATEGORY: &str = "stock_count_second_approval";
 
 const LINES: &str = "inventory_count_lines";
 
@@ -297,6 +315,18 @@ pub(crate) async fn inbound_count_line_check(
                 ),
             );
         }
+        let held_second = field(l, "second_approved_by_sync_id");
+        if held_second.is_some()
+            && (field(&line, "second_approved_by_sync_id") != held_second
+                || field(&line, "second_approved_at") != field(l, "second_approved_at"))
+        {
+            return conflict(
+                SYNC_APPROVAL_RECORD_CHANGED,
+                format!(
+                    "count line {entity_sync_id}: its second approval, recorded here, cannot be removed or changed"
+                ),
+            );
+        }
         if same_quantities && flag(l, "is_critical") && !above {
             return conflict(
                 SYNC_APPROVAL_RECORD_CHANGED,
@@ -307,16 +337,41 @@ pub(crate) async fn inbound_count_line_check(
             );
         }
         let same = same_quantities
-            && ["approved_by_sync_id", "approved_at", "counted_by_sync_id"]
-                .iter()
-                .all(|k| field(l, k) == field(&line, k))
+            && [
+                "approved_by_sync_id",
+                "approved_at",
+                "counted_by_sync_id",
+                "second_approved_by_sync_id",
+                "second_approved_at",
+                "reversed_transaction_sync_id",
+            ]
+            .iter()
+            .all(|k| field(l, k) == field(&line, k))
             && flag(l, "self_approved") == self_approved
             && flag(l, "is_critical") == above;
         if same {
             return Ok(None);
         }
     }
+    // A count reversed (its reversal movement is applied before the line, a reference it needs):
+    // nothing it moved is kept, four-eyes has nothing to hold.
+    if field(&line, "reversed_transaction_sync_id").is_some() {
+        return Ok(None);
+    }
     let by_counter = approver.is_some() && counter.is_some() && approver == counter;
+    let second = field(&line, "second_approved_by_sync_id");
+    if second.is_some() && !(by_counter && above) {
+        return conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!(
+                "count line {entity_sync_id} carries a second approval although it was not approved by its counter \
+                 above the four-eyes tolerance"
+            ),
+        );
+    }
+    if let (Some(second), true) = (second, by_counter && above) {
+        return second_approval_check(conn, entity_sync_id, &line, second).await;
+    }
     if !(by_counter && above) {
         if self_approved {
             return conflict(
@@ -376,6 +431,447 @@ pub(crate) async fn inbound_count_line_check(
             ),
         ),
     }
+}
+
+/// A received second approval of a self-approved line: by someone other than the counter, dated,
+/// and holding the count-approval right here (`inv.manage`, plant-wide as stores have no site).
+async fn second_approval_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    line: &serde_json::Map<String, serde_json::Value>,
+    second: &str,
+) -> AppResult<Option<InboundVerdict>> {
+    if Some(second) == field(line, "counted_by_sync_id") || field(line, "second_approved_at").is_none() {
+        return conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!("count line {entity_sync_id}: its second approval is by its counter, or undated"),
+        );
+    }
+    let Some(user) = crate::permit::sync_check::local_id(conn, "user_accounts", second).await? else {
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "count line {entity_sync_id}: its second approver {second} is not applied yet"
+        ))));
+    };
+    if !crate::settings::site::holds_tenant_right(conn, user, crate::rbac::permissions::INV_MANAGE).await? {
+        return conflict(
+            SYNC_SELF_APPROVAL,
+            format!(
+                "count line {entity_sync_id}: its second approver does not hold the count-approval right here \
+                 (inv.manage)"
+            ),
+        );
+    }
+    Ok(None)
+}
+
+/// Message of the recount notice of a count reversed where it was applied, held back here
+/// (`notifications:messages.<key>`).
+pub const RECOUNT_AFTER_REVERSAL_MESSAGE: &str = "stock_count_recount_reversed";
+
+/// Movement types of a count that move the stock.
+const COUNT_MOVEMENTS: [&str; 2] = ["COUNT_ADJUST", "COUNT_REVERSAL"];
+
+/// The latest received version (waiting, or refused for a person) of the count line naming the
+/// movement `movement_sync_id` under `key`.
+async fn waiting_line_naming(
+    conn: &impl ConnectionTrait,
+    key: &str,
+    movement_sync_id: &str,
+) -> AppResult<Option<(String, serde_json::Map<String, serde_json::Value>)>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT entity_sync_id, payload_json FROM sync_inbox
+                 WHERE entity_type = ? AND apply_status IN ('pending', 'deferred', 'conflict')
+                   AND operation NOT IN ('delete', 'archive')
+                   AND json_extract(payload_json, '$.{key}') = ?
+                 ORDER BY row_version DESC, id DESC LIMIT 1"
+            ),
+            [LINES.into(), movement_sync_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let sync_id: String = row.try_get("", "entity_sync_id")?;
+    let payload: String = row.try_get("", "payload_json")?;
+    match serde_json::from_str::<serde_json::Value>(&payload)? {
+        serde_json::Value::Object(map) => Ok(Some((sync_id, map))),
+        _ => Ok(None),
+    }
+}
+
+/// Whether this PC holds a `COUNT_ADJUST` of the received movement's count session, article and
+/// location (any sync id).
+async fn count_adjusted_here(
+    conn: &impl ConnectionTrait,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<bool> {
+    held_here(
+        conn,
+        received,
+        "SELECT 1 AS a FROM inventory_transactions
+         WHERE movement_type = 'COUNT_ADJUST' AND source_type = 'COUNT_SESSION' AND source_id = ?
+           AND article_id = ? AND location_id = ? LIMIT 1",
+    )
+    .await
+}
+
+/// Whether this PC holds the count line of the received movement's count session, article and
+/// location.
+async fn count_line_held_here(
+    conn: &impl ConnectionTrait,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<bool> {
+    held_here(
+        conn,
+        received,
+        "SELECT 1 AS a FROM inventory_count_lines WHERE session_id = ? AND article_id = ? AND location_id = ? LIMIT 1",
+    )
+    .await
+}
+
+/// Whether `sql` (bound to the local session, article and location of a received count movement)
+/// finds a row here; `false` when one of them is not here.
+async fn held_here(
+    conn: &impl ConnectionTrait,
+    received: &serde_json::Map<String, serde_json::Value>,
+    sql: &'static str,
+) -> AppResult<bool> {
+    let local = |table: &'static str, key: &'static str| async move {
+        match field(received, key) {
+            Some(sync_id) => crate::permit::sync_check::local_id(conn, table, sync_id).await,
+            None => Ok(None),
+        }
+    };
+    let (Some(session), Some(article), Some(location)) = (
+        local("inventory_count_sessions", "source_sync_id").await?,
+        local("articles", "article_sync_id").await?,
+        local("stock_locations", "location_sync_id").await?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [session.into(), article.into(), location.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Whether a movement is here or waiting in the inbox.
+async fn movement_here_or_waiting(conn: &impl ConnectionTrait, movement_sync_id: &str) -> AppResult<bool> {
+    if crate::permit::sync_check::local_id(conn, "inventory_transactions", movement_sync_id)
+        .await?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
+               AND apply_status IN ('pending', 'deferred') LIMIT 1",
+            [movement_sync_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// A received stock movement of a count (`COUNT_ADJUST`, `COUNT_REVERSAL` of a count session) is
+/// held with its count line (CMMS Advisor Q8, see the module documentation): it waits while the
+/// latest received version of its line is refused or waits here; a reversal waits for the
+/// adjustment it undoes; an adjustment whose line arrives reversed is applied with its reversal
+/// (net zero). A movement already here (a replay, the same posting received twice) is not held; a
+/// movement whose line has not arrived yet waits for it.
+pub(crate) async fn inbound_count_movement_hold(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    let Some(kind) = field(received, "movement_type").filter(|k| COUNT_MOVEMENTS.contains(k)) else {
+        return Ok(None);
+    };
+    if field(received, "source_type") != Some("COUNT_SESSION")
+        || crate::permit::sync_check::local_id(conn, "inventory_transactions", entity_sync_id)
+            .await?
+            .is_some()
+    {
+        return Ok(None);
+    }
+    // The count's adjustment is already applied here (under this id or another: the same count
+    // posted on two PCs, `inventory::count_sync`): its line was judged when it arrived; the
+    // movements of that count go on as before.
+    if count_adjusted_here(conn, received).await? {
+        return Ok(None);
+    }
+    let adjust = kind == "COUNT_ADJUST";
+    let key = if adjust {
+        "posted_transaction_sync_id"
+    } else {
+        "reversed_transaction_sync_id"
+    };
+    let Some((line_sync_id, line)) = waiting_line_naming(conn, key, entity_sync_id).await? else {
+        // No received version names it, but the count's line is held here (judged when it arrived,
+        // or entered and approved on this PC): the movement is applied as before.
+        if count_line_held_here(conn, received).await? {
+            return Ok(None);
+        }
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "count movement {entity_sync_id}: its count line has not arrived yet (held with it, four-eyes)"
+        ))));
+    };
+    if !adjust {
+        // A reversal undoes the adjustment named by its line: applied once that one is here.
+        let held = match field(&line, "posted_transaction_sync_id") {
+            Some(posted) => crate::permit::sync_check::local_id(conn, "inventory_transactions", posted)
+                .await?
+                .is_none(),
+            None => false,
+        };
+        return Ok(held.then(|| {
+            InboundVerdict::Defer(format!(
+                "count reversal {entity_sync_id}: the adjustment it undoes is held here with count line {line_sync_id}"
+            ))
+        }));
+    }
+    if let Some(reversal) = field(&line, "reversed_transaction_sync_id") {
+        if movement_here_or_waiting(conn, reversal).await? {
+            return Ok(None);
+        }
+    }
+    Ok(match inbound_count_line_check(conn, &line_sync_id, &line).await? {
+        None => None,
+        Some(InboundVerdict::Defer(why)) => Some(InboundVerdict::Defer(format!(
+            "count movement {entity_sync_id} waits with its count line {line_sync_id}: {why}"
+        ))),
+        Some(InboundVerdict::Conflict { code, message }) => Some(InboundVerdict::Defer(format!(
+            "count movement {entity_sync_id} is held with its count line {line_sync_id} ({code}: {message}); \
+                 settled where the count is applied: a second approval, or its reversal"
+        ))),
+    })
+}
+
+/// Display parameters of a count line notice: article, location, count and counter, read from what
+/// is here (the line's payload names them by sync id).
+async fn notice_params(
+    conn: &impl ConnectionTrait,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<serde_json::Value> {
+    let text = |sql: &'static str, sync_id: Option<String>| async move {
+        let Some(sync_id) = sync_id else {
+            return Ok::<Option<String>, AppError>(None);
+        };
+        Ok(conn
+            .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [sync_id.into()]))
+            .await?
+            .and_then(|r| r.try_get::<Option<String>>("", "v").ok().flatten()))
+    };
+    let owned = |key: &str| field(line, key).map(str::to_string);
+    let unknown = || "?".to_string();
+    Ok(serde_json::json!({
+        "code": text("SELECT article_code AS v FROM articles WHERE entity_sync_id = ?", owned("article_sync_id"))
+            .await?
+            .unwrap_or_else(unknown),
+        "title": text("SELECT article_name AS v FROM articles WHERE entity_sync_id = ?", owned("article_sync_id"))
+            .await?
+            .unwrap_or_default(),
+        "location": text(
+            "SELECT w.code || '/' || sl.code AS v FROM stock_locations sl JOIN warehouses w ON w.id = sl.warehouse_id
+             WHERE sl.entity_sync_id = ?",
+            owned("location_sync_id"),
+        )
+        .await?
+        .unwrap_or_else(unknown),
+        "session": text(
+            "SELECT session_code AS v FROM inventory_count_sessions WHERE entity_sync_id = ?",
+            owned("session_sync_id"),
+        )
+        .await?
+        .unwrap_or_else(unknown),
+        "counter": text(
+            "SELECT COALESCE(NULLIF(TRIM(display_name), ''), username) AS v FROM user_accounts WHERE entity_sync_id = ?",
+            owned("counted_by_sync_id"),
+        )
+        .await?
+        .unwrap_or_else(unknown),
+    }))
+}
+
+/// A device notice (`notifications::emitter::emit_device_event_with`): the same identity on every PC,
+/// written with capture suppressed (each PC raises its own), fire-and-log.
+#[allow(clippy::too_many_arguments)]
+async fn device_notice(
+    conn: &impl ConnectionTrait,
+    category: &str,
+    message_key: &str,
+    identity: &str,
+    source: Option<(&str, i64)>,
+    params: serde_json::Value,
+    title: String,
+    body: String,
+) -> AppResult<()> {
+    let input = crate::notifications::emitter::NotificationEventInput {
+        source_module: source.map_or("inventory", |(m, _)| m).into(),
+        source_record_id: source.map(|(_, id)| id.to_string()),
+        event_code: category.into(),
+        category_code: category.into(),
+        severity: "warning".into(),
+        dedupe_key: Some(identity.to_string()),
+        payload_json: None,
+        title,
+        body: Some(body),
+        action_url: Some(crate::inventory::negative_stock::LIST_URL.to_string()),
+    };
+    let message = crate::notifications::emitter::NotificationMessage::new(message_key, params);
+    // Inside a received row's apply capture is already suppressed: left as it is.
+    let suppressed = conn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS s FROM sync_capture_suppression LIMIT 1".to_string(),
+        ))
+        .await?
+        .is_some();
+    if !suppressed {
+        crate::sync::capture::begin_suppression(conn).await?;
+    }
+    let emitted =
+        crate::notifications::emitter::emit_device_event_with(conn, input, Some(identity), Some(&message)).await;
+    if !suppressed {
+        crate::sync::capture::end_suppression(conn).await?;
+    }
+    if let Err(err) = emitted {
+        tracing::warn!(error = %err, identity, "count notice not raised");
+    }
+    Ok(())
+}
+
+/// After a received count line's conflict was recorded (`sync::materialize`): a count held back
+/// for a second approval tells the count-approval holders, once per count (its line's sync id names
+/// the notice on every PC, a later refusal of the same line refreshes it).
+pub(crate) async fn after_count_conflict_recorded(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    code: &str,
+    payload_json: &str,
+) -> AppResult<()> {
+    if entity_type != LINES || code != SYNC_SELF_APPROVAL {
+        return Ok(());
+    }
+    let Ok(serde_json::Value::Object(line)) = serde_json::from_str::<serde_json::Value>(payload_json) else {
+        return Ok(());
+    };
+    let params = notice_params(conn, &line).await?;
+    let text = |k: &str| {
+        params
+            .get(k)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    };
+    device_notice(
+        conn,
+        SECOND_APPROVAL_CATEGORY,
+        SECOND_APPROVAL_CATEGORY,
+        &format!("count-held|{entity_sync_id}"),
+        None,
+        params.clone(),
+        format!("Comptage retenu — {} à {}", text("code"), text("location")),
+        format!(
+            "Le comptage {} de {} (compté et approuvé par {}) est retenu ici : seconde approbation ou annulation du \
+             comptage, sur le poste où il est appliqué.",
+            text("session"),
+            text("code"),
+            text("counter")
+        ),
+    )
+    .await
+}
+
+/// After a received count line was applied (`sync::materialize`): its `COUNT_SELF_APPROVAL`
+/// conflicts of older versions close (the second approval or the reversal arrived and passed); a
+/// reversed count tells its counter to count again.
+pub(crate) async fn after_count_line_applied(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    applied_row_version: i64,
+) -> AppResult<()> {
+    if entity_type != LINES {
+        return Ok(());
+    }
+    let open = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS o FROM sync_conflicts WHERE conflict_type = ? AND entity_type = ? AND entity_sync_id = ?
+               AND inbound_row_version < ?
+               AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed') LIMIT 1",
+            [
+                SYNC_SELF_APPROVAL.into(),
+                LINES.into(),
+                entity_sync_id.into(),
+                applied_row_version.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if !open {
+        return Ok(());
+    }
+    let Some(line) = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await? else {
+        return Ok(());
+    };
+    let reversed = field(&line, "reversed_transaction_sync_id").is_some();
+    crate::sync::code_clash::close_conflicts_superseded_by(
+        conn,
+        SYNC_SELF_APPROVAL,
+        LINES,
+        entity_sync_id,
+        applied_row_version,
+        if reversed {
+            "The count was reversed where it is applied: its held adjustment and its reversal were applied together."
+        } else {
+            "The count received its second approval where it is applied: it was applied here with its movement."
+        },
+    )
+    .await?;
+    if reversed {
+        let Some(line_id) = crate::permit::sync_check::local_id(conn, LINES, entity_sync_id).await? else {
+            return Ok(());
+        };
+        let params = notice_params(conn, &line).await?;
+        let text = |k: &str| {
+            params
+                .get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?")
+                .to_string()
+        };
+        device_notice(
+            conn,
+            crate::inventory::negative_stock::RECOUNT_CATEGORY,
+            RECOUNT_AFTER_REVERSAL_MESSAGE,
+            &format!("count-recount|{entity_sync_id}"),
+            Some(("inventory_count_lines", line_id)),
+            serde_json::json!({
+                "code": text("code"),
+                "title": text("title"),
+                "location": text("location"),
+                "session": text("session"),
+            }),
+            format!("Recomptage demandé — {} à {}", text("code"), text("location")),
+            format!(
+                "Le comptage {} a été annulé faute de seconde approbation. Recomptez l'emplacement.",
+                text("session")
+            ),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

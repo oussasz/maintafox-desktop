@@ -29,6 +29,7 @@ import {
   KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
+  SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   clashingNumber,
   clashingUsername,
   conflictActions,
@@ -208,6 +209,9 @@ export function SyncConflictList({
                     </span>
                   ) : null}
                 </p>
+              ) : null}
+              {SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(c.conflict_type) ? (
+                <p className="mt-1 text-xs text-text-primary">{t("sync.countSettledAtOrigin")}</p>
               ) : null}
               {c.conflict_type === "USERNAME_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">

@@ -1604,7 +1604,10 @@
       "criticalMeaning": "Above the four-eyes tolerance: approved by someone other than the counter.",
       "counterNotRecorded": "not recorded",
       "selfApproved": "Self-approval",
-      "selfApprovedMeaning": "Approved by its counter above the tolerance, under the site's four-eyes opt-out."
+      "selfApprovedMeaning": "Approved by its counter above the tolerance, under the site's four-eyes opt-out.",
+      "secondApprove": "Second approval",
+      "secondApproveMeaning": "Someone other than the counter approves this variance: the PCs where four-eyes applies, which hold this count back, then apply it.",
+      "secondApprovedBy": "Second approval by {{name}} on {{date}}"
     },
     "approval": {
       "title": "Approve the variance",
@@ -1614,6 +1617,11 @@
       "confirm": "Approve variance",
       "aboveTolerance": "Above the four-eyes tolerance: counted by {{counter}}, approved by someone else.",
       "withinTolerance": "Within the four-eyes tolerance (counted by {{counter}})."
+    },
+    "secondApproval": {
+      "title": "Second approval of the variance",
+      "description": "Counted and approved by {{counter}} (self-approval): another person approves it in turn.",
+      "confirm": "Give the second approval"
     },
     "reversal": {
       "reason": "Reversal reason",

@@ -80,6 +80,7 @@
     "resolveFailed": "The choice could not be applied: {{message}}",
     "codeClash": "Number {{number}} is already used on this device by another record (numbered on two devices before device codes existed, or two devices share a code). Renumbering gives the record on this device a new number of this device; the received record keeps {{number}}. Nothing is renamed without your choice.",
     "usernameClash": "The same username “{{username}}” was created on two PCs. Rename one of the two accounts (Users) on the PC that created it, then synchronise. If you renamed this PC’s account, then take the received account.",
+    "countSettledAtOrigin": "To settle on the PC where the count was made (where it is applied): a second approval by another person, or the count's cancellation (reversal). This conflict closes by itself when either arrives here.",
     "renumberLocal": "Renumber the record on this device",
     "conflictKind": {
       "CONCURRENT_EDIT": "Changed on this device and on another device",
@@ -200,7 +201,7 @@
       "PERMIT_APPROVER_MISSING": "A permit approved on another PC without saying who approved it (four-eyes)",
       "PERMIT_APPROVAL_RECORD_CHANGED": "Who wrote, submitted or approved a permit, as recorded here, was erased or changed on another PC",
       "PERMIT_APPROVAL_RECORD_INVALID": "A permit received with an incomplete or inconsistent record of its submission or approval",
-      "COUNT_SELF_APPROVAL": "A stock count variance above the four-eyes tolerance approved on another PC by the person who counted it, where the stores require a second person, or not recorded as a self-approval",
+      "COUNT_SELF_APPROVAL": "A stock count variance above the four-eyes tolerance approved on another PC by the person who counted it, where the stores require a second person here: the line and its stock movement are held (the stock does not move)",
       "COUNT_APPROVAL_RECORD_INVALID": "A stock count line received flagged as a self-approval although it was not approved by its counter above the tolerance",
       "COUNT_APPROVAL_RECORD_CHANGED": "A stock count line received that clears or changes the person who counted it, recorded here, or brings its variance back within the tolerance, without a new entry of the counted quantity",
       "NOTIFICATION_CATEGORY_LOCKED": "A change from another PC that would switch off or re-route the notice of a safety rule changed on another PC",

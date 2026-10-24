@@ -695,6 +695,99 @@ pub async fn approve_count_line(
     get_count_line(db, input.line_id).await
 }
 
+/// Refusal: the line has no self-approval to approve a second time (not posted, reversed, within
+/// the tolerance, approved by someone other than its counter, or approved a second time already).
+pub const REFUSED_SECOND_APPROVAL_NOT_NEEDED: &str = "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED";
+/// Refusal: the second approval is given by the counter (who also approved it).
+pub const REFUSED_SECOND_APPROVAL_SELF: &str = "GATE_INV_COUNT_SECOND_APPROVAL_SELF";
+
+/// The second approval of a posted count line whose variance above the four-eyes tolerance was
+/// approved by its counter ("auto-approbation", under the opt-out of the site): given by someone
+/// other than the counter, with a note of at least 8 characters, where the count is applied; audited
+/// and synchronised. A PC where four-eyes applies holds such a count back (line and movement,
+/// `count_four_eyes::inbound_count_movement_hold`) until this version arrives (CMMS Advisor Q8).
+pub async fn second_approve_count_line(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::SecondApproveInventoryCountLineInput,
+) -> AppResult<InventoryCountLine> {
+    let note = input.reviewer_evidence.trim();
+    if note.chars().count() < crate::inventory::negative_stock::REVIEW_REASON_MIN_CHARS {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_COUNT_EVIDENCE: reviewer_evidence must be explicit and at least 8 characters.".to_string(),
+        ]));
+    }
+    let tx = db.begin().await?;
+    let line = get_count_line(&tx, input.line_id).await?;
+    if line.row_version != input.expected_row_version {
+        return Err(count_line_changed_elsewhere());
+    }
+    let self_approved = line.is_critical == 1
+        && line.approved_by_id.is_some()
+        && line.approved_by_id == line.counted_by_id
+        && line.posted_transaction_id.is_some()
+        && line.reversed_transaction_id.is_none()
+        && line.second_approved_by_id.is_none();
+    if !self_approved {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{REFUSED_SECOND_APPROVAL_NOT_NEEDED}: this count line has no self-approval to approve a second time."
+        )]));
+    }
+    if line.counted_by_id == Some(input.reviewer_id) || line.approved_by_id == Some(input.reviewer_id) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{REFUSED_SECOND_APPROVAL_SELF}: you counted and approved this variance: another person gives the second \
+             approval."
+        )]));
+    }
+    let now = now_iso();
+    let written = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE inventory_count_lines
+             SET second_approved_by_id = ?, second_approved_at = ?, second_approval_note = ?,
+                 row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND row_version = ? AND second_approved_by_id IS NULL",
+            [
+                input.reviewer_id.into(),
+                now.clone().into(),
+                note.into(),
+                now.into(),
+                input.line_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if written.rows_affected() != 1 {
+        return Err(count_line_changed_elsewhere());
+    }
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: "inventory.count.line_second_approved".to_string(),
+            target_type: Some("inventory_count_sessions".to_string()),
+            target_id: Some(session_audit_target(&tx, line.session_id).await?),
+            actor_id: Some(input.reviewer_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "Self-approved count variance approved a second time by another person",
+                "count_line_id": line.id,
+                "article_id": line.article_id,
+                "location_id": line.location_id,
+                "variance_qty": line.variance_qty,
+                "counted_by_id": line.counted_by_id,
+                "approved_by_id": line.approved_by_id,
+                "note": note,
+            })),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    get_count_line(db, input.line_id).await
+}
+
 /// The tolerance kept in an approval's audit: the line's flag (judged at entry, as the entry's
 /// audit records with the thresholds then) and the thresholds in force at the approval.
 pub(crate) fn approval_tolerance_json(
@@ -1630,12 +1723,15 @@ pub async fn list_count_lines(db: &DatabaseConnection, session_id: i64) -> AppRe
                     cl.is_critical, cl.approval_required, cl.approved_by_id,
                     COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
+                    cl.second_approved_by_id, COALESCE(us.display_name, us.username) AS second_approved_by_name,
+                    cl.second_approved_at, cl.second_approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
              LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
+             LEFT JOIN user_accounts us ON us.id = cl.second_approved_by_id
              WHERE cl.session_id = ?
              ORDER BY cl.id ASC",
             [session_id.into()],
@@ -1688,12 +1784,15 @@ async fn get_count_line<C: ConnectionTrait>(db: &C, line_id: i64) -> AppResult<I
                     cl.is_critical, cl.approval_required, cl.approved_by_id,
                     COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
                     cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
+                    cl.second_approved_by_id, COALESCE(us.display_name, us.username) AS second_approved_by_name,
+                    cl.second_approved_at, cl.second_approval_note,
                     cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
              FROM inventory_count_lines cl
              JOIN articles a ON a.id = cl.article_id
              JOIN stock_locations sl ON sl.id = cl.location_id
              LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
              LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
+             LEFT JOIN user_accounts us ON us.id = cl.second_approved_by_id
              WHERE cl.id = ?",
             [line_id.into()],
         ))
@@ -1766,6 +1865,10 @@ fn map_count_line(row: sea_orm::QueryResult) -> AppResult<InventoryCountLine> {
         counted_by_id: row.try_get("", "counted_by_id")?,
         counted_by_name: row.try_get("", "counted_by_name").ok().flatten(),
         self_approved: row.try_get("", "self_approved")?,
+        second_approved_by_id: row.try_get("", "second_approved_by_id")?,
+        second_approved_by_name: row.try_get("", "second_approved_by_name").ok().flatten(),
+        second_approved_at: row.try_get("", "second_approved_at")?,
+        second_approval_note: row.try_get("", "second_approval_note")?,
         posted_transaction_id: row.try_get("", "posted_transaction_id")?,
         reversed_transaction_id: row.try_get("", "reversed_transaction_id")?,
         row_version: row.try_get("", "row_version")?,

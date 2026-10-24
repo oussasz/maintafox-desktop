@@ -3398,6 +3398,14 @@ export interface InventoryCountLine {
   counted_by_name: string | null;
   /** 1: approved by its counter above the tolerance under the site's opt-out ("auto-approbation"). */
   self_approved: number;
+  /**
+   * Second approval of a self-approved line by another person, so that a PC where four-eyes
+   * applies accepts the count it holds back (CMMS Advisor Q8).
+   */
+  second_approved_by_id: number | null;
+  second_approved_by_name: string | null;
+  second_approved_at: string | null;
+  second_approval_note: string | null;
   posted_transaction_id: number | null;
   reversed_transaction_id: number | null;
   row_version: number;
@@ -3439,6 +3447,13 @@ export interface ApproveInventoryCountLineInput {
   line_id: number;
   expected_row_version: number;
   reviewer_id: number;
+  reviewer_evidence: string;
+}
+
+/** The second approval of a self-approved count line (the approver is the signed-in user). */
+export interface SecondApproveInventoryCountLineInput {
+  line_id: number;
+  expected_row_version: number;
   reviewer_evidence: string;
 }
 

@@ -3674,3 +3674,289 @@ async fn a_received_count_line_keeps_the_counter_and_flag_held_here() {
     .await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "new entry: {outcome:?}");
 }
+
+// ── A self-approved count received where four-eyes applies (CMMS Advisor Q8) ──────────────────
+
+/// Each PC's own planning site, made there only (never sent): A's opted out of four-eyes when
+/// `a_opts_out`, B's per `b_opts_out` — each PC judges by its current rule.
+async fn sites_made_locally(a: &DatabaseConnection, b: &DatabaseConnection, a_opts_out: bool, b_opts_out: bool) {
+    for (db, opt_out, device) in [(a, a_opts_out, 7), (b, b_opts_out, 8)] {
+        crate::sync::capture::begin_suppression(db).await.expect("suppress");
+        crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(device), opt_out).await;
+        crate::sync::capture::end_suppression(db).await.expect("unsuppress");
+    }
+}
+
+/// The count line of a session on `db`.
+async fn line_of(db: &DatabaseConnection, session_code: &str) -> crate::inventory::domain::InventoryCountLine {
+    let session = session_by_code(db, session_code).await;
+    crate::inventory::controls::list_count_lines(db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("its line")
+}
+
+async fn notice_events(db: &DatabaseConnection, category: &str) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM notification_events WHERE category_code = ?",
+        vec![category.into()],
+    )
+    .await
+}
+
+/// A count self-approved on A under its site's opt-out, received by B where four-eyes applies.
+struct HeldCount {
+    a: DatabaseConnection,
+    b: DatabaseConnection,
+    server: TestServer,
+    pair_a: (i64, i64),
+    pair_b: (i64, i64),
+    counter: i32,
+    session_code: String,
+}
+
+async fn held_count(name: &str) -> HeldCount {
+    let Shortage {
+        mut dbs,
+        mut server,
+        pairs,
+    } = shortage(2).await;
+    let b = dbs.pop().expect("B");
+    let a = dbs.pop().expect("A");
+    sites_made_locally(&a, &b, true, false).await;
+    let counter = user_with(&a, name, &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done =
+        negative_stock::resolve_by_count(&a, counter, resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage du bac"))
+            .await
+            .expect("posted under the opt-out");
+    assert!(!done.pending_approval && done.self_approved);
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    HeldCount {
+        a,
+        b,
+        server,
+        pair_a: pairs[0],
+        pair_b: pairs[1],
+        counter,
+        session_code: done.session_code,
+    }
+}
+
+/// CMMS Advisor Q8: on a PC where four-eyes applies, a received count approved by its counter above
+/// the tolerance is a conflict and its movement is held with it (the stock does not move); the
+/// count-approval holders are told once; "keep mine" / "take theirs" are refused; a second approval
+/// given where the count is applied releases it: the movement is applied, the conflict closes.
+#[tokio::test]
+async fn a_self_approved_count_is_held_with_its_movement_until_its_second_approval_arrives() {
+    let HeldCount {
+        a,
+        b,
+        mut server,
+        pair_a,
+        pair_b,
+        counter,
+        session_code,
+    } = held_count("heldsecondcounter").await;
+    assert_eq!(on_hand_milli(&a, pair_a.0, pair_a.1).await, 0, "posted on A");
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "held on B: the stock does not move"
+    );
+    assert_eq!(
+        conflict_kinds(&b).await,
+        vec!["inventory_count_lines:COUNT_SELF_APPROVAL".to_string()]
+    );
+    assert!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND apply_status = 'deferred'",
+            vec![],
+        )
+        .await
+            >= 1,
+        "the movement waits with its line"
+    );
+    let held_notice = crate::inventory::count_four_eyes::SECOND_APPROVAL_CATEGORY;
+    assert_eq!(
+        notice_events(&b, held_notice).await,
+        1,
+        "the count-approval holders are told"
+    );
+
+    // "Keep mine" / "take theirs" are refused: settled where the count is applied.
+    use sea_orm::ConnectionTrait;
+    let conflict = b
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT id, row_version FROM sync_conflicts WHERE conflict_type = 'COUNT_SELF_APPROVAL'".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("conflict");
+    let (conflict_id, version): (i64, i64) = (
+        conflict.try_get("", "id").expect("id"),
+        conflict.try_get("", "row_version").expect("version"),
+    );
+    let admin_b = i64::from(second_person(&b, counter).await);
+    for action in ["accept_local", "accept_remote", "dismiss"] {
+        let refused = crate::sync::queries::resolve_sync_conflict(
+            &b,
+            admin_b,
+            crate::sync::domain::ResolveSyncConflictInput {
+                conflict_id,
+                expected_row_version: version,
+                action: action.into(),
+                resolution_note: Some("Choix de la version de ce poste".into()),
+            },
+        )
+        .await
+        .expect_err(action);
+        assert!(
+            format!("{refused:?}").contains("GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN"),
+            "{action}: {refused:?}"
+        );
+    }
+
+    // Judged again on the next exchange: still held, told once.
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, -5000);
+    assert_eq!(notice_events(&b, held_notice).await, 1, "never repeated");
+
+    // The second approval, where the count is applied: never by its counter.
+    let line = line_of(&a, &session_code).await;
+    let second = |by: i32, line: &crate::inventory::domain::InventoryCountLine| {
+        crate::inventory::controls::second_approve_count_line(
+            &a,
+            crate::inventory::domain::SecondApproveInventoryCountLineInput {
+                line_id: line.id,
+                expected_row_version: line.row_version,
+                reviewer_id: i64::from(by),
+                reviewer_evidence: "Comptage vérifié par un second".into(),
+            },
+        )
+    };
+    assert_eq!(
+        gate(second(counter, &line).await.expect_err("the counter")),
+        crate::inventory::controls::REFUSED_SECOND_APPROVAL_SELF
+    );
+    let approver = second_person(&a, counter).await;
+    let approved = second(approver, &line).await.expect("second approval");
+    assert_eq!(approved.second_approved_by_id, Some(i64::from(approver)));
+    assert_eq!(
+        gate(second(approver, &approved).await.expect_err("twice")),
+        crate::inventory::controls::REFUSED_SECOND_APPROVAL_NOT_NEEDED
+    );
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        0,
+        "released on B: the movement is applied with its line"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(notice_events(&b, held_notice).await, 1);
+}
+
+/// CMMS Advisor Q8: the count's reversal issued where it is applied: on the PC holding it, the held
+/// adjustment and its reversal are applied together (net zero), the conflict closes, the counter is
+/// told to count again and the stock to reconcile stays open.
+#[tokio::test]
+async fn a_held_count_reversed_where_it_is_applied_nets_to_zero_and_closes() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let HeldCount {
+        a,
+        b,
+        mut server,
+        pair_a,
+        pair_b,
+        counter,
+        session_code,
+    } = held_count("heldreversecounter").await;
+    // A's reversal must not take A below zero (it brings back the −5): stock found on A since,
+    // repaired on A only, so B's stock is the count's alone.
+    exec_unsent(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 10 WHERE article_id = ? AND location_id = ?",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let session = session_by_code(&a, &session_code).await;
+    crate::inventory::controls::reverse_count_session(
+        &a,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Pas de seconde approbation possible".into(),
+            actor_id: Some(i64::from(second_person(&a, counter).await)),
+        },
+    )
+    .await
+    .expect("reversed");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    let session_sync_id = text_of(
+        &b,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    assert_eq!(count_movements(&b, &session_sync_id, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(count_movements(&b, &session_sync_id, "COUNT_REVERSAL").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "the adjustment and its reversal together: net zero"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id
+             WHERE e.category_code = ? AND e.message_key = ? AND n.recipient_user_id = ?",
+            vec![
+                negative_stock::RECOUNT_CATEGORY.into(),
+                crate::inventory::count_four_eyes::RECOUNT_AFTER_REVERSAL_MESSAGE.into(),
+                i64::from(counter).into(),
+            ],
+        )
+        .await,
+        1,
+        "the counter is told to count again"
+    );
+    let list = negative_stock::list_reviews(&b, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "the stock to reconcile stays open");
+}
+
+/// CMMS Advisor Q8: where the site opted out of four-eyes here too, the received self-approved count
+/// is accepted on arrival (flagged), with its movement.
+#[tokio::test]
+async fn a_self_approved_count_is_accepted_where_the_site_opted_out_here_too() {
+    let Shortage {
+        mut dbs,
+        mut server,
+        pairs,
+    } = shortage(2).await;
+    let b = dbs.pop().expect("B");
+    let a = dbs.pop().expect("A");
+    sites_made_locally(&a, &b, true, true).await;
+    let counter = user_with(&a, "heldoptoutcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done =
+        negative_stock::resolve_by_count(&a, counter, resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage du bac"))
+            .await
+            .expect("posted");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        on_hand_milli(&b, pairs[1].0, pairs[1].1).await,
+        0,
+        "accepted with its movement"
+    );
+    assert!(conflict_kinds(&b).await.is_empty());
+    assert_eq!(line_of(&b, &done.session_code).await.self_approved, 1, "flagged");
+}

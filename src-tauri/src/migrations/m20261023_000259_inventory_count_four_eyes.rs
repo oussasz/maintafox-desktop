@@ -23,6 +23,13 @@
 //!   during the rebuild only, so the count lines still point to the same sessions). A table already
 //!   nullable there is left alone; a table whose definition is not the one expected is refused
 //!   (nothing is guessed).
+//! - `inventory_count_lines.second_approved_by_id` (synced, a user reference),
+//!   `second_approved_at`, `second_approval_note`: the second approval a different person gives,
+//!   on a PC where the count is applied, to a variance above the tolerance its counter approved
+//!   ("auto-approbation"), so that a PC where four-eyes applies accepts the count it holds back
+//!   (`inventory::count_four_eyes`, CMMS Advisor Q8).
+//! - The notification category `stock_count_second_approval` and its rule (audience
+//!   `permission:inv.manage`): the count-approval holders are told once per count held back here.
 //! - The notification category `stock_count_recount` and its rule (audience `assignee`: the counter
 //!   of the count line, `notifications::router`): a count from the stock-to-reconcile list whose
 //!   approval is refused because the stock moved since it tells its counter to count again
@@ -184,9 +191,13 @@ async fn threshold_nullable<C: ConnectionTrait + TransactionTrait>(db: &C) -> Re
     rebuilt
 }
 
-/// The recount notice's category and rule (see the module documentation).
-async fn recount_notice<C: ConnectionTrait + TransactionTrait>(db: &C) -> Result<(), DbErr> {
-    const CATEGORY: &str = crate::inventory::negative_stock::RECOUNT_CATEGORY;
+/// A notice category of this migration and its rule (see the module documentation).
+async fn notice_category<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    category: &str,
+    label: &str,
+    audience: &str,
+) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     // Made by this migration on every PC with the same identities: nothing is sent.
     let capture = capture_present(&txn).await?;
@@ -199,10 +210,11 @@ async fn recount_notice<C: ConnectionTrait + TransactionTrait>(db: &C) -> Result
         DatabaseBackend::Sqlite,
         "INSERT OR IGNORE INTO notification_categories \
          (entity_sync_id, code, label, default_severity, default_requires_ack, is_user_configurable, \
-          module_code, is_offered) VALUES (?, ?, 'Stock count to do again', 'warning', 0, 1, 'inv', 1)",
+          module_code, is_offered) VALUES (?, ?, ?, 'warning', 0, 1, 'inv', 1)",
         [
-            crate::sync::identity::seeded_entity_sync_id("notification_categories", CATEGORY).into(),
-            CATEGORY.into(),
+            crate::sync::identity::seeded_entity_sync_id("notification_categories", category).into(),
+            category.into(),
+            label.into(),
         ],
     ))
     .await?;
@@ -211,12 +223,13 @@ async fn recount_notice<C: ConnectionTrait + TransactionTrait>(db: &C) -> Result
         "INSERT INTO notification_rules \
          (entity_sync_id, category_code, routing_mode, requires_ack, dedupe_window_minutes, \
           escalation_policy_id, is_active, lead_time_minutes, audiences_json) \
-         SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, '[\"assignee\"]' \
+         SELECT ?, ?, 'manual', 0, 0, NULL, 1, NULL, ? \
          WHERE NOT EXISTS (SELECT 1 FROM notification_rules WHERE category_code = ?)",
         [
-            crate::sync::identity::seeded_entity_sync_id("notification_rules", CATEGORY).into(),
-            CATEGORY.into(),
-            CATEGORY.into(),
+            crate::sync::identity::seeded_entity_sync_id("notification_rules", category).into(),
+            category.into(),
+            serde_json::json!([audience]).to_string().into(),
+            category.into(),
         ],
     ))
     .await?;
@@ -298,8 +311,33 @@ impl MigrationTrait for Migration {
             .await?;
         }
         threshold_nullable(db).await?;
+        for (column, definition) in [
+            ("second_approved_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
+            ("second_approved_at", "TEXT NULL"),
+            ("second_approval_note", "TEXT NULL"),
+        ] {
+            if !has_column(db, "inventory_count_lines", column).await? {
+                db.execute_unprepared(&format!(
+                    "ALTER TABLE inventory_count_lines ADD COLUMN {column} {definition}"
+                ))
+                .await?;
+            }
+        }
         retire_critical_variance(db).await?;
-        recount_notice(db).await
+        notice_category(
+            db,
+            crate::inventory::negative_stock::RECOUNT_CATEGORY,
+            "Stock count to do again",
+            "assignee",
+        )
+        .await?;
+        notice_category(
+            db,
+            crate::inventory::count_four_eyes::SECOND_APPROVAL_CATEGORY,
+            "Stock count held for a second approval",
+            "permission:inv.manage",
+        )
+        .await
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {

@@ -964,6 +964,25 @@ pub async fn approve_inventory_count_line(
     controls::approve_count_line(&state.db, input).await
 }
 
+/// The second approval of a posted count line its counter self-approved above the four-eyes
+/// tolerance (CMMS Advisor Q8): the right of a count line's approval.
+#[tauri::command]
+pub async fn second_approve_inventory_count_line(
+    mut input: crate::inventory::domain::SecondApproveInventoryCountLineInput,
+    state: State<'_, AppState>,
+) -> AppResult<InventoryCountLine> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    // The second approver is always the signed-in user, never a value sent by the UI.
+    input.reviewer_id = i64::from(user.user_id);
+    controls::second_approve_count_line(&state.db, input).await
+}
+
 #[tauri::command]
 pub async fn post_inventory_count_session(
     mut input: PostInventoryCountSessionInput,

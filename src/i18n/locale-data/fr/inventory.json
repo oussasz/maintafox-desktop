@@ -1604,7 +1604,10 @@
       "criticalMeaning": "Au-dessus de la tolérance de double validation : approuvé par une autre personne que celle qui a compté.",
       "counterNotRecorded": "non enregistré",
       "selfApproved": "Auto-approbation",
-      "selfApprovedMeaning": "Approuvé par la personne qui a compté, au-dessus de la tolérance, le site ayant levé la double validation."
+      "selfApprovedMeaning": "Approuvé par la personne qui a compté, au-dessus de la tolérance, le site ayant levé la double validation.",
+      "secondApprove": "Seconde approbation",
+      "secondApproveMeaning": "Une autre personne que celle qui a compté approuve cet écart : les postes où la double validation s'applique, qui retiennent ce comptage, l'appliquent alors.",
+      "secondApprovedBy": "Seconde approbation par {{name}} le {{date}}"
     },
     "approval": {
       "title": "Approuver l'écart",
@@ -1614,6 +1617,11 @@
       "confirm": "Approuver l'écart",
       "aboveTolerance": "Au-dessus de la tolérance de double validation : compté par {{counter}}, approuvé par une autre personne.",
       "withinTolerance": "Dans la tolérance de double validation (compté par {{counter}})."
+    },
+    "secondApproval": {
+      "title": "Seconde approbation de l'écart",
+      "description": "Compté et approuvé par {{counter}} (auto-approbation) : une autre personne l'approuve à son tour.",
+      "confirm": "Donner la seconde approbation"
     },
     "reversal": {
       "reason": "Motif de contre-passation",

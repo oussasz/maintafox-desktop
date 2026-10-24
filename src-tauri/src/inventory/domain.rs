@@ -1184,6 +1184,13 @@ pub struct InventoryCountLine {
     /// 1: approved by its counter above the tolerance under the site's four-eyes opt-out
     /// ("auto-approbation").
     pub self_approved: i64,
+    /// The second approval of a self-approved variance above the tolerance, by someone other than
+    /// its counter, given where the count is applied so that a PC where four-eyes applies accepts
+    /// it (CMMS Advisor Q8).
+    pub second_approved_by_id: Option<i64>,
+    pub second_approved_by_name: Option<String>,
+    pub second_approved_at: Option<String>,
+    pub second_approval_note: Option<String>,
     pub posted_transaction_id: Option<i64>,
     pub reversed_transaction_id: Option<i64>,
     pub row_version: i64,
@@ -1257,6 +1264,16 @@ pub struct TransitionInventoryCountSessionInput {
 pub struct ApproveInventoryCountLineInput {
     pub line_id: i64,
     pub expected_row_version: i64,
+    pub reviewer_id: i64,
+    pub reviewer_evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecondApproveInventoryCountLineInput {
+    pub line_id: i64,
+    pub expected_row_version: i64,
+    /// The second approver: always the signed-in user (command layer), never a value of the screen.
+    #[serde(default)]
     pub reviewer_id: i64,
     pub reviewer_evidence: String,
 }

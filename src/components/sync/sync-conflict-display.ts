@@ -298,6 +298,14 @@ export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
 ]);
 
 /**
+ * Conflicts settled on the PC where the record is applied (a stock count approved by its counter
+ * above the four-eyes tolerance, held here with its movement, CMMS Advisor Q8): the server refuses
+ * "keep mine", "take theirs" and "dismiss" (`SETTLED_AT_ORIGIN_CONFLICTS` in
+ * `src-tauri/src/sync/queries.rs`); the conflict closes by itself.
+ */
+export const SETTLED_AT_ORIGIN_CONFLICT_KINDS = new Set(["COUNT_SELF_APPROVAL"]);
+
+/**
  * The choices offered on a conflict, in order. `withTriage`: also "retry later" and "escalate"
  * (Settings → sync diagnostics); a review-only conflict always offers "escalate".
  */
@@ -306,6 +314,9 @@ export function conflictActions(
   withTriage: boolean,
 ): ResolveSyncConflictInput["action"][] {
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
+    return withTriage ? ["retry_later", "escalate"] : ["escalate"];
+  }
   // A username created on two PCs: no merge tool (CMMS Advisor decision). One account is renamed
   // on the PC that created it; here the received account is then taken (refused, with the reason,
   // while its username is still used here). No local version to keep.

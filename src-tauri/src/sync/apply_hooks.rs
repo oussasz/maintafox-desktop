@@ -73,6 +73,10 @@
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
 //!   plant's list (free text from a PC that has not upgraded) is added to it flagged "à revoir"
 //!   (`permit::handover_roles::adopt_received_roles`; only that log's two roles);
+//! - `inventory_count_lines` / `inventory_transactions`: a count line approved by its counter above
+//!   the four-eyes tolerance where four-eyes applies here is a conflict, and the count's stock
+//!   movements wait with it (neither applies) until a second approval or the count's reversal
+//!   arrives (`inventory::count_four_eyes`, CMMS Advisor Q8);
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
@@ -221,6 +225,11 @@ pub(crate) async fn before_upsert_checked(
         // Four-eyes on a count variance above the tolerance (D11, `inventory::count_four_eyes`).
         "inventory_count_lines" => {
             Some(crate::inventory::count_four_eyes::inbound_count_line_check(conn, entity_sync_id, payload).await?)
+        }
+        // A count's stock movement is held with its line while that line is refused or waits here
+        // (CMMS Advisor Q8, `inventory::count_four_eyes::inbound_count_movement_hold`).
+        "inventory_transactions" => {
+            Some(crate::inventory::count_four_eyes::inbound_count_movement_hold(conn, entity_sync_id, payload).await?)
         }
         // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
         "work_order_downtime_segments" => {

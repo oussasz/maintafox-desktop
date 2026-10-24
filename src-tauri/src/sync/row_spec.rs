@@ -1266,7 +1266,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec(
         "inventory_count_lines",
-        &[r("approved_by_id", USER), r("counted_by_id", USER)],
+        &[
+            r("approved_by_id", USER),
+            r("counted_by_id", USER),
+            r("second_approved_by_id", USER),
+        ],
     ),
     spec(
         "inventory_document_links",

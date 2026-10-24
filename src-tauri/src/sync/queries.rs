@@ -88,6 +88,7 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
+        t if settled_at_origin_conflict(t) => ("remote", true, "escalate", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
 }
@@ -107,6 +108,21 @@ const REVIEW_ONLY_ACTIONS: &[&str] = &["dismiss", "escalate"];
 
 fn review_only_conflict(conflict_type: &str) -> bool {
     REVIEW_ONLY_CONFLICTS.contains(&conflict_type)
+}
+
+/// Conflicts settled on the PC where the record is applied, never here (CMMS Advisor Q8): a stock
+/// count approved by its counter above the four-eyes tolerance, held with its movement where
+/// four-eyes applies. "Keep mine" / "take theirs" are local only and would let the PCs differ;
+/// dismissing it would hide a count held back. It closes by itself when the count's second
+/// approval or its reversal arrives (`inventory::count_four_eyes`); only "retry later" and
+/// "escalate" are accepted ([`resolve_sync_conflict`]).
+const SETTLED_AT_ORIGIN_CONFLICTS: &[&str] = &[crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL];
+
+/// Actions accepted on a [`SETTLED_AT_ORIGIN_CONFLICTS`] conflict.
+const SETTLED_AT_ORIGIN_ACTIONS: &[&str] = &["retry_later", "escalate"];
+
+fn settled_at_origin_conflict(conflict_type: &str) -> bool {
+    SETTLED_AT_ORIGIN_CONFLICTS.contains(&conflict_type)
 }
 
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
@@ -1926,6 +1942,17 @@ pub async fn resolve_sync_conflict(
              fois le travail arrêté, ou « Escalader ». (Conflict {} is for review only: dismiss it with the \
              reason once the work is stopped, or escalate it.)",
             conflict.id, conflict.id
+        )]));
+    }
+
+    if settled_at_origin_conflict(&conflict.conflict_type)
+        && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
+    {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
+             (a second approval by another person, or the count's reversal); it closes by itself when that \
+             arrives.",
+            conflict.id
         )]));
     }
 

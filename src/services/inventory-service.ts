@@ -47,6 +47,7 @@ import type {
   RepairableOrderDetail,
   RepairVsReplaceResult,
   ReverseInventoryCountSessionInput,
+  SecondApproveInventoryCountLineInput,
   RunInventoryReconciliationInput,
   StockImpactProjection,
   StockLocation,
@@ -1017,6 +1018,10 @@ const InventoryCountLineSchema = z.object({
   counted_by_id: z.number().nullable(),
   counted_by_name: z.string().nullable(),
   self_approved: z.number(),
+  second_approved_by_id: z.number().nullable(),
+  second_approved_by_name: z.string().nullable(),
+  second_approved_at: z.string().nullable(),
+  second_approval_note: z.string().nullable(),
   posted_transaction_id: z.number().nullable(),
   reversed_transaction_id: z.number().nullable(),
   row_version: z.number(),
@@ -1557,6 +1562,13 @@ export function approveInventoryCountLine(
   input: ApproveInventoryCountLineInput,
 ): Promise<InventoryCountLine> {
   return invokeParsed("approve_inventory_count_line", { input }, InventoryCountLineSchema);
+}
+
+/** Second approval of a self-approved count line, by someone other than its counter. */
+export function secondApproveInventoryCountLine(
+  input: SecondApproveInventoryCountLineInput,
+): Promise<InventoryCountLine> {
+  return invokeParsed("second_approve_inventory_count_line", { input }, InventoryCountLineSchema);
 }
 
 export function postInventoryCountSession(

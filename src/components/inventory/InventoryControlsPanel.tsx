@@ -36,6 +36,7 @@ import {
   type InventoryArticleRow,
   type InventoryCountLineRow,
   approveInventoryCountLine,
+  secondApproveInventoryCountLine,
   createInventoryCountSession,
   getInventoryCountTolerance,
   listInventoryArticles,
@@ -111,6 +112,8 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const [lineVarianceReasonCode, setLineVarianceReasonCode] = useState("");
   const [approvalLine, setApprovalLine] = useState<InventoryCountLineRow | null>(null);
   const [approvalEvidence, setApprovalEvidence] = useState("");
+  /** The approval asked: of a variance, or the second approval of a self-approved one. */
+  const [approvalKind, setApprovalKind] = useState<"first" | "second">("first");
   const [sessionReversalReason, setSessionReversalReason] = useState("");
   const [reverseConfirmOpen, setReverseConfirmOpen] = useState(false);
 
@@ -237,6 +240,15 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const approveSelectedLine = async () => {
     if (!approvalLine || !approvalEvidence.trim()) return;
     const ok = await withSave(async () => {
+      if (approvalKind === "second") {
+        // The backend records the signed-in user as the second approver.
+        await secondApproveInventoryCountLine({
+          line_id: approvalLine.id,
+          expected_row_version: approvalLine.row_version,
+          reviewer_evidence: approvalEvidence.trim(),
+        });
+        return;
+      }
       await approveInventoryCountLine({
         line_id: approvalLine.id,
         expected_row_version: approvalLine.row_version,
@@ -353,6 +365,32 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   <StatusChip label={t("controls.lines.selfApproved")} tone="warning" />
                 </span>
               ) : null}
+              {line.second_approved_by_id !== null ? (
+                <span title={line.second_approval_note ?? undefined}>
+                  {t("controls.lines.secondApprovedBy", {
+                    name: line.second_approved_by_name ?? t("controls.lines.unknownReviewer"),
+                    date: line.second_approved_at ? formatDateTime(line.second_approved_at) : "—",
+                  })}
+                </span>
+              ) : line.self_approved === 1 &&
+                line.posted_transaction_id !== null &&
+                line.reversed_transaction_id === null ? (
+                <PermissionGate permission={P.INV_MANAGE} fallback={null}>
+                  <Button
+                    variant="outline"
+                    className="h-9"
+                    disabled={saving}
+                    title={t("controls.lines.secondApproveMeaning")}
+                    onClick={() => {
+                      setApprovalKind("second");
+                      setApprovalLine(line);
+                      setApprovalEvidence("");
+                    }}
+                  >
+                    {t("controls.lines.secondApprove")}
+                  </Button>
+                </PermissionGate>
+              ) : null}
             </span>
           );
         }
@@ -373,6 +411,7 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
               className="h-9"
               disabled={saving}
               onClick={() => {
+                setApprovalKind("first");
                 setApprovalLine(line);
                 setApprovalEvidence("");
               }}
@@ -933,7 +972,13 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("controls.approval.title")}</DialogTitle>
+            <DialogTitle>
+              {t(
+                approvalKind === "second"
+                  ? "controls.secondApproval.title"
+                  : "controls.approval.title",
+              )}
+            </DialogTitle>
             <DialogDescription>
               {approvalLine
                 ? `${t("controls.approval.description", {
@@ -943,9 +988,11 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     counted: qty(approvalLine.counted_qty),
                     variance: qty(approvalLine.variance_qty),
                   })} ${t(
-                    approvalLine.is_critical === 1
-                      ? "controls.approval.aboveTolerance"
-                      : "controls.approval.withinTolerance",
+                    approvalKind === "second"
+                      ? "controls.secondApproval.description"
+                      : approvalLine.is_critical === 1
+                        ? "controls.approval.aboveTolerance"
+                        : "controls.approval.withinTolerance",
                     {
                       counter:
                         approvalLine.counted_by_name ?? t("controls.lines.counterNotRecorded"),
@@ -978,7 +1025,11 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
               disabled={saving || !approvalEvidence.trim()}
               onClick={() => void approveSelectedLine()}
             >
-              {t("controls.approval.confirm")}
+              {t(
+                approvalKind === "second"
+                  ? "controls.secondApproval.confirm"
+                  : "controls.approval.confirm",
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

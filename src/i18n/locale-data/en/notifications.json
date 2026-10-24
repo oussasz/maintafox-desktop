@@ -191,7 +191,8 @@
     "permit_suspended_work_held": "Work order put on hold by its permit’s suspension",
     "permit_ended_under_work": "Permit ended on another PC during or before the work",
     "stock_to_reconcile": "Stock to reconcile after sync",
-    "stock_count_recount": "Count to do again"
+    "stock_count_recount": "Count to do again",
+    "stock_count_second_approval": "Stock count held for a second approval"
   },
   "messages": {
     "wo_assigned": {
@@ -352,6 +353,14 @@
     "stock_count_recount": {
       "title": "Count {{code}} at {{location}} again",
       "body": "{{title}}: the approval of your count {{session}} was refused, the stock moved since (from {{system_qty}} to {{on_hand}}). Count the location again from the stock to reconcile."
+    },
+    "stock_count_second_approval": {
+      "title": "Count {{session}} held here — {{code}} at {{location}}",
+      "body": "{{title}}: counted and approved by {{counter}} above the four-eyes tolerance, it is held here (the stock does not move). To settle on the PC where it is applied: a second approval by another person, or the count's cancellation."
+    },
+    "stock_count_recount_reversed": {
+      "title": "Count {{code}} at {{location}} again",
+      "body": "{{title}}: your count {{session}} was cancelled for want of a second approval. Count the location again from the stock to reconcile."
     }
   },
   "audience": {

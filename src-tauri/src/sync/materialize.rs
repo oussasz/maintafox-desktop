@@ -130,6 +130,15 @@ async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult
         item.row_version,
     )
     .await?;
+    // A count held for a second approval: its conflict closes once a version passing four-eyes is
+    // applied (`inventory::count_four_eyes`).
+    crate::inventory::count_four_eyes::after_count_line_applied(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+    )
+    .await?;
     record_synced_state(
         tx,
         &item.entity_type,
@@ -563,6 +572,15 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
             .await?;
             // A reservation released on two PCs is settled without a person (`inventory::reservations`).
             crate::inventory::reservations::settle_double_release(&tx, &item.entity_type, &item.entity_sync_id).await?;
+            // A count held for a second approval: the count-approval holders are told once.
+            crate::inventory::count_four_eyes::after_count_conflict_recorded(
+                &tx,
+                &item.entity_type,
+                &item.entity_sync_id,
+                code,
+                &item.payload_json,
+            )
+            .await?;
         }
         ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
     }
