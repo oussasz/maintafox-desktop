@@ -23,6 +23,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::wo::execution_log::{emit_execution_event, part_label_json};
 use crate::wo::time::now_utc_z;
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -263,8 +264,9 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         ("draft" | "planning" | "ready", "planned") => {}
         ("in_progress" | "on_hold", "execution_added") => {}
         _ => {
+            let status_key = status_i18n_key(&status_code);
             return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_WO_TASK_ADD_STATUS:origin={origin},status={status_code}: Impossible d'ajouter une tâche ({origin}) au statut '{status_code}'."
+                "GATE_WO_TASK_ADD_STATUS:status={status_key}: Impossible d'ajouter une tâche ({origin}) au statut '{status_code}'."
             )]));
         }
     }

@@ -23,6 +23,7 @@ use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{InventoryIssueInput, InventoryReleaseReservationInput, InventoryReserveInput};
 use crate::inventory::queries as inventory_queries;
 use crate::wo::execution_log::{emit_execution_event, part_label_json};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -339,8 +340,9 @@ async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResul
 pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> AppResult<WoPart> {
     let status_code = load_wo_status_code(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_PART_WO_LOCKED:status={status_code}: Impossible d'ajouter des pièces à un OT {status_code}."
+            "GATE_WO_PART_WO_LOCKED:status={status_key}: Impossible d'ajouter des pièces à un OT {status_code}."
         )]));
     }
 
@@ -578,8 +580,9 @@ pub async fn record_actual_usage(
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_PART_USAGE_STATUS:status={status_code}: Les réels des pièces ne peuvent être saisis qu'au statut 'in_progress', \
+            "GATE_WO_PART_USAGE_STATUS:status={status_key}: Les réels des pièces ne peuvent être saisis qu'au statut 'in_progress', \
              'on_hold' ou 'completed'. Statut actuel : '{status_code}'."
         )]));
     }
@@ -715,8 +718,9 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_PART_NOT_USED_STATUS:status={status_code}: Impossible de marquer une pièce non utilisée au statut '{status_code}'."
+            "GATE_WO_PART_NOT_USED_STATUS:status={status_key}: Impossible de marquer une pièce non utilisée au statut '{status_code}'."
         )]));
     }
 

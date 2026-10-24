@@ -15,6 +15,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::wo::execution_log::emit_execution_event;
 use crate::wo::time::now_utc_z;
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -168,8 +169,9 @@ pub async fn open_downtime_segment(db: &DatabaseConnection, input: OpenDowntimeI
 
     let status_code = load_wo_status_code(db, input.wo_id).await?;
     if !matches!(status_code.as_str(), "in_progress" | "on_hold") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_DOWNTIME_STATUS:status={status_code}: Un segment de temps d'arrêt ne peut être ouvert qu'aux statuts \
+            "GATE_WO_DOWNTIME_STATUS:status={status_key}: Un segment de temps d'arrêt ne peut être ouvert qu'aux statuts \
              in_progress ou on_hold. Statut actuel : '{status_code}'."
         )]));
     }

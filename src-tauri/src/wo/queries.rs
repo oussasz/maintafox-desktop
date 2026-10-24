@@ -6,6 +6,7 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -945,8 +946,9 @@ pub async fn update_wo_draft_fields(
     // 2. Guard: only allow draft edits
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
     if status_code != "draft" {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_DRAFT_ONLY:status={status_code}: Les champs ne peuvent être modifiés qu'au statut 'draft'. \
+            "GATE_WO_DRAFT_ONLY:status={status_key}: Les champs ne peuvent être modifiés qu'au statut 'draft'. \
              Statut actuel : '{status_code}'."
         )]));
     }
