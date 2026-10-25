@@ -463,7 +463,7 @@
     "GATE_SYNC_CHECKPOINT_REQUIRED": "Sync refused: the checkpoint token is required.",
     "GATE_SYNC_CHECKPOINT_STALE": "Sync refused: the checkpoint changed in the meantime. Run the synchronisation again.",
     "GATE_SYNC_CONFLICT_CLOSED": "Sync conflict: it is already closed.",
-    "GATE_SYNC_CONFLICT_REVIEW_ONLY": "Sync conflict for review only: nothing to keep or take. Dismiss it with the reason once the work is stopped, or escalate it.",
+    "GATE_SYNC_CONFLICT_REVIEW_ONLY": "Sync conflict for review only: there is nothing to keep or take. Dismiss it with the reason once the matter has been checked or settled, or escalate it.",
     "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN": "This conflict is settled on the PC where the count is applied: a second approval by another person, or the count's reversal. It closes by itself when that arrives here; \"keep mine\", \"take theirs\" and \"dismiss\" are not possible.",
     "GATE_SYNC_DATE_INVALID": "Sync refused: a date is not valid.",
     "GATE_SYNC_PROTOCOL_VERSION": "Sync refused: the protocol version is not supported. Update the application.",
