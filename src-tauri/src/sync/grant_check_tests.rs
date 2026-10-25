@@ -859,7 +859,8 @@ async fn re_enabling_an_account_with_administration_rights_is_a_conflict() {
 }
 
 /// A new account with the bootstrap flag: received on a PC joining the plant (no first
-/// administrator here yet) it applies; on a PC that has its first administrator it is a conflict.
+/// administrator here yet) it applies, and so it does while the first pull is unfinished; on a PC
+/// that has its first administrator and has finished a complete pull it is a conflict.
 #[tokio::test]
 async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administrator() {
     let p = plant().await;
@@ -889,6 +890,27 @@ async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administr
     crate::auth::builtin_admin::record_first_administrator_in(&p.db, "chef-sync")
         .await
         .expect("marker");
+    // The marker closed during the first pull (a restart backfills it from the first
+    // administrator received): the plant's other first administrators of older versions are
+    // still arriving, and apply.
+    assert!(!crate::sync::plant_join::complete_pull_done(&p.db).await.unwrap());
+    let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row.clone()).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "during the first pull: {outcome:?}"
+    );
+    exec(
+        &p.db,
+        "DELETE FROM user_accounts WHERE entity_sync_id = 'first-elsewhere-sync'",
+        vec![],
+    )
+    .await;
+
+    // Once a complete pull is done, a new one is a second first administrator.
+    crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
+        .await
+        .expect("complete pull");
+    assert!(crate::sync::plant_join::complete_pull_done(&p.db).await.unwrap());
     let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row).await;
     assert!(is_grant_conflict(&outcome), "second first administrator: {outcome:?}");
 }

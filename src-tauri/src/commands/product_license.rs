@@ -894,11 +894,27 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         }
 
         // `system_config` is kept, the accounts and the sync checkpoint are not: "the server
-        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`).
+        // confirmed no user accounts" and "a complete pull is done" must come from a new complete
+        // pull (`sync::plant_join`).
         tx.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "DELETE FROM system_config WHERE key = ?",
-            [crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into()],
+            "DELETE FROM system_config WHERE key IN (?, ?)",
+            [
+                crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into(),
+                crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into(),
+            ],
+        ))
+        .await?;
+        // The roles are wiped: the reseed below gives the editable ones their whole baseline again.
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM system_config WHERE substr(key, 1, ?) = ?",
+            [
+                i64::try_from(crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.len())
+                    .unwrap_or(i64::MAX)
+                    .into(),
+                crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.into(),
+            ],
         ))
         .await?;
 

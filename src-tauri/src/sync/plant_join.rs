@@ -42,6 +42,12 @@ use crate::sync::transport::worker::{SyncWorkerState, SyncWorkerStatus, BLOCKER_
 /// `system_config` key of the fact; its value is the tenant id the complete pull ran for.
 pub const SERVER_CONFIRMED_NO_ACCOUNTS_KEY: &str = "server_confirmed_no_user_accounts";
 
+/// `system_config` key of "this PC has finished a complete pull" (value: the tenant id of the last
+/// one), accounts or not. Until then every account the server holds may still be on its way, a
+/// plant's several first administrators of older versions included (`sync::grant_check`). Erased
+/// by a local data reset with the accounts.
+pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
+
 /// Whether the licence includes sync, i.e. this PC belongs to a plant it must join before a first
 /// administrator is created (`entitlements::queries::licence_includes_capability`, whatever the
 /// entitlement state). `false`, a single-PC plant, only when the envelope in force says so and was
@@ -102,10 +108,25 @@ async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
 
 /// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
 /// exchanges caught up with the server head, received rows materialized). Records the fact when
-/// this PC holds no user account and received none; erases it otherwise. Returns whether the fact
-/// holds now.
+/// this PC holds no user account and received none; erases it otherwise. Records in every case that
+/// a complete pull is done ([`complete_pull_done`]). Returns whether the fact holds now.
 pub(crate) async fn record_complete_pull(conn: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
-    if tenant_id.trim().is_empty() || accounts_present(conn).await? {
+    if tenant_id.trim().is_empty() {
+        forget(conn).await?;
+        return Ok(false);
+    }
+    conn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        [
+            COMPLETE_PULL_DONE_KEY.into(),
+            tenant_id.into(),
+            Utc::now().to_rfc3339().into(),
+        ],
+    ))
+    .await?;
+    if accounts_present(conn).await? {
         forget(conn).await?;
         return Ok(false);
     }
@@ -139,6 +160,19 @@ pub async fn server_confirmed_no_accounts(conn: &impl ConnectionTrait, tenant_id
         return Ok(false);
     }
     Ok(!accounts_present(conn).await?)
+}
+
+/// True once this PC has finished a complete pull ([`record_complete_pull`]): from then on it holds
+/// every account the server had.
+pub async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 AS c FROM system_config WHERE key = ?",
+            [COMPLETE_PULL_DONE_KEY.into()],
+        ))
+        .await?
+        .is_some())
 }
 
 /// Erases the fact: the first administrator has been created (caller's transaction), or a complete

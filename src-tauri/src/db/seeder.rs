@@ -2621,87 +2621,52 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
     }
 
     // ── Assign permissions to roles using name-based resolution ───────────
+    // Locked roles get their whole baseline at every start; an editable role gets each baseline
+    // permission once only ([`grant_baseline`]), so a right an administrator removed stays removed.
+
+    let operator_permissions = crate::rbac::permissions::OPERATOR_PERMISSIONS;
+    let names = |list: &[&str]| list.iter().map(|p| (*p).to_string()).collect::<Vec<_>>();
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    let view_permissions: Vec<String> = operator_permissions
+        .iter()
+        .filter(|p| p.ends_with(".view"))
+        .map(|p| (*p).to_string())
+        .collect();
+    let all_permissions = system_permission_names(db, &[]).await?;
+    // All operational permissions (excludes admin-only and control-plane).
+    let supervisor_permissions = system_permission_names(db, crate::rbac::permissions::SUPERVISOR_EXCLUSIONS).await?;
 
     // Administrator -> all permissions
-    if let Some(rid) = get_role_id_by_name(db, "Administrator").await? {
-        assign_all_permissions_to_role(db, rid, &now).await?;
-    }
-
-    // Supervisor -> all operational permissions (excludes admin-only and control-plane)
-    let excluded_for_supervisor = crate::rbac::permissions::SUPERVISOR_EXCLUSIONS;
-    if let Some(rid) = get_role_id_by_name(db, "Supervisor").await? {
-        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
-    }
-
+    grant_baseline(db, "Administrator", &all_permissions, &now).await?;
+    grant_baseline(db, "Supervisor", &supervisor_permissions, &now).await?;
     // Operator -> view + create/edit operational modules, no delete/approve/dangerous
-    let operator_permissions = crate::rbac::permissions::OPERATOR_PERMISSIONS;
-    if let Some(rid) = get_role_id_by_name(db, "Operator").await? {
-        for perm_name in operator_permissions {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
-
+    grant_baseline(db, "Operator", &names(operator_permissions), &now).await?;
     // Readonly -> only *.view permissions (subset of operator's list)
-    if let Some(rid) = get_role_id_by_name(db, "Readonly").await? {
-        #[allow(clippy::case_sensitive_file_extension_comparisons)]
-        let view_perms: Vec<&str> = operator_permissions
-            .iter()
-            .copied()
-            .filter(|p| p.ends_with(".view"))
-            .collect();
-        for perm_name in view_perms {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
-
+    grant_baseline(db, "Readonly", &view_permissions, &now).await?;
     // Finance Manager -> budgets end to end, including approval (with Administrator, the only
     // default holders of fin.approve)
-    if let Some(rid) = get_role_id_by_name(db, "Finance Manager").await? {
-        for perm_name in crate::rbac::permissions::FINANCE_MANAGER_PERMISSIONS {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
+    grant_baseline(
+        db,
+        "Finance Manager",
+        &names(crate::rbac::permissions::FINANCE_MANAGER_PERMISSIONS),
+        &now,
+    )
+    .await?;
 
     // ── Migration-028 system roles (INSERT OR IGNORE'd by the migration) ─
-    // These mirror the 4 seeder roles above but with spec-defined names.
-
-    // Superadmin -> all permissions (mirrors Administrator)
-    if let Some(rid) = get_role_id_by_name(db, "Superadmin").await? {
-        assign_all_permissions_to_role(db, rid, &now).await?;
-    }
-
-    // Maintenance Supervisor -> same exclusions as Supervisor
-    if let Some(rid) = get_role_id_by_name(db, "Maintenance Supervisor").await? {
-        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
-    }
-
-    // Maintenance Technician -> same permissions as Operator
-    if let Some(rid) = get_role_id_by_name(db, "Maintenance Technician").await? {
-        for perm_name in operator_permissions {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
-
+    // These mirror the seeder roles above but with spec-defined names.
+    grant_baseline(db, "Superadmin", &all_permissions, &now).await?;
+    grant_baseline(db, "Maintenance Supervisor", &supervisor_permissions, &now).await?;
+    grant_baseline(db, "Maintenance Technician", &names(operator_permissions), &now).await?;
     // Planner/Scheduler -> planning & scheduling focus
-    let planner_permissions = crate::rbac::permissions::PLANNER_PERMISSIONS;
-    if let Some(rid) = get_role_id_by_name(db, "Planner/Scheduler").await? {
-        for perm_name in planner_permissions {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
-
-    // Read Only Observer -> same view-only permissions as Readonly
-    if let Some(rid) = get_role_id_by_name(db, "Read Only Observer").await? {
-        #[allow(clippy::case_sensitive_file_extension_comparisons)]
-        let view_perms: Vec<&str> = operator_permissions
-            .iter()
-            .copied()
-            .filter(|p| p.ends_with(".view"))
-            .collect();
-        for perm_name in view_perms {
-            assign_permission_by_name(db, rid, perm_name, &now).await?;
-        }
-    }
+    grant_baseline(
+        db,
+        "Planner/Scheduler",
+        &names(crate::rbac::permissions::PLANNER_PERMISSIONS),
+        &now,
+    )
+    .await?;
+    grant_baseline(db, "Read Only Observer", &view_permissions, &now).await?;
 
     tracing::info!("seeder::system_roles_seeded");
     Ok(())
@@ -2709,62 +2674,107 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
 // ── RBAC seeder helpers ───────────────────────────────────────────────────
 
-async fn get_role_id_by_name(db: &DatabaseConnection, name: &str) -> AppResult<Option<i32>> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
+/// `system_config` key prefix of the baseline permissions the seeder has given an editable role on
+/// this PC (value: a JSON array of permission names). Local to this PC, never synchronised.
+pub const SEEDED_ROLE_PERMISSIONS_KEY_PREFIX: &str = "seeded_role_permissions:";
+
+/// Names of the system permissions, without `excluded`.
+async fn system_permission_names(db: &DatabaseConnection, excluded: &[&str]) -> AppResult<Vec<String>> {
+    let rows = db
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM roles WHERE name = ? AND deleted_at IS NULL",
-            [name.into()],
+            "SELECT name FROM permissions WHERE is_system = 1 ORDER BY name".to_string(),
         ))
         .await?;
-    Ok(row.and_then(|r| r.try_get::<i32>("", "id").ok()))
-}
-
-async fn assign_all_permissions_to_role(db: &DatabaseConnection, role_id: i32, now: &str) -> AppResult<()> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-           SELECT ?, id, ? FROM permissions WHERE is_system = 1",
-        [role_id.into(), now.into()],
-    ))
-    .await?;
-    Ok(())
-}
-
-async fn assign_permissions_excluding(
-    db: &DatabaseConnection,
-    role_id: i32,
-    excluded: &[&str],
-    now: &str,
-) -> AppResult<()> {
-    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!(
-        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-           SELECT ?, id, ? FROM permissions
-           WHERE is_system = 1 AND name NOT IN ({placeholders})",
-    );
-    let mut values: Vec<sea_orm::Value> = vec![role_id.into(), now.into()];
-    for e in excluded {
-        values.push((*e).into());
+    let mut names = Vec::with_capacity(rows.len());
+    for row in rows {
+        let name: String = row.try_get("", "name")?;
+        if !excluded.contains(&name.as_str()) {
+            names.push(name);
+        }
     }
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
-        .await?;
-    Ok(())
+    Ok(names)
 }
 
-async fn assign_permission_by_name(
-    db: &DatabaseConnection,
-    role_id: i32,
-    permission_name: &str,
-    now: &str,
-) -> AppResult<()> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-           SELECT ?, id, ? FROM permissions WHERE name = ?",
-        [role_id.into(), now.into(), permission_name.into()],
-    ))
-    .await?;
+/// Gives the role named `role_name` its baseline `permissions`.
+/// - A locked role (`is_system = 1`: its permissions cannot be edited, `update_role`) gets every
+///   missing one, at every run.
+/// - An editable role gets each one once only: the names already given on this PC are kept under
+///   [`SEEDED_ROLE_PERMISSIONS_KEY_PREFIX`] + the role's sync identity, so a permission an
+///   administrator removed (here or on another PC) is never given back, while a permission new to
+///   the baseline still reaches the role. The first run on a PC that has no record yet gives the
+///   whole baseline, as every start of earlier versions did.
+async fn grant_baseline(db: &DatabaseConnection, role_name: &str, permissions: &[String], now: &str) -> AppResult<()> {
+    let Some(role) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, is_system, COALESCE(entity_sync_id, '') AS sync_id FROM roles
+              WHERE name = ? AND deleted_at IS NULL",
+            [role_name.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let role_id: i32 = role.try_get("", "id")?;
+    let locked = role.try_get::<i32>("", "is_system")? == 1;
+    let sync_id: String = role.try_get("", "sync_id")?;
+    let key = format!(
+        "{SEEDED_ROLE_PERMISSIONS_KEY_PREFIX}{}",
+        if sync_id.is_empty() {
+            format!("id:{role_id}")
+        } else {
+            sync_id
+        }
+    );
+
+    let mut given: std::collections::BTreeSet<String> = if locked {
+        std::collections::BTreeSet::new()
+    } else {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT value FROM system_config WHERE key = ?",
+            [key.clone().into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "value"))
+        .transpose()?
+        .and_then(|raw| {
+            // An unreadable record counts as none: the baseline is given again, as before it existed.
+            serde_json::from_str(&raw)
+                .inspect_err(|e| tracing::warn!(key = %key, error = %e, "seeder::seeded_role_permissions_unreadable"))
+                .ok()
+        })
+        .unwrap_or_default()
+    };
+
+    let mut changed = false;
+    for permission in permissions {
+        if given.contains(permission) {
+            continue;
+        }
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+               SELECT ?, id, ? FROM permissions WHERE name = ?",
+            [role_id.into(), now.into(), permission.clone().into()],
+        ))
+        .await?;
+        if !locked {
+            given.insert(permission.clone());
+            changed = true;
+        }
+    }
+    if changed {
+        let value = serde_json::to_string(&given).map_err(|e| AppError::Internal(anyhow::anyhow!("{key}: {e}")))?;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            [key.into(), value.into(), now.into()],
+        ))
+        .await?;
+    }
     Ok(())
 }
 
@@ -2996,6 +3006,87 @@ mod tests {
         assert!(
             system >= catalog_names,
             "every catalog permission is a system permission"
+        );
+    }
+
+    async fn role_holds(db: &DatabaseConnection, role: &str, permission: &str) -> bool {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS c FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
+               JOIN permissions p ON p.id = rp.permission_id \
+              WHERE r.name = ? AND r.deleted_at IS NULL AND p.name = ?",
+            [role.into(), permission.into()],
+        ))
+        .await
+        .unwrap()
+        .is_some()
+    }
+
+    async fn remove_from_role(db: &DatabaseConnection, role: &str, permission: &str) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM role_permissions \
+              WHERE role_id = (SELECT id FROM roles WHERE name = ? AND deleted_at IS NULL) \
+                AND permission_id = (SELECT id FROM permissions WHERE name = ?)",
+            [role.into(), permission.into()],
+        ))
+        .await
+        .unwrap();
+    }
+
+    /// A permission an administrator removed from an editable baseline role stays removed at the
+    /// next start (and after a repair, which runs the same seed); a locked role gets its baseline
+    /// back; a permission new to an editable role's baseline still reaches it.
+    #[tokio::test]
+    async fn an_editable_role_keeps_a_permission_removed_by_an_administrator() {
+        let db = crate::db::test_db::seeded().await;
+        let probe = crate::rbac::permissions::OPERATOR_PERMISSIONS
+            .iter()
+            .copied()
+            .find(|p| p.ends_with(".view"))
+            .expect("a view permission");
+        assert!(role_holds(&db, "Operator", probe).await, "baseline given");
+        assert!(role_holds(&db, "Readonly", probe).await, "baseline given");
+
+        remove_from_role(&db, "Operator", probe).await;
+        remove_from_role(&db, "Readonly", probe).await;
+        seed_system_data(&db).await.expect("seed again");
+
+        assert!(
+            !role_holds(&db, "Operator", probe).await,
+            "removal kept (editable role)"
+        );
+        assert!(role_holds(&db, "Readonly", probe).await, "locked role restored");
+
+        // The same permission new to the Operator baseline (not yet given on this PC).
+        let key = format!(
+            "{SEEDED_ROLE_PERMISSIONS_KEY_PREFIX}{}",
+            crate::sync::identity::seeded_entity_sync_id("roles", "Operator")
+        );
+        let raw: String = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT value FROM system_config WHERE key = ?",
+                [key.clone().into()],
+            ))
+            .await
+            .unwrap()
+            .expect("record")
+            .try_get("", "value")
+            .unwrap();
+        let mut given: std::collections::BTreeSet<String> = serde_json::from_str(&raw).unwrap();
+        assert!(given.remove(probe));
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE system_config SET value = ? WHERE key = ?",
+            [serde_json::to_string(&given).unwrap().into(), key.into()],
+        ))
+        .await
+        .unwrap();
+        seed_system_data(&db).await.expect("seed again");
+        assert!(
+            role_holds(&db, "Operator", probe).await,
+            "new baseline permission given"
         );
     }
 

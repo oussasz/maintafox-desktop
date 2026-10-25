@@ -955,8 +955,12 @@ async fn account_carries_granting_rights(conn: &impl ConnectionTrait, user_id: i
 
 /// A received account (the row never says who changed it):
 /// - new here with the bootstrap flag, while this PC records its first administrator
-///   (`auth::builtin_admin::first_admin_marker_closes`): a second first administrator; refused
-///   (the first-start and join flows create one only on an empty plant, `sync::plant_join`);
+///   (`auth::builtin_admin::first_admin_marker_closes`) and has finished a complete pull
+///   (`sync::plant_join::complete_pull_done`): a second first administrator; refused (the
+///   first-start and join flows create one only on an empty plant, `sync::plant_join`). Before
+///   that pull ends, the server's own accounts are still arriving: a plant set up by older versions
+///   may hold several first administrators, and the marker may already be closed by one of them
+///   (`backfill_first_admin_marker` at a restart during the pull), so they are applied;
 /// - held here without the bootstrap flag and received with it: no command does that; refused;
 /// - held here disabled or deleted and received active or restored (`reactivate_user`, a restore)
 ///   while it holds a right to give access here ([`account_carries_granting_rights`]): refused.
@@ -968,7 +972,10 @@ async fn account_check(
     received: &Payload,
 ) -> AppResult<Option<ApplyOutcome>> {
     let Some(held) = crate::permit::sync_check::local_wire(conn, "user_accounts", entity_sync_id).await? else {
-        if truthy(received, "is_admin") && crate::auth::builtin_admin::first_admin_marker_closes(conn).await? {
+        if truthy(received, "is_admin")
+            && crate::auth::builtin_admin::first_admin_marker_closes(conn).await?
+            && crate::sync::plant_join::complete_pull_done(conn).await?
+        {
             return Ok(conflict(format!(
                 "account {entity_sync_id}: a new account with the bootstrap administrator flag, while this PC already \
                  has its first administrator; not applied, for an administrator to decide"
