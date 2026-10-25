@@ -117,9 +117,7 @@ async fn matching_here(conn: &impl ConnectionTrait, t: &Target<'_>) -> AppResult
         .to_string();
     let mut values: Vec<sea_orm::Value> = vec![t.sid.into(), t.start.into(), t.end.into()];
     if let Some((from_start, from_end)) = t.from {
-        sql.push_str(
-            " AND julianday(sb.old_slot_start) = julianday(?) AND julianday(sb.old_slot_end) = julianday(?)",
-        );
+        sql.push_str(" AND julianday(sb.old_slot_start) = julianday(?) AND julianday(sb.old_slot_end) = julianday(?)");
         values.extend([from_start.into(), from_end.into()]);
     }
     sql.push_str(" ORDER BY sb.id DESC");
@@ -271,7 +269,11 @@ async fn commitment_context(
     let team = match team_sync.as_deref() {
         Some(team_sync) => match local_id(conn, "teams", team_sync).await? {
             Some(team) => Some(team),
-            None => return Ok(Err(InboundVerdict::Defer(format!("crew {team_sync} is not applied yet")))),
+            None => {
+                return Ok(Err(InboundVerdict::Defer(format!(
+                    "crew {team_sync} is not applied yet"
+                ))))
+            }
         },
         None => None,
     };
@@ -290,9 +292,10 @@ impl CommitmentContext {
             sid,
             start: &self.start,
             end: &self.end,
-            from: self.local.as_ref().and_then(|l| {
-                Some((field(l, "committed_start")?, field(l, "committed_end")?))
-            }),
+            from: self
+                .local
+                .as_ref()
+                .and_then(|l| Some((field(l, "committed_start")?, field(l, "committed_end")?))),
         }
     }
 }
@@ -653,7 +656,11 @@ pub(crate) async fn inbound_unfreeze_check(
     let local_baseline: i64 = local.try_get("", "baseline_no").map_err(sync_err)?;
     let frozen_here = matches!(local_status.as_str(), "frozen" | "published");
     let received_open = matches!(status, "draft" | "approved");
-    let first = if frozen_here { local_baseline } else { local_baseline + 1 };
+    let first = if frozen_here {
+        local_baseline
+    } else {
+        local_baseline + 1
+    };
     let last = if received_open { baseline_no } else { baseline_no - 1 };
     let first = first.max(1);
     if first > last {

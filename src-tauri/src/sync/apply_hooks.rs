@@ -507,9 +507,7 @@ pub(crate) async fn adopt_existing_append_only(
         }
         // A break-in refused on the PC that received it comes back with its refusal marks only
         // (CMMS Advisor decision 2026-10-25); any other rewrite of a break-in is skipped.
-        "schedule_break_ins" => {
-            crate::planning::sync_check::refusal_marks_only(conn, entity_sync_id, payload).await
-        }
+        "schedule_break_ins" => crate::planning::sync_check::refusal_marks_only(conn, entity_sync_id, payload).await,
         _ => Ok(false),
     }
 }

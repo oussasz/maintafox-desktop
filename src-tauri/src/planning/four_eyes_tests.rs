@@ -929,12 +929,18 @@ fn the_approver_password_is_never_serialized_or_printed() {
     }))
     .expect("read from the command input");
     assert_eq!(
-        input.approver_password.as_ref().map(super::domain::ApproverPassword::expose),
+        input
+            .approver_password
+            .as_ref()
+            .map(super::domain::ApproverPassword::expose),
         Some("Very-Secret-1")
     );
     assert!(!format!("{input:?}").contains("Very-Secret-1"), "redacted in Debug");
     let sent = serde_json::to_string(&input).expect("serialize");
-    assert!(!sent.contains("Very-Secret-1") && !sent.contains("approver_password"), "{sent}");
+    assert!(
+        !sent.contains("Very-Secret-1") && !sent.contains("approver_password"),
+        "{sent}"
+    );
 }
 
 #[tokio::test]
@@ -1020,7 +1026,10 @@ async fn a_break_in_refused_on_a_pc_never_lets_its_commitment_in() {
     let r = received_setup("FE13").await;
     let bi = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |p| {
         p.insert("sync_refused_at".into(), "2026-05-05T10:00:00Z".into());
-        p.insert("sync_refused_reason".into(), "PLANNING_BREAK_IN_SELF_APPROVAL — re-planned here".into());
+        p.insert(
+            "sync_refused_reason".into(),
+            "PLANNING_BREAK_IN_SELF_APPROVAL — re-planned here".into(),
+        );
     });
     inbox(&r.db, "schedule_break_ins", "recv-bi-fe13", &bi).await;
     let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
@@ -1030,11 +1039,13 @@ async fn a_break_in_refused_on_a_pc_never_lets_its_commitment_in() {
 
 /// The week of `r` as it travels, and an `unfrozen` decision of it for baseline `baseline`.
 async fn week_payload(r: &Received) -> (String, Payload) {
-    let week_sid: String = r
-        .db
-        .query_one(Statement::from_string(
+    let week_sid: String =
+        r.db.query_one(Statement::from_string(
             DbBackend::Sqlite,
-            format!("SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = {}", r.site),
+            format!(
+                "SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = {}",
+                r.site
+            ),
         ))
         .await
         .expect("q")
@@ -1071,18 +1082,40 @@ async fn a_week_reopened_at_a_later_baseline_needs_every_unfreeze_decision() {
     let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
 
     // Only the decision of baseline 2: the reopening of baseline 1 is not judged → refused.
-    inbox(&r.db, "weekly_schedule_events", "fe14-ev2", &unfrozen_event(&week_sid, 2, &requester_sid, &approver_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe14-ev2",
+        &unfrozen_event(&week_sid, 2, &requester_sid, &approver_sid),
+    )
+    .await;
     let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened.clone()).await;
     assert_eq!(conflict_code(&outcome), Some("WEEK_UNFREEZE_UNDECIDED"), "{outcome:?}");
 
     // Baseline 1 decided by its own requester: refused.
-    inbox(&r.db, "weekly_schedule_events", "fe14-ev1-self", &unfrozen_event(&week_sid, 1, &requester_sid, &requester_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe14-ev1-self",
+        &unfrozen_event(&week_sid, 1, &requester_sid, &requester_sid),
+    )
+    .await;
     let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened.clone()).await;
-    assert_eq!(conflict_code(&outcome), Some("WEEK_UNFREEZE_SAME_PERSON"), "{outcome:?}");
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("WEEK_UNFREEZE_SAME_PERSON"),
+        "{outcome:?}"
+    );
     exec_sql(&r.db, "DELETE FROM sync_inbox WHERE entity_sync_id = 'fe14-ev1-self'").await;
 
     // Both decided by a holder at the site who is not the requester: applied.
-    inbox(&r.db, "weekly_schedule_events", "fe14-ev1", &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe14-ev1",
+        &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid),
+    )
+    .await;
     let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened).await;
     assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
 }
@@ -1108,7 +1141,13 @@ async fn a_reopened_week_conflict_closes_when_its_decision_arrives() {
     let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
     exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
     exec_sql(&r.db, "DELETE FROM sync_outbox").await;
-    inbox(&r.db, "weekly_schedule_events", "fe15-ev1", &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe15-ev1",
+        &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid),
+    )
+    .await;
     crate::sync::materialize::materialize_inbox(&r.db, 200, true)
         .await
         .expect("second pass");
@@ -1124,7 +1163,10 @@ async fn a_reopened_week_conflict_closes_when_its_decision_arrives() {
     assert_eq!(
         scalar(
             &r.db,
-            &format!("SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {} AND status = 'approved'", r.site)
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {} AND status = 'approved'",
+                r.site
+            )
         )
         .await,
         1
@@ -1143,7 +1185,10 @@ async fn open_conflict_of(db: &DatabaseConnection, sid: &str) -> (i64, i64) {
         .await
         .expect("q")
         .expect("open conflict");
-    (row.try_get("", "id").expect("id"), row.try_get("", "row_version").expect("rv"))
+    (
+        row.try_get("", "id").expect("id"),
+        row.try_get("", "row_version").expect("rv"),
+    )
 }
 
 async fn resolve(
@@ -1173,8 +1218,16 @@ async fn keeping_the_plan_cancels_a_refused_new_commitment_and_sends_it_never_a_
     let other = wo_commitment(&r.db, r.team, "FE16 other PC", "2026-05-14T08:00", "2026-05-14T09:00").await;
     let sid = sync_id(&r.db, "schedule_commitments", other.id).await;
     let mut p = payload(&r.db, "schedule_commitments", &sid).await;
-    exec_sql(&r.db, &format!("DELETE FROM schedule_change_log WHERE commitment_id = {}", other.id)).await;
-    exec_sql(&r.db, &format!("DELETE FROM schedule_commitments WHERE id = {}", other.id)).await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM schedule_change_log WHERE commitment_id = {}", other.id),
+    )
+    .await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM schedule_commitments WHERE id = {}", other.id),
+    )
+    .await;
     exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
     exec_sql(&r.db, "DELETE FROM sync_outbox").await;
     p.insert("committed_start".into(), local("2026-05-06T10:00").into());
@@ -1195,12 +1248,18 @@ async fn keeping_the_plan_cancels_a_refused_new_commitment_and_sends_it_never_a_
     );
 
     // Neither dismissed nor taken, nor kept by someone without plan.confirm at the crew's site.
-    let err = resolve(&r.db, r.approver, &sid, "dismiss").await.expect_err("no dismiss");
+    let err = resolve(&r.db, r.approver, &sid, "dismiss")
+        .await
+        .expect_err("no dismiss");
     assert!(code_of(&err).contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"), "{err:?}");
-    let err = resolve(&r.db, r.approver, &sid, "accept_remote").await.expect_err("never taken");
+    let err = resolve(&r.db, r.approver, &sid, "accept_remote")
+        .await
+        .expect_err("never taken");
     assert!(code_of(&err).contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"), "{err:?}");
     let windows = windows_only_user(&r.db, 195, "FE16-WIN").await;
-    let err = resolve(&r.db, windows, &sid, "accept_local").await.expect_err("no right");
+    let err = resolve(&r.db, windows, &sid, "accept_local")
+        .await
+        .expect_err("no right");
     assert!(code_of(&err).contains("GATE_SYNC_KEEP_PLAN_NOT_ALLOWED"), "{err:?}");
 
     resolve(&r.db, r.approver, &sid, "accept_local").await.expect("kept");
@@ -1239,7 +1298,11 @@ async fn keeping_the_plan_cancels_a_refused_new_commitment_and_sends_it_never_a_
         "the cancelled version is sent"
     );
     assert_eq!(
-        scalar(&r.db, "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved'").await,
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved'"
+        )
+        .await,
         1,
         "the choice is audited"
     );
@@ -1247,13 +1310,19 @@ async fn keeping_the_plan_cancels_a_refused_new_commitment_and_sends_it_never_a_
     // On the PC that made it, that cancelled version applies over the committed one.
     let mut cancelled = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
     cancelled.insert("status".into(), "cancelled".into());
-    cancelled.insert("status_reason".into(), "refusé (sync) : PLANNING_WEEK_FROZEN — test".into());
+    cancelled.insert(
+        "status_reason".into(),
+        "refusé (sync) : PLANNING_WEEK_FROZEN — test".into(),
+    );
     let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, cancelled).await;
     assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
     assert_eq!(
         scalar(
             &r.db,
-            &format!("SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND status = 'cancelled'", r.commitment.id)
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND status = 'cancelled'",
+                r.commitment.id
+            )
         )
         .await,
         1
@@ -1273,7 +1342,9 @@ async fn keeping_the_plan_marks_a_refused_new_break_in_and_its_origin_takes_the_
     crate::sync::materialize::materialize_inbox(&r.db, 200, true)
         .await
         .expect("pass");
-    resolve(&r.db, r.approver, "recv-bi-fe17", "accept_local").await.expect("kept");
+    resolve(&r.db, r.approver, "recv-bi-fe17", "accept_local")
+        .await
+        .expect("kept");
     assert_eq!(
         scalar(
             &r.db,
@@ -1304,11 +1375,11 @@ async fn keeping_the_plan_marks_a_refused_new_break_in_and_its_origin_takes_the_
     );
 
     // The PC holding a break-in takes its refusal marks, and nothing else.
-    let held: String = r
-        .db
-        .query_one(Statement::from_string(
+    let held: String =
+        r.db.query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT entity_sync_id FROM schedule_break_ins WHERE sync_refused_at IS NULL ORDER BY id LIMIT 1".to_string(),
+            "SELECT entity_sync_id FROM schedule_break_ins WHERE sync_refused_at IS NULL ORDER BY id LIMIT 1"
+                .to_string(),
         ))
         .await
         .expect("q")
