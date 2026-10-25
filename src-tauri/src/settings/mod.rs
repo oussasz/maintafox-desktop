@@ -116,6 +116,17 @@ pub async fn get_setting<C: ConnectionTrait>(db: &C, key: &str, scope: &str) -> 
     row.map(map_app_setting).transpose()
 }
 
+/// Rows the settings listings (`list_all_settings`, `list_settings_by_category`) leave out: device
+/// state that holds secrets (the licence onboarding row keeps the licence key and the activation
+/// token). Each is read only through its own module's commands, which never return the secrets;
+/// `get_setting` refuses them too (not plant parameters).
+pub const UNLISTED_SETTING_KEYS: &[&str] = &["product.license_onboarding"];
+
+/// Whether a settings listing may return this row (see [`UNLISTED_SETTING_KEYS`]).
+fn listed(setting: &AppSetting) -> bool {
+    !UNLISTED_SETTING_KEYS.contains(&setting.setting_key.as_str())
+}
+
 pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSetting>> {
     let rows = db
         .query_all(Statement::from_string(
@@ -137,7 +148,8 @@ pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSett
         ))
         .await?;
 
-    rows.into_iter().map(map_app_setting).collect()
+    let settings: Vec<AppSetting> = rows.into_iter().map(map_app_setting).collect::<AppResult<_>>()?;
+    Ok(settings.into_iter().filter(listed).collect())
 }
 
 pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) -> AppResult<Vec<AppSetting>> {
@@ -162,7 +174,8 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
         ))
         .await?;
 
-    rows.into_iter().map(map_app_setting).collect()
+    let settings: Vec<AppSetting> = rows.into_iter().map(map_app_setting).collect::<AppResult<_>>()?;
+    Ok(settings.into_iter().filter(listed).collect())
 }
 
 pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<String>> {
@@ -1379,6 +1392,37 @@ mod tests {
             .all(|e| e.new_value_json.is_none() && e.old_value_json.is_none()));
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 1);
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn the_settings_listings_leave_out_the_licence_row_and_its_secrets() {
+        let db = crate::db::test_db::seeded().await;
+        let secret_value = r#"{"license_key_plaintext":"MFX-KEY-LISTED-0001","activation_claim":{"activation_token":"tok-listed-9a1"}}"#;
+        set_setting(
+            &db,
+            "product.license_onboarding",
+            "device",
+            secret_value,
+            Some(1),
+            "licence",
+        )
+        .await
+        .expect("set");
+        let row = get_setting(&db, "product.license_onboarding", "device")
+            .await
+            .unwrap()
+            .expect("licence row stored");
+        let all = list_all_settings(&db).await.unwrap();
+        assert!(!all.is_empty(), "other settings are still listed");
+        let by_category = list_settings_by_category(&db, &row.category).await.unwrap();
+        for listing in [&all, &by_category] {
+            assert!(listing.iter().all(|s| s.setting_key != "product.license_onboarding"));
+            let text = serde_json::to_string(listing).unwrap();
+            assert!(
+                !text.contains("MFX-KEY-LISTED-0001") && !text.contains("tok-listed-9a1"),
+                "{text}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -65,7 +65,8 @@ pub enum ProductLicenseActivationStatus {
     DeniedOfflineGraceExpired,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` never shows the activation token (see the `impl` below).
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductActivationClaimRecord {
     pub tenant_id: String,
@@ -122,7 +123,8 @@ pub struct ProductLicenseReconciliationPolicy {
     pub last_error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` never shows the licence key nor the activation token (see the `impl` below).
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProductLicenseStateRecord {
     pub schema_version: u32,
     pub key_sha256: String,
@@ -153,6 +155,74 @@ pub struct ProductLicenseStateRecord {
     /// then needs an administrator.
     #[serde(default)]
     pub forced_update_lift_allowed: bool,
+}
+
+/// What replaces a secret field in a `Debug` output: whether it is set, never its value.
+fn redacted_debug(value: Option<&str>) -> &'static str {
+    match value {
+        Some(v) if !v.is_empty() => "[redacted]",
+        _ => "[none]",
+    }
+}
+
+impl std::fmt::Debug for ProductActivationClaimRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProductActivationClaimRecord")
+            .field("tenant_id", &self.tenant_id)
+            .field("license_id", &self.license_id)
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field("activation_token", &redacted_debug(Some(&self.activation_token)))
+            .field("expires_at", &self.expires_at)
+            .field("force_min_app_version", &self.force_min_app_version)
+            .field("force_update_required", &self.force_update_required)
+            .field("update_channel", &self.update_channel)
+            .field("offline_grace_hours", &self.offline_grace_hours)
+            .field(
+                "trust_revocation_disconnects_immediately",
+                &self.trust_revocation_disconnects_immediately,
+            )
+            .field(
+                "reconnect_requires_fresh_heartbeat",
+                &self.reconnect_requires_fresh_heartbeat,
+            )
+            .field("tenant_display_name", &self.tenant_display_name)
+            .field("tenant_slug", &self.tenant_slug)
+            .field("device_limit", &self.device_limit)
+            .field("license_tier", &self.license_tier)
+            .field("license_plan", &self.license_plan)
+            .field("license_status", &self.license_status)
+            .field("activated_device_count", &self.activated_device_count)
+            .field("has_demo_data", &self.has_demo_data)
+            .field("is_initialized", &self.is_initialized)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ProductLicenseStateRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProductLicenseStateRecord")
+            .field("schema_version", &self.schema_version)
+            .field("key_sha256", &self.key_sha256)
+            .field(
+                "license_key_plaintext",
+                &redacted_debug(self.license_key_plaintext.as_deref()),
+            )
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field("app_version", &self.app_version)
+            .field("submitted_at", &self.submitted_at)
+            .field("status", &self.status)
+            .field("pending_online_validation", &self.pending_online_validation)
+            .field("deny_reason_code", &self.deny_reason_code)
+            .field("deny_message", &self.deny_message)
+            .field("degraded_reason", &self.degraded_reason)
+            .field("activation_claim", &self.activation_claim)
+            .field("last_reconciled_at", &self.last_reconciled_at)
+            .field("reconciliation", &self.reconciliation)
+            .field("diagnostics", &self.diagnostics)
+            .field("company_display_name", &self.company_display_name)
+            .field("forced_update_lift_allowed", &self.forced_update_lift_allowed)
+            .finish()
+    }
 }
 
 impl ProductLicenseStateRecord {
@@ -3285,7 +3355,8 @@ const TENANT_INITIALIZE_PATH: &str = "/api/v1/activation/tenant-status/initializ
 pub enum ActivationCallResult<T> {
     /// The server answered; `answer` is what the call returns of it.
     Answered { answer: T },
-    /// Nothing to send from this PC (no activation token, or no licence key stored): nothing was
+    /// Nothing to send from this PC (no activation token, no licence key stored, or, for the tenant
+    /// initialisation, an organisation the stored claim already says is initialised): nothing was
     /// sent.
     NotActivated,
     /// As `PolicyRefreshResult::HttpError`.
@@ -3432,9 +3503,11 @@ fn answered_token(body: &str) -> String {
 /// A 2xx claim answer read as a complete activation claim (organisation, licence, machine and
 /// activation token, each as it may be stored: `canonical_id`, as the key entry requires), or why
 /// it is not one. Checked before the webview gets the claim, so local data is never wiped for a
-/// claim the key entry would then refuse as malformed.
+/// claim the key entry would then refuse as malformed. The machine must be the one the claim was
+/// sent for (`sent_fingerprint`): a slot taken for another machine is not this PC's activation.
 fn complete_claim_of_answer(
     body: &str,
+    sent_fingerprint: &str,
 ) -> Result<
     (
         ProductActivationClaimRecord,
@@ -3454,6 +3527,11 @@ fn complete_claim_of_answer(
     if !complete {
         return Err(
             "The activation claim answer misses the organisation, licence, machine or activation token.".to_string(),
+        );
+    }
+    if claim.machine_fingerprint != sent_fingerprint {
+        return Err(
+            "The activation claim answer names another machine than the one the claim was sent for.".to_string(),
         );
     }
     Ok((claim, envelope))
@@ -3536,7 +3614,7 @@ pub(crate) async fn claim_product_activation_in(
     };
     let token = answered_token(&answer);
     let secrets = [(key, KEY_MARKER), (token.as_str(), TOKEN_MARKER)];
-    let (claim, envelope) = match complete_claim_of_answer(&answer) {
+    let (claim, envelope) = match complete_claim_of_answer(&answer, fingerprint) {
         Ok(parts) => parts,
         Err(why) => return Ok(invalid_answer(ACTIVATION_CLAIM_PATH, why, &secrets).into()),
     };
@@ -3617,17 +3695,18 @@ pub(crate) async fn submit_pending_product_license_key_in(
     Ok(())
 }
 
-/// The activation token the tenant calls use: the pending claim's (the newest one issued to this
-/// PC), else the stored activation's when it is a valid claim.
-async fn tenant_call_token(db: &DatabaseConnection, pending: &PendingActivationClaimSlot) -> AppResult<Option<String>> {
-    let pending_token = pending.lock().await.as_ref().map(|p| p.claim.activation_token.clone());
-    let token = match pending_token {
-        Some(token) => Some(token),
-        None => load_state_record_from_db(db)
-            .await?
-            .filter(record_has_valid_activation_claim)
-            .and_then(|record| record.activation_claim.map(|c| c.activation_token)),
-    };
+/// The activation token the tenant initialisation uses: the stored activation's, when it is a valid
+/// claim whose organisation is not known as initialised (`is_initialized` not `Some(true)`, as the
+/// gate decides to initialise). Never a pending claim's: one not recorded yet may be for another
+/// organisation than the one stored here (a claim taken, then its key entry abandoned). The gate
+/// initialises only after a recorded key entry, which stored the claim and cleared the pending one.
+async fn tenant_call_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let token = load_state_record_from_db(db)
+        .await?
+        .filter(record_has_valid_activation_claim)
+        .and_then(|record| record.activation_claim)
+        .filter(|claim| claim.is_initialized != Some(true))
+        .map(|claim| claim.activation_token);
     Ok(token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
 }
 
@@ -3639,13 +3718,13 @@ pub struct ActivationTenantStatus {
 }
 
 /// Marks the activated organisation initialised on the control API at `api_base`, with the token
-/// of [`tenant_call_token`]. `NotActivated` when this PC holds none (nothing sent).
+/// of [`tenant_call_token`]. `NotActivated` when this PC holds none, or its stored claim already
+/// says the organisation is initialised (nothing sent).
 pub(crate) async fn mark_activation_tenant_initialized_in(
     db: &DatabaseConnection,
-    pending: &PendingActivationClaimSlot,
     api_base: &str,
 ) -> AppResult<ActivationCallResult<ActivationTenantStatus>> {
-    let Some(token) = tenant_call_token(db, pending).await? else {
+    let Some(token) = tenant_call_token(db).await? else {
         return Ok(ActivationCallResult::NotActivated);
     };
     let secrets = [(token.as_str(), TOKEN_MARKER)];
@@ -3673,17 +3752,12 @@ pub(crate) async fn mark_activation_tenant_initialized_in(
 }
 
 /// Marks the activated organisation as initialised on the control API (after the first activation
-/// of an organisation not yet initialised). Sent from Rust with the activation token held here.
+/// of an organisation not yet initialised). Sent from Rust with the stored activation token.
 #[tauri::command]
 pub async fn mark_activation_tenant_initialized(
     state: State<'_, AppState>,
 ) -> AppResult<ActivationCallResult<ActivationTenantStatus>> {
-    mark_activation_tenant_initialized_in(
-        &state.db,
-        &state.pending_activation_claim,
-        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
-    )
-    .await
+    mark_activation_tenant_initialized_in(&state.db, env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL")).await
 }
 
 /// Claims this PC's activation again with the licence key stored at the key entry, when its
@@ -3731,7 +3805,7 @@ pub(crate) async fn reclaim_product_activation_in(
     };
     let token = answered_token(&answer);
     let secrets = [(key, KEY_MARKER), (token.as_str(), TOKEN_MARKER)];
-    let (claim, envelope) = match complete_claim_of_answer(&answer) {
+    let (claim, envelope) = match complete_claim_of_answer(&answer, fingerprint) {
         Ok(parts) => parts,
         Err(why) => return Ok(invalid_answer(ACTIVATION_CLAIM_PATH, why, &secrets).into()),
     };

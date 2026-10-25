@@ -5,12 +5,15 @@
 
 use serde_json::{json, Value};
 
+use sea_orm::DatabaseConnection;
+
 use super::policy_refresh_tests::{refusal_code, start_stub, ADMIN, SIGNED_OUT};
 use super::{
-    claim_product_activation_in, get_activation_claim_record, load_state_record_from_db,
-    mark_activation_tenant_initialized_in, preview_product_activation_in, reclaim_product_activation_in,
-    record_activation_claim_for_tests, refuse_success_from_webview, submit_pending_product_license_key_in,
-    ActivationCallResult, PendingActivationClaimSlot, ProductLicenseActivationStatus,
+    bootstrap_initial_tenant_admin_in, claim_product_activation_in, get_activation_claim_record,
+    load_state_record_from_db, mark_activation_tenant_initialized_in, preview_product_activation_in,
+    reclaim_product_activation_in, record_activation_claim_for_tests, refuse_success_from_webview,
+    submit_pending_product_license_key_in, ActivationCallResult, BootstrapInitialAdminInput,
+    PendingActivationClaimSlot, ProductLicenseActivationStatus,
 };
 use crate::errors::AppError;
 
@@ -22,8 +25,12 @@ const CLAIM_TOKEN: &str = "claimed-activation-token-91c2";
 const STORED_TOKEN: &str = "stored-activation-token-44d0";
 
 fn claim_answer(token: &str) -> Value {
+    claim_answer_for(TENANT, token)
+}
+
+fn claim_answer_for(tenant: &str, token: &str) -> Value {
     json!({
-        "tenant_id": TENANT,
+        "tenant_id": tenant,
         "license_id": "lic-calls",
         "machine_fingerprint": FINGERPRINT,
         "activation_token": token,
@@ -49,11 +56,49 @@ fn assert_no_secret<T: serde::Serialize>(result: &T, secrets: &[&str]) {
 }
 
 async fn claimed(db_slot: &PendingActivationClaimSlot) {
-    let stub = start_stub(200, claim_answer(CLAIM_TOKEN).to_string()).await;
-    let result = claim_product_activation_in(db_slot, &stub.base_url, KEY, FINGERPRINT, Some("Bench"), Some("1.2.3"))
+    claimed_with(db_slot, KEY, claim_answer(CLAIM_TOKEN)).await;
+}
+
+/// A claim taken with `key`, the server answering `answer`.
+async fn claimed_with(db_slot: &PendingActivationClaimSlot, key: &str, answer: Value) {
+    let stub = start_stub(200, answer.to_string()).await;
+    let result = claim_product_activation_in(db_slot, &stub.base_url, key, FINGERPRINT, Some("Bench"), Some("1.2.3"))
         .await
         .expect("claim");
     assert!(matches!(result, ActivationCallResult::Answered { .. }), "{result:?}");
+}
+
+/// A PC whose key `KEY` was entered for `TENANT` (claim token `CLAIM_TOKEN`), then given its first
+/// administrator: licence changes then need one.
+async fn administered_plant() -> DatabaseConnection {
+    let db = crate::db::test_db::seeded().await;
+    let slot = PendingActivationClaimSlot::default();
+    claimed(&slot).await;
+    submit_pending_product_license_key_in(&db, SIGNED_OUT, &slot, KEY, TENANT, None)
+        .await
+        .expect("key entry");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
+    bootstrap_initial_tenant_admin_in(
+        &db,
+        BootstrapInitialAdminInput {
+            username: "chef".into(),
+            email: "chef@plant.example".into(),
+            password: "Chef-Usine-2026!Sûr".into(),
+            display_name: None,
+        },
+    )
+    .await
+    .expect("first administrator");
+    db
+}
+
+/// The whole licence record stored here, to compare before and after a refused change.
+async fn stored_record_json(db: &DatabaseConnection) -> String {
+    let record = load_state_record_from_db(db)
+        .await
+        .expect("record")
+        .expect("stored record");
+    serde_json::to_string(&record).expect("record json")
 }
 
 #[tokio::test]
@@ -264,32 +309,40 @@ async fn the_key_entry_records_only_the_pending_claim_of_that_key_and_organisati
 }
 
 #[tokio::test]
-async fn tenant_initialisation_uses_the_pending_token_then_the_stored_one() {
+async fn tenant_initialisation_uses_the_stored_token_never_a_pending_one() {
     let db = crate::db::test_db::seeded().await;
     let slot = PendingActivationClaimSlot::default();
     let stub = start_stub(200, json!({ "tenant_id": TENANT, "is_initialized": true }).to_string()).await;
 
-    let result = mark_activation_tenant_initialized_in(&db, &slot, &stub.base_url)
+    // A claim taken and not recorded (its key entry abandoned): nothing stored, nothing sent.
+    claimed(&slot).await;
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
     assert_eq!(
         serde_json::to_value(&result).expect("json"),
         json!({ "kind": "not_activated" })
     );
-    assert!(stub.requests().is_empty(), "nothing sent without a token");
+    assert!(stub.requests().is_empty(), "nothing sent with a pending token");
 
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, STORED_TOKEN)
         .await
         .expect("stored claim");
-    let result = mark_activation_tenant_initialized_in(&db, &slot, &stub.base_url)
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
     assert_eq!(
         serde_json::to_value(&result).expect("json"),
         json!({ "kind": "answered", "answer": { "tenant_id": TENANT, "is_initialized": true } })
     );
-    claimed(&slot).await;
-    mark_activation_tenant_initialized_in(&db, &slot, &stub.base_url)
+    // A newer claim for another organisation pending: still the stored activation's token.
+    claimed_with(
+        &slot,
+        KEY,
+        claim_answer_for("tenant-other", "other-activation-token-0b3e"),
+    )
+    .await;
+    mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
 
@@ -297,17 +350,55 @@ async fn tenant_initialisation_uses_the_pending_token_then_the_stored_one() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].path, "/api/v1/activation/tenant-status/initialize");
     assert_eq!(
-        requests[0].authorization.as_deref(),
-        Some(format!("Bearer {STORED_TOKEN}").as_str())
-    );
-    assert_eq!(
         serde_json::from_str::<Value>(&requests[0].body).expect("body"),
         json!({})
     );
+    for request in &requests {
+        assert_eq!(
+            request.authorization.as_deref(),
+            Some(format!("Bearer {STORED_TOKEN}").as_str())
+        );
+    }
+}
+
+#[tokio::test]
+async fn tenant_initialisation_is_not_sent_for_an_organisation_stored_as_initialised() {
+    let db = crate::db::test_db::seeded().await;
+    let slot = PendingActivationClaimSlot::default();
+    let mut answer = claim_answer(CLAIM_TOKEN);
+    answer["is_initialized"] = json!(true);
+    claimed_with(&slot, KEY, answer).await;
+    submit_pending_product_license_key_in(&db, SIGNED_OUT, &slot, KEY, TENANT, None)
+        .await
+        .expect("key entry");
+    let stub = start_stub(200, json!({ "tenant_id": TENANT, "is_initialized": true }).to_string()).await;
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
+        .await
+        .expect("initialise");
+    assert!(matches!(result, ActivationCallResult::NotActivated), "{result:?}");
+    assert!(stub.requests().is_empty());
+
+    // Stored as not initialised: the retry after a failed initialisation still sends.
+    let db = crate::db::test_db::seeded().await;
+    claimed(&slot).await;
+    submit_pending_product_license_key_in(&db, SIGNED_OUT, &slot, KEY, TENANT, None)
+        .await
+        .expect("key entry");
+    let failing = start_stub(503, String::new()).await;
+    let result = mark_activation_tenant_initialized_in(&db, &failing.base_url)
+        .await
+        .expect("initialise");
+    assert!(
+        matches!(result, ActivationCallResult::HttpError { status: 503, .. }),
+        "{result:?}"
+    );
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
+        .await
+        .expect("retry");
+    assert!(matches!(result, ActivationCallResult::Answered { .. }), "{result:?}");
     assert_eq!(
-        requests[1].authorization.as_deref(),
-        Some(format!("Bearer {CLAIM_TOKEN}").as_str()),
-        "the newest token, the pending claim's"
+        stub.requests()[0].authorization.as_deref(),
+        Some(format!("Bearer {CLAIM_TOKEN}").as_str())
     );
 }
 
@@ -317,9 +408,8 @@ async fn a_tenant_initialisation_error_never_returns_the_token() {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, STORED_TOKEN)
         .await
         .expect("stored claim");
-    let slot = PendingActivationClaimSlot::default();
     let stub = start_stub(404, format!("no route for {STORED_TOKEN}")).await;
-    let result = mark_activation_tenant_initialized_in(&db, &slot, &stub.base_url)
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
     let ActivationCallResult::HttpError { status, details, .. } = &result else {
@@ -330,7 +420,7 @@ async fn a_tenant_initialisation_error_never_returns_the_token() {
     assert_no_secret(&result, &[STORED_TOKEN]);
 
     let stub = start_stub(200, json!({ "tenant_id": TENANT }).to_string()).await;
-    let result = mark_activation_tenant_initialized_in(&db, &slot, &stub.base_url)
+    let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
     assert!(
@@ -428,6 +518,129 @@ async fn a_reclaim_error_never_returns_the_stored_key() {
         .expect("record")
         .expect("stored record");
     assert_eq!(record.status, ProductLicenseActivationStatus::Active);
+}
+
+#[tokio::test]
+async fn a_claim_answer_for_another_machine_is_not_held_nor_recorded() {
+    let slot = PendingActivationClaimSlot::default();
+    let mut answer = claim_answer(CLAIM_TOKEN);
+    answer["machine_fingerprint"] = json!("fp-another-machine");
+    let stub = start_stub(200, answer.to_string()).await;
+    let result = claim_product_activation_in(&slot, &stub.base_url, KEY, FINGERPRINT, None, None)
+        .await
+        .expect("claim");
+    assert!(
+        matches!(result, ActivationCallResult::InvalidResponse { .. }),
+        "{result:?}"
+    );
+    assert_no_secret(&result, &[CLAIM_TOKEN, KEY]);
+    assert!(slot.lock().await.is_none());
+
+    // The re-claim of an administered plant, signed in as an administrator: refused all the same,
+    // nothing written.
+    let db = administered_plant().await;
+    let before = stored_record_json(&db).await;
+    let stub = start_stub(200, answer.to_string()).await;
+    let result = reclaim_product_activation_in(&db, ADMIN, &stub.base_url, None, None)
+        .await
+        .expect("reclaim");
+    assert!(
+        matches!(result, ActivationCallResult::InvalidResponse { .. }),
+        "{result:?}"
+    );
+    assert_no_secret(&result, &[CLAIM_TOKEN, KEY]);
+    assert_eq!(before, stored_record_json(&db).await, "nothing written");
+}
+
+#[tokio::test]
+async fn a_signed_out_reclaim_of_another_activation_or_token_is_refused_and_writes_nothing() {
+    let db = administered_plant().await;
+    let before = stored_record_json(&db).await;
+    let mut other_licence = claim_answer(CLAIM_TOKEN);
+    other_licence["license_id"] = json!("lic-other");
+    for (case, answer) in [
+        ("another organisation", claim_answer_for("tenant-other", CLAIM_TOKEN)),
+        ("another licence", other_licence),
+        ("a token not bound here", claim_answer("unbound-activation-token-6d21")),
+    ] {
+        let stub = start_stub(200, answer.to_string()).await;
+        let err = reclaim_product_activation_in(&db, SIGNED_OUT, &stub.base_url, None, None)
+            .await
+            .expect_err(case);
+        assert_eq!(
+            refusal_code(&err).as_deref(),
+            Some("LICENSE_RECONCILE_ADMIN_REQUIRED"),
+            "{case}: {err:?}"
+        );
+        let text = format!("{err:?}");
+        assert!(
+            !text.contains(KEY) && !text.contains("unbound-activation-token-6d21"),
+            "{case}: {text}"
+        );
+        assert_eq!(before, stored_record_json(&db).await, "{case}: nothing written");
+    }
+    let claim = get_activation_claim_record(&db)
+        .await
+        .expect("claim")
+        .expect("stored claim");
+    assert_eq!(claim.activation_token, CLAIM_TOKEN, "the stored token is kept");
+}
+
+#[tokio::test]
+async fn a_signed_out_key_entry_while_the_licence_is_usable_is_refused_and_keeps_the_claim() {
+    let db = administered_plant().await;
+    let before = stored_record_json(&db).await;
+    let slot = PendingActivationClaimSlot::default();
+    claimed_with(&slot, KEY, claim_answer("second-activation-token-2c48")).await;
+    let err = submit_pending_product_license_key_in(&db, SIGNED_OUT, &slot, KEY, TENANT, None)
+        .await
+        .expect_err("a key entry on a usable licence needs an administrator");
+    assert_eq!(
+        refusal_code(&err).as_deref(),
+        Some("LICENSE_RECONCILE_ADMIN_REQUIRED"),
+        "{err:?}"
+    );
+    assert!(slot.lock().await.is_some(), "the pending claim is kept");
+    assert_eq!(before, stored_record_json(&db).await, "nothing written");
+}
+
+#[tokio::test]
+async fn a_key_entry_after_a_newer_claim_with_another_key_is_a_mismatch() {
+    let db = crate::db::test_db::seeded().await;
+    let slot = PendingActivationClaimSlot::default();
+    let key_b = "MFX-KEY-CALLS-0002";
+    claimed(&slot).await;
+    claimed_with(&slot, key_b, claim_answer("key-b-activation-token-8e15")).await;
+    let err = submit_pending_product_license_key_in(&db, SIGNED_OUT, &slot, KEY, TENANT, None)
+        .await
+        .expect_err("the claim waiting is key B's");
+    assert_eq!(gate_code(&err).as_deref(), Some("GATE_LICENSE_CLAIM_MISMATCH"));
+    assert!(slot.lock().await.is_some(), "key B's claim is kept");
+    assert!(load_state_record_from_db(&db).await.expect("record").is_none());
+}
+
+#[test]
+fn the_licence_records_never_show_their_secrets_in_debug() {
+    let record: super::ProductLicenseStateRecord = serde_json::from_value(json!({
+        "schema_version": 1,
+        "key_sha256": "hash",
+        "license_key_plaintext": KEY,
+        "submitted_at": "2026-10-25T00:00:00Z",
+        "status": "active",
+        "pending_online_validation": false,
+        "activation_claim": {
+            "tenant_id": TENANT,
+            "license_id": "lic-calls",
+            "machine_fingerprint": FINGERPRINT,
+            "activation_token": CLAIM_TOKEN,
+        },
+        "reconciliation": { "retry_attempt": 0 },
+        "diagnostics": [],
+    }))
+    .expect("record");
+    let text = format!("{record:?}");
+    assert!(!text.contains(KEY) && !text.contains(CLAIM_TOKEN), "{text}");
+    assert!(text.contains(TENANT), "the rest is shown: {text}");
 }
 
 #[test]
