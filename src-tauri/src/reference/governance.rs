@@ -411,7 +411,7 @@ pub fn assert_allows_operational_create(domain: &ReferenceDomain) -> AppResult<(
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' n'autorise pas la création opérationnelle \
+        "GATE_REF_DOMAIN_NO_OPERATIONAL_CREATE: Le domaine '{}' n'autorise pas la création opérationnelle \
          (catégorie={}).",
         domain.code,
         cat.as_str()
@@ -431,14 +431,14 @@ pub fn assert_allows_value_mutation(domain: &ReferenceDomain, set: &ReferenceSet
     }
     if !set_is_draft(set) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons ('draft') peuvent être modifiés.",
             set.status
         )]));
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' (catégorie={}) n'autorise pas cette mutation \
-         sur un jeu en statut '{}'.",
+        "GATE_REF_DOMAIN_NO_MUTATION_IN_SET:status={2}: Le domaine '{0}' (catégorie={1}) n'autorise pas cette mutation \
+         sur un jeu en statut '{2}'.",
         domain.code,
         cat.as_str(),
         set.status

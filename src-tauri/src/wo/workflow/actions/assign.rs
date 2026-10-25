@@ -12,7 +12,7 @@ use crate::wo::domain::WorkOrder;
 use crate::wo::queries;
 use crate::wo::time::now_utc_z;
 use crate::wo::workflow::events::emit_action_event;
-use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction, WoStatus};
+use crate::wo::workflow::state_machine::{assert_action_allowed, status_i18n_key, WoAction, WoStatus};
 use crate::wo::workflow::transition::{check_concurrency, load_wo_status};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,12 +142,13 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
     let reason = input.override_reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "override_reason is required for emergency reassign.".to_string(),
+            "GATE_WO_REASSIGN_REASON_REQUIRED: override_reason is required for emergency reassign.".to_string(),
         ]));
     }
     if input.assigned_team_id.is_none() && input.primary_responsible_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one of assigned_team_id or primary_responsible_id is required.".to_string(),
+            "GATE_WO_REASSIGN_TARGET_REQUIRED: At least one of assigned_team_id or primary_responsible_id is required."
+                .to_string(),
         ]));
     }
     if let Some(team_id) = input.assigned_team_id {
@@ -158,7 +159,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
     if let Some(ref cmt) = commitment {
         if cmt.frozen_at.is_some() {
             return Err(AppError::ValidationFailed(vec![
-                "Schedule is frozen for this work order. Use Planning break-in — emergency reassign is blocked."
+                "GATE_WO_REASSIGN_SCHEDULE_FROZEN: Schedule is frozen for this work order. Use Planning break-in — emergency reassign is blocked."
                     .to_string(),
             ]));
         }
@@ -172,7 +173,8 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         WoStatus::Ready => WoAction::Reassign,
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Emergency reassign is only allowed in status planning or ready (current: {}).",
+                "GATE_WO_REASSIGN_STATUS:status={0}: Emergency reassign is only allowed in status planning or ready (current: {1}).",
+                status_i18n_key(status.as_str()),
                 status.as_str()
             )]));
         }

@@ -64,7 +64,7 @@ async fn ensure_schema_not_newer(backup_db: &DatabaseConnection) -> AppResult<()
     match unknown.first() {
         None => Ok(()),
         Some(first) => Err(AppError::ValidationFailed(vec![format!(
-            "this backup was made by a newer Maintafox version ({} unknown migration(s), e.g. {first}); \
+            "GATE_BACKUP_NEWER_VERSION:unknown={0}: this backup was made by a newer Maintafox version ({0} unknown migration(s), e.g. {first}); \
              update the application before restoring it",
             unknown.len()
         )])),
@@ -77,7 +77,7 @@ pub async fn preflight(db: &DatabaseConnection, backup_path: &Path, key: &Databa
     let report = super::validate_backup_file(db, &path_str, Some(key)).await?;
     if !report.integrity_ok {
         return Err(AppError::ValidationFailed(vec![format!(
-            "backup failed the integrity check (it may be damaged or encrypted with another \
+            "GATE_BACKUP_INTEGRITY_FAILED: backup failed the integrity check (it may be damaged or encrypted with another \
              installation's key): {}",
             report.integrity_check_output
         )]));

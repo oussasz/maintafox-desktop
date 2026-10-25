@@ -32,7 +32,7 @@ pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResul
 pub fn validate_code(code: &str) -> AppResult<()> {
     if code.is_empty() || code.len() > 64 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code doit comporter entre 1 et 64 caractères.".into(),
+            "GATE_REF_LOOKUP_CODE_LENGTH: Le code doit comporter entre 1 et 64 caractères.".into(),
         ]));
     }
     if !code
@@ -40,7 +40,7 @@ pub fn validate_code(code: &str) -> AppResult<()> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code ne peut contenir que des majuscules, chiffres et tirets bas (ex : CORRECTIVE, TYPE_A).".into(),
+            "GATE_REF_LOOKUP_CODE_CHARS: Le code ne peut contenir que des majuscules, chiffres et tirets bas (ex : CORRECTIVE, TYPE_A).".into(),
         ]));
     }
     Ok(())
@@ -74,7 +74,7 @@ pub async fn assert_domain_extensible(db: &DatabaseConnection, domain_key: &str)
             }
             if is_extensible == 0 {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Le domaine '{domain_key}' n'est pas extensible."
+                    "GATE_REF_LOOKUP_NOT_EXTENSIBLE: Le domaine '{domain_key}' n'est pas extensible."
                 )]));
             }
             Ok(())

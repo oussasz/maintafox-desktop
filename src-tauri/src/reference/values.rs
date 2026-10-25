@@ -678,7 +678,7 @@ pub async fn create_operational_value(
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Aucun jeu publié pour le domaine '{domain_code}'. \
+                "GATE_REF_NO_PUBLISHED_SET: Aucun jeu publié pour le domaine '{domain_code}'. \
                  Publiez un jeu dans Données de référence avant d'ajouter des valeurs."
             )])
         })?;
