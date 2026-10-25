@@ -614,6 +614,11 @@ struct UnfreezeDecision {
 
 /// See the module documentation (`weekly_schedules`). Called after the lifecycle check
 /// (`weekly_schedule::inbound_lifecycle_conflict`) found nothing.
+///
+/// Every reopening between the week held here and the received one needs its decision (review
+/// B1): from the baseline frozen here (or the next one, when the week is open here) up to the
+/// received baseline when the week is received open again (the one before, when it is received
+/// frozen or published again).
 pub(crate) async fn inbound_unfreeze_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -625,9 +630,6 @@ pub(crate) async fn inbound_unfreeze_check(
     let Some(baseline_no) = int(received, "baseline_no") else {
         return Ok(None);
     };
-    if !matches!(status, "draft" | "approved") || baseline_no < 1 {
-        return Ok(None);
-    }
     let site_sync = field(received, &key("entity_id"));
     let Some(local) = conn
         .query_one(Statement::from_sql_and_values(
@@ -649,47 +651,64 @@ pub(crate) async fn inbound_unfreeze_check(
     };
     let local_status: String = local.try_get("", "status").map_err(sync_err)?;
     let local_baseline: i64 = local.try_get("", "baseline_no").map_err(sync_err)?;
-    if !matches!(local_status.as_str(), "frozen" | "published") || local_baseline != baseline_no {
+    let frozen_here = matches!(local_status.as_str(), "frozen" | "published");
+    let received_open = matches!(status, "draft" | "approved");
+    let first = if frozen_here { local_baseline } else { local_baseline + 1 };
+    let last = if received_open { baseline_no } else { baseline_no - 1 };
+    let first = first.max(1);
+    if first > last {
         return Ok(None);
     }
     let week_id: i64 = local.try_get("", "id").map_err(sync_err)?;
     let site: i64 = local.try_get("", "entity_id").map_err(sync_err)?;
     let local_sid: Option<String> = local.try_get("", "entity_sync_id").map_err(sync_err)?;
-    let Some(decision) = unfreeze_decision(conn, week_id, entity_sync_id, local_sid.as_deref(), baseline_no).await?
-    else {
-        return conflict(
-            WEEK_UNFREEZE_UNDECIDED,
-            format!(
-                "week of {week_start}: received reopened ('{status}', baseline {baseline_no}) without its unfreeze \
-                 decision, here or received with it"
-            ),
-        );
-    };
-    let (Some(requester), Some(decider)) = (decision.requester, decision.decider) else {
-        return conflict(
-            WEEK_UNFREEZE_SAME_PERSON,
-            format!("week of {week_start}: its unfreeze decision does not name both the requester and the decider"),
-        );
-    };
-    if requester == decider {
-        return conflict(
-            WEEK_UNFREEZE_SAME_PERSON,
-            format!("week of {week_start}: unfrozen by a decision of its own requester"),
-        );
-    }
-    let Some(decider_id) = local_id(conn, "user_accounts", &decider).await? else {
-        return wait(format!("decider {decider} is not applied yet"));
-    };
-    if !break_in_approvers(conn, Some(site)).await?.contains(&decider_id) {
-        if crate::permit::sync_check::rights_may_still_arrive(conn, &decider, crate::rbac::permissions::PLAN_CONFIRM)
-            .await?
-        {
-            return wait(format!("the rights of decider {decider} are still arriving"));
+    for baseline in first..=last {
+        let Some(decision) = unfreeze_decision(conn, week_id, entity_sync_id, local_sid.as_deref(), baseline).await?
+        else {
+            return conflict(
+                WEEK_UNFREEZE_UNDECIDED,
+                format!(
+                    "week of {week_start}: received '{status}' (baseline {baseline_no}) without the unfreeze decision \
+                     of baseline {baseline}, here or received with it"
+                ),
+            );
+        };
+        let (Some(requester), Some(decider)) = (decision.requester, decision.decider) else {
+            return conflict(
+                WEEK_UNFREEZE_SAME_PERSON,
+                format!(
+                    "week of {week_start}: the unfreeze decision of baseline {baseline} does not name both the \
+                     requester and the decider"
+                ),
+            );
+        };
+        if requester == decider {
+            return conflict(
+                WEEK_UNFREEZE_SAME_PERSON,
+                format!("week of {week_start}: baseline {baseline} unfrozen by a decision of its own requester"),
+            );
         }
-        return conflict(
-            WEEK_UNFREEZE_UNAUTHORISED,
-            format!("week of {week_start}: unfrozen by someone who does not hold plan.confirm at the site here"),
-        );
+        let Some(decider_id) = local_id(conn, "user_accounts", &decider).await? else {
+            return wait(format!("decider {decider} is not applied yet"));
+        };
+        if !break_in_approvers(conn, Some(site)).await?.contains(&decider_id) {
+            if crate::permit::sync_check::rights_may_still_arrive(
+                conn,
+                &decider,
+                crate::rbac::permissions::PLAN_CONFIRM,
+            )
+            .await?
+            {
+                return wait(format!("the rights of decider {decider} are still arriving"));
+            }
+            return conflict(
+                WEEK_UNFREEZE_UNAUTHORISED,
+                format!(
+                    "week of {week_start}: baseline {baseline} unfrozen by someone who does not hold plan.confirm at \
+                     the site here"
+                ),
+            );
+        }
     }
     Ok(None)
 }
@@ -757,7 +776,6 @@ pub(crate) const WEEK_FROZEN_CLOSED_EVENT: &str = "planning.week_frozen_conflict
 /// its conflict is closed (`resolved_remote`, `break_in_received`) and audited. Still not
 /// applicable: the conflict stays open with the new reason. Returns how many applied.
 pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppResult<i64> {
-    use crate::sync::materialize::ApplyOutcome;
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -788,69 +806,196 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
         if matching_here(db, &target).await?.is_empty() && matching_waiting(db, &target).await?.is_empty() {
             continue;
         }
-        let Some(item) = crate::sync::materialize::load_inbox_row(db, inbox_id).await? else {
-            continue;
-        };
-        let tx = db.begin().await?;
-        crate::sync::capture::drain_capture_journal(&tx).await?;
-        let outcome = crate::sync::materialize::apply_inbox_row_in(&tx, &item).await;
-        crate::sync::row_codec::clear_ref_cache();
-        let still = match outcome {
-            Ok(ApplyOutcome::Applied | ApplyOutcome::Unchanged) => {
-                tx.execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "UPDATE sync_conflicts \
-                        SET status = 'resolved_remote', resolution_action = 'break_in_received', \
-                            resolution_note = 'Its break-in was received and judged valid: the commitment is applied with it.', \
-                            resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1, \
-                            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-                      WHERE id = ?",
-                    [conflict_id.into()],
-                ))
-                .await?;
-                tx.commit().await?;
-                applied += 1;
-                audit_closed(db, conflict_id, &sid).await;
-                continue;
-            }
-            // Waits for a row of its break-in: tried again at the next synchronisation.
-            Ok(ApplyOutcome::Deferred { .. }) => {
-                tx.rollback().await?;
-                continue;
-            }
-            Ok(ApplyOutcome::Conflict { code, message }) => format!("{code}: {message}"),
-            Err(e) => e.to_string(),
-        };
-        tx.rollback().await?;
-        // The break-in received for it does not let it in: the conflict stays open, with why.
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE sync_conflicts SET detail_message = ?, row_version = row_version + 1, \
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-              WHERE id = ? AND COALESCE(detail_message, '') <> ?",
-            [still.clone().into(), conflict_id.into(), still.into()],
-        ))
+        let closed = reapply_conflicted(
+            db,
+            inbox_id,
+            conflict_id,
+            "break_in_received",
+            "Its break-in was received and judged valid: the commitment is applied with it.",
+        )
         .await?;
+        if closed {
+            applied += 1;
+            audit_closed(
+                db,
+                WEEK_FROZEN_CLOSED_EVENT,
+                "Frozen-week conflict closed: the commitment's break-in was received",
+                "schedule_commitment",
+                "schedule_commitments",
+                conflict_id,
+                &sid,
+            )
+            .await;
+        }
     }
     Ok(applied)
 }
 
-async fn audit_closed(db: &DatabaseConnection, conflict_id: i64, commitment_sync_id: &str) {
-    let commitment = match local_id(db, "schedule_commitments", commitment_sync_id).await {
+/// Audit action of a `WEEK_UNFREEZE_UNDECIDED` conflict closed by its decision received later.
+pub(crate) const UNFREEZE_CLOSED_EVENT: &str = "planning.week_unfreeze_conflict.closed_by_decision";
+
+/// Weeks refused as `WEEK_UNFREEZE_UNDECIDED` for which an `unfrozen` decision has arrived since
+/// (here, or waiting in the inbox; review S4): each is applied again, judged again with every
+/// decision it needs. Applied: its conflict is closed (`resolved_remote`, `decision_received`) and
+/// audited, and its commitments follow at the next pass. Still not applicable: the conflict stays
+/// open with the new reason. Returns how many applied.
+pub(crate) async fn retry_unfreeze_conflicts(db: &DatabaseConnection) -> AppResult<i64> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT i.id AS inbox_id, c.id AS conflict_id, i.entity_sync_id AS sid, i.payload_json AS payload \
+               FROM sync_inbox i JOIN sync_conflicts c ON c.linked_inbox_id = i.id \
+              WHERE i.entity_type = 'weekly_schedules' AND i.apply_status = 'conflict' \
+                AND i.rejection_code = ? AND c.conflict_type = ? \
+                AND c.status IN ('new', 'triaged', 'escalated') \
+              ORDER BY i.id",
+            [WEEK_UNFREEZE_UNDECIDED.into(), WEEK_UNFREEZE_UNDECIDED.into()],
+        ))
+        .await?;
+    let week_key = key("weekly_schedule_id");
+    let mut applied = 0;
+    for row in rows {
+        let inbox_id: i64 = row.try_get("", "inbox_id").map_err(sync_err)?;
+        let conflict_id: i64 = row.try_get("", "conflict_id").map_err(sync_err)?;
+        let sid: String = row.try_get("", "sid").map_err(sync_err)?;
+        let payload: String = row.try_get("", "payload").map_err(sync_err)?;
+        let Ok(Value::Object(received)) = serde_json::from_str::<Value>(&payload) else {
+            continue;
+        };
+        // An `unfrozen` decision of this week, here or waiting: worth judging the week again.
+        let here = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS d FROM weekly_schedule_events e JOIN weekly_schedules w ON w.id = e.weekly_schedule_id \
+                  WHERE e.action = 'unfrozen' AND (w.entity_sync_id = ? \
+                     OR (w.week_start = ? AND w.entity_id = (SELECT id FROM org_nodes WHERE entity_sync_id = ?))) \
+                  LIMIT 1",
+                [
+                    sid.clone().into(),
+                    field(&received, "week_start").map(str::to_string).into(),
+                    field(&received, &key("entity_id")).map(str::to_string).into(),
+                ],
+            ))
+            .await?
+            .is_some();
+        let waiting = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT 1 AS d FROM sync_inbox WHERE entity_type = 'weekly_schedule_events' AND {WAITING} \
+                       AND json_extract(payload_json, '$.{week_key}') = ? \
+                       AND json_extract(payload_json, '$.action') = 'unfrozen' LIMIT 1"
+                ),
+                [sid.clone().into()],
+            ))
+            .await?
+            .is_some();
+        if !here && !waiting {
+            continue;
+        }
+        let closed = reapply_conflicted(
+            db,
+            inbox_id,
+            conflict_id,
+            "decision_received",
+            "Its unfreeze decision was received and judged valid: the reopened week is applied.",
+        )
+        .await?;
+        if closed {
+            applied += 1;
+            audit_closed(
+                db,
+                UNFREEZE_CLOSED_EVENT,
+                "Week unfreeze conflict closed: its unfreeze decision was received",
+                "weekly_schedule",
+                "weekly_schedules",
+                conflict_id,
+                &sid,
+            )
+            .await;
+        }
+    }
+    Ok(applied)
+}
+
+/// Applies a conflicted inbox row again through every check, in one transaction. Applied: its
+/// conflict is closed (`resolved_remote`, `action`, `note`) and `true` is returned. Waiting: left
+/// as it was, tried again at the next synchronisation. Refused again: the conflict stays open with
+/// the new reason.
+async fn reapply_conflicted(
+    db: &DatabaseConnection,
+    inbox_id: i64,
+    conflict_id: i64,
+    action: &str,
+    note: &str,
+) -> AppResult<bool> {
+    use crate::sync::materialize::ApplyOutcome;
+    let Some(item) = crate::sync::materialize::load_inbox_row(db, inbox_id).await? else {
+        return Ok(false);
+    };
+    let tx = db.begin().await?;
+    crate::sync::capture::drain_capture_journal(&tx).await?;
+    let outcome = crate::sync::materialize::apply_inbox_row_in(&tx, &item).await;
+    crate::sync::row_codec::clear_ref_cache();
+    let still = match outcome {
+        Ok(ApplyOutcome::Applied | ApplyOutcome::Unchanged) => {
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE sync_conflicts \
+                    SET status = 'resolved_remote', resolution_action = ?, resolution_note = ?, \
+                        resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1, \
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+                  WHERE id = ?",
+                [action.into(), note.into(), conflict_id.into()],
+            ))
+            .await?;
+            tx.commit().await?;
+            return Ok(true);
+        }
+        Ok(ApplyOutcome::Deferred { .. }) => {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        Ok(ApplyOutcome::Conflict { code, message }) => format!("{code}: {message}"),
+        Err(e) => e.to_string(),
+    };
+    tx.rollback().await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_conflicts SET detail_message = ?, row_version = row_version + 1, \
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+          WHERE id = ? AND COALESCE(detail_message, '') <> ?",
+        [still.clone().into(), conflict_id.into(), still.into()],
+    ))
+    .await?;
+    Ok(false)
+}
+
+/// Audits a planning conflict closed by the row it waited for (target: the row, by its local id;
+/// sent by sync with its own sync id).
+#[allow(clippy::too_many_arguments)]
+async fn audit_closed(
+    db: &DatabaseConnection,
+    event: &str,
+    summary: &str,
+    target_type: &str,
+    table: &str,
+    conflict_id: i64,
+    sync_id: &str,
+) {
+    let target = match local_id(db, table, sync_id).await {
         Ok(Some(id)) => id.to_string(),
         _ => return,
     };
     crate::audit::emit(
         db,
         crate::audit::AuditEvent {
-            event_type: WEEK_FROZEN_CLOSED_EVENT,
+            event_type: event,
             actor_id: None,
-            entity_type: Some("schedule_commitment"),
-            entity_id: Some(&commitment),
-            summary: "Frozen-week conflict closed: the commitment's break-in was received",
-            detail_json: Some(
-                json!({ "sync_conflict_id": conflict_id, "commitment_sync_id": commitment_sync_id }).to_string(),
-            ),
+            entity_type: Some(target_type),
+            entity_id: Some(&target),
+            summary,
+            detail_json: Some(json!({ "sync_conflict_id": conflict_id, "entity_sync_id": sync_id }).to_string()),
             ..Default::default()
         },
     )

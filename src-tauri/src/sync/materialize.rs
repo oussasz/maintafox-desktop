@@ -233,6 +233,9 @@ async fn materialize_inbox_run(
     total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
     // Commitments refused for entering a frozen week without their break-in are applied with it
     // once it has arrived, their conflict closed (`planning::sync_check`).
+    // Weeks refused as reopened without their decision are judged again once it arrived, before
+    // the commitments that wait for them (`planning::sync_check`, review S4).
+    total.applied += crate::planning::sync_check::retry_unfreeze_conflicts(db).await?;
     total.applied += crate::planning::sync_check::retry_frozen_week_conflicts(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.

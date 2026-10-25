@@ -1027,3 +1027,106 @@ async fn a_break_in_refused_on_a_pc_never_lets_its_commitment_in() {
     let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
     assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
 }
+
+/// The week of `r` as it travels, and an `unfrozen` decision of it for baseline `baseline`.
+async fn week_payload(r: &Received) -> (String, Payload) {
+    let week_sid: String = r
+        .db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = {}", r.site),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get("", "entity_sync_id")
+        .expect("sid");
+    let p = payload(&r.db, "weekly_schedules", &week_sid).await;
+    (week_sid, p)
+}
+
+fn unfrozen_event(week_sid: &str, baseline: i64, requester: &str, decider: &str) -> Payload {
+    let mut p = Payload::new();
+    p.insert("weekly_schedule_sync_id".into(), week_sid.into());
+    p.insert("action".into(), "unfrozen".into());
+    p.insert("actor_sync_id".into(), requester.into());
+    p.insert("approver_sync_id".into(), decider.into());
+    p.insert("reason".into(), "Shutdown moved".into());
+    p.insert("baseline_no".into(), baseline.into());
+    p.insert("created_at".into(), "2026-05-04T10:00:00Z".into());
+    p.insert("row_version".into(), 1.into());
+    p
+}
+
+#[tokio::test]
+async fn a_week_reopened_at_a_later_baseline_needs_every_unfreeze_decision() {
+    let r = received_setup("FE14").await;
+    let (week_sid, mut reopened) = week_payload(&r).await;
+    // Frozen here at baseline 1; elsewhere unfrozen (1), frozen again (2) and unfrozen again (2).
+    reopened.insert("status".into(), "approved".into());
+    reopened.insert("baseline_no".into(), 2.into());
+    reopened.insert("frozen_at".into(), Value::Null);
+    let requester = signing_approver(&r.db, 190, "FE14-REQ").await;
+    let requester_sid = sync_id(&r.db, "user_accounts", requester).await;
+    let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
+
+    // Only the decision of baseline 2: the reopening of baseline 1 is not judged → refused.
+    inbox(&r.db, "weekly_schedule_events", "fe14-ev2", &unfrozen_event(&week_sid, 2, &requester_sid, &approver_sid)).await;
+    let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened.clone()).await;
+    assert_eq!(conflict_code(&outcome), Some("WEEK_UNFREEZE_UNDECIDED"), "{outcome:?}");
+
+    // Baseline 1 decided by its own requester: refused.
+    inbox(&r.db, "weekly_schedule_events", "fe14-ev1-self", &unfrozen_event(&week_sid, 1, &requester_sid, &requester_sid)).await;
+    let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened.clone()).await;
+    assert_eq!(conflict_code(&outcome), Some("WEEK_UNFREEZE_SAME_PERSON"), "{outcome:?}");
+    exec_sql(&r.db, "DELETE FROM sync_inbox WHERE entity_sync_id = 'fe14-ev1-self'").await;
+
+    // Both decided by a holder at the site who is not the requester: applied.
+    inbox(&r.db, "weekly_schedule_events", "fe14-ev1", &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid)).await;
+    let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_reopened_week_conflict_closes_when_its_decision_arrives() {
+    let r = received_setup("FE15").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let (week_sid, mut reopened) = week_payload(&r).await;
+    reopened.insert("status".into(), "approved".into());
+    reopened.insert("frozen_at".into(), Value::Null);
+    inbox(&r.db, "weekly_schedules", &week_sid, &reopened).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("first pass");
+    let open = "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'WEEK_UNFREEZE_UNDECIDED' \
+                AND status IN ('new', 'triaged', 'escalated')";
+    assert_eq!(scalar(&r.db, open).await, 1);
+
+    let requester = signing_approver(&r.db, 191, "FE15-REQ").await;
+    let requester_sid = sync_id(&r.db, "user_accounts", requester).await;
+    let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    inbox(&r.db, "weekly_schedule_events", "fe15-ev1", &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid)).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("second pass");
+    assert_eq!(scalar(&r.db, open).await, 0, "closed by its decision");
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.week_unfreeze_conflict.closed_by_decision'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!("SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {} AND status = 'approved'", r.site)
+        )
+        .await,
+        1
+    );
+}
