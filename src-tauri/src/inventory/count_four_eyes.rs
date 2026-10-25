@@ -82,7 +82,10 @@
 //! count, article, location and variance). One that is not — a forged or corrupted record — is
 //! never applied: the line naming it is a `COUNT_APPROVAL_RECORD_INVALID` conflict for a person,
 //! whatever their order of arrival, and the adjustment stays held with it (a reversal of it is
-//! refused with it, so it never moves the stock on its own).
+//! refused with it, so it never moves the stock on its own) until that conflict is settled: a
+//! later version of the line judged clean here, or "take theirs" once the adjustment is the line's
+//! own. A reversal, even of a count whose adjustment is applied here, is applied only with the line
+//! version naming it and only if it undoes that line's adjustment.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -877,6 +880,8 @@ struct NamingLine {
     payload: serde_json::Map<String, serde_json::Value>,
     /// The inbox batch it came with: the line is judged in its own context (snapshot or exchange).
     server_batch_id: String,
+    /// Its inbox status: `pending`, `deferred`, or `conflict` (refused for a person).
+    apply_status: String,
 }
 
 /// The latest received version (waiting, or refused for a person) of the count line naming the
@@ -890,7 +895,7 @@ async fn waiting_line_naming(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT entity_sync_id, payload_json, server_batch_id FROM sync_inbox
+                "SELECT entity_sync_id, payload_json, server_batch_id, apply_status FROM sync_inbox
                  WHERE entity_type = ? AND apply_status IN ('pending', 'deferred', 'conflict')
                    AND operation NOT IN ('delete', 'archive')
                    AND json_extract(payload_json, '$.{key}') = ?
@@ -908,6 +913,7 @@ async fn waiting_line_naming(
             sync_id: row.try_get("", "entity_sync_id")?,
             payload: map,
             server_batch_id: row.try_get("", "server_batch_id")?,
+            apply_status: row.try_get("", "apply_status")?,
         })),
         _ => Ok(None),
     }
@@ -942,6 +948,140 @@ async fn set_aside_line_naming(
         return Ok(None);
     };
     Ok(Some((row.try_get("", "entity_sync_id")?, row.try_get("", "code")?)))
+}
+
+/// Whether count line `line_sync_id` has an open `COUNT_APPROVAL_RECORD_INVALID` conflict.
+async fn invalid_conflict_open(conn: &impl ConnectionTrait, line_sync_id: &str) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS o FROM sync_conflicts WHERE conflict_type = ? AND entity_type = ? AND entity_sync_id = ?
+               AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed') LIMIT 1",
+            [SYNC_APPROVAL_RECORD_INVALID.into(), LINES.into(), line_sync_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// "Take theirs" on a received count line (`sync::conflicts::take_remote_version`), before that
+/// version is written: the count movement it names as posted, held with it in the inbox
+/// ([`inbound_count_movement_hold`]), is applied first — the line refers to it — through every
+/// check, the line version taken counted as waiting (no longer refused): the movement passes only
+/// if it is that line's own and the line passes four-eyes here; its reversal comes with it
+/// ([`count_movement_group`]). Otherwise nothing is taken (the caller rolls back): the stock
+/// never moves by a movement that is not the line's.
+pub(crate) async fn apply_held_movement_of_taken_line(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    linked_inbox_id: Option<i64>,
+    payload_json: &str,
+) -> AppResult<()> {
+    use crate::sync::materialize::ApplyOutcome;
+    if entity_type != LINES {
+        return Ok(());
+    }
+    let Ok(serde_json::Value::Object(line)) = serde_json::from_str::<serde_json::Value>(payload_json) else {
+        return Ok(());
+    };
+    let Some(posted) = field(&line, "posted_transaction_sync_id") else {
+        return Ok(());
+    };
+    if crate::permit::sync_check::local_id(conn, "inventory_transactions", posted)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let Some((movement_inbox_id, _)) = waiting_movement(conn, posted).await? else {
+        return Ok(());
+    };
+    if let Some(inbox_id) = linked_inbox_id {
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE sync_inbox SET apply_status = 'pending' WHERE id = ? AND apply_status = 'conflict'",
+            [inbox_id.into()],
+        ))
+        .await?;
+    }
+    let Some(item) = crate::sync::materialize::load_inbox_row(conn, movement_inbox_id).await? else {
+        return Ok(());
+    };
+    match Box::pin(crate::sync::materialize::apply_inbox_row_in(conn, &item)).await? {
+        ApplyOutcome::Applied | ApplyOutcome::Unchanged => Ok(()),
+        ApplyOutcome::Deferred { message, .. } | ApplyOutcome::Conflict { message, .. } => {
+            Err(AppError::ValidationFailed(vec![format!(
+                "GATE_SYNC_SERVER_VERSION_NOT_APPLIED: The server version cannot be applied yet: the count movement \
+                 {posted} it names is held: {message}"
+            )]))
+        }
+    }
+}
+
+/// Why a received reversal of a count whose adjustment is applied here is not the reversal of one
+/// of that count's adjustments held here (`None`: it is): its quantity undoes one of them (within
+/// [`QUANTITY_AGREEMENT`]) and that count has fewer reversals here than adjustments (a count is
+/// reversed once per posting: a second reversal of one posting would move the stock again).
+async fn reversal_of_adjustment_here(
+    conn: &impl ConnectionTrait,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<String>> {
+    let Some(undone) = received.get("quantity").and_then(serde_json::Value::as_f64) else {
+        return Ok(Some("its quantity is not given".to_string()));
+    };
+    let local = |table: &'static str, key: &'static str| async move {
+        match field(received, key) {
+            Some(sync_id) => crate::permit::sync_check::local_id(conn, table, sync_id).await,
+            None => Ok(None),
+        }
+    };
+    let (Some(session), Some(article), Some(location)) = (
+        local("inventory_count_sessions", "source_sync_id").await?,
+        local("articles", "article_sync_id").await?,
+        local("stock_locations", "location_sync_id").await?,
+    ) else {
+        return Ok(Some("its count is not held here".to_string()));
+    };
+    let of_count = "FROM inventory_transactions WHERE source_type = 'COUNT_SESSION' AND source_id = ?
+                      AND article_id = ? AND location_id = ?";
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT (SELECT COUNT(*) {of_count} AND movement_type = 'COUNT_ADJUST') AS adjusted,
+                        (SELECT COUNT(*) {of_count} AND movement_type = 'COUNT_REVERSAL') AS reversed,
+                        (SELECT COUNT(*) {of_count} AND movement_type = 'COUNT_ADJUST'
+                            AND ABS(quantity + ?) <= ?) AS undone"
+            ),
+            [
+                session.into(),
+                article.into(),
+                location.into(),
+                session.into(),
+                article.into(),
+                location.into(),
+                session.into(),
+                article.into(),
+                location.into(),
+                undone.into(),
+                QUANTITY_AGREEMENT.into(),
+            ],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("count movements: no row".to_string()))?;
+    let (adjusted, reversed, matching): (i64, i64, i64) = (
+        row.try_get("", "adjusted")?,
+        row.try_get("", "reversed")?,
+        row.try_get("", "undone")?,
+    );
+    Ok(if matching == 0 {
+        Some(format!(
+            "its quantity ({undone}) undoes no adjustment of this count held here"
+        ))
+    } else if reversed >= adjusted {
+        Some("this count is already reversed here".to_string())
+    } else {
+        None
+    })
 }
 
 /// Whether this PC holds a `COUNT_ADJUST` of the received movement's count session, article and
@@ -1063,15 +1203,7 @@ async fn reversal_check(
             "count line {entity_sync_id}: its reversal {reversal} has not arrived yet"
         ))));
     };
-    let same = |movement_key: &str, line_key: &str| {
-        field(line, line_key).is_some() && field(&movement, movement_key) == field(line, line_key)
-    };
-    let reverses_this_count = field(&movement, "movement_type") == Some("COUNT_REVERSAL")
-        && field(&movement, "source_type") == Some("COUNT_SESSION")
-        && same("source_sync_id", "session_sync_id")
-        && same("article_sync_id", "article_sync_id")
-        && same("location_sync_id", "location_sync_id");
-    if !reverses_this_count {
+    if !reverses_count(&movement, line) {
         return conflict(
             SYNC_APPROVAL_RECORD_INVALID,
             format!(
@@ -1085,19 +1217,46 @@ async fn reversal_check(
             "count line {entity_sync_id}: the adjustment {posted} its reversal undoes has not arrived yet"
         ))));
     };
+    match undo_mismatch(&movement, &adjustment) {
+        None => Ok(None),
+        Some(why) => conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!("count line {entity_sync_id}: its reversal {reversal} does not undo its posted adjustment {posted}: {why}"),
+        ),
+    }
+}
+
+/// Whether `movement` is a reversal of `line`'s count: a `COUNT_REVERSAL` of a count session, of
+/// the line's session, article and location.
+fn reverses_count(
+    movement: &serde_json::Map<String, serde_json::Value>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let same = |movement_key: &str, line_key: &str| {
+        field(line, line_key).is_some() && field(movement, movement_key) == field(line, line_key)
+    };
+    field(movement, "movement_type") == Some("COUNT_REVERSAL")
+        && field(movement, "source_type") == Some("COUNT_SESSION")
+        && same("source_sync_id", "session_sync_id")
+        && same("article_sync_id", "article_sync_id")
+        && same("location_sync_id", "location_sync_id")
+}
+
+/// Why a reversal does not undo `adjustment` (`None`: its quantity is the opposite of the
+/// adjustment's, within [`QUANTITY_AGREEMENT`]).
+fn undo_mismatch(
+    reversal: &serde_json::Map<String, serde_json::Value>,
+    adjustment: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
     let quantity =
         |m: &serde_json::Map<String, serde_json::Value>| m.get("quantity").and_then(serde_json::Value::as_f64);
-    match (quantity(&movement), quantity(&adjustment)) {
-        (Some(undone), Some(adjusted)) if (undone + adjusted).abs() <= QUANTITY_AGREEMENT => Ok(None),
-        (undone, adjusted) => conflict(
-            SYNC_APPROVAL_RECORD_INVALID,
-            format!(
-                "count line {entity_sync_id}: its reversal {reversal} ({}) does not undo its posted adjustment {posted} \
-                 ({})",
-                undone.map_or_else(|| "?".to_string(), |q| q.to_string()),
-                adjusted.map_or_else(|| "?".to_string(), |q| q.to_string()),
-            ),
-        ),
+    match (quantity(reversal), quantity(adjustment)) {
+        (Some(undone), Some(adjusted)) if (undone + adjusted).abs() <= QUANTITY_AGREEMENT => None,
+        (undone, adjusted) => Some(format!(
+            "its quantity ({}) is not the opposite of the adjustment's ({})",
+            undone.map_or_else(|| "?".to_string(), |q| q.to_string()),
+            adjusted.map_or_else(|| "?".to_string(), |q| q.to_string()),
+        )),
     }
 }
 
@@ -1166,13 +1325,23 @@ pub(crate) async fn inbound_count_movement_hold(
     {
         return Ok(None);
     }
-    // The count's adjustment is already applied here (under this id or another: the same count
-    // posted on two PCs, `inventory::count_sync`): its line was judged when it arrived; the
-    // movements of that count go on as before.
-    if count_adjusted_here(conn, received).await? {
-        return Ok(None);
-    }
     let adjust = kind == "COUNT_ADJUST";
+    // The count's adjustment is already applied here (under this id or another: the same count
+    // posted on two PCs, `inventory::count_sync`): its line was judged when it arrived; another
+    // adjustment of it goes on as before (applied, listed "posted twice"). A reversal of it is
+    // applied only if it undoes an adjustment of that count held here, not reversed yet (review of
+    // 2faa97d5, N1): the version of its line naming it may never come here (a line left in
+    // conflict on the PC whose posting lost), so it is matched against the ledger as it is held.
+    if count_adjusted_here(conn, received).await? {
+        if adjust {
+            return Ok(None);
+        }
+        return Ok(reversal_of_adjustment_here(conn, received).await?.map(|why| {
+            InboundVerdict::Defer(format!(
+                "count reversal {entity_sync_id} is held ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
+            ))
+        }));
+    }
     let key = if adjust {
         "posted_transaction_sync_id"
     } else {
@@ -1182,6 +1351,7 @@ pub(crate) async fn inbound_count_movement_hold(
         sync_id: line_sync_id,
         payload: line,
         server_batch_id,
+        apply_status,
     }) = waiting_line_naming(conn, key, entity_sync_id).await?
     else {
         // The version of its line naming it was set aside by a person's decision on that line's
@@ -1201,20 +1371,43 @@ pub(crate) async fn inbound_count_movement_hold(
              with it, four-eyes)"
         ))));
     };
+    // That version refused as a record contradicting itself (review of 2faa97d5, S1): the movement
+    // waits for that conflict to be settled — a corrected version of the line from the PC where the
+    // count is applied, judged here, or "take theirs" ([`apply_held_movement_of_taken_line`]) — never
+    // released while the line stays refused, its conflict saying the stock did not move.
+    if apply_status == "conflict" && invalid_conflict_open(conn, &line_sync_id).await? {
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "count movement {entity_sync_id} waits for the conflict of its count line {line_sync_id} \
+             ({SYNC_APPROVAL_RECORD_INVALID}) to be settled (held with it)"
+        ))));
+    }
+    let line_here = crate::permit::sync_check::local_wire(conn, LINES, &line_sync_id).await?;
     if !adjust {
         // A reversal undoes the adjustment named by its line: applied once that one is here (with
-        // it, in its group). A line naming no adjustment for it to undo is refused when it is
-        // judged (`reversal_check`): the reversal is never applied alone.
-        let held = match field(&line, "posted_transaction_sync_id") {
-            Some(posted) => crate::permit::sync_check::local_id(conn, "inventory_transactions", posted)
-                .await?
-                .is_none(),
-            None => true,
+        // it, in its group), and only if it is the reversal of that line's count undoing that
+        // adjustment (review of 2faa97d5, N1: an adjustment applied here does not release any
+        // reversal of its count). A line naming no adjustment for it to undo, or another reversal,
+        // is refused when it is judged (`reversal_check`): the reversal is never applied alone.
+        let adjustment = match field(&line, "posted_transaction_sync_id") {
+            Some(posted) => crate::permit::sync_check::local_wire(conn, "inventory_transactions", posted).await?,
+            None => None,
         };
-        return Ok(held.then(|| {
-            InboundVerdict::Defer(format!(
+        let Some(adjustment) = adjustment else {
+            return Ok(Some(InboundVerdict::Defer(format!(
                 "count reversal {entity_sync_id}: the adjustment it undoes is not applied here (held with count line \
                  {line_sync_id})"
+            ))));
+        };
+        let line = crate::permit::sync_check::overlay(line_here.as_ref(), &line);
+        let why = if reverses_count(received, &line) {
+            undo_mismatch(received, &adjustment)
+        } else {
+            Some("it is not the reversal of this count (session, article and location)".to_string())
+        };
+        return Ok(why.map(|why| {
+            InboundVerdict::Defer(format!(
+                "count reversal {entity_sync_id} is held with its count line {line_sync_id} \
+                 ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
             ))
         }));
     }
@@ -1225,7 +1418,6 @@ pub(crate) async fn inbound_count_movement_hold(
     // judged — on the same pass (movements go before the lines that name them) or when it arrives
     // or is tried again; a line version naming it cannot be applied here before it (it refers to
     // it), so this hold never has to record it.
-    let line_here = crate::permit::sync_check::local_wire(conn, LINES, &line_sync_id).await?;
     if let Some(why) = adjustment_mismatch(received, &crate::permit::sync_check::overlay(line_here.as_ref(), &line)) {
         return Ok(Some(InboundVerdict::Defer(format!(
             "count movement {entity_sync_id} is held with its count line {line_sync_id} \
@@ -1472,7 +1664,9 @@ pub(crate) async fn after_count_conflict_recorded(
 
 /// After a received count line was applied (`sync::materialize`): its `COUNT_SELF_APPROVAL`
 /// conflicts of older versions close (the second approval or the reversal arrived and passed); a
-/// reversed count tells its counter to count again.
+/// reversed count tells its counter to count again. Its `COUNT_APPROVAL_RECORD_INVALID` conflicts
+/// of older versions close too: a later version passed every check here (with its movement, held
+/// while the older one was refused).
 pub(crate) async fn after_count_line_applied(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -1482,6 +1676,15 @@ pub(crate) async fn after_count_line_applied(
     if entity_type != LINES {
         return Ok(());
     }
+    crate::sync::code_clash::close_conflicts_superseded_by(
+        conn,
+        SYNC_APPROVAL_RECORD_INVALID,
+        LINES,
+        entity_sync_id,
+        applied_row_version,
+        "A later version of the count line passed its checks here and was applied.",
+    )
+    .await?;
     let open = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

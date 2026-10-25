@@ -771,7 +771,16 @@ async fn concurrency_check(
         return Ok(Some(ApplyOutcome::Unchanged));
     }
     if def.conflict_policy == ConflictPolicy::AppendOnly {
-        // History rows are only inserted; the materializer skips rows that already exist.
+        // History rows are only inserted; the materializer skips rows that already exist. A version
+        // older than the one applied here is never written over it either: the same count posted
+        // on two PCs adopts the received content of a row it holds (`inventory::count_sync`), and
+        // an older version still waiting in the inbox (a count movement held, then released in a
+        // corrected version) must not replace the newer one.
+        if let Some((synced_version, _)) = synced_row_version(conn, &item.entity_type, &item.entity_sync_id).await? {
+            if item.row_version < synced_version {
+                return Ok(Some(ApplyOutcome::Unchanged));
+            }
+        }
         return Ok(None);
     }
     if let Some(local) = unsent.last() {
