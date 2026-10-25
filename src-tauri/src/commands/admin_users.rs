@@ -818,8 +818,9 @@ pub(crate) async fn create_user_impl(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
                  is_active, is_admin, force_password_change, password_changed_at, password_changed_by_id, \
-                 status_changed_by_id, failed_login_attempts, created_at, updated_at, row_version) \
-             VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, 0, ?, ?, 1)",
+                 password_set_at, password_set_by_id, status_changed_by_id, failed_login_attempts, created_at, \
+                 updated_at, row_version) \
+             VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)",
         // A password set here is dated and names its creator, who also enabled the account (the
         // other PCs check they could, `sync::credential_check`); no password (SSO): neither.
         vec![
@@ -831,6 +832,14 @@ pub(crate) async fn create_user_impl(
                 .map_or(sea_orm::Value::String(None), |h| h.clone().into()),
             input.personnel_id.into(),
             i32::from(force_pw).into(),
+            password_hash
+                .as_ref()
+                .map_or(sea_orm::Value::String(None), |_| now.clone().into()),
+            password_hash
+                .as_ref()
+                .map_or(sea_orm::Value::BigInt(None), |_| i64::from(caller.user_id).into()),
+            // The creator set it: who set it, and when (`password_set_*`, kept by the account's
+            // own later changes).
             password_hash
                 .as_ref()
                 .map_or(sea_orm::Value::String(None), |_| now.clone().into()),
@@ -1154,15 +1163,8 @@ pub(crate) async fn update_user_impl(
         sets.push("force_password_change = ?");
         values.push(i32::from(fpc).into());
     }
-    if let Some(active) = input.is_active {
-        note_change(
-            "is_active",
-            serde_json::json!(old_row.try_get::<i32>("", "is_active")? == 1),
-            serde_json::json!(active),
-        );
-        sets.push("is_active = ?");
-        values.push(i32::from(active).into());
-    }
+    // No `is_active` here: refused above (`GATE_ADMIN_USE_DISABLE`); enabling and disabling are
+    // written only by `set_user_active_impl`, which names who did it (`status_changed_by_id`).
 
     if sets.is_empty() || diff.is_empty() {
         return Ok(());
@@ -3164,15 +3166,19 @@ async fn admin_set_user_password_impl(
              force_password_change = 1, \
              password_changed_at = ?, \
              password_changed_by_id = ?, \
+             password_set_at = ?, \
+             password_set_by_id = ?, \
              failed_login_attempts = 0, \
              locked_until = NULL, \
              consecutive_lockouts = 0, \
              updated_at = ? \
          WHERE id = ?",
-        // The administrator who reset it is named: the other PCs check they could
-        // (`sync::credential_check`).
+        // The administrator who reset it is named, as its author and as who set it (kept by the
+        // account's own later changes): the other PCs check they could (`sync::credential_check`).
         [
             password_hash.into(),
+            now.clone().into(),
+            i64::from(admin.user_id).into(),
             now.clone().into(),
             i64::from(admin.user_id).into(),
             now.into(),

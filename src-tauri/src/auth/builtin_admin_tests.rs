@@ -144,7 +144,7 @@ async fn first_start_creates_the_first_administrator_on_a_fresh_release_pc() {
     assert_eq!(
         scalar(
             &db,
-            "SELECT COUNT(*) FROM user_accounts WHERE username = 'chef' AND password_changed_by_id = id",
+            "SELECT COUNT(*) FROM user_accounts WHERE username = 'chef' AND password_changed_by_id = id AND password_set_by_id = id AND password_set_at IS NOT NULL",
             vec![]
         )
         .await,

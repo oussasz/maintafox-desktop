@@ -520,7 +520,8 @@ async fn redeeming_creates_one_lasting_administrator_and_spends_the_code() {
             &format!(
                 "SELECT COUNT(*) AS n FROM user_accounts WHERE id = {new_id} AND is_admin = 0 \
                  AND is_active = 1 AND force_password_change = 0 AND password_changed_at IS NOT NULL \
-                 AND password_changed_by_id = id AND display_name = 'Responsable Maintenance'"
+                 AND password_changed_by_id = id AND password_set_by_id = id AND password_set_at IS NOT NULL \
+                 AND display_name = 'Responsable Maintenance'"
             )
         )
         .await,

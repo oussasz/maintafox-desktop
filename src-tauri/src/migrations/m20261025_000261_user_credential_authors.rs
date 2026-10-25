@@ -4,11 +4,17 @@
 //! PC checks that the person who made it could (`sync::credential_check`), so the row names them:
 //! - `password_changed_by_id`: who wrote the current password (the account itself for a change of
 //!   one's own password, the administrator for a reset, the creator for a new account);
+//! - `password_set_by_id` / `password_set_at`: who last set the password other than the account
+//!   itself, and when (an administrator's reset, the creator; the account itself only for the first
+//!   administrator and a vendor recovery account, which are their own root). A change of one's own
+//!   password keeps them: it is only as trusted as the password it replaces (a temporary password
+//!   an unauthorised administrator set stays refused once its holder changes it);
 //! - `status_changed_by_id`: who last enabled, disabled, restored or deleted the account.
 //!
-//! Both are references to `user_accounts` (sent as `password_changed_by_sync_id` and
-//! `status_changed_by_sync_id`; soft in `sync::row_spec`: a change of one's own password names the
-//! row itself). Existing rows keep NULL ("not recorded"): no author is guessed from the ledgers.
+//! The authors are references to `user_accounts` (sent as `password_changed_by_sync_id`,
+//! `password_set_by_sync_id` and `status_changed_by_sync_id`; soft in `sync::row_spec`: a change of
+//! one's own password names the row itself). Existing rows keep NULL ("not recorded"): no author is
+//! guessed from the ledgers.
 //! Already-present columns are left alone (a re-run changes nothing).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
@@ -36,6 +42,8 @@ async fn has_column(conn: &impl ConnectionTrait, table: &str, column: &str) -> R
 const COLUMNS: &[(&str, &str)] = &[
     ("password_changed_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
     ("status_changed_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
+    ("password_set_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
+    ("password_set_at", "TEXT NULL"),
 ];
 
 #[async_trait::async_trait]
@@ -76,7 +84,12 @@ mod tests {
             before
         );
         assert_eq!(scalar_i64(&db, hashes, vec![]).await, hashed, "passwords kept");
-        for column in ["password_changed_by_id", "status_changed_by_id"] {
+        for column in [
+            "password_changed_by_id",
+            "status_changed_by_id",
+            "password_set_by_id",
+            "password_set_at",
+        ] {
             assert_eq!(
                 scalar_i64(
                     &db,
@@ -100,6 +113,7 @@ mod tests {
         for (column, key) in [
             ("password_changed_by_id", "password_changed_by_sync_id"),
             ("status_changed_by_id", "status_changed_by_sync_id"),
+            ("password_set_by_id", "password_set_by_sync_id"),
         ] {
             let found = layout
                 .columns
@@ -120,5 +134,11 @@ mod tests {
                 other => panic!("{column} must travel as an account link, got {other:?}"),
             }
         }
+        let set_at = layout
+            .columns
+            .iter()
+            .find(|c| c.name == "password_set_at")
+            .expect("password_set_at in the layout");
+        assert!(matches!(&set_at.role, Role::Value { key } if key == "password_set_at"));
     }
 }

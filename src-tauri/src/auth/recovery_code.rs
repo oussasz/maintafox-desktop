@@ -716,10 +716,12 @@ async fn write_recovery(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?
         .try_get("", "id")?;
-    // The person chose the password: the account is its author (`sync::credential_check`).
+    // The person chose the password: the account is its author and its own root (who set it,
+    // `password_set_*`; `sync::credential_check`).
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET password_changed_by_id = id WHERE id = ?",
+        "UPDATE user_accounts SET password_changed_by_id = id, password_set_by_id = id, \
+         password_set_at = password_changed_at WHERE id = ?",
         [user_id.into()],
     ))
     .await?;

@@ -298,6 +298,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             &[
                 soft("personnel_id", "personnel"),
                 soft("password_changed_by_id", USER),
+                soft("password_set_by_id", USER),
                 soft("status_changed_by_id", USER),
             ],
         )
