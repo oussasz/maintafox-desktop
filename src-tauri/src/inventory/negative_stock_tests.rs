@@ -7349,14 +7349,92 @@ async fn a_reversal_named_by_a_new_line_at_another_location_is_refused() {
     assert_eq!(on_hand_milli(&b, pair_b.0, elsewhere_b).await, 10_000);
 }
 
-/// Review of 07d895a9 (S2): the same count posted on A (−3) and, offline, on B (−4) then reversed
-/// on B (+4, from B's own posting). B's posting lost; its reversal (the count's own id) reaches A,
-/// where no line names it and it undoes no posting held: it is not applied, and it is a visible
-/// COUNT_APPROVAL_RECORD_INVALID conflict on A rather than a silent wait. Applying it would put A
-/// at 11 where A counted 7 (and the PC that lost is itself off by its adoption after its reversal,
-/// a separate issue): a person recounts.
+/// The same approved count posted on B with a counted quantity of 6 (−4) where A counts 7 (−3).
+async fn divergent_on_b(b: &DatabaseConnection, session_sync_id: &str) {
+    exec(
+        b,
+        "UPDATE inventory_count_lines SET counted_qty = 6, variance_qty = -4
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
+        vec![session_sync_id.into()],
+    )
+    .await;
+}
+
+/// The count reversal `reversal` is in `db`'s outbox, never sent, with this quantity.
+async fn reversal_waits_in_outbox(db: &DatabaseConnection, reversal: &str, quantity: f64) {
+    let payload = text_of(
+        db,
+        "SELECT payload_json FROM sync_outbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
+           AND status = 'pending'",
+        vec![reversal.into()],
+    )
+    .await;
+    let payload: serde_json::Value = serde_json::from_str(&payload).expect("payload");
+    assert_eq!(
+        payload.get("quantity").and_then(serde_json::Value::as_f64),
+        Some(quantity)
+    );
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?
+               AND status <> 'pending'",
+            vec![reversal.into()],
+        )
+        .await,
+        0,
+        "never sent"
+    );
+}
+
+/// Both PCs back at 10 with one adjustment and one reversal undoing the posting kept (`kept`), and
+/// no count movement refused for a person on A.
+async fn converged_back_to_ten(
+    (a, b): (&DatabaseConnection, &DatabaseConnection),
+    (pair_a, pair_b): ((i64, i64), (i64, i64)),
+    session_sync_id: &str,
+    reversal: &str,
+    kept: f64,
+) {
+    for (pc, db, (art, loc)) in [("A", a, pair_a), ("B", b, pair_b)] {
+        assert_eq!(on_hand_milli(db, art, loc).await, 10_000, "{pc}: back to 10");
+        assert_eq!(
+            count_movements(db, session_sync_id, "COUNT_ADJUST").await,
+            (1, 1),
+            "{pc}: one adjustment"
+        );
+        assert_eq!(
+            count_movements(db, session_sync_id, "COUNT_REVERSAL").await,
+            (1, 1),
+            "{pc}: one reversal"
+        );
+        assert_eq!(
+            wire_row(db, "inventory_transactions", reversal)
+                .await
+                .get("quantity")
+                .and_then(serde_json::Value::as_f64),
+            Some(-kept),
+            "{pc}: the reversal undoes the posting kept"
+        );
+    }
+    assert!(
+        !conflict_kinds(a)
+            .await
+            .iter()
+            .any(|k| k.starts_with("inventory_transactions:")),
+        "A: no count movement refused: {:?}",
+        conflict_kinds(a).await
+    );
+}
+
+/// Review of ab58cd53 (§4): the same count posted on A (−3, first on the server) and, offline, on
+/// B (−4) then reversed on B (+4, from B's own posting). B's reversal waits in its outbox while its
+/// posting is not settled; when A's posting is applied on B, the reversal becomes the undo of it
+/// (+3) and B's stock follows (B does not move: posted, then reversed). A then receives +3, the
+/// reversal of the posting it holds: both PCs end at 10, each movement applied once. A replay of
+/// the reversal on A moves nothing.
 #[tokio::test]
-async fn a_reversal_of_a_divergent_posting_that_lost_is_a_conflict_where_it_undoes_nothing() {
+async fn a_reversal_of_a_divergent_posting_that_lost_converges_on_both_pcs() {
     let ApprovedOnBoth {
         a,
         b,
@@ -7366,44 +7444,176 @@ async fn a_reversal_of_a_divergent_posting_that_lost_is_a_conflict_where_it_undo
         pair_b,
         session_sync_id,
     } = approved_on_both().await;
-    exec(
-        &b,
-        "UPDATE inventory_count_lines SET counted_qty = 6, variance_qty = -4
-         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE entity_sync_id = ?)",
-        vec![session_sync_id.clone().into()],
-    )
-    .await;
+    divergent_on_b(&b, &session_sync_id).await;
     post_on(&a, users.0, &session_sync_id).await;
+    sync_applied(&mut server, "A", &a).await;
     post_on(&b, users.1, &session_sync_id).await;
     reverse_on(&b, users.1, &session_sync_id).await;
     assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
-    for (pc, db) in [("A", &a), ("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
-        sync_applied(&mut server, pc, db).await;
-    }
-    assert_eq!(
-        on_hand_milli(&a, pair_a.0, pair_a.1).await,
-        7_000,
-        "A: not moved by a reversal undoing no posting held here"
-    );
-    assert_eq!(count_movements(&a, &session_sync_id, "COUNT_REVERSAL").await, (0, 0));
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+
+    // B's posting loses on the server; its reversal is not sent with it and A's posting is taken.
+    sync_applied(&mut server, "B", &b).await;
     assert!(
-        conflict_kinds(&a)
-            .await
-            .contains(&"inventory_transactions:COUNT_APPROVAL_RECORD_INVALID".to_string()),
-        "A: a visible conflict, not a silent wait: {:?}",
-        conflict_kinds(&a).await
+        !server
+            .state
+            .contains_key(&("inventory_transactions".to_string(), reversal.clone())),
+        "the reversal waited for its posting to be settled"
     );
-    let detail = text_of(
-        &a,
-        "SELECT detail_message FROM sync_conflicts WHERE entity_type = 'inventory_transactions'
-           AND conflict_type = 'COUNT_APPROVAL_RECORD_INVALID'",
-        vec![],
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "B: posted and reversed, the stock does not move"
+    );
+    reversal_waits_in_outbox(&b, &reversal, 3.0).await;
+    let audit = text_of(
+        &b,
+        "SELECT details_json FROM audit_events WHERE action_code = ? AND target_type = 'inventory_transactions'",
+        vec![crate::inventory::count_sync::AUDIT_POSTED_TWICE.into()],
     )
     .await;
-    assert!(
-        detail.contains("which no count line here names") && detail.contains("undoes no adjustment"),
-        "{detail}"
+    let audit: serde_json::Value = serde_json::from_str(&audit).expect("details");
+    assert_eq!(
+        audit["reversal_undoes_kept"],
+        serde_json::json!({ "movement_sync_id": reversal, "this_pc_quantity": 4.0, "sent_quantity": 3.0 }),
+        "B's reversal of its own posting is audited with the posting it lost to"
     );
+
+    for (pc, db) in [("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -3.0).await;
+
+    // The reversal received again (a replay) moves nothing.
+    let version = server
+        .state
+        .get(&("inventory_transactions".to_string(), reversal.clone()))
+        .expect("on the server")
+        .row_version;
+    let replay = wire_row(&a, "inventory_transactions", &reversal).await;
+    inbox_put(
+        &a,
+        "replay",
+        "inventory_transactions",
+        &reversal,
+        version,
+        &replay,
+        "pending",
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&a, 200, true)
+        .await
+        .expect("tried");
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -3.0).await;
+}
+
+/// Review of ab58cd53 (§4), the other order of arrival: B's push is answered (its posting lost) but
+/// A's posting reaches B only later. B's reversal keeps waiting until that posting is applied on B,
+/// then it is sent as the undo of it: both PCs end at 10.
+#[tokio::test]
+async fn a_reversal_of_a_posting_that_lost_waits_for_the_posting_kept_to_arrive() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    divergent_on_b(&b, &session_sync_id).await;
+    post_on(&a, users.0, &session_sync_id).await;
+    sync_applied(&mut server, "A", &a).await;
+    let posting = movement_sync_id(&a, &session_sync_id, "COUNT_ADJUST").await;
+    post_on(&b, users.1, &session_sync_id).await;
+    reverse_on(&b, users.1, &session_sync_id).await;
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+
+    server.hold_back("B", &posting);
+    for _ in 0..2 {
+        sync_applied(&mut server, "B", &b).await;
+        assert!(
+            !server
+                .state
+                .contains_key(&("inventory_transactions".to_string(), reversal.clone())),
+            "the reversal waits while the posting kept has not reached B"
+        );
+        reversal_waits_in_outbox(&b, &reversal, 4.0).await;
+        assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+    }
+    server.release("B");
+    sync_applied(&mut server, "B", &b).await;
+    reversal_waits_in_outbox(&b, &reversal, 3.0).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+    for (pc, db) in [("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -3.0).await;
+}
+
+/// Review of ab58cd53 (§4), the other winner: B's posting (−4) reaches the server first, then its
+/// reversal (+4, unchanged: its posting is the one kept); A's posting (−3) loses and A takes B's.
+/// Both PCs end at 10, each movement applied once.
+#[tokio::test]
+async fn a_reversal_of_the_posting_kept_is_sent_unchanged_after_it() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    divergent_on_b(&b, &session_sync_id).await;
+    post_on(&a, users.0, &session_sync_id).await;
+    post_on(&b, users.1, &session_sync_id).await;
+    reverse_on(&b, users.1, &session_sync_id).await;
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        !server
+            .state
+            .contains_key(&("inventory_transactions".to_string(), reversal.clone())),
+        "sent after its posting is acknowledged"
+    );
+    reversal_waits_in_outbox(&b, &reversal, 4.0).await;
+    for (pc, db) in [("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -4.0).await;
+}
+
+/// A count posted and reversed on one PC before it synchronised (no other PC posted it): the
+/// reversal is sent once the posting is acknowledged, and the other PC applies the two together:
+/// it never moves (10 throughout), each movement once.
+#[tokio::test]
+async fn a_count_posted_and_reversed_offline_reaches_the_other_pc_net_zero() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_a,
+        pair_b,
+        session_sync_id,
+    } = approved_on_both().await;
+    post_on(&b, users.1, &session_sync_id).await;
+    reverse_on(&b, users.1, &session_sync_id).await;
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+    sync_applied(&mut server, "B", &b).await;
+    reversal_waits_in_outbox(&b, &reversal, 3.0).await;
+    sync_applied(&mut server, "A", &a).await;
+    assert_eq!(
+        on_hand_milli(&a, pair_a.0, pair_a.1).await,
+        10_000,
+        "A: the posting waits for its reversal"
+    );
+    for (pc, db) in [("B", &b), ("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -3.0).await;
 }
 
 /// Review of 07d895a9 (N2): "take theirs" on a count line whose held adjustment is now its own
