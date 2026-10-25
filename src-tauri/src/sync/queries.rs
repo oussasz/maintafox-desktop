@@ -1972,9 +1972,9 @@ pub async fn resolve_sync_conflict(
 
     if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » avec le motif une \
-             fois le travail arrêté, ou « Escalader ». (Conflict {} is for review only: dismiss it with the \
-             reason once the work is stopped, or escalate it.)",
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
+             le motif une fois le point vérifié ou réglé, ou « Escalader ». (Conflict {} is for review only: \
+             dismiss it with the reason once the matter has been checked or settled, or escalate it.)",
             conflict.id, conflict.id
         )]));
     }
