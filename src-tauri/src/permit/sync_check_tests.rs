@@ -7322,15 +7322,17 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
         )
         .await
         .as_deref(),
-        Some("1"),
-        "the one change of the rule held here is recorded; keeping it is not a change"
+        Some("3"),
+        "each row overwritten and the change of the rule held here are recorded (check 6, C6-S1)"
     );
     let change: Value = serde_json::from_str(
         &text(
             &db,
             "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
              WHERE wo.entity_sync_id = 'wo-s1-1' AND e.action_code = 'permit_rule_applied' \
-               AND json_extract(e.payload_json, '$.cause') = 'rules_converged'",
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged' \
+               AND json_extract(e.payload_json, '$.previous_rule_code') = 'CORRECTIVE_LOTO' \
+               AND json_extract(e.payload_json, '$.rule_code') = 'A_FIRST'",
         )
         .await
         .expect("change"),
@@ -7359,7 +7361,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
         )
         .await
         .as_deref(),
-        Some("1"),
+        Some("3"),
         "audited"
     );
     assert_eq!(
@@ -7507,8 +7509,8 @@ async fn a_received_rule_that_does_not_match_here_never_wins() {
         )
         .await
         .as_deref(),
-        Some("0"),
-        "the rule held here is kept: no change"
+        Some("1"),
+        "the rule held here is kept; the row it overwrote is recorded (check 6, C6-S1)"
     );
     // A live hot-work permit: the start gate still asks for a LOTO permit.
     let wo_id = wo_id_of(&db, "wo-r3-1").await;
@@ -8171,4 +8173,210 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
         (&params["previous_permit_type"], &params["permit_type"]),
         (&json!("hot_work"), &json!("loto"))
     );
+}
+
+// ── Check 6: the received type is ranked too (C6-S1); a restart never runs under a received weaker
+// type (C6-S2); the local re-checks (C6-S3) ─────────────────────────────────────────────────────
+
+/// C6-S1, the v2/v3 lists: PC B creates the work order under a list with a LOTO rule, PC A holds a
+/// list where only a hot-work rule matches. A row naming LOTO is kept on A (new there, or over the
+/// hot-work rule A held), recorded, so both PCs end on LOTO; the catch-up never takes it back.
+#[tokio::test]
+async fn a_received_isolation_type_is_kept_over_a_weaker_rule_here() {
+    for held_first in [false, true] {
+        let db = setup().await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "H_RULE",
+            json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        )
+        .await;
+        let named = new_row_naming(&db, "EQ-C6S1", "wo-c6s1", "CORRECTIVE_LOTO", "loto", false).await;
+        if held_first {
+            // A held the hot-work rule its list gave.
+            let own = wo_row(
+                &named,
+                &[
+                    ("permit_rule_code", json!("H_RULE")),
+                    ("permit_rule_permit_type", json!("hot_work")),
+                ],
+            );
+            let outcome = apply(&db, "work_orders", "wo-c6s1", &own).await;
+            assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+            assert_eq!(rule_state(&db, "wo-c6s1").await, ruled("H_RULE", "hot_work"));
+        }
+        let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held_first}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-c6s1").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{held_first}"
+        );
+        let cause = if held_first {
+            "rules_converged"
+        } else {
+            "rule_received_unmatched"
+        };
+        assert_eq!(
+            rule_events_with_cause(&db, "wo-c6s1", cause).await.len(),
+            1,
+            "{held_first}: recorded"
+        );
+        if held_first {
+            assert_eq!(
+                text(
+                    &db,
+                    "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
+                     WHERE message_key = 'wo_permit_rule_type_changed'"
+                )
+                .await
+                .as_deref(),
+                Some("1"),
+                "the permit issuers are told of the type change"
+            );
+        }
+        crate::permit::requirement_rules::catch_up(&db).await;
+        assert_eq!(
+            rule_state(&db, "wo-c6s1").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{held_first}: kept"
+        );
+    }
+}
+
+/// A work order received started naming the rule here with a weaker type (a finding), then
+/// completed here; its id.
+async fn received_started_with_weaker_type(db: &DatabaseConnection, wo_sync: &str) -> i64 {
+    let planning = new_row_naming(db, "EQ-C6S2", wo_sync, "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(db, "work_orders", wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(db, wo_sync).await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    exec(
+        db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'completed') \
+             WHERE entity_sync_id = '{wo_sync}'"
+        ),
+    )
+    .await;
+    wo_id_of(db, wo_sync).await
+}
+
+async fn reopen(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    target: &str,
+) -> Result<crate::wo::domain::WorkOrder, crate::errors::AppError> {
+    let row_version: i64 = text(
+        db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    crate::wo::closeout::reopen_wo(
+        db,
+        crate::wo::closeout::WoReopenInput {
+            wo_id,
+            actor_id: APPLIER,
+            expected_row_version: row_version,
+            reason: "Reprise du travail sur la pompe".into(),
+            target_status: Some(target.into()),
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+}
+
+/// C6-S2 and C6-S3: a work order whose rule came from another PC with a weaker type than the list
+/// here gives is never reopened straight to execution (GATE_REOPEN_RULE_RECHECK); reopened to
+/// planning, it gets this PC's rule and type, recorded (cause reopened), the permit issuers told.
+#[tokio::test]
+async fn a_received_weaker_type_is_never_reopened_to_execution_and_is_rechecked_in_planning() {
+    let db = setup().await;
+    let wo_id = received_started_with_weaker_type(&db, "wo-c6s2").await;
+    let refused = reopen(&db, wo_id, "in_progress").await;
+    assert!(
+        format!("{refused:?}").contains("GATE_REOPEN_RULE_RECHECK"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        rule_state(&db, "wo-c6s2").await,
+        ruled("CORRECTIVE_LOTO", "hot_work"),
+        "unchanged"
+    );
+    let reopened = reopen(&db, wo_id, "planning").await.expect("reopened to planning");
+    assert_eq!(reopened.status_code.as_deref(), Some("planning"));
+    assert_eq!(rule_state(&db, "wo-c6s2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = rule_events_with_cause(&db, "wo-c6s2", "reopened").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// C6-S3: a draft whose rule was kept as received (nothing here matched) gets this PC's rule on
+/// its next draft edit once the list here matches it (cause draft_edit).
+#[tokio::test]
+async fn a_draft_edit_rechecks_a_rule_kept_as_received() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-C6S3", "wo-c6s3", "CORRECTIVE_LOTO", "hot_work", false).await;
+    let draft = wo_row(&row, &[("status_sync_id", status_sync(&db, "draft").await)]);
+    let outcome = apply(&db, "work_orders", "wo-c6s3", &draft).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let wo_id = wo_id_of(&db, "wo-c6s3").await;
+    let wo = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: wo.row_version,
+            title: Some("Replace breaker (draft edit)".into()),
+            type_code: None,
+            equipment_id: None,
+            location_id: None,
+            description: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        },
+        Some(APPLIER),
+    )
+    .await
+    .expect("draft edit");
+    assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(rule_events_with_cause(&db, "wo-c6s3", "draft_edit").await.len(), 1);
 }

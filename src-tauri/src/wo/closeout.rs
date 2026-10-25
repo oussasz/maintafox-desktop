@@ -1851,6 +1851,22 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         }
     }
 
+    // Work restarts straight away: a plant rule that came from another PC and was not derived here,
+    // while this PC's list gives another rule or permit type, is never restarted under (the rule
+    // of a started work order is not changed by this PC): reopen it to planning, where it is
+    // judged again (check 6, C6-S2).
+    if target == WoStatus::InProgress {
+        if let Some((rule, permit_type)) =
+            crate::permit::requirement_rules::received_rule_differs_here(&txn, input.wo_id).await?
+        {
+            let permit_type = permit_type.as_deref().unwrap_or("?");
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_REOPEN_RULE_RECHECK:rule={rule}:permit_type={permit_type}: The plant permit rule of this work \
+                 order came from another PC; the plant applies rule {rule} ({permit_type} permit) here. Reopen it \
+                 to planning."
+            )]));
+        }
+    }
     // Work restarts: the same permit / LOTO gate as starting or resuming it.
     if target == WoStatus::InProgress {
         crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;

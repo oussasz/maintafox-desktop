@@ -519,7 +519,8 @@ pub mod stamp_causes {
     /// both PCs keep the same rule ([`super::converge_received_rule`], audit finding AU-04 R2-S1).
     pub const RULES_CONVERGED: &str = "rules_converged";
     /// The work order was received naming a rule while nothing held here and nothing in the list
-    /// here matched it: kept as received (it only adds), and re-checked later
+    /// here outranks it (no rule matches, or the received permit type requires an energy isolation
+    /// and the list's match does not): kept as received (it only adds), and re-checked later
     /// ([`super::recheck_received_rule`], audit finding AU-04 R5-S1).
     pub const RULE_RECEIVED_UNMATCHED: &str = "rule_received_unmatched";
     /// The work order returned to a status not started (reopened to planning).
@@ -800,12 +801,18 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             };
             let equipment: Option<i64> = row.try_get("", "equipment_id")?;
             let type_id: i64 = row.try_get("", "type_id")?;
-            let current: (Option<String>, Option<String>) = (
-                row.try_get("", "permit_rule_code")?,
-                row.try_get("", "permit_rule_permit_type")?,
-            );
+            let code: Option<String> = row.try_get("", "permit_rule_code")?;
+            let Some(code) = code else {
+                return Ok(false);
+            };
+            let current: (String, Option<String>) = (code, row.try_get("", "permit_rule_permit_type")?);
             let outcome = evaluate_with(db, &rules, equipment, type_id, false).await?;
-            if outcome.rule_code.is_none() || (outcome.rule_code, outcome.permit_type_code) == current {
+            let first = outcome
+                .rule_code
+                .zip(outcome.permit_type_code)
+                .map(|(c, t)| (c, Some(t)));
+            // Only when this PC's guarded choice differs (a kept isolation type opens no write, C6-N2).
+            if choose_rule(db, first, Some(current.clone()), current.clone()).await? == current {
                 return Ok(false);
             }
             let txn = db.begin().await?;
@@ -1058,26 +1065,17 @@ pub async fn converge_received_rule(
     let first_match = evaluate_with(conn, &rules, equipment, type_id, false).await?;
     let received = (received_code.clone(), received_type.clone());
     let before = held.map_or_else(|| received.clone(), |h| (h.code.clone(), h.permit_type.clone()));
-    let matched_here = first_match.rule_code.is_some();
-    let mut kept = match (first_match.rule_code, first_match.permit_type_code) {
-        (Some(code), Some(permit_type)) => (code, Some(permit_type)),
-        _ => before.clone(),
-    };
-    // A held permit type that requires an energy isolation is never replaced by one that does not
-    // (CMMS Advisor decision on AU-04 R5-S3, option A).
-    if let Some(h) = held {
-        let held_isolation = match &h.permit_type {
-            Some(t) => type_requires_isolation(conn, t).await?,
-            None => false,
-        };
-        let kept_isolation = match &kept.1 {
-            Some(t) => type_requires_isolation(conn, t).await?,
-            None => false,
-        };
-        if held_isolation && !kept_isolation {
-            kept = (h.code.clone(), h.permit_type.clone());
-        }
-    }
+    let first = first_match
+        .rule_code
+        .zip(first_match.permit_type_code)
+        .map(|(c, t)| (c, Some(t)));
+    let kept = choose_rule(
+        conn,
+        first.clone(),
+        held.map(|h| (h.code.clone(), h.permit_type.clone())),
+        received.clone(),
+    )
+    .await?;
     let rule_changed = kept != before;
     let row_differs = kept != received;
     let row_cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
@@ -1102,7 +1100,7 @@ pub async fn converge_received_rule(
     // A rule kept as received because nothing here matches (and none was held): recorded once, so
     // the reason of a start blocked on its permit type is shown and it is re-checked when the list
     // here matches it later (R5-S1).
-    let kept_as_received = held.is_none() && !matched_here;
+    let kept_as_received = held.is_none() && first.as_ref() != Some(&kept);
     if kept_as_received && !rule_changed && held_withdrawn.is_none() && !row_withdrawn {
         if received_unmatched_recorded(conn, wo_id, &kept.0, kept.1.as_deref()).await? {
             return Ok(None);
@@ -1134,7 +1132,7 @@ pub async fn converge_received_rule(
                 actor_id: None,
                 summary: Some(format!(
                     "Permis exigé : la règle {} (permis {}) reçue est gardée telle quelle ; aucune règle de l'usine \
-                     ne correspond ici à cet OT",
+                     ici ne l'emporte sur elle pour cet OT (aucune ne correspond, ou aucune n'exige de consignation)",
                     kept.0,
                     kept.1.as_deref().unwrap_or("?"),
                 )),
@@ -1146,7 +1144,9 @@ pub async fn converge_received_rule(
         .await?;
         return Ok(Some(kept.0));
     }
-    if !rule_changed && held_withdrawn.is_none() && !row_withdrawn {
+    // Every write over the row (and every change of the rule held here, and every clearing
+    // withdrawn) is recorded: nothing is overwritten silently (check 6, C6-S1).
+    if !rule_changed && !row_differs && held_withdrawn.is_none() && !row_withdrawn {
         return Ok(None);
     }
     let received_requires: i64 = row.try_get("", "requires_permit")?;
@@ -1236,6 +1236,70 @@ pub async fn converge_received_rule(
         }
     }
     Ok(Some(kept.0))
+}
+
+/// The rule a work order keeps, from this PC's first match (`first`, ranked: `evaluate_with`), the
+/// rule held here and the received one (CMMS Advisor decision on AU-04 R5-S3, option A, and check 6
+/// C6-S1): this PC's first match, else the held rule, else the received one; then a held permit
+/// type that requires an energy isolation here is never replaced by one that does not, and a
+/// received one that requires it here outranks a kept one that does not. Isolation is judged by the
+/// permit types known here: a made-up or unknown type never counts, so a row can only add an
+/// isolation requirement, never remove one. Every PC holding the same list and data keeps the same.
+pub async fn choose_rule(
+    conn: &impl ConnectionTrait,
+    first: Option<(String, Option<String>)>,
+    held: Option<(String, Option<String>)>,
+    received: (String, Option<String>),
+) -> AppResult<(String, Option<String>)> {
+    async fn isolation(conn: &impl ConnectionTrait, rule: &(String, Option<String>)) -> AppResult<bool> {
+        match &rule.1 {
+            Some(t) => type_requires_isolation(conn, t).await,
+            None => Ok(false),
+        }
+    }
+    let mut kept = first.or_else(|| held.clone()).unwrap_or_else(|| received.clone());
+    for candidate in [held, Some(received)].into_iter().flatten() {
+        if !isolation(conn, &kept).await? && isolation(conn, &candidate).await? {
+            kept = candidate;
+        }
+    }
+    Ok(kept)
+}
+
+/// The rule this PC's list (ranked and guarded, [`choose_rule`]) gives a work order whose rule came
+/// from another PC and was not derived here (a received mark, whatever its status), when it differs
+/// from the rule it carries: a reopening straight to execution is refused then (check 6, C6-S2).
+pub async fn received_rule_differs_here(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Option<(String, Option<String>)>> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.equipment_id, wo.type_id, wo.permit_rule_code, wo.permit_rule_permit_type \
+                   FROM work_orders wo WHERE wo.id = ? AND wo.permit_rule_code IS NOT NULL \
+                    AND {RECEIVED_RULE_MARK_SQL}"
+            ),
+            [wo_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let current: (String, Option<String>) = (
+        row.try_get("", "permit_rule_code")?,
+        row.try_get("", "permit_rule_permit_type")?,
+    );
+    let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+    let type_id: i64 = row.try_get("", "type_id")?;
+    let outcome = evaluate(conn, equipment, type_id, false).await?;
+    let first = outcome
+        .rule_code
+        .zip(outcome.permit_type_code)
+        .map(|(c, t)| (c, Some(t)));
+    let kept = choose_rule(conn, first, Some(current.clone()), current.clone()).await?;
+    Ok((kept != current).then_some(kept))
 }
 
 /// SQL (on `wo`, a work order) of a rule that came from another PC and was not derived here: kept
