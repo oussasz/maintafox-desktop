@@ -16,7 +16,6 @@ use crate::inspection::domain::{
     InspectionRoundSummaryFilter, InspectionScheduleSummary, InspectionTemplate, InspectionTemplateVersion,
     InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
     RefreshInspectionReliabilitySignalsInput, SaveInspectionScheduleInput, ScheduleInspectionRoundInput,
-    UpdateInspectionAnomalyInput,
 };
 use crate::inspection::insights;
 use crate::inspection::queries;
@@ -246,21 +245,6 @@ pub async fn add_inspection_evidence(
         AppError::ValidationFailed(vec!["GATE_CMD_USER_NO_PERSONNEL: User has no personnel_id.".into()])
     })?;
     results::add_inspection_evidence(&state.db, input, pid).await
-}
-
-#[tauri::command]
-pub async fn update_inspection_anomaly(
-    input: UpdateInspectionAnomalyInput,
-    state: State<'_, AppState>,
-) -> AppResult<InspectionAnomaly> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INS_EXECUTE,
-        PermissionScope::Global
-    );
-    results::update_inspection_anomaly(&state.db, input).await
 }
 
 #[tauri::command]

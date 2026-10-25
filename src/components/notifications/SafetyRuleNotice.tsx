@@ -25,8 +25,11 @@ export const SAFETY_NOTICE_CATEGORY = "safety_rule_received";
 /**
  * Every category of a persistent safety notice (`settings::received_notice::SAFETY_NOTICE_CATEGORIES`):
  * a safety rule changed on another PC, a lock taken off by a forced removal (shown to the
- * permit close-right holders of the site), and two concurrent versions of a PM plan (shown to the
- * PM planners). Each recipient acknowledges their own.
+ * permit close-right holders of the site), two concurrent versions of a PM plan (shown to the
+ * PM planners), a work order held or a permit ended under work, and a work order received started
+ * without its plant permit rule (shown to the permit issuers of its site), and an inspection anomaly
+ * cancelled after it was routed (shown to its follow-up's responsible). Each recipient acknowledges
+ * their own.
  */
 export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   SAFETY_NOTICE_CATEGORY,
@@ -34,6 +37,8 @@ export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   "pm_concurrent_versions",
   "permit_suspended_work_held",
   "permit_ended_under_work",
+  "wo_permit_rule_missing",
+  "insp_anomaly_origin_cancelled",
 ]);
 /** Message keys of the PM planning notices (not safety): shown with a planning icon. */
 const PM_NOTICE_KEYS: ReadonlySet<string> = new Set([

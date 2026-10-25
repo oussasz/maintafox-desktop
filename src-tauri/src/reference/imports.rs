@@ -705,7 +705,7 @@ pub async fn apply_import_batch(
     db: &DatabaseConnection,
     batch_id: i64,
     policy: RefImportApplyPolicy,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<RefImportApplyResult> {
     let batch = get_batch_by_id(db, batch_id).await?;
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
@@ -893,6 +893,19 @@ pub async fn apply_import_batch(
                 }
             }
         }
+        if crate::permit::requirement_rules::is_rules_domain(&target_domain.code) {
+            // Same rules as the editor: a permit rule names what it matches and an existing permit
+            // type (`permit::requirement_rules::checked_rule_metadata`).
+            match crate::permit::requirement_rules::checked_rule_metadata(&txn, &code, input.metadata_json.as_deref())
+                .await
+            {
+                Ok(meta) => input.metadata_json = Some(meta),
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
 
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {
@@ -970,6 +983,10 @@ pub async fn apply_import_batch(
         [now.into(), batch_id.into()],
     ))
     .await?;
+    // Imported permit rules: the work orders not started yet that the published list matches get
+    // it, in the same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for
+    // another list; the import fills a draft set, applied to work orders once it is published).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, policy.target_set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
 

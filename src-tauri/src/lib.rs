@@ -1130,7 +1130,6 @@ pub fn run() {
         commands::inspection::list_inspection_anomalies,
         commands::inspection::record_inspection_result,
         commands::inspection::add_inspection_evidence,
-        commands::inspection::update_inspection_anomaly,
         commands::inspection::list_inspection_round_summaries,
         commands::inspection::get_inspection_round_runner,
         commands::inspection::start_inspection_round,

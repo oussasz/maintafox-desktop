@@ -5,7 +5,7 @@
 //! The flag can be set or cleared only before execution starts (draft, planning,
 //! ready); once work is under way it is frozen so the gate cannot be bypassed.
 //!
-//! A flag a plant permit rule set when the work order was converted from a request
+//! A flag a plant permit rule set when the work order was created, whatever created it
 //! (`permit::requirement_rules`, `work_orders.permit_rule_code`), or the requirement carried from a
 //! request flagged "sécurité" (`work_orders.permit_from_safety_di`, migration 255), is not cleared
 //! by the general edit: [`clear_permit_rule_flag`] needs the permit-issue right (`ptw.issue`:
@@ -115,7 +115,7 @@ pub const PROTECTED_REQUIREMENT_SQL: &str = "requires_permit = 1 AND permit_rule
 /// Where a protected permit requirement came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtectedOrigin {
-    /// A plant rule (`PERMIT.REQUIREMENT_RULES`) matched at conversion. When the request was also
+    /// A plant rule (`PERMIT.REQUIREMENT_RULES`) matched at creation. When the request was also
     /// flagged "sécurité", the rule's stricter clearing applies.
     Rule(String),
     /// The request it was converted from was flagged "sécurité" (no rule matched).
@@ -235,7 +235,7 @@ pub(crate) async fn may_clear_protected_requirement(
 
 /// The sync id of a person here (the payloads keep it next to the local id, which another PC does
 /// not share).
-async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
+pub(crate) async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<String>> {
     let Some(id) = user_id else {
         return Ok(None);
     };
@@ -531,7 +531,7 @@ pub struct WoPermitRuleClearInput {
     pub reason: String,
 }
 
-/// Clear a protected permit requirement: the flag a plant rule set at conversion, or the requirement
+/// Clear a protected permit requirement: the flag a plant rule set at creation, or the requirement
 /// carried from a request flagged "sécurité" (migration 255). The person clearing it holds the
 /// permit-issue right (`ptw.issue`): plant-wide for a rule, at the work order's site for a safety
 /// request ([`may_clear_protected_requirement`]) — checked here as well as by the command, so

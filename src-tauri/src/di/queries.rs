@@ -614,6 +614,19 @@ pub async fn create_intervention_request(
     db: &DatabaseConnection,
     input: DiCreateInput,
 ) -> AppResult<InterventionRequest> {
+    // The DI row, its logs and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    let di = create_intervention_request_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(di)
+}
+
+/// [`create_intervention_request`] in the caller's transaction: what the request is raised from is
+/// linked to it in the same transaction (`inspection::routing`), never left half done.
+pub async fn create_intervention_request_in(
+    db: &impl ConnectionTrait,
+    input: DiCreateInput,
+) -> AppResult<InterventionRequest> {
     // Catalog membership (Category B) — same philosophy as equipment taxonomy.
     let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
     let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
@@ -629,9 +642,7 @@ pub async fn create_intervention_request(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    // The DI row, its logs and its sync outbox entry commit together.
-    let txn = db.begin().await?;
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
             entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type, request_type, \
@@ -685,7 +696,7 @@ pub async fn create_intervention_request(
     })?;
 
     // Fetch the inserted row by code (code is UNIQUE)
-    let row = txn
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -702,7 +713,7 @@ pub async fn create_intervention_request(
     let di = map_intervention_request(&row)?;
 
     // Write initial transition log entry
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
          VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
@@ -711,9 +722,9 @@ pub async fn create_intervention_request(
     .await?;
 
     // Freeze immutable SLA on the DI, then persist full audit snapshot.
-    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let di = super::sla::freeze_sla_on_di(db, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
@@ -740,7 +751,6 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
-    txn.commit().await?;
     Ok(di)
 }
 

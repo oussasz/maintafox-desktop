@@ -44,6 +44,19 @@
 //!   permit-issue right here), when (before execution) and why (`inbound_permit_rule_check`); so
 //!   does one whose requirement came from a request flagged "sécurité" (`permit_from_safety_di`,
 //!   migration 255: the right at its site), and that origin is never turned off by a received row;
+//!   a received work order that names another rule than the one held here is refused once started,
+//!   and applied before, both PCs keeping the same rule (`requirement_rules::converge_received_rule`);
+//!   one that carries no rule is applied (see the plant rules below), and over a rule held here it
+//!   is judged with that rule and keeps it, with its permit type, requirement and clearing held here
+//!   (`before_write`, `permit::sync_check::keep_held_rule_trace`, audit finding AU-04 R2-B1);
+//! - `work_orders` / `reference_values` / `reference_sets`: after the apply, the plant's permit rules
+//!   held here are applied to a received work order not started yet that has no rule, and to every
+//!   such work order when the rule list is received (`permit::requirement_rules::stamp_matching_rule`,
+//!   owner decision D2 (a), audit finding AU-04: each PC derives the same rule from the same work order
+//!   and list); a received work order already started without the rule that matches it here, or
+//!   without the rule held here, is applied and recorded once as a safety finding, the permit-issue
+//!   right holders of its site told (`requirement_rules::finding_for_started_without_rule`; not for
+//!   plant history received by a snapshot);
 //! - `work_orders` / `intervention_requests`: after the apply, a request flagged "sécurité" here
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
@@ -77,6 +90,9 @@
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
 //!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
+//! - `inspection_anomalies`: an anomaly is decided here only by routing or deferring it; a received
+//!   row that closes it without a decision, reopens a decided one, changes its link or clears its
+//!   "revue permis requise" is refused as a conflict (`inspection::sync_check`, audit finding AU-72);
 //! - `user_accounts`: the built-in "admin" account received with its password never changed is
 //!   disabled on arrival when this PC has another administrator or did not have the account
 //!   (`auth::builtin_admin::after_inbound_user_account`).
@@ -285,6 +301,11 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // An anomaly closed without a decision, reopened, its link changed or its "revue permis
+        // requise" cleared (`inspection::sync_check`, audit finding AU-72).
+        "inspection_anomalies" => {
+            Some(crate::inspection::sync_check::inbound_anomaly_check(conn, entity_sync_id, payload).await?)
+        }
         // A task, failure coding, labour line, tool or verification changed after its work order's
         // completion or close here (`wo::closeout_sync`, R5-R7).
         "work_order_tasks"
@@ -559,13 +580,33 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
-/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
+/// After an inbound row passed its checks, before it is written: columns of the row that are kept
+/// as held here instead of the received values, in the apply's transaction (capture suppressed: the
+/// other PCs do the same). `work_orders`: a row that carries no plant rule over the rule held here
+/// keeps the rule, its permit type and, without a clearing in the row, the requirement and the
+/// clearing held here; a row that names another rule is noted (`permit::sync_check::
+/// keep_held_rule_trace`, audit finding AU-04 R2-B1 / R2-S1). The note goes to [`after_upsert`].
+pub(crate) async fn before_write(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<crate::permit::sync_check::HeldRule>> {
+    match layout.def.entity_type {
+        "work_orders" => crate::permit::sync_check::keep_held_rule_trace(conn, entity_sync_id, payload).await,
+        _ => Ok(None),
+    }
+}
+
+/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as written
+/// (received, with the columns [`before_write`] kept as held here, `held_rule` its note).
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
     payload: &serde_json::Map<String, serde_json::Value>,
+    held_rule: Option<&crate::permit::sync_check::HeldRule>,
 ) -> AppResult<()> {
     match layout.def.entity_type {
         "inventory_transactions" if inserted => {
@@ -603,14 +644,43 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "occurrence not found after insert"))?;
             crate::pm::version_clash::after_received_occurrence(conn, id).await
         }
+        // The plant's permit rule list received: its rules apply to the work orders not started yet
+        // here (`permit::requirement_rules::stamp_open_work_orders`).
+        "reference_values" | "reference_sets" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "reference row not found after apply"))?;
+            let set_id = if layout.def.entity_type == "reference_sets" {
+                id
+            } else {
+                conn.query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT set_id FROM reference_values WHERE id = ?",
+                    [id.into()],
+                ))
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "reference value vanished"))?
+                .try_get::<i64>("", "set_id")
+                .map_err(|e| hook_err(layout.table(), e))?
+            };
+            if crate::permit::requirement_rules::is_rules_set(conn, set_id).await? {
+                crate::permit::requirement_rules::stamp_open_work_orders(
+                    conn,
+                    None,
+                    crate::permit::requirement_rules::stamp_causes::RULES_RECEIVED,
+                )
+                .await?;
+            }
+            Ok(())
+        }
         // The permit protection a request flagged "sécurité" gives its work orders, derived here from
-        // the request here (`after_received_work_order`).
+        // the request here, and the plant's permit rules (`after_received_work_order`).
         "work_orders" => {
             let id = located_row_id(conn, layout, row)
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "work order not found after apply"))?;
             let sent_without_origin = inserted && !payload.contains_key(crate::permit::sync_check::SAFETY_ORIGIN);
-            after_received_work_order(conn, id, sent_without_origin).await
+            after_received_work_order(conn, id, sent_without_origin, held_rule).await
         }
         // A request received flagged "sécurité" protects its work orders not started yet, as the PC
         // that flagged it did (`permit_requirement::raise_work_orders_of_safety_request`).
@@ -670,12 +740,23 @@ pub(crate) async fn after_upsert(
 /// - new here, sent by a PC without migration 255 (`sent_without_origin`: no `permit_from_safety_di`
 ///   in the row), already started, its request flagged: it carries that origin;
 /// - protected, required again but still carrying its clearing (a re-tick made by an older build):
-///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`).
+///   its clearing is withdrawn, recorded (`withdraw_received_clearing_of_required`);
+/// - not started yet and received naming another rule than the one held here (`held_rule`
+///   `Differs`): the same rule kept on every PC (`requirement_rules::converge_received_rule`);
+/// - not started yet with no plant rule: the rule of the list here that matches its equipment and work
+///   type is recorded on it (`requirement_rules::stamp_matching_rule`; a row that changed them is
+///   judged the same way, audit finding AU-04 S3);
+/// - already started with no plant rule while one here matches it, or received without the rule
+///   held here (`held_rule` `Kept`, the rule kept): recorded once as a safety finding
+///   (`requirement_rules::finding_for_started_without_rule`), not for plant history received by a
+///   snapshot.
 async fn after_received_work_order(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     sent_without_origin: bool,
+    held_rule: Option<&crate::permit::sync_check::HeldRule>,
 ) -> AppResult<()> {
+    use crate::permit::sync_check::HeldRule;
     let source_di: Option<i64> = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -698,7 +779,59 @@ async fn after_received_work_order(
         ))
         .await?;
     }
+    // A row that named a rule other than the one held here, or a rule while none is held here, on a
+    // work order not started: each PC keeps the rule its own list gives (R2-S1, R3-B1, R4-B1).
+    match held_rule {
+        Some(HeldRule::Differs { held }) => {
+            crate::permit::requirement_rules::converge_received_rule(
+                conn,
+                wo_id,
+                Some(held),
+                crate::permit::requirement_rules::stamp_causes::RULES_CONVERGED,
+            )
+            .await?;
+        }
+        Some(HeldRule::Received) => {
+            crate::permit::requirement_rules::converge_received_rule(
+                conn,
+                wo_id,
+                None,
+                crate::permit::requirement_rules::stamp_causes::RULES_CONVERGED,
+            )
+            .await?;
+        }
+        // The same rule as here: one that came from another PC and was not derived here is judged
+        // again by the list here (a work order received back in a status not started, R5-S1).
+        _ => {
+            crate::permit::requirement_rules::recheck_received_rule(
+                conn,
+                wo_id,
+                crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+            )
+            .await?;
+        }
+    }
     crate::wo::workflow::actions::permit_requirement::withdraw_received_clearing_of_required(conn, wo_id).await?;
+    crate::permit::requirement_rules::stamp_matching_rule(
+        conn,
+        wo_id,
+        None,
+        crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+    )
+    .await?;
+    if !crate::sync::materialize::applying_snapshot_row() {
+        let received_without_held_rule = match held_rule {
+            Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
+            _ => None,
+        };
+        crate::permit::requirement_rules::finding_for_started_without_rule(
+            conn,
+            wo_id,
+            received_without_held_rule,
+            matches!(held_rule, Some(HeldRule::Received)),
+        )
+        .await?;
+    }
     Ok(())
 }
 

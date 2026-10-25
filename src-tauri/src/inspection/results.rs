@@ -9,7 +9,6 @@ use crate::errors::{AppError, AppResult};
 use super::domain::{
     AddInspectionEvidenceInput, InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionEvidence,
     InspectionEvidenceFilter, InspectionResult, InspectionResultsFilter, InspectionRound, RecordInspectionResultInput,
-    UpdateInspectionAnomalyInput,
 };
 use super::queries::{
     get_inspection_checkpoint_by_id, get_inspection_round_by_id, get_inspection_template_version_by_id,
@@ -33,11 +32,6 @@ pub(crate) const ANOMALY_MISSING_PHOTO: &str = "missing_mandatory_photo";
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("inspection_results decode '{field}': {err}"))
-}
-
-fn opt_i64(v: Option<i64>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>))
 }
 
 fn opt_string(v: Option<String>) -> sea_orm::Value {
@@ -604,10 +598,16 @@ pub async fn record_inspection_result(
     Ok(out)
 }
 
-/// Keeps the automatic anomaly of one kind in line with the latest reading of a result, without
-/// ever touching an anomaly someone already acted on (routed to a DI/WO, deferred, resolved):
-/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending;
-/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly.
+/// Keeps the automatic anomaly of one kind in line with the latest reading of a result:
+/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending (an
+///   anomaly someone acted on, routed or deferred, covers it; a cancelled one does not, so a
+///   condition back after a correction opens a new anomaly);
+/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly; an anomaly
+///   already routed to a request or a work order is cancelled too, its decision and link kept and its
+///   follow-up left as it is (a "revue permis requise" on the work order stays, cleared only through
+///   its own path), and the follow-up's responsible is told (`settings::received_notice::
+///   announce_anomaly_origin_cancelled`, CMMS Advisor decision on AU-72, option B). A deferred
+///   anomaly is left as it is.
 pub(crate) async fn sync_auto_anomaly(
     db: &impl ConnectionTrait,
     round_id: i64,
@@ -626,6 +626,7 @@ pub(crate) async fn sync_auto_anomaly(
         ))
         .await?;
     let mut open_unrouted: Vec<i64> = Vec::new();
+    let mut routed: Vec<i64> = Vec::new();
     let mut acted_on = false;
     for r in &rows {
         let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
@@ -645,6 +646,9 @@ pub(crate) async fn sync_auto_anomaly(
             open_unrouted.push(id);
         } else if status != "cancelled" {
             acted_on = true;
+            if status == "triaged" && (di.is_some() || wo.is_some()) {
+                routed.push(id);
+            }
         }
     }
     if active {
@@ -688,6 +692,19 @@ pub(crate) async fn sync_auto_anomaly(
                 [id.into()],
             ))
             .await?;
+        }
+        for id in routed {
+            let cancelled = db
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE inspection_anomalies SET resolution_status = 'cancelled', row_version = row_version + 1 \
+                     WHERE id = ? AND resolution_status = 'triaged'",
+                    [id.into()],
+                ))
+                .await?;
+            if cancelled.rows_affected() > 0 {
+                crate::settings::received_notice::announce_anomaly_origin_cancelled(db, id).await;
+            }
         }
     }
     Ok(())
@@ -770,63 +787,4 @@ pub async fn add_inspection_evidence(
 
     txn.commit().await?;
     Ok(ev)
-}
-
-pub async fn update_inspection_anomaly(
-    db: &DatabaseConnection,
-    input: UpdateInspectionAnomalyInput,
-) -> AppResult<InspectionAnomaly> {
-    if !ANOMALY_STATUSES.contains(&input.resolution_status.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_INSP_ANOMALY_STATUS_INVALID: resolution_status must be one of {ANOMALY_STATUSES:?}"
-        )]));
-    }
-    let txn = db.begin().await?;
-    let cur = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "InspectionAnomaly".into(),
-            id: input.id.to_string(),
-        })?;
-    let rv: i64 = cur
-        .try_get("", "row_version")
-        .map_err(|e| decode_err("row_version", e))?;
-    if rv != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_anomalies.".into(),
-        ]));
-    }
-    let new_rv = rv + 1;
-    let rpr = input.requires_permit_review.unwrap_or(false);
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inspection_anomalies SET resolution_status = ?, linked_di_id = ?, linked_work_order_id = ?, \
-         requires_permit_review = ?, row_version = ? WHERE id = ?",
-        [
-            input.resolution_status.into(),
-            opt_i64(input.linked_di_id),
-            opt_i64(input.linked_work_order_id),
-            (if rpr { 1 } else { 0 }).into(),
-            new_rv.into(),
-            input.id.into(),
-        ],
-    ))
-    .await?;
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, round_id, result_id, anomaly_type, severity, description, linked_di_id, linked_work_order_id, \
-             requires_permit_review, resolution_status, routing_decision, entity_sync_id, row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .expect("row");
-    let an = map_anomaly(&row)?;
-    txn.commit().await?;
-    Ok(an)
 }

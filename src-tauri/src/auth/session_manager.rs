@@ -869,11 +869,13 @@ pub async fn change_password_and_rotate(
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
+        // The account changed its own password: it is its author (`sync::credential_check`).
         if clear_forced_change {
             "UPDATE user_accounts SET password_hash = ?, force_password_change = 0, password_changed_at = ?, \
-             updated_at = ? WHERE id = ?"
+             password_changed_by_id = id, updated_at = ? WHERE id = ?"
         } else {
-            "UPDATE user_accounts SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?"
+            "UPDATE user_accounts SET password_hash = ?, password_changed_at = ?, password_changed_by_id = id, \
+             updated_at = ? WHERE id = ?"
         },
         [new_hash.into(), now.clone().into(), now.clone().into(), user_id.into()],
     ))

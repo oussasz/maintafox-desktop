@@ -54,6 +54,10 @@ export const MESSAGE_KEYS = [
   // Grants received by sync from an author who lost the right (administrators).
   "admin_grants_to_review",
   "grants_from_former_authors",
+  // A password change or account re-enable received without a right author (administrators).
+  "password_change_refused",
+  "password_change_from_older_version",
+  "account_reenable_refused",
   // A running work order put on hold by its permit's suspension (its responsible).
   "permit_suspended_work_held",
   // A permit ended on another PC before or while its work ran here (responsible, close-right holders).
@@ -64,6 +68,14 @@ export const MESSAGE_KEYS = [
   "permit_ended_during_work_untimed",
   "permit_suspended_around_start",
   "permit_suspended_during_work",
+  // A work order received started without its plant permit rule (permit issuers of its site).
+  "wo_permit_rule_missing_on_arrival",
+  // The same, received with another rule or a weaker permit type (both named).
+  "wo_permit_rule_other_on_arrival",
+  // The permit type of a work order's plant rule changed here (permit issuers of its site).
+  "wo_permit_rule_type_changed",
+  // An inspection anomaly cancelled after it was routed (its follow-up's responsible).
+  "insp_anomaly_origin_cancelled",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

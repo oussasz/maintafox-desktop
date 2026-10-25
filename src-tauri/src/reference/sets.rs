@@ -558,7 +558,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 /// - Publishing automatically supersedes any previously published set in the
 ///   same domain (at most one published set per domain).
 /// - Sets `published_at` timestamp.
-pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -> AppResult<ReferenceSet> {
+pub async fn publish_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
     super::audience::assert_domain_editable(&domain)?;
@@ -598,9 +598,11 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
     if super::currencies::is_currency_domain(&domain.code) {
         super::currencies::mirror_into_lookup(&txn).await?;
     }
+    // A permit rule list published: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
-
     get_set_by_id(db, set_id).await
 }
 

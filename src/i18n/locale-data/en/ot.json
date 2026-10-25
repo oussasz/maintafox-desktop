@@ -16,6 +16,7 @@
   "permitRule": {
     "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
     "requiredByNoType": "Permit required by rule {{rule}}.",
+    "severalTypes": "Several permit rules: {{types}}",
     "requiredShort": "Required (rule {{rule}})",
     "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
     "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",

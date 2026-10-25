@@ -255,10 +255,13 @@ async fn write_retirement(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let deleted = profile.deletes_superseded_builtin_admin();
     // A deleted account keeps its deletion instant; a disabled one leaves `deleted_at` as it is.
+    // Retired by this rule, not by a person: no author (`status_changed_by_id`; a disable is never
+    // author-checked on arrival, `sync::credential_check`).
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts
-            SET is_active = 0, updated_at = ?, deleted_at = CASE WHEN ? = 1 THEN ? ELSE deleted_at END
+            SET is_active = 0, status_changed_by_id = NULL, updated_at = ?,
+                deleted_at = CASE WHEN ? = 1 THEN ? ELSE deleted_at END
           WHERE id = ?",
         [
             now.clone().into(),

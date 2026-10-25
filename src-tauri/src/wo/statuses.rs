@@ -108,7 +108,7 @@ fn map_status_row(row: &sea_orm::QueryResult) -> AppResult<WorkOrderStatusOption
 }
 
 /// Idempotent upsert of the 12 system statuses (same pattern as `ensure_required_work_order_types`).
-pub async fn ensure_required_work_order_statuses(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_required_work_order_statuses(db: &impl ConnectionTrait) -> AppResult<()> {
     for &(code, label, color, macro_state, is_terminal, sequence) in REQUIRED_WORK_ORDER_STATUSES {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -158,7 +158,7 @@ pub async fn ensure_required_work_order_statuses(db: &DatabaseConnection) -> App
 }
 
 /// Fast path before hot paths: repair empty / partial catalogs without re-upserting every time.
-pub async fn ensure_work_order_statuses_if_needed(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_work_order_statuses_if_needed(db: &impl ConnectionTrait) -> AppResult<()> {
     let count_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,

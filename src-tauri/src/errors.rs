@@ -139,6 +139,12 @@ pub enum AppError {
     #[error("{0}")]
     PasswordChangeRequired(String),
 
+    /// Sign-in to an account that arrived by sync without its password (a password change refused
+    /// on arrival, `sync::credential_check`): an administrator sets one. The sign-in screen shows it
+    /// from the code.
+    #[error("{0}")]
+    PasswordNotReceived(String),
+
     /// Encrypted database cannot be opened: key missing from the OS credential store or wrong.
     /// The UI offers recovery-key entry (`DATABASE_KEY_UNAVAILABLE`).
     #[error("Database key unavailable: {0}")]
@@ -191,6 +197,7 @@ impl Serialize for AppError {
             Self::SessionLocked(_) => "SESSION_LOCKED",
             Self::PinDisabled => "PIN_DISABLED",
             Self::PasswordChangeRequired(_) => "PASSWORD_CHANGE_REQUIRED",
+            Self::PasswordNotReceived(_) => "PASSWORD_NOT_RECEIVED",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;
