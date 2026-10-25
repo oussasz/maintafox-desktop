@@ -1609,7 +1609,9 @@
       "selfApprovedMeaning": "Approuvé par la personne qui a compté (sans seconde personne) : signalé sur tous les postes pour être revu par un responsable.",
       "secondApprove": "Seconde approbation",
       "secondApproveMeaning": "Une autre personne que celle qui a compté approuve cet écart : les postes où la double validation s'applique, qui retiennent ce comptage, l'appliquent alors.",
-      "secondApprovedBy": "Seconde approbation par {{name}} le {{date}}"
+      "secondApprovedBy": "Seconde approbation par {{name}} le {{date}}",
+      "secondApproveOptional": "Seconde approbation (facultative)",
+      "secondApproveOptionalMeaning": "Écart dans la tolérance de double validation de ce poste, approuvé par la personne qui a compté : une seconde approbation est facultative. Elle règle ce comptage sur les postes à la tolérance plus stricte qui le retiennent."
     },
     "approval": {
       "title": "Approuver l'écart",
@@ -1624,6 +1626,7 @@
     "secondApproval": {
       "title": "Seconde approbation de l'écart",
       "description": "Compté et approuvé par {{counter}} (auto-approbation) : une autre personne l'approuve à son tour.",
+      "descriptionOptional": "Compté et approuvé par {{counter}}, dans la tolérance de double validation de ce poste : cette seconde approbation est facultative ; elle règle ce comptage sur les postes à la tolérance plus stricte qui le retiennent.",
       "confirm": "Donner la seconde approbation"
     },
     "reversal": {

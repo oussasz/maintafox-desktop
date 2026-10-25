@@ -396,11 +396,14 @@ describe("InventoryControlsPanel", () => {
     expect(screen.getAllByText("Samir").length).toBeGreaterThan(0);
   });
 
-  it("offers the second approval only on a self-approved line above the tolerance", async () => {
+  it("offers the second approval on a posted variance approved by its counter, optional within the tolerance", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
+    // Counted and approved by Karim (9); the signed-in user is 7.
     const approvedByCounter = {
-      approved_by_id: 7,
-      approved_by_name: "Samir",
+      counted_by_id: 9,
+      counted_by_name: "Karim",
+      approved_by_id: 9,
+      approved_by_name: "Karim",
       approved_at: TS,
       approval_note: "Recounted twice",
       self_approved: 1,
@@ -412,21 +415,68 @@ describe("InventoryControlsPanel", () => {
     };
     mocks.listInventoryCountLines.mockResolvedValue([
       countLine({ ...approvedByCounter, id: 1, is_critical: 1 }),
-      // An auto-approbation within the tolerance (derived on read): no second person is needed.
+      // Within the tolerance, approved by its counter: no auto-approbation, the second approval
+      // is optional (it settles the count on a PC with a stricter tolerance).
       countLine({
         ...approvedByCounter,
         id: 2,
         article_id: 22,
         article_code: "A-22",
         is_critical: 0,
+        self_approved: 0,
         posted_transaction_id: 502,
+      }),
+      // Approved by someone other than its counter: nothing to approve a second time.
+      countLine({
+        ...approvedByCounter,
+        id: 3,
+        article_id: 23,
+        article_code: "A-23",
+        is_critical: 1,
+        self_approved: 0,
+        approved_by_id: 42,
+        approved_by_name: "Nadia",
+        posted_transaction_id: 503,
+      }),
+      // No variance.
+      countLine({
+        ...approvedByCounter,
+        id: 4,
+        article_id: 24,
+        article_code: "A-24",
+        is_critical: 0,
+        self_approved: 0,
+        counted_qty: 10,
+        variance_qty: 0,
+        posted_transaction_id: 504,
+      }),
+      // Counted and approved by the signed-in user: hidden from them.
+      countLine({
+        ...approvedByCounter,
+        id: 5,
+        article_id: 25,
+        article_code: "A-25",
+        is_critical: 0,
+        self_approved: 0,
+        counted_by_id: 7,
+        approved_by_id: 7,
+        posted_transaction_id: 505,
       }),
     ]);
     renderPanel();
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
     await selectSession("CC-100 (Posted)");
-    expect(await screen.findAllByText("Self-approval")).toHaveLength(2);
+    expect(await screen.findAllByText("Self-approval")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Second approval" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Second approval (optional)" })).toHaveLength(1);
+    const withinRow = screen.getByText("A-22").closest("tr");
+    if (!withinRow) throw new Error("expected the A-22 row");
+    fireEvent.click(within(withinRow).getByRole("button", { name: "Second approval (optional)" }));
+    expect(
+      await screen.findByText(
+        /within this PC's four-eyes tolerance: this second approval is optional/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("asks for confirmation before reversing a posted count", async () => {

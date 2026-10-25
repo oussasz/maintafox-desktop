@@ -290,7 +290,7 @@
     "GATE_INV_COUNT_RECONCILE_LIST": "Ce comptage a été enregistré depuis le stock à rapprocher : approuvez-le là (Stock à rapprocher, comptage en attente d'approbation).",
     "GATE_INV_COUNT_APPROVAL_CLOSED": "Approbation refusée : la session de comptage est « $t(inventory:controls.sessionStatuses.{{status}}) », ses lignes ne s'approuvent plus.",
     "GATE_INV_COUNT_ALREADY_APPROVED": "Approbation refusée : cette ligne est déjà approuvée. Saisissez de nouveau la quantité comptée pour la faire approuver à nouveau.",
-    "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED": "Pas de seconde approbation à donner : cette ligne n'est pas un écart auto-approuvé comptabilisé (ou elle a déjà sa seconde approbation, ou le comptage a été contre-passé).",
+    "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED": "Pas de seconde approbation à donner : cette ligne n'est pas un écart passé en stock et approuvé par la personne qui l'a compté (ou elle a déjà sa seconde approbation, ou le comptage a été contre-passé).",
     "GATE_INV_COUNT_SECOND_APPROVAL_SELF": "Seconde approbation refusée : vous avez compté et approuvé cet écart. Une autre personne donne la seconde approbation.",
     "GATE_INV_REVERSAL_REASON": "Indiquez un motif de contre-passation d'au moins {{min}} caractères.",
     "GATE_INV_WO_REQUIRED": "Ce motif de mouvement exige la référence d'un ordre de travail.",

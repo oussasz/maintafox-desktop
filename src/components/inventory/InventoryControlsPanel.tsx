@@ -287,6 +287,20 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
     (line) => line.approval_required === 1 && line.approved_by_id === null,
   ).length;
 
+  /**
+   * A second approval may be given to a posted, unreversed variance approved by its own counter
+   * (needed above the four-eyes tolerance, optional within it), by someone else: hidden from the
+   * counter, who approved it (the backend refuses them too).
+   */
+  const canSecondApprove = (line: InventoryCountLineRow) =>
+    line.second_approved_by_id === null &&
+    Math.abs(line.variance_qty) > 1e-9 &&
+    line.counted_by_id !== null &&
+    line.approved_by_id === line.counted_by_id &&
+    line.posted_transaction_id !== null &&
+    line.reversed_transaction_id === null &&
+    info?.user_id !== line.counted_by_id;
+
   const lineColumns: ColumnDef<InventoryCountLineRow>[] = [
     {
       accessorKey: "article_code",
@@ -372,23 +386,28 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     date: line.second_approved_at ? formatDateTime(line.second_approved_at) : "—",
                   })}
                 </span>
-              ) : line.self_approved === 1 &&
-                line.is_critical === 1 &&
-                line.posted_transaction_id !== null &&
-                line.reversed_transaction_id === null ? (
+              ) : canSecondApprove(line) ? (
                 <PermissionGate permission={P.INV_MANAGE} fallback={null}>
                   <Button
                     variant="outline"
                     className="h-9"
                     disabled={saving}
-                    title={t("controls.lines.secondApproveMeaning")}
+                    title={t(
+                      line.is_critical === 1
+                        ? "controls.lines.secondApproveMeaning"
+                        : "controls.lines.secondApproveOptionalMeaning",
+                    )}
                     onClick={() => {
                       setApprovalKind("second");
                       setApprovalLine(line);
                       setApprovalEvidence("");
                     }}
                   >
-                    {t("controls.lines.secondApprove")}
+                    {t(
+                      line.is_critical === 1
+                        ? "controls.lines.secondApprove"
+                        : "controls.lines.secondApproveOptional",
+                    )}
                   </Button>
                 </PermissionGate>
               ) : null}
@@ -990,7 +1009,9 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     variance: qty(approvalLine.variance_qty),
                   })} ${t(
                     approvalKind === "second"
-                      ? "controls.secondApproval.description"
+                      ? approvalLine.is_critical === 1
+                        ? "controls.secondApproval.description"
+                        : "controls.secondApproval.descriptionOptional"
                       : approvalLine.is_critical === 1
                         ? tolerance?.self_approval_allowed
                           ? "controls.approval.aboveToleranceOptOut"

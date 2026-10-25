@@ -4383,6 +4383,10 @@ async fn a_received_count_line_is_checked_on_its_second_approval_and_its_reversa
         "pass",
         "a valid second approval"
     );
+    // Q15: a second approval only of a variance approved by its counter.
+    let mut by_another = second(serde_json::json!(admin_sync), at.clone());
+    by_another.push(("approved_by_sync_id", serde_json::json!(admin_sync)));
+    assert_eq!(judge(by_another).await, invalid, "approved by another person");
 
     // Its "reversal": the count's own adjustment (waiting on B), another movement held on B, one
     // not arrived.
@@ -5174,8 +5178,8 @@ async fn a_line_accepted_within_the_tolerance_is_not_judged_again_by_its_posting
         7000,
         "the movement is applied with its line"
     );
-    // Not judged again in what B stores either: within, no auto-approbation (hence no second
-    // approval offered for it on B).
+    // Not judged again in what B stores either: within, no auto-approbation (a second approval
+    // stays optional for it, Q15).
     let listed = crate::inventory::controls::list_count_lines(&b, session_by_sync_id(&b, &session_sync).await.id)
         .await
         .expect("lines")
@@ -5186,6 +5190,108 @@ async fn a_line_accepted_within_the_tolerance_is_not_judged_again_by_its_posting
         (listed.is_critical, listed.self_approved),
         (0, 0),
         "kept within the tolerance as accepted"
+    );
+}
+
+/// CMMS Advisor Q15: a count approved by its counter within the tolerance where it was posted, held
+/// on a PC with a stricter tolerance (above it there), is settled by an optional second approval
+/// given where it was posted: when that version arrives the held line and its movement are applied
+/// together and the conflict closes.
+#[tokio::test]
+async fn an_optional_second_approval_releases_a_count_held_by_a_stricter_tolerance() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    // Stricter on B (10 %), not yet received by A.
+    tolerance_here_only(&b, crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD, "10").await;
+    let counter = user_with(&a, "optionalsecondcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10 on A: 30 %, within 50 %: its counter approves it, A posts it.
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance on A");
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!(approved.self_approved, 0);
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        conflict_kinds(&b).await,
+        vec!["inventory_count_lines:COUNT_SELF_APPROVAL".to_string()],
+        "above the tolerance on B: held"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10000,
+        "held on B: the stock does not move"
+    );
+
+    // The optional second approval, on A where the count is posted.
+    let posted = crate::inventory::controls::list_count_lines(&a, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("the line");
+    assert_eq!(posted.is_critical, 0, "still within the tolerance on A");
+    let approver = second_person(&a, counter).await;
+    let seconded = crate::inventory::controls::second_approve_count_line(
+        &a,
+        crate::inventory::domain::SecondApproveInventoryCountLineInput {
+            line_id: posted.id,
+            expected_row_version: posted.row_version,
+            reviewer_id: i64::from(approver),
+            reviewer_evidence: "Comptage vérifié par un second".into(),
+        },
+    )
+    .await
+    .expect("optional second approval within the tolerance");
+    assert_eq!(seconded.second_approved_by_id, Some(i64::from(approver)));
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7000,
+        "released on B: the movement is applied with its line"
     );
 }
 

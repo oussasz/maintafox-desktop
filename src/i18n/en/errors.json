@@ -290,7 +290,7 @@
     "GATE_INV_COUNT_RECONCILE_LIST": "This count was recorded from the stock to reconcile: approve it there (Stock to reconcile, count waiting for approval).",
     "GATE_INV_COUNT_APPROVAL_CLOSED": "Approval refused: the count session is \"$t(inventory:controls.sessionStatuses.{{status}})\"; its lines are no longer approved.",
     "GATE_INV_COUNT_ALREADY_APPROVED": "Approval refused: this line is already approved. Enter the counted quantity again to have it approved anew.",
-    "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED": "No second approval to give: this line is not a posted self-approved variance (or it already has its second approval, or the count was reversed).",
+    "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED": "No second approval to give: this line is not a posted variance approved by the person who counted it (or it already has its second approval, or the count was reversed).",
     "GATE_INV_COUNT_SECOND_APPROVAL_SELF": "Second approval refused: you counted and approved this variance. Another person gives the second approval.",
     "GATE_INV_REVERSAL_REASON": "Enter a reversal reason of at least {{min}} characters.",
     "GATE_INV_WO_REQUIRED": "This movement reason needs a work order reference.",

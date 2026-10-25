@@ -725,17 +725,19 @@ pub const REFUSED_COUNT_LINE_APPROVAL_CLOSED: &str = "GATE_INV_COUNT_APPROVAL_CL
 /// Refusal: the line is already approved (entered again, it is approved anew).
 pub const REFUSED_COUNT_LINE_ALREADY_APPROVED: &str = "GATE_INV_COUNT_ALREADY_APPROVED";
 
-/// Refusal: the line has no self-approval to approve a second time (not posted, reversed, within
-/// the tolerance, approved by someone other than its counter, or approved a second time already).
+/// Refusal: the line has no self-approval to approve a second time (not posted, reversed, without
+/// variance, approved by someone other than its counter, or approved a second time already).
 pub const REFUSED_SECOND_APPROVAL_NOT_NEEDED: &str = "GATE_INV_COUNT_SECOND_APPROVAL_NOT_NEEDED";
 /// Refusal: the second approval is given by the counter (who also approved it).
 pub const REFUSED_SECOND_APPROVAL_SELF: &str = "GATE_INV_COUNT_SECOND_APPROVAL_SELF";
 
-/// The second approval of a posted count line whose variance above the four-eyes tolerance was
-/// approved by its counter ("auto-approbation", under the opt-out of the site): given by someone
-/// other than the counter, with a note of at least 8 characters, where the count is applied; audited
-/// and synchronised. A PC where four-eyes applies holds such a count back (line and movement,
-/// `count_four_eyes::inbound_count_movement_hold`) until this version arrives (CMMS Advisor Q8).
+/// The second approval of a posted count line whose variance was approved by its counter: given by
+/// someone other than the counter, with a note of at least 8 characters, where the count is applied;
+/// audited and synchronised. Above the four-eyes tolerance ("auto-approbation", under the opt-out of
+/// the site) it is needed; within it, it is optional (CMMS Advisor Q15): a PC with a stricter
+/// tolerance or another cost judges the line above it there. A PC where four-eyes applies holds such
+/// a count back (line and movement, `count_four_eyes::inbound_count_movement_hold`) until this
+/// version arrives (CMMS Advisor Q8).
 pub async fn second_approve_count_line(
     db: &DatabaseConnection,
     input: crate::inventory::domain::SecondApproveInventoryCountLineInput,
@@ -772,7 +774,8 @@ pub async fn second_approve_count_line(
     if line.row_version != input.expected_row_version {
         return Err(count_line_changed_elsewhere());
     }
-    let self_approved = line.is_critical == 1
+    // Any variance approved by its counter (CMMS Advisor Q15), above the tolerance here or not.
+    let self_approved = line.variance_qty.abs() > f64::EPSILON
         && line.approved_by_id.is_some()
         && line.approved_by_id == line.counted_by_id
         && line.posted_transaction_id.is_some()
@@ -828,6 +831,7 @@ pub async fn second_approve_count_line(
                 "article_id": line.article_id,
                 "location_id": line.location_id,
                 "variance_qty": line.variance_qty,
+                "above_tolerance": line.is_critical == 1,
                 "counted_by_id": line.counted_by_id,
                 "approved_by_id": line.approved_by_id,
                 "note": note,

@@ -435,17 +435,23 @@ pub(crate) async fn inbound_count_line_check(
     }
     let by_counter = approver.is_some() && counter.is_some() && approver == counter;
     let second = field(&line, "second_approved_by_sync_id");
-    if second.is_some() && !(by_counter && above) {
+    // A second approval is given to any variance approved by its counter (CMMS Advisor Q15): needed
+    // above the tolerance, optional within it where it was posted (above it here, it settles it).
+    let has_variance = line
+        .get("variance_qty")
+        .and_then(serde_json::Value::as_f64)
+        .is_some_and(|v| v.abs() > QTY_TOLERANCE);
+    if second.is_some() && !(by_counter && has_variance) {
         return conflict(
             SYNC_APPROVAL_RECORD_INVALID,
             format!(
-                "count line {entity_sync_id} carries a second approval although it was not approved by its counter \
-                 above the four-eyes tolerance"
+                "count line {entity_sync_id} carries a second approval although it is not a variance approved by \
+                 its counter"
             ),
         );
     }
-    if let (Some(second), true) = (second, by_counter && above) {
-        return second_approval_check(conn, entity_sync_id, &line, second).await;
+    if let Some(second) = second {
+        return second_approval_check(conn, entity_sync_id, &line, second, above).await;
     }
     if !(by_counter && above) {
         if self_approved {
@@ -753,18 +759,25 @@ impl CountToleranceView {
 }
 
 /// A received second approval of a self-approved line: by someone other than the counter, dated,
-/// and holding the count-approval right here (`inv.manage`, plant-wide as stores have no site).
+/// and — when it settles a variance above the tolerance here (`above`) — by a person holding the
+/// count-approval right here (`inv.manage`, plant-wide as stores have no site). Within the tolerance
+/// here no second person is needed: the optional second approval (CMMS Advisor Q15) is only checked
+/// to be well formed.
 async fn second_approval_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     line: &serde_json::Map<String, serde_json::Value>,
     second: &str,
+    above: bool,
 ) -> AppResult<Option<InboundVerdict>> {
     if Some(second) == field(line, "counted_by_sync_id") || field(line, "second_approved_at").is_none() {
         return conflict(
             SYNC_APPROVAL_RECORD_INVALID,
             format!("count line {entity_sync_id}: its second approval is by its counter, or undated"),
         );
+    }
+    if !above {
+        return Ok(None);
     }
     let Some(user) = crate::permit::sync_check::local_id(conn, "user_accounts", second).await? else {
         return Ok(Some(InboundVerdict::Defer(format!(

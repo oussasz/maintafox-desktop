@@ -3690,10 +3690,11 @@ async fn reverse_line_session(
     controls::list_count_lines(db, line.session_id).await.expect("lines")[0].clone()
 }
 
-/// CMMS Advisor Q8 (review of a9c38354): a second approval needs the count-approval right
-/// (`inv.manage`) and a note of at least 8 characters, and only a posted, unreversed line whose
-/// variance above the tolerance its counter approved needs one — not before posting, not after the
-/// count's reversal, not within the tolerance, not when someone else approved it.
+/// CMMS Advisor Q8 (review of a9c38354), Q15: a second approval needs the count-approval right
+/// (`inv.manage`) and a note of at least 8 characters, and is given to a posted, unreversed line
+/// whose variance its counter approved — not before posting, not after the count's reversal, not
+/// to a line without variance, not when someone else approved it. Within the tolerance it is
+/// optional, and accepted (Q15).
 #[tokio::test]
 async fn a_second_approval_needs_the_right_a_note_and_a_posted_self_approval() {
     let db = setup_db().await;
@@ -3776,16 +3777,36 @@ async fn a_second_approval_needs_the_right_a_note_and_a_posted_self_approval() {
         not_needed
     );
 
-    // Within the tolerance: the counter's approval is no self-approval.
+    // Within the tolerance: the counter's approval needs no second person, but a second approval
+    // may still be given (Q15: a PC with a stricter tolerance holds the count until it has one).
     set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "50").await;
     let within = counted_line(&db, "INV-2A-WITHIN", 8.0, Some(1)).await;
     assert_eq!(within.is_critical, 0);
     let within = controls::approve_count_line(&db, approval(&within, 1))
         .await
         .expect("the counter approves within the tolerance");
+    assert_eq!(within.self_approved, 0);
     let within = post_line_session(&db, &within).await;
+    let counted_by = within.counted_by_id;
+    let seconded = second(within, manager, note)
+        .await
+        .expect("an optional second approval within the tolerance");
+    assert_eq!(seconded.second_approved_by_id, Some(manager));
+    assert_eq!(seconded.second_approval_note.as_deref(), Some(note));
+    assert!(seconded.second_approved_at.is_some());
+    assert_eq!(seconded.counted_by_id, counted_by);
+    // Given once.
     assert_eq!(
-        gate_code(second(within, manager, note).await.expect_err("within the tolerance")),
+        gate_code(second(seconded, manager, note).await.expect_err("given already")),
+        not_needed
+    );
+
+    // No variance: nothing was approved by its counter.
+    let exact = counted_line(&db, "INV-2A-EXACT", 10.0, Some(1)).await;
+    assert_eq!(exact.variance_qty, 0.0);
+    let exact = post_line_session(&db, &exact).await;
+    assert_eq!(
+        gate_code(second(exact, manager, note).await.expect_err("no variance")),
         not_needed
     );
 }
