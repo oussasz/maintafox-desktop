@@ -209,6 +209,9 @@ async fn materialize_inbox_run(
     // PM plan versions refused before two versions could share a number are applied again first,
     // so the rows waiting for them follow in this run (`pm::version_clash`).
     total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
+    // Commitments refused for entering a frozen week without their break-in are applied with it
+    // once it has arrived, their conflict closed (`planning::sync_check`).
+    total.applied += crate::planning::sync_check::retry_frozen_week_conflicts(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
     let started = std::time::Instant::now();

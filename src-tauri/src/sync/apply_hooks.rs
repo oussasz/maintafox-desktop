@@ -35,7 +35,15 @@
 //!   (`settings::site::inbound_site_setting_check`, `inbound_site_setting_event_check`);
 //! - `weekly_schedules`: a received week that would go backwards in its lifecycle here (frozen
 //!   back to draft, a later baseline back to an earlier one) is refused as a conflict
-//!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`);
+//!   (`planning::weekly_schedule::inbound_lifecycle_conflict`, `before_upsert_checked`); a week
+//!   reopened (frozen back to approved or draft, same baseline) comes with its unfreeze decision,
+//!   decided by another person than the requester holding plan.confirm at the site here
+//!   (`planning::sync_check::inbound_unfreeze_check`);
+//! - `schedule_commitments` / `schedule_break_ins`: work entering a week frozen here comes with its
+//!   break-in (here, or waiting in the inbox and applied with it in one transaction), else it is a
+//!   `PLANNING_WEEK_FROZEN` conflict at once, closed when a valid break-in arrives later; a received
+//!   break-in that is urgent or forced a blocking check is signed by a second planner holding
+//!   plan.confirm at the crew's site here (`planning::sync_check`);
 //! - `work_permits` / `permit_isolations` / `work_orders`: the permit and LOTO rules (activation,
 //!   close, hand-back, suspension, two-person verification, the work-order start gate) are checked
 //!   again on the received state; a failed rule is a conflict, a permit type or status not applied
@@ -313,6 +321,14 @@ pub(crate) async fn before_upsert_checked(
         "qualification_overrides" => {
             Some(crate::qualification::sync_check::inbound_override_check(conn, entity_sync_id, payload).await?)
         }
+        // Work entering a frozen week, and break-ins: four-eyes signature at the crew's site
+        // (`planning::sync_check`, audit findings AU-06, AU-102).
+        "schedule_commitments" => {
+            Some(crate::planning::sync_check::inbound_commitment_check(conn, entity_sync_id, payload).await?)
+        }
+        "schedule_break_ins" => {
+            Some(crate::planning::sync_check::inbound_break_in_check(conn, entity_sync_id, payload).await?)
+        }
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
         // An anomaly closed without a decision, reopened, its link changed or its "revue permis
         // requise" cleared (`inspection::sync_check`, audit finding AU-72).
@@ -374,12 +390,29 @@ pub(crate) async fn before_upsert_checked(
         }));
     }
     if layout.def.entity_type == "weekly_schedules" {
+        if let Some(message) =
+            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, entity_sync_id, payload).await?
+        {
+            return Ok(Some(ApplyOutcome::Conflict {
+                code: "WEEK_LIFECYCLE_BACKWARDS".into(),
+                message,
+            }));
+        }
+        // A reopening needs its four-eyes unfreeze decision (S4, `planning::sync_check`).
+        use crate::settings::site::InboundVerdict;
         return Ok(
-            crate::planning::weekly_schedule::inbound_lifecycle_conflict(conn, entity_sync_id, payload)
+            crate::planning::sync_check::inbound_unfreeze_check(conn, entity_sync_id, payload)
                 .await?
-                .map(|message| ApplyOutcome::Conflict {
-                    code: "WEEK_LIFECYCLE_BACKWARDS".into(),
-                    message,
+                .map(|v| match v {
+                    InboundVerdict::Defer(message) => ApplyOutcome::Deferred {
+                        code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                        message,
+                        waits_for: None,
+                    },
+                    InboundVerdict::Conflict { code, message } => ApplyOutcome::Conflict {
+                        code: code.into(),
+                        message,
+                    },
                 }),
         );
     }
@@ -500,6 +533,8 @@ pub(crate) async fn upsert_group(
                 (start, closeout) => start.or(closeout),
             })
         }
+        // A commitment entering a frozen week brings its break-in, judged with it.
+        "schedule_commitments" => crate::planning::sync_check::commitment_group(conn, entity_sync_id, payload).await,
         _ => Ok(None),
     }
 }

@@ -98,9 +98,22 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
 /// received end again, "take theirs" would drop this PC's unsent permit changes and put back the
 /// recorded version; only "dismiss" (with its reason, once the work is stopped) and "escalate" are
 /// accepted ([`resolve_sync_conflict`]).
+///
+/// The planning four-eyes conflicts (`planning::sync_check`, CMMS Advisor Q2-Q4) are review-only
+/// too: a commitment entering a frozen week is let in by its signed break-in (the conflict then
+/// closes by itself, audited) or planned again here as a break-in; a break-in or an unfreeze that
+/// fails the four-eyes rule is never taken as received.
 const REVIEW_ONLY_CONFLICTS: &[&str] = &[
     crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
     crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
+    crate::planning::sync_check::WEEK_FROZEN,
+    crate::planning::sync_check::BREAK_IN_APPROVAL_REQUIRED,
+    crate::planning::sync_check::BREAK_IN_SELF_APPROVAL,
+    crate::planning::sync_check::BREAK_IN_APPROVER_UNAUTHORISED,
+    crate::planning::sync_check::BREAK_IN_UNSIGNED,
+    crate::planning::sync_check::WEEK_UNFREEZE_UNDECIDED,
+    crate::planning::sync_check::WEEK_UNFREEZE_SAME_PERSON,
+    crate::planning::sync_check::WEEK_UNFREEZE_UNAUTHORISED,
 ];
 
 /// Actions accepted on a [`REVIEW_ONLY_CONFLICTS`] conflict.

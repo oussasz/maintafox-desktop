@@ -12,6 +12,7 @@ pub mod queries;
 pub mod readiness;
 pub mod scheduler;
 pub mod scheduling;
+pub(crate) mod sync_check;
 pub mod weekly;
 pub mod weekly_schedule;
 pub mod windows;
@@ -19,5 +20,7 @@ pub mod wo_sync;
 
 #[cfg(test)]
 mod absence_tags_tests;
+#[cfg(test)]
+mod four_eyes_tests;
 #[cfg(test)]
 mod tests;

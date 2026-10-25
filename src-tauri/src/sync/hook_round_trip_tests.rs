@@ -5,8 +5,9 @@
 //! wire never carries would let the change through here.
 //!
 //! Other hooks are covered next to their module: weekly schedules
-//! (`planning::tests::a_received_week_never_goes_back_in_its_lifecycle`) and document categories
-//! (`personnel::legacy_values_tests`).
+//! (`planning::tests::a_received_week_never_goes_back_in_its_lifecycle`), the planning four-eyes
+//! hooks on commitments, break-ins and reopened weeks, read from real payloads
+//! (`planning::four_eyes_tests`), and document categories (`personnel::legacy_values_tests`).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
