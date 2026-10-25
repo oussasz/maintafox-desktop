@@ -12,7 +12,7 @@ use crate::wo::domain::WorkOrder;
 use crate::wo::queries;
 use crate::wo::time::now_utc_z;
 use crate::wo::workflow::events::emit_action_event;
-use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction, WoStatus};
+use crate::wo::workflow::state_machine::{assert_action_allowed, status_i18n_key, WoAction, WoStatus};
 use crate::wo::workflow::transition::{check_concurrency, load_wo_status};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -173,7 +173,8 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         WoStatus::Ready => WoAction::Reassign,
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_WO_REASSIGN_STATUS:status={0}: Emergency reassign is only allowed in status planning or ready (current: {0}).",
+                "GATE_WO_REASSIGN_STATUS:status={0}: Emergency reassign is only allowed in status planning or ready (current: {1}).",
+                status_i18n_key(status.as_str()),
                 status.as_str()
             )]));
         }

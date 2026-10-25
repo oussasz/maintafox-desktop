@@ -11,7 +11,7 @@ use crate::wo::domain::WorkOrder;
 use crate::wo::queries;
 use crate::wo::time::{now_utc_z, parse_utc_timestamp};
 use crate::wo::workflow::events::emit_action_event;
-use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction, WoStatus};
+use crate::wo::workflow::state_machine::{assert_action_allowed, status_i18n_key, WoAction, WoStatus};
 use crate::wo::workflow::transition::{check_concurrency, load_wo_status};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,7 +175,8 @@ pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) 
         WoStatus::Ready => WoAction::Reschedule,
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_WO_PLAN_SCHEDULE_STATUS:status={0}: Job prep schedule fields can only be saved in status planning or ready (current: {0}).",
+                "GATE_WO_PLAN_SCHEDULE_STATUS:status={0}: Job prep schedule fields can only be saved in status planning or ready (current: {1}).",
+                status_i18n_key(status.as_str()),
                 status.as_str()
             )]));
         }
