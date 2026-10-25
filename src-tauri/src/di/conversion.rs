@@ -343,6 +343,10 @@ pub async fn convert_di_to_work_order(
     ))
     .await?;
 
+    // Rules that do not read, or name codes not held here: in the work order's history and audit
+    // trail too (the conversion response shows them).
+    crate::permit::requirement_rules::record_rule_problems(&txn, wo_id, Some(input.actor_id), &permit_flag).await?;
+
     // ── 5. Update DI status ───────────────────────────────────────────────
     let result = txn
         .execute(Statement::from_sql_and_values(

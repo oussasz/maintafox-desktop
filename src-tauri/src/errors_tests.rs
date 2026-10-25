@@ -146,6 +146,10 @@ mod errors_tests {
                 AppError::PasswordChangeRequired("change first".into()),
                 "PASSWORD_CHANGE_REQUIRED",
             ),
+            (
+                AppError::PasswordNotReceived("no password here".into()),
+                "PASSWORD_NOT_RECEIVED",
+            ),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 

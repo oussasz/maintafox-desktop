@@ -414,6 +414,12 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         failures = permit_sweep.failures,
         "startup: permit-end catch-up"
     );
+    // Phase 4a (permit rules): the plant's permit rules on the work orders not started yet that one
+    // matches now and that missed it before the last stop (`permit::requirement_rules::catch_up`,
+    // audit finding AU-04 R2-S2). Never blocks the startup; a failure is logged and retried by the
+    // next sync pass.
+    let rules_flagged = crate::permit::requirement_rules::catch_up(&app_state.db).await;
+    info!(flagged = rules_flagged, "startup: permit rules catch-up");
 
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.

@@ -20,7 +20,7 @@ use super::time::now_utc_z;
 use super::types::resolve_work_order_type_id_by_code;
 
 /// Ensures at least one closeout policy row exists and returns its id (for COALESCE on new WOs).
-async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn ensure_default_closeout_validation_policy_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -513,7 +513,25 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
 // D) create_work_order — full insert + transition log
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput) -> AppResult<WorkOrder> {
+pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) -> AppResult<WorkOrder> {
+    // The WO row, its transition log entry and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    let wo = create_work_order_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// [`create_work_order`] in the caller's transaction: what the work order is raised from is linked
+/// to it in the same transaction (`inspection::routing`), never left half done.
+///
+/// Every work order, whatever creates it (direct creation, PM, inspection anomaly, reliability
+/// action, a request), gets the plant's permit rules here (`permit::requirement_rules::evaluate`,
+/// owner decision D2 (a), audit finding AU-04): the hazard comes from the equipment and the job. A
+/// matching rule is recorded on the work order (`permit_rule_code`, `permit_rule_permit_type`) and
+/// protects its requirement like a converted request's. A rule only adds a requirement: an explicit
+/// "requires permit" (the form's tick, the PM version, the anomaly's permit review) and the source
+/// request's safety flag still apply.
+pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreateInput) -> AppResult<WorkOrder> {
     crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
     // Planned dates in their stored form (UTC), never a zone-less text (`wo::time`).
     input.planned_start = super::time::stored_planned_time(
@@ -522,11 +540,8 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
     )?;
     input.planned_end =
         super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
-    ensure_work_order_statuses_if_needed(db).await?;
-    let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
-
-    // The WO row, its transition log entry and its sync outbox entry commit together.
-    let txn = db.begin().await?;
+    ensure_work_order_statuses_if_needed(txn).await?;
+    let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(txn).await?;
 
     let equipment_id = input.equipment_id.filter(|&e| e > 0);
     let urgency_code = input
@@ -601,13 +616,13 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
 
     // Level of the shared DI / OT urgency scale (`WORK.URGENCY`).
     let urgency_id = match urgency_code.as_deref() {
-        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(&txn, code).await?),
+        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(txn, code).await?),
         None => None,
     };
 
-    let type_id = resolve_work_order_type_id_by_code(&txn, &input.type_code).await?;
+    let type_id = resolve_work_order_type_id_by_code(txn, &input.type_code).await?;
     let subtype_id = match input.subtype_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-        Some(code) => Some(crate::wo::types::resolve_subtype_for_type(&txn, code, type_id).await?),
+        Some(code) => Some(crate::wo::types::resolve_subtype_for_type(txn, code, type_id).await?),
         None => None,
     };
 
@@ -709,7 +724,14 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         "create_work_order: resolved FK targets before INSERT"
     );
 
-    let code = generate_wo_code(&txn).await?;
+    // The plant's permit rules (equipment class / work type → permit type), for every origin. A rule
+    // only adds to an explicit "requires permit" and to the source request's safety flag.
+    // Rules that do not read, or name codes not held here, are recorded on the work order once it
+    // exists (`record_rule_problems`, below).
+    let permit_flag = crate::permit::requirement_rules::evaluate(txn, equipment_id, type_id, from_safety_di).await?;
+    let requires_permit = permit_flag.requires_permit || input.requires_permit.unwrap_or(false);
+
+    let code = generate_wo_code(txn).await?;
     let now = now_utc_z();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
@@ -722,9 +744,9 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             entity_id, planner_id, requester_id, urgency_id, subtype_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
-            requires_permit, permit_from_safety_di, entity_sync_id, \
-            row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            requires_permit, permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
+            entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -797,7 +819,9 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
                 .expected_duration_hours
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            i64::from(from_safety_di || input.requires_permit.unwrap_or(false)).into(),
+            i64::from(requires_permit).into(),
+            permit_flag.rule_code.clone().into(),
+            permit_flag.permit_type_code.clone().into(),
             i64::from(from_safety_di).into(),
             entity_sync_id.into(),
             now.clone().into(),
@@ -850,13 +874,13 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         }
     })?;
 
-    let wo = get_work_order(&txn, new_id)
+    let wo = get_work_order(txn, new_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
 
     // Write initial transition log entry
     crate::wo::workflow::transition::log_transition(
-        &txn,
+        txn,
         wo.id,
         "none",
         "draft",
@@ -867,8 +891,8 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         &now,
     )
     .await?;
+    crate::permit::requirement_rules::record_rule_problems(txn, wo.id, Some(input.creator_id), &permit_flag).await?;
 
-    txn.commit().await?;
     Ok(wo)
 }
 
@@ -1118,6 +1142,26 @@ pub async fn update_wo_draft_fields(
         )
         .await?;
     }
+
+    // A plant rule that matches the draft's equipment and work type now is recorded on it (it only
+    // adds: owner decision D2 (a), audit finding AU-04 B1): a draft moved to another equipment or
+    // work type gets the rule's protection like one created with them. An untick sent in the same
+    // save gives way to the rule.
+    crate::permit::requirement_rules::stamp_matching_rule(
+        &txn,
+        input.id,
+        actor_id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
+    // A rule that came from another PC and was not derived here is judged again by the list here
+    // (audit finding AU-04 R5-S1).
+    crate::permit::requirement_rules::recheck_received_rule(
+        &txn,
+        input.id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
 
     // 5. Re-fetch and return updated row
     let wo = get_work_order(&txn, input.id)

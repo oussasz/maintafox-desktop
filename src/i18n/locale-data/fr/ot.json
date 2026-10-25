@@ -16,6 +16,7 @@
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",
+    "severalTypes": "Plusieurs règles de permis : {{types}}",
     "requiredShort": "Requis (règle {{rule}})",
     "clearHint": "Seule une personne habilitée à délivrer les permis peut lever cette exigence, avec un motif, avant le démarrage.",
     "checkboxLocked": "Exigé par la règle {{rule}} : se lève avec « Lever l'exigence » ci-dessous.",

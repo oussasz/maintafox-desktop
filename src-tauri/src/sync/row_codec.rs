@@ -1020,9 +1020,19 @@ pub(crate) async fn apply_row(
     {
         return Ok(outcome);
     }
+    // `user_accounts`: a password change or a re-enable whose author could not make it here is held
+    // back (its keys leave the payload; the rest of the row applies), after the checks above so a
+    // row they refuse records nothing (`sync::credential_check`).
+    if let Some(outcome) =
+        crate::sync::credential_check::inbound_credential_check(conn, layout, entity_sync_id, &mut payload).await?
+    {
+        return Ok(outcome);
+    }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
     let held = crate::sync::apply_hooks::held_before_write(conn, layout, entity_sync_id, &payload).await?;
     let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
+    // Columns the row passed its checks with but that are kept as held here (`apply_hooks::before_write`).
+    let written_note = crate::sync::apply_hooks::before_write(conn, layout, entity_sync_id, &mut payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1160,7 +1170,16 @@ pub(crate) async fn apply_row(
         .await?;
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
-    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload, held).await?;
+    crate::sync::apply_hooks::after_upsert(
+        conn,
+        layout,
+        &local_row,
+        inserted,
+        &payload,
+        held,
+        written_note.as_ref(),
+    )
+    .await?;
     crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, Some(&payload), rights_before).await?;
     if let Some(group) = group {
         if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {

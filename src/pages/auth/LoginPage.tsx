@@ -341,6 +341,11 @@ export function LoginPage() {
 
         {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
           <AuthAlert tone="warning">{session.error}</AuthAlert>
+        ) : session.error && session.errorCode === "PASSWORD_NOT_RECEIVED" ? (
+          // The account arrived by sync without its password (a change refused on arrival).
+          <AuthAlert tone="warning" title={t("login.passwordNotReceived.title")}>
+            <p>{t("login.passwordNotReceived.message")}</p>
+          </AuthAlert>
         ) : session.error && tenantScopeDenied ? (
           <AuthAlert tone="warning" title={t("login.tenantScopeDenied.title")}>
             <p>{session.error}</p>

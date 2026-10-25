@@ -510,6 +510,13 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("planning_windows", "site_assigned_by_id", "NULL"),
     ("planning_windows", "site_assigned_at", "NULL"),
     ("planning_windows", "site_assign_reason", "NULL"),
+    // A generic inspection anomaly is open and undecided (a received decision is judged against the
+    // decision rules of this PC, `inspection::sync_check`).
+    ("inspection_anomalies", "resolution_status", "'open'"),
+    ("inspection_anomalies", "routing_decision", "NULL"),
+    ("inspection_anomalies", "linked_di_id", "NULL"),
+    ("inspection_anomalies", "linked_work_order_id", "NULL"),
+    ("inspection_anomalies", "requires_permit_review", "0"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).

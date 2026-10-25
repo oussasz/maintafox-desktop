@@ -343,6 +343,8 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
         .chain(device.iter())
         .chain(derived.keys())
     {
+        // A database with every migration, and the app, still refuse a row spec naming a missing
+        // column.
         if !before_a_migration && !raw.iter().any(|c| c.name == *listed) {
             return Err(AppError::SyncError(format!(
                 "row spec of '{entity_type}' names column '{listed}' that {table} does not have."

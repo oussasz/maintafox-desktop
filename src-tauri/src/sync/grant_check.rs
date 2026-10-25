@@ -17,6 +17,8 @@
 //! - `user_accounts` (the row never names who changed it, [`account_check`]): the bootstrap flag
 //!   (`is_admin`) set on an account held here, a new account with it while this PC has its first
 //!   administrator, or an account holding a right to give access re-enabled or restored: refused.
+//!   A password change and a re-enable of any other account name their author and are judged by
+//!   [`author_check`] too (`sync::credential_check`, which holds back only those keys).
 //!
 //! An author who does not hold the right now (lead decision on review BLOCKING 1; role permissions
 //! are deleted, so a past set of rights cannot be rebuilt, and the row's times come from the
@@ -89,7 +91,7 @@ fn err(e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("grant re-check of a received row: {e}"))
 }
 
-fn truthy(p: &Payload, key: &str) -> bool {
+pub(crate) fn truthy(p: &Payload, key: &str) -> bool {
     match p.get(key) {
         Some(Value::Bool(b)) => *b,
         Some(Value::Number(n)) => n.as_i64().is_some_and(|v| v != 0),
@@ -116,7 +118,7 @@ fn wait_for(entity_type: &str, sync_id: &str, message: String) -> Option<ApplyOu
     })
 }
 
-fn wait(message: String) -> Option<ApplyOutcome> {
+pub(crate) fn wait(message: String) -> Option<ApplyOutcome> {
     Some(ApplyOutcome::Deferred {
         code: DEFER_MISSING_PARENT.into(),
         message,
@@ -125,7 +127,7 @@ fn wait(message: String) -> Option<ApplyOutcome> {
 }
 
 /// Local id of a row named by its sync id; `None` when not here.
-async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
     conn.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!("SELECT id FROM \"{table}\" WHERE entity_sync_id = ?"),
@@ -137,7 +139,7 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Ap
 }
 
 /// A plant administrator here, now (`auth::rbac::user_has_elevated_admin_access`).
-async fn is_plant_admin(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+pub(crate) async fn is_plant_admin(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     let Ok(id) = i32::try_from(user_id) else {
         return Ok(false);
     };
@@ -146,7 +148,7 @@ async fn is_plant_admin(conn: &impl ConnectionTrait, user_id: i64) -> AppResult<
 
 /// `user_id` may use `permission` to give access here, now: a plant administrator, or a holder of
 /// it plant-wide through a permanent role in force (`settings::site::holds_tenant_right`).
-async fn holds(conn: &impl ConnectionTrait, user_id: i64, permission: &str) -> AppResult<bool> {
+pub(crate) async fn holds(conn: &impl ConnectionTrait, user_id: i64, permission: &str) -> AppResult<bool> {
     Ok(is_plant_admin(conn, user_id).await?
         || crate::settings::site::holds_tenant_right(conn, user_id, permission).await?)
 }
@@ -186,15 +188,15 @@ async fn admin_rights_may_still_arrive(conn: &impl ConnectionTrait, user_sync_id
 /// A grant applied although its author does not hold the right here now, for the review notice:
 /// one readable line (what, to whom, by whom, the day it was made).
 #[derive(Debug, Clone)]
-struct ReviewItem {
+pub(crate) struct ReviewItem {
     /// The row the notice is about (`notification_events` source).
-    entity_type: &'static str,
-    source: String,
-    line: String,
+    pub(crate) entity_type: &'static str,
+    pub(crate) source: String,
+    pub(crate) line: String,
 }
 
 /// The day of a timestamp (`YYYY-MM-DD`) for the lines of a notice; "?" when unreadable.
-fn day(raw: Option<&str>) -> String {
+pub(crate) fn day(raw: Option<&str>) -> String {
     raw.and_then(crate::settings::site::instant)
         .map_or_else(|| "?".to_string(), |t| t.format("%Y-%m-%d").to_string())
 }
@@ -322,7 +324,10 @@ async fn record_for_review(conn: &impl ConnectionTrait, item: &ReviewItem) -> Ap
 /// here (see the module rule): never silently. It is listed in the administrators' review notice in
 /// the transaction of its apply; when the notice cannot be written, the grant is not applied: it
 /// waits and is tried again at the next synchronisation (fail closed).
-async fn accept_for_review(conn: &impl ConnectionTrait, item: ReviewItem) -> AppResult<Option<ApplyOutcome>> {
+pub(crate) async fn accept_for_review(
+    conn: &impl ConnectionTrait,
+    item: ReviewItem,
+) -> AppResult<Option<ApplyOutcome>> {
     conn.execute_unprepared("SAVEPOINT grant_review").await?;
     match record_for_review(conn, &item).await {
         Ok(()) => {
@@ -362,8 +367,10 @@ pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection
     let waiting = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
+            // Accounts too: a password change or a re-enable waits for its author
+            // (`sync::credential_check`).
             "SELECT 1 AS w FROM sync_inbox WHERE apply_status = 'deferred' \
-               AND entity_type IN ('user_scope_assignments', 'role_permissions') LIMIT 1"
+               AND entity_type IN ('user_scope_assignments', 'role_permissions', 'user_accounts') LIMIT 1"
                 .to_string(),
         ))
         .await?
@@ -499,20 +506,27 @@ async fn loss_time(conn: &impl ConnectionTrait, author: i64, permission: &str, a
 
 /// The author of a received grant may make it here (see the module rule); `None` when the grant is
 /// applied. `granted_at`: when the row says it was made (sender's clock); `review`: how it is
-/// listed when it is applied for review.
-async fn author_check(
+/// listed when it is applied for review. Without one (`sync::credential_check`: a password or a
+/// re-enable is held back at no cost), an author never received after a complete pull, or whose
+/// loss of the right is not known here, is refused instead (a conflict).
+pub(crate) async fn author_check(
     conn: &impl ConnectionTrait,
     what: &str,
     author_sync: &str,
     permission: &str,
     admin_role: bool,
     granted_at: Option<&str>,
-    review: ReviewItem,
+    review: Option<ReviewItem>,
 ) -> AppResult<Option<ApplyOutcome>> {
     let Some(author) = local_id(conn, "user_accounts", author_sync).await? else {
         if caught_up() {
             // A complete pull did not bring the author: it will never arrive.
-            return accept_for_review(conn, review).await;
+            return match review {
+                Some(review) => accept_for_review(conn, review).await,
+                None => Ok(conflict(format!(
+                    "{what}: its author {author_sync} never arrived here; not applied"
+                ))),
+            };
         }
         return Ok(wait_for(
             "user_accounts",
@@ -540,7 +554,14 @@ async fn author_check(
     }
     let needed = if admin_only { "plant administration" } else { permission };
     let lost = match loss_time(conn, author, permission, admin_only).await? {
-        Loss::Unknown => return accept_for_review(conn, review).await,
+        Loss::Unknown => {
+            return match review {
+                Some(review) => accept_for_review(conn, review).await,
+                None => Ok(conflict(format!(
+                    "{what}: its author no longer holds {needed} here, since a time this PC does not know; not applied"
+                ))),
+            }
+        }
         Loss::Never => {
             return Ok(conflict(format!(
                 "{what}: made by someone who never held {needed} here; not applied, for an administrator to decide"
@@ -564,7 +585,7 @@ async fn author_check(
 
 /// How a person is named in a notice: display name, else username, else the sync id (an account
 /// not received).
-async fn person_label(conn: &impl ConnectionTrait, user_sync: &str) -> AppResult<String> {
+pub(crate) async fn person_label(conn: &impl ConnectionTrait, user_sync: &str) -> AppResult<String> {
     Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -769,7 +790,16 @@ async fn assignment_check(
             day(granted_at)
         ),
     };
-    author_check(conn, &what, author_sync, ADM_USERS, admin_role, granted_at, review).await
+    author_check(
+        conn,
+        &what,
+        author_sync,
+        ADM_USERS,
+        admin_role,
+        granted_at,
+        Some(review),
+    )
+    .await
 }
 
 /// An assignment that names no author (see the module rule for the ones accepted).
@@ -890,7 +920,7 @@ async fn role_permission_check(conn: &impl ConnectionTrait, received: &Payload) 
         ADM_ROLES,
         ADMIN_ROLE_NAMES.contains(&role_name.as_str()),
         granted_at,
-        review,
+        Some(review),
     )
     .await
 }
@@ -1064,8 +1094,23 @@ async fn grants_made_by(
                FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
                JOIN permissions p ON p.id = rp.permission_id \
               WHERE rp.granted_by_id = ? \
+             UNION ALL \
+             SELECT CASE WHEN pw.password_set_by_id = ? THEN pw.password_set_at ELSE pw.password_changed_at END \
+                      AS at, \
+                    'Mot de passe de / password of ' || COALESCE(pw.display_name, pw.username) AS line \
+               FROM user_accounts pw \
+              WHERE (pw.password_set_by_id = ? OR pw.password_changed_by_id = ?) AND pw.id <> ? \
               ORDER BY at",
-            [user_id.into(), user_id.into()],
+            // Passwords of other accounts this person set (`sync::credential_check`), the account
+            // having changed it since included; their own password is not a grant.
+            [
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+            ],
         ))
         .await?;
     let cutoff = since.map(|t| t - chrono::Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES));

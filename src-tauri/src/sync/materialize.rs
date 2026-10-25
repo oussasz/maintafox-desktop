@@ -456,6 +456,10 @@ async fn materialize_pass(
     // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
     // refuses the received rows and is retried by the next pass (and at start-up).
     crate::permit::ended_hold::sweep(db).await;
+    // The plant's permit rules on the work orders not started yet that one matches now, derived
+    // here like a stamp made during the apply (`permit::requirement_rules::catch_up`, audit finding
+    // AU-04 R2-S2); a failure is logged and retried by the next pass.
+    crate::permit::requirement_rules::catch_up(db).await;
 
     Ok(result)
 }

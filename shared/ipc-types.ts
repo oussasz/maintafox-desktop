@@ -4715,6 +4715,11 @@ export interface PermitFlagOutcome {
   safety_flag: boolean;
   /** Published rules that do not read (ignored, to fix in Données de référence). */
   unreadable_rule_codes: string[];
+  /**
+   * Published rules that read but name a code not held here: applied as written (a match flags
+   * the work order), to fix in Données de référence.
+   */
+  unresolved_rule_codes?: string[];
 }
 
 export interface WoConversionResult {
@@ -5369,6 +5374,12 @@ export interface WorkOrder {
    * permits (Rust `permit::wo_gate::deisolation_pending_sql`); derived on read.
    */
   deisolation_pending?: boolean;
+  /**
+   * The permit types of every plant rule that matches this work order now, when they differ
+   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
+   * `permit::requirement_rules::matching_permit_types`).
+   */
+  permit_rule_matching_types?: string[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
@@ -8705,15 +8716,6 @@ export interface AddInspectionEvidenceInput {
   file_path_or_value: string;
   captured_at?: string | null;
   expected_row_version?: number | null;
-}
-
-export interface UpdateInspectionAnomalyInput {
-  id: number;
-  resolution_status: string;
-  linked_di_id?: number | null;
-  linked_work_order_id?: number | null;
-  requires_permit_review?: boolean | null;
-  expected_row_version: number;
 }
 
 export interface InspectionResultsFilter {

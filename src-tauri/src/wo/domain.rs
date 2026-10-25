@@ -191,6 +191,11 @@ pub struct WorkOrder {
     /// "Déconsignation à faire": mechanically complete with a lock still fitted under one of its
     /// permits (`permit::wo_gate::deisolation_pending_sql`); derived on read, not stored.
     pub deisolation_pending: bool,
+    /// The permit types of every plant rule that matches this work order now, when they differ
+    /// ("plusieurs règles de permis"): display only, filled by the detail read (`commands::wo::
+    /// get_wo`, `permit::requirement_rules::matching_permit_types`); empty elsewhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permit_rule_matching_types: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -604,6 +609,7 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "deisolation_pending")
             .map_err(|e| decode_err("deisolation_pending", e))?
             != 0,
+        permit_rule_matching_types: Vec::new(),
         status_label: row.try_get::<Option<String>>("", "status_label").unwrap_or(None),
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),
