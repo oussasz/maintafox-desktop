@@ -1142,18 +1142,22 @@ use crate::sync::test_support::{current_payload, started_device_db, TestServer};
 type Payload = serde_json::Map<String, Value>;
 
 /// A named administrator whose role travels by synchronisation (plant-wide, no scope reference).
-async fn synced_admin(db: &DatabaseConnection, username: &str) -> i64 {
+/// Without `by`, the plant's first administrator (bootstrap flag, its role given by no one); with
+/// `by`, an administrator whose role that account gave. Every received grant names an author that
+/// other PCs accept (`sync::grant_check`).
+async fn synced_admin(db: &DatabaseConnection, username: &str, by: Option<i64>) -> i64 {
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts
             (entity_sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin,
              force_password_change, password_changed_at, failed_login_attempts, created_at, updated_at, row_version)
-         VALUES (?, ?, ?, 'local', 'x', 1, 0, 0, ?, 0, ?, ?, 1)",
+         VALUES (?, ?, ?, 'local', 'x', 1, ?, 0, ?, 0, ?, ?, 1)",
         [
             uuid::Uuid::new_v4().to_string().into(),
             username.into(),
             username.into(),
+            i64::from(by.is_none()).into(),
             now.clone().into(),
             now.clone().into(),
             now.clone().into(),
@@ -1165,13 +1169,14 @@ async fn synced_admin(db: &DatabaseConnection, username: &str) -> i64 {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_scope_assignments
-            (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_to, created_at, updated_at,
-             row_version)
+            (entity_sync_id, user_id, role_id, scope_type, scope_reference, valid_to, assigned_by_id, created_at,
+             updated_at, row_version)
          VALUES (?, ?, (SELECT id FROM roles WHERE name = 'Administrator' AND deleted_at IS NULL), 'tenant',
-                 NULL, NULL, ?, ?, 1)",
+                 NULL, NULL, ?, ?, ?, 1)",
         [
             uuid::Uuid::new_v4().to_string().into(),
             id.into(),
+            by.into(),
             now.clone().into(),
             now.into(),
         ],
@@ -1190,8 +1195,8 @@ async fn two_pcs_after_recovery() -> (DatabaseConnection, DatabaseConnection, Te
         .await
         .expect("trust keys");
     set_claim(&a, TENANT, FINGERPRINT, LICENSE).await;
-    synced_admin(&a, "chef").await;
-    synced_admin(&a, "adjoint").await;
+    let chef = synced_admin(&a, "chef", None).await;
+    synced_admin(&a, "adjoint", Some(chef)).await;
     let mut server = TestServer::new();
     server.exchange("A", &a).await;
     server.exchange("B", &b).await;

@@ -6,13 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { getAppInfo } from "@/services/app.service";
 import { forceChangePassword, getSessionInfo, login, unlockSession } from "@/services/auth-service";
-import { getEntitlementSummary } from "@/services/entitlement-service";
+import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
 import {
   applyProductLicenseReconciliation,
   checkProductLicenseKeyEntry,
   claimProductActivation,
   getActivationBootstrapState,
-  getProductActivationToken,
   getProductLicenseDiagnostics,
   getProductLicenseOnboardingState,
   previewProductActivation,
@@ -122,7 +121,6 @@ vi.mock("@/services/product-license-service", async () => ({
   previewProductActivation: vi.fn(),
   markActivationTenantInitialized: vi.fn(),
   resetLocalTenantRuntimeData: vi.fn(),
-  getProductActivationToken: vi.fn(),
   refreshProductActivationPolicy: vi.fn(),
   toUserFacingActivationError: (err: unknown) => ({
     title: "Activation failed",
@@ -141,7 +139,7 @@ const mockedGetProductLicenseOnboardingState = vi.mocked(getProductLicenseOnboar
 const mockedGetProductLicenseDiagnostics = vi.mocked(getProductLicenseDiagnostics);
 const mockedGetActivationBootstrapState = vi.mocked(getActivationBootstrapState);
 const mockedGetEntitlementSummary = vi.mocked(getEntitlementSummary);
-const mockedGetProductActivationToken = vi.mocked(getProductActivationToken);
+const mockedNotifyEntitlementsUpdated = vi.mocked(notifyEntitlementsUpdated);
 const mockedRefreshProductActivationPolicy = vi.mocked(refreshProductActivationPolicy);
 const mockedApplyProductLicenseReconciliation = vi.mocked(applyProductLicenseReconciliation);
 const mockedClaimProductActivation = vi.mocked(claimProductActivation);
@@ -217,7 +215,8 @@ describe("ProductLicenseGate", () => {
       capability_map_json: "{}",
       feature_flag_map_json: "{}",
     });
-    mockedGetProductActivationToken.mockResolvedValue(null);
+    // No activation token on this PC unless a test says otherwise.
+    mockedRefreshProductActivationPolicy.mockResolvedValue({ kind: "no_token" });
     useSessionStore.getState().resetForTests();
     mockedGetSessionInfo.mockResolvedValue(signedOutSession);
   });
@@ -471,13 +470,12 @@ describe("ProductLicenseGate", () => {
     // Allow microtasks / effect settle; must stay quiet (no loop).
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(mockedGetProductActivationToken).not.toHaveBeenCalled();
     expect(mockedRefreshProductActivationPolicy).not.toHaveBeenCalled();
     expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(mockedGetEntitlementSummary.mock.calls.length).toBeLessThan(5);
   });
 
-  /** Active device due for its scheduled re-validation (never reconciled), with a stored token. */
+  /** Active device due for its scheduled re-validation (never reconciled); the refresh is per test. */
   function setUpDueActiveDevice() {
     mockedGetAppInfo.mockResolvedValue(appInfo);
     mockedGetProductLicenseOnboardingState.mockResolvedValue({
@@ -493,9 +491,98 @@ describe("ProductLicenseGate", () => {
       diagnostics: [],
       has_activation_claim: true,
     });
-    mockedGetProductActivationToken.mockResolvedValue("device-token");
     localStorage.setItem("maintafox:product-license:key-cache:v1", "MFX-TEST-KEY-0001");
   }
+
+  it("shows the licence Rust renewed without recording it again", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      kind: "refreshed",
+      state: {
+        complete: true,
+        status: "active",
+        pending_online_validation: false,
+        tenant_id: "ten_test",
+        last_reconciled_at: new Date().toISOString(),
+      },
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedNotifyEntitlementsUpdated).toHaveBeenCalled();
+    });
+    expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(appInfo.version);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+    expect(await screen.findByText("app content")).toBeInTheDocument();
+  });
+
+  it("claims with the cached key when this PC holds no activation token", async () => {
+    setUpDueActiveDevice();
+    const claim = {
+      tenant_id: "ten_test",
+      license_id: "lic_test",
+      machine_fingerprint: "fp",
+      activation_token: "new-token",
+    };
+    mockedClaimProductActivation.mockResolvedValue(claim);
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "active",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "success", claim }),
+      );
+    });
+    expect(mockedClaimProductActivation).toHaveBeenCalledWith(
+      expect.objectContaining({ license_key: "MFX-TEST-KEY-0001" }),
+    );
+  });
+
+  it("records a refresh that got no answer as a network error", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      new Error("Cannot reach the control API"),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "degraded_api_unavailable",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "network_error",
+          error_code: "network_unreachable",
+          error_message: "Cannot reach the control API",
+        }),
+      );
+    });
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+  });
 
   it("records a vendor revocation as a denial and never re-claims with the cached key", async () => {
     setUpDueActiveDevice();
@@ -571,13 +658,8 @@ describe("ProductLicenseGate", () => {
 
   it("never records a licence change this PC refused as a network failure", async () => {
     setUpDueActiveDevice();
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_other",
-      license_id: "lic_other",
-      machine_fingerprint: "fp",
-      activation_token: "device-token",
-    } as never);
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    // Rust refused to apply the renewed claim (another organisation, signed out).
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -596,14 +678,13 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "success" }),
-      );
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
-    // Only the refused success is sent (once per check): never a "network_error", "http_error" or
-    // "denial" recorded because of it.
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    await new Promise((r) => setTimeout(r, 150));
+    // Nothing is recorded: never a "network_error", "http_error" or "denial" because of the
+    // refusal, and no fresh claim.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
   });
 
   it("tells the licence server the version this PC runs when it refreshes the policy", async () => {
@@ -625,10 +706,7 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(
-        "device-token",
-        appInfo.version,
-      );
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(appInfo.version);
     });
   });
 
@@ -655,7 +733,7 @@ describe("ProductLicenseGate", () => {
       expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
-      expect(call[1]).toBeUndefined();
+      expect(call[0]).toBeUndefined();
     }
   });
 
@@ -758,14 +836,6 @@ describe("ProductLicenseGate", () => {
       diagnostics: [],
       has_activation_claim: true,
     });
-    mockedGetProductActivationToken.mockResolvedValue("device-token");
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_test",
-      license_id: "lic_test",
-      machine_fingerprint: "fp",
-      activation_token: "device-token",
-      expires_at: "2028-06-30T00:00:00Z",
-    } as never);
   }
 
   it("lets a signed-in administrator confirm their identity on the denied screen, then applies the renewal", async () => {
@@ -784,10 +854,11 @@ describe("ProductLicenseGate", () => {
       tenant_id: "ten_test",
       last_reconciled_at: new Date().toISOString(),
     };
-    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+    // Rust refuses to apply the renewal until the identity is confirmed, then records it.
+    mockedRefreshProductActivationPolicy.mockImplementation(async () => {
       if (!verified) throw stepUpRequired;
       applied = true;
-      return activeState;
+      return { kind: "refreshed", state: activeState };
     });
     // What this PC reports once the renewal is stored.
     mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
@@ -817,27 +888,22 @@ describe("ProductLicenseGate", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
 
-    // The dialog verifies and closes, then the gate applies the same change again.
+    // The dialog verifies and closes, then the gate runs the refresh again, which Rust applies.
     expect(await screen.findByText("app content")).toBeInTheDocument();
     expect(mockedVerifyStepUp).toHaveBeenCalledWith("not-a-real-password");
-    // The same renewal claim is applied again after the identity check (no new server call).
-    const successes = mockedApplyProductLicenseReconciliation.mock.calls.filter(
-      (c) => c[0].kind === "success",
-    );
-    expect(successes.length).toBeGreaterThanOrEqual(2);
-    expect(successes.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        kind: "success",
-        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
-      }),
-    );
-    expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledTimes(1);
+    // Once refused, then again from the identity check (`withStepUp` tries before asking).
+    expect(mockedRefreshProductActivationPolicy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
+      expect(call[0]).toBe(appInfo.version);
+    }
+    // Rust recorded the renewal: the webview records nothing itself.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(screen.queryByText("License expired")).not.toBeInTheDocument();
   });
 
   it("shows the coded refusal on the denied screen without an identity check when nobody may administer", async () => {
     setUpDeniedDeviceWithRenewal();
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -857,13 +923,13 @@ describe("ProductLicenseGate", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Revalidate now" }));
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("License expired")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm identity" })).not.toBeInTheDocument();
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    // A refusal is never recorded as a failure or a denial.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
   });
 
   /**
@@ -885,7 +951,8 @@ describe("ProductLicenseGate", () => {
       verified = true;
       return { success: true, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
     });
-    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+    // Rust answers the refresh as this PC would: refused, then applied.
+    mockedRefreshProductActivationPolicy.mockImplementation(async () => {
       if (!sessionUsable()) {
         throw {
           code: "ORG_VALIDATION_FAILED",
@@ -901,7 +968,7 @@ describe("ProductLicenseGate", () => {
       }
       if (!verified) throw { code: "STEP_UP_REQUIRED", message: "Step-up required" };
       applied = true;
-      return activeState;
+      return { kind: "refreshed" as const, state: activeState };
     });
     mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
       applied
@@ -924,12 +991,9 @@ describe("ProductLicenseGate", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
     expect(await screen.findByText("app content")).toBeInTheDocument();
-    expect(mockedApplyProductLicenseReconciliation.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        kind: "success",
-        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
-      }),
-    );
+    // The renewal was applied by the refresh run again after the identity check, in Rust.
+    expect(mockedRefreshProductActivationPolicy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
   }
 
   it("lets an administrator whose password must change sign in, change it, confirm identity and apply the renewal while denied", async () => {
@@ -1011,13 +1075,7 @@ describe("ProductLicenseGate", () => {
     setUpDueActiveDevice();
     // Signed in, the session still usable: it is read again once after the refusal, not in a loop.
     mockedGetSessionInfo.mockResolvedValue(adminSession);
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_test",
-      license_id: "lic_test",
-      machine_fingerprint: "fp",
-      activation_token: " ",
-    } as never);
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -1035,12 +1093,11 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     expect(await screen.findByText("app content")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 150));
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(mockedGetSessionInfo.mock.calls.length).toBeLessThan(5);
   });
 });

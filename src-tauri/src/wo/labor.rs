@@ -13,6 +13,7 @@
 //!   - `remove_labor_entry` is only allowed while the WO is in draft, planned, or assigned.
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -367,7 +368,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
             let at = crate::wo::time::parse_utc_timestamp(raw, field)?;
             if at > latest_allowed {
                 return Err(AppError::ValidationFailed(vec![
-                    "Les heures de main-d'œuvre ne peuvent pas être dans le futur.".to_string(),
+                    "GATE_WO_LABOR_FUTURE: Les heures de main-d'œuvre ne peuvent pas être dans le futur.".to_string(),
                 ]));
             }
         }
@@ -481,7 +482,7 @@ pub async fn close_labor_entry(
 
     if entry.ended_at.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Cette entrée de main-d'œuvre est déjà clôturée.".to_string(),
+            "GATE_WO_LABOR_ALREADY_CLOSED: Cette entrée de main-d'œuvre est déjà clôturée.".to_string(),
         ]));
     }
 
@@ -676,8 +677,9 @@ pub async fn remove_labor_entry(db: &DatabaseConnection, intervener_id: i64, _ac
     let status_code = load_wo_status_code(db, wo_id).await?;
     let allowed = matches!(status_code.as_str(), "draft" | "planning" | "ready");
     if !allowed {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "La suppression d'une entrée de main-d'œuvre n'est pas autorisée au statut '{status_code}'."
+            "GATE_WO_LABOR_DELETE_STATUS:status={status_key}: La suppression d'une entrée de main-d'œuvre n'est pas autorisée au statut '{status_code}'."
         )]));
     }
 

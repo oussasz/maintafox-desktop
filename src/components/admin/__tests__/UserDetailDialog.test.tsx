@@ -115,6 +115,19 @@ describe("UserDetailDialog", () => {
     expect(await screen.findByRole("button", { name: "console.user.disable" })).toBeDisabled();
   });
 
+  it("offers a password reset for another account (AU-36)", async () => {
+    rbac.getUser.mockResolvedValue(detail());
+    renderDialog(1);
+    expect(await screen.findByRole("button", { name: "console.user.reset" })).toBeInTheDocument();
+  });
+
+  it("does not offer a password reset on one's own account (AU-36)", async () => {
+    rbac.getUser.mockResolvedValue(detail());
+    renderDialog(7);
+    await screen.findByRole("button", { name: "console.user.disable" });
+    expect(screen.queryByRole("button", { name: "console.user.reset" })).not.toBeInTheDocument();
+  });
+
   it("does not offer to give a role to one's own account (AU-45)", async () => {
     rbac.getUser.mockResolvedValue(detail());
     renderDialog(7);

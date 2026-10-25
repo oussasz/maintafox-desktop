@@ -161,14 +161,14 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
 
     let Some(def) = settings::catalog::definition(&payload.key) else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unknown setting '{}'.",
+            "GATE_SETTING_UNKNOWN: Unknown setting '{}'.",
             payload.key
         )]));
     };
     let scope = payload.scope.unwrap_or_else(|| def.scope.to_string());
     if scope != def.scope {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Setting '{}' is stored at {} scope, not '{scope}'.",
+            "GATE_SETTING_SCOPE_MISMATCH: Setting '{}' is stored at {} scope, not '{scope}'.",
             def.key, def.scope
         )]));
     }

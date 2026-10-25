@@ -372,7 +372,7 @@ impl SyncWorkerHandle {
 pub async fn pause_sync(db: &DatabaseConnection, handle: &SyncWorkerHandle, minutes: u32) -> AppResult<String> {
     if minutes == 0 || minutes > SYNC_MAX_PAUSE_MINUTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
+            "GATE_SYNC_PAUSE_RANGE:max={SYNC_MAX_PAUSE_MINUTES}: Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
         )]));
     }
     let until = (chrono::Utc::now() + chrono::Duration::minutes(i64::from(minutes)))
@@ -822,6 +822,9 @@ impl SyncWorker {
     /// told apart from "not received yet" (`plant_join::record_complete_pull`). Nothing is recorded
     /// when the activation changed during the cycle: the pull ran for another organisation.
     async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
+        // Grants still waiting for an author or for rights that a complete pull did not bring wait
+        // no longer (`sync::grant_check`).
+        crate::sync::grant_check::release_after_complete_pull(&self.db).await?;
         let Some(tenant_id) = pulled_for else {
             return Ok(());
         };

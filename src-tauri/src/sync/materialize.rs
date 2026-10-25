@@ -168,7 +168,9 @@ enum Selection<'a> {
 /// Apply pending inbox rows, plus deferred rows whose entity type can now be applied (one pass of
 /// at most `limit` rows, pending rows first).
 pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
-    materialize_selection(db, Selection::Any, limit.unwrap_or(200)).await
+    // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
+    crate::sync::grant_check::with_review_collection(materialize_selection(db, Selection::Any, limit.unwrap_or(200)))
+        .await
 }
 
 /// Apply every pending inbox row (passes of `batch` rows, parents first). With `retry_deferred`,
@@ -176,6 +178,15 @@ pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>
 /// without the sweep (rows whose parent comes in a later page are deferred once) and sweeps after
 /// its last page, so the deferred rows are not re-read after every page.
 pub async fn materialize_inbox(
+    db: &DatabaseConnection,
+    batch: i64,
+    retry_deferred: bool,
+) -> AppResult<MaterializeInboxResult> {
+    // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
+    crate::sync::grant_check::with_review_collection(materialize_inbox_run(db, batch, retry_deferred)).await
+}
+
+async fn materialize_inbox_run(
     db: &DatabaseConnection,
     batch: i64,
     retry_deferred: bool,

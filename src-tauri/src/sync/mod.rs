@@ -9,6 +9,7 @@ pub mod code_clash;
 pub mod conflicts;
 pub mod device_code;
 pub mod domain;
+pub(crate) mod grant_check;
 pub mod identity;
 pub mod materialize;
 pub mod media;
@@ -30,6 +31,8 @@ mod audit_targets_tests;
 mod convergence_tests;
 #[cfg(test)]
 mod foundation_tests;
+#[cfg(test)]
+mod grant_check_tests;
 #[cfg(test)]
 mod harness_tests;
 #[cfg(test)]

@@ -121,7 +121,7 @@ pub async fn save_wo_attachment(
     if let Some(ref phase) = input.phase {
         if !VALID_PHASES.contains(&phase.as_str()) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "phase invalide : '{phase}'. Valeurs autorisées : before, during, after, evidence."
+                "GATE_WO_ATTACH_PHASE_INVALID: phase invalide : '{phase}'. Valeurs autorisées : before, during, after, evidence."
             )]));
         }
     }
@@ -129,7 +129,7 @@ pub async fn save_wo_attachment(
     // ── Validate file size ────────────────────────────────────────────────
     if input.file_bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La taille du fichier depasse la limite de {} Mo.",
+            "GATE_WO_ATTACH_TOO_LARGE:max_mb={0}: La taille du fichier depasse la limite de {0} Mo.",
             MAX_FILE_SIZE_BYTES / (1024 * 1024)
         )]));
     }
@@ -140,7 +140,9 @@ pub async fn save_wo_attachment(
         .and_then(|n| n.to_str())
         .unwrap_or("attachment");
     if sanitized_name.is_empty() || sanitized_name.contains("..") {
-        return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_WO_ATTACH_NAME_INVALID: Nom de fichier invalide.".into(),
+        ]));
     }
 
     // Resolved before the transaction: the helper reads through the pool connection.
@@ -172,7 +174,7 @@ pub async fn save_wo_attachment(
 
     if status == "cancelled" || status == "closed" {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible d'ajouter une piece jointe a un OT cloture/annule.".into(),
+            "GATE_WO_ATTACH_WO_LOCKED: Impossible d'ajouter une piece jointe a un OT cloture/annule.".into(),
         ]));
     }
 
@@ -303,7 +305,8 @@ pub async fn delete_wo_attachment_record(db: &DatabaseConnection, attachment_id:
             .map_err(|e| decode_err("status_code", e))?;
         if status == "closed" || status == "cancelled" {
             return Err(AppError::ValidationFailed(vec![
-                "Suppression interdite: OT cloture/annule (audit trail verrouille).".into(),
+                "GATE_WO_ATTACH_DELETE_LOCKED: Suppression interdite: OT cloture/annule (audit trail verrouille)."
+                    .into(),
             ]));
         }
         let relative_path: String = row.try_get("", "relative_path").unwrap_or_default();

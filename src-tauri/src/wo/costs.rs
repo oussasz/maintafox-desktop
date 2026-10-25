@@ -8,6 +8,7 @@
 //!   update_service_cost   — manual vendor/service cost entry
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -197,8 +198,9 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
         .map_err(|e| decode_err("status_code", e))?;
 
     if !matches!(status_code.as_str(), "closed" | "technically_verified") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le hook de cout n'est disponible que pour les OT clotures ou verifies techniquement. \
+            "GATE_WO_COST_HOOK_STATUS:status={status_key}: Le hook de cout n'est disponible que pour les OT clotures ou verifies techniquement. \
              Statut actuel : '{status_code}'."
         )]));
     }
@@ -278,14 +280,15 @@ pub async fn update_service_cost(
         .map_err(|e| decode_err("status_code", e))?;
 
     if matches!(status_code.as_str(), "closed" | "cancelled") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier le cout de service pour un OT en statut '{status_code}'."
+            "GATE_WO_SERVICE_COST_LOCKED:status={status_key}: Impossible de modifier le cout de service pour un OT en statut '{status_code}'."
         )]));
     }
 
     if service_cost < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le cout de service ne peut pas etre negatif.".to_string(),
+            "GATE_WO_SERVICE_COST_NEGATIVE: Le cout de service ne peut pas etre negatif.".to_string(),
         ]));
     }
 

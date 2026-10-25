@@ -73,64 +73,80 @@ pub const WORKLOAD_PERIODS: [i64; 2] = [7, 30];
 
 fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
     if raw.len() > 48_000 {
-        return Err(AppError::ValidationFailed(vec!["layout_json too large.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_CMD_DASH_LAYOUT_INVALID: layout_json too large.".into(),
+        ]));
     }
     let v: serde_json::Value =
         serde_json::from_str(raw).map_err(|e| AppError::ValidationFailed(vec![format!("layout_json: {e}")]))?;
-    let obj = v
-        .as_object()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json must be an object.".into()]))?;
+    let obj = v.as_object().ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_CMD_DASH_LAYOUT_INVALID: layout_json must be an object.".into()
+        ])
+    })?;
     if obj.get("version").and_then(|x| x.as_u64()) != Some(1) {
-        return Err(AppError::ValidationFailed(
-            vec!["layout_json.version must be 1.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_CMD_DASH_LAYOUT_INVALID: layout_json.version must be 1.".into(),
+        ]));
     }
     let Some(widgets) = obj.get("widgets").and_then(|x| x.as_array()) else {
-        return Err(AppError::ValidationFailed(vec!["layout_json.widgets required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_CMD_DASH_LAYOUT_INVALID: layout_json.widgets required.".into(),
+        ]));
     };
     if widgets.is_empty() || widgets.len() > 32 {
         return Err(AppError::ValidationFailed(vec![
-            "layout_json.widgets length invalid.".into()
+            "GATE_CMD_DASH_LAYOUT_INVALID: layout_json.widgets length invalid.".into(),
         ]));
     }
     for w in widgets {
-        let wo = w
-            .as_object()
-            .ok_or_else(|| AppError::ValidationFailed(vec!["each widget must be an object.".into()]))?;
+        let wo = w.as_object().ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_CMD_DASH_LAYOUT_INVALID: each widget must be an object.".into()
+            ])
+        })?;
         wo.get("id")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty() && s.len() <= 64)
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.id invalid.".into()]))?;
-        wo.get("order")
-            .and_then(|x| x.as_i64())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.order invalid.".into()]))?;
-        wo.get("visible")
-            .and_then(|x| x.as_bool())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.visible invalid.".into()]))?;
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: widget.id invalid.".into()])
+            })?;
+        wo.get("order").and_then(|x| x.as_i64()).ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: widget.order invalid.".into()])
+        })?;
+        wo.get("visible").and_then(|x| x.as_bool()).ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: widget.visible invalid.".into()])
+        })?;
     }
     if let Some(cards) = obj.get("metric_cards") {
-        let arr = cards
-            .as_array()
-            .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json.metric_cards must be an array.".into()]))?;
+        let arr = cards.as_array().ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_CMD_DASH_LAYOUT_INVALID: layout_json.metric_cards must be an array.".into(),
+            ])
+        })?;
         if arr.len() > 16 {
             return Err(AppError::ValidationFailed(vec![
-                "layout_json.metric_cards length invalid.".into(),
+                "GATE_CMD_DASH_LAYOUT_INVALID: layout_json.metric_cards length invalid.".into(),
             ]));
         }
         for w in arr {
-            let wo = w
-                .as_object()
-                .ok_or_else(|| AppError::ValidationFailed(vec!["each metric_card must be an object.".into()]))?;
+            let wo = w.as_object().ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_CMD_DASH_LAYOUT_INVALID: each metric_card must be an object.".into(),
+                ])
+            })?;
             wo.get("id")
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.is_empty() && s.len() <= 64)
-                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.id invalid.".into()]))?;
-            wo.get("order")
-                .and_then(|x| x.as_i64())
-                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.order invalid.".into()]))?;
-            wo.get("visible")
-                .and_then(|x| x.as_bool())
-                .ok_or_else(|| AppError::ValidationFailed(vec!["metric_card.visible invalid.".into()]))?;
+                .ok_or_else(|| {
+                    AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: metric_card.id invalid.".into()])
+                })?;
+            wo.get("order").and_then(|x| x.as_i64()).ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: metric_card.order invalid.".into()])
+            })?;
+            wo.get("visible").and_then(|x| x.as_bool()).ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_CMD_DASH_LAYOUT_INVALID: metric_card.visible invalid.".into()])
+            })?;
         }
     }
     Ok(())
@@ -166,7 +182,7 @@ pub async fn build_workload_chart(
 ) -> AppResult<DashboardWorkloadChart> {
     if !WORKLOAD_PERIODS.contains(&period) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "period_days must be one of {WORKLOAD_PERIODS:?}."
+            "GATE_CMD_DASH_PERIOD_INVALID: period_days must be one of {WORKLOAD_PERIODS:?}."
         )]));
     }
     let col = |allowed: bool, sql: &str, name: &str| {

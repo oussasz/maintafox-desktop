@@ -197,7 +197,7 @@ async fn resolve_fta_graph_from_real_data(
     graph_json: &str,
 ) -> AppResult<(String, Value)> {
     let mut root: Value = serde_json::from_str(graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("FTA graph_json: {e}")]))?;
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_FTA_GRAPH_INVALID: FTA graph_json: {e}")]))?;
     let Some(nodes) = root.get_mut("nodes").and_then(Value::as_object_mut) else {
         return Ok((graph_json.to_string(), json!({ "bindings": [] })));
     };
@@ -216,7 +216,7 @@ async fn resolve_fta_graph_from_real_data(
 
         let p_manual = node_spec.as_object().and_then(|o| as_f64(o.get("p"))).ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "node '{node_id}': basic event requires numeric field 'p' for manual mode"
+                "GATE_REL_FTA_NODE_P_REQUIRED: node '{node_id}': basic event requires numeric field 'p' for manual mode"
             )])
         })?;
         let binding_cfg = match parse_node_binding(node_id, node_spec, equipment_id) {
@@ -288,7 +288,7 @@ async fn resolve_rbd_graph_from_real_data(
     graph_json: &str,
 ) -> AppResult<(String, Value)> {
     let mut root: Value = serde_json::from_str(graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("RBD graph_json: {e}")]))?;
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_RBD_GRAPH_INVALID: RBD graph_json: {e}")]))?;
     let Some(nodes) = root.get_mut("nodes").and_then(Value::as_object_mut) else {
         return Ok((graph_json.to_string(), json!({ "bindings": [] })));
     };
@@ -307,7 +307,7 @@ async fn resolve_rbd_graph_from_real_data(
 
         let r_manual = node_spec.as_object().and_then(|o| as_f64(o.get("r"))).ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "node '{node_id}': block requires numeric field 'r' for manual mode"
+                "GATE_REL_RBD_NODE_R_REQUIRED: node '{node_id}': block requires numeric field 'r' for manual mode"
             )])
         })?;
 
@@ -537,7 +537,9 @@ pub async fn update_fta_model(db: &DatabaseConnection, input: UpdateFtaModelInpu
         vals.push(s.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -553,7 +555,9 @@ pub async fn update_fta_model(db: &DatabaseConnection, input: UpdateFtaModelInpu
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["fta_models update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: fta_models update conflict.".into(),
+        ]));
     }
     load_fta_by_id(db, input.id).await
 }
@@ -585,7 +589,7 @@ pub async fn evaluate_fta_model(db: &DatabaseConnection, id: i64) -> AppResult<F
     let (resolved_graph_json, binding_meta) =
         resolve_fta_graph_from_real_data(db, m.equipment_id, &m.graph_json).await?;
     let g: FtaGraph = serde_json::from_str(&resolved_graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("FTA graph_json: {e}")]))?;
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_FTA_GRAPH_INVALID: FTA graph_json: {e}")]))?;
     let ev = evaluate_fta(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let latest_data_at = latest_rams_data_change_at(db, m.equipment_id).await?;
     let evaluated_at = Utc::now().to_rfc3339();
@@ -680,7 +684,9 @@ pub async fn update_rbd_model(db: &DatabaseConnection, input: UpdateRbdModelInpu
         vals.push(s.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -696,7 +702,9 @@ pub async fn update_rbd_model(db: &DatabaseConnection, input: UpdateRbdModelInpu
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["rbd_models update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: rbd_models update conflict.".into(),
+        ]));
     }
     load_rbd_by_id(db, input.id).await
 }
@@ -728,7 +736,7 @@ pub async fn evaluate_rbd_model(db: &DatabaseConnection, id: i64) -> AppResult<R
     let (resolved_graph_json, binding_meta) =
         resolve_rbd_graph_from_real_data(db, m.equipment_id, &m.graph_json).await?;
     let g: RbdGraph = serde_json::from_str(&resolved_graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("RBD graph_json: {e}")]))?;
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_RBD_GRAPH_INVALID: RBD graph_json: {e}")]))?;
     let ev = evaluate_rbd(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let latest_data_at = latest_rams_data_change_at(db, m.equipment_id).await?;
     let evaluated_at = Utc::now().to_rfc3339();
@@ -824,7 +832,9 @@ pub async fn update_event_tree_model(
         vals.push(s.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -841,7 +851,7 @@ pub async fn update_event_tree_model(
         .rows_affected();
     if n == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "event_tree_models update conflict.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: event_tree_models update conflict.".into(),
         ]));
     }
     load_eta_by_id(db, input.id).await
@@ -871,8 +881,9 @@ pub async fn delete_event_tree_model(db: &DatabaseConnection, id: i64) -> AppRes
 
 pub async fn evaluate_event_tree_model(db: &DatabaseConnection, id: i64) -> AppResult<EventTreeModel> {
     let m = load_eta_by_id(db, id).await?;
-    let g: EtaGraph = serde_json::from_str(&m.graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Event tree graph_json: {e}")]))?;
+    let g: EtaGraph = serde_json::from_str(&m.graph_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!("GATE_REL_ETA_GRAPH_INVALID: Event tree graph_json: {e}")])
+    })?;
     let ev = evaluate_eta(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let result_json = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
     let now = Utc::now().to_rfc3339();

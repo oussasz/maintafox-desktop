@@ -272,9 +272,9 @@ pub async fn get_reference_domain(db: &DatabaseConnection, domain_id: i64) -> Ap
 pub async fn get_reference_domain_by_code(db: &DatabaseConnection, domain_code: &str) -> AppResult<ReferenceDomain> {
     let code = normalize_code(domain_code);
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(
-            vec!["Le code de domaine est requis.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REF_DOMAIN_CODE_REQUIRED: Le code de domaine est requis.".into(),
+        ]));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(

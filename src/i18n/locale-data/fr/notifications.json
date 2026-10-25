@@ -361,6 +361,14 @@
     "stock_count_recount_reversed": {
       "title": "Recomptez {{code}} à {{location}}",
       "body": "{{title}} : votre comptage {{session}} a été annulé faute de seconde approbation. Recomptez l'emplacement depuis le stock à rapprocher."
+    },
+    "admin_grants_to_review": {
+      "title": "Droits d’administration retirés : attributions à revoir",
+      "body": "{{people}} n’a plus {{rights}} (retiré le {{since}}). {{count}} attribution(s) faites depuis par cette personne sont présentes sur ce poste : {{grants}}. Rien n’a été retiré automatiquement ; vérifiez-les."
+    },
+    "grants_from_former_authors": {
+      "title": "Droits reçus d’une personne qui n’a plus ce droit",
+      "body": "{{count}} attribution(s) reçues d’un autre poste ont été appliquées, mais leur auteur n’a plus le droit de les accorder et ce poste ne sait pas depuis quand : {{grants}}. Vérifiez-les."
     }
   },
   "audience": {

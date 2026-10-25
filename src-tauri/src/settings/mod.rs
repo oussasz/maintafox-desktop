@@ -252,13 +252,17 @@ pub async fn set_setting_recorded(
 ) -> AppResult<()> {
     if value_json.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "setting_value_json for '{}' must not be empty",
-            key
+            "GATE_SET_VALUE_EMPTY:key={}: setting_value_json for '{}' must not be empty",
+            key, key
         )]));
     }
 
-    let _: serde_json::Value = serde_json::from_str(value_json)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
+    let _: serde_json::Value = serde_json::from_str(value_json).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_SET_VALUE_JSON_INVALID:key={}: setting_value_json for '{}' is not valid JSON",
+            key, key
+        )])
+    })?;
     let tx = db.begin().await?;
     // Per-key checks: the fiscal-year start month and the tenant currency (stored postings
     // depend on them).
@@ -794,11 +798,14 @@ pub async fn save_policy_draft(
 ) -> AppResult<PolicySnapshot> {
     if domain.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "policy domain must not be empty".to_string()
+            "GATE_SET_POLICY_DOMAIN_REQUIRED: policy domain must not be empty".to_string(),
         ]));
     }
-    let _: serde_json::Value = serde_json::from_str(snapshot_json)
-        .map_err(|_| AppError::ValidationFailed(vec!["snapshot_json is not valid JSON".to_string()]))?;
+    let _: serde_json::Value = serde_json::from_str(snapshot_json).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_SET_POLICY_JSON_INVALID: snapshot_json is not valid JSON".to_string()
+        ])
+    })?;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -862,9 +869,11 @@ pub async fn save_policy_draft(
 
 /// Validate the current draft for a domain.
 pub async fn test_policy_draft(db: &DatabaseConnection, domain: &str) -> AppResult<Vec<PolicyTestResult>> {
-    let draft = get_draft_policy(db, domain)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("no draft exists for domain '{domain}'")]))?;
+    let draft = get_draft_policy(db, domain).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_SET_POLICY_NO_DRAFT:domain={domain}: no draft exists for domain '{domain}'"
+        )])
+    })?;
 
     Ok(validate_policy_json(domain, &draft.snapshot_json))
 }

@@ -189,7 +189,7 @@ async fn insert_transition(
 pub fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .to_string(),
         ]));

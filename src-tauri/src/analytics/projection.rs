@@ -106,7 +106,7 @@ fn checked_horizon(days: i64) -> AppResult<i64> {
     match days {
         7 | 30 | 90 => Ok(days),
         other => Err(AppError::ValidationFailed(vec![format!(
-            "analytics horizon must be 7, 30 or 90 days (got {other})"
+            "GATE_ANA_HORIZON_INVALID:value={other}: analytics horizon must be 7, 30 or 90 days (got {other})"
         )])),
     }
 }

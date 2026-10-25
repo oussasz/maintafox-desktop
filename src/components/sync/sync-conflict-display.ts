@@ -69,6 +69,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "CODE_CLASH",
   // An account received with a username already used here (`sync::username_clash`).
   "USERNAME_CLASH",
+  // A received grant whose author does not hold the right to grant it here (`sync::grant_check`).
+  "GRANT_BY_UNAUTHORISED_ADMIN",
   // Rules re-checked on a received row (`sync::apply_hooks`): safety, four-eyes, site rules.
   "APPEND_ONLY_DELETE",
   // An audit chain stub for this PC's own chain, or malformed (`audit::chain`).

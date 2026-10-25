@@ -23,7 +23,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-context";
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
-import { appErrorText, describeAppError } from "@/lib/app-error";
+import { appErrorText } from "@/lib/app-error";
 import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
@@ -153,9 +153,7 @@ export function SetupInitialAdminPage() {
       }
       navigate("/", { replace: true });
     } catch (e) {
-      setResetActivationError(
-        describeAppError(e).title || t("login.resetActivation.errorFallback"),
-      );
+      setResetActivationError(appErrorText(e) || t("login.resetActivation.errorFallback"));
     } finally {
       if (mountedRef.current) {
         setResettingActivation(false);

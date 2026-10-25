@@ -228,7 +228,7 @@ pub async fn create_custom_permission(
     // ── Validate `cst.` prefix ───────────────────────────────────────────
     if !name.starts_with("cst.") {
         return Err(AppError::ValidationFailed(vec![
-            "Custom permission name must start with 'cst.' prefix".to_owned(),
+            "GATE_ADMIN_PERM_PREFIX: Custom permission name must start with 'cst.' prefix".to_owned(),
         ]));
     }
 
@@ -236,7 +236,7 @@ pub async fn create_custom_permission(
     for prefix in SYSTEM_PREFIXES {
         if name.starts_with(prefix) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Permission name must not use reserved system prefix '{prefix}'"
+                "GATE_ADMIN_PERM_RESERVED_PREFIX: Permission name must not use reserved system prefix '{prefix}'"
             )]));
         }
     }
@@ -244,7 +244,8 @@ pub async fn create_custom_permission(
     // ── Minimum length after prefix ──────────────────────────────────────
     if name.len() < 5 {
         return Err(AppError::ValidationFailed(vec![
-            "Permission name must have at least one character after 'cst.' prefix".to_owned(),
+            "GATE_ADMIN_PERM_NAME_SHORT: Permission name must have at least one character after 'cst.' prefix"
+                .to_owned(),
         ]));
     }
 
@@ -267,7 +268,7 @@ pub async fn create_custom_permission(
         .map_err(|e: sea_orm::DbErr| {
             if e.to_string().contains("UNIQUE") {
                 AppError::ValidationFailed(vec![format!(
-                    "Permission '{name}' already exists"
+                    "GATE_ADMIN_PERM_EXISTS: Permission '{name}' already exists"
                 )])
             } else {
                 AppError::Database(e)

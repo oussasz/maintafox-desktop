@@ -307,7 +307,7 @@ pub async fn save_activity_filter(payload: SaveFilterInput, state: State<'_, App
 
     if payload.view_name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "view_name must not be empty".to_string()
+            "GATE_CMD_VIEW_NAME_EMPTY: view_name must not be empty".to_string(),
         ]));
     }
 
