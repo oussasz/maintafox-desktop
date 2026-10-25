@@ -1,6 +1,7 @@
 //! The licence policy refresh sent from Rust (`refresh_product_activation_policy_in`) against an
 //! in-process HTTP stub of the control API on 127.0.0.1 (one request per connection). The stored
-//! activation token is sent as the bearer and never comes back in the result.
+//! activation token is sent as the bearer and never comes back in the result. The stub is shared
+//! with the other activation calls' tests (`product_license_activation_calls_tests.rs`).
 
 use std::sync::{Arc, Mutex};
 
@@ -16,13 +17,13 @@ use super::{
 };
 use crate::errors::AppError;
 
-const SIGNED_OUT: LicenceCaller = LicenceCaller {
+pub(super) const SIGNED_OUT: LicenceCaller = LicenceCaller {
     user_id: None,
     may_administer: false,
     step_up: false,
 };
 /// An administrator signed in with a fresh identity check.
-const ADMIN: LicenceCaller = LicenceCaller {
+pub(super) const ADMIN: LicenceCaller = LicenceCaller {
     user_id: Some(1),
     may_administer: true,
     step_up: true,
@@ -34,25 +35,25 @@ const STORED_TOKEN: &str = "stored-activation-token-7f3a";
 const PATH: &str = "/api/v1/activation/policy-refresh";
 
 #[derive(Debug, Clone)]
-struct Recorded {
-    path: String,
-    authorization: Option<String>,
-    body: String,
+pub(super) struct Recorded {
+    pub(super) path: String,
+    pub(super) authorization: Option<String>,
+    pub(super) body: String,
 }
 
 /// A control API that answers every request with `status` and `body`, recording each request.
-struct Stub {
-    base_url: String,
+pub(super) struct Stub {
+    pub(super) base_url: String,
     requests: Arc<Mutex<Vec<Recorded>>>,
 }
 
 impl Stub {
-    fn requests(&self) -> Vec<Recorded> {
+    pub(super) fn requests(&self) -> Vec<Recorded> {
         self.requests.lock().expect("requests").clone()
     }
 }
 
-async fn start_stub(status: u16, body: String) -> Stub {
+pub(super) async fn start_stub(status: u16, body: String) -> Stub {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let base_url = format!("http://{}", listener.local_addr().expect("addr"));
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -140,7 +141,7 @@ async fn administered_pc() -> DatabaseConnection {
     db
 }
 
-fn refusal_code(err: &AppError) -> Option<String> {
+pub(super) fn refusal_code(err: &AppError) -> Option<String> {
     match err {
         AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()),
         _ => None,
