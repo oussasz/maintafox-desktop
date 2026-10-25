@@ -4807,6 +4807,9 @@ async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
         held,
         "from an exchange: judged"
     );
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("claim");
     crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
         .await
         .expect("complete pull");
@@ -4814,6 +4817,205 @@ async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
         line_judged_in(&db, snapshot, &fresh, &received).await,
         held,
         "after a complete pull, a snapshot is no first join"
+    );
+    // Review of 93817231 (NOTE 1): the pull was of one organisation; re-activated into another one
+    // (no local data reset), this PC's first snapshot of that one is its first join.
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-b", "fp-a", "token-a")
+        .await
+        .expect("claim");
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        "pass",
+        "a complete pull of another organisation: first join"
+    );
+}
+
+/// CMMS Advisor Q14: a count from the list within the four-eyes tolerance records the person
+/// counting as its reviewer; no second person was needed, so it is not listed as an
+/// auto-approbation (above the tolerance, approved by its counter, it is:
+/// `a_count_posted_twice_is_an_item_that_a_new_count_closes`).
+#[tokio::test]
+async fn a_list_count_within_the_tolerance_approved_by_its_counter_is_no_auto_approbation() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let user = user_with(&db, "q14withincounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let session = approve_count(&db, user, enter_count(&db, user, art, loc, 7.0).await).await;
+    let session_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&db, user, &session_sync_id).await;
+    // The same posting made again under its own id (an older version's PC): a count posted twice.
+    let first = movement_sync_id(&db, &session_sync_id, "COUNT_ADJUST").await;
+    exec(
+        &db,
+        "INSERT INTO inventory_transactions
+            (entity_sync_id, article_id, warehouse_id, location_id, movement_type, quantity, source_type,
+             source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         SELECT ?, article_id, warehouse_id, location_id, movement_type, quantity, source_type, source_id,
+                source_ref, reason, performed_by_id, '2026-10-01T09:00:00Z', 1
+         FROM inventory_transactions WHERE entity_sync_id = ?",
+        vec![crate::sync::identity::new_entity_sync_id().into(), first.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty - 3, available_qty = available_qty - 3
+         WHERE article_id = ? AND location_id = ?",
+        vec![art.into(), loc.into()],
+    )
+    .await;
+    assert_eq!(
+        negative_stock::list_reviews(&db, false)
+            .await
+            .expect("list")
+            .double_postings
+            .len(),
+        1
+    );
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    // 3 counted, 4 on record: 25 %, within 50 %: posted at once, its counter as its reviewer.
+    let resolved =
+        negative_stock::resolve_by_count(&db, user, resolution(art, loc, 3.0, "Recompté après double passage"))
+            .await
+            .expect("posted");
+    assert!(!resolved.pending_approval && !resolved.self_approved);
+    let all = negative_stock::list_reviews(&db, true).await.expect("list");
+    let closed_by = all.closed_double_postings[0].closed_by.as_ref().expect("closed by");
+    assert_eq!(closed_by.session_code, resolved.session_code);
+    assert!(closed_by.approved_by.is_some());
+    assert_eq!(
+        closed_by.approved_by, closed_by.counted_by,
+        "its counter is its reviewer"
+    );
+    assert!(!closed_by.self_approved, "within the tolerance: no auto-approbation");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions s ON s.id = cl.session_id
+             WHERE s.session_code = ? AND cl.is_critical = 0 AND cl.self_approved = 0
+               AND cl.approved_by_id = cl.counted_by_id",
+            vec![resolved.session_code.clone().into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// CMMS Advisor Q14: a received count line's "above the tolerance" flag is this PC's judgement. A
+/// line approved by its counter whose sender cleared the flag, above the tolerance here (blank:
+/// strict), is stored above it and shown as an auto-approbation — here a line new here in the
+/// snapshot of a first join, applied as the plant's history (Q9), not flagged as a self-approval.
+#[tokio::test]
+async fn a_received_line_cleared_of_its_critique_but_above_here_is_an_auto_approbation() {
+    use crate::sync::materialize::{apply_inbound_payload, judged_as_row_of_batch, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "q14receivedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (session, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    // The same count of another location of the session, as another PC sends it.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let other_location_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+        vec![other.rowid.into()],
+    )
+    .await;
+    let other_warehouse_sync = text_of(
+        &db,
+        "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id WHERE l.id = ?",
+        vec![other.rowid.into()],
+    )
+    .await;
+    let mut received = wire_row(&db, "inventory_count_lines", &line_sync).await;
+    for (k, v) in [
+        ("location_sync_id", serde_json::json!(other_location_sync)),
+        ("warehouse_sync_id", serde_json::json!(other_warehouse_sync)),
+        ("is_critical", serde_json::json!(0)),
+        ("approved_by_sync_id", serde_json::json!(counter_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+        ("self_approved", serde_json::json!(0)),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let json = serde_json::Value::Object(received.clone()).to_string();
+    let outcome = judged_as_row_of_batch(
+        "snapshot-q14",
+        apply_inbound_payload(&db, "inventory_count_lines", &fresh, "upsert", 1, &json),
+    )
+    .await
+    .expect("apply");
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_critical * 10 + self_approved FROM inventory_count_lines WHERE entity_sync_id = ?",
+            vec![fresh.clone().into()],
+        )
+        .await,
+        10,
+        "stored above the tolerance (judged here); its self-approval flag kept as received"
+    );
+    let listed = crate::inventory::controls::list_count_lines(&db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.location_id == other.rowid)
+        .expect("the received line");
+    assert_eq!(
+        (listed.is_critical, listed.self_approved),
+        (1, 1),
+        "above the tolerance here, approved by its counter: an auto-approbation"
+    );
+    // The sender's flag stays 0 in its later versions: raised here from it, that is no lowering of
+    // the flag held here (the version is judged as when it arrived).
+    inbox_put(
+        &db,
+        "snapshot-q14",
+        "inventory_count_lines",
+        &fresh,
+        1,
+        &received,
+        "applied",
+    )
+    .await;
+    assert_eq!(
+        verdict_code(
+            crate::inventory::count_four_eyes::inbound_count_line_check(&db, &fresh, &received)
+                .await
+                .expect("judged")
+                .as_ref()
+        ),
+        "pass",
+        "the sender's own flag, received again"
     );
 }
 

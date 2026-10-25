@@ -396,6 +396,39 @@ describe("InventoryControlsPanel", () => {
     expect(screen.getAllByText("Samir").length).toBeGreaterThan(0);
   });
 
+  it("offers the second approval only on a self-approved line above the tolerance", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
+    const approvedByCounter = {
+      approved_by_id: 7,
+      approved_by_name: "Samir",
+      approved_at: TS,
+      approval_note: "Recounted twice",
+      self_approved: 1,
+      posted_transaction_id: 501,
+      second_approved_by_id: null,
+      second_approved_by_name: null,
+      second_approved_at: null,
+      second_approval_note: null,
+    };
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({ ...approvedByCounter, id: 1, is_critical: 1 }),
+      // An auto-approbation within the tolerance (derived on read): no second person is needed.
+      countLine({
+        ...approvedByCounter,
+        id: 2,
+        article_id: 22,
+        article_code: "A-22",
+        is_critical: 0,
+        posted_transaction_id: 502,
+      }),
+    ]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Posted)");
+    expect(await screen.findAllByText("Self-approval")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Second approval" })).toHaveLength(1);
+  });
+
   it("asks for confirmation before reversing a posted count", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
     mocks.reverseInventoryCountSession.mockResolvedValue(session({ status: "reversed" }));

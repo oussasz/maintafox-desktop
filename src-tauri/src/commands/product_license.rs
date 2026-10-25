@@ -506,7 +506,7 @@ async fn load_state_record(state: &State<'_, AppState>) -> AppResult<Option<Prod
     load_state_record_from_db(&state.db).await
 }
 
-async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<ProductLicenseStateRecord>> {
+async fn load_state_record_from_db<C: ConnectionTrait>(db: &C) -> AppResult<Option<ProductLicenseStateRecord>> {
     let row = settings::get_setting(db, PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE).await?;
     let Some(row) = row else {
         return Ok(None);
@@ -519,7 +519,9 @@ async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<
     Ok(ProductLicenseStateRecord::from_legacy_json(legacy))
 }
 
-pub async fn get_activation_claim_tenant_id(db: &DatabaseConnection) -> AppResult<Option<String>> {
+/// The organisation of this PC's current activation (`None`: not activated). Any connection, so a
+/// caller's transaction can read it (`sync::plant_join::complete_pull_done`).
+pub async fn get_activation_claim_tenant_id<C: ConnectionTrait>(db: &C) -> AppResult<Option<String>> {
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };

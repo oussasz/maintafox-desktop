@@ -587,6 +587,15 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A received count line's "above the tolerance" flag is this PC's judgement (CMMS Advisor
+        // Q14, `inventory::count_four_eyes::store_judged_critique`): the derived auto-approbation
+        // and the "critique" badge read it.
+        "inventory_count_lines" => match row {
+            RowLocator::Identity(sync_id) => {
+                crate::inventory::count_four_eyes::store_judged_critique(conn, sync_id).await
+            }
+            RowLocator::Natural(_) => Err(hook_err(layout.table(), "count line located without its sync id")),
+        },
         // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
         // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC:
         // this log's two roles only.

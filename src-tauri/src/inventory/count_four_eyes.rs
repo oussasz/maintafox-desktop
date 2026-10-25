@@ -53,10 +53,13 @@
 //! waiting), a snapshot row is judged as any other ([`first_join_history`]); a movement is judged
 //! with its line in the line's own context (snapshot or exchange), not the movement's.
 //!
-//! Auto-approbation on read (CMMS Advisor Q13): a line whose approver is its counter is shown and
-//! listed as an auto-approbation on every PC and in every read model ([`SELF_APPROVED_ON_READ_SQL`]),
-//! whether or not it was flagged where it was approved and whatever the tolerance here; nothing
-//! stored is rewritten. All PCs thus show the same lines to review.
+//! Auto-approbation on read (CMMS Advisor Q13, Q14): a line whose approver is its counter and whose
+//! variance is above the tolerance is shown and listed as an auto-approbation on every PC and in
+//! every read model ([`SELF_APPROVED_ON_READ_SQL`]), whether or not it was flagged where it was
+//! approved; within the tolerance it is not one (no second person was needed). Nothing stored is
+//! rewritten but "above the tolerance" (`is_critical`): it is always this PC's judgement — made at
+//! entry here, or for a received line the received flag OR this PC's recompute (with the Q10 cost
+//! check), stored on apply ([`store_judged_critique`]), never the peer's flag alone.
 //!
 //! Held with its stock movement (CMMS Advisor Q8). Where this PC judges a received count line
 //! four-eyes (its current site rule; under the opt-out here it is accepted on arrival, flagged), the
@@ -107,12 +110,14 @@ pub const SECOND_APPROVAL_CATEGORY: &str = "stock_count_second_approval";
 
 const LINES: &str = "inventory_count_lines";
 
-/// CMMS Advisor Q13: whether a count line (`cl`) is shown as an auto-approbation, derived on read:
-/// flagged `self_approved`, or a variance approved by its own counter (both recorded). A line
-/// without variance needs no approval (a count from the list records the person counting as its
-/// reviewer even then): never one.
+/// CMMS Advisor Q13, Q14: whether a count line (`cl`) is shown as an auto-approbation, derived on
+/// read: flagged `self_approved`, or a variance above the tolerance (`is_critical`, this PC's
+/// judgement, [`store_judged_critique`]) approved by its own counter (both recorded). A variance
+/// within the tolerance needs no second person (a count from the list records the person counting
+/// as its reviewer): never one, nor a line without variance.
 pub const SELF_APPROVED_ON_READ_SQL: &str = "(CASE WHEN cl.self_approved = 1
-      OR (ABS(cl.variance_qty) > 1e-9 AND cl.approved_by_id IS NOT NULL AND cl.approved_by_id = cl.counted_by_id)
+      OR (ABS(cl.variance_qty) > 1e-9 AND cl.is_critical = 1
+          AND cl.approved_by_id IS NOT NULL AND cl.approved_by_id = cl.counted_by_id)
       THEN 1 ELSE 0 END)";
 
 /// Quantities closer than this are no variance.
@@ -352,7 +357,10 @@ pub(crate) async fn inbound_count_line_check(
     let approver = field(&line, "approved_by_sync_id");
     let counter = field(&line, "counted_by_sync_id");
     let self_approved = flag(&line, "self_approved");
-    let above = flag(&line, "is_critical");
+    // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
+    // quantities: a received flag can make a line stricter, never more lenient. The flag held here
+    // is that same judgement (`store_judged_critique`), so it is compared with this one.
+    let above = flag(&line, "is_critical") || above_here(conn, &line).await?;
     if let Some(l) = &local {
         let quantity =
             |p: &serde_json::Map<String, serde_json::Value>, key: &str| p.get(key).and_then(serde_json::Value::as_f64);
@@ -391,7 +399,14 @@ pub(crate) async fn inbound_count_line_check(
                 ),
             );
         }
-        if same_quantities && flag(l, "is_critical") && !above {
+        // Lowered: the flag held here (this PC's judgement) is cleared by the received version
+        // without a new entry. Not when it was raised here from the sender's own flag
+        // ([`store_judged_critique`]): the last version applied from it already said within.
+        if same_quantities
+            && flag(l, "is_critical")
+            && !flag(&line, "is_critical")
+            && last_applied_critique(conn, entity_sync_id).await? != Some(false)
+        {
             return conflict(
                 SYNC_APPROVAL_RECORD_CHANGED,
                 format!(
@@ -431,9 +446,6 @@ pub(crate) async fn inbound_count_line_check(
     if let Some(reversal) = field(&line, "reversed_transaction_sync_id") {
         return reversal_check(conn, entity_sync_id, &line, reversal).await;
     }
-    // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
-    // quantities: a received flag can make a line stricter, never more lenient.
-    let above = above || above_here(conn, &line).await?;
     let by_counter = approver.is_some() && counter.is_some() && approver == counter;
     let second = field(&line, "second_approved_by_sync_id");
     if second.is_some() && !(by_counter && above) {
@@ -537,6 +549,50 @@ async fn first_join_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -
         .await?
         .is_some();
     Ok(!held)
+}
+
+/// After a received count line was written (`sync::apply_hooks::after_upsert`, capture
+/// suppressed): its "above the tolerance" flag is this PC's judgement (CMMS Advisor Q14) — the
+/// received flag OR [`above_here`] (the line's quantities, this PC's tolerance, the Q10 cost
+/// check) — so every read of it, the derived auto-approbation first, rests on that judgement, never
+/// on the peer's flag alone. Only ever raised: a received flag is never lowered here.
+pub(crate) async fn store_judged_critique(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    let Some(line) = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await? else {
+        return Ok(());
+    };
+    let counted = |key: &str| line.get(key).and_then(serde_json::Value::as_f64).is_some();
+    // A line not counted yet has no variance to judge.
+    if !(counted("counted_qty") && counted("system_qty"))
+        || flag(&line, "is_critical")
+        || !above_here(conn, &line).await?
+    {
+        return Ok(());
+    }
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_lines SET is_critical = 1 WHERE entity_sync_id = ?",
+        [entity_sync_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The "above the tolerance" flag of the last version of a count line applied here from another PC,
+/// as it was received (`None`: none applied, or not readable).
+async fn last_applied_critique(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<Option<bool>> {
+    let payload = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT payload_json FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'applied'
+             ORDER BY row_version DESC, id DESC LIMIT 1",
+            [LINES.into(), entity_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "payload_json"))
+        .transpose()?;
+    Ok(payload
+        .and_then(|p| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&p).ok())
+        .map(|p| flag(&p, "is_critical")))
 }
 
 /// Why a received line's variance is not its counted less its system quantity (`None`: they

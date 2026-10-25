@@ -107,16 +107,24 @@ async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
 /// is not a first join (`inventory::count_four_eyes`, CMMS Advisor Q9).
 pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
 
-/// Whether this PC has completed a full pull since it joined (or since its last local data reset).
+/// Whether this PC has completed a full pull of the organisation it is activated for now, since it
+/// joined (or since its last local data reset). A pull recorded for another organisation (the PC
+/// re-activated into another one without a local data reset) is not: that organisation's first
+/// snapshot here is its first join. Not activated: none.
 pub(crate) async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult<bool> {
-    Ok(conn
+    let Some(tenant_id) = crate::commands::product_license::get_activation_claim_tenant_id(conn).await? else {
+        return Ok(false);
+    };
+    let recorded = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT 1 AS d FROM system_config WHERE key = ?",
+            "SELECT value FROM system_config WHERE key = ?",
             [COMPLETE_PULL_DONE_KEY.into()],
         ))
         .await?
-        .is_some())
+        .map(|r| r.try_get::<String>("", "value"))
+        .transpose()?;
+    Ok(!tenant_id.trim().is_empty() && recorded.as_deref() == Some(tenant_id.as_str()))
 }
 
 /// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
@@ -270,6 +278,9 @@ mod tests {
     #[tokio::test]
     async fn the_fact_names_one_organisation_and_ends_when_an_account_arrives() {
         let db = crate::db::test_db::seeded().await;
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
         assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
         assert!(!complete_pull_done(&db).await.expect("done"), "not joined yet");
         // The dev built-in "admin" of the seed does not count.
@@ -321,6 +332,28 @@ mod tests {
             .expect("query")
             .map(|r| r.try_get::<i64>("", "c").expect("count"));
         assert_eq!(stored, Some(0));
+    }
+
+    /// Review of 93817231 (NOTE 1): the complete pull is recorded for one organisation; a PC
+    /// re-activated into another one without a local data reset has not pulled that one yet.
+    #[tokio::test]
+    async fn a_complete_pull_counts_only_for_the_organisation_it_was_made_for() {
+        let db = crate::db::test_db::seeded().await;
+        assert!(record_complete_pull(&db, PLANT).await.expect("record"));
+        assert!(!complete_pull_done(&db).await.expect("done"), "not activated: none");
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
+        assert!(complete_pull_done(&db).await.expect("done"), "the organisation pulled");
+        crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-other", "fp-1", "token-1")
+            .await
+            .expect("claim");
+        assert!(
+            !complete_pull_done(&db).await.expect("done"),
+            "re-activated into another organisation: its first pull is still to come"
+        );
+        record_complete_pull(&db, "tenant-other").await.expect("record");
+        assert!(complete_pull_done(&db).await.expect("done"), "now pulled");
     }
 
     #[tokio::test]
