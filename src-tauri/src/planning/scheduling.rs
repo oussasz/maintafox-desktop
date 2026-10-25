@@ -10,7 +10,7 @@ use crate::{activity, notifications};
 
 use super::break_in_approval::{self, ForcedCheck};
 use super::domain::{
-    AbsenceAccess, AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow,
+    AbsenceAccess, ApproverPassword, AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow,
     CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput,
     ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput,
     NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot,
@@ -1633,8 +1633,9 @@ pub async fn create_schedule_break_in(
         .filter(|v| !v.is_empty());
     // The approver's password counts toward their lockout (`auth::second_signer`): read before the
     // transaction, the outcome recorded after it, refused or not.
-    let signer = break_in_approval::signer_account(input.approved_by_user_id, input.approver_password.as_deref());
-    let password = break_in_approval::signer_password_state(db, signer, input.approver_password.as_deref()).await?;
+    let typed = input.approver_password.as_ref().map(ApproverPassword::expose);
+    let signer = break_in_approval::signer_account(input.approved_by_user_id, typed);
+    let password = break_in_approval::signer_password_state(db, signer, typed).await?;
     let mut password_checked = None;
     let tx = db.begin().await?;
     let in_tx = async {
@@ -2054,10 +2055,10 @@ pub async fn create_schedule_commitment(
     let (break_in_approver, break_in_password) = input
         .frozen_week_break_in
         .as_ref()
-        .map(|b| (b.approved_by_user_id, b.approver_password.clone()))
+        .map(|b| (b.approved_by_user_id, b.approver_password.as_ref().map(ApproverPassword::expose)))
         .unwrap_or((None, None));
-    let signer = break_in_approval::signer_account(break_in_approver, break_in_password.as_deref());
-    let password = break_in_approval::signer_password_state(db, signer, break_in_password.as_deref()).await?;
+    let signer = break_in_approval::signer_account(break_in_approver, break_in_password);
+    let password = break_in_approval::signer_password_state(db, signer, break_in_password).await?;
     let mut password_checked = None;
     let tx = db.begin().await?;
     let in_tx = async {

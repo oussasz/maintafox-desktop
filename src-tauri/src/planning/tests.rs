@@ -898,7 +898,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             override_reason: Some("line stop".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
-            approver_password: Some(APPROVER_PASSWORD.to_string()),
+            approver_password: Some(APPROVER_PASSWORD.into()),
         },
     )
     .await
@@ -1396,7 +1396,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             override_reason: Some("Emergency move".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
-            approver_password: Some(APPROVER_PASSWORD.to_string()),
+            approver_password: Some(APPROVER_PASSWORD.into()),
             bypass_availability: Some(true),
         },
     )
@@ -2660,7 +2660,7 @@ async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
         override_reason: reason.map(str::to_string),
         acknowledged_assignee_issues: acknowledged,
         dangerous_override_reason: Some("Pump failure, line stopped".to_string()),
-        approver_password: Some(APPROVER_PASSWORD.to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     };
     let refused = scheduling::create_schedule_break_in(&db, 1, break_in(Some("Night callout"), Vec::new()))
         .await
@@ -3478,7 +3478,7 @@ async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reaso
         Some("Line stopped by the breakdown itself"),
     );
     forced.approved_by_user_id = Some(approver);
-    forced.approver_password = Some(APPROVER_PASSWORD.to_string());
+    forced.approver_password = Some(APPROVER_PASSWORD.into());
     let forced = scheduling::create_schedule_break_in(&db, 1, forced)
         .await
         .expect("forced break-in");
@@ -3589,7 +3589,7 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
         let mut input = break_in_input(commitment, "2026-05-04T10:00", "2026-05-04T11:00", None);
         input.break_in_reason = "emergency".to_string();
         input.approved_by_user_id = Some(approver);
-        input.approver_password = Some(APPROVER_PASSWORD.to_string());
+        input.approver_password = Some(APPROVER_PASSWORD.into());
         input
     };
 
@@ -3904,7 +3904,7 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
         reason: "emergency".to_string(),
         approved_by_user_id: Some(approver),
         dangerous_override_reason: Some("Pump seized on line 2".to_string()),
-        approver_password: Some(APPROVER_PASSWORD.to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     });
     let inserted = scheduling::create_schedule_commitment(&db, 1, emergency)
         .await
@@ -4958,7 +4958,7 @@ async fn planning_kpis_measure_the_frozen_baseline() {
         reason: "emergency".to_string(),
         approved_by_user_id: Some(approver),
         dangerous_override_reason: Some("Line stopped".to_string()),
-        approver_password: Some(APPROVER_PASSWORD.to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     });
     let urgent = scheduling::create_schedule_commitment(&db, actor, urgent)
         .await

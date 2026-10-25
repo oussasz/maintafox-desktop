@@ -158,7 +158,7 @@ fn move_input(c: &ScheduleCommitment, reason: &str, start: &str, end: &str) -> C
 
 fn signed(mut input: CreateScheduleBreakInInput, approver: i64, password: &str) -> CreateScheduleBreakInInput {
     input.approved_by_user_id = Some(approver);
-    input.approver_password = Some(password.to_string());
+    input.approver_password = Some(password.into());
     input
 }
 
@@ -314,7 +314,7 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
     let with = |approver: Option<i64>, password: Option<&str>| CommitBreakIn {
         reason: "safety".to_string(),
         approved_by_user_id: approver,
-        approver_password: password.map(str::to_string),
+        approver_password: password.map(Into::into),
         dangerous_override_reason: Some("Guard missing".to_string()),
     };
     input.frozen_week_break_in = Some(with(None, None));
@@ -917,4 +917,22 @@ async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
         .expect("row")
         .try_get_by_index::<String>(0)
         .expect("text")
+}
+
+#[test]
+fn the_approver_password_is_never_serialized_or_printed() {
+    let input: CommitBreakIn = serde_json::from_value(serde_json::json!({
+        "reason": "emergency",
+        "approved_by_user_id": 7,
+        "approver_password": "Very-Secret-1",
+        "dangerous_override_reason": null
+    }))
+    .expect("read from the command input");
+    assert_eq!(
+        input.approver_password.as_ref().map(super::domain::ApproverPassword::expose),
+        Some("Very-Secret-1")
+    );
+    assert!(!format!("{input:?}").contains("Very-Secret-1"), "redacted in Debug");
+    let sent = serde_json::to_string(&input).expect("serialize");
+    assert!(!sent.contains("Very-Secret-1") && !sent.contains("approver_password"), "{sent}");
 }
