@@ -856,6 +856,114 @@ describe("ProductLicenseGate", () => {
     }
   });
 
+  it("wipes local data for another organisation before the key entry records its claim", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "uninitialized",
+      pending_online_validation: false,
+      tenant_id: null,
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    const terms = { tenant_id: "ten_new", license_id: "lic_new", machine_fingerprint: "fp" };
+    mockedPreviewProductActivation.mockResolvedValue(terms);
+    mockedCheckProductLicenseKeyEntry.mockResolvedValue(undefined);
+    mockedClaimProductActivation.mockResolvedValue({ ...terms, is_initialized: true });
+    mockedResetLocalTenantRuntimeData.mockResolvedValue(0);
+    mockedSubmitProductLicenseKey.mockResolvedValue(undefined);
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0004" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    await waitFor(() => {
+      expect(mockedSubmitProductLicenseKey).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedResetLocalTenantRuntimeData).toHaveBeenCalledTimes(1);
+    const resetOrder =
+      mockedResetLocalTenantRuntimeData.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY;
+    const submitOrder =
+      mockedSubmitProductLicenseKey.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY;
+    expect(resetOrder).toBeLessThan(submitOrder);
+    // Stored as initialised by the claim: nothing to initialise.
+    expect(mockedMarkActivationTenantInitialized).not.toHaveBeenCalled();
+  });
+
+  it("keeps local data when the key entry is for the organisation already bound here", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "pending_online_validation",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    const terms = { tenant_id: "ten_test", license_id: "lic_test", machine_fingerprint: "fp" };
+    mockedPreviewProductActivation.mockResolvedValue(terms);
+    mockedCheckProductLicenseKeyEntry.mockResolvedValue(undefined);
+    mockedClaimProductActivation.mockResolvedValue({ ...terms, is_initialized: true });
+    mockedSubmitProductLicenseKey.mockResolvedValue(undefined);
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0005" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    await waitFor(() => {
+      expect(mockedSubmitProductLicenseKey).toHaveBeenCalledWith({
+        key: "MFX-TEST-KEY-0005",
+        tenant_id: "ten_test",
+        app_version: appInfo.version,
+      });
+    });
+    expect(mockedResetLocalTenantRuntimeData).not.toHaveBeenCalled();
+  });
+
+  it("forgets the typed key when the user goes back from the licence shown for it", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "uninitialized",
+      pending_online_validation: false,
+      tenant_id: null,
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    mockedPreviewProductActivation.mockResolvedValue({
+      tenant_id: "ten_new",
+      license_id: "lic_new",
+      machine_fingerprint: "fp",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0006" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "activation.changeKey" }));
+
+    expect(await screen.findByLabelText("License key")).toHaveValue("");
+  });
+
   it("stops before taking a device slot or wiping local data when this PC would refuse the licence", async () => {
     mockedGetAppInfo.mockResolvedValue(appInfo);
     mockedGetProductLicenseOnboardingState.mockResolvedValue({

@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { i18n } from "@/i18n/config";
 import {
   CLAIM_FALLBACK_TOKEN_ERRORS,
   LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY,
@@ -167,6 +168,31 @@ describe("user-facing activation errors without a status", () => {
     expect(out).not.toHaveProperty("status");
   });
 
+  it("a refusal of this PC's licence rule shows its translated GATE text, referenced by its code", async () => {
+    const { initI18n } = await import("@/i18n");
+    initI18n();
+    await i18n.changeLanguage("fr");
+    // As Rust's GATE_ refusals reach the webview (`AppError::ValidationFailed`).
+    const refusal = {
+      code: "VALIDATION_FAILED",
+      message:
+        "Validation failed: GATE_LICENSE_CLAIM_NOT_PENDING: No licence claim is waiting on this PC: validate the key and activate again.",
+    };
+    const out = toUserFacingActivationError(refusal);
+    expect(out.referenceCode).toBe("GATE_LICENSE_CLAIM_NOT_PENDING");
+    expect(out.message).toBe(String(i18n.t("errors:gateError.GATE_LICENSE_CLAIM_NOT_PENDING")));
+    expect(out.message).not.toContain("GATE_");
+    expect(out.message).not.toMatch(/could not be saved/);
+    expect(out.code).toBe("VALIDATION_FAILED");
+
+    // A GATE code without a translation keeps the generic validation text.
+    const untranslated = toUserFacingActivationError({
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: GATE_NOT_A_REAL_CODE: x",
+    });
+    expect(untranslated.referenceCode).toBe("VALIDATION_FAILED");
+  });
+
   it("a validation failure keeps the status when the server gave one", () => {
     const out = toUserFacingActivationError(
       Object.assign(new Error("x"), { code: "VALIDATION_FAILED", status: 400 }),
@@ -211,11 +237,11 @@ describe("local licence commands", () => {
   it("submits the key with the organisation and version only, never a claim or token", async () => {
     ipc.invoke.mockResolvedValue(undefined);
     await submitProductLicenseKey({ key: FAKE_KEY, tenant_id: "t-test", app_version: "9.9.9" });
-    expect(ipc.invoke).toHaveBeenCalledWith("submit_product_license_key", {
-      key: FAKE_KEY,
-      tenantId: "t-test",
-      appVersion: "9.9.9",
-    });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "submit_product_license_key",
+      { key: FAKE_KEY, tenantId: "t-test", appVersion: "9.9.9" },
+      { notifyOnError: false },
+    );
     await submitProductLicenseKey({ key: FAKE_KEY, tenant_id: "t-test" });
     expect(ipc.invoke.mock.calls[1]?.[1]).toMatchObject({ appVersion: null });
   });

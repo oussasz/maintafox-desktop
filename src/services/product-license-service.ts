@@ -1,6 +1,11 @@
 import { z } from "zod";
 
+import { i18n } from "@/i18n/config";
 import { invoke } from "@/lib/ipc-invoke";
+import { toErrorMessage } from "@/utils/errors";
+
+/** The activation calls show their failure inline in the licence gate: no global toast as well. */
+const INLINE_ERROR = { notifyOnError: false } as const;
 
 /** Session flag: show one-time login notice after activation (LoginPage reads and clears). */
 export const POST_ACTIVATION_LOGIN_HINT_KEY = "maintafox:post-activation-login-hint:v1";
@@ -439,6 +444,19 @@ export function toUserFacingActivationError(err: unknown): UserFacingActivationE
       code,
     };
   }
+  // A refusal of this PC's licence rule (`GATE_…` in the message, e.g. no claim waiting for this
+  // key): its translated text, the GATE code as reference.
+  const gateCode = toErrorMessage(err).match(/GATE_[A-Z0-9_]+/)?.[0];
+  if (gateCode && i18n.exists(`errors:gateError.${gateCode}`)) {
+    return {
+      title: "Activation could not be completed",
+      message: String(i18n.t(`errors:gateError.${gateCode}`)),
+      referenceCode: gateCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      ...(code ? { code } : {}),
+    };
+  }
   if (
     code === "VALIDATION_FAILED" ||
     (typeof e.message === "string" &&
@@ -566,12 +584,16 @@ function activationAnswer(raw: unknown, scope: string): Record<string, unknown> 
 export async function previewProductActivation(
   input: ActivationRequest,
 ): Promise<ProductActivationPreview> {
-  const raw = await invoke<unknown>("preview_product_activation", {
-    licenseKey: input.license_key,
-    machineFingerprint: input.machine_fingerprint,
-    machineLabel: input.machine_label ?? null,
-    appVersion: input.app_version ?? null,
-  });
+  const raw = await invoke<unknown>(
+    "preview_product_activation",
+    {
+      licenseKey: input.license_key,
+      machineFingerprint: input.machine_fingerprint,
+      machineLabel: input.machine_label ?? null,
+      appVersion: input.app_version ?? null,
+    },
+    INLINE_ERROR,
+  );
   return ActivationPreviewSchema.parse(
     normalizeActivationPayload(activationAnswer(raw, "License validation")),
   );
@@ -584,12 +606,16 @@ export async function previewProductActivation(
 export async function claimProductActivation(
   input: ActivationRequest,
 ): Promise<ProductActivationClaim> {
-  const raw = await invoke<unknown>("claim_product_activation", {
-    licenseKey: input.license_key,
-    machineFingerprint: input.machine_fingerprint,
-    machineLabel: input.machine_label ?? null,
-    appVersion: input.app_version ?? null,
-  });
+  const raw = await invoke<unknown>(
+    "claim_product_activation",
+    {
+      licenseKey: input.license_key,
+      machineFingerprint: input.machine_fingerprint,
+      machineLabel: input.machine_label ?? null,
+      appVersion: input.app_version ?? null,
+    },
+    INLINE_ERROR,
+  );
   return ActivationClaimSchema.parse(
     normalizeActivationPayload(activationAnswer(raw, "Activation")),
   );
@@ -599,12 +625,13 @@ const TenantInitializeResultSchema = activationCallResultSchema(ActivationTenant
 
 /**
  * Marks the activated organisation as initialised on the control API, sent from Rust with the
- * activation token held there (the claim just taken, else the stored activation). Throws with
- * code `tenant_init_unavailable` (404) or `tenant_init_failed`.
+ * stored activation's token (call it after {@link submitProductLicenseKey} recorded the claim).
+ * Throws with code `tenant_init_unavailable` (404) or `tenant_init_failed` (also when nothing was
+ * sent: no activation stored, or one already stored as initialised).
  */
 export async function markActivationTenantInitialized(): Promise<ActivationTenantStatus> {
   const result = TenantInitializeResultSchema.parse(
-    await invoke<unknown>("mark_activation_tenant_initialized"),
+    await invoke<unknown>("mark_activation_tenant_initialized", undefined, INLINE_ERROR),
   );
   switch (result.kind) {
     case "answered":
@@ -735,11 +762,15 @@ export async function submitProductLicenseKey(input: {
   tenant_id: string;
   app_version?: string;
 }): Promise<void> {
-  await invoke<void>("submit_product_license_key", {
-    key: input.key,
-    tenantId: input.tenant_id,
-    appVersion: input.app_version ?? null,
-  });
+  await invoke<void>(
+    "submit_product_license_key",
+    {
+      key: input.key,
+      tenantId: input.tenant_id,
+      appVersion: input.app_version ?? null,
+    },
+    INLINE_ERROR,
+  );
 }
 
 /**
@@ -839,10 +870,14 @@ export async function reclaimProductActivation(input: {
   app_version?: string;
 }): Promise<ReclaimOutcome> {
   const result = ReclaimResultSchema.parse(
-    await invoke<unknown>("reclaim_product_activation", {
-      machineLabel: input.machine_label ?? null,
-      appVersion: input.app_version ?? null,
-    }),
+    await invoke<unknown>(
+      "reclaim_product_activation",
+      {
+        machineLabel: input.machine_label ?? null,
+        appVersion: input.app_version ?? null,
+      },
+      INLINE_ERROR,
+    ),
   );
   switch (result.kind) {
     case "answered":

@@ -997,6 +997,8 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
                 variant="secondary"
                 disabled={submitting}
                 onClick={() => {
+                  // The typed key is not kept once the user leaves the licence shown for it.
+                  setKey("");
                   setPendingPreview(null);
                   setInitializeRetryPending(false);
                   setError(null);

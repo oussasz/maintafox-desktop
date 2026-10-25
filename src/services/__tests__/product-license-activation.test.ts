@@ -121,12 +121,17 @@ describe("activation payload from different server versions", () => {
   it("asks Rust for the preview with the key, fingerprint, label and version", async () => {
     ipc.invoke.mockResolvedValue(answered(BASE));
     await previewProductActivation(INPUT);
-    expect(ipc.invoke).toHaveBeenCalledWith("preview_product_activation", {
-      licenseKey: "MFX-TEST",
-      machineFingerprint: "fp-1",
-      machineLabel: null,
-      appVersion: null,
-    });
+    // The gate shows the failure inline: no global toast as well.
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "preview_product_activation",
+      {
+        licenseKey: "MFX-TEST",
+        machineFingerprint: "fp-1",
+        machineLabel: null,
+        appVersion: null,
+      },
+      { notifyOnError: false },
+    );
   });
 
   it("claims through Rust with the same normalisation; the answer carries no token", async () => {
@@ -138,12 +143,16 @@ describe("activation payload from different server versions", () => {
     });
     expect(claim).toMatchObject({ device_limit: 2, license_tier: "p" });
     expect(claim).not.toHaveProperty("activation_token");
-    expect(ipc.invoke).toHaveBeenCalledWith("claim_product_activation", {
-      licenseKey: "MFX-TEST",
-      machineFingerprint: "fp-1",
-      machineLabel: "Bench",
-      appVersion: "1.2.3",
-    });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "claim_product_activation",
+      {
+        licenseKey: "MFX-TEST",
+        machineFingerprint: "fp-1",
+        machineLabel: "Bench",
+        appVersion: "1.2.3",
+      },
+      { notifyOnError: false },
+    );
   });
 
   it("refuses an answer that names no organisation", async () => {
@@ -274,7 +283,9 @@ describe("tenant initialisation (sent from Rust with the token held there)", () 
   it("asks Rust without any token and returns the tenant status", async () => {
     ipc.invoke.mockResolvedValue(answered({ tenant_id: "t-1", is_initialized: true }));
     expect(await markActivationTenantInitialized()).toMatchObject({ is_initialized: true });
-    expect(ipc.invoke).toHaveBeenCalledWith("mark_activation_tenant_initialized");
+    expect(ipc.invoke).toHaveBeenCalledWith("mark_activation_tenant_initialized", undefined, {
+      notifyOnError: false,
+    });
   });
 
   it("fails as tenant_init_failed when this PC holds no activation", async () => {
@@ -316,10 +327,11 @@ describe("re-claim with the key stored in Rust", () => {
     expect(
       await reclaimProductActivation({ machine_label: "Bench", app_version: "0.9.2" }),
     ).toEqual({ kind: "reclaimed", state: STATE });
-    expect(ipc.invoke).toHaveBeenCalledWith("reclaim_product_activation", {
-      machineLabel: "Bench",
-      appVersion: "0.9.2",
-    });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "reclaim_product_activation",
+      { machineLabel: "Bench", appVersion: "0.9.2" },
+      { notifyOnError: false },
+    );
   });
 
   it("says when no key is stored here, and throws error answers as the refresh does", async () => {
