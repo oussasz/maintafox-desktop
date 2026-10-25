@@ -65,6 +65,8 @@ function reviewList(overrides: Record<string, unknown> = {}): Record<string, unk
     over_quantities: [],
     closed_over_quantities: [overIssue()],
     over_reservations: [],
+    pending_counts: [],
+    self_approval_allowed: false,
     ...overrides,
   };
 }
@@ -141,6 +143,7 @@ describe("list of the stock to reconcile", () => {
       path: "count_session",
       counted_by: "Alice",
       approved_by: null,
+      self_approved: false,
       device_code: "PC-1",
       counted_at: TS,
       system_qty: 10,

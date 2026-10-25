@@ -192,7 +192,9 @@
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
     "wo_permit_rule_missing": "OT reçu démarré sans sa règle de permis de l'usine",
     "insp_anomaly_origin_cancelled": "Anomalie d'inspection d'origine annulée",
-    "stock_to_reconcile": "Stock à rapprocher après synchronisation"
+    "stock_to_reconcile": "Stock à rapprocher après synchronisation",
+    "stock_count_recount": "Comptage à refaire",
+    "stock_count_second_approval": "Comptage retenu pour une seconde approbation"
   },
   "messages": {
     "wo_assigned": {
@@ -365,6 +367,18 @@
     "stock_double_count": {
       "title": "{{code}} compté deux fois à {{location}}",
       "body": "{{title}} : {{count}} comptages enregistrés sur des postes différents. Vérifiez le stock et enregistrez un nouveau comptage."
+    },
+    "stock_count_recount": {
+      "title": "Recomptez {{code}} à {{location}}",
+      "body": "{{title}} : l'approbation de votre comptage {{session}} a été refusée, le stock a bougé depuis (de {{system_qty}} à {{on_hand}}). Recomptez l'emplacement depuis le stock à rapprocher."
+    },
+    "stock_count_second_approval": {
+      "title": "Comptage {{session}} retenu ici — {{code}} à {{location}}",
+      "body": "{{title}} : compté et approuvé par {{counter}} au-dessus de la tolérance de double validation, il est retenu ici (le stock ne bouge pas). À régler sur le poste où il est appliqué : seconde approbation par une autre personne, ou annulation du comptage."
+    },
+    "stock_count_recount_reversed": {
+      "title": "Recomptez {{code}} à {{location}}",
+      "body": "{{title}} : votre comptage {{session}} a été annulé faute de seconde approbation. Recomptez l'emplacement depuis le stock à rapprocher."
     },
     "admin_grants_to_review": {
       "title": "Droits d’administration retirés : attributions à revoir",

@@ -130,6 +130,15 @@ async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult
         item.row_version,
     )
     .await?;
+    // A count held for a second approval: its conflict closes once a version passing four-eyes is
+    // applied (`inventory::count_four_eyes`).
+    crate::inventory::count_four_eyes::after_count_line_applied(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+    )
+    .await?;
     record_synced_state(
         tx,
         &item.entity_type,
@@ -578,6 +587,15 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
             .await?;
             // A reservation released on two PCs is settled without a person (`inventory::reservations`).
             crate::inventory::reservations::settle_double_release(&tx, &item.entity_type, &item.entity_sync_id).await?;
+            // A count held for a second approval: the count-approval holders are told once.
+            crate::inventory::count_four_eyes::after_count_conflict_recorded(
+                &tx,
+                &item.entity_type,
+                &item.entity_sync_id,
+                code,
+                &item.payload_json,
+            )
+            .await?;
         }
         ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
     }
@@ -653,6 +671,16 @@ tokio::task_local! {
 /// inbox apply: a "take theirs", a test applying a payload directly).
 pub(crate) fn applying_snapshot_row() -> bool {
     APPLYING_SNAPSHOT_ROW.try_with(|s| *s).unwrap_or(false)
+}
+
+/// Runs `judge` as if the inbox row of `server_batch_id` were being applied
+/// ([`applying_snapshot_row`]): a received row judged on behalf of another (a count line judged
+/// for its stock movement, `inventory::count_four_eyes`) is judged in its own context — a version
+/// from an exchange is never judged as a snapshot row because the row it is judged for is one.
+pub(crate) async fn judged_as_row_of_batch<F: std::future::Future>(server_batch_id: &str, judge: F) -> F::Output {
+    APPLYING_SNAPSHOT_ROW
+        .scope(server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX), judge)
+        .await
 }
 
 async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {

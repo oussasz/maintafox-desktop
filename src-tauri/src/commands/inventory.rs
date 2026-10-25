@@ -916,7 +916,7 @@ pub async fn transition_inventory_count_session(
 
 #[tauri::command]
 pub async fn upsert_inventory_count_line(
-    input: UpsertInventoryCountLineInput,
+    mut input: UpsertInventoryCountLineInput,
     state: State<'_, AppState>,
 ) -> AppResult<InventoryCountLine> {
     let user = require_session!(state);
@@ -926,7 +926,25 @@ pub async fn upsert_inventory_count_line(
         crate::rbac::permissions::INV_COUNT,
         PermissionScope::Global
     );
+    // The counter is always the signed-in user, never a value sent by the UI (four-eyes, D11).
+    input.actor_id = Some(i64::from(user.user_id));
     controls::upsert_count_line(&state.db, input).await
+}
+
+/// The plant's four-eyes tolerance of a count variance (Settings > Inventory), shown on the count
+/// screens; blank thresholds are `null`; whether the stores' site opted out of four-eyes.
+#[tauri::command]
+pub async fn get_inventory_count_tolerance(
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::count_four_eyes::CountToleranceView> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::count_four_eyes::CountToleranceView::read(&state.db).await
 }
 
 #[tauri::command]
@@ -944,6 +962,25 @@ pub async fn approve_inventory_count_line(
     // The reviewer is always the signed-in user, never a value sent by the UI.
     input.reviewer_id = i64::from(user.user_id);
     controls::approve_count_line(&state.db, input).await
+}
+
+/// The second approval of a posted count line its counter self-approved above the four-eyes
+/// tolerance (CMMS Advisor Q8): the right of a count line's approval.
+#[tauri::command]
+pub async fn second_approve_inventory_count_line(
+    mut input: crate::inventory::domain::SecondApproveInventoryCountLineInput,
+    state: State<'_, AppState>,
+) -> AppResult<InventoryCountLine> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    // The second approver is always the signed-in user, never a value sent by the UI.
+    input.reviewer_id = i64::from(user.user_id);
+    controls::second_approve_count_line(&state.db, input).await
 }
 
 #[tauri::command]

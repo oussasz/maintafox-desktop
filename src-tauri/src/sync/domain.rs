@@ -290,6 +290,10 @@ pub struct SyncConflictRecord {
     /// That text as a plain, coded reason, for a row the database refused (`sync::apply_reason`).
     #[serde(default)]
     pub reason: Option<crate::sync::apply_reason::ConflictReason>,
+    /// A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): its reference,
+    /// counter and posting time, read from what this PC holds (CMMS Advisor Q12).
+    #[serde(default)]
+    pub count_hold: Option<crate::inventory::count_four_eyes::CountHoldContext>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -236,6 +236,51 @@ pub(super) async fn user_with(db: &DatabaseConnection, name: &str, permissions: 
     user
 }
 
+/// Someone other than `user` who approves a count variance on `db` (four-eyes above the
+/// tolerance, D11; the tests' tolerance is blank, so every variance is above it): the seeded
+/// administrator account, the same on every PC (a test account made on one PC only would take
+/// local ids another PC also uses).
+pub(super) async fn second_person(db: &DatabaseConnection, user: i32) -> i32 {
+    let admin = scalar_i64(
+        db,
+        "SELECT id FROM user_accounts WHERE username = 'admin' AND id <> ?",
+        vec![user.into()],
+    )
+    .await;
+    i32::try_from(admin).expect("id")
+}
+
+/// [`negative_stock::resolve_by_count`] by `user`, then — when the count waits for a second person
+/// (above the four-eyes tolerance, D11 Q4a; at a location below zero every variance is) — its
+/// approval by [`second_person`].
+pub(super) async fn resolve_approved(
+    db: &DatabaseConnection,
+    user: i32,
+    input: ResolveNegativeStockInput,
+) -> Result<negative_stock::NegativeStockResolution, AppError> {
+    let resolution = negative_stock::resolve_by_count(db, user, input).await?;
+    if !resolution.pending_approval {
+        return Ok(resolution);
+    }
+    let pending = negative_stock::list_reviews(db, false)
+        .await?
+        .pending_counts
+        .into_iter()
+        .find(|p| p.session_code == resolution.session_code)
+        .expect("the count waits for its approval");
+    let approver = second_person(db, user).await;
+    negative_stock::approve_pending_count(
+        db,
+        approver,
+        negative_stock::ApprovePendingCountInput {
+            line_id: pending.line_id,
+            expected_row_version: pending.row_version,
+            reason: "Comptage vérifié par un second".into(),
+        },
+    )
+    .await
+}
+
 pub(super) fn resolution(article_id: i64, location_id: i64, counted: f64, reason: &str) -> ResolveNegativeStockInput {
     ResolveNegativeStockInput {
         article_id,
@@ -372,6 +417,8 @@ pub(super) async fn enter_count(
             location_id,
             counted_qty: counted,
             variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: None,
+            actor_id: Some(i64::from(user)),
         },
     )
     .await
@@ -402,7 +449,8 @@ pub(super) async fn post_count(
         crate::inventory::domain::InventoryCountLine,
     ),
 ) -> crate::inventory::domain::InventoryCountSession {
-    post_count_approved_by(db, user, user, counted).await
+    let approver = second_person(db, user).await;
+    post_count_approved_by(db, user, approver, counted).await
 }
 
 /// [`post_count`], the line's variance approved by `approver`.
@@ -564,7 +612,7 @@ async fn two_pcs_issuing_the_last_units_leave_one_item_that_a_count_closes_on_bo
     assert_eq!(on_a.2, on_b.2, "the same notice on both PCs");
     assert_eq!(notified(&a, manager).await, 1, "the inv.manage holder is told");
 
-    let resolved = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté : bac vide"))
+    let resolved = resolve_approved(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté : bac vide"))
         .await
         .expect("count resolves");
     let closed = resolved.review.expect("the negative item");
@@ -588,7 +636,7 @@ async fn two_pcs_issuing_the_last_units_leave_one_item_that_a_count_closes_on_bo
             &a,
             "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions cs ON cs.id = cl.session_id
              WHERE cs.status = 'posted' AND cl.article_id = ? AND cl.location_id = ?
-               AND cl.counted_qty = 0 AND cl.variance_qty = 5 AND cl.approval_note = 'Recompté : bac vide'
+               AND cl.counted_qty = 0 AND cl.variance_qty = 5 AND cl.approval_note = 'Comptage vérifié par un second'
                AND cl.count_follows_json = '[]' AND cl.count_replica_id = ?
                AND cl.count_path = 'reconciliation'",
             vec![
@@ -906,7 +954,7 @@ async fn a_count_entered_before_the_other_pcs_count_arrived_is_a_double_count() 
 
     let entered = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
     assert_eq!((entered.1.system_qty, entered.1.variance_qty), (-5.0, 5.0));
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -964,13 +1012,13 @@ async fn a_zero_variance_count_does_not_hide_an_earlier_count_below_zero() {
     let (art_a, loc_a) = pairs[0];
     let (art_c, loc_c) = pairs[2];
 
-    negative_stock::resolve_by_count(a, manager_a, resolution(art_a, loc_a, 0.0, "Comptage poste A"))
+    resolve_approved(a, manager_a, resolution(art_a, loc_a, 0.0, "Comptage poste A"))
         .await
         .expect("A1 at −5");
     let cycle = enter_count(a, manager_a, art_a, loc_a, 0.0).await;
     assert_eq!((cycle.1.system_qty, cycle.1.variance_qty), (0.0, 0.0), "A2 at 0");
     post_count(a, manager_a, cycle).await;
-    negative_stock::resolve_by_count(c, manager_c, resolution(art_c, loc_c, 0.0, "Comptage poste C"))
+    resolve_approved(c, manager_c, resolution(art_c, loc_c, 0.0, "Comptage poste C"))
         .await
         .expect("C1 at −5, offline");
     for _ in 0..2 {
@@ -992,7 +1040,7 @@ async fn a_zero_variance_count_does_not_hide_an_earlier_count_below_zero() {
         );
     }
 
-    negative_stock::resolve_by_count(a, manager_a, resolution(art_a, loc_a, 0.0, "Recomptage commun"))
+    resolve_approved(a, manager_a, resolution(art_a, loc_a, 0.0, "Recomptage commun"))
         .await
         .expect("a count that knows both");
     sync_clean(&mut server, "A", a).await;
@@ -1293,7 +1341,7 @@ async fn a_list_count_and_a_count_session_on_two_pcs_are_a_double_count() {
     sync_clean(&mut server, "B", &b).await;
     sync_clean(&mut server, "A", &a).await;
 
-    negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+    resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Comptage depuis la liste"))
         .await
         .expect("A reconciles from the list");
     // B counts the location through the count workflow.
@@ -1381,10 +1429,10 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
     sync_clean(&mut server, "A", &a).await;
 
     // Offline, each PC counts 0 and resolves its item.
-    negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Comptage poste A"))
+    resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Comptage poste A"))
         .await
         .expect("A resolves");
-    negative_stock::resolve_by_count(&b, manager_b, resolution(art_b, loc_b, 0.0, "Comptage poste B"))
+    resolve_approved(&b, manager_b, resolution(art_b, loc_b, 0.0, "Comptage poste B"))
         .await
         .expect("B resolves");
     watch(&a).await;
@@ -1427,11 +1475,11 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
         );
     }
 
-    let short = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recompt"))
+    let short = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recompt"))
         .await
         .expect_err("7 characters");
     assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
-    let closed = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
+    let closed = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
         .await
         .expect("a new count closes it");
     assert!(closed.review.is_none(), "no negative item was open");
@@ -1448,7 +1496,7 @@ async fn two_pcs_resolving_offline_show_a_double_count_that_a_new_count_closes()
             "{pc}"
         );
     }
-    let again = negative_stock::resolve_by_count(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
+    let again = resolve_approved(&a, manager_a, resolution(art, loc, 0.0, "Recomptage commun"))
         .await
         .expect_err("nothing left");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -1494,12 +1542,12 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     assert!(issued.is_err(), "issue of the stock reserved before refused");
     assert_eq!(on_hand_milli(&a, art, loc).await, -4000, "nothing moved");
 
-    let denied = negative_stock::resolve_by_count(&a, viewer, resolution(art, loc, 0.0, "Recompté bac"))
+    let denied = resolve_approved(&a, viewer, resolution(art, loc, 0.0, "Recompté bac"))
         .await
         .expect_err("inv.view only");
     assert!(matches!(denied, AppError::PermissionDenied(_)), "{denied:?}");
     for short in ["", "        ", "abcdefg", "  abcd  "] {
-        let err = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 0.0, short))
+        let err = resolve_approved(&a, manager, resolution(art, loc, 0.0, short))
             .await
             .expect_err("short reason");
         assert_eq!(refusal_code(err), REFUSED_REASON_SHORT, "{short:?}");
@@ -1508,7 +1556,7 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     assert_eq!(on_hand_milli(&a, art, loc).await, -4000, "refusals write nothing");
 
     // Counted 0 while 1 is still reserved: the item closes, the reservation shows as a warning.
-    let resolved = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 0.0, " abcdefgh "))
+    let resolved = resolve_approved(&a, manager, resolution(art, loc, 0.0, " abcdefgh "))
         .await
         .expect("eight characters once trimmed");
     let closed = resolved.review.expect("the negative item");
@@ -1520,7 +1568,7 @@ async fn a_negative_location_refuses_local_issues_and_the_count_needs_the_right_
     let list = negative_stock::list_reviews(&a, false).await.expect("list");
     assert!(list.items.is_empty());
     assert_eq!(list.over_reservations.len(), 1, "over-reservation warning");
-    let again = negative_stock::resolve_by_count(&a, manager, resolution(art, loc, 2.0, "Recompté bac"))
+    let again = resolve_approved(&a, manager, resolution(art, loc, 2.0, "Recompté bac"))
         .await
         .expect_err("nothing left to reconcile");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -1559,7 +1607,7 @@ async fn a_count_whose_movement_is_not_here_is_not_followed() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let counter_b = user_with(b, "negunappliedb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -1601,7 +1649,7 @@ async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count(
     let counter_b = user_with(b, "negreenterb", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (session, first) = enter_count(b, counter_b, pairs[1].0, pairs[1].1, 0.0).await;
     assert_eq!(first.system_qty, -5.0);
-    negative_stock::resolve_by_count(
+    resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
@@ -1618,6 +1666,8 @@ async fn a_count_entered_again_after_the_other_count_arrived_is_no_double_count(
             location_id: pairs[1].1,
             counted_qty: 0.0,
             variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: Some(first.row_version),
+            actor_id: Some(i64::from(counter_b)),
         },
     )
     .await
@@ -1642,7 +1692,7 @@ async fn a_session_counted_after_another_count_on_the_same_pc_is_refused() {
     let counter_b = user_with(b, "negstalesession", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art, loc) = pairs[1];
     let stale = enter_count(b, counter_b, art, loc, 0.0).await;
-    negative_stock::resolve_by_count(b, counter_b, resolution(art, loc, 0.0, "Comptage depuis la liste"))
+    resolve_approved(b, counter_b, resolution(art, loc, 0.0, "Comptage depuis la liste"))
         .await
         .expect("a count posted from the list on the same PC");
     assert_eq!(on_hand_milli(b, art, loc).await, 0);
@@ -1656,7 +1706,7 @@ async fn a_session_counted_after_another_count_on_the_same_pc_is_refused() {
         crate::inventory::domain::ApproveInventoryCountLineInput {
             line_id: stale.1.id,
             expected_row_version: stale.1.row_version,
-            reviewer_id: i64::from(counter_b),
+            reviewer_id: i64::from(second_person(b, counter_b).await),
             reviewer_evidence: "Bac vérifié au comptage".into(),
         },
     )
@@ -1751,14 +1801,14 @@ async fn reversing_one_of_the_two_counts_closes_the_double_count() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let manager_b = user_with(b, "negrevdoubleb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    let resolved_a = negative_stock::resolve_by_count(
+    let resolved_a = resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
     )
     .await
     .expect("A1");
-    negative_stock::resolve_by_count(
+    resolve_approved(
         b,
         manager_b,
         resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
@@ -1840,7 +1890,7 @@ async fn the_notice_says_when_the_shortage_opened_and_a_new_shortage_reopens_it_
         .expect("dated");
     assert_eq!(params().await["opened_at"], serde_json::json!(first_crossing));
 
-    negative_stock::resolve_by_count(a, manager, resolution(art, loc, 0.0, "Comptage poste A"))
+    resolve_approved(a, manager, resolution(art, loc, 0.0, "Comptage poste A"))
         .await
         .expect("count");
     assert_eq!(watch(a).await.resolved, 1);
@@ -1881,14 +1931,14 @@ async fn a_double_count_closed_by_a_reversal_leaves_the_negative_item_open() {
     sync_clean(&mut server, "A", a).await;
     sync_clean(&mut server, "B", b).await;
     let manager_b = user_with(b, "negrevopenb", &[crate::rbac::permissions::INV_MANAGE]).await;
-    let resolved_a = negative_stock::resolve_by_count(
+    let resolved_a = resolve_approved(
         a,
         manager_a,
         resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage poste A"),
     )
     .await
     .expect("A1");
-    negative_stock::resolve_by_count(
+    resolve_approved(
         b,
         manager_b,
         resolution(pairs[1].0, pairs[1].1, 0.0, "Comptage poste B"),
@@ -1948,7 +1998,7 @@ async fn approve_count(
         crate::inventory::domain::ApproveInventoryCountLineInput {
             line_id: line.id,
             expected_row_version: line.row_version,
-            reviewer_id: i64::from(user),
+            reviewer_id: i64::from(second_person(db, user).await),
             reviewer_evidence: "Bac vérifié au comptage".into(),
         },
     )
@@ -2445,7 +2495,8 @@ async fn a_count_movement_received_under_another_id_is_applied_and_listed() {
     assert_eq!(on_hand_milli(&db, art, loc).await, 4_000);
 
     // Another session of the same article and location, approved here but not posted: a movement of
-    // that session from another PC is not this count, so it is applied.
+    // that session from another PC is not this count, so it is applied — with the version of its
+    // line naming it (four-eyes, CMMS Advisor Q8): alone, it waits for that version.
     let other = approve_count(&db, user, enter_count(&db, user, art, loc, 5.0).await).await;
     let other_sync_id = text_of(
         &db,
@@ -2456,16 +2507,29 @@ async fn a_count_movement_received_under_another_id_is_applied_and_listed() {
     let mut for_other = payload;
     for_other.insert("source_sync_id".into(), other_sync_id.clone().into());
     for_other.insert("quantity".into(), serde_json::json!(1.0));
-    let applied = apply_inbound_payload(
+    let other_movement = crate::sync::identity::new_entity_sync_id();
+    let other_json = serde_json::Value::Object(for_other).to_string();
+    let apply_other =
+        || apply_inbound_payload(&db, "inventory_transactions", &other_movement, "upsert", 1, &other_json);
+    let waits = apply_other().await.expect("apply other alone");
+    assert!(matches!(waits, ApplyOutcome::Deferred { .. }), "{waits:?}");
+    let other_line = text_of(
         &db,
-        "inventory_transactions",
-        &crate::sync::identity::new_entity_sync_id(),
-        "upsert",
-        1,
-        &serde_json::Value::Object(for_other).to_string(),
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl WHERE cl.session_id = ?",
+        vec![other.id.into()],
     )
-    .await
-    .expect("apply other");
+    .await;
+    let mut naming = wire_row(&db, "inventory_count_lines", &other_line).await;
+    naming.insert("posted_transaction_sync_id".into(), other_movement.clone().into());
+    exec(
+        &db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                 row_version, payload_json, payload_hash, apply_status)
+         VALUES ('b-other-pc', 'c1', 'inventory_count_lines', ?, 'upsert', 99, ?, 'h-other-line', 'pending')",
+        vec![other_line.into(), serde_json::Value::Object(naming).to_string().into()],
+    )
+    .await;
+    let applied = apply_other().await.expect("apply other");
     assert!(matches!(applied, ApplyOutcome::Applied), "{applied:?}");
     assert_eq!(
         on_hand_milli(&db, art, loc).await,
@@ -2571,14 +2635,13 @@ async fn a_count_posted_twice_is_an_item_that_a_new_count_closes() {
     }
 
     // A reason under 8 characters is refused; a new count with its reason closes it.
-    let short = negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "court"))
+    let short = resolve_approved(&a, user, resolution(art, loc, 7.0, "court"))
         .await
         .expect_err("short reason");
     assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
-    let resolved =
-        negative_stock::resolve_by_count(&a, user, resolution(art, loc, 7.0, "Recompté après double passage"))
-            .await
-            .expect("a new count");
+    let resolved = resolve_approved(&a, user, resolution(art, loc, 7.0, "Recompté après double passage"))
+        .await
+        .expect("a new count");
     assert!(
         (resolved.variance_qty - 3.0).abs() < 1e-9,
         "the stock is set to the count"
@@ -2611,11 +2674,44 @@ async fn a_count_posted_twice_is_an_item_that_a_new_count_closes() {
             "{pc}: closed by the new count"
         );
         assert_eq!(
+            all.closed_double_postings[0]
+                .closed_by
+                .as_ref()
+                .map(|c| c.self_approved),
+            Some(false),
+            "{pc}: approved by a second person"
+        );
+        assert_eq!(
             negative_stock::summary(db).await.expect("summary").double_posting_count,
             0,
             "{pc}"
         );
     }
+    // CMMS Advisor Q13: a count approved by its own counter is listed as an auto-approbation,
+    // derived on read, although nothing stored says so (here a line as another PC's version would
+    // hold it: approver = counter, not flagged).
+    exec_unsent(
+        &a,
+        "UPDATE inventory_count_lines SET approved_by_id = counted_by_id, self_approved = 0
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE session_code = ?)",
+        vec![resolved.session_code.clone().into()],
+    )
+    .await;
+    let all = negative_stock::list_reviews(&a, true).await.expect("list");
+    let closed_by = all.closed_double_postings[0].closed_by.as_ref().expect("closed by");
+    assert!(closed_by.self_approved, "shown as an auto-approbation");
+    assert_eq!(closed_by.approved_by, closed_by.counted_by);
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions s ON s.id = cl.session_id
+             WHERE s.session_code = ? AND cl.self_approved = 0",
+            vec![resolved.session_code.clone().into()],
+        )
+        .await,
+        1,
+        "nothing stored is rewritten"
+    );
 }
 
 /// A count posted twice is not closed by a count entered before the second movement was here: its
@@ -2786,7 +2882,7 @@ async fn a_count_posted_on_two_pcs_with_different_quantities_converges_and_is_li
 
     // A new count on B (reason of at least 8 characters) closes it.
     let counter_b = user_with(&b, "au100divergent", &[crate::rbac::permissions::INV_MANAGE]).await;
-    negative_stock::resolve_by_count(
+    resolve_approved(
         &b,
         counter_b,
         resolution(pair_b.0, pair_b.1, 7.0, "Recompté après comptage divergent"),
@@ -3052,4 +3148,2939 @@ async fn a_divergent_count_reversed_on_the_pc_that_lost_goes_back_once() {
             "{pc}: the reversal undoes the kept movement"
         );
     }
+}
+
+// ── Four-eyes on a count from the list (D11 Q4a) ─────────────────────────────────────────────
+
+fn gate(err: AppError) -> String {
+    match err {
+        AppError::ValidationFailed(messages) => messages[0].split(':').next().unwrap_or_default().to_string(),
+        other => refusal_code(other),
+    }
+}
+
+/// D11 Q4a: a count from the list above the four-eyes tolerance (at a location below zero every
+/// variance is) is saved as counted and moves nothing; the item stays open and shows it waiting.
+/// Its counter cannot approve it; a second person does, with a note of 8 characters at least, and
+/// that posts the movement and closes the item in one step.
+#[tokio::test]
+async fn a_list_count_above_the_tolerance_waits_for_a_second_person() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyeslistcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyeslistapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+
+    let counted = negative_stock::resolve_by_count(db, counter, resolution(art, loc, 2.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    assert!(counted.pending_approval && !counted.self_approved);
+    assert_eq!(on_hand_milli(db, art, loc).await, -5000, "nothing moved");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "the item stays open");
+    let pending = list.pending_counts.first().expect("waiting for approval").clone();
+    assert_eq!(
+        (pending.article_id, pending.location_id, pending.counted_by_id),
+        (art, loc, Some(i64::from(counter)))
+    );
+    assert!((pending.variance_qty - 7.0).abs() < 1e-9);
+
+    let approve = |user: i32, reason: &str| {
+        negative_stock::approve_pending_count(
+            db,
+            user,
+            negative_stock::ApprovePendingCountInput {
+                line_id: pending.line_id,
+                expected_row_version: pending.row_version,
+                reason: reason.into(),
+            },
+        )
+    };
+    assert_eq!(
+        gate(
+            approve(counter, "Je confirme mon comptage")
+                .await
+                .expect_err("the counter")
+        ),
+        crate::inventory::count_four_eyes::REFUSED_SELF_APPROVAL
+    );
+    assert_eq!(
+        refusal_code(approve(approver, " court ").await.expect_err("short")),
+        REFUSED_REASON_SHORT
+    );
+    let done = approve(approver, "Recompté avec le magasinier")
+        .await
+        .expect("approved");
+    assert!(!done.pending_approval);
+    assert_eq!(
+        on_hand_milli(db, art, loc).await,
+        2000,
+        "posted at the counted quantity"
+    );
+    assert_eq!(done.review.expect("item").status, "closed");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert!(list.items.is_empty() && list.pending_counts.is_empty());
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE id = ? AND approved_by_id = ? AND counted_by_id = ?
+               AND self_approved = 0 AND posted_transaction_id IS NOT NULL",
+            vec![pending.line_id.into(), approver.into(), counter.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'inventory.negative_stock.count_approved' AND actor_id = ?",
+            vec![approver.into()],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        refusal_code(
+            approve(approver, "Recompté avec le magasinier")
+                .await
+                .expect_err("twice")
+        ),
+        negative_stock::REFUSED_COUNT_NOT_PENDING
+    );
+}
+
+/// D11 Q4a: the stock on record moved after the count waiting for approval: approving it would no
+/// longer bring the stock to what was counted — refused, the location is counted again; a new count
+/// of the pair replaces the waiting one.
+#[tokio::test]
+async fn a_waiting_list_count_is_refused_once_the_stock_moved_and_replaced_by_a_new_count() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesstalecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyesstaleapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    let first = negative_stock::list_reviews(db, false)
+        .await
+        .expect("list")
+        .pending_counts[0]
+        .clone();
+    adjust_noted(db, art, loc, 1.0, "Retour trouvé au comptage")
+        .await
+        .expect("entry");
+    let stale = negative_stock::approve_pending_count(
+        db,
+        approver,
+        negative_stock::ApprovePendingCountInput {
+            line_id: first.line_id,
+            expected_row_version: first.row_version,
+            reason: "Recompté avec le magasinier".into(),
+        },
+    )
+    .await
+    .expect_err("the stock moved");
+    assert_eq!(refusal_code(stale), negative_stock::REFUSED_COUNT_STALE);
+    assert_eq!(on_hand_milli(db, art, loc).await, -4000);
+
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.0, "Second comptage du bac"))
+        .await
+        .expect("counted again");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert_eq!(list.pending_counts.len(), 1, "the new count replaces the waiting one");
+    assert_ne!(list.pending_counts[0].line_id, first.line_id);
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_sessions WHERE session_code = ? AND status = 'cancelled'",
+            vec![first.session_code.clone().into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// D11 Q4a: under the four-eyes opt-out of the organisation's only site, a count from the list above
+/// the tolerance posts at once, flagged "auto-approbation".
+#[tokio::test]
+async fn under_the_sites_opt_out_a_list_count_posts_at_once_flagged() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(7), true).await;
+    let counter = user_with(db, "foureyesoptoutcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done = negative_stock::resolve_by_count(db, counter, resolution(art, loc, 0.0, "Comptage du bac"))
+        .await
+        .expect("posted");
+    assert!(!done.pending_approval && done.self_approved);
+    assert_eq!(on_hand_milli(db, art, loc).await, 0);
+    assert_eq!(
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE count_path = 'reconciliation' AND self_approved = 1
+               AND approved_by_id = ? AND counted_by_id = ?",
+            vec![counter.into(), counter.into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// D11: a count line received from another PC approved by its counter above the tolerance is a
+/// conflict unless flagged and the site opted out here; a flag on a line approved by a second
+/// person is a conflict; a line approved by a second person applies.
+#[tokio::test]
+async fn a_received_count_line_approved_by_its_counter_is_judged_by_four_eyes() {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyessynccounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let other = user_with(db, "foureyessyncother", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(db, counter, art, loc, 2.0).await;
+    assert_eq!(line.is_critical, 1);
+    let line_sync = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await
+    .expect("line sync id");
+    let user_sync = |id: i32| {
+        crate::sync::test_support::scalar_opt_text(
+            db,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            vec![id.into()],
+        )
+    };
+    let (counter_sync, other_sync) = (
+        user_sync(counter).await.expect("counter"),
+        user_sync(other).await.expect("other"),
+    );
+    let held = crate::permit::sync_check::local_wire(db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    let approved = |by: &str, flag: i64| {
+        let mut p = held.clone();
+        p.insert("approved_by_sync_id".into(), serde_json::json!(by));
+        p.insert("approved_at".into(), serde_json::json!("2026-10-23T10:00:00Z"));
+        p.insert("approval_note".into(), serde_json::json!("Recompté avec le magasinier"));
+        p.insert("self_approved".into(), serde_json::json!(flag));
+        p.insert("row_version".into(), serde_json::json!(line.row_version + 1));
+        p
+    };
+    let apply = |payload: serde_json::Map<String, serde_json::Value>| {
+        let line_sync = line_sync.clone();
+        async move {
+            let layout = crate::sync::row_layout::layout(db, "inventory_count_lines")
+                .await
+                .expect("layout");
+            let tx = db.begin().await.expect("begin");
+            let outcome = crate::sync::row_codec::apply_row(
+                &tx,
+                &layout,
+                &line_sync,
+                "upsert",
+                &serde_json::to_string(&payload).expect("json"),
+            )
+            .await
+            .expect("apply");
+            tx.rollback().await.expect("rollback");
+            outcome
+        }
+    };
+    let code = |outcome: &ApplyOutcome| match outcome {
+        ApplyOutcome::Conflict { code, .. } => code.clone(),
+        other => format!("{other:?}"),
+    };
+    for flag in [0, 1] {
+        let outcome = apply(approved(&counter_sync, flag)).await;
+        assert_eq!(code(&outcome), "COUNT_SELF_APPROVAL", "flag {flag}: {outcome:?}");
+    }
+    // No planning site applied here (the organisation still arriving): a self-approval waits.
+    exec(
+        db,
+        "UPDATE org_nodes SET deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE deleted_at IS NULL",
+        vec![],
+    )
+    .await;
+    assert!(
+        crate::inventory::count_four_eyes::store_rule(db)
+            .await
+            .expect("rule")
+            .no_site
+    );
+    let outcome = apply(approved(&counter_sync, 1)).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Deferred { .. }),
+        "no site here yet: waits, {outcome:?}"
+    );
+    let outcome = apply(approved(&counter_sync, 0)).await;
+    assert_eq!(
+        code(&outcome),
+        "COUNT_SELF_APPROVAL",
+        "not flagged, no site: {outcome:?}"
+    );
+    let outcome = apply(approved(&other_sync, 1)).await;
+    assert_eq!(code(&outcome), "COUNT_APPROVAL_RECORD_INVALID", "{outcome:?}");
+    let outcome = apply(approved(&other_sync, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+
+    crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(7), true).await;
+    let outcome = apply(approved(&counter_sync, 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "opted out here: {outcome:?}");
+    let outcome = apply(approved(&counter_sync, 0)).await;
+    assert_eq!(code(&outcome), "COUNT_SELF_APPROVAL", "not flagged: {outcome:?}");
+}
+
+/// The approval of the waiting list count `pending` by `user` with a valid note.
+async fn approve_waiting(
+    db: &DatabaseConnection,
+    user: i32,
+    pending: &negative_stock::PendingReconciliationCount,
+) -> Result<negative_stock::NegativeStockResolution, AppError> {
+    negative_stock::approve_pending_count(
+        db,
+        user,
+        negative_stock::ApprovePendingCountInput {
+            line_id: pending.line_id,
+            expected_row_version: pending.row_version,
+            reason: "Recompté avec le magasinier".into(),
+        },
+    )
+    .await
+}
+
+async fn waiting_counts(db: &DatabaseConnection) -> Vec<negative_stock::PendingReconciliationCount> {
+    negative_stock::list_reviews(db, false)
+        .await
+        .expect("list")
+        .pending_counts
+}
+
+/// D11 review: the approval of a waiting list count is refused without inv.manage, against another
+/// version of its line, or once it was cancelled; the generic count screen cannot approve or post
+/// it (it is approved from the list, where the posting closes the item).
+#[tokio::test]
+async fn a_waiting_list_count_is_approved_only_from_the_list_by_a_manager_against_its_version() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::{
+        ApproveInventoryCountLineInput, PostInventoryCountSessionInput, TransitionInventoryCountSessionInput,
+    };
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesrulescounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyesrulesapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let viewer = user_with(db, "foureyesrulesviewer", &[crate::rbac::permissions::INV_VIEW]).await;
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 2.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    let pending = waiting_counts(db).await[0].clone();
+
+    let denied = approve_waiting(db, viewer, &pending).await.expect_err("inv.view only");
+    assert!(matches!(denied, AppError::PermissionDenied(_)), "{denied:?}");
+    let stale_version = negative_stock::PendingReconciliationCount {
+        row_version: pending.row_version + 1,
+        ..pending.clone()
+    };
+    assert_eq!(
+        gate(
+            approve_waiting(db, approver, &stale_version)
+                .await
+                .expect_err("another version")
+        ),
+        "GATE_RECORD_CHANGED_ELSEWHERE"
+    );
+
+    // The generic count screen: the line approval and the posting are refused.
+    let refused = controls::approve_count_line(
+        db,
+        ApproveInventoryCountLineInput {
+            line_id: pending.line_id,
+            expected_row_version: pending.row_version,
+            reviewer_id: i64::from(approver),
+            reviewer_evidence: "Recompté avec le magasinier".into(),
+        },
+    )
+    .await
+    .expect_err("approved from the list only");
+    assert_eq!(gate(refused), controls::REFUSED_RECONCILE_LIST_COUNT);
+    let session_id = scalar_i64(
+        db,
+        "SELECT session_id FROM inventory_count_lines WHERE id = ?",
+        vec![pending.line_id.into()],
+    )
+    .await;
+    // Even a session put in "approved" by hand is not posted from the count screen.
+    exec(
+        db,
+        "UPDATE inventory_count_sessions SET status = 'approved' WHERE id = ?",
+        vec![session_id.into()],
+    )
+    .await;
+    let version = scalar_i64(
+        db,
+        "SELECT row_version FROM inventory_count_sessions WHERE id = ?",
+        vec![session_id.into()],
+    )
+    .await;
+    let refused = controls::post_count_session(
+        db,
+        PostInventoryCountSessionInput {
+            session_id,
+            expected_row_version: version,
+            actor_id: Some(i64::from(approver)),
+        },
+    )
+    .await
+    .expect_err("posted from the list only");
+    assert_eq!(gate(refused), controls::REFUSED_RECONCILE_LIST_COUNT);
+    assert_eq!(on_hand_milli(db, art, loc).await, -5000, "nothing moved");
+    exec(
+        db,
+        "UPDATE inventory_count_sessions SET status = 'submitted' WHERE id = ?",
+        vec![session_id.into()],
+    )
+    .await;
+
+    // Cancelled from the count screen: no longer waiting, and the item stays open.
+    let version = scalar_i64(
+        db,
+        "SELECT row_version FROM inventory_count_sessions WHERE id = ?",
+        vec![session_id.into()],
+    )
+    .await;
+    controls::transition_count_session(
+        db,
+        TransitionInventoryCountSessionInput {
+            session_id,
+            expected_row_version: version,
+            next_status: "cancelled".into(),
+            reason: None,
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("cancelled");
+    assert_eq!(
+        refusal_code(approve_waiting(db, approver, &pending).await.expect_err("cancelled")),
+        negative_stock::REFUSED_COUNT_NOT_PENDING
+    );
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert!(list.pending_counts.is_empty());
+    assert_eq!(list.items.len(), 1, "cancelling a waiting count never closes the item");
+    assert_eq!(list.items[0].status, "open");
+}
+
+/// D11 review (S2, S3, item 11): a waiting count replaced by a new count is cancelled with an audit
+/// on its session naming the count that replaced it, and the new count's audit names it; the audit
+/// of a count that waits says so; the item stays open until a count is approved and posted, whose
+/// approval audit carries the tolerance.
+#[tokio::test]
+async fn a_replaced_waiting_count_is_audited_and_the_item_stays_open_until_a_valid_count() {
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesreplcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(db, "foureyesreplapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    let first = waiting_counts(db).await[0].clone();
+    let waiting_summary = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT json_extract(details_json, '$.summary') FROM audit_events
+         WHERE action_code = 'inventory.negative_stock.counted' ORDER BY id DESC LIMIT 1",
+        vec![],
+    )
+    .await
+    .expect("audit");
+    assert!(
+        waiting_summary.contains("waiting") && !waiting_summary.contains("resolved"),
+        "{waiting_summary}"
+    );
+
+    let second = negative_stock::resolve_by_count(db, counter, resolution(art, loc, 1.5, "Second comptage du bac"))
+        .await
+        .expect("counted again");
+    assert!(second.pending_approval);
+    let replaced_by = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT json_extract(details_json, '$.replaced_by_session_code') FROM audit_events
+         WHERE action_code = 'inventory.count.replaced' AND actor_id = ?
+           AND json_extract(details_json, '$.count_session_code') = ?",
+        vec![i64::from(counter).into(), first.session_code.clone().into()],
+    )
+    .await
+    .expect("the replaced count is audited on its session");
+    assert_eq!(replaced_by, second.session_code);
+    let named = crate::sync::test_support::scalar_opt_text(
+        db,
+        "SELECT json_extract(details_json, '$.replaced_session_codes') FROM audit_events
+         WHERE action_code = 'inventory.negative_stock.counted' ORDER BY id DESC LIMIT 1",
+        vec![],
+    )
+    .await
+    .expect("audit");
+    assert!(named.contains(&first.session_code), "{named}");
+    let list = negative_stock::list_reviews(db, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "replacing a waiting count never closes the item");
+    assert_eq!(on_hand_milli(db, art, loc).await, -5000);
+
+    let pending = waiting_counts(db).await[0].clone();
+    let done = approve_waiting(db, approver, &pending).await.expect("approved");
+    assert_eq!(done.review.expect("item").status, "closed", "a valid count closes it");
+    let tolerance = scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM audit_events
+         WHERE action_code = 'inventory.negative_stock.count_approved'
+           AND json_extract(details_json, '$.four_eyes_tolerance.above_tolerance_at_entry') = 1
+           AND json_extract(details_json, '$.four_eyes_tolerance.at_approval.rule') IS NOT NULL",
+        vec![],
+    )
+    .await;
+    assert_eq!(tolerance, 1, "the approval's audit carries the tolerance");
+}
+
+/// D11 (CMMS Advisor Q7): the stock moved since a waiting count by a movement RECEIVED from another
+/// PC: the approval is refused as stale (the stock on record is compared, whatever moved it) and
+/// the counter is told in-app to count again.
+#[tokio::test]
+async fn a_movement_received_from_another_pc_makes_a_waiting_count_stale_and_the_counter_is_told() {
+    let Shortage {
+        dbs, mut server, pairs, ..
+    } = shortage(2).await;
+    let (a, b) = (&dbs[0], &dbs[1]);
+    let (art, loc) = pairs[0];
+    let counter = user_with(a, "foureyesrecvcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let approver = user_with(a, "foureyesrecvapprover", &[crate::rbac::permissions::INV_MANAGE]).await;
+    negative_stock::resolve_by_count(a, counter, resolution(art, loc, 1.0, "Comptage du bac"))
+        .await
+        .expect("counted");
+    let pending = waiting_counts(a).await[0].clone();
+
+    adjust_noted(b, pairs[1].0, pairs[1].1, 2.0, "Retour trouvé sur le poste B")
+        .await
+        .expect("entry on B");
+    sync_applied(&mut server, "B", b).await;
+    sync_applied(&mut server, "A", a).await;
+    assert_eq!(on_hand_milli(a, art, loc).await, -3000, "B's movement applied on A");
+
+    let stale = approve_waiting(a, approver, &pending).await.expect_err("stale");
+    assert_eq!(refusal_code(stale), negative_stock::REFUSED_COUNT_STALE);
+    assert_eq!(on_hand_milli(a, art, loc).await, -3000, "nothing posted");
+    let notice = |user: i32| {
+        scalar_i64(
+            a,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id
+             WHERE e.category_code = ? AND n.recipient_user_id = ? AND e.message_key = ?",
+            vec![
+                negative_stock::RECOUNT_CATEGORY.into(),
+                i64::from(user).into(),
+                negative_stock::RECOUNT_CATEGORY.into(),
+            ],
+        )
+    };
+    assert_eq!(notice(counter).await, 1, "the counter is told to count again");
+    assert_eq!(notice(approver).await, 0);
+    let params = crate::sync::test_support::scalar_opt_text(
+        a,
+        "SELECT message_params_json FROM notification_events WHERE category_code = ?",
+        vec![negative_stock::RECOUNT_CATEGORY.into()],
+    )
+    .await
+    .expect("params");
+    assert!(
+        params.contains(&pending.session_code) && params.contains(&pending.location_code),
+        "{params}"
+    );
+    // The notice is named by the line's sync id (the same on every PC), not its local id.
+    let line_sync = text_of(
+        a,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![pending.line_id.into()],
+    )
+    .await;
+    assert_eq!(
+        text_of(
+            a,
+            "SELECT dedupe_key FROM notification_events WHERE category_code = ?",
+            vec![negative_stock::RECOUNT_CATEGORY.into()],
+        )
+        .await,
+        format!("stock-count-recount|{line_sync}")
+    );
+    let list = negative_stock::list_reviews(a, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "the item stays open");
+}
+
+/// D11 review: "above the tolerance" of a received line is judged here from this PC's tolerance and
+/// the line's quantities: a line received marked within it, approved by its counter, is still a
+/// four-eyes conflict where it is above here (the tests' tolerance is blank: every variance is).
+#[tokio::test]
+async fn a_received_line_marked_within_the_tolerance_is_judged_on_its_quantities_here() {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesrecomputecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(db, counter, art, loc, 2.0).await;
+    let sync_of = |sql: &'static str, id: i64| crate::sync::test_support::scalar_opt_text(db, sql, vec![id.into()]);
+    let line_sync = sync_of("SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?", line.id)
+        .await
+        .expect("line");
+    let counter_sync = sync_of(
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        i64::from(counter),
+    )
+    .await
+    .expect("counter");
+    // The same line as another PC would send it, new here, marked within the tolerance.
+    let mut payload = crate::permit::sync_check::local_wire(db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    payload.insert("is_critical".into(), serde_json::json!(0));
+    payload.insert("approved_by_sync_id".into(), serde_json::json!(counter_sync));
+    payload.insert("approved_at".into(), serde_json::json!("2026-10-23T10:00:00Z"));
+    payload.insert("approval_note".into(), serde_json::json!("Recompté avec le magasinier"));
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let layout = crate::sync::row_layout::layout(db, "inventory_count_lines")
+        .await
+        .expect("layout");
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        &fresh,
+        "upsert",
+        &serde_json::to_string(&payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    tx.rollback().await.expect("rollback");
+    assert!(
+        matches!(&outcome, ApplyOutcome::Conflict { code, .. } if code == "COUNT_SELF_APPROVAL"),
+        "{outcome:?}"
+    );
+}
+
+/// D11 review (B2): a received count line cannot clear the counter held here, nor change it or
+/// lower its "above the tolerance" flag without a new entry; with a new entry it is judged as
+/// received.
+#[tokio::test]
+async fn a_received_count_line_keeps_the_counter_and_flag_held_here() {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let Shortage { dbs, pairs, .. } = shortage(2).await;
+    let db = &dbs[0];
+    let (art, loc) = pairs[0];
+    let counter = user_with(db, "foureyesheldcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let other = user_with(db, "foureyesheldother", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(db, counter, art, loc, 2.0).await;
+    assert_eq!(line.is_critical, 1);
+    let sync_of = |sql: &'static str, id: i64| crate::sync::test_support::scalar_opt_text(db, sql, vec![id.into()]);
+    let line_sync = sync_of("SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?", line.id)
+        .await
+        .expect("line");
+    let counter_sync = sync_of(
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        i64::from(counter),
+    )
+    .await
+    .expect("counter");
+    let other_sync = sync_of(
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        i64::from(other),
+    )
+    .await
+    .expect("other");
+    let held = crate::permit::sync_check::local_wire(db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    let received = |changes: &[(&str, serde_json::Value)]| {
+        let mut p = held.clone();
+        p.insert("approved_by_sync_id".into(), serde_json::json!(counter_sync));
+        p.insert("approved_at".into(), serde_json::json!("2026-10-23T10:00:00Z"));
+        p.insert("approval_note".into(), serde_json::json!("Recompté avec le magasinier"));
+        p.insert("self_approved".into(), serde_json::json!(0));
+        p.insert("row_version".into(), serde_json::json!(line.row_version + 1));
+        for (k, v) in changes {
+            p.insert((*k).into(), v.clone());
+        }
+        p
+    };
+    let apply = |payload: serde_json::Map<String, serde_json::Value>| {
+        let line_sync = line_sync.clone();
+        async move {
+            let layout = crate::sync::row_layout::layout(db, "inventory_count_lines")
+                .await
+                .expect("layout");
+            let tx = db.begin().await.expect("begin");
+            let outcome = crate::sync::row_codec::apply_row(
+                &tx,
+                &layout,
+                &line_sync,
+                "upsert",
+                &serde_json::to_string(&payload).expect("json"),
+            )
+            .await
+            .expect("apply");
+            tx.rollback().await.expect("rollback");
+            outcome
+        }
+    };
+    let code = |outcome: &ApplyOutcome| match outcome {
+        ApplyOutcome::Conflict { code, .. } => code.clone(),
+        other => format!("{other:?}"),
+    };
+    let changed = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_CHANGED;
+    // Approved by the real counter: the counter cleared, then changed to someone else.
+    let outcome = apply(received(&[("counted_by_sync_id", serde_json::Value::Null)])).await;
+    assert_eq!(code(&outcome), changed, "counter cleared: {outcome:?}");
+    let outcome = apply(received(&[("counted_by_sync_id", serde_json::json!(other_sync))])).await;
+    assert_eq!(code(&outcome), changed, "counter changed: {outcome:?}");
+    // The flag lowered without a new entry.
+    let outcome = apply(received(&[("is_critical", serde_json::json!(0))])).await;
+    assert_eq!(code(&outcome), changed, "flag lowered: {outcome:?}");
+    // A new entry by the other person (another quantity), approved by the first counter: a second
+    // person, applied.
+    let outcome = apply(received(&[
+        ("counted_by_sync_id", serde_json::json!(other_sync)),
+        ("counted_qty", serde_json::json!(3.0)),
+        ("variance_qty", serde_json::json!(8.0)),
+    ]))
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "new entry: {outcome:?}");
+}
+
+// ── A self-approved count received where four-eyes applies (CMMS Advisor Q8) ──────────────────
+
+/// Each PC's own planning site, made there only (never sent): A's opted out of four-eyes when
+/// `a_opts_out`, B's per `b_opts_out` — each PC judges by its current rule.
+async fn sites_made_locally(a: &DatabaseConnection, b: &DatabaseConnection, a_opts_out: bool, b_opts_out: bool) {
+    for (db, opt_out, device) in [(a, a_opts_out, 7), (b, b_opts_out, 8)] {
+        crate::sync::capture::begin_suppression(db).await.expect("suppress");
+        crate::inventory::tests::single_site_opting_out(db, &mut RowFactory::for_device(device), opt_out).await;
+        crate::sync::capture::end_suppression(db).await.expect("unsuppress");
+    }
+}
+
+/// The count line of a session on `db`.
+async fn line_of(db: &DatabaseConnection, session_code: &str) -> crate::inventory::domain::InventoryCountLine {
+    let session = session_by_code(db, session_code).await;
+    crate::inventory::controls::list_count_lines(db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("its line")
+}
+
+async fn notice_events(db: &DatabaseConnection, category: &str) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM notification_events WHERE category_code = ?",
+        vec![category.into()],
+    )
+    .await
+}
+
+/// A count self-approved on A under its site's opt-out, received by B where four-eyes applies.
+struct HeldCount {
+    a: DatabaseConnection,
+    b: DatabaseConnection,
+    server: TestServer,
+    pair_a: (i64, i64),
+    pair_b: (i64, i64),
+    counter: i32,
+    session_code: String,
+}
+
+async fn held_count(name: &str) -> HeldCount {
+    let Shortage {
+        mut dbs,
+        mut server,
+        pairs,
+    } = shortage(2).await;
+    let b = dbs.pop().expect("B");
+    let a = dbs.pop().expect("A");
+    sites_made_locally(&a, &b, true, false).await;
+    let counter = user_with(&a, name, &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done =
+        negative_stock::resolve_by_count(&a, counter, resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage du bac"))
+            .await
+            .expect("posted under the opt-out");
+    assert!(!done.pending_approval && done.self_approved);
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    HeldCount {
+        a,
+        b,
+        server,
+        pair_a: pairs[0],
+        pair_b: pairs[1],
+        counter,
+        session_code: done.session_code,
+    }
+}
+
+/// CMMS Advisor Q8: on a PC where four-eyes applies, a received count approved by its counter above
+/// the tolerance is a conflict and its movement is held with it (the stock does not move); the
+/// count-approval holders are told once; "keep mine" / "take theirs" are refused; a second approval
+/// given where the count is applied releases it: the movement is applied, the conflict closes.
+#[tokio::test]
+async fn a_self_approved_count_is_held_with_its_movement_until_its_second_approval_arrives() {
+    let HeldCount {
+        a,
+        b,
+        mut server,
+        pair_a,
+        pair_b,
+        counter,
+        session_code,
+    } = held_count("heldsecondcounter").await;
+    assert_eq!(on_hand_milli(&a, pair_a.0, pair_a.1).await, 0, "posted on A");
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "held on B: the stock does not move"
+    );
+    assert_eq!(
+        conflict_kinds(&b).await,
+        vec!["inventory_count_lines:COUNT_SELF_APPROVAL".to_string()]
+    );
+    assert!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM sync_inbox WHERE entity_type = 'inventory_transactions' AND apply_status = 'deferred'",
+            vec![],
+        )
+        .await
+            >= 1,
+        "the movement waits with its line"
+    );
+    let held_notice = crate::inventory::count_four_eyes::SECOND_APPROVAL_CATEGORY;
+    assert_eq!(
+        notice_events(&b, held_notice).await,
+        1,
+        "the count-approval holders are told"
+    );
+    // The sync centre names the count held: its reference, its counter, when it was posted (Q12).
+    let listed = crate::sync::queries::list_sync_conflicts(&b, Default::default())
+        .await
+        .expect("conflicts");
+    let hold = listed
+        .iter()
+        .find_map(|c| c.count_hold.clone())
+        .expect("the held count is named");
+    assert_eq!(hold.session_code.as_deref(), Some(session_code.as_str()));
+    assert_eq!(hold.counter.as_deref(), Some("heldsecondcounter"));
+    assert!(hold.posted_at.is_some(), "{hold:?}");
+
+    // "Keep mine" / "take theirs" are refused: settled where the count is applied.
+    use sea_orm::ConnectionTrait;
+    let conflict = b
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT id, row_version FROM sync_conflicts WHERE conflict_type = 'COUNT_SELF_APPROVAL'".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("conflict");
+    let (conflict_id, version): (i64, i64) = (
+        conflict.try_get("", "id").expect("id"),
+        conflict.try_get("", "row_version").expect("version"),
+    );
+    let admin_b = i64::from(second_person(&b, counter).await);
+    for action in ["accept_local", "accept_remote", "dismiss"] {
+        let refused = crate::sync::queries::resolve_sync_conflict(
+            &b,
+            admin_b,
+            crate::sync::domain::ResolveSyncConflictInput {
+                conflict_id,
+                expected_row_version: version,
+                action: action.into(),
+                resolution_note: Some("Choix de la version de ce poste".into()),
+            },
+        )
+        .await
+        .expect_err(action);
+        assert!(
+            format!("{refused:?}").contains("GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN"),
+            "{action}: {refused:?}"
+        );
+    }
+
+    // Judged again (its inbox row tried anew, twice): still held, told once — the notice is named
+    // by the count, not by the attempt.
+    for _ in 0..2 {
+        exec(
+            &b,
+            "UPDATE sync_inbox SET apply_status = 'pending' WHERE entity_type = 'inventory_count_lines'
+               AND apply_status = 'conflict'",
+            vec![],
+        )
+        .await;
+        let judged = crate::sync::materialize::materialize_inbox_batch(&b, Some(2000))
+            .await
+            .expect("judged again");
+        assert!(judged.conflicts >= 1, "refused again");
+    }
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, -5000);
+    assert_eq!(notice_events(&b, held_notice).await, 1, "never repeated");
+
+    // The second approval, where the count is applied: never by its counter.
+    let line = line_of(&a, &session_code).await;
+    let second = |by: i32, line: &crate::inventory::domain::InventoryCountLine| {
+        crate::inventory::controls::second_approve_count_line(
+            &a,
+            crate::inventory::domain::SecondApproveInventoryCountLineInput {
+                line_id: line.id,
+                expected_row_version: line.row_version,
+                reviewer_id: i64::from(by),
+                reviewer_evidence: "Comptage vérifié par un second".into(),
+            },
+        )
+    };
+    assert_eq!(
+        gate(second(counter, &line).await.expect_err("the counter")),
+        crate::inventory::controls::REFUSED_SECOND_APPROVAL_SELF
+    );
+    let approver = second_person(&a, counter).await;
+    let approved = second(approver, &line).await.expect("second approval");
+    assert_eq!(approved.second_approved_by_id, Some(i64::from(approver)));
+    assert_eq!(
+        gate(second(approver, &approved).await.expect_err("twice")),
+        crate::inventory::controls::REFUSED_SECOND_APPROVAL_NOT_NEEDED
+    );
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        0,
+        "released on B: the movement is applied with its line"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(notice_events(&b, held_notice).await, 1);
+
+    // The second approval held on B is kept: a received row cannot remove or change it.
+    let line_sync = text_of(
+        &b,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE second_approved_by_id IS NOT NULL",
+        vec![],
+    )
+    .await;
+    let held = crate::permit::sync_check::local_wire(&b, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    let counter_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    let changed = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_CHANGED;
+    for (what, key, value) in [
+        ("removed", "second_approved_by_sync_id", serde_json::Value::Null),
+        (
+            "given to another",
+            "second_approved_by_sync_id",
+            serde_json::json!(counter_sync),
+        ),
+        (
+            "redated",
+            "second_approved_at",
+            serde_json::json!("2026-10-24T23:59:00Z"),
+        ),
+    ] {
+        let mut received = held.clone();
+        received.insert(key.into(), value);
+        let verdict = crate::inventory::count_four_eyes::inbound_count_line_check(&b, &line_sync, &received)
+            .await
+            .expect("judged");
+        assert_eq!(verdict_code(verdict.as_ref()), changed, "second approval {what}");
+    }
+}
+
+/// `pass`, `wait` or the conflict code of a received row's verdict.
+fn verdict_code(verdict: Option<&crate::settings::site::InboundVerdict>) -> String {
+    match verdict {
+        None => "pass".into(),
+        Some(crate::settings::site::InboundVerdict::Defer(_)) => "wait".into(),
+        Some(crate::settings::site::InboundVerdict::Conflict { code, .. }) => (*code).to_string(),
+    }
+}
+
+/// Review of a9c38354 (B1): the exchange can end between a count's movement and the line version
+/// naming it. With an earlier version of the line already applied here (entered, not yet
+/// approved), the movement still waits for the version naming it, judged with it: the stock does
+/// not move while that version is refused.
+#[tokio::test]
+async fn a_count_movement_waits_for_the_line_version_naming_it_across_exchanges() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, true, false).await;
+    let counter = user_with(&a, "pagesplitcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_a = (article.rowid, location.rowid);
+    let pair_b = local_pair(&b, &article, &location).await;
+    let entered = enter_count(&a, counter, pair_a.0, pair_a.1, 7.0).await;
+    let line_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![entered.1.id.into()],
+    )
+    .await;
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![entered.0.id.into()],
+    )
+    .await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE entity_sync_id = ? AND approved_by_id IS NULL",
+            vec![line_sync.clone().into()],
+        )
+        .await,
+        1,
+        "the line as entered is applied on B"
+    );
+
+    // Approved by its counter under A's opt-out, then posted on A.
+    post_count_approved_by(&a, counter, counter, entered).await;
+    assert_eq!(on_hand_milli(&a, pair_a.0, pair_a.1).await, 7000);
+    sync_applied(&mut server, "A", &a).await;
+
+    // B's exchange ends between the movement and the line version naming it.
+    server.hold_back("B", &line_sync);
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "the movement waits for the line version naming it"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+
+    // That version arrives in the next exchange, refused here: the movement stays held with it.
+    server.release("B");
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        conflict_kinds(&b).await,
+        vec!["inventory_count_lines:COUNT_SELF_APPROVAL".to_string()]
+    );
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (0, 0));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "held: the stock does not move"
+    );
+}
+
+/// Review of a9c38354 (S2): a held adjustment is released only together with its reversal, in one
+/// transaction. When the reversal cannot be applied (it waits for a row of its own, here a person
+/// not applied on B yet), the adjustment is not applied alone either.
+#[tokio::test]
+async fn a_held_adjustment_is_never_applied_without_its_reversal() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let HeldCount {
+        a,
+        b,
+        mut server,
+        pair_a,
+        pair_b,
+        counter,
+        session_code,
+    } = held_count("heldgroupcounter").await;
+    exec_unsent(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 10 WHERE article_id = ? AND location_id = ?",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let session = session_by_code(&a, &session_code).await;
+    crate::inventory::controls::reverse_count_session(
+        &a,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Pas de seconde approbation possible".into(),
+            actor_id: Some(i64::from(second_person(&a, counter).await)),
+        },
+    )
+    .await
+    .expect("reversed");
+    sync_applied(&mut server, "A", &a).await;
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    let reversal = movement_sync_id(&a, &session_sync, "COUNT_REVERSAL").await;
+    // The reversal reaches B naming a person not applied there: it waits, for a reason of its own.
+    {
+        let row = server
+            .state
+            .get_mut(&("inventory_transactions".to_string(), reversal.clone()))
+            .expect("the reversal is on the server");
+        let mut payload: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&row.payload_json).expect("payload");
+        payload.insert(
+            "performed_by_sync_id".into(),
+            serde_json::json!("a-person-not-applied-on-b"),
+        );
+        row.payload_json = serde_json::to_string(&payload).expect("json");
+        row.payload_hash = crate::sync::queries::hash_payload(&row.payload_json);
+    }
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_REVERSAL").await,
+        (0, 0),
+        "the reversal waits"
+    );
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "the adjustment is not applied without its reversal"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "the stock does not move"
+    );
+
+    // Review of 435c9410 (SF3): the missing person arrives — the group is tried again and recovers:
+    // the adjustment and its reversal are applied together, the stock nets to zero, the conflict
+    // closes.
+    let late = crate::auth::scope_tests::user(&b, "heldgrouplate").await;
+    exec_unsent(
+        &b,
+        "UPDATE user_accounts SET entity_sync_id = 'a-person-not-applied-on-b' WHERE id = ?",
+        vec![late.into()],
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&b, 200, true)
+        .await
+        .expect("tried again");
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "both together: net zero"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+}
+
+/// Review of a9c38354 (S1, S3): a received count line is checked on what it names — a second
+/// approval by its counter, undated, by someone without the count-approval right here, or by
+/// someone not applied here yet (it waits); a "reversal" that is not the reversal of this count
+/// (another movement, or one not arrived: it waits).
+#[tokio::test]
+async fn a_received_count_line_is_checked_on_its_second_approval_and_its_reversal() {
+    let HeldCount {
+        a,
+        b,
+        counter,
+        session_code,
+        ..
+    } = held_count("forgedsecondcounter").await;
+    let line_sync = text_of(
+        &a,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    let user_sync = |db: &DatabaseConnection, id: i32| {
+        let db = db.clone();
+        async move {
+            text_of(
+                &db,
+                "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+                vec![id.into()],
+            )
+            .await
+        }
+    };
+    let counter_sync = user_sync(&a, counter).await;
+    let admin_sync = text_of(
+        &b,
+        "SELECT entity_sync_id FROM user_accounts WHERE username = 'admin'",
+        vec![],
+    )
+    .await;
+    let viewer = user_with(&b, "forgedsecondviewer", &[crate::rbac::permissions::INV_VIEW]).await;
+    let viewer_sync = user_sync(&b, viewer).await;
+    // The line as A sends it: posted, approved by its counter, held on B.
+    let posted = wire_row(&a, "inventory_count_lines", &line_sync).await;
+    let judge = |changes: Vec<(&'static str, serde_json::Value)>| {
+        let mut received = posted.clone();
+        for (k, v) in changes {
+            received.insert(k.into(), v);
+        }
+        let (b, line_sync) = (&b, line_sync.clone());
+        async move {
+            let verdict = crate::inventory::count_four_eyes::inbound_count_line_check(b, &line_sync, &received)
+                .await
+                .expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    let second = |by: serde_json::Value, at: serde_json::Value| {
+        vec![
+            ("second_approved_by_sync_id", by),
+            ("second_approved_at", at),
+            (
+                "second_approval_note",
+                serde_json::json!("Comptage vérifié par un second"),
+            ),
+        ]
+    };
+    let at = serde_json::json!("2026-10-24T10:00:00Z");
+    let invalid = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID;
+    let held = crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL;
+    assert_eq!(
+        judge(second(serde_json::json!(counter_sync), at.clone())).await,
+        invalid,
+        "by its counter"
+    );
+    assert_eq!(
+        judge(second(serde_json::json!(admin_sync), serde_json::Value::Null)).await,
+        invalid,
+        "undated"
+    );
+    assert_eq!(
+        judge(second(serde_json::json!(viewer_sync), at.clone())).await,
+        held,
+        "without the count-approval right here"
+    );
+    assert_eq!(
+        judge(second(serde_json::json!("a-person-not-applied-on-b"), at.clone())).await,
+        "wait",
+        "its second approver not applied here yet"
+    );
+    assert_eq!(
+        judge(second(serde_json::json!(admin_sync), at.clone())).await,
+        "pass",
+        "a valid second approval"
+    );
+    // Q15: a second approval only of a variance approved by its counter.
+    let mut by_another = second(serde_json::json!(admin_sync), at.clone());
+    by_another.push(("approved_by_sync_id", serde_json::json!(admin_sync)));
+    assert_eq!(judge(by_another).await, invalid, "approved by another person");
+
+    // Its "reversal": the count's own adjustment (waiting on B), another movement held on B, one
+    // not arrived.
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    let adjustment = movement_sync_id(&a, &session_sync, "COUNT_ADJUST").await;
+    let other_movement = text_of(
+        &b,
+        "SELECT entity_sync_id FROM inventory_transactions ORDER BY id LIMIT 1",
+        vec![],
+    )
+    .await;
+    let reversed = |id: &str| vec![("reversed_transaction_sync_id", serde_json::json!(id))];
+    assert_eq!(judge(reversed(&adjustment)).await, invalid, "its own adjustment");
+    assert_eq!(judge(reversed(&other_movement)).await, invalid, "another movement");
+    assert_eq!(
+        judge(reversed("a-movement-not-arrived")).await,
+        "wait",
+        "not arrived yet"
+    );
+}
+
+/// CMMS Advisor Q8: the count's reversal issued where it is applied: on the PC holding it, the held
+/// adjustment and its reversal are applied together (net zero), the conflict closes, the counter is
+/// told to count again and the stock to reconcile stays open.
+#[tokio::test]
+async fn a_held_count_reversed_where_it_is_applied_nets_to_zero_and_closes() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let HeldCount {
+        a,
+        b,
+        mut server,
+        pair_a,
+        pair_b,
+        counter,
+        session_code,
+    } = held_count("heldreversecounter").await;
+    // A's reversal must not take A below zero (it brings back the −5): stock found on A since,
+    // repaired on A only, so B's stock is the count's alone.
+    exec_unsent(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 10 WHERE article_id = ? AND location_id = ?",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let session = session_by_code(&a, &session_code).await;
+    crate::inventory::controls::reverse_count_session(
+        &a,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Pas de seconde approbation possible".into(),
+            actor_id: Some(i64::from(second_person(&a, counter).await)),
+        },
+    )
+    .await
+    .expect("reversed");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    let session_sync_id = text_of(
+        &b,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    assert_eq!(count_movements(&b, &session_sync_id, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(count_movements(&b, &session_sync_id, "COUNT_REVERSAL").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "the adjustment and its reversal together: net zero"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id
+             WHERE e.category_code = ? AND e.message_key = ? AND n.recipient_user_id = ?",
+            vec![
+                negative_stock::RECOUNT_CATEGORY.into(),
+                crate::inventory::count_four_eyes::RECOUNT_AFTER_REVERSAL_MESSAGE.into(),
+                i64::from(counter).into(),
+            ],
+        )
+        .await,
+        1,
+        "the counter is told to count again"
+    );
+    let line_sync = text_of(
+        &b,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.session_code = ?",
+        vec![session_code.clone().into()],
+    )
+    .await;
+    assert_eq!(
+        text_of(
+            &b,
+            "SELECT dedupe_key FROM notification_events WHERE message_key = ?",
+            vec![crate::inventory::count_four_eyes::RECOUNT_AFTER_REVERSAL_MESSAGE.into()],
+        )
+        .await,
+        format!("count-recount|{line_sync}"),
+        "named by the line's sync id"
+    );
+    let list = negative_stock::list_reviews(&b, false).await.expect("list");
+    assert_eq!(list.items.len(), 1, "the stock to reconcile stays open");
+}
+
+/// CMMS Advisor Q8: where the site opted out of four-eyes here too, the received self-approved count
+/// is accepted on arrival (flagged), with its movement.
+#[tokio::test]
+async fn a_self_approved_count_is_accepted_where_the_site_opted_out_here_too() {
+    let Shortage {
+        mut dbs,
+        mut server,
+        pairs,
+    } = shortage(2).await;
+    let b = dbs.pop().expect("B");
+    let a = dbs.pop().expect("A");
+    sites_made_locally(&a, &b, true, true).await;
+    let counter = user_with(&a, "heldoptoutcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let done =
+        negative_stock::resolve_by_count(&a, counter, resolution(pairs[0].0, pairs[0].1, 0.0, "Comptage du bac"))
+            .await
+            .expect("posted");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        on_hand_milli(&b, pairs[1].0, pairs[1].1).await,
+        0,
+        "accepted with its movement"
+    );
+    assert!(conflict_kinds(&b).await.is_empty());
+    assert_eq!(line_of(&b, &done.session_code).await.self_approved, 1, "flagged");
+}
+
+// ── Received lines judged on their quantities and entry cost; first join (CMMS Advisor Q9, Q10) ──
+
+/// Review of 9ebd482c (blocking) and CMMS Advisor Q10: a received line approved by its counter is
+/// judged on its own quantities — its variance must be its counted less its system quantity, or the
+/// record is refused — with a value threshold set: at the unit cost it was entered with when that
+/// cost is consistent with its stored value and within 10 % of the average cost here, otherwise at
+/// the cost here (a forged or inconsistent cost never makes it more lenient).
+#[tokio::test]
+async fn a_received_line_is_judged_on_its_quantities_and_the_cost_it_was_entered_with() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    // The average cost here; the value threshold set, the percent blank.
+    exec(
+        &db,
+        "UPDATE stock_balances SET moving_avg_unit_cost = 10.5 WHERE article_id = ? AND location_id = ?",
+        vec![article.rowid.into(), location.rowid.into()],
+    )
+    .await;
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("value threshold");
+    let counter = user_with(&db, "entrycostcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 1, "5 × 10.5 = 52.5 is above 50 here");
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    let entered = crate::permit::sync_check::local_wire(&db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    assert_eq!(
+        entered.get("entry_unit_cost"),
+        Some(&serde_json::json!(10.5)),
+        "kept at entry"
+    );
+    assert_eq!(entered.get("entry_variance_value"), Some(&serde_json::json!(-52.5)));
+    // The same line as another PC would send it, new here: approved by its counter, judged within
+    // the tolerance there (not flagged as a self-approval).
+    let received = |changes: Vec<(&'static str, serde_json::Value)>| {
+        let mut p = entered.clone();
+        for (k, v) in [
+            ("is_critical", serde_json::json!(0)),
+            ("approved_by_sync_id", serde_json::json!(counter_sync)),
+            ("approved_at", serde_json::json!("2026-10-24T10:00:00Z")),
+            ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+            ("self_approved", serde_json::json!(0)),
+        ] {
+            p.insert(k.into(), v);
+        }
+        for (k, v) in changes {
+            p.insert(k.into(), v);
+        }
+        let db = &db;
+        async move {
+            let fresh = crate::sync::identity::new_entity_sync_id();
+            let verdict = crate::inventory::count_four_eyes::inbound_count_line_check(db, &fresh, &p)
+                .await
+                .expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    let entry = |cost: f64, value: f64| {
+        vec![
+            ("entry_unit_cost", serde_json::json!(cost)),
+            ("entry_variance_value", serde_json::json!(value)),
+        ]
+    };
+    let held = crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL;
+    // Entered at a cost of 10 (5 × 10 = 50: within), 10.5 here: a drift within 10 %.
+    assert_eq!(received(entry(10.0, -50.0)).await, "pass", "no false conflict");
+    // A cost far from the one here (5, value 25): not trusted, judged at 10.5.
+    assert_eq!(received(entry(5.0, -25.0)).await, held, "a forged cost");
+    // A value that is not the variance × the stored cost: judged at the cost here.
+    assert_eq!(received(entry(10.0, -10.0)).await, held, "an inconsistent value");
+    // No cost stored (a PC before the update): judged at the cost here.
+    assert_eq!(
+        received(vec![
+            ("entry_unit_cost", serde_json::Value::Null),
+            ("entry_variance_value", serde_json::Value::Null),
+        ])
+        .await,
+        held,
+        "judged at the cost here"
+    );
+    // A variance of 0 although the counted quantity is not the system quantity: refused.
+    let mut zero = entry(10.0, 0.0);
+    zero.push(("variance_qty", serde_json::json!(0.0)));
+    assert_eq!(
+        received(zero).await,
+        crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID,
+        "variance 0, counted 5 of 10"
+    );
+}
+
+/// A snapshot of every plant row on the server, in its order, stored in `db`'s inbox under `batch`
+/// (a `snapshot-…` batch this PC asked for) and materialized.
+async fn snapshot_into(server: &TestServer, db: &DatabaseConnection, batch: &str) {
+    let mut rows: Vec<_> = server
+        .state
+        .iter()
+        .filter(|((entity_type, _), _)| {
+            crate::sync::registry::entity(entity_type).map(|e| e.scope) != Some(crate::sync::registry::SyncScope::User)
+        })
+        .collect();
+    rows.sort_by_key(|(_, row)| row.seq);
+    for ((entity_type, sync_id), row) in rows {
+        exec(
+            db,
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                     row_version, payload_json, payload_hash, apply_status)
+             VALUES (?, 'c1', ?, ?, ?, ?, ?, ?, 'pending')",
+            vec![
+                batch.into(),
+                entity_type.clone().into(),
+                sync_id.clone().into(),
+                row.operation.clone().into(),
+                row.row_version.into(),
+                row.payload_json.clone().into(),
+                row.payload_hash.clone().into(),
+            ],
+        )
+        .await;
+    }
+    crate::sync::materialize::materialize_inbox(db, 200, true)
+        .await
+        .expect("materialize");
+}
+
+/// CMMS Advisor Q9: a PC joining the plant receives its history in the snapshot of its first join:
+/// a count self-approved on another PC, where four-eyes applies on the PC joining, is applied as
+/// history (no four-eyes judgement) with its movement, its self-approval flag kept for review.
+#[tokio::test]
+async fn a_self_approved_count_received_in_a_first_join_snapshot_is_applied_as_history() {
+    let HeldCount {
+        server, session_code, ..
+    } = held_count("firstjoincounter").await;
+    let c = started_device_db().await;
+    crate::sync::capture::begin_suppression(&c).await.expect("suppress");
+    crate::inventory::tests::single_site_opting_out(&c, &mut RowFactory::for_device(9), false).await;
+    crate::sync::capture::end_suppression(&c).await.expect("unsuppress");
+    // The snapshot of C's first join: every plant row on the server, in its order.
+    snapshot_into(&server, &c, "snapshot-all-firstjoin").await;
+    let kinds = conflict_kinds(&c).await;
+    assert!(
+        !kinds.iter().any(|k| k.starts_with("inventory_")),
+        "no count held on a first join: {kinds:?}"
+    );
+    let line = line_of(&c, &session_code).await;
+    assert_eq!(
+        line.self_approved, 1,
+        "the self-approval flag is kept, shown for review"
+    );
+    assert!(line.posted_transaction_id.is_some(), "applied with its movement");
+    let (art, loc) = (line.article_id, line.location_id);
+    assert_eq!(
+        on_hand_milli(&c, art, loc).await,
+        0,
+        "the count's stock, as on the other PCs"
+    );
+}
+
+// ── Re-bootstrap judged, reversal checked (reviews of 536cb792 and 435c9410) ──────────────────
+
+/// A row stored in `db`'s inbox as received under `batch`, with `status`.
+async fn inbox_put(
+    db: &DatabaseConnection,
+    batch: &str,
+    entity_type: &str,
+    sync_id: &str,
+    row_version: i64,
+    payload: &serde_json::Map<String, serde_json::Value>,
+    status: &str,
+) {
+    let json = serde_json::to_string(payload).expect("json");
+    exec(
+        db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                 row_version, payload_json, payload_hash, apply_status)
+         VALUES (?, 'c1', ?, ?, 'upsert', ?, ?, ?, ?)",
+        vec![
+            batch.into(),
+            entity_type.into(),
+            sync_id.into(),
+            row_version.into(),
+            json.clone().into(),
+            crate::sync::queries::hash_payload(&json).into(),
+            status.into(),
+        ],
+    )
+    .await;
+}
+
+/// The verdict on a received count line, judged as a row of `batch` (snapshot or exchange).
+async fn line_judged_in(
+    db: &DatabaseConnection,
+    batch: &str,
+    sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let verdict = crate::sync::materialize::judged_as_row_of_batch(
+        batch,
+        crate::inventory::count_four_eyes::inbound_count_line_check(db, sync_id, received),
+    )
+    .await
+    .expect("judged");
+    verdict_code(verdict.as_ref())
+}
+
+/// The sync id of the count line of a session on `db`.
+async fn line_sync_of(db: &DatabaseConnection, session_code: &str) -> String {
+    text_of(
+        db,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.session_code = ?",
+        vec![session_code.into()],
+    )
+    .await
+}
+
+async fn session_sync_of(db: &DatabaseConnection, session_code: &str) -> String {
+    text_of(
+        db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.into()],
+    )
+    .await
+}
+
+/// Review of 536cb792 (S1): a snapshot asked for again (a re-bootstrap after the server refused the
+/// checkpoint, e.g. after a server restore) brings back a count line held here in conflict, with its
+/// held adjustment: it is not a first join — the line is judged again, both stay held and the stock
+/// does not move. The movement is judged with its line in the line's own context.
+#[tokio::test]
+async fn a_re_bootstrap_keeps_a_held_count_held() {
+    let HeldCount {
+        a,
+        b,
+        server,
+        pair_b,
+        session_code,
+        ..
+    } = held_count("rebootstrapcounter").await;
+    let session_sync = session_sync_of(&a, &session_code).await;
+    let adjustment = movement_sync_id(&a, &session_sync, "COUNT_ADJUST").await;
+    let adjustment_row = wire_row(&a, "inventory_transactions", &adjustment).await;
+    // The movement judged as a snapshot row: its line's version came from an exchange, judged so.
+    let verdict = crate::sync::materialize::judged_as_row_of_batch(
+        "snapshot-all-rebootstrap",
+        crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &adjustment, &adjustment_row),
+    )
+    .await
+    .expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "wait", "held with its line");
+
+    snapshot_into(&server, &b, "snapshot-all-rebootstrap").await;
+    assert!(
+        conflict_kinds(&b)
+            .await
+            .contains(&"inventory_count_lines:COUNT_SELF_APPROVAL".to_string()),
+        "still held"
+    );
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "the adjustment is not applied by the snapshot"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "the stock does not move"
+    );
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE entity_sync_id = ?",
+            vec![line_sync_of(&a, &session_code).await.into()],
+        )
+        .await,
+        0,
+        "the line is not applied"
+    );
+}
+
+/// Review of 536cb792 (S1): a snapshot row is the plant's history only for a line new here, and only
+/// until this PC completed a full pull; a line already here, or a version from an exchange, is judged.
+#[tokio::test]
+async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "snapshotjudgedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 1, "blank tolerance: strict");
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    // Approved by its counter, not flagged: four-eyes refuses it wherever it is judged.
+    let mut received = crate::permit::sync_check::local_wire(&db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    for (k, v) in [
+        ("approved_by_sync_id", serde_json::json!(counter_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let held = crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL;
+    let snapshot = "snapshot-all-join";
+    assert_eq!(
+        line_judged_in(&db, snapshot, &line_sync, &received).await,
+        held,
+        "a line already here: judged"
+    );
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        "pass",
+        "new here, first join: history"
+    );
+    assert_eq!(
+        line_judged_in(&db, "delta-42", &fresh, &received).await,
+        held,
+        "from an exchange: judged"
+    );
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("claim");
+    crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+        .await
+        .expect("complete pull");
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        held,
+        "after a complete pull, a snapshot is no first join"
+    );
+    // Review of 93817231 (NOTE 1): the pull was of one organisation; re-activated into another one
+    // (no local data reset), this PC's first snapshot of that one is its first join.
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-b", "fp-a", "token-a")
+        .await
+        .expect("claim");
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        "pass",
+        "a complete pull of another organisation: first join"
+    );
+}
+
+/// CMMS Advisor Q14: a count from the list within the four-eyes tolerance records the person
+/// counting as its reviewer; no second person was needed, so it is not listed as an
+/// auto-approbation (above the tolerance, approved by its counter, it is:
+/// `a_count_posted_twice_is_an_item_that_a_new_count_closes`).
+#[tokio::test]
+async fn a_list_count_within_the_tolerance_approved_by_its_counter_is_no_auto_approbation() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let user = user_with(&db, "q14withincounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (art, loc) = (article.rowid, location.rowid);
+    let session = approve_count(&db, user, enter_count(&db, user, art, loc, 7.0).await).await;
+    let session_sync_id = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&db, user, &session_sync_id).await;
+    // The same posting made again under its own id (an older version's PC): a count posted twice.
+    let first = movement_sync_id(&db, &session_sync_id, "COUNT_ADJUST").await;
+    exec(
+        &db,
+        "INSERT INTO inventory_transactions
+            (entity_sync_id, article_id, warehouse_id, location_id, movement_type, quantity, source_type,
+             source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         SELECT ?, article_id, warehouse_id, location_id, movement_type, quantity, source_type, source_id,
+                source_ref, reason, performed_by_id, '2026-10-01T09:00:00Z', 1
+         FROM inventory_transactions WHERE entity_sync_id = ?",
+        vec![crate::sync::identity::new_entity_sync_id().into(), first.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty - 3, available_qty = available_qty - 3
+         WHERE article_id = ? AND location_id = ?",
+        vec![art.into(), loc.into()],
+    )
+    .await;
+    assert_eq!(
+        negative_stock::list_reviews(&db, false)
+            .await
+            .expect("list")
+            .double_postings
+            .len(),
+        1
+    );
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    // 3 counted, 4 on record: 25 %, within 50 %: posted at once, its counter as its reviewer.
+    let resolved =
+        negative_stock::resolve_by_count(&db, user, resolution(art, loc, 3.0, "Recompté après double passage"))
+            .await
+            .expect("posted");
+    assert!(!resolved.pending_approval && !resolved.self_approved);
+    let all = negative_stock::list_reviews(&db, true).await.expect("list");
+    let closed_by = all.closed_double_postings[0].closed_by.as_ref().expect("closed by");
+    assert_eq!(closed_by.session_code, resolved.session_code);
+    assert!(closed_by.approved_by.is_some());
+    assert_eq!(
+        closed_by.approved_by, closed_by.counted_by,
+        "its counter is its reviewer"
+    );
+    assert!(!closed_by.self_approved, "within the tolerance: no auto-approbation");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions s ON s.id = cl.session_id
+             WHERE s.session_code = ? AND cl.is_critical = 0 AND cl.self_approved = 0
+               AND cl.approved_by_id = cl.counted_by_id",
+            vec![resolved.session_code.clone().into()],
+        )
+        .await,
+        1
+    );
+}
+
+/// CMMS Advisor Q14: a received count line's "above the tolerance" flag is this PC's judgement. A
+/// line approved by its counter whose sender cleared the flag, above the tolerance here (blank:
+/// strict), is stored above it and shown as an auto-approbation — here a line new here in the
+/// snapshot of a first join, applied as the plant's history (Q9), not flagged as a self-approval.
+#[tokio::test]
+async fn a_received_line_cleared_of_its_critique_but_above_here_is_an_auto_approbation() {
+    use crate::sync::materialize::{apply_inbound_payload, judged_as_row_of_batch, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "q14receivedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (session, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    // The same count of another location of the session, as another PC sends it.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let other_location_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+        vec![other.rowid.into()],
+    )
+    .await;
+    let other_warehouse_sync = text_of(
+        &db,
+        "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id WHERE l.id = ?",
+        vec![other.rowid.into()],
+    )
+    .await;
+    let mut received = wire_row(&db, "inventory_count_lines", &line_sync).await;
+    for (k, v) in [
+        ("location_sync_id", serde_json::json!(other_location_sync)),
+        ("warehouse_sync_id", serde_json::json!(other_warehouse_sync)),
+        ("is_critical", serde_json::json!(0)),
+        ("approved_by_sync_id", serde_json::json!(counter_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+        ("self_approved", serde_json::json!(0)),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let json = serde_json::Value::Object(received.clone()).to_string();
+    let outcome = judged_as_row_of_batch(
+        "snapshot-q14",
+        apply_inbound_payload(&db, "inventory_count_lines", &fresh, "upsert", 1, &json),
+    )
+    .await
+    .expect("apply");
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_critical * 10 + self_approved FROM inventory_count_lines WHERE entity_sync_id = ?",
+            vec![fresh.clone().into()],
+        )
+        .await,
+        10,
+        "stored above the tolerance (judged here); its self-approval flag kept as received"
+    );
+    let listed = crate::inventory::controls::list_count_lines(&db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.location_id == other.rowid)
+        .expect("the received line");
+    assert_eq!(
+        (listed.is_critical, listed.self_approved),
+        (1, 1),
+        "above the tolerance here, approved by its counter: an auto-approbation"
+    );
+    // The sender's flag stays 0 in its later versions: raised here from it, that is no lowering of
+    // the flag held here (the version is judged as when it arrived).
+    inbox_put(
+        &db,
+        "snapshot-q14",
+        "inventory_count_lines",
+        &fresh,
+        1,
+        &received,
+        "applied",
+    )
+    .await;
+    assert_eq!(
+        verdict_code(
+            crate::inventory::count_four_eyes::inbound_count_line_check(&db, &fresh, &received)
+                .await
+                .expect("judged")
+                .as_ref()
+        ),
+        "pass",
+        "the sender's own flag, received again"
+    );
+}
+
+/// A plant tolerance set on `db` only (capture suppressed: never sent), as an edit another PC has
+/// not received yet.
+async fn tolerance_here_only(db: &DatabaseConnection, key: &str, value: &str) {
+    crate::sync::capture::begin_suppression(db).await.expect("suppress");
+    crate::settings::set_setting(db, key, "tenant", value, None, "test")
+        .await
+        .expect("tolerance");
+    crate::sync::capture::end_suppression(db).await.expect("unsuppress");
+}
+
+/// Review of b4f8b2fd (B1): a count line accepted here within the tolerance, approved by its
+/// counter, is not judged again by a later version whose checked fields are unchanged — here the
+/// version that carries its posting, after the tolerance was tightened on this PC. The version is
+/// accepted, the count's movement is applied with it, no conflict.
+#[tokio::test]
+async fn a_line_accepted_within_the_tolerance_is_not_judged_again_by_its_posting() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    let counter = user_with(&a, "rejudgedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10: 30 %, within 50 %: its counter approves it (no auto-approbation).
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance");
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!(approved.self_approved, 0);
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "accepted on B within the tolerance"
+    );
+
+    // The tolerance tightened on B (10 %: the 30 % variance is above it now), then A posts.
+    tolerance_here_only(&b, crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD, "10").await;
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "the posting version is not judged again: no COUNT_SELF_APPROVAL"
+    );
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7000,
+        "the movement is applied with its line"
+    );
+    // Not judged again in what B stores either: within, no auto-approbation (a second approval
+    // stays optional for it, Q15).
+    let listed = crate::inventory::controls::list_count_lines(&b, session_by_sync_id(&b, &session_sync).await.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("the line");
+    assert_eq!(
+        (listed.is_critical, listed.self_approved),
+        (0, 0),
+        "kept within the tolerance as accepted"
+    );
+}
+
+/// CMMS Advisor Q15: a count approved by its counter within the tolerance where it was posted, held
+/// on a PC with a stricter tolerance (above it there), is settled by an optional second approval
+/// given where it was posted: when that version arrives the held line and its movement are applied
+/// together and the conflict closes.
+#[tokio::test]
+async fn an_optional_second_approval_releases_a_count_held_by_a_stricter_tolerance() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    // Stricter on B (10 %), not yet received by A.
+    tolerance_here_only(&b, crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD, "10").await;
+    let counter = user_with(&a, "optionalsecondcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10 on A: 30 %, within 50 %: its counter approves it, A posts it.
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance on A");
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!(approved.self_approved, 0);
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        conflict_kinds(&b).await,
+        vec!["inventory_count_lines:COUNT_SELF_APPROVAL".to_string()],
+        "above the tolerance on B: held"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10000,
+        "held on B: the stock does not move"
+    );
+
+    // The optional second approval, on A where the count is posted.
+    let posted = crate::inventory::controls::list_count_lines(&a, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("the line");
+    assert_eq!(posted.is_critical, 0, "still within the tolerance on A");
+    let approver = second_person(&a, counter).await;
+    let seconded = crate::inventory::controls::second_approve_count_line(
+        &a,
+        crate::inventory::domain::SecondApproveInventoryCountLineInput {
+            line_id: posted.id,
+            expected_row_version: posted.row_version,
+            reviewer_id: i64::from(approver),
+            reviewer_evidence: "Comptage vérifié par un second".into(),
+        },
+    )
+    .await
+    .expect("optional second approval within the tolerance");
+    assert_eq!(seconded.second_approved_by_id, Some(i64::from(approver)));
+
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7000,
+        "released on B: the movement is applied with its line"
+    );
+}
+
+/// Review of b4f8b2fd (S1, S2): a received version may clear the "above the tolerance" flag held
+/// here without a new entry only when this PC raised that flag itself from a received "within"
+/// and the line has not changed here since (its device-local mark). Never a flag entered here,
+/// whatever the inbox holds; never once the last version applied here said "above" itself; and
+/// the flag lowered that way is stored as this PC judges the line now.
+#[tokio::test]
+async fn only_a_flag_raised_here_from_a_received_within_may_be_cleared_without_a_new_entry() {
+    use crate::inventory::count_four_eyes::{inbound_count_line_check, SETTING_PERCENT_THRESHOLD};
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "raisedmarkcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    // Entered here, 5 of 10, tolerance blank: above (strict).
+    let (session, local) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(local.is_critical, 1);
+    let local_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![local.id.into()],
+    )
+    .await;
+    let changed = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_CHANGED;
+    let judged = |sync_id: String, payload: serde_json::Map<String, serde_json::Value>| {
+        let db = &db;
+        async move {
+            let verdict = inbound_count_line_check(db, &sync_id, &payload).await.expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    let with_critique = |mut p: serde_json::Map<String, serde_json::Value>, critique: i64| {
+        p.insert("is_critical".into(), serde_json::json!(critique));
+        p
+    };
+
+    // A flag entered here is never lowered, even with an applied version saying "within" in the
+    // inbox (the rule before this fix took that as a raise of its own).
+    let entered = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    inbox_put(
+        &db,
+        "exchange-raised",
+        "inventory_count_lines",
+        &local_sync,
+        1,
+        &with_critique(entered.clone(), 0),
+        "applied",
+    )
+    .await;
+    assert_eq!(
+        judged(local_sync.clone(), with_critique(entered, 0)).await,
+        changed,
+        "entered here"
+    );
+
+    // A line received from another PC (another location of the session), not approved, sent as
+    // within the tolerance: applied, raised here (blank tolerance: strict) and marked.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let mut received = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    for (k, v) in [
+        (
+            "location_sync_id",
+            serde_json::json!(
+                text_of(
+                    &db,
+                    "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+                    vec![other.rowid.into()]
+                )
+                .await
+            ),
+        ),
+        (
+            "warehouse_sync_id",
+            serde_json::json!(
+                text_of(
+                    &db,
+                    "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id
+                     WHERE l.id = ?",
+                    vec![other.rowid.into()]
+                )
+                .await
+            ),
+        ),
+        ("is_critical", serde_json::json!(0)),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let mut version = 1;
+    let mut apply = |payload: serde_json::Map<String, serde_json::Value>| {
+        version += 1;
+        let (db, fresh, version) = (&db, fresh.clone(), version);
+        async move {
+            let json = serde_json::Value::Object(payload).to_string();
+            apply_inbound_payload(db, "inventory_count_lines", &fresh, "upsert", version, &json)
+                .await
+                .expect("apply")
+        }
+    };
+    let state = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            scalar_i64(
+                db,
+                "SELECT is_critical * 10 + (critique_raised_version IS NOT NULL
+                        AND critique_raised_version = row_version)
+                 FROM inventory_count_lines WHERE entity_sync_id = ?",
+                vec![fresh.into()],
+            )
+            .await
+        }
+    };
+    let outcome = apply(received.clone()).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "raised here from the received within, marked");
+    let held = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move { wire_row(db, "inventory_count_lines", &fresh).await }
+    };
+    assert_eq!(
+        held().await.get("critique_raised_version"),
+        None,
+        "the mark never travels"
+    );
+
+    // Its later version, still within: no lowering of a flag raised here; applied, raised again.
+    assert_eq!(judged(fresh.clone(), with_critique(held().await, 0)).await, "pass");
+    let outcome = apply(with_critique(held().await, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "still above here: raised again");
+
+    // Entered again here (same quantity): the line changed here, its flag is an entry of its own.
+    let session = session_by_code(&db, &session.session_code).await;
+    let line_here = crate::inventory::controls::list_count_lines(&db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.location_id == other.rowid)
+        .expect("the received line");
+    crate::inventory::controls::upsert_count_line(
+        &db,
+        crate::inventory::domain::UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id: article.rowid,
+            location_id: other.rowid,
+            counted_qty: 5.0,
+            variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: Some(line_here.row_version),
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("entered again");
+    assert_eq!(state().await, 10, "entered here: not marked");
+    assert_eq!(
+        judged(fresh.clone(), with_critique(held().await, 0)).await,
+        changed,
+        "entered again here"
+    );
+
+    // The last version applied here said "above" itself: the flag held is that one, not a raise.
+    let outcome = apply(with_critique(held().await, 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 10, "received above: not marked");
+    assert_eq!(
+        judged(fresh.clone(), with_critique(held().await, 0)).await,
+        changed,
+        "the last applied version said above"
+    );
+
+    // A new entry received within: raised here again and marked. Then the tolerance loosened (70 %:
+    // the 60 % variance is within it now): the next version within, unchanged, is accepted (the
+    // flag raised here, no lowering) and not judged again — the flag held stays raised and marked;
+    // only a new entry is judged with the tolerance of now, stored within.
+    let mut entry = with_critique(held().await, 0);
+    entry.insert("counted_qty".into(), serde_json::json!(4.0));
+    entry.insert("variance_qty".into(), serde_json::json!(-6.0));
+    let outcome = apply(entry).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "a new entry, raised here");
+    tolerance_here_only(&db, SETTING_PERCENT_THRESHOLD, "70").await;
+    assert_eq!(judged(fresh.clone(), with_critique(held().await, 0)).await, "pass");
+    let outcome = apply(with_critique(held().await, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "unchanged: kept as judged when it arrived");
+    let mut entry = with_critique(held().await, 0);
+    entry.insert("counted_qty".into(), serde_json::json!(5.0));
+    entry.insert("variance_qty".into(), serde_json::json!(-5.0));
+    let outcome = apply(entry).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 0, "a new entry within here now: stored within, no mark");
+}
+
+/// Review of 5ead90e8 (gap): the one path where a received version lowers the flag held here
+/// without a new entry — a flag this PC raised itself (marked), the same quantities, another
+/// approval, judged within the tolerance of now: stored within, the mark cleared.
+#[tokio::test]
+async fn a_flag_raised_here_is_lowered_by_a_changed_version_judged_within_now() {
+    use crate::inventory::count_four_eyes::{inbound_count_line_check, SETTING_PERCENT_THRESHOLD};
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "loweredmarkcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, local) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    let local_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![local.id.into()],
+    )
+    .await;
+    // A line of the same session received from another PC (another location), 5 of 10, sent as
+    // within; the tolerance here is blank (strict): raised here and marked.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let mut received = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    received.insert(
+        "location_sync_id".into(),
+        serde_json::json!(
+            text_of(
+                &db,
+                "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+                vec![other.rowid.into()]
+            )
+            .await
+        ),
+    );
+    received.insert(
+        "warehouse_sync_id".into(),
+        serde_json::json!(
+            text_of(
+                &db,
+                "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id
+                 WHERE l.id = ?",
+                vec![other.rowid.into()]
+            )
+            .await
+        ),
+    );
+    received.insert("is_critical".into(), serde_json::json!(0));
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let apply = |payload: serde_json::Map<String, serde_json::Value>, version: i64| {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            let json = serde_json::Value::Object(payload).to_string();
+            apply_inbound_payload(db, "inventory_count_lines", &fresh, "upsert", version, &json)
+                .await
+                .expect("apply")
+        }
+    };
+    let state = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            scalar_i64(
+                db,
+                "SELECT is_critical * 10 + (critique_raised_version IS NOT NULL
+                        AND critique_raised_version = row_version)
+                 FROM inventory_count_lines WHERE entity_sync_id = ?",
+                vec![fresh.into()],
+            )
+            .await
+        }
+    };
+    let outcome = apply(received, 2).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "raised here, marked");
+
+    // The tolerance loosened here (70 %: the 50 % variance is within it now); a version with the
+    // same quantities, still "within", now approved by another person: a changed version, judged
+    // again — within — and the flag this PC raised is lowered, its mark cleared.
+    tolerance_here_only(&db, SETTING_PERCENT_THRESHOLD, "70").await;
+    let approver = second_person(&db, counter).await;
+    let approver_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![approver.into()],
+    )
+    .await;
+    let mut approved = wire_row(&db, "inventory_count_lines", &fresh).await;
+    for (k, v) in [
+        ("is_critical", serde_json::json!(0)),
+        ("approved_by_sync_id", serde_json::json!(approver_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Écart vérifié par un second")),
+    ] {
+        approved.insert(k.into(), v);
+    }
+    let verdict = inbound_count_line_check(&db, &fresh, &approved).await.expect("judged");
+    assert_eq!(
+        verdict_code(verdict.as_ref()),
+        "pass",
+        "the lowering of a flag raised here"
+    );
+    let outcome = apply(approved, 3).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 0, "judged within now: stored within, no mark");
+}
+
+/// Review of 5ead90e8 (S1, N1): a received version of a line held here is "already judged" only
+/// under the same count, article and location (whose cost judges it) and the same "approval
+/// required"; otherwise it is judged again. A line accepted within the tolerance, approved by its
+/// counter, re-sent under a costlier location is judged there — above: refused — not accepted
+/// unchanged.
+#[tokio::test]
+async fn a_line_held_within_re_sent_under_another_location_is_judged_again() {
+    use crate::inventory::count_four_eyes::{held_judgement, inbound_count_line_check, SYNC_SELF_APPROVAL};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let costly = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    for (place, cost) in [(location.rowid, 1.0), (costly.rowid, 100.0)] {
+        exec(
+            &db,
+            "UPDATE stock_balances SET moving_avg_unit_cost = ? WHERE article_id = ? AND location_id = ?",
+            vec![cost.into(), article.rowid.into(), place.into()],
+        )
+        .await;
+    }
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("value threshold");
+    let counter = user_with(&db, "movedlinecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    // 5 of 10 at a cost of 1: a value of 5, within 50; its counter approves it.
+    let (session, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance");
+    crate::inventory::controls::transition_count_session(&db, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &db,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!((approved.is_critical, approved.self_approved), (0, 0));
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let held = wire_row(&db, "inventory_count_lines", &line_sync).await;
+    let changed = |key: &str, value: serde_json::Value| {
+        let mut p = held.clone();
+        p.insert(key.into(), value);
+        p
+    };
+    let costly_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+        vec![costly.rowid.into()],
+    )
+    .await;
+
+    // The same version: already judged (the flag held, within, is kept).
+    assert_eq!(held_judgement(&db, &line_sync, &held).await.expect("held"), Some(false));
+    let verdict = inbound_count_line_check(&db, &line_sync, &held).await.expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "pass");
+    // Another count, article, location or "approval required": judged again.
+    for (key, value) in [
+        (
+            "session_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        (
+            "article_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        ("location_sync_id", serde_json::json!(costly_sync)),
+        ("approval_required", serde_json::json!(0)),
+    ] {
+        assert_eq!(
+            held_judgement(&db, &line_sync, &changed(key, value))
+                .await
+                .expect("held"),
+            None,
+            "{key} changed: not already judged"
+        );
+    }
+    // Under the costlier location (5 × 100 = 500, above 50), approved by its counter without a
+    // self-approval: refused, not accepted as the line held.
+    let verdict = inbound_count_line_check(
+        &db,
+        &line_sync,
+        &changed("location_sync_id", serde_json::json!(costly_sync)),
+    )
+    .await
+    .expect("judged");
+    assert_eq!(
+        verdict_code(verdict.as_ref()),
+        SYNC_SELF_APPROVAL,
+        "judged at the costlier location"
+    );
+}
+
+/// Review of 5ead90e8 (S2): a received count adjustment is released by the line version naming it
+/// only when it is that line's own adjustment — the line's count session, article and location,
+/// of the line's variance — as a reversal must be the reversal of its count. Otherwise it waits
+/// (COUNT_APPROVAL_RECORD_INVALID) and the stock does not move.
+#[tokio::test]
+async fn a_count_adjustment_is_released_only_if_it_is_the_one_of_its_line() {
+    use crate::inventory::count_four_eyes::inbound_count_movement_hold;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    let other_location = second_location(&a, &mut factory, article.rowid, 10.0).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    let counter = user_with(&a, "ownadjustcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10: 30 %, within 50 %: its counter approves it, accepted on B.
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = session_sync_of(&a, &session.session_code).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "accepted on B within the tolerance"
+    );
+
+    // A posts; B receives an adjustment of another quantity than the line's variance (−3).
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    let adjustment = movement_sync_id(&a, &session_sync, "COUNT_ADJUST").await;
+    let real = wire_row(&a, "inventory_transactions", &adjustment).await;
+    assert_eq!(real.get("quantity"), Some(&serde_json::json!(-3.0)));
+    {
+        let row = server
+            .state
+            .get_mut(&("inventory_transactions".to_string(), adjustment.clone()))
+            .expect("the adjustment is on the server");
+        let mut payload: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&row.payload_json).expect("payload");
+        payload.insert("quantity".into(), serde_json::json!(-8.0));
+        row.payload_json = serde_json::to_string(&payload).expect("json");
+        row.payload_hash = crate::sync::queries::hash_payload(&row.payload_json);
+    }
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "not the line's adjustment: it waits"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "the stock does not move"
+    );
+
+    // Judged against the line version naming it, waiting on B: its own adjustment passes; another
+    // quantity, article, location or count waits.
+    let hold = |payload: serde_json::Map<String, serde_json::Value>| {
+        let (b, adjustment) = (&b, adjustment.clone());
+        async move {
+            let verdict = inbound_count_movement_hold(b, &adjustment, &payload)
+                .await
+                .expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    assert_eq!(hold(real.clone()).await, "pass", "the line's own adjustment");
+    for (key, value) in [
+        ("quantity", serde_json::json!(-8.0)),
+        (
+            "article_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        ("location_sync_id", serde_json::json!(other_location.entity_sync_id)),
+        (
+            "source_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+    ] {
+        let mut tampered = real.clone();
+        tampered.insert(key.into(), value);
+        assert_eq!(hold(tampered).await, "wait", "{key} is not the line's");
+    }
+}
+
+/// Review of 435c9410 (SF1, SF2, SF3): the reversal a received count line names must undo exactly
+/// the adjustment it names as posted — a token reversal, or the real reversal of another count of
+/// the same article and location, is refused; a reversal named without a posted adjustment is
+/// refused, and such a reversal movement waits (never applied alone).
+#[tokio::test]
+async fn a_received_reversal_must_undo_the_adjustment_its_line_names() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let HeldCount {
+        a,
+        b,
+        pair_a,
+        counter,
+        session_code,
+        ..
+    } = held_count("reversalqtycounter").await;
+    exec_unsent(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 10 WHERE article_id = ? AND location_id = ?",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let approver = second_person(&a, counter).await;
+    let reverse = |session: crate::inventory::domain::InventoryCountSession| {
+        let a = a.clone();
+        async move {
+            crate::inventory::controls::reverse_count_session(
+                &a,
+                ReverseInventoryCountSessionInput {
+                    session_id: session.id,
+                    expected_row_version: session.row_version,
+                    reason: "Pas de seconde approbation possible".into(),
+                    actor_id: Some(i64::from(approver)),
+                },
+            )
+            .await
+            .expect("reversed");
+        }
+    };
+    reverse(session_by_code(&a, &session_code).await).await;
+    // Another count of the same article and location, approved by another person, then reversed: a
+    // real COUNT_REVERSAL of another count.
+    let other = enter_count(&a, counter, pair_a.0, pair_a.1, 8.0).await;
+    let other = post_count_approved_by(&a, counter, approver, other).await;
+    reverse(session_by_code(&a, &other.session_code).await).await;
+
+    let reversal = movement_sync_id(&a, &session_sync_of(&a, &session_code).await, "COUNT_REVERSAL").await;
+    let other_reversal = movement_sync_id(&a, &session_sync_of(&a, &other.session_code).await, "COUNT_REVERSAL").await;
+    let line_sync = line_sync_of(&a, &session_code).await;
+    let reversed_line = wire_row(&a, "inventory_count_lines", &line_sync).await;
+    assert_eq!(
+        reversed_line.get("reversed_transaction_sync_id"),
+        Some(&serde_json::json!(reversal))
+    );
+    // On B the adjustment is held (deferred); the movements reach its inbox.
+    let real = wire_row(&a, "inventory_transactions", &reversal).await;
+    inbox_put(&b, "delta-r", "inventory_transactions", &reversal, 1, &real, "pending").await;
+    let mut token = real.clone();
+    token.insert("quantity".into(), serde_json::json!(-0.001));
+    let token_sync = crate::sync::identity::new_entity_sync_id();
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_transactions",
+        &token_sync,
+        1,
+        &token,
+        "pending",
+    )
+    .await;
+    let other_row = wire_row(&a, "inventory_transactions", &other_reversal).await;
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_transactions",
+        &other_reversal,
+        1,
+        &other_row,
+        "pending",
+    )
+    .await;
+
+    let naming = |reversal: &str, posted: Option<serde_json::Value>| {
+        let mut p = reversed_line.clone();
+        p.insert("reversed_transaction_sync_id".into(), serde_json::json!(reversal));
+        if let Some(posted) = posted {
+            p.insert("posted_transaction_sync_id".into(), posted);
+        }
+        p
+    };
+    let invalid = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID;
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&reversal, None)).await,
+        "pass",
+        "its real reversal"
+    );
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&token_sync, None)).await,
+        invalid,
+        "a token reversal of −0.001"
+    );
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&other_reversal, None)).await,
+        invalid,
+        "the reversal of another count"
+    );
+    let no_posted = naming(&reversal, Some(serde_json::Value::Null));
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &no_posted).await,
+        invalid,
+        "a reversal without a posted adjustment"
+    );
+    // The reversal movement, whose latest line version names no adjustment for it to undo, waits.
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_count_lines",
+        &line_sync,
+        99,
+        &no_posted,
+        "pending",
+    )
+    .await;
+    let verdict = crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &reversal, &real)
+        .await
+        .expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "wait", "never applied alone");
+}
+
+/// Review of 435c9410 (N1): when the version of a count line naming a movement was set aside by a
+/// person's decision on its conflict, the movement says it waits for that conflict to be settled,
+/// not for the line to arrive.
+#[tokio::test]
+async fn a_movement_whose_line_version_was_set_aside_waits_for_that_conflict() {
+    let HeldCount { a, b, session_code, .. } = held_count("setasidecounter").await;
+    let adjustment = movement_sync_id(&a, &session_sync_of(&a, &session_code).await, "COUNT_ADJUST").await;
+    let payload = wire_row(&a, "inventory_transactions", &adjustment).await;
+    exec(
+        &b,
+        "UPDATE sync_inbox SET apply_status = 'superseded'
+         WHERE entity_type = 'inventory_count_lines' AND apply_status = 'conflict'",
+        vec![],
+    )
+    .await;
+    match crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &adjustment, &payload)
+        .await
+        .expect("judged")
+    {
+        Some(crate::settings::site::InboundVerdict::Defer(why)) => {
+            assert!(
+                why.contains("waits for the conflict of its count line") && why.contains("COUNT_SELF_APPROVAL"),
+                "{why}"
+            );
+            assert!(!why.contains("has not arrived yet"), "{why}");
+        }
+        other => panic!("the movement waits: {other:?}"),
+    }
+}
+
+/// Review of 435c9410 (SF3): a held count of two lines raises one notice to the count-approval
+/// holders, not one per line.
+#[tokio::test]
+async fn a_held_count_of_two_lines_raises_one_notice() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::{
+        ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, PostInventoryCountSessionInput,
+        UpsertInventoryCountLineInput,
+    };
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    let second = factory.create(&a, "articles").await.expect("article");
+    exec(
+        &a,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,
+                requires_expiration = 0, is_critical_spare = 0, is_active = 1 WHERE id = ?",
+        vec![second.rowid.into()],
+    )
+    .await;
+    adjust(&a, second.rowid, location.rowid, 10.0).await.expect("stock in");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, true, false).await;
+    let counter = user_with(&a, "twolinecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let warehouse_id = scalar_i64(
+        &a,
+        "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+        vec![location.rowid.into()],
+    )
+    .await;
+    let session = controls::create_count_session(
+        &a,
+        CreateInventoryCountSessionInput {
+            warehouse_id,
+            location_id: Some(location.rowid),
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("session");
+    let session = controls::transition_count_session(&a, move_to(&session, "counting", counter))
+        .await
+        .expect("counting");
+    let mut lines = Vec::new();
+    for article_id in [article.rowid, second.rowid] {
+        lines.push(
+            controls::upsert_count_line(
+                &a,
+                UpsertInventoryCountLineInput {
+                    session_id: session.id,
+                    article_id,
+                    location_id: location.rowid,
+                    counted_qty: 7.0,
+                    variance_reason_code: Some("COUNT_ERROR".into()),
+                    expected_row_version: None,
+                    actor_id: Some(i64::from(counter)),
+                },
+            )
+            .await
+            .expect("line"),
+        );
+    }
+    let session = controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    for line in &lines {
+        let approved = controls::approve_count_line(
+            &a,
+            ApproveInventoryCountLineInput {
+                line_id: line.id,
+                expected_row_version: line.row_version,
+                reviewer_id: i64::from(counter),
+                reviewer_evidence: "Bac vérifié au comptage".into(),
+            },
+        )
+        .await
+        .expect("self-approved under A's opt-out");
+        assert_eq!(approved.self_approved, 1);
+    }
+    let session = controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    controls::post_count_session(
+        &a,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("posted");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    let kinds = conflict_kinds(&b).await;
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| k.as_str() == "inventory_count_lines:COUNT_SELF_APPROVAL")
+            .count(),
+        2,
+        "both lines held: {kinds:?}"
+    );
+    assert_eq!(
+        notice_events(&b, crate::inventory::count_four_eyes::SECOND_APPROVAL_CATEGORY).await,
+        1,
+        "one notice per held count, not per line"
+    );
 }

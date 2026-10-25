@@ -86,6 +86,10 @@
 //! - `permit_handover_logs`: after the apply, the log's "from" / "to" role that is not in the
 //!   plant's list (free text from a PC that has not upgraded) is added to it flagged "à revoir"
 //!   (`permit::handover_roles::adopt_received_roles`; only that log's two roles);
+//! - `inventory_count_lines` / `inventory_transactions`: a count line approved by its counter above
+//!   the four-eyes tolerance where four-eyes applies here is a conflict, and the count's stock
+//!   movements wait with it (neither applies) until a second approval or the count's reversal
+//!   arrives (`inventory::count_four_eyes`, CMMS Advisor Q8);
 //! - `qualification_overrides`: reason, subject, context, no self-override and the approver's
 //!   certification right (`qualification::sync_check`);
 //! - `media_attachments`: the file is queued for download from object storage
@@ -244,6 +248,15 @@ pub(crate) async fn before_upsert_checked(
             Some(crate::permit::sync_check::inbound_permit_type_check(conn, entity_sync_id, payload).await?)
         }
         "work_permits" => Some(crate::permit::sync_check::inbound_permit_check(conn, entity_sync_id, payload).await?),
+        // Four-eyes on a count variance above the tolerance (D11, `inventory::count_four_eyes`).
+        "inventory_count_lines" => {
+            Some(crate::inventory::count_four_eyes::inbound_count_line_check(conn, entity_sync_id, payload).await?)
+        }
+        // A count's stock movement is held with its line while that line is refused or waits here
+        // (CMMS Advisor Q8, `inventory::count_four_eyes::inbound_count_movement_hold`).
+        "inventory_transactions" => {
+            Some(crate::inventory::count_four_eyes::inbound_count_movement_hold(conn, entity_sync_id, payload).await?)
+        }
         // A downtime end received while a lock is fitted here (owner decision D4, condition 2).
         "work_order_downtime_segments" => {
             Some(crate::permit::ended_hold::inbound_downtime_end_check(conn, entity_sync_id, payload).await?)
@@ -473,6 +486,10 @@ pub(crate) async fn upsert_group(
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
     match layout.def.entity_type {
         "work_permits" => crate::permit::sync_check::permit_group(conn, entity_sync_id, payload).await,
+        // A held count adjustment released with its reversal: one transaction (CMMS Advisor Q8).
+        "inventory_transactions" => {
+            crate::inventory::count_four_eyes::count_movement_group(conn, entity_sync_id, payload).await
+        }
         // A start (or resume, reopen) brings its permits, waits and status changes; every status
         // change (and a work order new here) brings its close-out children too: one group.
         "work_orders" => {
@@ -580,6 +597,29 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
+/// What [`after_upsert`] must know of the row held here, read before a received row is written.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HeldBeforeWrite {
+    /// A count line: the "above the tolerance" flag held here when the received version is one
+    /// this PC already judged (`inventory::count_four_eyes::held_judgement`).
+    pub count_line_judged: Option<bool>,
+}
+
+/// Reads [`HeldBeforeWrite`] for a received row about to be written.
+pub(crate) async fn held_before_write(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<HeldBeforeWrite> {
+    Ok(match layout.def.entity_type {
+        "inventory_count_lines" => HeldBeforeWrite {
+            count_line_judged: crate::inventory::count_four_eyes::held_judgement(conn, entity_sync_id, payload).await?,
+        },
+        _ => HeldBeforeWrite::default(),
+    })
+}
+
 /// After an inbound row passed its checks, before it is written: columns of the row that are kept
 /// as held here instead of the received values, in the apply's transaction (capture suppressed: the
 /// other PCs do the same). `work_orders`: a row that carries no plant rule over the rule held here
@@ -599,13 +639,15 @@ pub(crate) async fn before_write(
 }
 
 /// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as written
-/// (received, with the columns [`before_write`] kept as held here, `held_rule` its note).
+/// (received, with the columns [`before_write`] kept as held here, `held_rule` its note); `held` is
+/// what [`held_before_write`] read of the row held here before the write.
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
     payload: &serde_json::Map<String, serde_json::Value>,
+    held: HeldBeforeWrite,
     held_rule: Option<&crate::permit::sync_check::HeldRule>,
 ) -> AppResult<()> {
     match layout.def.entity_type {
@@ -621,6 +663,15 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A received count line's "above the tolerance" flag is this PC's judgement (CMMS Advisor
+        // Q14, `inventory::count_four_eyes::store_judged_critique`): the derived auto-approbation
+        // and the "critique" badge read it. A version already judged here keeps the flag held.
+        "inventory_count_lines" => match row {
+            RowLocator::Identity(sync_id) => {
+                crate::inventory::count_four_eyes::store_judged_critique(conn, sync_id, held.count_line_judged).await
+            }
+            RowLocator::Natural(_) => Err(hook_err(layout.table(), "count line located without its sync id")),
+        },
         // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
         // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC:
         // this log's two roles only.

@@ -74,7 +74,8 @@
     "ram.fmeca_rpn_critical_threshold": "FMECA RPN critical threshold",
     "documents.default_header": "Default document header",
     "wo.reopen_window_days": "Reopen window after closure (days)",
-    "inventory.count_critical_variance": "Critical variance of a stock count",
+    "inventory.count_four_eyes_value_threshold": "Four-eyes tolerance of a count: value of the variance",
+    "inventory.count_four_eyes_percent_threshold": "Four-eyes tolerance of a count: share of the system quantity",
     "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
     "locale.fiscal_year_start_month": "Fiscal year starts in"
   },
@@ -345,6 +346,7 @@
   },
   "catalog": {
     "shipped": "Shipped value",
+    "notSet": "Not set",
     "changed": "Changed",
     "lastChange": "Changed by {{who}} on {{when}}",
     "restoreShipped": "Restore the shipped value",
@@ -365,7 +367,8 @@
       "locale.currency_code": "Currency in which stock, purchases and costs are valued (ISO 4217 code).",
       "locale.fiscal_year_start_month": "First month of the fiscal year: budget periods, postings, period close.",
       "wo.reopen_window_days": "Days after closure during which a closed work order can be reopened (0 = never).",
-      "inventory.count_critical_variance": "A counted line whose variance reaches this quantity (in the article's unit) is critical and needs approval. Each count session keeps the value it was opened with.",
+      "inventory.count_four_eyes_value_threshold": "A counted variance whose value (variance × unit cost at the location, plant currency) is above this amount is “critical”: someone other than the counter approves it. Leave blank to judge by the share only. Both blank: every variance needs a second person.",
+      "inventory.count_four_eyes_percent_threshold": "A counted variance above this share of the system quantity (%) is “critical”: someone other than the counter approves it. A system quantity of zero or less is always critical. Leave blank to judge by the value only; blank is never zero.",
       "inventory.reconciliation_drift_break": "A gap between the movement ledger and the stock balance that reaches this quantity (in the article's unit) is a break. Must be above zero.",
       "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
       "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
@@ -375,7 +378,8 @@
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
       "wo.reopen_window_days_other": "{{count}} days",
-      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
+      "inventory.count_four_eyes_value_threshold": "{{value, number(maximumFractionDigits: 6)}} (plant currency)",
+      "inventory.count_four_eyes_percent_threshold": "{{value, number(maximumFractionDigits: 6)}} %",
       "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
       "ram.fmeca_rpn_critical_threshold": "{{count}}",
       "backup.retention_daily_one": "{{count}} backup",

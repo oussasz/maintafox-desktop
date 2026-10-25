@@ -1216,15 +1216,8 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
     .await
     .expect("seed stock");
 
-    // The count tolerance is the tenant setting.
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "UPDATE app_settings SET setting_value_json = '2' \
-         WHERE setting_key = 'inventory.count_critical_variance' AND setting_scope = 'tenant'"
-            .to_string(),
-    ))
-    .await
-    .expect("count tolerance");
+    // The four-eyes tolerance is the plant setting (here 20 % of the system quantity).
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "20").await;
     let mut session = controls::create_count_session(
         &db,
         CreateInventoryCountSessionInput {
@@ -1255,15 +1248,18 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
             location_id,
             counted_qty: 6.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: Some(1),
         },
     )
     .await
     .expect("upsert line");
-    assert!(
-        (session.critical_abs_threshold - 2.0).abs() < f64::EPSILON,
-        "the session keeps the setting"
+    assert_eq!(
+        session.critical_abs_threshold, None,
+        "a new session records no tolerance"
     );
-    assert_eq!(line.is_critical, 1, "a variance of 4 is critical at a tolerance of 2");
+    assert_eq!(line.is_critical, 1, "a variance of 4 on 10 (40 %) is above 20 %");
+    assert_eq!(line.counted_by_id, Some(1), "the counter is recorded");
     session = controls::transition_count_session(
         &db,
         TransitionInventoryCountSessionInput {
@@ -1330,7 +1326,7 @@ async fn count_session_requires_reviewer_evidence_for_posting() {
         ApproveInventoryCountLineInput {
             line_id: line.id,
             expected_row_version: line.row_version,
-            reviewer_id: 99,
+            reviewer_id: count_reviewer(&db).await,
             reviewer_evidence: "Double-check done with signed sheet".to_string(),
         },
     )
@@ -1428,6 +1424,8 @@ async fn a_count_session_is_never_posted_or_reversed_by_a_status_change() {
             location_id,
             counted_qty: 7.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -1440,7 +1438,7 @@ async fn a_count_session_is_never_posted_or_reversed_by_a_status_change() {
         ApproveInventoryCountLineInput {
             line_id: line.id,
             expected_row_version: line.row_version,
-            reviewer_id: 2,
+            reviewer_id: count_reviewer(&db).await,
             reviewer_evidence: "Recounted with the store keeper".to_string(),
         },
     )
@@ -1961,8 +1959,8 @@ async fn low_stock_only_follows_the_shared_rule() {
     );
 }
 
-/// The count and the reconciliation read their tolerance from the tenant settings (seeded 5 and
-/// 0.01); without the setting they refuse rather than guess.
+/// The count's four-eyes tolerance comes from the plant settings, judged at entry (blank = strict,
+/// never zero); the reconciliation reads its seeded tolerance and refuses without it.
 #[tokio::test]
 async fn count_tolerances_come_from_the_tenant_settings() {
     let db = setup_db().await;
@@ -1991,7 +1989,7 @@ async fn count_tolerances_come_from_the_tenant_settings() {
     )
     .await
     .expect("create session");
-    assert!((session.critical_abs_threshold - 5.0).abs() < f64::EPSILON, "seeded 5");
+    assert_eq!(session.critical_abs_threshold, None);
     let session = controls::transition_count_session(
         &db,
         TransitionInventoryCountSessionInput {
@@ -2012,29 +2010,80 @@ async fn count_tolerances_come_from_the_tenant_settings() {
             location_id,
             counted_qty: 6.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
-        },
-    )
-    .await
-    .expect("upsert line");
-    assert_eq!(line.is_critical, 0, "a variance of 4 is under the seeded 5");
-
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        "DELETE FROM app_settings WHERE setting_key IN          ('inventory.count_critical_variance', 'inventory.reconciliation_drift_break')"
-            .to_string(),
-    ))
-    .await
-    .expect("remove settings");
-    assert!(controls::create_count_session(
-        &db,
-        CreateInventoryCountSessionInput {
-            warehouse_id: 1,
-            location_id: Some(location_id),
+            expected_row_version: None,
             actor_id: Some(1),
         },
     )
     .await
-    .is_err());
+    .expect("upsert line");
+    assert_eq!(line.is_critical, 1, "both thresholds blank: every variance is above");
+    let enter = |counted_qty: f64, line: &crate::inventory::domain::InventoryCountLine| UpsertInventoryCountLineInput {
+        session_id: session.id,
+        article_id,
+        location_id,
+        counted_qty,
+        variance_reason_code: Some("COUNT_ERROR".to_string()),
+        expected_row_version: Some(line.row_version),
+        actor_id: Some(1),
+    };
+    // 50 % only: a variance of 4 on 10 is within it; exactly 50 % is within it too (">").
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "50").await;
+    let line = controls::upsert_count_line(&db, enter(6.0, &line)).await.expect("40 %");
+    assert_eq!(line.is_critical, 0);
+    let line = controls::upsert_count_line(&db, enter(5.0, &line)).await.expect("50 %");
+    assert_eq!(line.is_critical, 0, "exactly at the threshold: within");
+    let line = controls::upsert_count_line(&db, enter(4.0, &line)).await.expect("60 %");
+    assert_eq!(line.is_critical, 1);
+    // A value threshold set but no unit cost at the location: the percent alone judges.
+    set_tenant_setting(&db, "inventory.count_four_eyes_value_threshold", "0").await;
+    let line = controls::upsert_count_line(&db, enter(6.0, &line))
+        .await
+        .expect("no unit cost");
+    assert_eq!(
+        line.is_critical, 0,
+        "no unit cost: value threshold ignored, 40 % within 50 %"
+    );
+    // With a unit cost, any threshold exceeded is enough: 4 × 3 = 12 > 0.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_balances SET moving_avg_unit_cost = 3 WHERE article_id = ? AND location_id = ?",
+        [article_id.into(), location_id.into()],
+    ))
+    .await
+    .expect("unit cost");
+    let line = controls::upsert_count_line(&db, enter(6.0, &line))
+        .await
+        .expect("valued");
+    assert_eq!(line.is_critical, 1, "the value threshold is exceeded");
+    let entered = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT details_json FROM audit_events WHERE action_code = 'inventory.count.line_entered' \
+             ORDER BY id DESC LIMIT 1"
+                .to_string(),
+        ))
+        .await
+        .expect("audit")
+        .expect("the entry is audited")
+        .try_get::<String>("", "details_json")
+        .expect("details");
+    let entered: serde_json::Value = serde_json::from_str(&entered).expect("json");
+    assert_eq!(
+        entered["four_eyes_tolerance"]["value_threshold"],
+        serde_json::json!(0.0)
+    );
+    assert_eq!(
+        entered["four_eyes_tolerance"]["percent_threshold"],
+        serde_json::json!(50.0)
+    );
+    assert_eq!(entered["four_eyes_tolerance"]["unit_cost"], serde_json::json!(3.0));
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "DELETE FROM app_settings WHERE setting_key = 'inventory.reconciliation_drift_break'".to_string(),
+    ))
+    .await
+    .expect("remove settings");
     assert!(
         controls::run_reconciliation(&db, RunInventoryReconciliationInput { actor_id: Some(1) })
             .await
@@ -2735,6 +2784,8 @@ async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catche
             location_id: main_loc,
             counted_qty: on_hand - 2.0,
             variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: Some(1),
         },
     )
     .await
@@ -2757,7 +2808,7 @@ async fn reconciliation_of_a_consistent_ledger_reports_no_drift_and_still_catche
         ApproveInventoryCountLineInput {
             line_id: line.id,
             expected_row_version: line.row_version,
-            reviewer_id: 99,
+            reviewer_id: count_reviewer(&db).await,
             reviewer_evidence: "Counted twice".to_string(),
         },
     )
@@ -3048,4 +3099,823 @@ async fn a_goods_receipt_into_a_negative_location_is_accepted_and_closes_it_once
     assert_eq!(list.items[0].closure_kind.as_deref(), Some(CLOSURE_RECEIPT));
     assert_eq!(list.items[0].closing_movement_type.as_deref(), Some("GR_ACCEPT"));
     assert!((list.items[0].on_hand_qty - 2.0).abs() < 1e-9);
+}
+
+/// A second account of the seeded database, approving count variances in these tests (four-eyes:
+/// the counter of the tests is user 1).
+async fn count_reviewer(db: &DatabaseConnection) -> i64 {
+    let existing = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = 'countreviewer'".to_string(),
+        ))
+        .await
+        .expect("reviewer");
+    if let Some(row) = existing {
+        return row.try_get::<i64>("", "id").expect("id");
+    }
+    i64::from(crate::auth::scope_tests::user(db, "countreviewer").await)
+}
+
+/// A plant setting row written as Settings would (tests).
+async fn set_tenant_setting(db: &DatabaseConnection, key: &str, value_json: &str) {
+    crate::settings::set_setting(db, key, "tenant", value_json, None, "test")
+        .await
+        .expect("setting");
+}
+
+/// A session counting `counted` of an article holding 10 at the main location, entered by `counter`.
+async fn counted_line(
+    db: &DatabaseConnection,
+    code: &str,
+    counted: f64,
+    counter: Option<i64>,
+) -> crate::inventory::domain::InventoryCountLine {
+    let article_id = create_test_article(db, code).await;
+    let location_id = main_location_id(db).await;
+    queries::adjust_stock(
+        db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    let session = controls::create_count_session(
+        db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: counter,
+        },
+    )
+    .await
+    .expect("session");
+    controls::upsert_count_line(
+        db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id,
+            counted_qty: counted,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: counter,
+        },
+    )
+    .await
+    .expect("line")
+}
+
+fn approval(line: &crate::inventory::domain::InventoryCountLine, reviewer_id: i64) -> ApproveInventoryCountLineInput {
+    ApproveInventoryCountLineInput {
+        line_id: line.id,
+        expected_row_version: line.row_version,
+        reviewer_id,
+        reviewer_evidence: "Recompté avec le magasinier".to_string(),
+    }
+}
+
+fn gate_code(err: AppError) -> String {
+    match err {
+        AppError::ValidationFailed(messages) => messages[0].split(':').next().unwrap_or_default().to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The only planning site of the organisation, created here, with its four-eyes opt-out.
+pub(super) async fn single_site_opting_out(
+    db: &DatabaseConnection,
+    factory: &mut crate::sync::test_support::RowFactory,
+    opt_out: bool,
+) {
+    let node = factory.create(db, "org_nodes").await.expect("site");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE org_node_types SET can_own_work = 1 WHERE id = (SELECT node_type_id FROM org_nodes WHERE id = ?)",
+        [node.rowid.into()],
+    ))
+    .await
+    .expect("planning site");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE org_nodes SET deleted_at = CASE WHEN id = ? THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ','now') END          WHERE id = ? OR node_type_id IN (SELECT id FROM org_node_types WHERE can_own_work = 1)",
+        [node.rowid.into(), node.rowid.into()],
+    ))
+    .await
+    .expect("the only live site");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json, updated_at, row_version) \
+         VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
+        [
+            crate::sync::identity::new_entity_sync_id().into(),
+            node.rowid.into(),
+            crate::reliability::study::decisions::SELF_APPROVAL_SETTING.into(),
+            (if opt_out { "true" } else { "false" }).into(),
+        ],
+    ))
+    .await
+    .expect("site rule");
+    assert_eq!(
+        crate::inventory::count_four_eyes::store_rule(db)
+            .await
+            .expect("rule")
+            .site_id,
+        Some(node.rowid),
+        "exactly one site"
+    );
+}
+
+/// D11: above the tolerance the counter does not approve; another person does; within it the
+/// counter may; a line whose counter was not recorded is entered again.
+#[tokio::test]
+async fn a_variance_above_the_tolerance_is_approved_by_someone_other_than_its_counter() {
+    let db = setup_db().await;
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "25").await;
+
+    let above = counted_line(&db, "INV-4E-ABOVE", 6.0, Some(1)).await;
+    assert_eq!((above.is_critical, above.counted_by_id), (1, Some(1)));
+    let refused = controls::approve_count_line(&db, approval(&above, 1))
+        .await
+        .expect_err("the counter approves a variance above the tolerance");
+    assert_eq!(
+        gate_code(refused),
+        crate::inventory::count_four_eyes::REFUSED_SELF_APPROVAL
+    );
+    let approved = controls::approve_count_line(&db, approval(&above, count_reviewer(&db).await))
+        .await
+        .expect("a second person approves");
+    assert_eq!(
+        (approved.approved_by_id, approved.self_approved),
+        (Some(count_reviewer(&db).await), 0)
+    );
+    let flagged = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT details_json FROM audit_events WHERE action_code = 'inventory.count.line_approved' \
+             ORDER BY id DESC LIMIT 1"
+                .to_string(),
+        ))
+        .await
+        .expect("audit")
+        .expect("the approval is audited")
+        .try_get::<String>("", "details_json")
+        .expect("details");
+    assert!(flagged.contains("\"self_approved\":false"));
+    // The approval keeps the tolerance: the line's flag judged at entry and the thresholds now.
+    let audit: serde_json::Value = serde_json::from_str(&flagged).expect("json");
+    assert_eq!(
+        audit["four_eyes_tolerance"]["above_tolerance_at_entry"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        audit["four_eyes_tolerance"]["at_approval"]["percent_threshold"],
+        serde_json::json!(25.0)
+    );
+    assert_eq!(
+        audit["four_eyes_tolerance"]["at_approval"]["value_threshold"],
+        serde_json::Value::Null,
+        "blank stays blank"
+    );
+
+    let within = counted_line(&db, "INV-4E-WITHIN", 8.0, Some(1)).await;
+    assert_eq!(within.is_critical, 0, "20 % is within 25 %");
+    let approved = controls::approve_count_line(&db, approval(&within, 1))
+        .await
+        .expect("the counter approves a variance within the tolerance");
+    // No four-eyes was needed: nothing is stored as a self-approval, and a variance within the
+    // tolerance approved by its own counter is no auto-approbation on read (CMMS Advisor Q14).
+    assert_eq!(
+        approved.self_approved, 0,
+        "within the tolerance, approved by its counter: no auto-approbation"
+    );
+    assert_eq!(
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT self_approved FROM inventory_count_lines WHERE id = ?",
+            [approved.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("line")
+        .try_get::<i64>("", "self_approved")
+        .expect("stored"),
+        0,
+        "nothing stored is rewritten"
+    );
+    let listed = controls::list_count_lines(&db, approved.session_id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.id == approved.id)
+        .expect("listed");
+    assert_eq!(listed.self_approved, 0, "not listed as an auto-approbation");
+    // Above the tolerance and approved by its counter (as another PC's version would hold it, not
+    // flagged): shown and listed as an auto-approbation, nothing stored rewritten (Q13, Q14).
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_count_lines SET approved_by_id = counted_by_id, approved_at = ?, self_approved = 0
+         WHERE id = ?",
+        ["2026-10-25T09:00:00Z".into(), above.id.into()],
+    ))
+    .await
+    .expect("approved by its counter");
+    let listed = controls::list_count_lines(&db, above.session_id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.id == above.id)
+        .expect("listed");
+    assert_eq!(
+        (listed.is_critical, listed.self_approved),
+        (1, 1),
+        "above the tolerance, approved by its counter: listed as an auto-approbation"
+    );
+    let short = controls::approve_count_line(
+        &db,
+        ApproveInventoryCountLineInput {
+            reviewer_evidence: "  court ".to_string(),
+            ..approval(
+                &controls::list_count_lines(&db, within.session_id).await.expect("l")[0],
+                1,
+            )
+        },
+    )
+    .await
+    .expect_err("the 8-character note is still required");
+    assert_eq!(gate_code(short), "GATE_INV_COUNT_EVIDENCE");
+
+    let unknown = counted_line(&db, "INV-4E-NOBODY", 6.0, None).await;
+    let refused = controls::approve_count_line(&db, approval(&unknown, count_reviewer(&db).await))
+        .await
+        .expect_err("the counter of a variance above the tolerance was not recorded");
+    assert_eq!(
+        gate_code(refused),
+        crate::inventory::count_four_eyes::REFUSED_COUNTER_UNKNOWN
+    );
+}
+
+/// D11: under the four-eyes opt-out of the organisation's only site, the counter may approve a
+/// variance above the tolerance; it is flagged "auto-approbation". Without the opt-out, or with
+/// several sites, four-eyes applies.
+#[tokio::test]
+async fn the_only_sites_opt_out_lets_the_counter_approve_flagged_as_a_self_approval() {
+    let db = setup_db().await;
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    single_site_opting_out(&db, &mut factory, false).await;
+    let line = counted_line(&db, "INV-4E-SITE-OFF", 6.0, Some(1)).await;
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&line, 1))
+                .await
+                .expect_err("four-eyes")
+        ),
+        crate::inventory::count_four_eyes::REFUSED_SELF_APPROVAL
+    );
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE site_settings SET value_json = 'true'".to_string(),
+    ))
+    .await
+    .expect("opt out");
+    let approved = controls::approve_count_line(&db, approval(&line, 1))
+        .await
+        .expect("self-approval under the opt-out");
+    assert_eq!((approved.approved_by_id, approved.self_approved), (Some(1), 1));
+
+    // A second site: the stores' rule can no longer come from one site.
+    let second = factory.create(&db, "org_nodes").await.expect("second site");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE org_nodes SET deleted_at = NULL,
+                node_type_id = (SELECT node_type_id FROM org_nodes WHERE id IN (SELECT site_node_id FROM site_settings))
+         WHERE id = ?",
+        [second.rowid.into()],
+    ))
+    .await
+    .expect("second planning site");
+    let other = counted_line(&db, "INV-4E-TWO-SITES", 6.0, Some(1)).await;
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&other, 1))
+                .await
+                .expect_err("two sites")
+        ),
+        crate::inventory::count_four_eyes::REFUSED_SELF_APPROVAL
+    );
+}
+
+/// D11: an optional threshold set blank has no row (blank is never zero) and its change is kept
+/// in the settings history; the retired critical variance is not in the catalog.
+#[tokio::test]
+async fn a_four_eyes_threshold_set_blank_has_no_row() {
+    let db = setup_db().await;
+    let key = crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD;
+    assert_eq!(
+        crate::settings::catalog::optional_decimal_setting(&db, key)
+            .await
+            .expect("read"),
+        None,
+        "not seeded"
+    );
+    set_tenant_setting(&db, key, "0").await;
+    assert_eq!(
+        crate::settings::catalog::optional_decimal_setting(&db, key)
+            .await
+            .expect("read"),
+        Some(0.0),
+        "zero is a value"
+    );
+    set_tenant_setting(&db, key, "null").await;
+    assert_eq!(
+        crate::settings::catalog::optional_decimal_setting(&db, key)
+            .await
+            .expect("read"),
+        None
+    );
+    let history = crate::settings::list_change_events(&db, 10, Some(key))
+        .await
+        .expect("history");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].new_value_json, None, "cleared");
+    assert!(crate::settings::catalog::definition("inventory.count_critical_variance").is_none());
+}
+
+/// AU-68: a count line is entered again only against the version its author saw; a stale version,
+/// or none on a line already entered, is refused and the line is left as it was.
+#[tokio::test]
+async fn a_count_line_is_entered_again_only_against_its_current_version() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-CC-AU68").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    let session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("create session");
+    let entry = |counted_qty: f64, expected_row_version: Option<i64>| UpsertInventoryCountLineInput {
+        session_id: session.id,
+        article_id,
+        location_id,
+        counted_qty,
+        variance_reason_code: Some("COUNT_ERROR".to_string()),
+        expected_row_version,
+        actor_id: Some(1),
+    };
+    let changed_elsewhere = |err: AppError| match err {
+        AppError::ValidationFailed(messages) => messages[0].starts_with("GATE_RECORD_CHANGED_ELSEWHERE"),
+        _ => false,
+    };
+
+    let refused_first = controls::upsert_count_line(&db, entry(9.0, Some(1)))
+        .await
+        .expect_err("a version given for a line not entered yet");
+    assert!(changed_elsewhere(refused_first));
+
+    let first = controls::upsert_count_line(&db, entry(9.0, None))
+        .await
+        .expect("first entry");
+    assert!((first.counted_qty - 9.0).abs() < 1e-9);
+
+    let without_version = controls::upsert_count_line(&db, entry(8.0, None))
+        .await
+        .expect_err("no version on a line already entered");
+    assert!(changed_elsewhere(without_version));
+
+    let again = controls::upsert_count_line(&db, entry(8.0, Some(first.row_version)))
+        .await
+        .expect("entered again against its version");
+    assert!((again.counted_qty - 8.0).abs() < 1e-9);
+    assert!(again.row_version > first.row_version);
+
+    let stale = controls::upsert_count_line(&db, entry(7.0, Some(first.row_version)))
+        .await
+        .expect_err("a stale version");
+    assert!(changed_elsewhere(stale));
+    let lines = controls::list_count_lines(&db, session.id).await.expect("lines");
+    assert_eq!(lines.len(), 1);
+    assert!(
+        (lines[0].counted_qty - 8.0).abs() < 1e-9,
+        "the refused entries changed nothing"
+    );
+    assert_eq!(lines[0].row_version, again.row_version);
+}
+
+/// D11 review (blocking 1): a variance whose counter was not recorded (entered before migration
+/// 259) is never approved without four-eyes, even when its flag says within the tolerance (the
+/// flag of the retired rule): it is entered again.
+#[tokio::test]
+async fn a_variance_without_a_recorded_counter_is_entered_again_whatever_its_flag() {
+    let db = setup_db().await;
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "25").await;
+    let within = counted_line(&db, "INV-4E-OLD-WITHIN", 8.0, None).await;
+    assert_eq!((within.is_critical, within.counted_by_id), (0, None));
+    let refused = controls::approve_count_line(&db, approval(&within, count_reviewer(&db).await))
+        .await
+        .expect_err("no counter recorded");
+    assert_eq!(
+        gate_code(refused),
+        crate::inventory::count_four_eyes::REFUSED_COUNTER_UNKNOWN
+    );
+}
+
+/// D11 review: a line is approved once, while its session is still counted or reviewed: approving
+/// it again, or approving a line of a cancelled count, is refused (its approver is never rewritten).
+#[tokio::test]
+async fn a_count_line_is_approved_once_and_only_while_its_session_is_open() {
+    let db = setup_db().await;
+    let reviewer = count_reviewer(&db).await;
+    let line = counted_line(&db, "INV-4E-ONCE", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, reviewer))
+        .await
+        .expect("approved");
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&approved, reviewer))
+                .await
+                .expect_err("twice")
+        ),
+        controls::REFUSED_COUNT_LINE_ALREADY_APPROVED
+    );
+
+    let other = counted_line(&db, "INV-4E-CANCELLED", 6.0, Some(1)).await;
+    let session = controls::list_count_sessions(&db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == other.session_id)
+        .expect("session");
+    controls::transition_count_session(
+        &db,
+        TransitionInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            next_status: "cancelled".to_string(),
+            reason: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("cancelled");
+    assert_eq!(
+        gate_code(
+            controls::approve_count_line(&db, approval(&other, reviewer))
+                .await
+                .expect_err("cancelled count")
+        ),
+        controls::REFUSED_COUNT_LINE_APPROVAL_CLOSED
+    );
+}
+
+/// D11 review: a line entered again by another person records that person as its counter and loses
+/// the approval given to the previous entry, its self-approval flag included.
+#[tokio::test]
+async fn a_line_entered_again_by_another_person_changes_its_counter_and_drops_the_self_approval() {
+    let db = setup_db().await;
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    single_site_opting_out(&db, &mut factory, true).await;
+    let line = counted_line(&db, "INV-4E-REENTRY", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, 1))
+        .await
+        .expect("self-approval under the opt-out");
+    assert_eq!(approved.self_approved, 1);
+    let reviewer = count_reviewer(&db).await;
+    let again = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: line.session_id,
+            article_id: line.article_id,
+            location_id: line.location_id,
+            counted_qty: 6.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: Some(approved.row_version),
+            actor_id: Some(reviewer),
+        },
+    )
+    .await
+    .expect("entered again");
+    assert_eq!(again.counted_by_id, Some(reviewer));
+    assert_eq!((again.self_approved, again.approved_by_id), (0, None));
+}
+
+/// The session of `line`, moved through counting, submitted and approved, then posted by user 1.
+async fn post_line_session(
+    db: &DatabaseConnection,
+    line: &crate::inventory::domain::InventoryCountLine,
+) -> crate::inventory::domain::InventoryCountLine {
+    let session_now = || async {
+        controls::list_count_sessions(db)
+            .await
+            .expect("sessions")
+            .into_iter()
+            .find(|s| s.id == line.session_id)
+            .expect("session")
+    };
+    for next in ["counting", "submitted", "approved"] {
+        let session = session_now().await;
+        controls::transition_count_session(
+            db,
+            TransitionInventoryCountSessionInput {
+                session_id: session.id,
+                expected_row_version: session.row_version,
+                next_status: next.to_string(),
+                reason: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect(next);
+    }
+    let session = session_now().await;
+    controls::post_count_session(
+        db,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("posted");
+    controls::list_count_lines(db, line.session_id).await.expect("lines")[0].clone()
+}
+
+/// Reverses the posted session of `line` (user 1).
+async fn reverse_line_session(
+    db: &DatabaseConnection,
+    line: &crate::inventory::domain::InventoryCountLine,
+) -> crate::inventory::domain::InventoryCountLine {
+    let session = controls::list_count_sessions(db)
+        .await
+        .expect("sessions")
+        .into_iter()
+        .find(|s| s.id == line.session_id)
+        .expect("session");
+    controls::reverse_count_session(
+        db,
+        ReverseInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            reason: "Feuille de comptage erronée".to_string(),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("reversed");
+    controls::list_count_lines(db, line.session_id).await.expect("lines")[0].clone()
+}
+
+/// CMMS Advisor Q8 (review of a9c38354), Q15: a second approval needs the count-approval right
+/// (`inv.manage`) and a note of at least 8 characters, and is given to a posted, unreversed line
+/// whose variance its counter approved — not before posting, not after the count's reversal, not
+/// to a line without variance, not when someone else approved it. Within the tolerance it is
+/// optional, and accepted (Q15).
+#[tokio::test]
+async fn a_second_approval_needs_the_right_a_note_and_a_posted_self_approval() {
+    let db = setup_db().await;
+    let mut factory = crate::sync::test_support::RowFactory::new();
+    single_site_opting_out(&db, &mut factory, true).await;
+    let manager = i64::from(
+        crate::inventory::negative_stock_tests::user_with(
+            &db,
+            "secondapprovalmanager",
+            &[crate::rbac::permissions::INV_MANAGE],
+        )
+        .await,
+    );
+    let viewer = i64::from(
+        crate::inventory::negative_stock_tests::user_with(
+            &db,
+            "secondapprovalviewer",
+            &[crate::rbac::permissions::INV_VIEW],
+        )
+        .await,
+    );
+    let second = |line: crate::inventory::domain::InventoryCountLine, by: i64, note: &'static str| {
+        let db = &db;
+        async move {
+            controls::second_approve_count_line(
+                db,
+                crate::inventory::domain::SecondApproveInventoryCountLineInput {
+                    line_id: line.id,
+                    expected_row_version: line.row_version,
+                    reviewer_id: by,
+                    reviewer_evidence: note.to_string(),
+                },
+            )
+            .await
+        }
+    };
+    let note = "Comptage vérifié par un second";
+    let not_needed = controls::REFUSED_SECOND_APPROVAL_NOT_NEEDED;
+
+    // Self-approved by its counter (under the opt-out), not posted yet.
+    let line = counted_line(&db, "INV-2A-SELF", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, 1))
+        .await
+        .expect("self-approval under the opt-out");
+    assert_eq!(approved.self_approved, 1);
+    assert_eq!(
+        gate_code(second(approved.clone(), manager, note).await.expect_err("not posted")),
+        not_needed
+    );
+    // Posted: the right, then the note.
+    let posted = post_line_session(&db, &approved).await;
+    let denied = second(posted.clone(), viewer, note).await.expect_err("inv.view only");
+    assert!(matches!(denied, AppError::PermissionDenied(_)), "{denied:?}");
+    for short in ["", "court", "  abcdefg  "] {
+        assert_eq!(
+            gate_code(second(posted.clone(), manager, short).await.expect_err(short)),
+            "GATE_INV_COUNT_EVIDENCE",
+            "{short:?}"
+        );
+    }
+    // Reversed: nothing it moved is kept, nothing to approve a second time.
+    let reversed = reverse_line_session(&db, &posted).await;
+    assert_eq!(
+        gate_code(second(reversed, manager, note).await.expect_err("reversed")),
+        not_needed
+    );
+
+    // Approved by someone other than its counter.
+    let other = counted_line(&db, "INV-2A-OTHER", 6.0, Some(1)).await;
+    let other = controls::approve_count_line(&db, approval(&other, count_reviewer(&db).await))
+        .await
+        .expect("a second person approves");
+    let other = post_line_session(&db, &other).await;
+    assert_eq!(
+        gate_code(
+            second(other, manager, note)
+                .await
+                .expect_err("approved by another person")
+        ),
+        not_needed
+    );
+
+    // Within the tolerance: the counter's approval needs no second person, but a second approval
+    // may still be given (Q15: a PC with a stricter tolerance holds the count until it has one).
+    set_tenant_setting(&db, "inventory.count_four_eyes_percent_threshold", "50").await;
+    let within = counted_line(&db, "INV-2A-WITHIN", 8.0, Some(1)).await;
+    assert_eq!(within.is_critical, 0);
+    let within = controls::approve_count_line(&db, approval(&within, 1))
+        .await
+        .expect("the counter approves within the tolerance");
+    assert_eq!(within.self_approved, 0);
+    let within = post_line_session(&db, &within).await;
+    let counted_by = within.counted_by_id;
+    let seconded = second(within, manager, note)
+        .await
+        .expect("an optional second approval within the tolerance");
+    assert_eq!(seconded.second_approved_by_id, Some(manager));
+    assert_eq!(seconded.second_approval_note.as_deref(), Some(note));
+    assert!(seconded.second_approved_at.is_some());
+    assert_eq!(seconded.counted_by_id, counted_by);
+    // Given once.
+    assert_eq!(
+        gate_code(second(seconded, manager, note).await.expect_err("given already")),
+        not_needed
+    );
+
+    // No variance: nothing was approved by its counter.
+    let exact = counted_line(&db, "INV-2A-EXACT", 10.0, Some(1)).await;
+    assert_eq!(exact.variance_qty, 0.0);
+    let exact = post_line_session(&db, &exact).await;
+    assert_eq!(
+        gate_code(second(exact, manager, note).await.expect_err("no variance")),
+        not_needed
+    );
+}
+
+/// Review of 9ebd482c: the approval guard holds on a posted count and on a reversed one, not only
+/// on a cancelled one: the approver of the line is never rewritten.
+#[tokio::test]
+async fn a_line_of_a_posted_or_reversed_count_is_never_approved_again() {
+    let db = setup_db().await;
+    let reviewer = count_reviewer(&db).await;
+    let line = counted_line(&db, "INV-4E-POSTED", 6.0, Some(1)).await;
+    let approved = controls::approve_count_line(&db, approval(&line, reviewer))
+        .await
+        .expect("approved");
+    let posted = post_line_session(&db, &approved).await;
+    let refused_on = |line: crate::inventory::domain::InventoryCountLine, status: &'static str| {
+        let db = &db;
+        async move {
+            let refused = controls::approve_count_line(db, approval(&line, 1))
+                .await
+                .expect_err(status);
+            let message = format!("{refused:?}");
+            assert_eq!(
+                gate_code(refused),
+                controls::REFUSED_COUNT_LINE_APPROVAL_CLOSED,
+                "{status}"
+            );
+            assert!(message.contains(&format!("status={status}")), "{message}");
+            let kept = &controls::list_count_lines(db, line.session_id).await.expect("lines")[0];
+            assert_eq!(kept.approved_by_id, Some(reviewer), "{status}: the approver is kept");
+        }
+    };
+    refused_on(posted.clone(), "posted").await;
+    let reversed = reverse_line_session(&db, &posted).await;
+    refused_on(reversed, "reversed").await;
+}
+
+/// CMMS Advisor Q10: a count line keeps the unit cost it was judged with at entry and the
+/// variance's value at that cost (none without a unit cost), for the PCs that receive it.
+#[tokio::test]
+async fn a_count_line_keeps_the_unit_cost_and_value_it_was_entered_with() {
+    let db = setup_db().await;
+    set_tenant_setting(&db, crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD, "9").await;
+    let without = counted_line(&db, "INV-4E-NOCOST", 6.0, Some(1)).await;
+    let article_id = create_test_article(&db, "INV-4E-COST").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 10.0,
+            reason_code: Some("seed count".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed stock");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_balances SET moving_avg_unit_cost = 2.5 WHERE article_id = ? AND location_id = ?",
+        [article_id.into(), location_id.into()],
+    ))
+    .await
+    .expect("cost");
+    let session = controls::create_count_session(
+        &db,
+        CreateInventoryCountSessionInput {
+            warehouse_id: 1,
+            location_id: Some(location_id),
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("session");
+    let with = controls::upsert_count_line(
+        &db,
+        UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id,
+            location_id,
+            counted_qty: 6.0,
+            variance_reason_code: Some("COUNT_ERROR".to_string()),
+            expected_row_version: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("line");
+    assert_eq!(with.is_critical, 1, "4 × 2.5 = 10 is above 9");
+    let entry = |id: i64| {
+        let db = &db;
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT entry_unit_cost, entry_variance_value FROM inventory_count_lines WHERE id = ?",
+                    [id.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("line");
+            (
+                row.try_get::<Option<f64>>("", "entry_unit_cost").expect("cost"),
+                row.try_get::<Option<f64>>("", "entry_variance_value").expect("value"),
+            )
+        }
+    };
+    assert_eq!(entry(with.id).await, (Some(2.5), Some(-10.0)));
+    assert_eq!(entry(without.id).await, (None, None), "no unit cost: none kept");
 }

@@ -13,8 +13,10 @@ import {
   getSyncStateSummary,
   getSyncWorkerStatus,
   listOutboxItems,
+  listSyncConflicts,
   pauseSync,
   reportNetworkOnline,
+  resolveSyncConflict,
   resumeSync,
   retryMediaDownload,
   runSyncNow,
@@ -53,6 +55,39 @@ const EMPTY_SUMMARY = {
   inbox_conflict_count: 0,
   unresolved_conflict_count: 0,
 };
+
+function conflictRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 1,
+    conflict_key: "inventory_count_lines:line-1:COUNT_SELF_APPROVAL",
+    source_scope: "inbound",
+    source_batch_id: "b1",
+    linked_outbox_id: null,
+    linked_inbox_id: 10,
+    entity_type: "inventory_count_lines",
+    entity_sync_id: "line-1",
+    operation: "upsert",
+    conflict_type: "COUNT_SELF_APPROVAL",
+    local_payload_json: null,
+    inbound_payload_json: "{}",
+    authority_side: "server",
+    checkpoint_token: null,
+    auto_resolution_policy: "manual",
+    requires_operator_review: true,
+    recommended_action: "review",
+    status: "new",
+    resolution_action: null,
+    resolution_note: null,
+    resolved_by_id: null,
+    resolved_at: null,
+    row_version: 1,
+    local_row_version: null,
+    inbound_row_version: 3,
+    created_at: "2026-10-24T10:05:00Z",
+    updated_at: "2026-10-24T10:05:00Z",
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   mockInvoke.mockReset();
@@ -171,6 +206,31 @@ describe("sync summary", () => {
   it("propagates other errors", async () => {
     mockInvoke.mockRejectedValueOnce(new Error("database is locked"));
     await expect(getSyncStateSummary()).rejects.toThrow("database is locked");
+  });
+
+  it("keeps the held count details of a conflict when listing and resolving", async () => {
+    const hold = {
+      session_code: "INV-2026-0042",
+      counter: "Karim",
+      posted_at: "2026-10-24T10:00:00Z",
+    };
+    mockInvoke.mockResolvedValueOnce([conflictRecord({ count_hold: hold })]);
+    const listed = await listSyncConflicts();
+    expect(listed[0]?.count_hold).toEqual(hold);
+
+    mockInvoke.mockResolvedValueOnce(conflictRecord({ count_hold: hold, status: "resolved" }));
+    const resolved = await resolveSyncConflict({
+      conflict_id: 1,
+      expected_row_version: 1,
+      action: "retry_later",
+      resolution_note: null,
+    } as never);
+    expect(resolved.count_hold).toEqual(hold);
+
+    // A conflict of another kind carries none.
+    mockInvoke.mockResolvedValueOnce([conflictRecord()]);
+    const other = await listSyncConflicts();
+    expect(other[0]?.count_hold).toBeNull();
   });
 
   it("lists outbox items with the given filter", async () => {

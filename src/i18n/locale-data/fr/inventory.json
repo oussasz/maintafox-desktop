@@ -22,6 +22,7 @@
     "balance": "En stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
     "openedAt": "Constaté sous zéro le {{date}} (dernière sortie : {{movement}})",
     "recordCount": "Enregistrer un comptage",
+    "selfApproved": "auto-approbation (écart approuvé par la personne qui a compté)",
     "overReservedTitle": "Réservations supérieures au stock (avertissement)",
     "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
     "closure": {
@@ -36,7 +37,7 @@
     "loading": "Chargement du stock à rapprocher…",
     "dialog": {
       "title": "Enregistrer un comptage",
-      "description": "{{article}} à {{location}} est à {{onHand}} sur ce poste. Comptez ce qui est physiquement présent : le stock devient la quantité comptée et l'élément est clos. Le comptage est passé comme tout inventaire et tracé dans l'audit.",
+      "description": "{{article}} à {{location}} est à {{onHand}} sur ce poste. Comptez ce qui est physiquement présent : dans la tolérance de double validation, le stock devient la quantité comptée et l'élément est clos ; au-dessus, le comptage attend l'approbation d'une autre personne et ne mouvemente rien d'ici là. Le comptage est enregistré comme tout inventaire et tracé dans l'audit.",
       "counted": "Quantité comptée",
       "varianceReason": "Motif d'écart",
       "varianceReasonPlaceholder": "Choisir un motif",
@@ -102,7 +103,20 @@
     },
     "label": "Stock négatif",
     "hint": "À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",
-    "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles)."
+    "hintTotal": "Total des magasins négatif. À corriger : un autre poste a peut-être enregistré un mouvement. Enregistrez un comptage dans « Stock à rapprocher » (Stock › Contrôles).",
+    "pending": {
+      "flag": "Comptage en attente d'approbation",
+      "list": "Comptages en attente d'approbation",
+      "line": "Compté par {{who}} le {{date}} ({{session}}) : théorique {{system}}, compté {{counted}}, écart {{variance}}.",
+      "rule": "Au-dessus de la tolérance de double validation : une autre personne que celle qui a compté l'approuve ; cela le passe en stock et clôt l'élément.",
+      "approve": "Approuver le comptage",
+      "notByCounter": "Vous avez effectué ce comptage : une autre personne doit l'approuver.",
+      "dialogTitle": "Approuver le comptage",
+      "dialogDescription": "{{article}} à {{location}}, compté par {{who}} : {{counted}} (écart {{variance}}). L'approbation passe le comptage en stock : le stock devient la quantité comptée.",
+      "note": "Note d'approbation",
+      "confirm": "Approuver et passer en stock",
+      "recorded": "Le comptage dépasse la tolérance de double validation : il est enregistré et attend l'approbation d'une autre personne. Rien n'a encore été mouvementé."
+    }
   },
   "transfer": {
     "action": "Transférer",
@@ -1533,8 +1547,8 @@
       "cancelled": "Abandonné"
     },
     "sessions": {
-      "criticalFromSettings": "L'écart critique d'une nouvelle session est la valeur de l'usine ; chaque session garde celle du jour de sa création :",
-      "criticalThresholdOfSession": "Écart critique de cette session : {{value}}",
+      "criticalFromSettings": "Un écart est critique quand il dépasse la tolérance de double validation de l'usine : une autre personne que celle qui l'a compté l'approuve (sauf si le site a levé la double validation).",
+      "criticalThresholdOfSession": "Écart critique de cette session selon l'ancienne règle (une quantité) : {{value}}",
       "title": "Inventaires tournants",
       "hint": "Comptez un magasin ou un emplacement, contrôlez les écarts puis passez-les en stock.",
       "warehouse": "Magasin",
@@ -1559,9 +1573,9 @@
     },
     "lines": {
       "title": "Lignes comptées",
-      "hint": "Saisissez les quantités comptées ; les écarts critiques doivent être approuvés avant passage en stock.",
-      "pendingCount_one": "{{count}} écart critique attend une approbation.",
-      "pendingCount_other": "{{count}} écarts critiques attendent une approbation.",
+      "hint": "Saisissez les quantités comptées ; chaque écart est approuvé avec une note avant passage en stock, un écart critique (au-dessus de la tolérance de double validation) par une autre personne que celle qui l'a compté.",
+      "pendingCount_one": "{{count}} écart attend une approbation.",
+      "pendingCount_other": "{{count}} écarts attendent une approbation.",
       "article": "Article",
       "location": "Emplacement",
       "countedQty": "Quantité comptée",
@@ -1579,7 +1593,8 @@
         "countedQty": "Qté comptée",
         "variance": "Écart",
         "critical": "Criticité",
-        "review": "Contrôle"
+        "review": "Contrôle",
+        "countedBy": "Compté par"
       },
       "critical": "Critique",
       "normal": "Normal",
@@ -1587,14 +1602,32 @@
       "approvedBy": "Approuvé par {{name}} le {{date}}",
       "unknownReviewer": "utilisateur inconnu",
       "noApprovalNeeded": "Pas d'approbation requise",
-      "pendingApproval": "En attente d'approbation"
+      "pendingApproval": "En attente d'approbation",
+      "criticalMeaning": "Au-dessus de la tolérance de double validation : approuvé par une autre personne que celle qui a compté.",
+      "counterNotRecorded": "non enregistré",
+      "selfApproved": "Auto-approbation",
+      "selfApprovedMeaning": "Approuvé par la personne qui a compté (sans seconde personne) : signalé sur tous les postes pour être revu par un responsable.",
+      "secondApprove": "Seconde approbation",
+      "secondApproveMeaning": "Une autre personne que celle qui a compté approuve cet écart : les postes où la double validation s'applique, qui retiennent ce comptage, l'appliquent alors.",
+      "secondApprovedBy": "Seconde approbation par {{name}} le {{date}}",
+      "secondApproveOptional": "Seconde approbation (facultative)",
+      "secondApproveOptionalMeaning": "Écart dans la tolérance de double validation de ce poste, approuvé par la personne qui a compté : une seconde approbation est facultative. Elle règle ce comptage sur les postes à la tolérance plus stricte qui le retiennent."
     },
     "approval": {
       "title": "Approuver l'écart",
       "description": "{{article}} en {{location}} : théorique {{system}}, compté {{counted}}, écart {{variance}}.",
       "evidence": "Justificatif du contrôleur",
       "evidencePlaceholder": "Ce qui a été vérifié (recomptage, document, photo…)",
-      "confirm": "Approuver l'écart"
+      "confirm": "Approuver l'écart",
+      "aboveTolerance": "Au-dessus de la tolérance de double validation : compté par {{counter}}, approuvé par une autre personne.",
+      "aboveToleranceOptOut": "Au-dessus de la tolérance de double validation (compté par {{counter}}) : le site a levé la double validation ; la personne qui a compté peut l'approuver (auto-approbation).",
+      "withinTolerance": "Dans la tolérance de double validation (compté par {{counter}})."
+    },
+    "secondApproval": {
+      "title": "Seconde approbation de l'écart",
+      "description": "Compté et approuvé par {{counter}} (auto-approbation) : une autre personne l'approuve à son tour.",
+      "descriptionOptional": "Compté et approuvé par {{counter}}, dans la tolérance de double validation de ce poste : cette seconde approbation est facultative ; elle règle ce comptage sur les postes à la tolérance plus stricte qui le retiennent.",
+      "confirm": "Donner la seconde approbation"
     },
     "reversal": {
       "reason": "Motif de contre-passation",
@@ -1639,6 +1672,13 @@
         "reason": "Motif",
         "notes": "Notes"
       }
+    },
+    "fourEyes": {
+      "set": "Tolérance de double validation : un écart est critique quand {{thresholds}}.",
+      "or": " ou ",
+      "value": "sa valeur dépasse {{value}}",
+      "percent": "il dépasse {{value}} % de la quantité théorique",
+      "notSet": "Tolérance de double validation : non définie — tout écart exige une double validation."
     }
   },
   "issueDesk": {
@@ -1876,6 +1916,8 @@
     "COUNT_SESSION_STALE_SNAPSHOT": "Un comptage a été validé sur cet article et cet emplacement depuis l'ouverture de cette session : annulez cette session et recomptez dans une nouvelle session.",
     "COUNT_SESSION_STATUS_POSTING_ONLY": "Un inventaire est passé en stock ou contre-passé uniquement par « Passer les écarts en stock » ou « Contre-passer » : le stock bouge avec eux.",
     "COUNT_LINE_NOT_APPROVED": "{{lines}} ligne(s) comptée(s) avec écart attendent encore l'approbation d'un vérificateur avant d'approuver l'inventaire.",
-    "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre poste) : actualisez la session ; rien n'a été mouvementé deux fois."
+    "COUNT_ALREADY_POSTED": "L'inventaire {{session}} a déjà mouvementé le stock de cet article à cet emplacement (passé en stock ou contre-passé sur un autre poste) : actualisez la session ; rien n'a été mouvementé deux fois.",
+    "NEGATIVE_STOCK_COUNT_NOT_PENDING": "Ce comptage n'attend plus d'approbation (approuvé, remplacé par un nouveau comptage ou annulé) : actualisez la liste.",
+    "NEGATIVE_STOCK_COUNT_STALE": "Le stock de cet emplacement a bougé depuis le comptage {{session}} : l'approuver ne donnerait plus la quantité comptée. Recomptez l'emplacement."
   }
 }

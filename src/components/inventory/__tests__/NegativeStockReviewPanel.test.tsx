@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
 import type { ReactNode } from "react";
 import { initReactI18next } from "react-i18next";
@@ -9,10 +9,12 @@ import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
 import frInventory from "@/i18n/locale-data/fr/inventory.json";
 import type * as NegativeStockService from "@/services/negative-stock-service";
+import { useSessionStore } from "@/store/session-store";
 
 const mocks = vi.hoisted(() => ({
   listNegativeStockReviews: vi.fn(),
   resolveNegativeStockByCount: vi.fn(),
+  approvePendingNegativeStockCount: vi.fn(),
   getNegativeStockSummary: vi.fn(),
 }));
 const lookupMocks = vi.hoisted(() => ({ getLookupValues: vi.fn() }));
@@ -108,6 +110,7 @@ describe("NegativeStockReviewPanel", () => {
           available_qty: -2,
         },
       ],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
 
@@ -130,6 +133,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     mocks.listNegativeStockReviews.mockResolvedValue({
       items: [],
@@ -140,12 +144,15 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     mocks.resolveNegativeStockByCount.mockResolvedValue({
       session_code: "CC-1",
       counted_qty: 0,
       variance_qty: 5,
       review: item({ status: "closed", closure_kind: "count", closed_at: TS, on_hand_qty: 0 }),
+      pending_approval: false,
+      self_approved: false,
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByRole("button", { name: "Record a count" }));
@@ -190,6 +197,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -222,6 +230,7 @@ describe("NegativeStockReviewPanel", () => {
               session_code: "CC-1",
               counted_by: "Alice",
               approved_by: "Alice",
+              self_approved: true,
               device_code: "7KQ2",
               counted_at: TS,
               counted_qty: 0,
@@ -234,6 +243,7 @@ describe("NegativeStockReviewPanel", () => {
               session_code: "CC-2",
               counted_by: "Bob",
               approved_by: "Bob",
+              self_approved: true,
               device_code: "M3XZ",
               counted_at: TS,
               counted_qty: 0,
@@ -248,12 +258,17 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     expect(await screen.findByText("Double count — to verify")).toBeInTheDocument();
     expect(
       screen.getByText(/Alice on PC 7KQ2, .*, by stock-to-reconcile list: counted 0/),
     ).toBeInTheDocument();
+    // CMMS Advisor Q13: a count approved by its own counter is listed as an auto-approbation.
+    expect(
+      screen.getAllByText(/· self-approval \(variance approved by its counter\)$/),
+    ).toHaveLength(2);
     expect(
       screen.getByText(/Bob on PC M3XZ, .*, by count session CC-2: counted 0/),
     ).toBeInTheDocument();
@@ -305,6 +320,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     expect(await screen.findByText("Count posted twice — to verify")).toBeInTheDocument();
@@ -360,6 +376,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     expect(await screen.findByText("Divergent count — to verify")).toBeInTheDocument();
@@ -389,6 +406,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -416,6 +434,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -457,6 +476,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -538,6 +558,7 @@ describe("NegativeStockReviewPanel", () => {
       ],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     expect(await screen.findByText("Over-issue — to reconcile")).toBeInTheDocument();
@@ -601,6 +622,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "reconciliation",
             counted_by: "Alice",
             approved_by: "Alice",
+            self_approved: true,
             device_code: "7KQ2",
             counted_at: TS,
             system_qty: 10,
@@ -613,12 +635,13 @@ describe("NegativeStockReviewPanel", () => {
         },
       ],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
     expect(
       await screen.findByText(
-        /Over-receipt — to reconcile · PO-77 · Closed by count CC-9 from the stock-to-reconcile list: counted by Alice, .+, variance approved by Alice$/,
+        /Over-receipt — to reconcile · PO-77 · Closed by count CC-9 from the stock-to-reconcile list: counted by Alice, .+, variance approved by Alice · self-approval \(variance approved by its counter\)$/,
       ),
     ).toBeInTheDocument();
   });
@@ -675,6 +698,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "count_session",
             counted_by: "Dan",
             approved_by: null,
+            self_approved: false,
             device_code: "M3XZ",
             counted_at: TS,
             system_qty: 5,
@@ -684,6 +708,7 @@ describe("NegativeStockReviewPanel", () => {
         }),
       ],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -731,6 +756,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "count_session",
             counted_by: "Erin",
             approved_by: "Frank",
+            self_approved: false,
             device_code: "Q8LW",
             counted_at: TS,
             system_qty: 6,
@@ -745,6 +771,7 @@ describe("NegativeStockReviewPanel", () => {
       over_quantities: [],
       closed_over_quantities: [],
       over_reservations: [],
+      pending_counts: [],
     });
     render(<NegativeStockReviewPanel />);
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
@@ -765,5 +792,160 @@ describe("NegativeStockReviewPanel", () => {
     expect(fr).toEqual(en);
     expect(frInventory.negativeStock.flag).toBe("Négatif — à rapprocher");
     expect(frInventory.negativeStock.closure.receipt).toMatch(/^Régularisé par réception/);
+  });
+
+  it("shows a count waiting for a second person and approves it with an 8-character note", async () => {
+    const pending = {
+      line_id: 7,
+      row_version: 3,
+      session_code: "CC-7",
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      counted_by_id: 4,
+      counted_by: "Karim",
+      counted_at: TS,
+      system_qty: -5,
+      counted_qty: 2,
+      variance_qty: 7,
+      variance_reason_code: "COUNT_ERROR",
+    };
+    const empty = {
+      items: [],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+      pending_counts: [],
+    };
+    mocks.listNegativeStockReviews.mockResolvedValueOnce({
+      ...empty,
+      items: [item()],
+      pending_counts: [pending],
+    });
+    mocks.listNegativeStockReviews.mockResolvedValue(empty);
+    mocks.approvePendingNegativeStockCount.mockResolvedValue({
+      session_code: "CC-7",
+      counted_qty: 2,
+      variance_qty: 7,
+      review: item({ status: "closed", closure_kind: "count", closed_at: TS, on_hand_qty: 2 }),
+      pending_approval: false,
+      self_approved: false,
+    });
+    render(<NegativeStockReviewPanel />);
+
+    // The waiting count is listed, and its item says so.
+    expect(await screen.findAllByText("Count waiting for approval")).toHaveLength(2);
+    expect(screen.getByText(/Counted by Karim on .* \(CC-7\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Approve the count" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Approve and post" });
+    fireEvent.change(within(dialog).getByLabelText("Approval note"), {
+      target: { value: " court " },
+    });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Approval note"), {
+      target: { value: "Recompté avec le magasinier" },
+    });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(mocks.approvePendingNegativeStockCount).toHaveBeenCalledWith({
+        line_id: 7,
+        expected_row_version: 3,
+        reason: "Recompté avec le magasinier",
+      }),
+    );
+    expect(await screen.findByText("No location below zero.")).toBeInTheDocument();
+  });
+
+  it("does not offer a waiting count's approval to its counter, except under the opt-out", async () => {
+    const pending = {
+      line_id: 7,
+      row_version: 3,
+      session_code: "CC-7",
+      article_id: 21,
+      article_code: "A-21",
+      article_name: "Bearing",
+      location_id: 10,
+      location_code: "BIN",
+      warehouse_code: "MAIN",
+      counted_by_id: 4,
+      counted_by: "Karim",
+      counted_at: TS,
+      system_qty: -5,
+      counted_qty: 2,
+      variance_qty: 7,
+      variance_reason_code: "COUNT_ERROR",
+    };
+    const list = (selfApprovalAllowed: boolean) => ({
+      items: [item()],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+      pending_counts: [pending],
+      self_approval_allowed: selfApprovalAllowed,
+    });
+    useSessionStore.setState({ info: { user_id: 4 } as never });
+    try {
+      mocks.listNegativeStockReviews.mockResolvedValue(list(false));
+      const { unmount } = render(<NegativeStockReviewPanel />);
+      expect(
+        await screen.findByText("You made this count: another person must approve it."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Approve the count" })).toBeNull();
+      expect(frInventory.negativeStock.pending.notByCounter).toBe(
+        "Vous avez effectué ce comptage : une autre personne doit l'approuver.",
+      );
+      unmount();
+
+      mocks.listNegativeStockReviews.mockResolvedValue(list(true));
+      render(<NegativeStockReviewPanel />);
+      expect(await screen.findByRole("button", { name: "Approve the count" })).toBeInTheDocument();
+    } finally {
+      useSessionStore.setState({ info: null });
+    }
+  });
+
+  it("says a count above the tolerance waits for a second person", async () => {
+    const list = {
+      items: [item()],
+      double_counts: [],
+      closed_double_counts: [],
+      double_postings: [],
+      closed_double_postings: [],
+      over_quantities: [],
+      closed_over_quantities: [],
+      over_reservations: [],
+      pending_counts: [],
+    };
+    mocks.listNegativeStockReviews.mockResolvedValue(list);
+    mocks.resolveNegativeStockByCount.mockResolvedValue({
+      session_code: "CC-8",
+      counted_qty: 0,
+      variance_qty: 5,
+      review: item(),
+      pending_approval: true,
+      self_approved: false,
+    });
+    render(<NegativeStockReviewPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Record a count" }));
+    fireEvent.change(screen.getByLabelText("Quantity counted"), { target: { value: "0" } });
+    fireEvent.click(screen.getByLabelText("Variance reason"));
+    fireEvent.click(await screen.findByRole("option", { name: "Count error" }));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Bin empty" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record the count" }));
+    expect(
+      await screen.findByText(/waits for a second person's approval\. Nothing moved yet\./),
+    ).toBeInTheDocument();
   });
 });

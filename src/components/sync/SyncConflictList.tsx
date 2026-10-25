@@ -29,6 +29,7 @@ import {
   KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
+  SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   clashingNumber,
   clashingUsername,
   conflictActions,
@@ -207,6 +208,18 @@ export function SyncConflictList({
                       {t("sync.applyReason.rule", { rule: c.reason.rule })}
                     </span>
                   ) : null}
+                </p>
+              ) : null}
+              {SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(c.conflict_type) ? (
+                <p className="mt-1 text-xs text-text-primary">{t("sync.countSettledAtOrigin")}</p>
+              ) : null}
+              {c.count_hold ? (
+                <p className="mt-1 text-xs text-text-secondary">
+                  {t("sync.countHeldRecord", {
+                    session: c.count_hold.session_code ?? "?",
+                    counter: c.count_hold.counter ?? "?",
+                    postedAt: c.count_hold.posted_at ? formatDateTime(c.count_hold.posted_at) : "?",
+                  })}
                 </p>
               ) : null}
               {c.conflict_type === "USERNAME_CLASH" ? (

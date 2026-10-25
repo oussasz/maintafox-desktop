@@ -12,6 +12,7 @@ import {
   KNOWN_CONFLICT_KINDS,
   KNOWN_WAIT_REASONS,
   REVIEW_ONLY_CONFLICT_KINDS,
+  SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   conflictActions,
 } from "../sync-conflict-display";
 
@@ -85,6 +86,10 @@ describe("sync conflict kinds", () => {
         expect(conflictActions(kind, triage)).toEqual(["escalate", "dismiss"]);
       }
     }
+    // A count held for a second approval is settled where it is applied: no keep / take / dismiss.
+    expect(SETTLED_AT_ORIGIN_CONFLICT_KINDS.has("COUNT_SELF_APPROVAL")).toBe(true);
+    expect(conflictActions("COUNT_SELF_APPROVAL", false)).toEqual(["escalate"]);
+    expect(conflictActions("COUNT_SELF_APPROVAL", true)).toEqual(["retry_later", "escalate"]);
     expect(conflictActions("CONCURRENT_EDIT", false)).toEqual([
       "accept_local",
       "accept_remote",

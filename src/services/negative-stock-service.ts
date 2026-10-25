@@ -67,6 +67,8 @@ export const ReconciliationCountSchema = z.object({
   counted_by: z.string().nullable(),
   /** Who approved its variance, when it had one and the account is known on this PC. */
   approved_by: z.string().nullable(),
+  /** Auto-approbation, derived on every PC: flagged, or its variance approved by its own counter. */
+  self_approved: z.boolean(),
   device_code: z.string(),
   counted_at: z.string(),
   /** Stock on record the count was set against, on the PC that posted it. */
@@ -197,6 +199,30 @@ export const OverQuantityReviewSchema = z.object({
 });
 export type OverQuantityReview = z.infer<typeof OverQuantityReviewSchema>;
 
+/**
+ * A count recorded from this list above the four-eyes tolerance, waiting for a second person's
+ * approval before it moves the stock ("comptage en attente d'approbation").
+ */
+export const PendingReconciliationCountSchema = z.object({
+  line_id: z.number(),
+  row_version: z.number(),
+  session_code: z.string(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  location_id: z.number(),
+  location_code: z.string(),
+  warehouse_code: z.string(),
+  counted_by_id: z.number().nullable(),
+  counted_by: z.string().nullable(),
+  counted_at: z.string(),
+  system_qty: z.number(),
+  counted_qty: z.number(),
+  variance_qty: z.number(),
+  variance_reason_code: z.string().nullable(),
+});
+export type PendingReconciliationCount = z.infer<typeof PendingReconciliationCountSchema>;
+
 const NegativeStockReviewListSchema = z.object({
   items: z.array(NegativeStockReviewSchema),
   double_counts: z.array(DoubleCountReviewSchema),
@@ -209,6 +235,10 @@ const NegativeStockReviewListSchema = z.object({
   /** Over-issues and over-receipts that a return or a count closed (when closed items are asked). */
   closed_over_quantities: z.array(OverQuantityReviewSchema),
   over_reservations: z.array(OverReservationWarningSchema),
+  /** Counts above the four-eyes tolerance waiting for a second person's approval. */
+  pending_counts: z.array(PendingReconciliationCountSchema),
+  /** The stores' site opted out of four-eyes: the counter may approve a waiting count. */
+  self_approval_allowed: z.boolean(),
 });
 export type NegativeStockReviewList = z.infer<typeof NegativeStockReviewListSchema>;
 
@@ -228,6 +258,10 @@ const NegativeStockResolutionSchema = z.object({
   counted_qty: z.number(),
   variance_qty: z.number(),
   review: NegativeStockReviewSchema.nullable(),
+  /** Above the four-eyes tolerance: saved as counted, waiting for a second person's approval. */
+  pending_approval: z.boolean(),
+  /** Approved by the person counting under the site's opt-out ("auto-approbation"). */
+  self_approved: z.boolean(),
 });
 export type NegativeStockResolution = z.infer<typeof NegativeStockResolutionSchema>;
 
@@ -239,6 +273,21 @@ export interface ResolveNegativeStockInput {
   /** Code of the plant's variance-reason list (`inventory.variance_reason`). */
   variance_reason_code: string;
   reason: string;
+}
+
+export interface ApprovePendingCountInput {
+  line_id: number;
+  expected_row_version: number;
+  /** The approver's note (at least `NEGATIVE_STOCK_REASON_MIN_CHARS` characters). */
+  reason: string;
+}
+
+/** Approves (and posts) a count waiting for its approval; the approver is the signed-in user. */
+export async function approvePendingNegativeStockCount(
+  input: ApprovePendingCountInput,
+): Promise<NegativeStockResolution> {
+  const raw = await invoke<unknown>("approve_negative_stock_count", { input });
+  return NegativeStockResolutionSchema.parse(raw);
 }
 
 export async function listNegativeStockReviews(

@@ -92,7 +92,7 @@ pub struct SiteSettingView {
 /// Nodes of a draft organisation structure are not sites yet: a rule set on one would be in force
 /// nowhere, and the publish could not move the rule of the node it copies onto it
 /// (`org::validation::collect_site_rules_on_draft_copies`).
-const NOT_A_DRAFT_NODE_SQL: &str = "NOT EXISTS (SELECT 1 FROM org_structure_models m \
+pub(crate) const NOT_A_DRAFT_NODE_SQL: &str = "NOT EXISTS (SELECT 1 FROM org_structure_models m \
      WHERE m.id = n.structure_model_id AND m.status = 'draft')";
 
 /// `key` at every planning site (live nodes whose type can own work, outside a draft structure),

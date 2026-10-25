@@ -506,7 +506,7 @@ async fn load_state_record(state: &State<'_, AppState>) -> AppResult<Option<Prod
     load_state_record_from_db(&state.db).await
 }
 
-async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<ProductLicenseStateRecord>> {
+async fn load_state_record_from_db<C: ConnectionTrait>(db: &C) -> AppResult<Option<ProductLicenseStateRecord>> {
     let row = settings::get_setting(db, PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE).await?;
     let Some(row) = row else {
         return Ok(None);
@@ -519,7 +519,9 @@ async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<
     Ok(ProductLicenseStateRecord::from_legacy_json(legacy))
 }
 
-pub async fn get_activation_claim_tenant_id(db: &DatabaseConnection) -> AppResult<Option<String>> {
+/// The organisation of this PC's current activation (`None`: not activated). Any connection, so a
+/// caller's transaction can read it (`sync::plant_join::complete_pull_done`).
+pub async fn get_activation_claim_tenant_id<C: ConnectionTrait>(db: &C) -> AppResult<Option<String>> {
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
@@ -894,11 +896,15 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         }
 
         // `system_config` is kept, the accounts and the sync checkpoint are not: "the server
-        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`).
+        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`), and
+        // the PC joins the plant again (its next snapshot is a first join).
         tx.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "DELETE FROM system_config WHERE key = ?",
-            [crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into()],
+            "DELETE FROM system_config WHERE key IN (?, ?)",
+            [
+                crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into(),
+                crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into(),
+            ],
         ))
         .await?;
 

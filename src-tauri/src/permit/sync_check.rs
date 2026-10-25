@@ -485,6 +485,12 @@ pub(crate) struct GroupRow {
 }
 
 impl GroupRow {
+    /// The waiting inbox row `inbox_id` of `entity_type`, applied in a group (a count's reversal
+    /// applied with its held adjustment, `inventory::count_four_eyes::count_movement_group`).
+    pub(crate) fn new(entity_type: &'static str, inbox_id: i64) -> Self {
+        Self { entity_type, inbox_id }
+    }
+
     /// The inbox row applied in the group.
     pub(crate) fn inbox_id(&self) -> i64 {
         self.inbox_id
@@ -1124,7 +1130,11 @@ fn approval_recorded(p: &Payload) -> bool {
 /// `relaxing` a rule switching it on (`value_json` true), else one switching it off. A self-approval
 /// waits for the opt-out it was made under (four-eyes meanwhile), and one accepted under the opt-out
 /// held here waits while a return to four-eyes is on its way; nothing is written meanwhile.
-async fn site_rule_change_waiting(conn: &impl ConnectionTrait, site_id: i64, relaxing: bool) -> AppResult<bool> {
+pub(crate) async fn site_rule_change_waiting(
+    conn: &impl ConnectionTrait,
+    site_id: i64,
+    relaxing: bool,
+) -> AppResult<bool> {
     let Some(site_sync) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

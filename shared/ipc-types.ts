@@ -1118,7 +1118,15 @@ export interface SettingDefinitionView {
   key: string;
   category: string;
   scope: string;
-  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
+  kind:
+    | "choice"
+    | "integer"
+    | "decimal"
+    | "optional_decimal"
+    | "currency"
+    | "month"
+    | "document_header"
+    | "module";
   options: string[];
   /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: number | null;
@@ -3349,8 +3357,11 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
-  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
-  critical_abs_threshold: number;
+  /**
+   * Critical variance (a quantity) the session was opened with before the four-eyes tolerance
+   * (migration 259): history only; null for sessions opened since.
+   */
+  critical_abs_threshold: number | null;
   submitted_by_id: number | null;
   submitted_at: string | null;
   posted_by_id: number | null;
@@ -3376,16 +3387,42 @@ export interface InventoryCountLine {
   counted_qty: number;
   variance_qty: number;
   variance_reason_code: string | null;
+  /** 1: the variance is above the plant's four-eyes tolerance (judged when it was entered). */
   is_critical: number;
   approval_required: number;
   approved_by_id: number | null;
   approved_at: string | null;
   approval_note: string | null;
+  /** Who entered the counted quantity (null for lines entered before the four-eyes update). */
+  counted_by_id: number | null;
+  counted_by_name: string | null;
+  /**
+   * 1: an "auto-approbation", derived on read on every PC (CMMS Advisor Q13): flagged where it was
+   * approved (above the tolerance under the site's opt-out), or its variance approved by its own
+   * counter. Nothing stored is rewritten.
+   */
+  self_approved: number;
+  /**
+   * Second approval of a self-approved line by another person, so that a PC where four-eyes
+   * applies accepts the count it holds back (CMMS Advisor Q8).
+   */
+  second_approved_by_id: number | null;
+  second_approved_by_name: string | null;
+  second_approved_at: string | null;
+  second_approval_note: string | null;
   posted_transaction_id: number | null;
   reversed_transaction_id: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
+}
+
+/** The plant's four-eyes tolerance of a count variance (Settings › Inventory); null = blank. */
+export interface InventoryCountTolerance {
+  value_threshold: number | null;
+  percent_threshold: number | null;
+  /** The stores' site opted out of four-eyes: the counter may approve ("auto-approbation"). */
+  self_approval_allowed: boolean;
 }
 
 export interface CreateInventoryCountSessionInput {
@@ -3400,6 +3437,8 @@ export interface UpsertInventoryCountLineInput {
   location_id: number;
   counted_qty: number;
   variance_reason_code?: string | null;
+  /** Version of the line entered again (its `row_version`); null for a first entry (AU-68). */
+  expected_row_version: number | null;
 }
 
 export interface TransitionInventoryCountSessionInput {
@@ -3414,6 +3453,13 @@ export interface ApproveInventoryCountLineInput {
   line_id: number;
   expected_row_version: number;
   reviewer_id: number;
+  reviewer_evidence: string;
+}
+
+/** The second approval of a self-approved count line (the approver is the signed-in user). */
+export interface SecondApproveInventoryCountLineInput {
+  line_id: number;
+  expected_row_version: number;
   reviewer_evidence: string;
 }
 
@@ -10552,8 +10598,23 @@ export interface SyncConflictRecord {
   detail_message: string | null;
   /** That text as a coded reason, for a row the database refused (`sync::apply_reason`). */
   reason: SyncConflictReason | null;
+  /** A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): what it is. */
+  count_hold?: SyncConflictCountHold | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The count a `COUNT_SELF_APPROVAL` conflict holds back (CMMS Advisor Q12), read from what this PC
+ * holds (`inventory::count_four_eyes::count_hold_context`); `null`: not here yet.
+ */
+export interface SyncConflictCountHold {
+  /** The count's reference (`CC-…`). */
+  session_code: string | null;
+  /** Who counted it (and approved it). */
+  counter: string | null;
+  /** When it was posted where it is applied. */
+  posted_at: string | null;
 }
 
 /** `UNIQUE_TAKEN` | `REQUIRED_MISSING` | `LINK_MISSING` | `RULE_REFUSED` | `INVALID_DATA` | `TECHNICAL`. */

@@ -1,17 +1,18 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   ExecuteSyncRepairInput,
   ListOutboxFilter,
+  MediaFileState,
   ReplaySyncFailuresInput,
   ReplaySyncFailuresResult,
   ResolveSyncConflictInput,
   StageOutboxItemInput,
   SyncConflictFilter,
   SyncConflictRecord,
-  SyncObservabilityReport,
   SyncInboxItem,
+  SyncObservabilityReport,
   SyncOutboxItem,
   SyncRepairActionRecord,
   SyncRepairExecutionResult,
@@ -21,7 +22,6 @@ import type {
   SyncStateSummary,
   SyncWaitingInboxReport,
   SyncWorkerStatus,
-  MediaFileState,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -125,6 +125,16 @@ const SyncConflictRecordSchema = z.object({
       table: z.string().nullable(),
       columns: z.array(z.string()),
       rule: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
+  /** A count held back here for a second approval (CMMS Advisor Q12): its reference, counter and posting time. */
+  count_hold: z
+    .object({
+      session_code: z.string().nullable(),
+      counter: z.string().nullable(),
+      posted_at: z.string().nullable(),
     })
     .nullable()
     .optional()
