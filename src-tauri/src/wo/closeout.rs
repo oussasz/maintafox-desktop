@@ -13,7 +13,7 @@
 
 use crate::activity::emitter;
 use crate::audit;
-use crate::auth::password;
+use crate::auth::second_signer;
 use crate::errors::{AppError, AppResult};
 use crate::reliability::advanced_rams::queries as advanced_rams_queries;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
@@ -547,70 +547,28 @@ fn signer_password_account(input: &WoCloseInput) -> Option<i32> {
         .and_then(|id| i32::try_from(id).ok())
 }
 
-/// The signer's password outcome, counted toward the signer's account lockout as at sign-in: a
-/// wrong one is a failed attempt (`lockout::record_failed_attempt`, same policy), a right one
-/// resets the count. Written outside the close-out transaction, so a refused close-out still
-/// counts. A wrong password is audited like the other failed password checks (actor: the user
-/// closing; target: the signer's account). When the signer is the signed-in user (self-signing
-/// allowed by the policy), the command ends the session if this locks the account
-/// (`commands::wo::close_wo`).
+/// The signer's password outcome, counted toward the signer's account lockout as at sign-in
+/// (`auth::second_signer::record_outcome`): written outside the close-out transaction, so a
+/// refused close-out still counts. When the signer is the signed-in user (self-signing allowed by
+/// the policy), the command ends the session if this locks the account (`commands::wo::close_wo`).
 async fn record_signer_password_outcome(
     db: &DatabaseConnection,
     input: &WoCloseInput,
     signer: Option<i32>,
     checked: Option<bool>,
 ) -> AppResult<()> {
-    let (Some(signer), Some(ok)) = (signer, checked) else {
-        return Ok(());
-    };
-    if ok {
-        return crate::auth::lockout::clear_failed_attempts(db, signer).await;
-    }
-    let policy = crate::auth::lockout::LockoutPolicy::load(db).await;
-    tracing::warn!(
-        signer_id = signer,
-        wo_id = input.wo_id,
-        "close-out override: wrong signer password"
-    );
-    let signer_ref = signer.to_string();
-    audit::emit(
+    second_signer::record_outcome(
         db,
-        audit::AuditEvent {
-            event_type: audit::event_type::STEP_UP_FAILURE,
-            actor_id: i32::try_from(input.actor_id).ok(),
-            entity_type: Some("user_account"),
-            entity_id: Some(&signer_ref),
+        signer,
+        checked,
+        &second_signer::SignatureContext {
+            actor_id: input.actor_id,
+            context: "closeout_override",
             summary: "Close-out override refused: wrong signer password",
-            detail_json: Some(
-                serde_json::json!({ "context": "closeout_override", "work_order_id": input.wo_id }).to_string(),
-            ),
-            ..Default::default()
+            detail: serde_json::json!({ "work_order_id": input.wo_id }),
         },
     )
-    .await;
-    crate::auth::lockout::record_failed_attempt(db, signer, &policy).await
-}
-
-async fn verify_user_password(db: &impl ConnectionTrait, user_id: i64, password_raw: &str) -> AppResult<bool> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT password_hash
-             FROM user_accounts
-             WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
-            [user_id.into()],
-        ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(false);
-    };
-    let hash: Option<String> = row
-        .try_get("", "password_hash")
-        .map_err(|e| decode_err("override_signer_password_hash", e))?;
-    let Some(hash) = hash else {
-        return Ok(false);
-    };
-    password::verify_password(password_raw, &hash)
+    .await
 }
 
 pub(crate) async fn has_supervisor_override_role(
@@ -1105,19 +1063,9 @@ pub async fn save_verification(
     Ok((verification, wo))
 }
 
-/// The signature password of a FMECA parts override, as the close can check it.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum SignerPassword<'a> {
-    /// Typed by the signer for this close, on this PC: verified (`close_preflight` returns the
-    /// outcome; `close_wo` counts it toward the signer's lockout after its transaction).
-    Given(Option<&'a str>),
-    /// Typed for this close, but the signer's account is locked out here (`auth::lockout`, read
-    /// before the transaction): not checked, refused with the LOCKED code.
-    Locked,
-    /// A close received by synchronisation: the password was checked on the PC that closed and
-    /// cannot be checked again here (the other rules of the override still are).
-    NotVerifiableHere,
-}
+/// The signature password of a FMECA parts override, as the close can check it (shared with the
+/// other second-person signatures).
+pub(crate) use crate::auth::second_signer::SignerPassword;
 
 /// What a close brings besides the stored work order: the closer, the no-downtime attestation and
 /// the FMECA parts override. For a received close, read from the work order row just written and
@@ -1353,7 +1301,7 @@ pub(crate) async fn close_preflight(
                 let signer_password_ok = if signer_exists {
                     match ev.fmeca_override_signer_password {
                         SignerPassword::Given(Some(raw)) if !raw.trim().is_empty() => {
-                            let ok = verify_user_password(conn, signer_id, raw).await?;
+                            let ok = second_signer::verify_user_password(conn, signer_id, raw).await?;
                             signer_password_checked = Some(ok);
                             ok
                         }
@@ -1548,11 +1496,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // (the lockout check may write); the outcome is recorded after it.
     let signer_for_password = signer_password_account(&input);
     let signer_locked = match signer_for_password {
-        Some(id) => match crate::auth::lockout::check_lockout(db, id).await {
-            Ok(()) => false,
-            Err(AppError::AccountLocked { .. }) => true,
-            Err(e) => return Err(e),
-        },
+        Some(id) => second_signer::lockout_state(db, id).await?,
         None => false,
     };
 
