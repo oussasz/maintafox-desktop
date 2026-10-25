@@ -7017,6 +7017,338 @@ async fn a_count_line_posted_here_is_never_posted_again_at_another_location() {
     );
 }
 
+/// `payload` (a count movement or line as received) at another location: its location sync id, and
+/// its warehouse's when it carries one.
+fn at_location(
+    payload: &serde_json::Map<String, serde_json::Value>,
+    (location_sync, warehouse_sync): (&str, &str),
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut moved = payload.clone();
+    moved.insert("location_sync_id".into(), serde_json::json!(location_sync));
+    if moved.contains_key("warehouse_sync_id") {
+        moved.insert("warehouse_sync_id".into(), serde_json::json!(warehouse_sync));
+    }
+    moved
+}
+
+/// Review of 006d8057 (S1): `reversal` (a count reversal as received) put in `db`'s inbox under a
+/// new id, with version `version` of count line `line_sync` (a payload of the caller's making)
+/// naming it as its reversal, both received and tried. Returns the reversal's new id.
+async fn push_forged_reversal(
+    db: &DatabaseConnection,
+    line_sync: &str,
+    version: i64,
+    mut line: serde_json::Map<String, serde_json::Value>,
+    reversal: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let forged = crate::sync::identity::new_entity_sync_id();
+    line.insert("reversed_transaction_sync_id".into(), serde_json::json!(forged));
+    inbox_put(
+        db,
+        "delta-forged",
+        "inventory_transactions",
+        &forged,
+        1,
+        reversal,
+        "pending",
+    )
+    .await;
+    inbox_put(
+        db,
+        "delta-forged",
+        "inventory_count_lines",
+        line_sync,
+        version,
+        &line,
+        "pending",
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(db, 200, true)
+        .await
+        .expect("tried");
+    forged
+}
+
+/// The row version of a row on the server.
+fn server_version(server: &TestServer, entity_type: &str, sync_id: &str) -> i64 {
+    server
+        .state
+        .get(&(entity_type.to_string(), sync_id.to_string()))
+        .expect("on the server")
+        .row_version
+}
+
+/// Review of 006d8057 (S1), the held-line branch of the reversal path: another count M of the same
+/// article at another location, posted on both PCs; a reversal of M (the real one, copied under a
+/// new id), named by a later version of the line of the FIRST count moved to M's session and
+/// location, naming M's real adjustment as posted. The reversal's identity, the line version's and
+/// the adjustment's all agree (so `adjustment_of_other_count` passes), but the line held here is of
+/// another count: a visible conflict on that reversal saying so; the stock does not move anywhere.
+#[tokio::test]
+async fn a_reversal_of_another_count_named_by_a_line_held_for_a_different_count_is_refused() {
+    let ForgedAdjustment {
+        a,
+        b,
+        mut server,
+        pair_b,
+        counter,
+        session_sync,
+        line_sync,
+        other_location,
+        ..
+    } = posted_count("heldlinecounter").await;
+    let (elsewhere_b, location_sync, warehouse_sync) = location_elsewhere(&a, &b, &other_location).await;
+    let article_a = scalar_i64(
+        &a,
+        "SELECT article_id FROM inventory_count_lines WHERE entity_sync_id = ?",
+        vec![line_sync.clone().into()],
+    )
+    .await;
+    // The count M of the same article at the other location, posted and received by B.
+    let other = enter_count(&a, counter, article_a, other_location.rowid, 7.0).await;
+    let other = post_count(&a, counter, other).await;
+    let other_sync = session_sync_of(&a, &other.session_code).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(conflict_kinds(&b).await.is_empty(), "both counts accepted on B");
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7_000,
+        "the first count posted"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, elsewhere_b).await, 7_000, "M posted");
+    let other_adjustment = movement_sync_id(&a, &other_sync, "COUNT_ADJUST").await;
+    // M reversed on A; B has not received it.
+    reverse_on(&a, second_person(&a, counter).await, &other_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    let other_reversal = movement_sync_id(&a, &other_sync, "COUNT_REVERSAL").await;
+    let real = wire_row(&a, "inventory_transactions", &other_reversal).await;
+
+    // The first count's line, moved to M's session and location, naming M's adjustment as posted.
+    let mut line = at_location(
+        &wire_row(&b, "inventory_count_lines", &line_sync).await,
+        (&location_sync, &warehouse_sync),
+    );
+    line.insert("session_sync_id".into(), serde_json::json!(other_sync));
+    line.insert("posted_transaction_sync_id".into(), serde_json::json!(other_adjustment));
+    let version = server_version(&server, "inventory_count_lines", &line_sync) + 1;
+    let forged = push_forged_reversal(&b, &line_sync, version, line, &real).await;
+    assert_forged_movement_refused(&b, &forged, "its count line here is of another count").await;
+    assert_eq!(count_movements(&b, &other_sync, "COUNT_REVERSAL").await, (0, 0));
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (0, 0));
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, elsewhere_b).await,
+        7_000,
+        "M stays posted: not undone through the other count's line"
+    );
+    assert_eq!(
+        wire_row(&b, "inventory_count_lines", &line_sync)
+            .await
+            .get("session_sync_id"),
+        Some(&serde_json::json!(session_sync)),
+        "the line held keeps its count"
+    );
+}
+
+/// Review of 006d8057 (S1), `reversal_check`: a version of a count line judged while the reversal it
+/// names (at another location, waiting in the inbox) is a reversal of that location's count but the
+/// adjustment it names as posted is the count's at its own location. The line version contradicts
+/// itself: a conflict on the line saying the adjustment is not of the reversal's count, not the
+/// quantity text of `undo_mismatch` (the two quantities do agree). Its real reversal is accepted.
+#[tokio::test]
+async fn a_line_version_naming_a_reversal_and_an_adjustment_of_different_locations_is_refused() {
+    let ForgedAdjustment {
+        a,
+        b,
+        mut server,
+        pair_b,
+        counter,
+        session_sync,
+        line_sync,
+        other_location,
+        ..
+    } = posted_count("reversalcheckcounter").await;
+    let (elsewhere_b, location_sync, warehouse_sync) = location_elsewhere(&a, &b, &other_location).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000, "posted");
+    reverse_on(&a, second_person(&a, counter).await, &session_sync).await;
+    let reversal = movement_sync_id(&a, &session_sync, "COUNT_REVERSAL").await;
+    let real = wire_row(&a, "inventory_transactions", &reversal).await;
+    let held_line = wire_row(&b, "inventory_count_lines", &line_sync).await;
+    let posted = held_line
+        .get("posted_transaction_sync_id")
+        .cloned()
+        .expect("the line names its adjustment");
+
+    // The reversal at L2 waits in the inbox; the line version moved to L2 names it, and the
+    // adjustment of L1 as posted.
+    let forged = crate::sync::identity::new_entity_sync_id();
+    inbox_put(
+        &b,
+        "delta-forged",
+        "inventory_transactions",
+        &forged,
+        1,
+        &at_location(&real, (&location_sync, &warehouse_sync)),
+        "pending",
+    )
+    .await;
+    let mut moved = at_location(&held_line, (&location_sync, &warehouse_sync));
+    moved.insert("reversed_transaction_sync_id".into(), serde_json::json!(forged));
+    assert_eq!(moved.get("posted_transaction_sync_id"), Some(&posted));
+    match crate::inventory::count_four_eyes::inbound_count_line_check(&b, &line_sync, &moved)
+        .await
+        .expect("judged")
+    {
+        Some(crate::settings::site::InboundVerdict::Conflict { code, message }) => {
+            assert_eq!(code, crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID);
+            assert!(
+                message.contains("does not undo its posted adjustment")
+                    && message.contains("not an adjustment of the same count (session, article and location)"),
+                "{message}"
+            );
+            assert!(!message.contains("is not the opposite"), "{message}");
+        }
+        other => panic!("the line contradicts itself: {other:?}"),
+    }
+    // Control: the same line at its own location naming its real reversal (waiting) passes.
+    inbox_put(
+        &b,
+        "delta-forged",
+        "inventory_transactions",
+        &reversal,
+        1,
+        &real,
+        "pending",
+    )
+    .await;
+    let mut genuine = held_line.clone();
+    genuine.insert("reversed_transaction_sync_id".into(), serde_json::json!(reversal));
+    assert_eq!(
+        verdict_code(
+            crate::inventory::count_four_eyes::inbound_count_line_check(&b, &line_sync, &genuine)
+                .await
+                .expect("judged")
+                .as_ref()
+        ),
+        "pass",
+        "its real reversal"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+    assert_eq!(on_hand_milli(&b, pair_b.0, elsewhere_b).await, 10_000);
+}
+
+/// Review of 006d8057 (S1), the article variant: the real reversal copied under a new id for ANOTHER
+/// article, named by a later version of the count line moved to that article (still naming the real
+/// adjustment as posted), is refused: the adjustment it names is of another article. A visible
+/// conflict on that reversal; the stock does not move for either article.
+#[tokio::test]
+async fn a_reversal_of_another_article_is_refused() {
+    let ForgedAdjustment {
+        a,
+        b,
+        mut server,
+        pair_b,
+        counter,
+        session_sync,
+        line_sync,
+        other_location,
+        ..
+    } = posted_count("articlevariantcounter").await;
+    let (elsewhere_b, _, _) = location_elsewhere(&a, &b, &other_location).await;
+    let mut factory = RowFactory::for_device(9);
+    let other_article = factory.create(&a, "articles").await.expect("article");
+    exec(
+        &a,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,
+                requires_expiration = 0, is_critical_spare = 0, is_active = 1 WHERE id = ?",
+        vec![other_article.rowid.into()],
+    )
+    .await;
+    adjust(&a, other_article.rowid, other_location.rowid, 5.0)
+        .await
+        .expect("stock in");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    let other_b = scalar_i64(
+        &b,
+        "SELECT id FROM articles WHERE entity_sync_id = ?",
+        vec![other_article.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000, "posted");
+    assert_eq!(on_hand_milli(&b, other_b, elsewhere_b).await, 5_000);
+    reverse_on(&a, second_person(&a, counter).await, &session_sync).await;
+    let reversal = movement_sync_id(&a, &session_sync, "COUNT_REVERSAL").await;
+    let mut real = wire_row(&a, "inventory_transactions", &reversal).await;
+    real.insert(
+        "article_sync_id".into(),
+        serde_json::json!(other_article.entity_sync_id),
+    );
+    let mut line = wire_row(&b, "inventory_count_lines", &line_sync).await;
+    line.insert(
+        "article_sync_id".into(),
+        serde_json::json!(other_article.entity_sync_id),
+    );
+    let version = server_version(&server, "inventory_count_lines", &line_sync) + 1;
+
+    let forged = push_forged_reversal(&b, &line_sync, version, line, &real).await;
+    assert_forged_movement_refused(&b, &forged, "not an adjustment of the same count").await;
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (0, 0));
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+    assert_eq!(on_hand_milli(&b, other_b, elsewhere_b).await, 5_000);
+}
+
+/// Review of 006d8057 (S1), the forged new line variant: a line under a NEW sync id (none held here,
+/// so no held-line check) for the count at another location, naming the real adjustment as posted
+/// and a copy of the real reversal at that location, is refused on the reversal alone: the
+/// adjustment it names is of another location. A visible conflict; the stock does not move.
+#[tokio::test]
+async fn a_reversal_named_by_a_new_line_at_another_location_is_refused() {
+    let ForgedAdjustment {
+        a,
+        b,
+        mut server,
+        pair_b,
+        counter,
+        session_sync,
+        line_sync,
+        other_location,
+        ..
+    } = posted_count("newlinecounter").await;
+    let (elsewhere_b, location_sync, warehouse_sync) = location_elsewhere(&a, &b, &other_location).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000, "posted");
+    reverse_on(&a, second_person(&a, counter).await, &session_sync).await;
+    let reversal = movement_sync_id(&a, &session_sync, "COUNT_REVERSAL").await;
+    let real = at_location(
+        &wire_row(&a, "inventory_transactions", &reversal).await,
+        (&location_sync, &warehouse_sync),
+    );
+    let line = at_location(
+        &wire_row(&b, "inventory_count_lines", &line_sync).await,
+        (&location_sync, &warehouse_sync),
+    );
+    let new_line = crate::sync::identity::new_entity_sync_id();
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE entity_sync_id = ?",
+            vec![new_line.clone().into()],
+        )
+        .await,
+        0,
+        "no line held here under that id"
+    );
+
+    let forged = push_forged_reversal(&b, &new_line, 1, line, &real).await;
+    assert_forged_movement_refused(&b, &forged, "not an adjustment of the same count").await;
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (0, 0));
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+    assert_eq!(on_hand_milli(&b, pair_b.0, elsewhere_b).await, 10_000);
+}
+
 /// Review of 07d895a9 (S2): the same count posted on A (−3) and, offline, on B (−4) then reversed
 /// on B (+4, from B's own posting). B's posting lost; its reversal (the count's own id) reaches A,
 /// where no line names it and it undoes no posting held: it is not applied, and it is a visible
