@@ -3752,8 +3752,8 @@ pub struct ActivationTenantStatus {
 }
 
 /// Marks the activated organisation initialised on the control API at `api_base`, with the token
-/// of [`tenant_call_token`]. `NotActivated` when this PC holds none, or its stored claim already
-/// says the organisation is initialised (nothing sent).
+/// of [`tenant_call_token`]. `NotActivated` (nothing sent) only when this PC holds no valid stored
+/// activation; a claim already marked initialised is sent again (the call is idempotent).
 pub(crate) async fn mark_activation_tenant_initialized_in(
     db: &DatabaseConnection,
     api_base: &str,
