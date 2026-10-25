@@ -26,7 +26,7 @@ pub(super) async fn setup_db() -> DatabaseConnection {
     db
 }
 
-async fn insert_candidate(
+pub(super) async fn insert_candidate(
     db: &DatabaseConnection,
     source_type: &str,
     source_id: i64,
@@ -359,7 +359,17 @@ pub(super) async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee
     personnel_id
 }
 
-async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_id: i64) {
+/// The password of the approvers made by `ensure_approver_user` (they sign break-ins with it).
+pub(super) const APPROVER_PASSWORD: &str = "Approver-Pass-1";
+
+/// An approver holding plan.confirm plant-wide, linked to a new personnel record.
+pub(super) async fn signing_approver(db: &DatabaseConnection, user_id: i64, employee_code: &str) -> i64 {
+    let personnel = ensure_personnel_with_rate(db, employee_code).await;
+    ensure_approver_user(db, user_id, personnel).await;
+    user_id
+}
+
+pub(super) async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_id: i64) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO users (id) VALUES (?)",
@@ -370,14 +380,18 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
-            (id, entity_sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, 0, 0, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            (id, entity_sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id,
+             password_hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 0, 0, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [
             user_id.into(),
             format!("approver-sync-{user_id}").into(),
             format!("approver-{user_id}").into(),
             format!("Approver {user_id}").into(),
             personnel_id.into(),
+            crate::auth::password::hash_password(APPROVER_PASSWORD)
+                .expect("hash")
+                .into(),
         ],
     ))
     .await
@@ -860,6 +874,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await
@@ -883,6 +898,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             override_reason: Some("line stop".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: Some(APPROVER_PASSWORD.to_string()),
         },
     )
     .await
@@ -1139,7 +1155,7 @@ async fn seed_equipment_for_wo(db: &DatabaseConnection) {
     .expect("seed equipment");
 }
 
-async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) {
+pub(super) async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) {
     seed_equipment_for_wo(db).await;
     let actor = db
         .query_one(Statement::from_sql_and_values(
@@ -1380,6 +1396,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             override_reason: Some("Emergency move".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: Some(APPROVER_PASSWORD.to_string()),
             bypass_availability: Some(true),
         },
     )
@@ -1512,7 +1529,7 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
 // ── Step A: load over working days, finished work, estimates, no-capacity days ───────────────
 
 /// An RFC 3339 instant for a local date-time (`YYYY-MM-DDTHH:MM`), as the planning screen sends it.
-fn local(at: &str) -> String {
+pub(super) fn local(at: &str) -> String {
     use chrono::TimeZone;
     let naive = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M").expect("local date-time");
     chrono::Local
@@ -1527,7 +1544,7 @@ fn day(d: &str) -> chrono::NaiveDate {
     chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").expect("day")
 }
 
-fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> CreateScheduleCommitmentInput {
+pub(super) fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> CreateScheduleCommitmentInput {
     CreateScheduleCommitmentInput {
         schedule_candidate_id: candidate_id,
         expected_candidate_row_version: None,
@@ -1835,6 +1852,7 @@ async fn a_break_in_can_unassign_the_technician() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await
@@ -2625,12 +2643,14 @@ async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
         .await
         .expect("commitment");
 
+    // An urgent break-in is signed by a second planner (D6).
+    let approver = signing_approver(&db, 94, "APPROVER-ACK").await;
     // Moved to 18:00–20:00, after the technician's shift.
     let break_in = |reason: Option<&str>, acknowledged: Vec<String>| CreateScheduleBreakInInput {
         schedule_commitment_id: commitment.id,
         expected_commitment_row_version: commitment.row_version,
         break_in_reason: "emergency".to_string(),
-        approved_by_user_id: None,
+        approved_by_user_id: Some(approver),
         new_slot_start: local("2026-05-04T18:00"),
         new_slot_end: local("2026-05-04T20:00"),
         new_assigned_team_id: Some(team_id),
@@ -2640,6 +2660,7 @@ async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
         override_reason: reason.map(str::to_string),
         acknowledged_assignee_issues: acknowledged,
         dangerous_override_reason: Some("Pump failure, line stopped".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.to_string()),
     };
     let refused = scheduling::create_schedule_break_in(&db, 1, break_in(Some("Night callout"), Vec::new()))
         .await
@@ -2723,13 +2744,13 @@ async fn an_older_commitment_counts_labour_per_person_or_is_reported_unknown() {
 
 // ── Step C: planning windows per site / equipment, reasons, qualifications of every job ──────
 
-async fn exec_sql(db: &DatabaseConnection, sql: &str) {
+pub(super) async fn exec_sql(db: &DatabaseConnection, sql: &str) {
     db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("{sql}: {e}"));
 }
 
-async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
+pub(super) async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
     db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .expect("query")
@@ -3399,6 +3420,7 @@ fn break_in_input(
         override_reason: None,
         acknowledged_assignee_issues: Vec::new(),
         dangerous_override_reason: dangerous_override_reason.map(str::to_string),
+        approver_password: None,
     }
 }
 
@@ -3430,8 +3452,8 @@ async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reaso
     .expect_err("blocking conflict on a break-in");
     assert!(format!("{refused:?}").contains("NO_FEASIBLE_WINDOW"), "{refused:?}");
 
-    // Forced with the dangerous-override reason: moved, recorded, and the bar stays critical.
-    scheduling::create_schedule_break_in(
+    // A dangerous-override reason alone no longer forces it: a second planner signs (Q1).
+    let unsigned = scheduling::create_schedule_break_in(
         &db,
         1,
         break_in_input(
@@ -3442,7 +3464,31 @@ async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reaso
         ),
     )
     .await
-    .expect("forced break-in");
+    .expect_err("forcing needs the signature");
+    assert!(
+        format!("{unsigned:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
+        "{unsigned:?}"
+    );
+    // Forced with the reason and the signature: moved, recorded, and the bar stays critical.
+    let approver = signing_approver(&db, 93, "APPROVER-FORCE").await;
+    let mut forced = break_in_input(
+        &commitment,
+        "2026-05-04T10:00",
+        "2026-05-04T11:00",
+        Some("Line stopped by the breakdown itself"),
+    );
+    forced.approved_by_user_id = Some(approver);
+    forced.approver_password = Some(APPROVER_PASSWORD.to_string());
+    let forced = scheduling::create_schedule_break_in(&db, 1, forced)
+        .await
+        .expect("forced break-in");
+    // The shutdown requirement blocks the job's readiness too: both forced checks are recorded.
+    assert!(
+        forced.forced_checks.contains(&"shutdown_window".to_string()),
+        "{:?}",
+        forced.forced_checks
+    );
+    assert!(forced.approver_signed_at.is_some(), "the signature is recorded");
     let moved = scheduling::list_schedule_commitments(
         &db,
         ScheduleCommitmentFilter {
@@ -3543,6 +3589,7 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
         let mut input = break_in_input(commitment, "2026-05-04T10:00", "2026-05-04T11:00", None);
         input.break_in_reason = "emergency".to_string();
         input.approved_by_user_id = Some(approver);
+        input.approver_password = Some(APPROVER_PASSWORD.to_string());
         input
     };
 
@@ -3595,7 +3642,7 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
 /// A planning site (a node whose type can own work) and a crew attached to it, with roster
 /// capacity. The site's week follows the seeded all-sites weekend (Friday-Saturday): Sunday to
 /// Saturday.
-async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
+pub(super) async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
     let _ = get_any_team_id(db).await;
     exec_sql(
         db,
@@ -3641,7 +3688,7 @@ async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
     (site, team)
 }
 
-fn week_ref(site: i64, day: &str, rv: Option<i64>) -> crate::planning::weekly_schedule::WeeklyScheduleRef {
+pub(super) fn week_ref(site: i64, day: &str, rv: Option<i64>) -> crate::planning::weekly_schedule::WeeklyScheduleRef {
     crate::planning::weekly_schedule::WeeklyScheduleRef {
         site_id: site,
         day: day.to_string(),
@@ -3829,6 +3876,7 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
         reason: "emergency".to_string(),
         approved_by_user_id: None,
         dangerous_override_reason: None,
+        approver_password: None,
     });
     let refused = scheduling::create_schedule_commitment(&db, 1, emergency.clone())
         .await
@@ -3837,10 +3885,26 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
         format!("{refused:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
         "{refused:?}"
     );
+    // A dangerous-override reason no longer stands in for the signature (D6).
     emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
         reason: "emergency".to_string(),
         approved_by_user_id: None,
         dangerous_override_reason: Some("Pump seized on line 2".to_string()),
+        approver_password: None,
+    });
+    let refused = scheduling::create_schedule_commitment(&db, 1, emergency.clone())
+        .await
+        .expect_err("urgent needs the signature");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
+        "{refused:?}"
+    );
+    let approver = signing_approver(&db, 91, "APPROVER-INSERT").await;
+    emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: Some(approver),
+        dangerous_override_reason: Some("Pump seized on line 2".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.to_string()),
     });
     let inserted = scheduling::create_schedule_commitment(&db, 1, emergency)
         .await
@@ -3873,14 +3937,15 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
             &db,
             &format!(
                 "SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {} AND kind = 'insert' \
-                   AND old_slot_start IS NULL AND old_slot_end IS NULL AND approved_by_user_id IS NULL \
+                   AND old_slot_start IS NULL AND old_slot_end IS NULL AND approved_by_user_id = {approver} \
+                   AND approver_signed_at IS NOT NULL AND forced_checks_json IS NULL \
                    AND override_reason = 'Pump seized on line 2'",
                 inserted.id
             )
         )
         .await,
         1,
-        "an inserted job has no old slot and no approver it did not have"
+        "an inserted job has no old slot, and its signer is recorded"
     );
     assert_eq!(
         scalar(
@@ -4888,10 +4953,12 @@ async fn planning_kpis_measure_the_frozen_baseline() {
         "2026-05-07T08:00",
         "2026-05-07T09:00",
     );
+    let approver = signing_approver(&db, 92, "APPROVER-KPI").await;
     urgent.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
         reason: "emergency".to_string(),
-        approved_by_user_id: None,
+        approved_by_user_id: Some(approver),
         dangerous_override_reason: Some("Line stopped".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.to_string()),
     });
     let urgent = scheduling::create_schedule_commitment(&db, actor, urgent)
         .await
@@ -4919,6 +4986,7 @@ async fn planning_kpis_measure_the_frozen_baseline() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await

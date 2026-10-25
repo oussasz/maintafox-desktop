@@ -751,8 +751,8 @@ pub struct UnfreezeDecisionInput {
     pub comment: Option<String>,
 }
 
-/// Approves or rejects a pending unfreeze. The decider holds plan.confirm (checked by the
-/// command) and is not the requester. Approved: the week's commitments are no longer frozen and
+/// Approves or rejects a pending unfreeze. The decider holds plan.confirm at the site (or
+/// plant-wide) and is not the requester. Approved: the week's commitments are no longer frozen and
 /// the week goes back to approved (or draft); freezing it again takes a new baseline.
 pub async fn decide_unfreeze(
     db: &DatabaseConnection,
@@ -779,6 +779,18 @@ pub async fn decide_unfreeze(
         return Err(org_validation_failed(
             "PLANNING_UNFREEZE_SAME_PERSON",
             "The unfreeze must be decided by another planner holding plan.confirm (four-eyes).",
+            HashMap::new(),
+        ));
+    }
+    // The decider holds plan.confirm at this site (or plant-wide), as the signer of a break-in
+    // (`planning::break_in_approval`), not only somewhere in the plant.
+    if !super::break_in_approval::break_in_approvers(&tx, Some(input.site_id))
+        .await?
+        .contains(&actor_id)
+    {
+        return Err(org_validation_failed(
+            "PLANNING_UNFREEZE_NOT_ALLOWED_AT_SITE",
+            "The unfreeze must be decided by a planner holding plan.confirm at this site.",
             HashMap::new(),
         ));
     }
@@ -1213,6 +1225,9 @@ pub(crate) async fn inbound_lifecycle_conflict(
 #[derive(Debug, Clone)]
 pub struct FrozenWeek {
     pub week_start: String,
+    /// When the week froze here (its `frozen_at`), or, for a week due to freeze but not frozen
+    /// yet, when it was due (`freeze_due_at`); `None` when not recorded.
+    pub frozen_at: Option<String>,
 }
 
 /// The week of the crew's planning site that `[start, end)` touches and that is frozen: frozen or
@@ -1244,6 +1259,7 @@ pub async fn frozen_week_for_slot(
     if let Some(schedule) = frozen_schedule_touching(db, site, start, end, None).await? {
         return Ok(Some(FrozenWeek {
             week_start: schedule.week_start,
+            frozen_at: schedule.frozen_at,
         }));
     }
     let (Some(slot_start), Some(slot_end)) = (
@@ -1269,9 +1285,11 @@ pub async fn frozen_week_for_slot(
         let never_frozen = load_schedule(db, site, week.week_start)
             .await?
             .is_none_or(|s| s.baseline_no == 0 && matches!(s.status.as_str(), STATUS_DRAFT | STATUS_APPROVED));
-        if never_frozen && freeze_due_at(db, &week).await? <= now {
+        let due = freeze_due_at(db, &week).await?;
+        if never_frozen && due <= now {
             return Ok(Some(FrozenWeek {
                 week_start: week.week_start.to_string(),
+                frozen_at: Some(rfc3339(due)),
             }));
         }
     }

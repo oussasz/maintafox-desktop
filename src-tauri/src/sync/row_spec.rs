@@ -661,6 +661,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.personnel_id", "personnel"),
             json_ref_hist("details_json", "$.break_in_id", "schedule_break_ins"),
             json_ref_hist("details_json", "$.approved_by_user_id", USER),
+            json_ref_hist("details_json", "$.requested_by_user_id", USER),
             json_ref_hist("details_json", "$.approved_by_personnel_id", "personnel"),
             json_ref_hist("details_json", "$.schedule_candidate_id", "schedule_candidates"),
             json_ref_hist("details_json", "$.team_id", "teams"),

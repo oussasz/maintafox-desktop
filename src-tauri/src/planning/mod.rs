@@ -1,5 +1,6 @@
 //! Planning and scheduling bounded context (PRD §6.16).
 
+pub mod break_in_approval;
 pub mod break_in_reasons;
 pub mod domain;
 pub mod kpis;

@@ -250,6 +250,21 @@ pub struct ScheduleBreakIn {
     pub approved_by_display_name: Option<String>,
     pub old_assignee_name: Option<String>,
     pub new_assignee_name: Option<String>,
+    /// When the approver's password was verified on the PC that recorded it (migration 260;
+    /// `None`: nobody signed, or recorded before 0.9.2).
+    pub approver_signed_at: Option<String>,
+    /// The blocking checks the break-in forced (`crew_capacity`, `locked_window`, `readiness`,
+    /// `shutdown_window`; empty: none, or not recorded before 0.9.2).
+    #[serde(default)]
+    pub forced_checks: Vec<String>,
+}
+
+/// A person who may sign a break-in of a crew (`planning::break_in_approval`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakInApproverOption {
+    pub user_id: i64,
+    pub display_name: String,
+    pub personnel_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +455,9 @@ pub struct CommitBreakIn {
     /// A code of the COMPANY list `PLANNING.BREAK_IN_REASONS`.
     pub reason: String,
     pub approved_by_user_id: Option<i64>,
+    /// The approver's password, typed by them on this PC to sign (never stored, logged or echoed).
+    #[serde(default)]
+    pub approver_password: Option<String>,
     pub dangerous_override_reason: Option<String>,
 }
 
@@ -491,6 +509,9 @@ pub struct CreateScheduleBreakInInput {
     pub bypass_availability: Option<bool>,
     pub override_reason: Option<String>,
     pub dangerous_override_reason: Option<String>,
+    /// The approver's password, typed by them on this PC to sign (never stored, logged or echoed).
+    #[serde(default)]
+    pub approver_password: Option<String>,
     /// The assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason:
     /// each refusal must be listed, so a reason given for one never covers another.
     #[serde(default)]
