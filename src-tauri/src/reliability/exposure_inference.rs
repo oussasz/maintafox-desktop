@@ -24,7 +24,11 @@ struct ScheduleShift {
 fn parse_dt_utc(raw: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw)
         .map(|d| d.with_timezone(&Utc))
-        .map_err(|e| AppError::ValidationFailed(vec![format!("invalid RFC3339 datetime '{raw}': {e}")]))
+        .map_err(|e| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REL_DATE_INVALID: invalid RFC3339 datetime '{raw}': {e}"
+            )])
+        })
 }
 
 fn parse_time(raw: &str) -> AppResult<NaiveTime> {

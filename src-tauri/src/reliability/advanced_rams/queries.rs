@@ -40,7 +40,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 fn parse_ts(s: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s.trim())
         .map(|d| d.with_timezone(&Utc))
-        .map_err(|e| AppError::ValidationFailed(vec![format!("invalid timestamp: {e}")]))
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_DATE_INVALID: invalid timestamp: {e}")]))
 }
 
 /// Exposure-hour time base marker persisted on `weibull_fit_results.time_base`.
@@ -440,10 +440,14 @@ fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {
 }
 
 fn validate_sod(s: i64, o: i64, d: i64) -> AppResult<()> {
-    for (name, v) in [("severity", s), ("occurrence", o), ("detectability", d)] {
+    for (name, code, v) in [
+        ("severity", "GATE_REL_SEVERITY_RANGE", s),
+        ("occurrence", "GATE_REL_OCCURRENCE_RANGE", o),
+        ("detectability", "GATE_REL_DETECTABILITY_RANGE", d),
+    ] {
         if !(1..=10).contains(&v) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "{name} must be 1-10, got {v}"
+                "{code}:value={v}: {name} must be 1-10, got {v}"
             )]));
         }
     }
@@ -627,7 +631,7 @@ pub async fn update_fmeca_analysis(
         .rows_affected();
     if n == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "fmeca_analyses update conflict.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: fmeca_analyses update conflict.".into(),
         ]));
     }
     let row = db
@@ -744,9 +748,11 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
     let ra = input.recommended_action.clone().unwrap_or_default();
     let cc = input.current_control.clone().unwrap_or_default();
     if let Some(id) = input.id {
-        let exp = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+        let exp = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
+            ])
+        })?;
         let n = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -794,7 +800,9 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
             .await?
             .rows_affected();
         if n == 0 {
-            return Err(AppError::ValidationFailed(vec!["fmeca_items update conflict.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: fmeca_items update conflict.".into(),
+            ]));
         }
     } else {
         if let Some(did) = input.source_ram_ishikawa_diagram_id {
@@ -807,7 +815,7 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
                 .await?;
             if d_exists.is_none() {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Ishikawa diagram not found (source_ram_ishikawa_diagram_id={did})."
+                    "GATE_REL_ISHIKAWA_UNKNOWN:diagram_id={did}: Ishikawa diagram not found (source_ram_ishikawa_diagram_id={did})."
                 )]));
             }
         }
@@ -1005,7 +1013,9 @@ pub async fn update_rcm_study(db: &DatabaseConnection, input: UpdateRcmStudyInpu
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["rcm_studies update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: rcm_studies update conflict.".into(),
+        ]));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -1097,7 +1107,7 @@ fn validate_tactic(t: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "selected_tactic must be one of {:?}",
+            "GATE_REL_TACTIC_INVALID: selected_tactic must be one of {:?}",
             RCM_TACTICS
         )]))
     }
@@ -1111,9 +1121,11 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
     let cc = input.consequence_category.clone().unwrap_or_default();
     let jus = input.justification.clone().unwrap_or_default();
     if let Some(id) = input.id {
-        let exp = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+        let exp = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
+            ])
+        })?;
         let n = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -1149,9 +1161,9 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
             .await?
             .rows_affected();
         if n == 0 {
-            return Err(AppError::ValidationFailed(
-                vec!["rcm_decisions update conflict.".into()],
-            ));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: rcm_decisions update conflict.".into(),
+            ]));
         }
     } else {
         let eid = format!("rcm_decision:{}", Uuid::new_v4());
@@ -1383,7 +1395,7 @@ async fn load_reliability_dashboard_policy(db: &DatabaseConnection) -> AppResult
     let pm_label: String = row.try_get("", "pm_label").map_err(|e| decode_err("pm_label", e))?;
     if !(0.0..=1.0).contains(&danger_threshold_r) || !(0.0..1.0).contains(&pm_threshold_r) {
         return Err(AppError::ValidationFailed(vec![
-            "reliability_dashboard_policies.danger_threshold_r must be in [0.0, 1.0], pm_threshold_r in (0.0, 1.0)"
+            "GATE_REL_DASHBOARD_THRESHOLDS_INVALID: reliability_dashboard_policies.danger_threshold_r must be in [0.0, 1.0], pm_threshold_r in (0.0, 1.0)"
                 .into(),
         ]));
     }
@@ -1925,9 +1937,11 @@ pub async fn upsert_ram_ishikawa_diagram(
     let now = Utc::now().to_rfc3339();
     let _ = _user_id;
     if let Some(id) = input.id {
-        let exp = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
+        let exp = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
+            ])
+        })?;
         let title = input.title.clone().unwrap_or_default();
         let n = db
             .execute(Statement::from_sql_and_values(
@@ -1950,7 +1964,7 @@ pub async fn upsert_ram_ishikawa_diagram(
             .rows_affected();
         if n == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "ram_ishikawa_diagrams update conflict.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: ram_ishikawa_diagrams update conflict.".into(),
             ]));
         }
     } else {

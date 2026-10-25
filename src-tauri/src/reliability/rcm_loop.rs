@@ -154,24 +154,30 @@ pub fn recommend_tactic(a: &RcmAnswers) -> RcmRecommendation {
 /// MIL-STD-1629A failure mode criticality `Cm = β · α · λp · t`.
 pub fn mode_criticality(beta: f64, alpha: f64, lambda_per_hour: f64, operating_hours: f64) -> AppResult<f64> {
     let checks = [
-        (beta, "effect probability β", 0.0, 1.0),
-        (alpha, "failure mode ratio α", 0.0, 1.0),
+        (
+            beta,
+            "effect probability β",
+            "GATE_REL_EFFECT_PROBABILITY_RANGE",
+            0.0,
+            1.0,
+        ),
+        (alpha, "failure mode ratio α", "GATE_REL_MODE_RATIO_RANGE", 0.0, 1.0),
     ];
-    for (v, name, lo, hi) in checks {
+    for (v, name, code, lo, hi) in checks {
         if !v.is_finite() || v < lo || v > hi {
             return Err(AppError::ValidationFailed(vec![format!(
-                "{name} must be between {lo} and {hi}."
+                "{code}: {name} must be between {lo} and {hi}."
             )]));
         }
     }
     if !lambda_per_hour.is_finite() || lambda_per_hour < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "failure rate λp must be a non-negative number of failures per hour.".into(),
+            "GATE_REL_LAMBDA_INVALID: failure rate λp must be a non-negative number of failures per hour.".into(),
         ]));
     }
     if !operating_hours.is_finite() || operating_hours <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "operating time t must be positive (hours).".into(),
+            "GATE_REL_OPERATING_TIME_INVALID: operating time t must be positive (hours).".into(),
         ]));
     }
     Ok(beta * alpha * lambda_per_hour * operating_hours)
@@ -323,19 +329,19 @@ pub async fn apply_rcm_decision_logic(
     ];
     if !allowed.contains(&selected.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unknown tactic '{selected}'."
+            "GATE_REL_TACTIC_INVALID: Unknown tactic '{selected}'."
         )]));
     }
     let justification = input.justification.as_deref().map(str::trim).unwrap_or("").to_string();
     if selected != rec.recommended_tactic && justification.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The decision logic recommends '{}': a justification is required to retain '{selected}'.",
+            "GATE_REL_TACTIC_JUSTIFICATION_REQUIRED: The decision logic recommends '{}': a justification is required to retain '{selected}'.",
             rec.recommended_tactic
         )]));
     }
     if rec.redesign_compulsory && selected != TACTIC_REDESIGN {
         return Err(AppError::ValidationFailed(vec![
-            "Redesign is compulsory: no task brings the safety or environmental risk to a tolerable level.".into(),
+            "GATE_REL_REDESIGN_COMPULSORY: Redesign is compulsory: no task brings the safety or environmental risk to a tolerable level.".into(),
         ]));
     }
     let txn = db.begin().await?;
@@ -434,7 +440,7 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
         ),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
+                "GATE_REL_LOOP_SOURCE_INVALID: source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
             )]))
         }
     };
@@ -477,13 +483,15 @@ pub async fn create_pm_revision_from_source(
     if let Some(tactic) = &ctx.tactic {
         if !PM_TACTICS.contains(&tactic.as_str()) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "A '{tactic}' decision is not carried out by preventive maintenance."
+                "GATE_REL_TACTIC_NOT_PM: A '{tactic}' decision is not carried out by preventive maintenance."
             )]));
         }
     }
     let note = input.change_note.trim();
     if note.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["A change note is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_CHANGE_NOTE_REQUIRED: A change note is required.".into(),
+        ]));
     }
     let latest = db
         .query_one(Statement::from_sql_and_values(
@@ -496,7 +504,7 @@ pub async fn create_pm_revision_from_source(
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "The PM plan has no version yet: create its first version in the PM module.".into(),
+                "GATE_PM_NO_VERSION_TO_REVISE: The PM plan has no version yet: create its first version in the PM module.".into(),
             ])
         })?;
     let get_s = |c: &str| -> AppResult<Option<String>> { latest.try_get("", c).map_err(|e| decode_err(c, e)) };
@@ -570,7 +578,7 @@ pub async fn create_pm_revision_from_source(
     };
     link.await.map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Draft version {} was created but could not be linked to its source: {e}",
+            "GATE_REL_PM_DRAFT_LINK_FAILED:version_no={0}: Draft version {0} was created but could not be linked to its source: {e}",
             version.version_no
         )])
     })?;
@@ -603,7 +611,7 @@ pub async fn create_wo_from_source(
     let ctx = load_source(db, &input.source_type, input.source_id).await?;
     if input.source_type == SOURCE_RCM_DECISION && ctx.tactic.as_deref() == Some(TACTIC_RUN_TO_FAILURE) {
         return Err(AppError::ValidationFailed(vec![
-            "A run-to-failure decision does not call for a work order.".into(),
+            "GATE_REL_RTF_NO_WORK_ORDER: A run-to-failure decision does not call for a work order.".into(),
         ]));
     }
     let title = input
@@ -614,7 +622,7 @@ pub async fn create_wo_from_source(
         .map_or_else(|| ctx.label.clone(), str::to_string);
     if title.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "A work order title is required.".into()
+            "GATE_REL_WO_TITLE_REQUIRED: A work order title is required.".into(),
         ]));
     }
     let wo = crate::wo::queries::create_work_order(
@@ -655,7 +663,7 @@ pub async fn create_wo_from_source(
     .await
     .map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Work order {} was created but could not be linked to its source: {e}",
+            "GATE_REL_WO_LINK_FAILED:wo_code={0}: Work order {0} was created but could not be linked to its source: {e}",
             wo.code
         )])
     })?;
@@ -787,7 +795,8 @@ pub async fn compute_fmeca_criticality(
     let evidence = fmeca_criticality_evidence(db, input.item_id).await?;
     let alpha = input.mode_ratio.or(evidence.mode_ratio).ok_or_else(|| {
         AppError::ValidationFailed(vec![
-            "No failure history for this failure mode: enter the failure mode ratio α.".into(),
+            "GATE_REL_MODE_RATIO_REQUIRED: No failure history for this failure mode: enter the failure mode ratio α."
+                .into(),
         ])
     })?;
     let lambda = input
@@ -795,7 +804,7 @@ pub async fn compute_fmeca_criticality(
         .or(evidence.failure_rate_per_hour)
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "No failure rate is known for this equipment: enter λp (failures per hour).".into(),
+                "GATE_REL_FAILURE_RATE_REQUIRED: No failure rate is known for this equipment: enter λp (failures per hour).".into(),
             ])
         })?;
     let cm = mode_criticality(input.effect_probability, alpha, lambda, input.operating_hours)?;

@@ -167,7 +167,9 @@ pub async fn update_mc_model(db: &DatabaseConnection, input: UpdateMcModelInput)
         vals.push(s.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -183,7 +185,9 @@ pub async fn update_mc_model(db: &DatabaseConnection, input: UpdateMcModelInput)
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["mc_models update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: mc_models update conflict.".into(),
+        ]));
     }
     load_mc_by_id(db, input.id).await
 }
@@ -214,13 +218,13 @@ pub async fn evaluate_mc_model(db: &DatabaseConnection, id: i64) -> AppResult<Mc
     let g = guardrails::load_guardrails(db).await?;
     if !g.monte_carlo_enabled {
         return Err(AppError::ValidationFailed(vec![
-            "Monte Carlo disabled by guardrails.".into()
+            "GATE_REL_MC_DISABLED: Monte Carlo disabled by guardrails.".into(),
         ]));
     }
     let m = load_mc_by_id(db, id).await?;
     if m.trials > g.mc_max_trials {
         return Err(AppError::ValidationFailed(vec![format!(
-            "trials {} exceeds mc_max_trials {}",
+            "GATE_REL_MC_TRIALS_LIMIT:trials={0},max={1}: trials {0} exceeds mc_max_trials {1}",
             m.trials, g.mc_max_trials
         )]));
     }
@@ -302,7 +306,9 @@ pub async fn update_markov_model(db: &DatabaseConnection, input: UpdateMarkovMod
         vals.push(s.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -318,9 +324,9 @@ pub async fn update_markov_model(db: &DatabaseConnection, input: UpdateMarkovMod
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(
-            vec!["markov_models update conflict.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: markov_models update conflict.".into(),
+        ]));
     }
     load_markov_by_id(db, input.id).await
 }
@@ -350,17 +356,18 @@ pub async fn delete_markov_model(db: &DatabaseConnection, id: i64) -> AppResult<
 pub async fn evaluate_markov_model(db: &DatabaseConnection, id: i64) -> AppResult<MarkovModel> {
     let g = guardrails::load_guardrails(db).await?;
     if !g.markov_enabled {
-        return Err(AppError::ValidationFailed(
-            vec!["Markov disabled by guardrails.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_MARKOV_DISABLED: Markov disabled by guardrails.".into(),
+        ]));
     }
     let m = load_markov_by_id(db, id).await?;
-    let spec: MarkovSpec = serde_json::from_str(&m.graph_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Markov graph_json: {e}")]))?;
+    let spec: MarkovSpec = serde_json::from_str(&m.graph_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!("GATE_REL_MARKOV_GRAPH_INVALID: Markov graph_json: {e}")])
+    })?;
     let n = spec.states.len() as i64;
     if n > g.markov_max_states {
         return Err(AppError::ValidationFailed(vec![format!(
-            "states {n} exceeds markov_max_states {}",
+            "GATE_REL_MARKOV_STATES_LIMIT:states={n},max={0}: states {n} exceeds markov_max_states {0}",
             g.markov_max_states
         )]));
     }
