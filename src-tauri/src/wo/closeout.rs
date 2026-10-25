@@ -1861,7 +1861,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         {
             let permit_type = permit_type.as_deref().unwrap_or("?");
             return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_REOPEN_RULE_RECHECK:rule={rule}:permit_type={permit_type}: The plant permit rule of this work \
+                "GATE_REOPEN_RULE_RECHECK:rule={rule},permit_type={permit_type}: The plant permit rule of this work \
                  order came from another PC; the plant applies rule {rule} ({permit_type} permit) here. Reopen it \
                  to planning."
             )]));

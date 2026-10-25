@@ -8308,6 +8308,15 @@ async fn a_received_weaker_type_is_never_reopened_to_execution_and_is_rechecked_
         format!("{refused:?}").contains("GATE_REOPEN_RULE_RECHECK"),
         "{refused:?}"
     );
+    // Both parameters reach the screen (the refusal's coded form, `errors::split_coded_refusal`).
+    let message = match &refused {
+        Err(crate::errors::AppError::ValidationFailed(issues)) => issues[0].clone(),
+        other => panic!("expected a validation refusal, got {other:?}"),
+    };
+    let (code, params) = crate::errors::split_coded_refusal(&message).expect("coded refusal");
+    assert_eq!(code, "GATE_REOPEN_RULE_RECHECK");
+    assert_eq!(params.get("rule").map(String::as_str), Some("CORRECTIVE_LOTO"));
+    assert_eq!(params.get("permit_type").map(String::as_str), Some("loto"));
     assert_eq!(
         rule_state(&db, "wo-c6s2").await,
         ruled("CORRECTIVE_LOTO", "hot_work"),
