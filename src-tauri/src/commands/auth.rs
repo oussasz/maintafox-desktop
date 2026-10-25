@@ -91,6 +91,15 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
                 },
             )
             .await;
+            // Its password change was refused on arrival (`sync::credential_check`): say so, the
+            // account cannot sign in here until an administrator sets a password.
+            if crate::sync::credential_check::password_withheld_on_arrival(&state.db, i64::from(user_id)).await? {
+                return Err(AppError::PasswordNotReceived(
+                    "PASSWORD_NOT_RECEIVED: le mot de passe de ce compte n'a pas été reçu sur ce poste ; \
+                     demandez à un administrateur de le définir."
+                        .into(),
+                ));
+            }
             return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
         }
         Some(h) => h,
