@@ -753,7 +753,6 @@ const SIGNED_OUT: LicenceCaller = LicenceCaller {
     may_administer: false,
     step_up: false,
 };
-const ADMINISTERED_REFUSAL: &str = "administered";
 
 /// A licence check result for `tenant` / `licence` on this machine, no terms stated.
 fn reconciliation(tenant: &str, licence: &str) -> String {
@@ -834,9 +833,7 @@ async fn l3_a_signed_out_keep_or_reduce_refresh_is_still_allowed() {
 #[tokio::test]
 async fn l3_a_signed_out_reset_is_refused() {
     let db = licensed_pc_with_unused_builtin_admin().await;
-    let err = authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect_err("pre-administered");
+    let err = authorize_signed_out_reset(&db).await.expect_err("pre-administered");
     assert_eq!(code_of(&err), Some("LICENSE_RESET_BUILTIN_ADMIN_PENDING"), "{err:?}");
 }
 
@@ -850,13 +847,8 @@ async fn l3_the_first_admin_is_still_allowed_and_replaces_the_builtin_account() 
     assert!(!builtin(&db).await.is_active, "the built-in account is retired");
     assert!(plant_has_administrator(&db).await.expect("check"));
     // Now an ordinary administered plant: the existing refusal applies.
-    let err = authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect_err("administered");
-    assert!(
-        matches!(&err, AppError::Auth(m) if m == ADMINISTERED_REFUSAL),
-        "{err:?}"
-    );
+    let err = authorize_signed_out_reset(&db).await.expect_err("administered");
+    assert_eq!(code_of(&err), Some("LICENSE_RESET_REQUIRES_ADMIN_SIGNIN"), "{err:?}");
 }
 
 /// The L3 limits need both conditions: without a stored claim (a true first start) or without the
@@ -865,15 +857,13 @@ async fn l3_the_first_admin_is_still_allowed_and_replaces_the_builtin_account() 
 async fn l3_does_not_apply_to_a_true_first_start() {
     // Built-in account, no claim.
     let db = crate::db::test_db::seeded().await;
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect("no claim: first start");
+    authorize_signed_out_reset(&db).await.expect("no claim: first start");
     // Claim, no built-in account (release install).
     let db = release_fresh_db().await;
     record_activation_claim_for_tests(&db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
+    authorize_signed_out_reset(&db)
         .await
         .expect("no built-in account: first start");
     apply_product_license_reconciliation_in(&db, SIGNED_OUT, &reconciliation("tenant-other", "lic-other"))
@@ -887,7 +877,7 @@ async fn l3_does_not_apply_to_a_true_first_start() {
         vec![],
     )
     .await;
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
+    authorize_signed_out_reset(&db)
         .await
         .expect("disabled built-in account");
 }
