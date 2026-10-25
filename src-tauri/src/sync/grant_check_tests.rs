@@ -1276,10 +1276,34 @@ async fn a_delegation_policy_is_checked_against_its_author() {
     let outcome = receive(&p.db, "delegated_admin_policies", "pol-worker", "upsert", by_worker).await;
     assert!(is_grant_conflict(&outcome), "author never held adm.roles: {outcome:?}");
 
+    // A policy made before 0.9.2 (no author) received during this PC's first download: applied and
+    // listed for the administrators.
+    let mut legacy = remote_policy(&p, "pol-legacy", r#"["inv"]"#, Some(p.manager)).await;
+    legacy.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-legacy", "upsert", legacy).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "first download: {outcome:?}");
+    assert!(
+        review_notices(&p.db)
+            .await
+            .iter()
+            .any(|n| n.contains("author not recorded")),
+        "listed for review"
+    );
+
+    // Once a complete pull is done, a new policy that names nobody is a conflict.
+    crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
+        .await
+        .expect("complete pull");
     let mut nobody = remote_policy(&p, "pol-nobody", r#"["inv"]"#, Some(p.manager)).await;
     nobody.remove("changed_by_sync_id");
     let outcome = receive(&p.db, "delegated_admin_policies", "pol-nobody", "upsert", nobody).await;
     assert!(is_grant_conflict(&outcome), "no author: {outcome:?}");
+
+    // The held policy received again unchanged, naming nobody: applied (nothing widened).
+    let mut same = by_manager.clone();
+    same.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", same).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "unchanged: {outcome:?}");
 
     // The held policy narrowed (a domain removed), by a version that names nobody: applied.
     let mut narrowed = by_manager.clone();
@@ -1289,9 +1313,20 @@ async fn a_delegation_policy_is_checked_against_its_author() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "narrowing: {outcome:?}");
 
     // Widened again (a domain added) with nobody named: a conflict.
-    let mut widened = by_manager;
+    let mut widened = by_manager.clone();
     widened.remove("changed_by_sync_id");
     widened.insert("allowed_domains_json".into(), r#"["inv","ot","di"]"#.into());
     let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", widened).await;
     assert!(is_grant_conflict(&outcome), "widening without an author: {outcome:?}");
+
+    // Step-up no longer required, by an author who never held adm.roles: a conflict.
+    let mut no_step_up = by_manager;
+    no_step_up.insert("allowed_domains_json".into(), r#"["inv"]"#.into());
+    no_step_up.insert("requires_step_up_for_publish".into(), 0.into());
+    no_step_up.insert("changed_by_sync_id".into(), "worker-sync".into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", no_step_up).await;
+    assert!(
+        is_grant_conflict(&outcome),
+        "step-up removed by a non-holder: {outcome:?}"
+    );
 }

@@ -67,7 +67,10 @@ mod tests {
     async fn a_repair_reseeds_this_pc_only_and_keeps_capture() {
         let db = crate::db::test_db::seeded().await;
         crate::sync::capture::install_capture_in(&db).await.expect("capture");
-        let triggers = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger'";
+        // Capture triggers only (`sync::capture`, prefix `sync_cap_`).
+        let triggers =
+            "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND substr(name, 1, 9) = 'sync_cap_'";
+        let journal = "SELECT COUNT(*) AS n FROM sync_capture_journal";
         let outbox = "SELECT COUNT(*) AS n FROM sync_outbox";
         let missing = "SELECT COUNT(*) AS n FROM permissions p WHERE p.is_system = 1 AND NOT EXISTS ( \
                          SELECT 1 FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
@@ -84,10 +87,12 @@ mod tests {
         .expect("lose one");
         assert_eq!(count(&db, missing).await, 1);
         let outbox_before = count(&db, outbox).await;
+        let journal_before = count(&db, journal).await;
 
         super::reseed_without_capture(&db).await.expect("repair");
 
         assert_eq!(count(&db, missing).await, 0, "baseline back");
+        assert_eq!(count(&db, journal).await, journal_before, "nothing captured");
         assert_eq!(count(&db, outbox).await, outbox_before, "nothing sent");
         assert_eq!(count(&db, triggers).await, triggers_before, "capture installed again");
     }

@@ -59,8 +59,10 @@
 //!
 //! A delegation policy (`delegated_admin_policies`) created or widened elsewhere names who did it
 //! (`changed_by_id`, migration 262) and is judged like a role permission, against `adm.roles`
-//! ([`delegation_policy_check`]); one that names nobody is a conflict for an administrator. A change
-//! that only narrows a held policy (domains removed, step-up required) is applied.
+//! ([`delegation_policy_check`]). One that names nobody (made before 0.9.2) is applied and listed in
+//! the review notice while this PC has not finished its first complete pull (the server already
+//! held it), and is a conflict for an administrator afterwards. A change that only narrows a held
+//! policy (domains removed, step-up required) is applied.
 
 use std::collections::BTreeSet;
 
@@ -685,12 +687,6 @@ async fn delegation_policy_check(
         return Ok(None);
     }
     let what = format!("delegation policy {entity_sync_id}");
-    let Some(author_sync) = field(received, "changed_by_sync_id") else {
-        return Ok(conflict(format!(
-            "{what}: a delegation of administration created or widened without saying who did it; not applied, \
-             for an administrator to decide"
-        )));
-    };
     let role_name = match field(received, "admin_role_sync_id") {
         Some(role_sync) => match role_named(conn, role_sync).await? {
             Some((name, _)) => name,
@@ -705,11 +701,37 @@ async fn delegation_policy_check(
         None => "?".to_string(),
     };
     let changed_at = field(received, "updated_at");
+    let domains =
+        policy_domains(received).map_or_else(|| "?".to_string(), |d| d.into_iter().collect::<Vec<_>>().join(", "));
+    let Some(author_sync) = field(received, "changed_by_sync_id") else {
+        // A policy made before 0.9.2 names nobody. During this PC's first download it is one the
+        // server already held: applied, and listed for the administrators. Afterwards it is a
+        // conflict; re-saving the policy on a PC that holds it records its author.
+        if !crate::sync::plant_join::complete_pull_done(conn).await? {
+            return accept_for_review(
+                conn,
+                ReviewItem {
+                    entity_type: "delegated_admin_policies",
+                    source: entity_sync_id.to_string(),
+                    line: format!(
+                        "{role_name} : délégation d'administration / delegated administration ({domains}), \
+                         auteur non enregistré / author not recorded, {}",
+                        day(changed_at)
+                    ),
+                },
+            )
+            .await;
+        }
+        return Ok(conflict(format!(
+            "{what}: a delegation of administration created or widened without saying who did it; not applied, \
+             for an administrator to decide (saving the policy again on a PC that holds it records its author)"
+        )));
+    };
     let review = ReviewItem {
         entity_type: "delegated_admin_policies",
         source: entity_sync_id.to_string(),
         line: format!(
-            "{role_name} : délégation d'administration / delegated administration, par / by {}, {}",
+            "{role_name} : délégation d'administration / delegated administration ({domains}), par / by {}, {}",
             person_label(conn, author_sync).await?,
             day(changed_at)
         ),
@@ -1195,10 +1217,18 @@ async fn grants_made_by(
                     'Mot de passe de / password of ' || COALESCE(pw.display_name, pw.username) AS line \
                FROM user_accounts pw \
               WHERE (pw.password_set_by_id = ? OR pw.password_changed_by_id = ?) AND pw.id <> ? \
+             UNION ALL \
+             SELECT dap.updated_at AS at, \
+                    r.name || ' : délégation d''administration / delegated administration ' \
+                      || dap.allowed_domains_json AS line \
+               FROM delegated_admin_policies dap JOIN roles r ON r.id = dap.admin_role_id \
+              WHERE dap.changed_by_id = ? \
               ORDER BY at",
             // Passwords of other accounts this person set (`sync::credential_check`), the account
-            // having changed it since included; their own password is not a grant.
+            // having changed it since included; their own password is not a grant. Delegation
+            // policies this person created or last changed (migration 262).
             [
+                user_id.into(),
                 user_id.into(),
                 user_id.into(),
                 user_id.into(),
@@ -1317,4 +1347,69 @@ pub(crate) async fn after_rights_change(
         false,
     )
     .await
+}
+
+#[cfg(test)]
+mod policy_widens_tests {
+    use super::{policy_widens, Payload};
+    use serde_json::json;
+
+    fn policy(fields: serde_json::Value) -> Payload {
+        let mut p: Payload = json!({
+            "entity_sync_id": "pol",
+            "admin_role_sync_id": "role-a",
+            "managed_scope_type": "tenant",
+            "allowed_domains_json": "[\"inv\",\"ot\"]",
+            "requires_step_up_for_publish": 1,
+            "changed_by_sync_id": "chef-sync",
+            "updated_at": "2026-10-25T08:00:00Z",
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        for (k, v) in fields.as_object().unwrap() {
+            p.insert(k.clone(), v.clone());
+        }
+        p
+    }
+
+    #[test]
+    fn what_gives_more_is_checked_and_what_narrows_is_not() {
+        let held = policy(json!({}));
+        assert!(policy_widens(None, &held), "new here");
+        assert!(!policy_widens(
+            Some(&held),
+            &policy(json!({"updated_at": "2026-10-26T08:00:00Z"}))
+        ));
+        assert!(!policy_widens(
+            Some(&held),
+            &policy(json!({"allowed_domains_json": "[\"inv\"]"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"allowed_domains_json": "[\"inv\",\"ot\",\"di\"]"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"allowed_domains_json": "not json"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"admin_role_sync_id": "role-b"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"managed_scope_type": "org_node"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"managed_scope_reference_sync_id": "site-1"}))
+        ));
+        assert!(policy_widens(
+            Some(&held),
+            &policy(json!({"requires_step_up_for_publish": 0}))
+        ));
+        let relaxed = policy(json!({"requires_step_up_for_publish": 0}));
+        assert!(!policy_widens(Some(&relaxed), &held), "step-up required again");
+    }
 }

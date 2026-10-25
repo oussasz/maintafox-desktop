@@ -8,8 +8,10 @@
 //! makes it wait for that author instead). The time is the row's own `updated_at`.
 //!
 //! Existing rows keep a NULL author ("not recorded"): no author is guessed from the admin ledger.
-//! They are already on every PC; only a later change travels, and it names its author. An
-//! already-present column is left alone (a re-run changes nothing).
+//! A later change names its author. A PC that downloads such a row during its first complete pull
+//! (a new or rebuilt PC) applies it and lists it for the administrators (`sync::grant_check`);
+//! saving the policy again on a PC that holds it records its author. An already-present column is
+//! left alone (a re-run changes nothing).
 //!
 //! Also: a PC already in service (it holds a sync checkpoint, so its first download finished under
 //! an earlier version) records that a complete pull is done (`sync::plant_join::
