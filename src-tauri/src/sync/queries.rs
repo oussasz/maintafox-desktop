@@ -138,6 +138,25 @@ fn settled_at_origin_conflict(conflict_type: &str) -> bool {
     SETTLED_AT_ORIGIN_CONFLICTS.contains(&conflict_type)
 }
 
+/// Whether `conflict` refuses a received history row (append-only: a count's stock movement or its
+/// audit link) as a record contradicting itself, and that row is not held here (review of
+/// ab58cd53, S-a). "Keep mine" would send a delete of that history row (there is no row here to
+/// send again) and "take theirs" judges it again (refused): only "dismiss" and "escalate" are
+/// accepted ([`resolve_sync_conflict`]).
+async fn refused_history_row_absent(conn: &impl ConnectionTrait, conflict: &SyncConflictRecord) -> AppResult<bool> {
+    if conflict.conflict_type != crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID
+        || registry::entity(&conflict.entity_type)
+            .is_none_or(|def| def.conflict_policy != registry::ConflictPolicy::AppendOnly)
+    {
+        return Ok(false);
+    }
+    Ok(
+        crate::permit::sync_check::local_wire(conn, &conflict.entity_type, &conflict.entity_sync_id)
+            .await?
+            .is_none(),
+    )
+}
+
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
     match action {
         "accept_local" => Some("resolved_local"),
@@ -1981,6 +2000,16 @@ pub async fn resolve_sync_conflict(
              (a second approval by another person, or the count's reversal); it closes by itself when that \
              arrives.",
             conflict.id
+        )]));
+    }
+
+    if !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) && refused_history_row_absent(&tx, &conflict).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} porte sur un enregistrement d'historique refusé, absent de \
+             ce poste : rien à garder ni à reprendre ; choisissez « Ignorer » avec le motif, ou « Escalader ». \
+             (Conflict {} is over a refused history record not held here: nothing to keep or take; dismiss it \
+             with the reason, or escalate it.)",
+            conflict.id, conflict.id
         )]));
     }
 
