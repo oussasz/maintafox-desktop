@@ -58,12 +58,18 @@ impl MigrationTrait for Migration {
             .await?
             .is_some();
         // The fact names the organisation the pull ran for (`plant_join::complete_pull_done`): the
-        // one of the current activation, the only one this checkpoint can belong to.
+        // one of the current activation (a PC re-activated into another organisation without a
+        // local data reset is then counted as pulled: received grants are judged, never taken
+        // unchecked, so that errs on the strict side). An unreadable licence state never stops the
+        // upgrade: nothing is recorded, and the PC's next complete pull records the fact.
         let tenant_id = if synced_before {
-            crate::commands::product_license::get_activation_claim_tenant_id(&txn)
-                .await
-                .map_err(|e| DbErr::Custom(format!("migration 262: activation: {e}")))?
-                .filter(|t| !t.trim().is_empty())
+            match crate::commands::product_license::get_activation_claim_tenant_id(&txn).await {
+                Ok(tenant) => tenant.filter(|t| !t.trim().is_empty()),
+                Err(e) => {
+                    tracing::warn!(error = %e, "migration 262: licence state unreadable; complete pull not recorded");
+                    None
+                }
+            }
         } else {
             None
         };
