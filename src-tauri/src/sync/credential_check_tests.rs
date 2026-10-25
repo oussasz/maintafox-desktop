@@ -1147,3 +1147,48 @@ async fn a_legitimate_chain_and_a_legacy_account_arrive_on_a_new_pc() {
     assert_eq!(hash(&c.db, "clerk").await.as_deref(), Some("x"));
     assert_eq!(audits(&c.db, PASSWORD_CHANGE_UNAUTHORISED).await, 0);
 }
+
+/// Staggered upgrade: a new account arrives on B from a PC A still before 0.9.2 (no root keys): B
+/// dates its password as migration 261 would. A is upgraded later (its migration dates it the same
+/// way) and the account changes its own password there (Profil): accepted on B.
+#[tokio::test]
+async fn a_new_account_from_an_older_version_is_dated_so_its_own_change_is_accepted_later() {
+    let b = plant().await;
+    let created_on_a = stamp(chrono::Duration::days(-3));
+    let mut old_row = remote_new_account(&b.db, "old-hire", None, &created_on_a).await;
+    for key in [AUTHOR, STATUS_AUTHOR, SET_BY, SET_AT] {
+        old_row.remove(key);
+    }
+    assert!(applied(
+        &receive(&b.db, "user_accounts", "old-hire-sync", old_row.clone()).await
+    ));
+    assert_eq!(hash(&b.db, "old-hire").await.as_deref(), Some(REMOTE_HASH));
+    assert_eq!(
+        scalar(
+            &b.db,
+            "SELECT COUNT(*) FROM user_accounts WHERE username = 'old-hire' AND password_set_by_id IS NULL \
+               AND password_set_at = password_changed_at",
+            vec![],
+        )
+        .await,
+        Some(1),
+        "dated like migration 261 dates it"
+    );
+
+    // A upgraded: migration 261 dated the password from its last change, naming nobody.
+    let mut on_a = old_row;
+    on_a.insert(AUTHOR.into(), Value::Null);
+    on_a.insert(STATUS_AUTHOR.into(), Value::Null);
+    on_a.insert(SET_BY.into(), Value::Null);
+    let dated = on_a.get("password_changed_at").cloned().expect("changed_at");
+    on_a.insert(SET_AT.into(), dated);
+    let changed = own_change(on_a, "old-hire", "hash-chosen-by-the-hire", &now());
+    assert!(applied(
+        &receive(&b.db, "user_accounts", "old-hire-sync", changed).await
+    ));
+    assert_eq!(
+        hash(&b.db, "old-hire").await.as_deref(),
+        Some("hash-chosen-by-the-hire")
+    );
+    assert_eq!(audits(&b.db, PASSWORD_CHANGE_UNAUTHORISED).await, 0);
+}

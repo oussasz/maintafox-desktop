@@ -307,6 +307,29 @@ fn same_root(held: &Payload, received: &Payload) -> bool {
     same_by && same_at
 }
 
+/// A new account received with a password but without its date (`password_set_at` absent or
+/// empty: sent by a PC still before 0.9.2) is dated as migration 261 dates the passwords it finds:
+/// its `password_changed_at`, else its `created_at`, its setter not recorded. That PC's own upgrade
+/// dates it the same way, so a later change of one's own password made there keeps a date this PC
+/// holds too (otherwise it would be refused here for ever). The built-in "admin" account is seeded
+/// on each PC with its own `created_at` (dev builds and versions before 0.9.0 only): its legacy
+/// dates may differ between PCs, which refuses its own changes (fails closed).
+fn date_undated_password(payload: &mut Payload) {
+    if field(payload, "password_hash").is_none() || field(payload, SET_AT_KEY).is_some() {
+        return;
+    }
+    let dated = field(payload, "password_changed_at")
+        .or_else(|| field(payload, "created_at"))
+        .map(str::to_string);
+    let Some(dated) = dated else {
+        return;
+    };
+    payload.insert(SET_AT_KEY.into(), Value::String(dated));
+    if !payload.contains_key(SET_BY_KEY) {
+        payload.insert(SET_BY_KEY.into(), Value::Null);
+    }
+}
+
 /// A received password change (see the module rule): its author, then who set the password it
 /// carries (the root a change of one's own password keeps).
 async fn judge_password(
@@ -461,6 +484,9 @@ pub(crate) async fn inbound_credential_check(
                 Verdict::Refuse(r) => refusals.push(r),
             }
         }
+    }
+    if held.is_none() {
+        date_undated_password(payload);
     }
     if refusals.is_empty() {
         return Ok(None);
