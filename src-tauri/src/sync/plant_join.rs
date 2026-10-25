@@ -44,8 +44,10 @@ pub const SERVER_CONFIRMED_NO_ACCOUNTS_KEY: &str = "server_confirmed_no_user_acc
 
 /// `system_config` key of "this PC has finished a complete pull" (value: the tenant id of the last
 /// one), accounts or not. Until then every account the server holds may still be on its way, a
-/// plant's several first administrators of older versions included (`sync::grant_check`). Erased
-/// by a local data reset with the accounts.
+/// plant's several first administrators of older versions included (`sync::grant_check`). A PC in
+/// service before 0.9.2 gets it from migration 262 (value `before-0.9.2`). Erased by a local data
+/// reset with the accounts; only its presence counts (the accounts it vouches for are those held
+/// here, whatever organisation the pull ran for).
 pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
 
 /// Whether the licence includes sync, i.e. this PC belongs to a plant it must join before a first

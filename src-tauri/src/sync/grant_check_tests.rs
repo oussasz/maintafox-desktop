@@ -1223,3 +1223,75 @@ async fn reactivating_through_the_commands_is_checked() {
     let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", edited).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
 }
+
+// ── Delegation policies (migration 262) ───────────────────────────────────────────────────────
+
+/// The wire form of a delegation policy made on another PC (`changed_by_id` its author), removed
+/// again so that it arrives as new.
+async fn remote_policy(p: &Plant, sync_id: &str, domains: &str, by: Option<i64>) -> Payload {
+    exec(
+        &p.db,
+        "INSERT INTO delegated_admin_policies (entity_sync_id, admin_role_id, managed_scope_type, \
+           allowed_domains_json, requires_step_up_for_publish, changed_by_id, updated_at) \
+         VALUES (?, ?, 'tenant', ?, 1, ?, ?)",
+        vec![
+            sync_id.into(),
+            p.operator.into(),
+            domains.into(),
+            by.into(),
+            now().into(),
+        ],
+    )
+    .await;
+    let row = payload(&p.db, "delegated_admin_policies", sync_id).await;
+    exec(
+        &p.db,
+        "DELETE FROM delegated_admin_policies WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await;
+    row
+}
+
+/// A policy created or widened elsewhere is judged against its author's `adm.roles`; one that names
+/// nobody is a conflict; one that only narrows a held policy is applied.
+#[tokio::test]
+async fn a_delegation_policy_is_checked_against_its_author() {
+    let p = plant().await;
+    let by_manager = remote_policy(&p, "pol-manager", r#"["inv","ot"]"#, Some(p.manager)).await;
+    let outcome = receive(
+        &p.db,
+        "delegated_admin_policies",
+        "pol-manager",
+        "upsert",
+        by_manager.clone(),
+    )
+    .await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "author holds adm.roles: {outcome:?}"
+    );
+
+    let by_worker = remote_policy(&p, "pol-worker", r#"["inv"]"#, Some(p.worker)).await;
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-worker", "upsert", by_worker).await;
+    assert!(is_grant_conflict(&outcome), "author never held adm.roles: {outcome:?}");
+
+    let mut nobody = remote_policy(&p, "pol-nobody", r#"["inv"]"#, Some(p.manager)).await;
+    nobody.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-nobody", "upsert", nobody).await;
+    assert!(is_grant_conflict(&outcome), "no author: {outcome:?}");
+
+    // The held policy narrowed (a domain removed), by a version that names nobody: applied.
+    let mut narrowed = by_manager.clone();
+    narrowed.remove("changed_by_sync_id");
+    narrowed.insert("allowed_domains_json".into(), r#"["inv"]"#.into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", narrowed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "narrowing: {outcome:?}");
+
+    // Widened again (a domain added) with nobody named: a conflict.
+    let mut widened = by_manager;
+    widened.remove("changed_by_sync_id");
+    widened.insert("allowed_domains_json".into(), r#"["inv","ot","di"]"#.into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", widened).await;
+    assert!(is_grant_conflict(&outcome), "widening without an author: {outcome:?}");
+}

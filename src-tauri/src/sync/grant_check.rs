@@ -57,8 +57,10 @@
 //! a delete) are listed in ONE review notice to the administrators
 //! (`settings::received_notice::send_grant_review_notice`). Nothing is ended or deleted silently.
 //!
-//! `delegated_admin_policies` records no author (no column names who created or widened a
-//! policy): it cannot be judged here (reported; adding the column is a schema change).
+//! A delegation policy (`delegated_admin_policies`) created or widened elsewhere names who did it
+//! (`changed_by_id`, migration 262) and is judged like a role permission, against `adm.roles`
+//! ([`delegation_policy_check`]); one that names nobody is a conflict for an administrator. A change
+//! that only narrows a held policy (domains removed, step-up required) is applied.
 
 use std::collections::BTreeSet;
 
@@ -625,8 +627,94 @@ pub(crate) async fn inbound_grant_check(
         "user_scope_assignments" => assignment_check(conn, entity_sync_id, received).await,
         "role_permissions" => role_permission_check(conn, received).await,
         "user_accounts" => account_check(conn, entity_sync_id, received).await,
+        "delegated_admin_policies" => delegation_policy_check(conn, entity_sync_id, received).await,
         _ => Ok(None),
     }
+}
+
+/// Domains of a policy (`allowed_domains_json`); `None` when unreadable.
+fn policy_domains(p: &Payload) -> Option<BTreeSet<String>> {
+    match p.get("allowed_domains_json")? {
+        Value::String(raw) => serde_json::from_str(raw).ok(),
+        Value::Array(_) => serde_json::from_value(p.get("allowed_domains_json")?.clone()).ok(),
+        _ => None,
+    }
+}
+
+/// Whether a received policy gives more than the one held here: new here, another role or scope
+/// (any field other than the domains, the step-up flag, the author and the bookkeeping), a domain
+/// added or unreadable, or step-up no longer required. Fail closed on anything unreadable.
+fn policy_widens(held: Option<&Payload>, received: &Payload) -> bool {
+    let Some(held) = held else {
+        return true;
+    };
+    const BOOKKEEPING: [&str; 5] = [
+        "allowed_domains_json",
+        "requires_step_up_for_publish",
+        "changed_by_sync_id",
+        "updated_at",
+        "row_version",
+    ];
+    if received
+        .iter()
+        .any(|(k, v)| !BOOKKEEPING.contains(&k.as_str()) && held.get(k) != Some(v))
+    {
+        return true;
+    }
+    if received.contains_key("allowed_domains_json") {
+        match (policy_domains(held), policy_domains(received)) {
+            (Some(h), Some(r)) if r.is_subset(&h) => {}
+            _ => return true,
+        }
+    }
+    received.contains_key("requires_step_up_for_publish")
+        && !truthy(received, "requires_step_up_for_publish")
+        && truthy(held, "requires_step_up_for_publish")
+}
+
+/// A received delegation policy that gives more than the one held here: its author
+/// (`changed_by_sync_id`) must have held `adm.roles` (the right of the screen) when it was made
+/// (`updated_at`); one that names nobody is a conflict.
+async fn delegation_policy_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<ApplyOutcome>> {
+    let held = crate::permit::sync_check::local_wire(conn, "delegated_admin_policies", entity_sync_id).await?;
+    if !policy_widens(held.as_ref(), received) {
+        return Ok(None);
+    }
+    let what = format!("delegation policy {entity_sync_id}");
+    let Some(author_sync) = field(received, "changed_by_sync_id") else {
+        return Ok(conflict(format!(
+            "{what}: a delegation of administration created or widened without saying who did it; not applied, \
+             for an administrator to decide"
+        )));
+    };
+    let role_name = match field(received, "admin_role_sync_id") {
+        Some(role_sync) => match role_named(conn, role_sync).await? {
+            Some((name, _)) => name,
+            None => {
+                return Ok(wait_for(
+                    "roles",
+                    role_sync,
+                    format!("{what}: role {role_sync} is not applied yet"),
+                ))
+            }
+        },
+        None => "?".to_string(),
+    };
+    let changed_at = field(received, "updated_at");
+    let review = ReviewItem {
+        entity_type: "delegated_admin_policies",
+        source: entity_sync_id.to_string(),
+        line: format!(
+            "{role_name} : délégation d'administration / delegated administration, par / by {}, {}",
+            person_label(conn, author_sync).await?,
+            day(changed_at)
+        ),
+    };
+    author_check(conn, &what, author_sync, ADM_ROLES, false, changed_at, Some(review)).await
 }
 
 /// A validity bound moved so that the assignment is in force longer: `earlier` for a start, else an

@@ -644,8 +644,8 @@ pub async fn create_delegation_policy(
             DbBackend::Sqlite,
             "INSERT INTO delegated_admin_policies \
              (admin_role_id, managed_scope_type, managed_scope_reference, \
-              allowed_domains_json, requires_step_up_for_publish) \
-             VALUES (?, ?, ?, ?, ?)",
+              allowed_domains_json, requires_step_up_for_publish, changed_by_id) \
+             VALUES (?, ?, ?, ?, ?, ?)",
             [
                 input.admin_role_id.into(),
                 input.managed_scope_type.clone().into(),
@@ -656,6 +656,8 @@ pub async fn create_delegation_policy(
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
                 domains_json.into(),
                 i32::from(input.requires_step_up_for_publish).into(),
+                // Checked on the other PCs (`sync::grant_check`, migration 262).
+                i64::from(caller.user_id).into(),
             ],
         ))
         .await?;
@@ -752,9 +754,13 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
             .db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE delegated_admin_policies SET allowed_domains_json = ?, \
+                "UPDATE delegated_admin_policies SET allowed_domains_json = ?, changed_by_id = ?, \
                  updated_at = datetime('now') WHERE id = ?",
-                [new_json.into(), input.policy_id.into()],
+                [
+                    new_json.into(),
+                    i64::from(caller.user_id).into(),
+                    input.policy_id.into(),
+                ],
             ))
             .await?;
         diff.insert(
@@ -771,9 +777,13 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
             .db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE delegated_admin_policies SET requires_step_up_for_publish = ?, \
+                "UPDATE delegated_admin_policies SET requires_step_up_for_publish = ?, changed_by_id = ?, \
                  updated_at = datetime('now') WHERE id = ?",
-                [i32::from(step_up).into(), input.policy_id.into()],
+                [
+                    i32::from(step_up).into(),
+                    i64::from(caller.user_id).into(),
+                    input.policy_id.into(),
+                ],
             ))
             .await?;
         diff.insert(
