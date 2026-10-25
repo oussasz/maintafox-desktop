@@ -30,7 +30,7 @@ use crate::errors::{AppError, AppResult};
 use crate::permit::sync_check::{conflict, field, local_wire, overlay, wait, Payload};
 use crate::settings::site::InboundVerdict;
 
-use super::break_in_approval::{break_in_approvers, team_planning_site};
+use super::break_in_approval::{break_in_approvers, holds_at_crew_sites, team_planning_site};
 
 /// Work entering a frozen week without its break-in (same code as the local refusal).
 pub(crate) const WEEK_FROZEN: &str = "PLANNING_WEEK_FROZEN";
@@ -89,52 +89,122 @@ fn slot_of(p: &Payload) -> (Option<String>, Option<String>, Option<String>) {
     )
 }
 
-/// A break-in of the commitment `sid` to the slot `[start, end)` applied here.
-async fn break_in_applied_here(conn: &impl ConnectionTrait, sid: &str, start: &str, end: &str) -> AppResult<bool> {
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT 1 AS m FROM schedule_break_ins sb JOIN schedule_commitments c ON c.id = sb.schedule_commitment_id \
-              WHERE c.entity_sync_id = ? AND julianday(sb.new_slot_start) = julianday(?) \
-                AND julianday(sb.new_slot_end) = julianday(?) LIMIT 1",
-            [sid.into(), start.into(), end.into()],
-        ))
+/// Code of a received planning row too malformed to be judged (no slot, no commitment).
+pub(crate) const INVALID_VALUE: &str = "INVALID_VALUE";
+
+/// The columns a break-in held here may still receive: the refusal marks a planner set on a PC
+/// that received it (CMMS Advisor decision 2026-10-25). Nothing else of a break-in ever changes.
+pub(crate) const REFUSAL_COLUMNS: &[&str] = &["sync_refused_at", "sync_refused_reason"];
+
+/// A break-in that would let commitment `sid` in at `[start, end)`: its new slot is that slot and,
+/// when the commitment is held here at `from`, its old slot is the slot held here (the move it
+/// describes, review S1: an older break-in to the same slot is never replayed). A break-in refused
+/// on a PC (`sync_refused_at`) never counts.
+struct Target<'a> {
+    sid: &'a str,
+    start: &'a str,
+    end: &'a str,
+    /// The commitment's slot here (`None`: new here).
+    from: Option<(&'a str, &'a str)>,
+}
+
+/// The break-ins applied here that match `t` (their payloads, as this PC would send them).
+async fn matching_here(conn: &impl ConnectionTrait, t: &Target<'_>) -> AppResult<Vec<(String, Payload)>> {
+    let mut sql = "SELECT sb.entity_sync_id AS sid FROM schedule_break_ins sb \
+                     JOIN schedule_commitments c ON c.id = sb.schedule_commitment_id \
+                    WHERE c.entity_sync_id = ? AND sb.sync_refused_at IS NULL \
+                      AND julianday(sb.new_slot_start) = julianday(?) AND julianday(sb.new_slot_end) = julianday(?)"
+        .to_string();
+    let mut values: Vec<sea_orm::Value> = vec![t.sid.into(), t.start.into(), t.end.into()];
+    if let Some((from_start, from_end)) = t.from {
+        sql.push_str(
+            " AND julianday(sb.old_slot_start) = julianday(?) AND julianday(sb.old_slot_end) = julianday(?)",
+        );
+        values.extend([from_start.into(), from_end.into()]);
+    }
+    sql.push_str(" ORDER BY sb.id DESC");
+    let mut out = Vec::new();
+    for r in conn
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?
-        .is_some())
+    {
+        let Some(sid) = r.try_get::<Option<String>>("", "sid").map_err(sync_err)? else {
+            continue;
+        };
+        if let Some(p) = local_wire(conn, "schedule_break_ins", &sid).await? {
+            out.push((sid, p));
+        }
+    }
+    Ok(out)
 }
 
-/// Inbox ids of the break-ins of the commitment `sid` to the slot `[start, end)` still waiting.
-async fn break_ins_waiting(conn: &impl ConnectionTrait, sid: &str, start: &str, end: &str) -> AppResult<Vec<i64>> {
+/// The break-ins waiting in the inbox that match `t`: inbox id, sync id and payload.
+async fn matching_waiting(conn: &impl ConnectionTrait, t: &Target<'_>) -> AppResult<Vec<(i64, String, Payload)>> {
     let commitment_key = key("schedule_commitment_id");
-    conn.query_all(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        format!(
-            "SELECT id FROM sync_inbox WHERE entity_type = 'schedule_break_ins' AND {WAITING} \
-               AND json_extract(payload_json, '$.{commitment_key}') = ? \
-               AND julianday(json_extract(payload_json, '$.new_slot_start')) = julianday(?) \
-               AND julianday(json_extract(payload_json, '$.new_slot_end')) = julianday(?) \
-             ORDER BY id"
-        ),
-        [sid.into(), start.into(), end.into()],
-    ))
-    .await?
-    .iter()
-    .map(|r| r.try_get::<i64>("", "id").map_err(sync_err))
-    .collect()
+    let mut sql = format!(
+        "SELECT id, entity_sync_id AS sid, payload_json FROM sync_inbox \
+          WHERE entity_type = 'schedule_break_ins' AND {WAITING} \
+            AND json_extract(payload_json, '$.{commitment_key}') = ? \
+            AND json_extract(payload_json, '$.sync_refused_at') IS NULL \
+            AND julianday(json_extract(payload_json, '$.new_slot_start')) = julianday(?) \
+            AND julianday(json_extract(payload_json, '$.new_slot_end')) = julianday(?)"
+    );
+    let mut values: Vec<sea_orm::Value> = vec![t.sid.into(), t.start.into(), t.end.into()];
+    if let Some((from_start, from_end)) = t.from {
+        sql.push_str(
+            " AND julianday(json_extract(payload_json, '$.old_slot_start')) = julianday(?) \
+              AND julianday(json_extract(payload_json, '$.old_slot_end')) = julianday(?)",
+        );
+        values.extend([from_start.into(), from_end.into()]);
+    }
+    sql.push_str(" ORDER BY id");
+    let mut out = Vec::new();
+    for r in conn
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?
+    {
+        let id: i64 = r.try_get("", "id").map_err(sync_err)?;
+        let sid: String = r.try_get("", "sid").map_err(sync_err)?;
+        let json: String = r.try_get("", "payload_json").map_err(sync_err)?;
+        if let Ok(Value::Object(p)) = serde_json::from_str::<Value>(&json) {
+            out.push((id, sid, p));
+        }
+    }
+    Ok(out)
 }
 
-/// The waiting break-ins of `sid` to `[start, end)` that can be applied with it now
-/// (`permit::sync_check::children`: admissible, nothing else missing), and why a matching one
-/// cannot be counted yet.
-async fn matching_children(
+/// What the matching break-ins of a commitment say.
+enum BreakInSupport {
+    /// A valid one is applied here: the commitment may enter.
+    Here,
+    /// Valid ones wait in the inbox and can be applied with it now (the group's rows).
+    Waiting(Vec<crate::permit::sync_check::GroupRow>),
+    /// A matching one needs another row first (its approver, crew, rights still arriving).
+    Wait(String),
+    /// None is valid: the refusal of the first one judged, or `None` when there is none.
+    None(Option<String>),
+}
+
+/// The matching break-ins of `t`, each judged ([`judge_break_in`]); `fallback_team`: the crew a
+/// break-in recorded before 0.9.2 (no crews on it) is judged at.
+async fn break_in_support(
     conn: &impl ConnectionTrait,
-    sid: &str,
-    start: &str,
-    end: &str,
-) -> AppResult<(Vec<crate::permit::sync_check::GroupRow>, Option<String>)> {
-    let matching = break_ins_waiting(conn, sid, start, end).await?;
-    if matching.is_empty() {
-        return Ok((Vec::new(), None));
+    t: &Target<'_>,
+    fallback_team: Option<i64>,
+) -> AppResult<BreakInSupport> {
+    let mut refused: Option<String> = None;
+    for (sid, p) in matching_here(conn, t).await? {
+        match judge_break_in(conn, &sid, &p, fallback_team).await? {
+            None => return Ok(BreakInSupport::Here),
+            Some(InboundVerdict::Defer(m)) => return Ok(BreakInSupport::Wait(m)),
+            Some(InboundVerdict::Conflict { code, message }) => {
+                refused.get_or_insert(format!("{code}: {message}"));
+            }
+        }
+    }
+    let waiting = matching_waiting(conn, t).await?;
+    if waiting.is_empty() {
+        return Ok(BreakInSupport::None(refused));
     }
     let children = crate::permit::sync_check::children(
         conn,
@@ -142,33 +212,105 @@ async fn matching_children(
         "schedule_commitments",
         "schedule_commitment_id",
         &key("schedule_commitment_id"),
-        sid,
+        t.sid,
     )
     .await?;
-    let counted: Vec<_> = children
-        .counted
-        .into_iter()
-        .filter(|row| matching.contains(&row.inbox_id()))
-        .collect();
-    let blocked = counted.is_empty().then(|| {
-        children
-            .blocked
-            .unwrap_or_else(|| format!("the break-in of commitment {sid} received with it cannot be applied yet"))
-    });
-    Ok((counted, blocked))
+    let mut valid = Vec::new();
+    let mut wait_for: Option<String> = None;
+    for (inbox_id, sid, p) in &waiting {
+        match judge_break_in(conn, sid, p, fallback_team).await? {
+            None => match children.counted.iter().find(|row| row.inbox_id() == *inbox_id) {
+                Some(row) => valid.push(row.clone()),
+                None => {
+                    wait_for.get_or_insert_with(|| {
+                        children.blocked.clone().unwrap_or_else(|| {
+                            format!("the break-in {sid} of commitment {} cannot be applied yet", t.sid)
+                        })
+                    });
+                }
+            },
+            Some(InboundVerdict::Defer(m)) => {
+                wait_for.get_or_insert(m);
+            }
+            Some(InboundVerdict::Conflict { code, message }) => {
+                refused.get_or_insert(format!("{code}: {message}"));
+            }
+        }
+    }
+    Ok(if !valid.is_empty() {
+        BreakInSupport::Waiting(valid)
+    } else if let Some(m) = wait_for {
+        BreakInSupport::Wait(m)
+    } else {
+        BreakInSupport::None(refused)
+    })
 }
 
-/// A reopening of the week starting `week_start` (draft or approved again) waiting in the inbox.
-async fn reopening_waiting(conn: &impl ConnectionTrait, week_start: &str) -> AppResult<bool> {
+/// The commitment's slot here, its local crew id and the received crew's local id.
+struct CommitmentContext {
+    local: Option<Payload>,
+    merged: Payload,
+    start: String,
+    end: String,
+    team: Option<i64>,
+}
+
+async fn commitment_context(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Result<CommitmentContext, InboundVerdict>> {
+    let local = local_wire(conn, "schedule_commitments", entity_sync_id).await?;
+    let merged = overlay(local.as_ref(), received);
+    let (Some(start), Some(end), team_sync) = slot_of(&merged) else {
+        return Ok(Err(InboundVerdict::Conflict {
+            code: INVALID_VALUE,
+            message: format!("commitment {entity_sync_id} received without its slot"),
+        }));
+    };
+    let team = match team_sync.as_deref() {
+        Some(team_sync) => match local_id(conn, "teams", team_sync).await? {
+            Some(team) => Some(team),
+            None => return Ok(Err(InboundVerdict::Defer(format!("crew {team_sync} is not applied yet")))),
+        },
+        None => None,
+    };
+    Ok(Ok(CommitmentContext {
+        local,
+        merged,
+        start,
+        end,
+        team,
+    }))
+}
+
+impl CommitmentContext {
+    fn target<'a>(&'a self, sid: &'a str) -> Target<'a> {
+        Target {
+            sid,
+            start: &self.start,
+            end: &self.end,
+            from: self.local.as_ref().and_then(|l| {
+                Some((field(l, "committed_start")?, field(l, "committed_end")?))
+            }),
+        }
+    }
+}
+
+/// A reopening of the week starting `week_start` of the site `site_sync` (draft or approved again)
+/// waiting in the inbox (review N11: the site too).
+async fn reopening_waiting(conn: &impl ConnectionTrait, week_start: &str, site: i64) -> AppResult<bool> {
+    let site_key = key("entity_id");
     Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
                 "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'weekly_schedules' AND {WAITING} \
                    AND json_extract(payload_json, '$.week_start') = ? \
+                   AND json_extract(payload_json, '$.{site_key}') = (SELECT entity_sync_id FROM org_nodes WHERE id = ?) \
                    AND json_extract(payload_json, '$.status') IN ('draft', 'approved') LIMIT 1"
             ),
-            [week_start.into()],
+            [week_start.into(), site.into()],
         ))
         .await?
         .is_some())
@@ -180,27 +322,24 @@ pub(crate) async fn inbound_commitment_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    let local = local_wire(conn, "schedule_commitments", entity_sync_id).await?;
-    let merged = overlay(local.as_ref(), received);
+    let ctx = match commitment_context(conn, entity_sync_id, received).await? {
+        Ok(ctx) => ctx,
+        Err(verdict) => return Ok(Some(verdict)),
+    };
     // Released or cancelled: leaving the schedule is not entering a week.
-    if field(&merged, "status") != Some("committed") {
+    if field(&ctx.merged, "status") != Some("committed") {
         return Ok(None);
     }
-    let (Some(start), Some(end), team_sync) = slot_of(&merged) else {
-        return Ok(None);
-    };
-    let moved = local.as_ref().is_none_or(|l| slot_of(l) != slot_of(&merged));
-    let frozen_here = local.as_ref().and_then(|l| field(l, "frozen_at")).is_some();
-    let unfrozen = frozen_here && field(&merged, "frozen_at").is_none();
+    let local = ctx.local.as_ref();
+    let moved = local.is_none_or(|l| slot_of(l) != slot_of(&ctx.merged));
+    let frozen_here = local.and_then(|l| field(l, "frozen_at")).is_some();
+    let unfrozen = frozen_here && field(&ctx.merged, "frozen_at").is_none();
     if !moved && !unfrozen {
         return Ok(None);
     }
-    let frozen_week = match team_sync.as_deref() {
-        Some(team_sync) => {
-            let Some(team) = local_id(conn, "teams", team_sync).await? else {
-                return wait(format!("crew {team_sync} is not applied yet"));
-            };
-            super::weekly_schedule::frozen_week_for_slot(conn, team, &start, &end, Utc::now()).await?
+    let frozen_week = match ctx.team {
+        Some(team) => {
+            super::weekly_schedule::frozen_week_for_slot(conn, team, &ctx.start, &ctx.end, Utc::now()).await?
         }
         None => None,
     };
@@ -208,19 +347,15 @@ pub(crate) async fn inbound_commitment_check(
         .or_else(|| field(received, "created_at"))
         .unwrap_or("not recorded")
         .to_string();
+    let (start, end) = (&ctx.start, &ctx.end);
     if moved && (frozen_week.is_some() || frozen_here) {
-        if break_in_applied_here(conn, entity_sync_id, &start, &end).await? {
-            return Ok(None);
-        }
-        let (counted, blocked) = matching_children(conn, entity_sync_id, &start, &end).await?;
-        if !counted.is_empty() {
-            // Applied with it, and judged (`commitment_group`).
-            return Ok(None);
-        }
-        if let Some(blocked) = blocked {
+        let refused = match break_in_support(conn, &ctx.target(entity_sync_id), ctx.team).await? {
+            // Applied with it, and judged again (`commitment_group`), or applied here and valid.
+            BreakInSupport::Here | BreakInSupport::Waiting(_) => return Ok(None),
             // Its break-in is in the inbox but needs another row first: a bounded wait.
-            return wait(blocked);
-        }
+            BreakInSupport::Wait(m) => return wait(m),
+            BreakInSupport::None(refused) => refused,
+        };
         let (week, frozen_at) = match &frozen_week {
             Some(w) => (
                 w.week_start.clone(),
@@ -229,16 +364,19 @@ pub(crate) async fn inbound_commitment_check(
             None => (
                 "of its current slot".to_string(),
                 local
-                    .as_ref()
                     .and_then(|l| field(l, "frozen_at"))
                     .unwrap_or("not recorded")
                     .to_string(),
             ),
         };
+        let why = match refused {
+            Some(r) => format!("its break-in is refused ({r})"),
+            None => "without its break-in".to_string(),
+        };
         return conflict(
             WEEK_FROZEN,
             format!(
-                "commitment {entity_sync_id} enters the frozen week {week} ({start} -> {end}) without its break-in; \
+                "commitment {entity_sync_id} enters the frozen week {week} ({start} -> {end}) {why}; \
                  changed on its PC at {sent_at} (that PC's clock), week frozen here at {frozen_at}"
             ),
         );
@@ -246,11 +384,17 @@ pub(crate) async fn inbound_commitment_check(
     let Some(week) = frozen_week.filter(|_| unfrozen) else {
         return Ok(None);
     };
-    if reopening_waiting(conn, &week.week_start).await? {
-        return wait(format!(
-            "the reopening of the week {} is still in the inbox",
-            week.week_start
-        ));
+    let site = match ctx.team {
+        Some(team) => team_planning_site(conn, team).await?,
+        None => None,
+    };
+    if let Some(site) = site {
+        if reopening_waiting(conn, &week.week_start, site).await? {
+            return wait(format!(
+                "the reopening of the week {} is still in the inbox",
+                week.week_start
+            ));
+        }
     }
     conflict(
         WEEK_FROZEN,
@@ -263,26 +407,26 @@ pub(crate) async fn inbound_commitment_check(
     )
 }
 
-/// The waiting break-ins of a received commitment that match its slot, applied right after it in
-/// its transaction (a break-in refused by its own check refuses the commitment too).
+/// The waiting, valid break-ins of a received commitment that match its move, applied right after
+/// it in its transaction (each is judged again by its own check there).
 pub(crate) async fn commitment_group(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<crate::permit::sync_check::Group>> {
-    let local = local_wire(conn, "schedule_commitments", entity_sync_id).await?;
-    let merged = overlay(local.as_ref(), received);
-    let (Some(start), Some(end), _) = slot_of(&merged) else {
+    let Ok(ctx) = commitment_context(conn, entity_sync_id, received).await? else {
         return Ok(None);
     };
-    let (counted, _) = matching_children(conn, entity_sync_id, &start, &end).await?;
-    if counted.is_empty() {
+    if field(&ctx.merged, "status") != Some("committed") {
         return Ok(None);
     }
+    let BreakInSupport::Waiting(rows) = break_in_support(conn, &ctx.target(entity_sync_id), ctx.team).await? else {
+        return Ok(None);
+    };
     Ok(Some(crate::permit::sync_check::Group::new(
         entity_sync_id.to_string(),
-        local.as_ref().and_then(|l| field(l, "status")).map(str::to_string),
-        counted,
+        ctx.local.as_ref().and_then(|l| field(l, "status")).map(str::to_string),
+        rows,
         true,
         None,
     )))
@@ -294,13 +438,23 @@ pub(crate) async fn inbound_break_in_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    // Append-only: a break-in held here is never changed.
+    // Append-only: a break-in held here only ever receives its refusal marks
+    // (`refusal_marks_only`, applied by `sync::apply_hooks::adopt_existing_append_only`); any other
+    // rewrite is skipped by the apply.
     if local_id(conn, "schedule_break_ins", entity_sync_id).await?.is_some() {
+        return Ok(None);
+    }
+    // A break-in refused on another PC is kept as history: it never counts as valid
+    // (`matching_here` / `matching_waiting`), so it is not judged.
+    if field(received, "sync_refused_at").is_some() {
         return Ok(None);
     }
     let commitment_key = key("schedule_commitment_id");
     let Some(commitment_sync) = field(received, &commitment_key) else {
-        return Ok(None);
+        return conflict(
+            INVALID_VALUE,
+            format!("break-in {entity_sync_id} received without its commitment"),
+        );
     };
     let team: Option<i64> = conn
         .query_one(Statement::from_sql_and_values(
@@ -314,6 +468,48 @@ pub(crate) async fn inbound_break_in_check(
         .flatten();
     if local_id(conn, "schedule_commitments", commitment_sync).await?.is_none() {
         return wait(format!("commitment {commitment_sync} is not applied yet"));
+    }
+    judge_break_in(conn, entity_sync_id, received, team).await
+}
+
+/// Whether a received break-in differs from the one held here only by refusal marks it did not
+/// have here (CMMS Advisor decision 2026-10-25): those marks are applied, nothing else.
+pub(crate) async fn refusal_marks_only(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<bool> {
+    let Some(local) = local_wire(conn, "schedule_break_ins", entity_sync_id).await? else {
+        return Ok(false);
+    };
+    if field(&local, "sync_refused_at").is_some() || field(received, "sync_refused_at").is_none() {
+        return Ok(false);
+    }
+    // Every other value the received row carries is the one held here.
+    Ok(received.iter().all(|(k, v)| {
+        REFUSAL_COLUMNS.contains(&k.as_str())
+            || matches!(k.as_str(), "row_version" | "updated_at")
+            || local.get(k).is_none_or(|held| held == v)
+    }))
+}
+
+/// The four-eyes rules of a break-in (received, or held here and relied on again): an urgent one
+/// (or one whose reason this PC does not know), or one that forced a blocking check, names an
+/// approver; a named approver is not the requester, signed with a password, is linked to a
+/// personnel record here and holds plan.confirm at the sites of the crews the break-in names
+/// (the crew it goes to and the crew it leaves; `fallback_team` for a break-in recorded before
+/// 0.9.2 without them), here, now.
+pub(crate) async fn judge_break_in(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+    fallback_team: Option<i64>,
+) -> AppResult<Option<InboundVerdict>> {
+    if field(received, "sync_refused_at").is_some() {
+        return conflict(
+            BREAK_IN_UNSIGNED,
+            format!("break-in {entity_sync_id} was refused on a PC that received it"),
+        );
     }
     // A reason this PC does not know is judged as urgent (fail closed).
     let reason = field(received, "break_in_reason").unwrap_or_default();
@@ -359,11 +555,37 @@ pub(crate) async fn inbound_break_in_check(
     let Some(approver) = local_id(conn, "user_accounts", approver_sync).await? else {
         return wait(format!("approver {approver_sync} is not applied yet"));
     };
-    let site = match team {
-        Some(team) => team_planning_site(conn, team).await?,
-        None => None,
+    // The approver is a person of the plant here (review N10).
+    let linked = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS l FROM user_accounts WHERE id = ? AND personnel_id IS NOT NULL",
+            [approver.into()],
+        ))
+        .await?
+        .is_some();
+    if !linked {
+        return conflict(
+            BREAK_IN_APPROVER_UNAUTHORISED,
+            format!("break-in {entity_sync_id} is approved by an account linked to no personnel record here"),
+        );
+    }
+    // The crews the break-in names (review S2), else the commitment's crew.
+    let mut crews: Vec<i64> = Vec::new();
+    for column in ["new_team_id", "old_team_id"] {
+        if let Some(team_sync) = field(received, &key(column)) {
+            match local_id(conn, "teams", team_sync).await? {
+                Some(team) => crews.push(team),
+                None => return wait(format!("crew {team_sync} is not applied yet")),
+            }
+        }
+    }
+    let allowed = match (crews.first(), fallback_team) {
+        (Some(team), _) => holds_at_crew_sites(conn, approver, *team, crews.get(1).copied()).await?,
+        (None, Some(team)) => holds_at_crew_sites(conn, approver, team, None).await?,
+        (None, None) => break_in_approvers(conn, None).await?.contains(&approver),
     };
-    if !break_in_approvers(conn, site).await?.contains(&approver) {
+    if !allowed {
         if crate::permit::sync_check::rights_may_still_arrive(
             conn,
             approver_sync,
@@ -376,7 +598,8 @@ pub(crate) async fn inbound_break_in_check(
         return conflict(
             BREAK_IN_APPROVER_UNAUTHORISED,
             format!(
-                "break-in {entity_sync_id} is approved by someone who does not hold plan.confirm at the crew's site here"
+                "break-in {entity_sync_id} is approved by someone who does not hold plan.confirm at the site of each \
+                 crew it names, here"
             ),
         );
     }
@@ -556,14 +779,13 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
         let Ok(Value::Object(received)) = serde_json::from_str::<Value>(&payload) else {
             continue;
         };
-        let local = local_wire(db, "schedule_commitments", &sid).await?;
-        let merged = overlay(local.as_ref(), &received);
-        let (Some(start), Some(end), _) = slot_of(&merged) else {
+        let Ok(ctx) = commitment_context(db, &sid, &received).await? else {
             continue;
         };
-        if !break_in_applied_here(db, &sid, &start, &end).await?
-            && break_ins_waiting(db, &sid, &start, &end).await?.is_empty()
-        {
+        // Only a break-in of this very move (review S1), not refused anywhere, is worth a retry; the
+        // retry judges it again (review S2).
+        let target = ctx.target(&sid);
+        if matching_here(db, &target).await?.is_empty() && matching_waiting(db, &target).await?.is_empty() {
             continue;
         }
         let Some(item) = crate::sync::materialize::load_inbox_row(db, inbox_id).await? else {

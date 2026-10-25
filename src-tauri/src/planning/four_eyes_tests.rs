@@ -972,3 +972,58 @@ async fn work_taken_from_another_crew_is_signed_by_a_holder_at_both_sites() {
         .expect("signed at both sites");
     assert_eq!((created.old_team_id, created.new_team_id), (Some(crew_x), Some(crew_y)));
 }
+
+#[tokio::test]
+async fn an_older_break_in_to_the_same_slot_is_never_replayed() {
+    let r = received_setup("FE12").await;
+    // Here: moved into the frozen week (F1), then on to F2, each by a signed break-in.
+    let c = r.commitment.clone();
+    let first = scheduling::create_schedule_break_in(
+        &r.db,
+        1,
+        signed(
+            move_input(&c, "emergency", "2026-05-06T08:00", "2026-05-06T09:00"),
+            r.approver,
+            APPROVER_PASSWORD,
+        ),
+    )
+    .await
+    .expect("to F1");
+    let rv = scalar(
+        &r.db,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", c.id),
+    )
+    .await;
+    let mut at_f1 = c.clone();
+    at_f1.row_version = rv;
+    at_f1.committed_start = first.new_slot_start.clone();
+    at_f1.committed_end = first.new_slot_end.clone();
+    scheduling::create_schedule_break_in(
+        &r.db,
+        1,
+        signed(
+            move_input(&at_f1, "emergency", "2026-05-07T08:00", "2026-05-07T09:00"),
+            r.approver,
+            APPROVER_PASSWORD,
+        ),
+    )
+    .await
+    .expect("to F2");
+    // A version back at F1 with no new break-in: the break-in to F1 described another move.
+    let back = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_break_in_refused_on_a_pc_never_lets_its_commitment_in() {
+    let r = received_setup("FE13").await;
+    let bi = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |p| {
+        p.insert("sync_refused_at".into(), "2026-05-05T10:00:00Z".into());
+        p.insert("sync_refused_reason".into(), "PLANNING_BREAK_IN_SELF_APPROVAL — re-planned here".into());
+    });
+    inbox(&r.db, "schedule_break_ins", "recv-bi-fe13", &bi).await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+}
