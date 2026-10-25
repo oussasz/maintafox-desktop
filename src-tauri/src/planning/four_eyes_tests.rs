@@ -1130,3 +1130,223 @@ async fn a_reopened_week_conflict_closes_when_its_decision_arrives() {
         1
     );
 }
+
+/// The open conflict of a row: id and row version.
+async fn open_conflict_of(db: &DatabaseConnection, sid: &str) -> (i64, i64) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, row_version FROM sync_conflicts WHERE entity_sync_id = ? \
+               AND status IN ('new', 'triaged', 'escalated') ORDER BY id DESC LIMIT 1",
+            [sid.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("open conflict");
+    (row.try_get("", "id").expect("id"), row.try_get("", "row_version").expect("rv"))
+}
+
+async fn resolve(
+    db: &DatabaseConnection,
+    user: i64,
+    sid: &str,
+    action: &str,
+) -> crate::errors::AppResult<crate::sync::domain::SyncConflictRecord> {
+    let (id, rv) = open_conflict_of(db, sid).await;
+    crate::sync::queries::resolve_sync_conflict(
+        db,
+        user,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id: id,
+            expected_row_version: rv,
+            action: action.to_string(),
+            resolution_note: Some("Re-planned here with a fresh signed break-in".to_string()),
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn keeping_the_plan_cancels_a_refused_new_commitment_and_sends_it_never_a_delete() {
+    let r = received_setup("FE16").await;
+    // A commitment made on another PC: its real payload, then not held here.
+    let other = wo_commitment(&r.db, r.team, "FE16 other PC", "2026-05-14T08:00", "2026-05-14T09:00").await;
+    let sid = sync_id(&r.db, "schedule_commitments", other.id).await;
+    let mut p = payload(&r.db, "schedule_commitments", &sid).await;
+    exec_sql(&r.db, &format!("DELETE FROM schedule_change_log WHERE commitment_id = {}", other.id)).await;
+    exec_sql(&r.db, &format!("DELETE FROM schedule_commitments WHERE id = {}", other.id)).await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    p.insert("committed_start".into(), local("2026-05-06T10:00").into());
+    p.insert("committed_end".into(), local("2026-05-06T11:00").into());
+    inbox(&r.db, "schedule_commitments", &sid, &p).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("pass");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{sid}' AND conflict_type = 'PLANNING_WEEK_FROZEN'"
+            )
+        )
+        .await,
+        1
+    );
+
+    // Neither dismissed nor taken, nor kept by someone without plan.confirm at the crew's site.
+    let err = resolve(&r.db, r.approver, &sid, "dismiss").await.expect_err("no dismiss");
+    assert!(code_of(&err).contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"), "{err:?}");
+    let err = resolve(&r.db, r.approver, &sid, "accept_remote").await.expect_err("never taken");
+    assert!(code_of(&err).contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"), "{err:?}");
+    let windows = windows_only_user(&r.db, 195, "FE16-WIN").await;
+    let err = resolve(&r.db, windows, &sid, "accept_local").await.expect_err("no right");
+    assert!(code_of(&err).contains("GATE_SYNC_KEEP_PLAN_NOT_ALLOWED"), "{err:?}");
+
+    resolve(&r.db, r.approver, &sid, "accept_local").await.expect("kept");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE entity_sync_id = '{sid}' AND status = 'cancelled' \
+                   AND status_reason LIKE 'refusé (sync)%' AND status_changed_by_id = {}",
+                r.approver
+            )
+        )
+        .await,
+        1,
+        "stored here cancelled, by the deciding planner"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{sid}' AND operation IN ('delete', 'archive')")
+        )
+        .await,
+        0,
+        "never a delete"
+    );
+    assert!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{sid}' AND status = 'pending' \
+                   AND json_extract(payload_json, '$.status') = 'cancelled'"
+            )
+        )
+        .await
+            >= 1,
+        "the cancelled version is sent"
+    );
+    assert_eq!(
+        scalar(&r.db, "SELECT COUNT(*) FROM audit_events WHERE action_code = 'sync.conflict_resolved'").await,
+        1,
+        "the choice is audited"
+    );
+
+    // On the PC that made it, that cancelled version applies over the committed one.
+    let mut cancelled = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
+    cancelled.insert("status".into(), "cancelled".into());
+    cancelled.insert("status_reason".into(), "refusé (sync) : PLANNING_WEEK_FROZEN — test".into());
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, cancelled).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!("SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND status = 'cancelled'", r.commitment.id)
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn keeping_the_plan_marks_a_refused_new_break_in_and_its_origin_takes_the_marks() {
+    let r = received_setup("FE17").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let creator = r.break_in_template.get("created_by_sync_id").cloned().expect("creator");
+    let bi = r.break_in("2026-05-12T10:00", "2026-05-12T11:00", |p| {
+        p.insert("approved_by_user_sync_id".into(), creator);
+    });
+    inbox(&r.db, "schedule_break_ins", "recv-bi-fe17", &bi).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("pass");
+    resolve(&r.db, r.approver, "recv-bi-fe17", "accept_local").await.expect("kept");
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = 'recv-bi-fe17' \
+               AND sync_refused_at IS NOT NULL AND sync_refused_reason LIKE 'refusé (sync)%'"
+        )
+        .await,
+        1,
+        "stored here, marked refused"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = 'recv-bi-fe17' AND operation IN ('delete', 'archive')"
+        )
+        .await,
+        0
+    );
+    assert!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = 'recv-bi-fe17' AND status = 'pending' \
+               AND json_extract(payload_json, '$.sync_refused_at') IS NOT NULL"
+        )
+        .await
+            >= 1,
+        "the refused version is sent"
+    );
+
+    // The PC holding a break-in takes its refusal marks, and nothing else.
+    let held: String = r
+        .db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM schedule_break_ins WHERE sync_refused_at IS NULL ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await
+        .expect("q")
+        .expect("row")
+        .try_get("", "entity_sync_id")
+        .expect("sid");
+    let mut rewritten = payload(&r.db, "schedule_break_ins", &held).await;
+    rewritten.insert("override_reason".into(), "rewritten by a peer".into());
+    receive(&r.db, "schedule_break_ins", &held, rewritten).await;
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = '{held}' \
+                   AND override_reason = 'rewritten by a peer'"
+            )
+        )
+        .await,
+        0,
+        "any other change is skipped"
+    );
+    let mut marked = payload(&r.db, "schedule_break_ins", &held).await;
+    marked.insert("sync_refused_at".into(), "2026-05-05T10:00:00Z".into());
+    marked.insert(
+        "sync_refused_reason".into(),
+        "refusé (sync) : PLANNING_BREAK_IN_SELF_APPROVAL — test".into(),
+    );
+    let outcome = receive(&r.db, "schedule_break_ins", &held, marked).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = '{held}' AND sync_refused_at IS NOT NULL"
+            )
+        )
+        .await,
+        1,
+        "the refusal marks are taken"
+    );
+}

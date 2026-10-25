@@ -1001,3 +1001,188 @@ async fn audit_closed(
     )
     .await;
 }
+
+// ── "Keep this PC's plan" (CMMS Advisor decision 2026-10-25) ─────────────────────────────────
+
+/// The planning four-eyes conflict codes (`resolve_sync_conflict` offers only "keep this PC's
+/// plan" and "escalate" on them).
+pub(crate) const PLANNING_CONFLICTS: &[&str] = &[
+    WEEK_FROZEN,
+    BREAK_IN_APPROVAL_REQUIRED,
+    BREAK_IN_SELF_APPROVAL,
+    BREAK_IN_APPROVER_UNAUTHORISED,
+    BREAK_IN_UNSIGNED,
+    WEEK_UNFREEZE_UNDECIDED,
+    WEEK_UNFREEZE_SAME_PERSON,
+    WEEK_UNFREEZE_UNAUTHORISED,
+];
+
+fn keep_refused(message: String) -> AppError {
+    AppError::ValidationFailed(vec![message])
+}
+
+/// The crews a planning conflict is decided at: the crew of the received row and of the row held
+/// here (a commitment), the crews a break-in names (else its commitment's crew here).
+async fn conflict_crews(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    received: &Payload,
+    local: Option<&Payload>,
+) -> AppResult<Vec<i64>> {
+    fn push(crews: &mut Vec<i64>, team: Option<i64>) {
+        if let Some(team) = team {
+            if !crews.contains(&team) {
+                crews.push(team);
+            }
+        }
+    }
+    let mut crews = Vec::new();
+    let team_of = |p: &Payload, column: &str| field(p, &key(column)).map(str::to_string);
+    match entity_type {
+        "schedule_commitments" => {
+            for p in [Some(received), local].into_iter().flatten() {
+                if let Some(team_sync) = team_of(p, "assigned_team_id") {
+                    push(&mut crews, local_id(conn, "teams", &team_sync).await?);
+                }
+            }
+        }
+        "schedule_break_ins" => {
+            for column in ["new_team_id", "old_team_id"] {
+                if let Some(team_sync) = team_of(received, column) {
+                    push(&mut crews, local_id(conn, "teams", &team_sync).await?);
+                }
+            }
+            if crews.is_empty() {
+                if let Some(commitment) = field(received, &key("schedule_commitment_id")) {
+                    let team: Option<i64> = conn
+                        .query_one(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "SELECT assigned_team_id FROM schedule_commitments WHERE entity_sync_id = ?",
+                            [commitment.into()],
+                        ))
+                        .await?
+                        .map(|r| r.try_get::<Option<i64>>("", "assigned_team_id").map_err(sync_err))
+                        .transpose()?
+                        .flatten();
+                    push(&mut crews, team);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(crews)
+}
+
+/// "Keep this PC's plan" on a planning four-eyes conflict, before the generic keep
+/// (`sync::conflicts::keep_local_version`, which then sends this PC's version):
+/// - the person holds plan.confirm at the site of every crew involved (a week: its site here);
+/// - a commitment refused while new here is stored here cancelled ("refusé (sync)", by this
+///   person, now), a break-in refused while new here is stored here marked refused: that version is
+///   what is sent, so every PC ends with the same row (never a delete);
+/// - a row held here is simply sent again (a week stays frozen; its unfreeze event stays history).
+pub(crate) async fn keep_planning_plan(
+    conn: &impl ConnectionTrait,
+    conflict: &crate::sync::domain::SyncConflictRecord,
+    user_id: i64,
+    reason: &str,
+) -> AppResult<()> {
+    let received: Payload = conflict
+        .inbound_payload_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str::<Value>(j).ok())
+        .and_then(|v| match v {
+            Value::Object(m) => Some(m),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let entity_type = conflict.entity_type.as_str();
+    let sid = conflict.entity_sync_id.as_str();
+    let local = local_wire(conn, entity_type, sid).await?;
+
+    // Who may keep the plan: plan.confirm at each site involved.
+    let allowed = if entity_type == "weekly_schedules" {
+        let site: Option<i64> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT entity_id FROM weekly_schedules WHERE entity_sync_id = ? \
+                    OR (week_start = ? AND entity_id = (SELECT id FROM org_nodes WHERE entity_sync_id = ?)) \
+                  ORDER BY (entity_sync_id = ?) DESC LIMIT 1",
+                [
+                    sid.into(),
+                    field(&received, "week_start").map(str::to_string).into(),
+                    field(&received, &key("entity_id")).map(str::to_string).into(),
+                    sid.into(),
+                ],
+            ))
+            .await?
+            .map(|r| r.try_get::<i64>("", "entity_id").map_err(sync_err))
+            .transpose()?;
+        break_in_approvers(conn, site).await?.contains(&user_id)
+    } else {
+        let crews = conflict_crews(conn, entity_type, &received, local.as_ref()).await?;
+        match crews.as_slice() {
+            [] => break_in_approvers(conn, None).await?.contains(&user_id),
+            [team, rest @ ..] => {
+                let mut ok = holds_at_crew_sites(conn, user_id, *team, None).await?;
+                for other in rest {
+                    ok = ok && holds_at_crew_sites(conn, user_id, *other, None).await?;
+                }
+                ok
+            }
+        }
+    };
+    if !allowed {
+        return Err(keep_refused(
+            "GATE_SYNC_KEEP_PLAN_NOT_ALLOWED: Keeping this PC's plan needs plan.confirm at the site of each crew \
+             involved."
+                .to_string(),
+        ));
+    }
+    if local.is_some() || entity_type == "weekly_schedules" {
+        return Ok(());
+    }
+
+    // Absent here: stored here in its refused form, then sent as this PC's version.
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let refusal = format!("refusé (sync) : {} — {reason}", conflict.conflict_type);
+    let mut refused = received.clone();
+    match entity_type {
+        "schedule_commitments" => {
+            let user_sync = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+                    [user_id.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<Option<String>>("", "entity_sync_id").ok().flatten());
+            refused.insert("status".into(), "cancelled".into());
+            refused.insert("status_reason".into(), refusal.into());
+            refused.insert("status_changed_at".into(), now.clone().into());
+            refused.insert(key("status_changed_by_id"), user_sync.map_or(Value::Null, Value::from));
+            refused.insert("frozen_at".into(), Value::Null);
+        }
+        "schedule_break_ins" => {
+            refused.insert("sync_refused_at".into(), now.clone().into());
+            refused.insert("sync_refused_reason".into(), refusal.into());
+        }
+        _ => return Ok(()),
+    }
+    let version = conflict.inbound_row_version.unwrap_or(1);
+    match crate::sync::materialize::apply_inbound_payload(
+        conn,
+        entity_type,
+        sid,
+        "upsert",
+        version,
+        &Value::Object(refused).to_string(),
+    )
+    .await?
+    {
+        crate::sync::materialize::ApplyOutcome::Applied | crate::sync::materialize::ApplyOutcome::Unchanged => Ok(()),
+        crate::sync::materialize::ApplyOutcome::Deferred { message, .. }
+        | crate::sync::materialize::ApplyOutcome::Conflict { message, .. } => Err(keep_refused(format!(
+            "GATE_SYNC_KEEP_PLAN_NOT_YET: The refused version cannot be recorded here yet: {message}"
+        ))),
+    }
+}

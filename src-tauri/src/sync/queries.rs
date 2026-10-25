@@ -88,6 +88,7 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
+        t if planning_conflict(t) => ("local", true, "accept_local", "manual_review_required"),
         t if settled_at_origin_conflict(t) => ("remote", true, "escalate", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
@@ -98,23 +99,21 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
 /// received end again, "take theirs" would drop this PC's unsent permit changes and put back the
 /// recorded version; only "dismiss" (with its reason, once the work is stopped) and "escalate" are
 /// accepted ([`resolve_sync_conflict`]).
-///
-/// The planning four-eyes conflicts (`planning::sync_check`, CMMS Advisor Q2-Q4) are review-only
-/// too: a commitment entering a frozen week is let in by its signed break-in (the conflict then
-/// closes by itself, audited) or planned again here as a break-in; a break-in or an unfreeze that
-/// fails the four-eyes rule is never taken as received.
 const REVIEW_ONLY_CONFLICTS: &[&str] = &[
     crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
     crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
-    crate::planning::sync_check::WEEK_FROZEN,
-    crate::planning::sync_check::BREAK_IN_APPROVAL_REQUIRED,
-    crate::planning::sync_check::BREAK_IN_SELF_APPROVAL,
-    crate::planning::sync_check::BREAK_IN_APPROVER_UNAUTHORISED,
-    crate::planning::sync_check::BREAK_IN_UNSIGNED,
-    crate::planning::sync_check::WEEK_UNFREEZE_UNDECIDED,
-    crate::planning::sync_check::WEEK_UNFREEZE_SAME_PERSON,
-    crate::planning::sync_check::WEEK_UNFREEZE_UNAUTHORISED,
 ];
+
+/// Actions accepted on a planning four-eyes conflict (`planning::sync_check::PLANNING_CONFLICTS`,
+/// CMMS Advisor decision 2026-10-25): "keep this PC's plan" (by a planner holding plan.confirm at
+/// the site of each crew involved, with the reason, audited; a refused row new here is kept in its
+/// refused form and sent, never deleted) and "escalate". Nothing is ever taken as received, and
+/// nothing is dismissed: a legitimate change is redone here with a fresh signed break-in.
+const PLANNING_ACTIONS: &[&str] = &["accept_local", "escalate"];
+
+fn planning_conflict(conflict_type: &str) -> bool {
+    crate::planning::sync_check::PLANNING_CONFLICTS.contains(&conflict_type)
+}
 
 /// Actions accepted on a [`REVIEW_ONLY_CONFLICTS`] conflict.
 const REVIEW_ONLY_ACTIONS: &[&str] = &["dismiss", "escalate"];
@@ -1992,6 +1991,13 @@ pub async fn resolve_sync_conflict(
         )]));
     }
 
+    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan              (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone here              with a fresh signed break-in.",
+            conflict.id
+        )]));
+    }
+
     if settled_at_origin_conflict(&conflict.conflict_type)
         && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
     {
@@ -2016,7 +2022,14 @@ pub async fn resolve_sync_conflict(
     // The person's choice is applied to the data in the same transaction as the status change.
     let mut renumbered = None;
     match input.action.as_str() {
-        "accept_local" => crate::sync::conflicts::keep_local_version(&tx, &conflict).await?,
+        "accept_local" => {
+            // A planning four-eyes refusal: the right at the site, and a refused row new here stored
+            // in its refused form before it is sent (`planning::sync_check::keep_planning_plan`).
+            if planning_conflict(&conflict.conflict_type) {
+                crate::planning::sync_check::keep_planning_plan(&tx, &conflict, user_id, &reason).await?;
+            }
+            crate::sync::conflicts::keep_local_version(&tx, &conflict).await?
+        }
         "accept_remote" => crate::sync::conflicts::take_remote_version(&tx, &conflict).await?,
         "renumber_local" => renumbered = crate::sync::code_clash::renumber_local_record(&tx, &conflict).await?,
         _ => {}
