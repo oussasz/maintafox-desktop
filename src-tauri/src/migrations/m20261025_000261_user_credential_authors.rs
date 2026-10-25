@@ -13,9 +13,15 @@
 //!
 //! The authors are references to `user_accounts` (sent as `password_changed_by_sync_id`,
 //! `password_set_by_sync_id` and `status_changed_by_sync_id`; soft in `sync::row_spec`: a change of
-//! one's own password names the row itself). Existing rows keep NULL ("not recorded"): no author is
-//! guessed from the ledgers.
-//! Already-present columns are left alone (a re-run changes nothing).
+//! one's own password names the row itself). Existing rows keep NULL authors ("not recorded"): no
+//! author is guessed from the ledgers. An existing password is dated, though: `password_set_at`
+//! takes its `password_changed_at` (its `created_at` when the password was never changed; both are
+//! the same on every PC that holds that password), `password_set_by_id` staying NULL ("set before
+//! 0.9.2, setter not recorded"). A change of one's own password that keeps that date is accepted on
+//! the other PCs; one carrying another date with nobody named is not (a reset made on a PC still
+//! before 0.9.2, carried over by its upgrade: `sync::credential_check`).
+//! Already-present columns are left alone and only undated passwords are dated (a re-run changes
+//! nothing).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
@@ -57,6 +63,11 @@ impl MigrationTrait for Migration {
                     .await?;
             }
         }
+        txn.execute_unprepared(
+            "UPDATE user_accounts SET password_set_at = COALESCE(password_changed_at, created_at) \
+              WHERE password_hash IS NOT NULL AND password_set_at IS NULL AND password_set_by_id IS NULL",
+        )
+        .await?;
         txn.commit().await
     }
 
@@ -70,11 +81,33 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::sync::row_layout::{Role, Target};
-    use crate::sync::test_support::{scalar_i64, started_db, started_db_before_migration};
+    use crate::sync::test_support::{exec, scalar_i64, started_db, started_db_before_migration};
 
     #[tokio::test]
     async fn an_upgraded_database_keeps_its_passwords_and_sends_both_authors_as_account_links() {
         let db = started_db_before_migration("m20261025_000261_user_credential_authors").await;
+        // Accounts as an earlier version leaves them: a password changed on a date, one never
+        // changed since its creation, and an account without a password (SSO).
+        for (sync_id, hash, changed_at) in [
+            ("legacy-changed", Some("h1"), Some("2026-05-01T08:00:00Z")),
+            ("legacy-never-changed", Some("h2"), None),
+            ("legacy-sso", None, None),
+        ] {
+            exec(
+                &db,
+                "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, is_active, \
+                   is_admin, force_password_change, password_changed_at, failed_login_attempts, created_at, \
+                   updated_at, row_version) \
+                 VALUES (?, ?, 'local', ?, 1, 0, 0, ?, 0, '2026-04-01T08:00:00Z', '2026-04-01T08:00:00Z', 1)",
+                vec![
+                    sync_id.into(),
+                    sync_id.into(),
+                    hash.map(str::to_string).into(),
+                    changed_at.map(str::to_string).into(),
+                ],
+            )
+            .await;
+        }
         let hashes = "SELECT COUNT(*) FROM user_accounts WHERE password_hash IS NOT NULL";
         let before = scalar_i64(&db, "SELECT COUNT(*) FROM user_accounts", vec![]).await;
         let hashed = scalar_i64(&db, hashes, vec![]).await;
@@ -84,12 +117,7 @@ mod tests {
             before
         );
         assert_eq!(scalar_i64(&db, hashes, vec![]).await, hashed, "passwords kept");
-        for column in [
-            "password_changed_by_id",
-            "status_changed_by_id",
-            "password_set_by_id",
-            "password_set_at",
-        ] {
+        for column in ["password_changed_by_id", "status_changed_by_id", "password_set_by_id"] {
             assert_eq!(
                 scalar_i64(
                     &db,
@@ -101,6 +129,32 @@ mod tests {
                 "{column}: not recorded, never guessed"
             );
         }
+        // A password is dated by when it was set (else created), its setter not recorded; an account
+        // without a password stays undated.
+        let set_at = |sync_id: &'static str| {
+            let db = db.clone();
+            async move {
+                scalar_i64(
+                    &db,
+                    "SELECT COUNT(*) FROM user_accounts WHERE entity_sync_id = ? AND password_set_at IS NOT NULL \
+                       AND password_set_at = COALESCE(password_changed_at, created_at)",
+                    vec![sync_id.into()],
+                )
+                .await
+            }
+        };
+        assert_eq!(set_at("legacy-changed").await, 1);
+        assert_eq!(set_at("legacy-never-changed").await, 1);
+        assert_eq!(set_at("legacy-sso").await, 0);
+        assert_eq!(
+            scalar_i64(
+                &db,
+                "SELECT COUNT(*) FROM user_accounts WHERE password_hash IS NULL AND password_set_at IS NOT NULL",
+                vec![],
+            )
+            .await,
+            0
+        );
         // Run again: nothing changes.
         crate::migrations::Migrator::up(&db, None)
             .await

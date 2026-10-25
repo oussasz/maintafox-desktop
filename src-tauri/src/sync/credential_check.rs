@@ -293,6 +293,20 @@ fn root_changed(held: Option<&Payload>, received: &Payload) -> bool {
             && instant_text_differs(field(held, SET_AT_KEY), field(received, SET_AT_KEY)))
 }
 
+/// The received root is the one held here: the same `password_set_by` (both naming nobody counts
+/// as the same) **and** the same `password_set_at`, which must be there on both sides. A root
+/// naming nobody is only trusted with the very date this PC holds (migration 261 dates every
+/// password set before 0.9.2): any other date may be a reset made by a version that did not record
+/// who made it.
+fn same_root(held: &Payload, received: &Payload) -> bool {
+    let same_by = field(received, SET_BY_KEY) == field(held, SET_BY_KEY);
+    let same_at = match (field(held, SET_AT_KEY), field(received, SET_AT_KEY)) {
+        (Some(h), Some(r)) => !instant_text_differs(Some(h), Some(r)),
+        _ => false,
+    };
+    same_by && same_at
+}
+
 /// A received password change (see the module rule): its author, then who set the password it
 /// carries (the root a change of one's own password keeps).
 async fn judge_password(
@@ -352,19 +366,24 @@ async fn judge_password(
         Named::Nobody => None,
         Named::Author(r) => Some(r),
     };
-    if !root_changed(held, received) {
-        // The root this PC holds: judged when it arrived, set here, or older than the upgrade.
+    if held.is_some_and(|h| same_root(h, received)) {
+        // The root this PC holds: judged when it arrived, set here, or set before 0.9.2 (dated by
+        // migration 261) and untouched since.
         return Ok(Verdict::Accept);
     }
     let set_at = field(received, SET_AT_KEY);
     match root {
+        // Names nobody, with another date than the one held here: set by a version that does not
+        // record who set it (a reset on a PC still before 0.9.2, carried over by its upgrade).
         None if is_held => Ok(refusal(
             Kind::Password,
-            Reason::NoAuthor,
+            Reason::OlderVersion,
             None,
             set_at.or(at),
-            format!("{account}: the row does not say who set the password"),
+            format!("{account}: the password was set where it is not recorded who set it"),
         )),
+        // A new account: a password set before 0.9.2 names nobody; legacy accounts must still
+        // arrive (the new-account rule of the module).
         None => Ok(Verdict::Accept),
         // Its own root (the first administrator, a vendor recovery account).
         Some(r) if r == entity_sync_id => Ok(Verdict::Accept),

@@ -52,12 +52,15 @@ async fn user(db: &DatabaseConnection, username: &str) -> i64 {
         db,
         "INSERT INTO user_accounts \
          (entity_sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin, \
-          force_password_change, password_changed_at, failed_login_attempts, created_at, updated_at, row_version) \
-         VALUES (?, ?, ?, 'local', 'x', 1, 0, 0, ?, 0, ?, ?, 1)",
+          force_password_change, password_changed_at, password_set_at, failed_login_attempts, created_at, \
+          updated_at, row_version) \
+         VALUES (?, ?, ?, 'local', 'x', 1, 0, 0, ?, ?, 0, ?, ?, 1)",
+        // A password set before 0.9.2, as migration 261 leaves it: dated, its setter not recorded.
         vec![
             format!("{username}-sync").into(),
             username.into(),
             username.into(),
+            at.clone().into(),
             at.clone().into(),
             at.clone().into(),
             at.into(),
@@ -1063,4 +1066,84 @@ async fn a_changed_or_missing_password_root_is_judged() {
     assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", row).await));
     assert_eq!(hash(&p.db, "worker").await.as_deref(), Some("x"));
     assert_eq!(notices(&p.db, "password_change_from_older_version").await.len(), 1);
+}
+
+// ── Passwords set before 0.9.2 (review SHOULD-FIX on the root check) ─────────────────────────────
+
+/// The manager, demoted on B, resets the worker's password on a PC A still before 0.9.2 (B refuses
+/// that row: an older version). A is upgraded: migration 261 dates the reset password, naming
+/// nobody. Signed in as the worker, the manager makes the forced change: the row names the worker
+/// and a root naming nobody, with the reset's date. B holds the worker's earlier date: held back.
+#[tokio::test]
+async fn a_forced_change_after_an_upgrade_carrying_a_pre_upgrade_reset_is_held_back() {
+    let b = plant().await;
+    demote_manager(&b, &stamp(chrono::Duration::hours(-1))).await;
+    let reset_at = now();
+    let mut forced = own_change(
+        payload(&b.db, "user_accounts", "worker-sync").await,
+        "worker",
+        "hash-chosen-by-the-attacker",
+        &stamp(chrono::Duration::minutes(2)),
+    );
+    // What migration 261 left on A for the password the old version reset there.
+    forced.insert(SET_BY.into(), Value::Null);
+    forced.insert(SET_AT.into(), reset_at.into());
+    let outcome = receive(&b.db, "user_accounts", "worker-sync", forced).await;
+    assert!(applied(&outcome), "{outcome:?}");
+    assert_eq!(hash(&b.db, "worker").await.as_deref(), Some("x"), "held back");
+    assert_eq!(notices(&b.db, "password_change_from_older_version").await.len(), 1);
+    assert_eq!(audits(&b.db, PASSWORD_CHANGE_UNAUTHORISED).await, 1);
+}
+
+/// An account untouched since the upgrade changes its own password (Profil) on A: the root naming
+/// nobody keeps the date every PC holds, accepted on B.
+#[tokio::test]
+async fn an_own_change_of_a_password_set_before_the_upgrade_is_accepted() {
+    let b = plant().await;
+    let changed = own_change(
+        payload(&b.db, "user_accounts", "worker-sync").await,
+        "worker",
+        "hash-chosen-by-the-worker",
+        &now(),
+    );
+    assert!(changed.get(SET_BY).is_some_and(Value::is_null));
+    assert!(applied(&receive(&b.db, "user_accounts", "worker-sync", changed).await));
+    assert_eq!(
+        hash(&b.db, "worker").await.as_deref(),
+        Some("hash-chosen-by-the-worker")
+    );
+    assert_eq!(audits(&b.db, PASSWORD_CHANGE_UNAUTHORISED).await, 0);
+}
+
+/// A legitimate chain (the plant administrator's reset, then the account's own change) on a new
+/// PC's first pull: the account arrives with its password. A legacy account (root naming nobody)
+/// arrives with its password too.
+#[tokio::test]
+async fn a_legitimate_chain_and_a_legacy_account_arrive_on_a_new_pc() {
+    let a = plant().await;
+    let reset = remote_reset(&a.db, "worker", Some("chef-sync"), &now()).await;
+    let changed = own_change(
+        reset,
+        "worker",
+        "hash-chosen-by-the-worker",
+        &stamp(chrono::Duration::minutes(5)),
+    );
+    let legacy = payload(&a.db, "user_accounts", "clerk-sync").await;
+    assert!(legacy.get(SET_BY).is_some_and(Value::is_null));
+
+    let c = plant().await;
+    exec(
+        &c.db,
+        "DELETE FROM user_accounts WHERE username IN ('worker', 'clerk')",
+        vec![],
+    )
+    .await;
+    assert!(applied(&receive(&c.db, "user_accounts", "worker-sync", changed).await));
+    assert_eq!(
+        hash(&c.db, "worker").await.as_deref(),
+        Some("hash-chosen-by-the-worker")
+    );
+    assert!(applied(&receive(&c.db, "user_accounts", "clerk-sync", legacy).await));
+    assert_eq!(hash(&c.db, "clerk").await.as_deref(), Some("x"));
+    assert_eq!(audits(&c.db, PASSWORD_CHANGE_UNAUTHORISED).await, 0);
 }
