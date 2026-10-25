@@ -276,7 +276,7 @@ pub async fn insert_lookup_value(
         let msg = e.to_string();
         if msg.contains("UNIQUE constraint failed") {
             AppError::ValidationFailed(vec![format!(
-                "Le code '{code}' existe d\u{00e9}j\u{00e0} dans ce domaine."
+                "GATE_REF_CODE_EXISTS_PUBLISHED:code={code}: Le code '{code}' existe d\u{00e9}j\u{00e0} dans ce domaine."
             )])
         } else {
             AppError::from(e)

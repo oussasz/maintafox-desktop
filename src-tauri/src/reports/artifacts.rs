@@ -184,7 +184,7 @@ pub async fn read_run_document(
         .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("status: {e}"))))?;
     if status != "success" {
         return Err(AppError::ValidationFailed(vec![
-            "Report run has no downloadable artifact (not successful).".into(),
+            "GATE_REPORTS_RUN_NO_ARTIFACT: Report run has no downloadable artifact (not successful).".into(),
         ]));
     }
 

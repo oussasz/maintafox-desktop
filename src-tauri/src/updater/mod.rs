@@ -584,7 +584,9 @@ impl InstallSlot {
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| Self(flag))
             .map_err(|_| {
-                AppError::ValidationFailed(vec!["an update is already being installed on this computer".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_UPD_INSTALL_BUSY: an update is already being installed on this computer".to_string(),
+                ])
             })
     }
 }
@@ -926,12 +928,12 @@ pub async fn install(
         ManifestAnswer::Offer(update, ext) => (*update, ext),
         ManifestAnswer::NotConfigured => {
             return Err(AppError::ValidationFailed(vec![
-                "this build has no in-app updates".to_string()
+                "GATE_UPD_NOT_CONFIGURED: this build has no in-app updates".to_string(),
             ]))
         }
         ManifestAnswer::NotActivated => {
             return Err(AppError::ValidationFailed(vec![
-                "this device is not activated".to_string()
+                "GATE_UPD_NOT_ACTIVATED: this device is not activated".to_string(),
             ]))
         }
         ManifestAnswer::None | ManifestAnswer::ServerRefused | ManifestAnswer::NotAcceptable(_) => {
@@ -1107,12 +1109,12 @@ pub enum ReinstallCheck {
 pub fn reinstall_check(journal: Option<UpdateJournal>, running: &str) -> AppResult<ReinstallCheck> {
     let Some(entry) = journal.filter(|j| j.state == JournalState::RollbackRequired) else {
         return Err(AppError::ValidationFailed(vec![
-            "no failed update to roll back".to_string()
+            "GATE_UPD_NO_FAILED_UPDATE: no failed update to roll back".to_string(),
         ]));
     };
     if entry.to_version != running {
         return Err(AppError::ValidationFailed(vec![format!(
-            "the failed update was to {}, this is version {running}: nothing to roll back here",
+            "GATE_UPD_ROLLBACK_WRONG_VERSION: the failed update was to {}, this is version {running}: nothing to roll back here",
             entry.to_version
         )]));
     }

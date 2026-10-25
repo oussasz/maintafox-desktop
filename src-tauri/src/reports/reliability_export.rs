@@ -227,7 +227,7 @@ pub async fn export_reliability_report(
     let fmt = export_format.to_ascii_lowercase();
     if fmt != "pdf" && fmt != "xlsx" {
         return Err(AppError::ValidationFailed(vec![
-            "export_format must be pdf or xlsx.".into()
+            "GATE_REPORT_FORMAT_INVALID: export_format must be pdf or xlsx.".into(),
         ]));
     }
     let (equipment_label, sections) = load_sections(db, equipment_id).await?;
