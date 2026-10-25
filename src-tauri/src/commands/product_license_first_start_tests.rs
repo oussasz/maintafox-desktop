@@ -8,10 +8,11 @@ use sea_orm::DatabaseConnection;
 use serde_json::json;
 
 use super::{
-    apply_product_license_reconciliation_in, bootstrap_initial_tenant_admin_in, check_product_license_key_entry_in,
-    get_activation_claim_tenant_id, licence_caller, record_activation_claim_for_tests, submit_product_license_key_in,
-    tenant_has_administrator_for_id, BootstrapInitialAdminInput, LicenceCaller, ProductLicenseActivationStatus,
-    PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE,
+    apply_product_license_reconciliation_in, authorize_signed_out_reset, bootstrap_initial_tenant_admin_in,
+    check_product_license_key_entry_in, get_activation_claim_tenant_id, licence_caller,
+    record_activation_claim_for_tests, submit_product_license_key_in, tenant_has_administrator_for_id,
+    BootstrapInitialAdminInput, LicenceCaller, ProductLicenseActivationStatus, PRODUCT_LICENSE_ONBOARDING_KEY,
+    PRODUCT_LICENSE_SCOPE,
 };
 use crate::errors::AppError;
 
@@ -2791,4 +2792,28 @@ async fn the_update_manifest_stays_reachable_while_the_licence_requires_an_updat
         active,
         "an active licence: the same token as sync"
     );
+}
+
+/// F8: a signed-out reset ("Réinitialiser l'activation / autre clé") on a plant with an
+/// administrator is refused with a coded reason the login screen translates (sign in as an
+/// administrator, or a vendor recovery code), not a bare authentication error; nothing is reset.
+/// Before any administrator exists, the reset stays open as before.
+#[tokio::test]
+async fn a_signed_out_reset_on_an_administered_plant_names_the_two_routes() {
+    let db = activated_plant_with_admin().await;
+    let err = authorize_signed_out_reset(&db).await.expect_err("administered");
+    assert_eq!(code_of(&err), Some("LICENSE_RESET_REQUIRES_ADMIN_SIGNIN"), "{err:?}");
+    assert!(!matches!(err, AppError::Auth(_)), "{err:?}");
+    assert_eq!(
+        get_activation_claim_tenant_id(&db).await.expect("tenant").as_deref(),
+        Some(TENANT),
+        "the licence is kept"
+    );
+    assert!(tenant_has_administrator_for_id(&db, TENANT).await.expect("check"));
+
+    // No administrator and no licence held yet (a true first start): still allowed.
+    let first_start = crate::db::test_db::seeded().await;
+    authorize_signed_out_reset(&first_start)
+        .await
+        .expect("no administrator: first start");
 }
