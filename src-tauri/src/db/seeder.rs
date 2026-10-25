@@ -1,7 +1,7 @@
 use crate::auth::builtin_admin::BuildProfile;
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait, Value};
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
@@ -13,13 +13,16 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in `system_config`.
 /// The built-in "admin" account follows the build ([`BuildProfile::current`]): created only in
 /// builds with `debug_assertions`, never in a release build (`auth::builtin_admin`).
-pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn seed_system_data(db: &(impl ConnectionTrait + TransactionTrait)) -> AppResult<()> {
     seed_system_data_for(db, BuildProfile::current()).await
 }
 
 /// [`seed_system_data`] for an explicit build profile: what a release build seeds can be checked
 /// from a test binary (which is a `debug_assertions` build).
-pub(crate) async fn seed_system_data_for(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
+pub(crate) async fn seed_system_data_for(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    profile: BuildProfile,
+) -> AppResult<()> {
     tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
 
     // ── 1. Insert all domain definitions ─────────────────────────────────
@@ -2267,7 +2270,7 @@ pub(crate) async fn seed_system_data_for(db: &DatabaseConnection, profile: Build
 /// rows remain, which previously caused the seeder to skip entirely and left Settings
 /// without localization / appearance / backup categories.
 /// Safe to call on every startup after migrations.
-pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn seed_default_settings(db: &impl ConnectionTrait) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
     // Shipped values come from the settings catalog (single source of the "Valeur livree").
@@ -2347,7 +2350,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
 }
 
 // ── Helper: insert domain if not exists ───────────────────────────────────
-async fn seed_inventory_valuation_policies(db: &DatabaseConnection) -> AppResult<()> {
+async fn seed_inventory_valuation_policies(db: &impl ConnectionTrait) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -2399,7 +2402,7 @@ async fn seed_inventory_valuation_policies(db: &DatabaseConnection) -> AppResult
 }
 
 async fn seed_domain(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     domain_key: &str,
     display_name: &str,
     domain_type: &str,
@@ -2432,7 +2435,7 @@ async fn seed_domain(
 }
 
 // ── Helper: resolve domain id by key ─────────────────────────────────────
-async fn get_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppResult<i32> {
+async fn get_domain_id(db: &impl ConnectionTrait, domain_key: &str) -> AppResult<i32> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2451,7 +2454,7 @@ async fn get_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppResult<i
 // ── Helper: insert value if not exists ───────────────────────────────────
 #[allow(clippy::too_many_arguments)]
 async fn seed_value(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     domain_id: i32,
     code: &str,
     label: &str,
@@ -2509,7 +2512,7 @@ async fn seed_value(
 /// Uses INSERT OR IGNORE — safe to call multiple times.
 /// Permissions are ordered by domain prefix then action suffix.
 /// All seeded permissions have `is_system` = 1 and cannot be deleted.
-async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
+async fn seed_permissions(db: &impl ConnectionTrait) -> AppResult<()> {
     // Canonical catalog is the sole permission SSOT (shared/rbac/permission-registry.json).
     let now = Utc::now().to_rfc3339();
     for meta in crate::rbac::permissions::CATALOG {
@@ -2572,7 +2575,7 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
 /// Protection policy:
 /// - Locked/system: Administrator, Readonly
 /// - Editable/custom baseline: Supervisor, Operator
-async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
+async fn seed_system_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
     let baseline_roles: &[(&str, &str, i64, &str)] = &[
@@ -2679,7 +2682,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 pub const SEEDED_ROLE_PERMISSIONS_KEY_PREFIX: &str = "seeded_role_permissions:";
 
 /// Names of the system permissions, without `excluded`.
-async fn system_permission_names(db: &DatabaseConnection, excluded: &[&str]) -> AppResult<Vec<String>> {
+async fn system_permission_names(db: &impl ConnectionTrait, excluded: &[&str]) -> AppResult<Vec<String>> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -2704,7 +2707,12 @@ async fn system_permission_names(db: &DatabaseConnection, excluded: &[&str]) -> 
 ///   administrator removed (here or on another PC) is never given back, while a permission new to
 ///   the baseline still reaches the role. The first run on a PC that has no record yet gives the
 ///   whole baseline, as every start of earlier versions did.
-async fn grant_baseline(db: &DatabaseConnection, role_name: &str, permissions: &[String], now: &str) -> AppResult<()> {
+async fn grant_baseline(
+    db: &impl ConnectionTrait,
+    role_name: &str,
+    permissions: &[String],
+    now: &str,
+) -> AppResult<()> {
     let Some(role) = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2779,7 +2787,7 @@ async fn grant_baseline(db: &DatabaseConnection, role_name: &str, permissions: &
 }
 
 /// Idempotent backfill: Administrator/Superadmin must hold ram.analyze (added post-seed in some DBs).
-async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_admin_ram_permissions(db: &impl ConnectionTrait) -> AppResult<()> {
     for perm in [
         crate::rbac::permissions::RAM_ANALYZE,
         crate::rbac::permissions::RAM_MANAGE,
@@ -2806,7 +2814,7 @@ async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> 
 /// The built-in "admin" account: seeded only when the build profile says so
 /// ([`BuildProfile::seeds_builtin_admin`]). The seeding code and the dev password are compiled only
 /// with `debug_assertions`, so a release binary contains neither.
-async fn seed_builtin_admin(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
+async fn seed_builtin_admin(db: &impl ConnectionTrait, profile: BuildProfile) -> AppResult<()> {
     if !profile.seeds_builtin_admin() {
         tracing::info!("seeder::builtin_admin not seeded (release build): first start creates the first administrator");
         return Ok(());
@@ -2824,7 +2832,7 @@ async fn seed_builtin_admin(db: &DatabaseConnection, profile: BuildProfile) -> A
 /// Skips an existing account (any state): never overwrites it or its password, never brings back
 /// one that was disabled or deleted.
 #[cfg(debug_assertions)]
-async fn seed_dev_admin_account(db: &DatabaseConnection) -> AppResult<()> {
+async fn seed_dev_admin_account(db: &impl ConnectionTrait) -> AppResult<()> {
     use crate::auth::password::hash_password;
 
     let existing = db
@@ -2893,7 +2901,7 @@ async fn seed_dev_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 /// Ensures the admin user has the Administrator role assigned via user_scope_assignments.
 /// Idempotent — uses INSERT OR IGNORE.
 #[cfg(debug_assertions)]
-async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
+async fn ensure_admin_role_assignment(db: &impl ConnectionTrait) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     // Every device seeds this assignment (`sync::seeded_identity`).
     let entity_sync_id =
@@ -3009,7 +3017,7 @@ mod tests {
         );
     }
 
-    async fn role_holds(db: &DatabaseConnection, role: &str, permission: &str) -> bool {
+    async fn role_holds(db: &impl ConnectionTrait, role: &str, permission: &str) -> bool {
         db.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT 1 AS c FROM role_permissions rp JOIN roles r ON r.id = rp.role_id \
@@ -3022,7 +3030,7 @@ mod tests {
         .is_some()
     }
 
-    async fn remove_from_role(db: &DatabaseConnection, role: &str, permission: &str) {
+    async fn remove_from_role(db: &impl ConnectionTrait, role: &str, permission: &str) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM role_permissions \

@@ -312,7 +312,7 @@ pub async fn builtin_admin_retired_here(conn: &impl ConnectionTrait) -> AppResul
 /// the rule itself and a PC whose only administrator is that account never loses it because
 /// another PC has one. The audit entry is written once the change is committed.
 pub async fn retire_builtin_admin_if_superseded(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     profile: BuildProfile,
     origin: RetireOrigin,
 ) -> AppResult<Option<RetiredBuiltinAdmin>> {
@@ -487,7 +487,10 @@ pub async fn backfill_first_admin_marker(conn: &impl ConnectionTrait) -> AppResu
 
 /// At every start (`seeder::seed_system_data`): marker of PCs administered before it existed, then
 /// retirement of a superseded built-in account.
-pub async fn reconcile_at_startup(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
+pub async fn reconcile_at_startup(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    profile: BuildProfile,
+) -> AppResult<()> {
     backfill_first_admin_marker(db).await?;
     retire_builtin_admin_if_superseded(db, profile, RetireOrigin::Startup).await?;
     Ok(())
