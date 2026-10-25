@@ -5328,6 +5328,12 @@ export interface WorkOrder {
    * permits (Rust `permit::wo_gate::deisolation_pending_sql`); derived on read.
    */
   deisolation_pending?: boolean;
+  /**
+   * The permit types of every plant rule that matches this work order now, when they differ
+   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
+   * `permit::requirement_rules::matching_permit_types`).
+   */
+  permit_rule_matching_types?: string[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
