@@ -85,16 +85,20 @@
 //! refused with it, so it never moves the stock on its own) until that conflict is settled: a
 //! later version of the line judged clean here, or "take theirs" once the adjustment is the line's
 //! own. A reversal, even of a count whose adjustment is applied here, is applied with the line
-//! version naming it, and only if it undoes that line's adjustment and, where the count's
-//! adjustment is applied here, that count is not reversed here yet and the line held here names no
-//! other reversal (otherwise a `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal: a count is
-//! reversed once per posting). Only the count's own reversal (its seeded id) that no version of its
-//! line names here is matched against the ledger instead: it must undo an adjustment of that count
-//! held here, not reversed yet, or it is a `COUNT_APPROVAL_RECORD_INVALID` conflict on that
-//! reversal. A count movement already applied here is never moved again by a later version of it
-//! received from the server that changes its quantity (a `COUNT_APPROVAL_RECORD_INVALID` conflict
-//! on that movement): only this PC's own posting, never synchronised, takes the version posted
-//! first on another PC (`inventory::count_sync`).
+//! version naming it, and only if it undoes that line's adjustment, applied here, that adjustment
+//! and the line held here are of the reversal's own count (session, article and location: checked
+//! against what this PC holds, never only against the line version), that count is not reversed
+//! here yet and the line held here names no other reversal (otherwise a
+//! `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal: a count is reversed once per posting).
+//! Likewise an adjustment named by a version of a line held here under another count is a conflict
+//! on that adjustment (a line is never moved: it would be posted a second time elsewhere). Only the
+//! count's own reversal (its seeded id) that no version of its line names here is matched against
+//! the ledger instead: it must undo an adjustment of that count held here, not reversed yet, or it
+//! is a `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal. A count movement already applied
+//! here is never moved again by a later version of it received from the server that changes its
+//! quantity (a `COUNT_APPROVAL_RECORD_INVALID` conflict on that movement): only this PC's own
+//! posting, never synchronised, takes the version posted first on another PC
+//! (`inventory::count_sync`).
 //!
 //! Known limit (AU-100): a `COUNT_ADJUST` under another id, of a count whose adjustment is already
 //! applied here, is not checked against a line: it is applied as received, with any quantity, and
@@ -1137,7 +1141,15 @@ async fn count_movements_here(
 /// ab58cd53, B2). A count is reversed once per posting: it is refused when its count already has
 /// as many reversals here as adjustments, or when the version of its line held here names another
 /// reversal. Otherwise a reversal under a new id, named by a forged version of the line, would move
-/// the stock again once the real one is applied.
+/// the stock again once the real one is applied. Its count is the one of the adjustment it undoes,
+/// held here (checked before, review of 5fdad581, B3).
+///
+/// A count posted twice by older versions (two adjustments under random ids, AU-100) on one shared
+/// line, then reversed on both PCs, is not reversed twice: each PC's line names its own reversal,
+/// so the other PC's reversal is refused there by "its count line here names another reversal",
+/// although the count holds two adjustments (review of 5fdad581, N1). Safe: both PCs hold the same
+/// stock (each one adjustment reversed, the other kept), each with a visible conflict on the other
+/// reversal for a person, and the count is listed "posted twice" to be checked by a new count.
 async fn second_reversal_here(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -1260,7 +1272,10 @@ async fn movement_here_or_waiting(
 /// the opposite of the adjustment's) — here, or waiting in the inbox to be applied with it.
 /// Otherwise the record contradicts itself (a line naming any other movement, or a token reversal,
 /// would release its held adjustment without a real reversal); a reversal named without a posted
-/// adjustment too (a reversal only ever undoes one). Not arrived yet, the line waits for it.
+/// adjustment too (a reversal only ever undoes one), and an adjustment named as posted that is not
+/// of the reversal's own count ([`adjustment_of_other_count`], review of 5fdad581, B3: a version of
+/// the line moved to another location or article would otherwise undo that count's posting there).
+/// Not arrived yet, the line waits for it.
 async fn reversal_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -1292,7 +1307,7 @@ async fn reversal_check(
             "count line {entity_sync_id}: the adjustment {posted} its reversal undoes has not arrived yet"
         ))));
     };
-    match undo_mismatch(&movement, &adjustment) {
+    match adjustment_of_other_count(&movement, &adjustment).or_else(|| undo_mismatch(&movement, &adjustment)) {
         None => Ok(None),
         Some(why) => conflict(
             SYNC_APPROVAL_RECORD_INVALID,
@@ -1310,14 +1325,44 @@ fn reverses_count(
     movement: &serde_json::Map<String, serde_json::Value>,
     line: &serde_json::Map<String, serde_json::Value>,
 ) -> bool {
+    field(movement, "movement_type") == Some("COUNT_REVERSAL")
+        && field(movement, "source_type") == Some("COUNT_SESSION")
+        && of_line_count(movement, line)
+}
+
+/// Whether a count movement is of `line`'s count: its session, article and location are the line's.
+fn of_line_count(
+    movement: &serde_json::Map<String, serde_json::Value>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
     let same = |movement_key: &str, line_key: &str| {
         field(line, line_key).is_some() && field(movement, movement_key) == field(line, line_key)
     };
-    field(movement, "movement_type") == Some("COUNT_REVERSAL")
-        && field(movement, "source_type") == Some("COUNT_SESSION")
-        && same("source_sync_id", "session_sync_id")
+    same("source_sync_id", "session_sync_id")
         && same("article_sync_id", "article_sync_id")
         && same("location_sync_id", "location_sync_id")
+}
+
+/// Why `adjustment`, the movement a reversal's line names as posted, is not an adjustment of that
+/// reversal's count (`None`: it is): a `COUNT_ADJUST` of a count session, of the reversal's session,
+/// article and location (review of 5fdad581, B3). Compared with the movement itself (held here or
+/// waiting), never with a line version: a version of the line can claim any count, the movement
+/// cannot (a history row is never rewritten, `inventory::count_sync`).
+fn adjustment_of_other_count(
+    reversal: &serde_json::Map<String, serde_json::Value>,
+    adjustment: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let same = |key: &str| field(adjustment, key).is_some() && field(adjustment, key) == field(reversal, key);
+    let of_count = field(adjustment, "movement_type") == Some("COUNT_ADJUST")
+        && field(adjustment, "source_type") == Some("COUNT_SESSION")
+        && same("source_sync_id")
+        && same("article_sync_id")
+        && same("location_sync_id");
+    (!of_count).then(|| {
+        "the adjustment it names as undone is not an adjustment of the same count (session, article and \
+         location)"
+            .to_string()
+    })
 }
 
 /// Why a reversal does not undo `adjustment` (`None`: its quantity is the opposite of the
@@ -1569,18 +1614,37 @@ pub(crate) async fn inbound_count_movement_hold(
                  ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
             ))));
         }
-        // The count's adjustment applied here: its line version is not enough, the count must not
-        // be reversed here already (review of ab58cd53, B2) — a visible conflict on that reversal.
-        if count_here {
-            if let Some(why) = second_reversal_here(conn, entity_sync_id, received, line_here.as_ref()).await? {
-                return conflict(
-                    SYNC_APPROVAL_RECORD_INVALID,
-                    format!(
-                        "count reversal {entity_sync_id}, named by a version of count line {line_sync_id}, would \
-                         reverse its count a second time: {why}; it is not applied and the stock does not move"
-                    ),
-                );
-            }
+        // Its count is checked against what this PC holds, never only against the line version
+        // naming it (review of 5fdad581, B3): the adjustment it undoes, applied here, is of its own
+        // session, article and location, and so is the line held here. Otherwise a version of the
+        // line moved to another location or article (or a line new here) would undo this count's
+        // posting a second time there — a visible conflict on that reversal.
+        let why = adjustment_of_other_count(received, &adjustment).or_else(|| {
+            line_here
+                .as_ref()
+                .filter(|held| !of_line_count(received, held))
+                .map(|_| "its count line here is of another count (session, article and location)".to_string())
+        });
+        if let Some(why) = why {
+            return conflict(
+                SYNC_APPROVAL_RECORD_INVALID,
+                format!(
+                    "count reversal {entity_sync_id}, named by a version of count line {line_sync_id}, is not the \
+                     reversal of the posting it names: {why}; it is not applied and the stock does not move"
+                ),
+            );
+        }
+        // Its count's adjustment is applied here (the one just checked): its line version is not
+        // enough, the count must not be reversed here already (review of ab58cd53, B2) — a visible
+        // conflict on that reversal.
+        if let Some(why) = second_reversal_here(conn, entity_sync_id, received, line_here.as_ref()).await? {
+            return conflict(
+                SYNC_APPROVAL_RECORD_INVALID,
+                format!(
+                    "count reversal {entity_sync_id}, named by a version of count line {line_sync_id}, would reverse \
+                     its count a second time: {why}; it is not applied and the stock does not move"
+                ),
+            );
         }
         return Ok(None);
     }
@@ -1596,6 +1660,21 @@ pub(crate) async fn inbound_count_movement_hold(
             "count movement {entity_sync_id} is held with its count line {line_sync_id} \
              ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
         ))));
+    }
+    // The line held here is of the adjustment's count too (review of 5fdad581, sweep): a count line
+    // never changes its session, article or location (one line per count of an article at a
+    // location), so a version of it moved elsewhere naming a new adjustment would post that line a
+    // second time there (its count here has no adjustment yet, so the posting is not refused above).
+    // A visible conflict on that adjustment: it is not applied.
+    if line_here.as_ref().is_some_and(|held| !of_line_count(received, held)) {
+        return conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!(
+                "count adjustment {entity_sync_id}, named by a version of count line {line_sync_id}, is not of the \
+                 count of that line held here (session, article and location): it would post that line a second \
+                 time elsewhere; it is not applied and the stock does not move"
+            ),
+        );
     }
     // Its line judged here, in the line's own context (a version from a snapshot or an exchange):
     // a line arriving reversed passes once its reversal is shown to be this count's
@@ -1625,13 +1704,7 @@ fn adjustment_mismatch(
     movement: &serde_json::Map<String, serde_json::Value>,
     line: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<String> {
-    let same = |movement_key: &str, line_key: &str| {
-        field(line, line_key).is_some() && field(movement, movement_key) == field(line, line_key)
-    };
-    if !(same("source_sync_id", "session_sync_id")
-        && same("article_sync_id", "article_sync_id")
-        && same("location_sync_id", "location_sync_id"))
-    {
+    if !of_line_count(movement, line) {
         return Some("it is not the adjustment of this count (session, article and location)".to_string());
     }
     let number =
