@@ -74,6 +74,7 @@
 //!   movement is applied with it and the conflict closes ([`after_count_line_applied`]);
 //! - or the count's reversal: the held adjustment and its reversal are applied together (net zero),
 //!   the conflict closes and the counter is told to count again.
+//!
 //! When the conflict opens, the count-approval holders are told once per count
 //! ([`after_count_conflict_recorded`]).
 

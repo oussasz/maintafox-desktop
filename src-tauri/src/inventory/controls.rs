@@ -1213,8 +1213,6 @@ pub(crate) struct PostedLocationCount {
     /// The count movement (none when the count equals the stock on record, or while it waits for
     /// its approval).
     pub transaction_id: Option<i64>,
-    /// The variance is above the four-eyes tolerance (`count_four_eyes`).
-    pub above_tolerance: bool,
     /// Approved by its counter under the site's opt-out ("auto-approbation").
     pub self_approved: bool,
     /// Counted, not posted: it waits for a second person's approval.
@@ -1429,7 +1427,6 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
         system_qty,
         variance_qty,
         transaction_id,
-        above_tolerance,
         self_approved,
         pending_approval,
         tolerance_json: verdict.audit_json(),
@@ -1637,7 +1634,6 @@ pub(crate) async fn approve_location_count_in<C: ConnectionTrait>(
         system_qty: pending.system_qty,
         variance_qty: pending.variance_qty,
         transaction_id: Some(transaction_id),
-        above_tolerance: pending.is_critical,
         self_approved,
         pending_approval: false,
         tolerance_json: approval_tolerance_json(pending.is_critical, &tolerance),
