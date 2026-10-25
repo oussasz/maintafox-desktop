@@ -193,6 +193,8 @@ function makeBreakIn(overrides: Partial<ScheduleBreakIn> = {}): ScheduleBreakIn 
     approved_by_display_name: "Admin",
     old_assignee_name: null,
     new_assignee_name: null,
+    approver_signed_at: TS,
+    forced_checks: [],
     ...overrides,
   };
 }

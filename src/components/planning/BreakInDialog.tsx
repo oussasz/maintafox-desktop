@@ -6,6 +6,7 @@ import {
   AssigneeCapacityDetails,
   assigneeOptionSuffix,
 } from "@/components/planning/AssigneeCapacityDetails";
+import { BreakInSignerFields, signatureMissing } from "@/components/planning/BreakInSignerFields";
 import {
   breakInReasonLabel,
   isUrgentBreakInReason,
@@ -23,7 +24,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -34,7 +34,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
-import { useCanReadList } from "@/lib/list-access";
 import { listTeamMembers } from "@/services/personnel-service";
 import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
@@ -44,7 +43,6 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-type ApproverOption = { id: number; label: string };
 type PersonnelOption = { id: number; label: string };
 
 type BreakInDialogProps = {
@@ -55,7 +53,6 @@ type BreakInDialogProps = {
   teamId: number | null;
   /** Commitment to move when the dialog opens (from the commitment inspector). */
   initialCommitmentId?: number | null;
-  approvers: ApproverOption[];
   personnel: PersonnelOption[];
   saving: boolean;
   onSubmit: (input: CreateScheduleBreakInInput) => Promise<void>;
@@ -68,14 +65,11 @@ export function BreakInDialog({
   breakIns,
   teamId,
   initialCommitmentId = null,
-  approvers,
   personnel,
   saving,
   onSubmit,
 }: BreakInDialogProps) {
   const { t, i18n } = useTranslation("planning");
-  // Approvers are user accounts: listed only with the user administration right.
-  const canReadUsers = useCanReadList("users");
   const { formatDateTime, formatCurrency, formatDecimal } = useFormatters();
   const reasons = useBreakInReasons(open);
   const [commitmentId, setCommitmentId] = useState<number | null>(null);
@@ -86,6 +80,7 @@ export function BreakInDialog({
   }, [reason, reasons]);
   const urgent = isUrgentBreakInReason(reasons.find((r) => r.code === reason));
   const [approverUserId, setApproverUserId] = useState<number | null>(null);
+  const [approverPassword, setApproverPassword] = useState("");
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [newPersonnelId, setNewPersonnelId] = useState<number | null>(null);
@@ -101,6 +96,10 @@ export function BreakInDialog({
   useEffect(() => {
     if (open && initialCommitmentId != null) setCommitmentId(initialCommitmentId);
   }, [open, initialCommitmentId]);
+  // Closed: the approver's password is never kept.
+  useEffect(() => {
+    if (!open) setApproverPassword("");
+  }, [open]);
 
   const selected = commitments.find((c) => c.id === commitmentId) ?? null;
   // The crew it moves to: the crew in scope, else the commitment's own crew.
@@ -177,6 +176,7 @@ export function BreakInDialog({
         expected_commitment_row_version: selected.row_version,
         break_in_reason: reason,
         approved_by_user_id: approverUserId,
+        approver_password: approverUserId != null ? approverPassword : null,
         new_slot_start: startIso,
         new_slot_end: endIso,
         new_assigned_team_id: targetTeamId,
@@ -190,6 +190,8 @@ export function BreakInDialog({
         acknowledged_assignee_issues: acknowledged ? refusals : [],
       });
     } catch (err) {
+      // Refused: the approver types their password again.
+      setApproverPassword("");
       const codes = extractIpcValidationDetails(err)
         .map((d) => d.code)
         .filter((c) => c.startsWith("PLANNING_ASSIGNEE_"));
@@ -201,6 +203,7 @@ export function BreakInDialog({
     }
     setOverrideReason("");
     setDangerousOverrideReason("");
+    setApproverPassword("");
     onOpenChange(false);
   }
 
@@ -273,27 +276,16 @@ export function BreakInDialog({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Label>{t("breakIns.approver")}</Label>
-              <Select
-                disabled={!canReadUsers}
-                value={approverUserId != null ? String(approverUserId) : "__none__"}
-                onValueChange={(v) => setApproverUserId(v === "__none__" ? null : Number(v))}
-              >
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue placeholder={t("breakIns.selectApprover")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("breakIns.selectApprover")}</SelectItem>
-                  {approvers.map((user) => (
-                    <SelectItem key={user.id} value={String(user.id)}>
-                      {user.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!canReadUsers ? <ListAccessNote list="users" className="mt-1" /> : null}
-            </div>
+            <BreakInSignerFields
+              open={open}
+              teamId={targetTeamId}
+              approverUserId={approverUserId}
+              onApproverChange={setApproverUserId}
+              password={approverPassword}
+              onPasswordChange={setApproverPassword}
+              required={urgent}
+              idPrefix="break-in"
+            />
             <div>
               <Label>{t("breakIns.newAssignee")}</Label>
               <Select
@@ -353,8 +345,11 @@ export function BreakInDialog({
             ) : null}
           </div>
           <div>
-            <Label>{t("breakIns.dangerousOverrideReason")}</Label>
+            <Label htmlFor="break-in-dangerous-reason">
+              {t("breakIns.dangerousOverrideReason")}
+            </Label>
             <Textarea
+              id="break-in-dangerous-reason"
               className="min-h-[64px] text-sm"
               value={dangerousOverrideReason}
               onChange={(e) => setDangerousOverrideReason(e.target.value)}
@@ -397,7 +392,9 @@ export function BreakInDialog({
               type="button"
               size="sm"
               variant="outline"
-              disabled={!selected || saving}
+              disabled={
+                !selected || saving || signatureMissing(urgent, approverUserId, approverPassword)
+              }
               onClick={() => void handleSubmit()}
             >
               {t("breakIns.create")}

@@ -101,8 +101,6 @@ type CommitDialogProps = {
   visibleEnd: number;
   saving: boolean;
   onSubmit: (input: CreateScheduleCommitmentInput) => Promise<void>;
-  /** Who may approve a break-in (frozen week); same list as the break-in dialog. */
-  approvers: { id: number; label: string }[];
 };
 
 export function CommitDialog({
@@ -122,7 +120,6 @@ export function CommitDialog({
   visibleEnd,
   saving,
   onSubmit,
-  approvers,
 }: CommitDialogProps) {
   const { t } = useTranslation("planning");
   const absenceType = useAbsenceTypeLookup();
@@ -995,7 +992,7 @@ export function CommitDialog({
           if (!next) setPendingFrozenInput(null);
         }}
         weekStart={frozenWeekStart}
-        approvers={approvers}
+        teamId={pendingFrozenInput?.assigned_team_id ?? null}
         onConfirm={(breakIn) => {
           const pending = pendingFrozenInput;
           if (!pending) return;
