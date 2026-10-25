@@ -36,6 +36,10 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("backup/scheduler.rs", "{key} must be a non-negative integer"),
     ("settings/catalog.rs", "{key}: not a decimal setting"),
     ("settings/catalog.rs", "{key}: the setting is missing"),
+    (
+        "settings/catalog.rs",
+        "{key}: not an optional decimal setting of the catalog",
+    ),
     ("sync/row_codec.rs", "{table}: invalid payload_json"),
     // Machine code + payload, not yet translated by a screen text.
     ("commands/reliability_study.rs", "ADVANCED_TOOL_DISABLED"),
@@ -119,9 +123,10 @@ fn first_literal(text: &str) -> Option<(String, usize)> {
 }
 
 /// Whether a message starting with a format placeholder is coded at run time: the placeholder is a
-/// code (`{code}`, `{gate}`, `{head}`, a `{..GATE..}` constant) or a bare `{}` whose first format
-/// argument (`rest` follows the literal) is a gate constant.
-fn placeholder_is_code(literal: &str, rest: &str) -> bool {
+/// code (`{code}`, `{gate}`, `{head}`, a `{..GATE..}` constant, a constant of the same file whose
+/// value is a gate code) or a bare `{}` whose first format argument (`rest` follows the literal) is
+/// a gate constant.
+fn placeholder_is_code(literal: &str, rest: &str, file: &str) -> bool {
     let Some(end) = literal.find('}') else {
         return false;
     };
@@ -136,8 +141,20 @@ fn placeholder_is_code(literal: &str, rest: &str) -> bool {
                 .collect();
             arg.contains("GATE_") || arg.contains("_codes::")
         }
-        n => n.contains("GATE"),
+        n => n.contains("GATE") || gate_constant(file, n),
     }
+}
+
+/// Whether `name` is a string constant of `file` whose value is a gate code
+/// (`const NAME: &str = "GATE_...";`).
+fn gate_constant(file: &str, name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && regex::Regex::new(&format!(r#"const\s+{name}\s*:\s*&(?:'static\s+)?str\s*=\s*"GATE_"#))
+            .expect("regex")
+            .is_match(file)
 }
 
 /// Byte ranges of the inline `#[cfg(test)] mod x { ... }` bodies (braces matched, string and
@@ -212,7 +229,7 @@ fn every_user_facing_refusal_is_gate_coded() {
             if literal.starts_with("GATE_") {
                 continue;
             }
-            if literal.starts_with('{') && placeholder_is_code(&literal, &args[end..]) {
+            if literal.starts_with('{') && placeholder_is_code(&literal, &args[end..], &text) {
                 continue;
             }
             if let Some(entry) = allowed_by(&rel, &literal) {
