@@ -7349,6 +7349,101 @@ async fn a_reversal_named_by_a_new_line_at_another_location_is_refused() {
     assert_eq!(on_hand_milli(&b, pair_b.0, elsewhere_b).await, 10_000);
 }
 
+/// Review of 006d8057 (N1): a count with two adjustments here (posted twice by an older version,
+/// AU-100: the real one and a second under another id, both −3), the real one reversed here. A
+/// reversal under a new id, named by a line under a new id (no line held to compare with) naming
+/// the real adjustment again, is refused: that adjustment is already reversed here. A visible
+/// conflict; the stock does not move. A reversal of the OTHER adjustment, named the same way,
+/// still passes: one reversal per adjustment, the count ends reversed twice and back to 10.
+#[tokio::test]
+async fn an_adjustment_of_a_count_posted_twice_is_never_reversed_twice() {
+    let ForgedAdjustment {
+        a,
+        b,
+        mut server,
+        pair_b,
+        counter,
+        session_sync,
+        line_sync,
+        adjustment,
+        real,
+        ..
+    } = posted_count("twicereversecounter").await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000, "posted");
+    // The same count posted a second time by an older version, under another id.
+    let legacy = crate::sync::identity::new_entity_sync_id();
+    inbox_put(
+        &b,
+        "delta-legacy",
+        "inventory_transactions",
+        &legacy,
+        1,
+        &real,
+        "pending",
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&b, 200, true)
+        .await
+        .expect("tried");
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (2, 2),
+        "posted twice"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 4_000);
+
+    // The real adjustment is reversed on A and here.
+    reverse_on(&a, second_person(&a, counter).await, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000, "the real reversal");
+    assert!(conflict_kinds(&b).await.is_empty());
+    let reversal = movement_sync_id(&a, &session_sync, "COUNT_REVERSAL").await;
+    let undo = wire_row(&b, "inventory_transactions", &reversal).await;
+    let line = wire_row(&b, "inventory_count_lines", &line_sync).await;
+    assert_eq!(
+        line.get("posted_transaction_sync_id"),
+        Some(&serde_json::json!(adjustment))
+    );
+
+    // Reversed again under a new id, by a line under a new id naming the real adjustment.
+    let forged = push_forged_reversal(&b, &crate::sync::identity::new_entity_sync_id(), 1, line.clone(), &undo).await;
+    assert_forged_movement_refused(
+        &b,
+        &forged,
+        &format!("({adjustment}) is already reversed here by {reversal}"),
+    )
+    .await;
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_REVERSAL").await,
+        (1, 1),
+        "never reversed twice"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+
+    // The other adjustment, reversed the same way, is its own first reversal here.
+    let mut other = line;
+    other.insert("posted_transaction_sync_id".into(), serde_json::json!(legacy));
+    let second = push_forged_reversal(&b, &crate::sync::identity::new_entity_sync_id(), 1, other, &undo).await;
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_transactions WHERE entity_sync_id = ?",
+            vec![second.into()],
+        )
+        .await,
+        1,
+        "applied"
+    );
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_REVERSAL").await,
+        (2, 2),
+        "one reversal per adjustment"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+}
+
 /// The same approved count posted on B with a counted quantity of 6 (−4) where A counts 7 (−3).
 async fn divergent_on_b(b: &DatabaseConnection, session_sync_id: &str) {
     exec(
