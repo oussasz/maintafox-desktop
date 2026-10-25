@@ -140,6 +140,16 @@ async fn first_start_creates_the_first_administrator_on_a_fresh_release_pc() {
         .await,
         1
     );
+    // The administrator chose the password: the account is its author (`sync::credential_check`).
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM user_accounts WHERE username = 'chef' AND password_changed_by_id = id",
+            vec![]
+        )
+        .await,
+        1
+    );
     assert!(
         builtin_admin_row(&db).await.expect("read").is_none(),
         "no built-in account appears"
@@ -1007,7 +1017,20 @@ mod sync_arrival {
             !row.is_active,
             "a later version never re-enables a default-password administrator this PC retired"
         );
-        assert_eq!(retire_audits(&db, row.user_id).await, 2, "each arrival audited");
+        // The later version's re-enable names nobody: held back on arrival
+        // (`sync::credential_check`) and audited there, so the account is never active again here
+        // and needs no second retirement.
+        assert_eq!(retire_audits(&db, row.user_id).await, 1, "the first arrival retired it");
+        assert_eq!(
+            scalar(
+                &db,
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = ?",
+                vec![crate::sync::credential_check::ACCOUNT_REENABLE_UNAUTHORISED.into()],
+            )
+            .await,
+            1,
+            "the second arrival's re-enable audited"
+        );
     }
 
     /// Review SF-1, scenario B: an upgraded PC retired its own built-in account because a named
