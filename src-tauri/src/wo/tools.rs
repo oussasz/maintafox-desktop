@@ -82,13 +82,13 @@ pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult
     let status = load_wo_status_code(db, input.wo_id).await?;
     if matches!(status.as_str(), "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible d'ajouter un outil sur un OT clôturé/annulé.".into(),
+            "GATE_WO_TOOL_WO_LOCKED: Impossible d'ajouter un outil sur un OT clôturé/annulé.".into(),
         ]));
     }
     let label = input.tool_label.trim();
     if label.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le libellé de l'outil est obligatoire.".into(),
+            "GATE_WO_TOOL_LABEL_REQUIRED: Le libellé de l'outil est obligatoire.".into(),
         ]));
     }
     let origin = if matches!(status.as_str(), "in_progress" | "on_hold") {
@@ -98,7 +98,7 @@ pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult
     };
     if !matches!(origin.as_str(), "planned" | "execution_added") {
         return Err(AppError::ValidationFailed(vec![
-            "origin invalide (planned|execution_added).".into(),
+            "GATE_WO_ORIGIN_INVALID: origin invalide (planned|execution_added).".into(),
         ]));
     }
     let usage = if origin == "execution_added" { "used" } else { "planned" };

@@ -42,10 +42,14 @@ pub struct UpdateWorkOrderStatusInput {
 fn validate_label(raw: &str, field: &str) -> AppResult<String> {
     let s = raw.trim();
     if s.is_empty() {
-        return Err(AppError::ValidationFailed(vec![format!("{field} obligatoire.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_STATUS_LABEL_REQUIRED: {field} obligatoire."
+        )]));
     }
     if s.len() > 120 {
-        return Err(AppError::ValidationFailed(vec![format!("{field} trop long.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_STATUS_LABEL_TOO_LONG:max=120: {field} trop long."
+        )]));
     }
     Ok(s.to_string())
 }
@@ -54,12 +58,12 @@ fn validate_color_hex(raw: &str) -> AppResult<String> {
     let s = raw.trim();
     if s.len() != 7 || !s.starts_with('#') {
         return Err(AppError::ValidationFailed(vec![
-            "Couleur : format hex attendu (#RRGGBB).".into(),
+            "GATE_WO_STATUS_COLOR_FORMAT: Couleur : format hex attendu (#RRGGBB).".into(),
         ]));
     }
     if !s.chars().skip(1).all(|c| c.is_ascii_hexdigit()) {
         return Err(AppError::ValidationFailed(vec![
-            "Couleur : caractères hexadécimaux uniquement.".into(),
+            "GATE_WO_STATUS_COLOR_HEX: Couleur : caractères hexadécimaux uniquement.".into(),
         ]));
     }
     Ok(s.to_ascii_uppercase())
