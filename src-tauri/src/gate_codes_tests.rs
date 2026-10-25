@@ -16,10 +16,21 @@ use std::path::{Path, PathBuf};
 const ALLOWLIST: &[(&str, &str)] = &[
     // Queued: these modules get their texts from their own lead.
     ("permit/", ""),
-    ("license/", ""),
-    ("activation/", ""),
-    ("entitlements/", ""),
-    ("auth/pin.rs", ""),
+    // Licence / activation / entitlements: only stored-data, parse and lineage faults stay uncoded.
+    ("license/queries.rs", "Failed to decode license field"),
+    ("license/security.rs", "Failed to decode licensing security field"),
+    ("license/security.rs", "{field} must be RFC3339"),
+    ("activation/queries.rs", "Failed to decode activation field"),
+    ("activation/queries.rs", "Invalid policy_snapshot_json"),
+    ("activation/queries.rs", "Invalid anchor_hashes_json"),
+    ("activation/queries.rs", "offline_grace_until missing"),
+    ("activation/queries.rs", "Invalid offline_grace_until"),
+    ("entitlements/queries.rs", "Failed to decode entitlement field"),
+    (
+        "entitlements/queries.rs",
+        "Failed to validate previous envelope lineage",
+    ),
+    ("entitlements/queries.rs", "previous_envelope_id must reference"),
     // Permit / lock requirement of a work order: queued with the permit module's lead.
     ("wo/workflow/actions/permit_requirement.rs", ""),
     // Internal parse / serialisation failures: the text is the library error, not a rule.
