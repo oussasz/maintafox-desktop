@@ -71,16 +71,43 @@ pub(crate) async fn break_in_approvers(conn: &impl ConnectionTrait, site: Option
     crate::notifications::router::permission_holder_user_ids(conn, crate::rbac::permissions::PLAN_CONFIRM, site).await
 }
 
-/// The people the signed-in user may ask to sign a break-in of the crew `team_id`: the
-/// [`break_in_approvers`] of the crew's site, linked to a personnel record, other than the caller,
-/// sorted by name.
+/// The approvers of the sites of the crews `team_id` and, when the work changes crew,
+/// `from_team_id`: plan.confirm at each (CMMS review S2).
+pub(crate) async fn approvers_at_crew_sites(
+    conn: &impl ConnectionTrait,
+    team_id: i64,
+    from_team_id: Option<i64>,
+) -> AppResult<Vec<i64>> {
+    let mut holders = break_in_approvers(conn, team_planning_site(conn, team_id).await?).await?;
+    if let Some(from) = from_team_id.filter(|f| *f != team_id) {
+        let at_from = break_in_approvers(conn, team_planning_site(conn, from).await?).await?;
+        holders.retain(|id| at_from.contains(id));
+    }
+    Ok(holders)
+}
+
+/// Whether `user` may sign a break-in of `team_id` (taken from `from_team_id`).
+pub(crate) async fn holds_at_crew_sites(
+    conn: &impl ConnectionTrait,
+    user: i64,
+    team_id: i64,
+    from_team_id: Option<i64>,
+) -> AppResult<bool> {
+    Ok(approvers_at_crew_sites(conn, team_id, from_team_id)
+        .await?
+        .contains(&user))
+}
+
+/// The people the signed-in user may ask to sign a break-in of the crew `team_id` (taken from
+/// `from_team_id` when the work changes crew): plan.confirm at each crew's site, linked to a
+/// personnel record, other than the caller, sorted by name.
 pub async fn list_break_in_approvers(
     conn: &impl ConnectionTrait,
     caller_id: i64,
     team_id: i64,
+    from_team_id: Option<i64>,
 ) -> AppResult<Vec<BreakInApproverOption>> {
-    let site = team_planning_site(conn, team_id).await?;
-    let holders: Vec<i64> = break_in_approvers(conn, site)
+    let holders: Vec<i64> = approvers_at_crew_sites(conn, team_id, from_team_id)
         .await?
         .into_iter()
         .filter(|id| *id != caller_id)
@@ -123,6 +150,9 @@ pub(crate) struct ApprovalRequest<'a> {
     pub actor_id: i64,
     /// The crew whose site the approver must hold plan.confirm at.
     pub team_id: i64,
+    /// The crew the work is taken from, when it changes crew: the approver holds plan.confirm at its
+    /// site too (the frozen week being broken may be that one).
+    pub from_team_id: Option<i64>,
     pub reason_code: &'a str,
     pub urgent: bool,
     pub forced: &'a [ForcedCheck],
@@ -173,8 +203,7 @@ pub(crate) async fn validate_break_in_approval(
             "GATE_PLAN_APPROVER_SELF: The break-in must be signed by another planner, not by the person recording it.",
         ));
     }
-    let site = team_planning_site(conn, req.team_id).await?;
-    if !break_in_approvers(conn, site).await?.contains(&approver) {
+    if !holds_at_crew_sites(conn, approver, req.team_id, req.from_team_id).await? {
         return Err(gate(
             "GATE_PLAN_APPROVER_NOT_ALLOWED: The approver must hold plan.confirm at the crew's site.",
         ));

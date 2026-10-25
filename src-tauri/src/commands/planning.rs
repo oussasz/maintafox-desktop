@@ -291,16 +291,24 @@ pub async fn create_schedule_break_in(
     scheduling::create_schedule_break_in(&state.db, i64::from(user.user_id), input).await
 }
 
-/// The people who may sign a break-in of the crew `team_id`: plan.confirm at the crew's site,
-/// linked to a personnel record, other than the caller (`planning::break_in_approval`).
+/// The people who may sign a break-in of the crew `team_id` (taken from `from_team_id` when the
+/// work changes crew): plan.confirm at each crew's site, linked to a personnel record, other than
+/// the caller (`planning::break_in_approval`).
 #[tauri::command]
 pub async fn list_break_in_approvers(
     team_id: i64,
+    from_team_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::planning::domain::BreakInApproverOption>> {
     let user = require_session!(state);
     require_plan_confirm(&state, user.user_id).await?;
-    crate::planning::break_in_approval::list_break_in_approvers(&state.db, i64::from(user.user_id), team_id).await
+    crate::planning::break_in_approval::list_break_in_approvers(
+        &state.db,
+        i64::from(user.user_id),
+        team_id,
+        from_team_id,
+    )
+    .await
 }
 
 #[tauri::command]

@@ -546,6 +546,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("schedule_break_ins", "approved_by_personnel_id", "NULL"),
     ("schedule_break_ins", "approver_signed_at", "NULL"),
     ("schedule_break_ins", "forced_checks_json", "NULL"),
+    ("schedule_break_ins", "old_team_id", "NULL"),
+    ("schedule_break_ins", "new_team_id", "NULL"),
+    ("schedule_break_ins", "sync_refused_at", "NULL"),
+    ("schedule_break_ins", "sync_refused_reason", "NULL"),
 ];
 
 #[derive(Debug, Clone)]

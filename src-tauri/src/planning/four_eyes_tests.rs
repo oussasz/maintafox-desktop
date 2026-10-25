@@ -397,7 +397,7 @@ async fn the_approver_list_holds_plan_confirm_at_the_crews_site_linked_people_bu
     let ids = |caller: i64| {
         let db = db.clone();
         async move {
-            super::break_in_approval::list_break_in_approvers(&db, caller, team)
+            super::break_in_approval::list_break_in_approvers(&db, caller, team, None)
                 .await
                 .expect("list")
                 .into_iter()
@@ -935,4 +935,40 @@ fn the_approver_password_is_never_serialized_or_printed() {
     assert!(!format!("{input:?}").contains("Very-Secret-1"), "redacted in Debug");
     let sent = serde_json::to_string(&input).expect("serialize");
     assert!(!sent.contains("Very-Secret-1") && !sent.contains("approver_password"), "{sent}");
+}
+
+#[tokio::test]
+async fn work_taken_from_another_crew_is_signed_by_a_holder_at_both_sites() {
+    let db = setup_db().await;
+    let (site_x, crew_x) = weekly_site(&db, "FE11X").await;
+    let (site_y, crew_y) = weekly_site(&db, "FE11Y").await;
+    let c = open_commitment(&db, crew_x, 8401, "2026-05-12T08:00", "2026-05-12T09:00").await;
+    let mut to_y = move_input(&c, "emergency", "2026-05-12T10:00", "2026-05-12T11:00");
+    to_y.new_assigned_team_id = Some(crew_y);
+    // plan.confirm at the new crew's site only: it cannot pull work out of the other site.
+    let only_y = site_approver(&db, 180, "FE11-Y", site_y).await;
+    let err = scheduling::create_schedule_break_in(&db, 1, signed(to_y.clone(), only_y, APPROVER_PASSWORD))
+        .await
+        .expect_err("not at the site the work leaves");
+    assert!(code_of(&err).contains("GATE_PLAN_APPROVER_NOT_ALLOWED"), "{err:?}");
+    let listed = super::break_in_approval::list_break_in_approvers(&db, 1, crew_y, Some(crew_x))
+        .await
+        .expect("list");
+    assert!(!listed.iter().any(|o| o.user_id == only_y), "not offered either");
+    // A holder at both sites signs it; the row names both crews.
+    let both = site_approver(&db, 181, "FE11-XY", site_x).await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+                valid_from, created_at, updated_at)
+             VALUES ('site-approver-usa-{both}-y', {both}, 778, 'org_node', '{site_y}', '2026-01-01T00:00:00Z',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let created = scheduling::create_schedule_break_in(&db, 1, signed(to_y, both, APPROVER_PASSWORD))
+        .await
+        .expect("signed at both sites");
+    assert_eq!((created.old_team_id, created.new_team_id), (Some(crew_x), Some(crew_y)));
 }

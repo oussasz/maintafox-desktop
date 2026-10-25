@@ -257,6 +257,13 @@ pub struct ScheduleBreakIn {
     /// `shutdown_window`; empty: none, or not recorded before 0.9.2).
     #[serde(default)]
     pub forced_checks: Vec<String>,
+    /// The crew the work leaves (`None`: new work, or recorded before 0.9.2) and the crew it goes to.
+    pub old_team_id: Option<i64>,
+    pub new_team_id: Option<i64>,
+    /// Refused by a planner on a PC that received it ("refusé (sync)"): history only, never a valid
+    /// break-in.
+    pub sync_refused_at: Option<String>,
+    pub sync_refused_reason: Option<String>,
 }
 
 /// The password a break-in approver types to sign it (`planning::break_in_approval`). Read from the

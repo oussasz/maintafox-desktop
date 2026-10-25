@@ -56,7 +56,7 @@ const COMMITMENT_JOINS: &str = "\
 const CHANGE_LOG_COLS: &str = "scl.id,scl.commitment_id,scl.action_type,scl.actor_id,scl.field_changed,scl.old_value,scl.new_value,scl.reason_code,scl.reason_note,scl.reason,scl.details_json,scl.created_at";
 const CHANGE_LOG_JOIN_COLS: &str = "COALESCE(ua.display_name, ua.username) AS actor_display_name";
 const CHANGE_LOG_JOINS: &str = "LEFT JOIN user_accounts ua ON ua.id = scl.actor_id";
-const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.kind,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at,sb.approver_signed_at,sb.forced_checks_json";
+const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.kind,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at,sb.approver_signed_at,sb.forced_checks_json,sb.old_team_id,sb.new_team_id,sb.sync_refused_at,sb.sync_refused_reason";
 const BREAK_IN_JOIN_COLS: &str = "\
     CASE cmt.source_type \
         WHEN 'work_order' THEN wo.code \
@@ -347,6 +347,14 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
             .map_err(|e| decode_err("forced_checks_json", e))?
             .and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok())
             .unwrap_or_default(),
+        old_team_id: row.try_get("", "old_team_id").map_err(|e| decode_err("old_team_id", e))?,
+        new_team_id: row.try_get("", "new_team_id").map_err(|e| decode_err("new_team_id", e))?,
+        sync_refused_at: row
+            .try_get("", "sync_refused_at")
+            .map_err(|e| decode_err("sync_refused_at", e))?,
+        sync_refused_reason: row
+            .try_get("", "sync_refused_reason")
+            .map_err(|e| decode_err("sync_refused_reason", e))?,
     })
 }
 
@@ -1820,6 +1828,8 @@ pub async fn create_schedule_break_in(
             &break_in_approval::ApprovalRequest {
                 actor_id,
                 team_id: next_team_id,
+                // Work taken from another crew: the approver holds the right at its site too.
+                from_team_id: Some(current.assigned_team_id).filter(|t| *t != next_team_id),
                 reason_code: &reason,
                 urgent: break_in_reason.urgent,
                 forced: &forced,
@@ -1879,8 +1889,9 @@ pub async fn create_schedule_break_in(
             "INSERT INTO schedule_break_ins
                 (schedule_commitment_id, break_in_reason, kind, approved_by_user_id, approved_by_personnel_id, override_reason,
                  old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id, new_assignee_id,
-                 cost_impact_delta, notification_dedupe_key, created_by_id, approver_signed_at, forced_checks_json)
-             VALUES (?, ?, 'move', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost_impact_delta, notification_dedupe_key, created_by_id, approver_signed_at, forced_checks_json,
+                 old_team_id, new_team_id)
+             VALUES (?, ?, 'move', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 current.id.into(),
                 reason.clone().into(),
@@ -1898,6 +1909,8 @@ pub async fn create_schedule_break_in(
                 Some(actor_id).into(),
                 approval.signed_at.clone().into(),
                 break_in_approval::forced_checks_json(&forced).into(),
+                current.assigned_team_id.into(),
+                next_team_id.into(),
             ],
         ))
         .await?;
@@ -2115,6 +2128,7 @@ pub async fn create_schedule_commitment(
                     &break_in_approval::ApprovalRequest {
                         actor_id,
                         team_id: input.assigned_team_id,
+                        from_team_id: None,
                         reason_code: &reason.code,
                         urgent: reason.urgent,
                         forced: &[],
@@ -2188,8 +2202,8 @@ pub async fn create_schedule_commitment(
                     (schedule_commitment_id, break_in_reason, kind, approved_by_user_id, approved_by_personnel_id,
                      override_reason, old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id,
                      new_assignee_id, cost_impact_delta, notification_dedupe_key, created_by_id, approver_signed_at,
-                     forced_checks_json)
-                 VALUES (?, ?, 'insert', ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, NULL, ?, ?, ?, NULL)",
+                     forced_checks_json, old_team_id, new_team_id)
+                 VALUES (?, ?, 'insert', ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, NULL, ?, ?, ?, NULL, NULL, ?)",
                     [
                         id.into(),
                         reason.code.clone().into(),
@@ -2202,6 +2216,7 @@ pub async fn create_schedule_commitment(
                         Some(dedupe_key.clone()).into(),
                         Some(actor_id).into(),
                         approval.signed_at.clone().into(),
+                        input.assigned_team_id.into(),
                     ],
                 ))
                 .await?;
