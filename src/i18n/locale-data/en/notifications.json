@@ -352,6 +352,18 @@
       "title": "Administration rights removed: grants to review",
       "body": "{{people}} no longer holds {{rights}} (removed on {{since}}). {{count}} grant(s) made by this person since then are present on this PC: {{grants}}. Nothing was withdrawn automatically; please check them."
     },
+    "password_change_refused": {
+      "title": "Password change received without the right: not applied",
+      "body": "{{account}}: password changed on {{changed_at}} by {{author}}, who did not (or no longer) hold user management here. This PC kept the current password (an account that arrived this way has no password on this PC). If the change was intended, an administrator makes it again; that also corrects the other PCs."
+    },
+    "password_change_from_older_version": {
+      "title": "Password change received from an older version: not applied",
+      "body": "{{account}}: password change sent by a PC with an older Maintafox version (it does not say who made it): not applied. Update that PC, then change the password again."
+    },
+    "account_reenable_refused": {
+      "title": "Account re-enable received without the right: not applied",
+      "body": "{{account}}: account re-enabled on {{changed_at}} by {{author}}, who did not (or no longer) hold user management here. The account stays disabled on this PC. If it was intended, an administrator enables it again; that also corrects the other PCs."
+    },
     "grants_from_former_authors": {
       "title": "Rights received from someone who no longer holds the right",
       "body": "{{count}} grant(s) received from another PC were applied, but their author no longer has the right to grant them and this PC does not know since when: {{grants}}. Please check them."

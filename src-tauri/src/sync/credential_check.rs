@@ -508,7 +508,7 @@ async fn record_refusals(
                     json!({
                         "account": account,
                         "author": author,
-                        "at": refusal.changed_at,
+                        "changed_at": refusal.changed_at,
                         "new_account": inserted,
                     }),
                 ),
