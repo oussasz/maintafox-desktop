@@ -231,6 +231,9 @@ pub struct PublishedRule {
     pub spec: Option<RuleSpec>,
     /// It reads but names a code not held here (applied as written, recorded).
     pub unresolved: bool,
+    /// Its permit type requires an energy isolation here (`permit_types.requires_energy_isolation`):
+    /// it outranks a rule whose type does not (CMMS Advisor decision on AU-04 R5-S3, option A).
+    pub isolation: bool,
 }
 
 /// The plant's published rule list, in its order: sort order, then code (the same on every PC
@@ -261,7 +264,16 @@ impl PublishedRules {
             let metadata: Option<String> = row.try_get("", "metadata_json")?;
             let spec = parse_rule(metadata.as_deref()).ok();
             let unresolved = spec.is_some() && rule_problem(db, metadata.as_deref()).await?.is_some();
-            rules.push(PublishedRule { code, spec, unresolved });
+            let isolation = match &spec {
+                Some(rule) => type_requires_isolation(db, &rule.permit_type_code).await?,
+                None => false,
+            };
+            rules.push(PublishedRule {
+                code,
+                spec,
+                unresolved,
+                isolation,
+            });
         }
         Ok(Self(rules))
     }
@@ -337,6 +349,7 @@ pub async fn evaluate_with(
         .await?
         .and_then(|r| r.try_get::<String>("", "code").ok());
 
+    let mut chosen_isolation = false;
     for published in &rules.0 {
         let code = published.code.clone();
         let Some(rule) = published.spec.clone() else {
@@ -354,14 +367,72 @@ pub async fn evaluate_with(
             .work_type_code
             .as_ref()
             .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
-        if class_ok && type_ok && outcome.rule_code.is_none() {
+        // The rule recorded: the first matching rule whose permit type requires an energy isolation,
+        // else the first matching rule (CMMS Advisor decision on AU-04 R5-S3, option A: an isolation
+        // type always outranks one without; otherwise the list's order wins).
+        let outranks = outcome.rule_code.is_none() || (published.isolation && !chosen_isolation);
+        if class_ok && type_ok && outranks {
             outcome.requires_permit = true;
             outcome.reason_code = reasons::RULE_MATCHED.into();
             outcome.rule_code = Some(code);
             outcome.permit_type_code = Some(rule.permit_type_code);
+            chosen_isolation = published.isolation;
         }
     }
     Ok(outcome)
+}
+
+/// Whether the permit type `code` requires an energy isolation here (unknown here: no).
+pub async fn type_requires_isolation(db: &impl ConnectionTrait, code: &str) -> AppResult<bool> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM permit_types WHERE code = ? AND COALESCE(requires_energy_isolation, 0) = 1",
+            [code.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The permit types of every published rule that matches this equipment and work type, distinct, in
+/// the list's order: shown on the work order when they differ ("plusieurs règles de permis"), display
+/// only (CMMS Advisor decision on AU-04 R5-S3). Empty when fewer than two types.
+pub async fn matching_permit_types(
+    db: &impl ConnectionTrait,
+    equipment_id: Option<i64>,
+    work_type_id: i64,
+) -> AppResult<Vec<String>> {
+    let rules = PublishedRules::load(db).await?;
+    if rules.is_empty() {
+        return Ok(Vec::new());
+    }
+    let class = match equipment_id {
+        Some(id) => equipment_class_code(db, id).await?,
+        None => None,
+    };
+    let work_type: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM reference_values WHERE id = ?",
+            [work_type_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let mut types: Vec<String> = Vec::new();
+    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
+        let class_ok = rule
+            .equipment_class_code
+            .as_ref()
+            .is_none_or(|c| class.as_deref() == Some(c.as_str()));
+        let type_ok = rule
+            .work_type_code
+            .as_ref()
+            .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
+        if class_ok && type_ok && !types.contains(&rule.permit_type_code) {
+            types.push(rule.permit_type_code.clone());
+        }
+    }
+    Ok(if types.len() > 1 { types } else { Vec::new() })
 }
 
 /// Rules that did not read, or that name a code not held here, when they are evaluated for a work
@@ -988,10 +1059,25 @@ pub async fn converge_received_rule(
     let received = (received_code.clone(), received_type.clone());
     let before = held.map_or_else(|| received.clone(), |h| (h.code.clone(), h.permit_type.clone()));
     let matched_here = first_match.rule_code.is_some();
-    let kept = match (first_match.rule_code, first_match.permit_type_code) {
+    let mut kept = match (first_match.rule_code, first_match.permit_type_code) {
         (Some(code), Some(permit_type)) => (code, Some(permit_type)),
         _ => before.clone(),
     };
+    // A held permit type that requires an energy isolation is never replaced by one that does not
+    // (CMMS Advisor decision on AU-04 R5-S3, option A).
+    if let Some(h) = held {
+        let held_isolation = match &h.permit_type {
+            Some(t) => type_requires_isolation(conn, t).await?,
+            None => false,
+        };
+        let kept_isolation = match &kept.1 {
+            Some(t) => type_requires_isolation(conn, t).await?,
+            None => false,
+        };
+        if held_isolation && !kept_isolation {
+            kept = (h.code.clone(), h.permit_type.clone());
+        }
+    }
     let rule_changed = kept != before;
     let row_differs = kept != received;
     let row_cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
@@ -1125,6 +1211,30 @@ pub async fn converge_received_rule(
         },
     )
     .await?;
+    // The permit type of a rule held here changed: the permit issuers of its site are told (CMMS
+    // Advisor decision on AU-04 R5-S3, option A).
+    if let Some(h) = held.filter(|h| h.permit_type != kept.1) {
+        let wo = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code, entity_sync_id FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?;
+        if let Some(wo) = wo {
+            let code: String = wo.try_get("", "code")?;
+            let wo_sync: String = wo.try_get("", "entity_sync_id")?;
+            crate::settings::received_notice::notify_work_order_rule_type_changed(
+                conn,
+                wo_id,
+                &wo_sync,
+                &code,
+                (&h.code, h.permit_type.as_deref()),
+                (&kept.0, kept.1.as_deref()),
+            )
+            .await;
+        }
+    }
     Ok(Some(kept.0))
 }
 

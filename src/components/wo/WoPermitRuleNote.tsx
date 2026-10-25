@@ -98,6 +98,9 @@ export function WoPermitRuleNote({
   const active = permitRuleFlagActive(wo);
   const clearable = active && PERMIT_REQUIREMENT_EDITABLE_STATUSES.has(wo.status_code ?? "");
   const reasonOk = reason.trim().length >= MIN_PERMIT_RULE_CLEAR_REASON;
+  // Several plant rules naming different permit types match it (display only; the rule recorded
+  // is the one with an energy isolation, else the first of the list).
+  const severalTypes = wo.permit_rule_matching_types ?? [];
 
   return (
     <div
@@ -115,6 +118,11 @@ export function WoPermitRuleNote({
             : t("permitRule.requiredByNoType", { rule: wo.permit_rule_code })}
         </span>
       </p>
+      {severalTypes.length > 1 ? (
+        <p className="mt-1 pl-6 text-xs" data-testid="wo-permit-rule-several">
+          {t("permitRule.severalTypes", { types: severalTypes.join(", ") })}
+        </p>
+      ) : null}
       {active ? (
         <p className="mt-1 pl-6 text-xs text-text-secondary">{t("permitRule.clearHint")}</p>
       ) : null}

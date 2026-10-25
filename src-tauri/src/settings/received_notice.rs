@@ -904,6 +904,58 @@ pub(crate) async fn notify_work_order_without_rule(
     Ok(())
 }
 
+/// The permit type of the plant rule held on a work order changed (the list here gives another rule
+/// or type, `permit::requirement_rules::converge_received_rule`): the permit-issue right holders of
+/// its site are told, each until they acknowledge it ([`WO_PERMIT_RULE_MISSING_CATEGORY`], its
+/// audience and fallback), with the rule and permit type before and after (CMMS Advisor decision on
+/// AU-04 R5-S3, option A). The change itself is recorded in the work order's history and audit
+/// trail; a notice that cannot be written is logged.
+pub(crate) async fn notify_work_order_rule_type_changed(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    wo_sync_id: &str,
+    wo_code: &str,
+    before: (&str, Option<&str>),
+    after: (&str, Option<&str>),
+) {
+    let (old_rule, old_type) = (before.0, before.1.unwrap_or("?"));
+    let (new_rule, new_type) = (after.0, after.1.unwrap_or("?"));
+    let route = NoticeRoute {
+        category: WO_PERMIT_RULE_MISSING_CATEGORY,
+        source_module: "work_orders",
+        source_record_id: wo_id.to_string(),
+        entity_type: "work_orders",
+        entity_sync_id: wo_sync_id,
+        org_node_id: None,
+    };
+    send_logged_notice(
+        conn,
+        &route,
+        format!(
+            "OT {wo_code} : permis exigé changé de {old_type} à {new_type} / Work order {wo_code}: required permit \
+             changed from {old_type} to {new_type}"
+        ),
+        format!(
+            "Les règles de permis de l'usine appliquées ici donnent à l'OT {wo_code} la règle {new_rule} (permis \
+             {new_type}) au lieu de {old_rule} (permis {old_type}). Vérifiez le permis prévu pour ce travail. / The \
+             plant's permit rules applied here give work order {wo_code} rule {new_rule} ({new_type} permit) instead \
+             of {old_rule} ({old_type} permit). Check the permit planned for this work."
+        ),
+        &format!("/work-orders?openWo={wo_id}"),
+        &NotificationMessage::new(
+            "wo_permit_rule_type_changed",
+            json!({
+                "code": wo_code,
+                "rule": new_rule,
+                "permit_type": new_type,
+                "previous_rule": old_rule,
+                "previous_permit_type": old_type,
+            }),
+        ),
+    )
+    .await;
+}
+
 /// Writes a notice in a savepoint of the caller's transaction; a notice that cannot be written is
 /// logged and the change it tells of is kept (it is never held back by its notice).
 async fn send_logged_notice(

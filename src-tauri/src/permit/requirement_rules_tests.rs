@@ -1763,3 +1763,51 @@ async fn a_failing_work_order_does_not_stop_the_catch_up_and_is_retried() {
     assert_eq!(rules::catch_up(&db).await, 1, "retried by the next run");
     assert_eq!(rule_of(blocked.id).await.as_deref(), Some("PUMPS_LOTO"));
 }
+
+/// CMMS Advisor decision on AU-04 R5-S3 (option A): a new work order that a hot-work rule (first in
+/// the list) and a LOTO rule both match gets the LOTO rule from its first stamp: a permit type that
+/// requires an energy isolation outranks one that does not. Both types are shown on the work order.
+#[tokio::test]
+async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    add_rule(
+        &db,
+        "A_PUMP_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    add_rule(
+        &db,
+        "B_PUMP_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_PUMP_HOT'",
+    )
+    .await;
+    let wo = crate::wo::queries::create_work_order(&db, direct_input(actor, None))
+        .await
+        .expect("create");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("B_PUMP_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+    assert_eq!(
+        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id)
+            .await
+            .expect("types"),
+        vec!["hot_work".to_string(), "loto".to_string()],
+        "several permit rules shown"
+    );
+    // One type only: nothing shown.
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'A_PUMP_HOT'",
+    )
+    .await;
+    assert!(rules::matching_permit_types(&db, wo.equipment_id, wo.type_id)
+        .await
+        .expect("types")
+        .is_empty());
+}

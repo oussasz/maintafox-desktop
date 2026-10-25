@@ -7280,7 +7280,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
         &planning,
         &[
             ("permit_rule_code", json!("A_FIRST")),
-            ("permit_rule_permit_type", json!("hot_work")),
+            ("permit_rule_permit_type", json!("loto")),
             ("requires_permit", json!(1)),
         ],
     );
@@ -7291,7 +7291,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
     crate::permit::requirement_rules::add_published_rule(
         &db,
         "A_FIRST",
-        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
     )
     .await;
     exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_FIRST'").await;
@@ -7300,7 +7300,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
         matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
         "{outcome:?}"
     );
-    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "hot_work"));
+    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "loto"));
     // A late row of a PC still on the old list (CORRECTIVE_LOTO): A_FIRST stays.
     let from_v1 = wo_row(
         &planning,
@@ -7312,7 +7312,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
     );
     let outcome = apply_received(&db, "work_orders", "wo-s1-1", &from_v1).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
-    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "hot_work"));
+    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "loto"));
     assert_eq!(
         text(
             &db,
@@ -7347,7 +7347,7 @@ async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
             &json!("CORRECTIVE_LOTO"),
             &json!("loto"),
             &json!("A_FIRST"),
-            &json!("hot_work")
+            &json!("loto")
         )
     );
     assert_eq!(
@@ -8051,7 +8051,7 @@ async fn both_clearing_withdrawals_of_the_convergence_are_recorded() {
     crate::permit::requirement_rules::add_published_rule(
         &db,
         "A_FIRST",
-        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
     )
     .await;
     exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_FIRST'").await;
@@ -8059,13 +8059,13 @@ async fn both_clearing_withdrawals_of_the_convergence_are_recorded() {
         &planning,
         &[
             ("permit_rule_code", json!("A_FIRST")),
-            ("permit_rule_permit_type", json!("hot_work")),
+            ("permit_rule_permit_type", json!("loto")),
             ("requires_permit", json!(1)),
         ],
     );
     let outcome = apply(&db, "work_orders", "wo-r5n3-1", &first).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
-    assert_eq!(rule_state(&db, "wo-r5n3-1").await, ruled("A_FIRST", "hot_work"));
+    assert_eq!(rule_state(&db, "wo-r5n3-1").await, ruled("A_FIRST", "loto"));
     let events = converged_events(&db, "wo-r5n3-1").await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0]["withdrawn_cleared_at"], json!("2026-10-01T07:00:00Z"));
@@ -8089,4 +8089,86 @@ async fn both_clearing_withdrawals_of_the_convergence_are_recorded() {
     let events = converged_events(&db, "wo-r5n3-2").await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0]["received_withdrawn_cleared_at"], json!(cleared_at));
+}
+
+// ── CMMS Advisor decision on AU-04 R5-S3 (option A): permit types ranked by energy isolation ──
+
+/// A held LOTO rule is never replaced by a hot-work rule the list here now gives first: kept, no
+/// type-change notice.
+#[tokio::test]
+async fn a_recheck_never_replaces_a_held_isolation_type() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-OPTA-1", "wo-opta-1").await;
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'CORRECTIVE_LOTO'",
+    )
+    .await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_FIRST",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let other = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("OTHER_RULE")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-opta-1", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("0")
+    );
+}
+
+/// A held hot-work rule replaced by the LOTO rule the list here now gives: the type change is
+/// recorded and the permit issuers of the site are told.
+#[tokio::test]
+async fn a_held_rule_type_change_notifies_the_permit_issuers() {
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let row = new_row_naming(&db, "EQ-OPTA-2", "wo-opta-2", "H_RULE", "hot_work", false).await;
+    let outcome = apply(&db, "work_orders", "wo-opta-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("H_RULE", "hot_work"));
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "L_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let other = wo_row(&row, &[("permit_rule_code", json!("OTHER_RULE"))]);
+    let outcome = apply(&db, "work_orders", "wo-opta-2", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("L_RULE", "loto"));
+    let params: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed' \
+             AND category_code = 'wo_permit_rule_missing'",
+        )
+        .await
+        .expect("notice"),
+    )
+    .expect("json");
+    assert_eq!(
+        (&params["previous_permit_type"], &params["permit_type"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
 }
