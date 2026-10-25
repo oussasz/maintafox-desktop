@@ -907,6 +907,18 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
             ],
         ))
         .await?;
+        // The roles are wiped: the reseed below gives the editable ones their whole baseline again.
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM system_config WHERE substr(key, 1, ?) = ?",
+            [
+                i64::try_from(crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.len())
+                    .unwrap_or(i64::MAX)
+                    .into(),
+                crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.into(),
+            ],
+        ))
+        .await?;
 
         // Tenant-scoped preferences are tenant-owned context and should not leak across activations.
         tx.execute(Statement::from_string(

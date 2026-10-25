@@ -181,7 +181,7 @@ pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<
         .collect()
 }
 
-pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {
+pub async fn get_active_policy(db: &impl ConnectionTrait, domain: &str) -> AppResult<Option<PolicySnapshot>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1117,7 +1117,7 @@ pub async fn discard_policy_draft(db: &DatabaseConnection, domain: &str, actor_i
 }
 
 /// Ensure active session/backup policy snapshots exist (idempotent).
-pub async fn ensure_default_policies(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_default_policies(db: &impl ConnectionTrait) -> AppResult<()> {
     if get_active_policy(db, "session").await?.is_none() {
         let json = serde_json::to_string(&SessionPolicy::default())?;
         db.execute(Statement::from_sql_and_values(

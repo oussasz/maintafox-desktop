@@ -51,7 +51,7 @@ pub fn detect_os_locale() -> Option<String> {
 }
 
 /// Read a locale value from `system_config` by key.
-pub async fn read_locale_config(db: &DatabaseConnection, key: &str) -> AppResult<Option<String>> {
+pub async fn read_locale_config(db: &impl ConnectionTrait, key: &str) -> AppResult<Option<String>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -64,7 +64,7 @@ pub async fn read_locale_config(db: &DatabaseConnection, key: &str) -> AppResult
 }
 
 /// Write a locale value to `system_config` (upsert).
-pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str) -> AppResult<()> {
+pub async fn write_locale_config(db: &impl ConnectionTrait, key: &str, value: &str) -> AppResult<()> {
     let follow_os = key == "locale.user_language" && value == FOLLOW_OS_LOCALE;
     if !follow_os && !SUPPORTED_LOCALES.contains(&value) {
         return Err(AppError::ValidationFailed(vec![format!(

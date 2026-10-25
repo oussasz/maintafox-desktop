@@ -859,7 +859,8 @@ async fn re_enabling_an_account_with_administration_rights_is_a_conflict() {
 }
 
 /// A new account with the bootstrap flag: received on a PC joining the plant (no first
-/// administrator here yet) it applies; on a PC that has its first administrator it is a conflict.
+/// administrator here yet) it applies, and so it does while the first pull is unfinished; on a PC
+/// that has its first administrator and has finished a complete pull it is a conflict.
 #[tokio::test]
 async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administrator() {
     let p = plant().await;
@@ -889,6 +890,30 @@ async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administr
     crate::auth::builtin_admin::record_first_administrator_in(&p.db, "chef-sync")
         .await
         .expect("marker");
+    // The marker closed during the first pull (a restart backfills it from the first
+    // administrator received): the plant's other first administrators of older versions are
+    // still arriving, and apply.
+    assert!(!crate::sync::plant_join::complete_pull_done(&p.db).await.unwrap());
+    let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row.clone()).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "during the first pull: {outcome:?}"
+    );
+    exec(
+        &p.db,
+        "DELETE FROM user_accounts WHERE entity_sync_id = 'first-elsewhere-sync'",
+        vec![],
+    )
+    .await;
+
+    // Once a complete pull is done, a new one is a second first administrator.
+    crate::commands::product_license::record_activation_claim_for_tests(&p.db, "tenant-test", "fp-1", "token-1")
+        .await
+        .expect("activated");
+    crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
+        .await
+        .expect("complete pull");
+    assert!(crate::sync::plant_join::complete_pull_done(&p.db).await.unwrap());
     let outcome = receive(&p.db, "user_accounts", "first-elsewhere-sync", "upsert", row).await;
     assert!(is_grant_conflict(&outcome), "second first administrator: {outcome:?}");
 }
@@ -1200,4 +1225,114 @@ async fn reactivating_through_the_commands_is_checked() {
     edited.insert("display_name".into(), "Renamed elsewhere".into());
     let outcome = receive(&p.db, "user_accounts", "manager-sync", "upsert", edited).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+// ── Delegation policies (migration 262) ───────────────────────────────────────────────────────
+
+/// The wire form of a delegation policy made on another PC (`changed_by_id` its author), removed
+/// again so that it arrives as new.
+async fn remote_policy(p: &Plant, sync_id: &str, domains: &str, by: Option<i64>) -> Payload {
+    exec(
+        &p.db,
+        "INSERT INTO delegated_admin_policies (entity_sync_id, admin_role_id, managed_scope_type, \
+           allowed_domains_json, requires_step_up_for_publish, changed_by_id, updated_at) \
+         VALUES (?, ?, 'tenant', ?, 1, ?, ?)",
+        vec![
+            sync_id.into(),
+            p.operator.into(),
+            domains.into(),
+            by.into(),
+            now().into(),
+        ],
+    )
+    .await;
+    let row = payload(&p.db, "delegated_admin_policies", sync_id).await;
+    exec(
+        &p.db,
+        "DELETE FROM delegated_admin_policies WHERE entity_sync_id = ?",
+        vec![sync_id.into()],
+    )
+    .await;
+    row
+}
+
+/// A policy created or widened elsewhere is judged against its author's `adm.roles`; one that names
+/// nobody is a conflict; one that only narrows a held policy is applied.
+#[tokio::test]
+async fn a_delegation_policy_is_checked_against_its_author() {
+    let p = plant().await;
+    let by_manager = remote_policy(&p, "pol-manager", r#"["inv","ot"]"#, Some(p.manager)).await;
+    let outcome = receive(
+        &p.db,
+        "delegated_admin_policies",
+        "pol-manager",
+        "upsert",
+        by_manager.clone(),
+    )
+    .await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied),
+        "author holds adm.roles: {outcome:?}"
+    );
+
+    let by_worker = remote_policy(&p, "pol-worker", r#"["inv"]"#, Some(p.worker)).await;
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-worker", "upsert", by_worker).await;
+    assert!(is_grant_conflict(&outcome), "author never held adm.roles: {outcome:?}");
+
+    // A policy made before 0.9.2 (no author) received during this PC's first download: applied and
+    // listed for the administrators.
+    let mut legacy = remote_policy(&p, "pol-legacy", r#"["inv"]"#, Some(p.manager)).await;
+    legacy.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-legacy", "upsert", legacy).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "first download: {outcome:?}");
+    assert!(
+        review_notices(&p.db)
+            .await
+            .iter()
+            .any(|n| n.contains("author not recorded")),
+        "listed for review"
+    );
+
+    // Once a complete pull is done, a new policy that names nobody is a conflict.
+    crate::commands::product_license::record_activation_claim_for_tests(&p.db, "tenant-test", "fp-1", "token-1")
+        .await
+        .expect("activated");
+    crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
+        .await
+        .expect("complete pull");
+    let mut nobody = remote_policy(&p, "pol-nobody", r#"["inv"]"#, Some(p.manager)).await;
+    nobody.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-nobody", "upsert", nobody).await;
+    assert!(is_grant_conflict(&outcome), "no author: {outcome:?}");
+
+    // The held policy received again unchanged, naming nobody: applied (nothing widened).
+    let mut same = by_manager.clone();
+    same.remove("changed_by_sync_id");
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", same).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "unchanged: {outcome:?}");
+
+    // The held policy narrowed (a domain removed), by a version that names nobody: applied.
+    let mut narrowed = by_manager.clone();
+    narrowed.remove("changed_by_sync_id");
+    narrowed.insert("allowed_domains_json".into(), r#"["inv"]"#.into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", narrowed).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "narrowing: {outcome:?}");
+
+    // Widened again (a domain added) with nobody named: a conflict.
+    let mut widened = by_manager.clone();
+    widened.remove("changed_by_sync_id");
+    widened.insert("allowed_domains_json".into(), r#"["inv","ot","di"]"#.into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", widened).await;
+    assert!(is_grant_conflict(&outcome), "widening without an author: {outcome:?}");
+
+    // Step-up no longer required, by an author who never held adm.roles: a conflict.
+    let mut no_step_up = by_manager;
+    no_step_up.insert("allowed_domains_json".into(), r#"["inv"]"#.into());
+    no_step_up.insert("requires_step_up_for_publish".into(), 0.into());
+    no_step_up.insert("changed_by_sync_id".into(), "worker-sync".into());
+    let outcome = receive(&p.db, "delegated_admin_policies", "pol-manager", "upsert", no_step_up).await;
+    assert!(
+        is_grant_conflict(&outcome),
+        "step-up removed by a non-holder: {outcome:?}"
+    );
 }

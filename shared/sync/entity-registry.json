@@ -377,7 +377,8 @@
       "parents": [
         "roles",
         "org_nodes",
-        "teams"
+        "teams",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },

@@ -317,7 +317,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec(
         "delegated_admin_policies",
-        &[poly("managed_scope_reference", "managed_scope_type", SCOPE_TARGETS)],
+        &[
+            poly("managed_scope_reference", "managed_scope_type", SCOPE_TARGETS),
+            // Who created or last changed the policy (migration 262), checked on arrival by
+            // `sync::grant_check`; soft, as `assigned_by_id` above.
+            soft("changed_by_id", USER),
+        ],
     ),
     spec("org_structure_models", &[r("activated_by_id", USER)]),
     spec("org_node_types", &[r("structure_model_id", "org_structure_models")]),
