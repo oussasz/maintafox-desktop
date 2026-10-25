@@ -529,7 +529,8 @@ pub(crate) fn adoption_delta(local: &Map<String, Value>, inbound: &Map<String, V
 /// ([`AUDIT_POSTED_TWICE`]) and the event is queued for synchronisation (this apply runs with capture
 /// suppressed). Only this PC's own posting, never synchronised, is replaced so: a received version
 /// changing the quantity of a count movement received or acknowledged here is refused before it
-/// gets here (`count_four_eyes::inbound_count_movement_hold`).
+/// gets here (`count_four_eyes::inbound_count_movement_hold`), and an error here if it ever does
+/// (nothing is written: the received row is a materialize error for a person).
 pub(crate) async fn adopt_first_posted(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -547,6 +548,18 @@ pub(crate) async fn adopt_first_posted(
             return Ok(false);
         };
         if let Some(delta) = adoption_delta(&local, inbound) {
+            // Only this PC's own posting, never synchronised, moves the stock so; checked here too,
+            // not only by the hold that runs before (review of ab58cd53, N3): a movement received or
+            // acknowledged here is never moved by a later version of it.
+            if crate::sync::queries::synced_row_version(conn, MOVEMENTS, entity_sync_id)
+                .await?
+                .is_some()
+            {
+                return Err(crate::errors::AppError::SyncError(format!(
+                    "count movement {entity_sync_id} is synchronised here: a received version changing its quantity \
+                     is never adopted (it would move the stock with no count line behind it)"
+                )));
+            }
             let row = conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
