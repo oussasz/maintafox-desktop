@@ -2587,14 +2587,26 @@ fn reset_builtin_admin_pending() -> AppError {
     )
 }
 
+/// A signed-out local reset refused because the plant has an administrator: the two routes that
+/// remain are an administrator signed in with a fresh identity check, or a vendor recovery code
+/// (coded, translated on screen).
+fn reset_requires_admin_signin() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RESET_REQUIRES_ADMIN_SIGNIN",
+        "This PC already has an administrator: sign in as an administrator (the password is asked again) to \
+         change the licence key, or use a vendor recovery code.",
+        std::collections::HashMap::new(),
+    )
+}
+
 /// The rule for a reset asked without a session (`reset_product_license_activation`,
 /// `reset_local_tenant_runtime_data`): allowed only on a true first start. The administrators
 /// decide, not the stored claim (which a signed-out key entry can empty): refused once the plant
-/// has an administrator (`administered_refusal`), and refused on a PC that holds a claim and is
-/// still reached through the never-used built-in account (`pre_administered_by_builtin_account`).
-pub(crate) async fn authorize_signed_out_reset(db: &DatabaseConnection, administered_refusal: &str) -> AppResult<()> {
+/// has an administrator (`reset_requires_admin_signin`), and refused on a PC that holds a claim and
+/// is still reached through the never-used built-in account (`pre_administered_by_builtin_account`).
+pub(crate) async fn authorize_signed_out_reset(db: &DatabaseConnection) -> AppResult<()> {
     if plant_has_administrator(db).await? {
-        return Err(AppError::Auth(administered_refusal.into()));
+        return Err(reset_requires_admin_signin());
     }
     let record = load_state_record_from_db(db).await?;
     if pre_administered_by_builtin_account(db, record.as_ref()).await? {
@@ -2621,11 +2633,7 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         );
         crate::require_step_up!(state);
     } else {
-        authorize_signed_out_reset(
-            &state.db,
-            "Session requise pour réinitialiser l'activation une fois un administrateur créé.",
-        )
-        .await?;
+        authorize_signed_out_reset(&state.db).await?;
     }
 
     let wiped_rows = reset_to_first_run(&state, "recovery").await?;
@@ -2687,11 +2695,7 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         );
         crate::require_step_up!(state);
     } else {
-        authorize_signed_out_reset(
-            &state.db,
-            "Session requise pour réinitialiser les données runtime une fois un administrateur créé.",
-        )
-        .await?;
+        authorize_signed_out_reset(&state.db).await?;
     }
 
     tracing::warn!(

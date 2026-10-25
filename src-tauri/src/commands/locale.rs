@@ -61,7 +61,7 @@ pub async fn set_locale_preference(
     // The follow-Windows value is a personal choice, never a plant default.
     if as_tenant_default && payload.locale == locale::FOLLOW_OS_LOCALE {
         return Err(crate::errors::AppError::ValidationFailed(vec![
-            "The plant default language must be French or English.".into(),
+            "GATE_CMD_LOCALE_TENANT_DEFAULT: The plant default language must be French or English.".into(),
         ]));
     }
 

@@ -57,7 +57,8 @@ pub async fn register_analytics_contract_version(
     if input.contract_id.trim().is_empty() || input.version_semver.trim().is_empty() || input.content_sha256.len() != 64
     {
         return Err(crate::errors::AppError::ValidationFailed(vec![
-            "contract_id, version_semver, and 64-char content_sha256 required".into(),
+            "GATE_CMD_ANALYTICS_CONTRACT_FIELDS: contract_id, version_semver, and 64-char content_sha256 required"
+                .into(),
         ]));
     }
 

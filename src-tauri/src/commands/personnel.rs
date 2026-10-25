@@ -210,12 +210,12 @@ pub async fn create_personnel(input: PersonnelCreateInput, state: State<'_, AppS
     let trimmed = input.full_name.trim().to_string();
     if trimmed.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom complet est obligatoire.".into()
+            "GATE_PERS_FULL_NAME_REQUIRED: Le nom complet est obligatoire.".into(),
         ]));
     }
     if trimmed.chars().count() > 200 {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom complet ne peut pas dépasser 200 caractères.".into(),
+            "GATE_PERS_FULL_NAME_TOO_LONG:max=200: Le nom complet ne peut pas dépasser 200 caractères.".into(),
         ]));
     }
 
@@ -604,7 +604,7 @@ pub async fn create_external_company(
     );
     if name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom de l'entreprise est obligatoire.".into(),
+            "GATE_PERS_COMPANY_NAME_REQUIRED: Le nom de l'entreprise est obligatoire.".into(),
         ]));
     }
     queries::create_external_company(&state.db, name, service_domain, contract_start, contract_end, notes).await
@@ -973,7 +973,7 @@ pub async fn declare_own_skill(payload: DeclareOwnSkillInput, state: State<'_, A
     let user = require_session!(state);
     let Some(personnel_id) = linked_personnel_id(&state, user.user_id).await? else {
         return Err(AppError::ValidationFailed(vec![
-            "No personnel record linked to current session user.".to_string(),
+            "GATE_CMD_USER_NO_PERSONNEL: No personnel record linked to current session user.".to_string(),
         ]));
     };
     skills::declare_personnel_skill(
@@ -1095,7 +1095,7 @@ pub async fn export_workforce_report_csv(report_kind: String, state: State<'_, A
         "skills_gap" => reports::export_skills_gap_csv(&state.db).await,
         "kpi" => reports::export_kpis_csv(&state.db).await,
         _ => Err(AppError::ValidationFailed(vec![
-            "report_kind must be one of: summary, skills_gap, kpi.".to_string(),
+            "GATE_PERS_REPORT_KIND_INVALID: report_kind must be one of: summary, skills_gap, kpi.".to_string(),
         ])),
     }
 }

@@ -631,7 +631,7 @@ pub async fn supersede_previous_published(
 pub fn assert_set_is_draft(set: &ReferenceSet) -> AppResult<()> {
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons ('draft') peuvent être modifiés.",
             set.status
         )]));
@@ -645,7 +645,7 @@ pub fn assert_set_is_editable(set: &ReferenceSet) -> AppResult<()> {
     match set.status.as_str() {
         SET_STATUS_DRAFT | SET_STATUS_VALIDATED => Ok(()),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_OR_VALIDATED_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons et les jeux validés peuvent être modifiés.",
             set.status
         )])),

@@ -68,7 +68,7 @@ pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str
     let follow_os = key == "locale.user_language" && value == FOLLOW_OS_LOCALE;
     if !follow_os && !SUPPORTED_LOCALES.contains(&value) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported locale '{value}'. Supported: {:?}",
+            "GATE_LOCALE_UNSUPPORTED: Unsupported locale '{value}'. Supported: {:?}",
             SUPPORTED_LOCALES
         )]));
     }

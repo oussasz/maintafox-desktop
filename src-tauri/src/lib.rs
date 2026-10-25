@@ -71,6 +71,8 @@ mod background_tests;
 #[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
+mod gate_codes_tests;
+#[cfg(test)]
 pub mod observability;
 #[cfg(test)]
 mod startup_tests;

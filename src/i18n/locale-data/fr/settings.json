@@ -549,6 +549,7 @@
     "LICENSE_CLAIM_INVALID": "Les données de licence reçues sont incomplètes ou mal formées (organisation, licence, poste ou jeton d'activation) : rien n'a été modifié.",
     "LICENSE_FIRST_ADMIN_RETRY": "Le premier administrateur n'a pas pu être enregistré car un autre est en cours de création au même moment : patientez un instant, puis réessayez.",
     "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "Ce poste détient une licence et n'est encore accessible que par son compte administrateur intégré : créez le premier administrateur, puis connectez-vous avec ce compte pour réinitialiser les données locales.",
+    "LICENSE_RESET_REQUIRES_ADMIN_SIGNIN": "Ce poste a déjà un administrateur : connectez-vous en administrateur (confirmation du mot de passe demandée) pour changer de clé, ou utilisez un code de récupération éditeur.",
     "LAST_ADMINISTRATOR_REQUIRED": "Cette modification laisserait l'usine sans administrateur actif : créez ou réactivez d'abord un second administrateur.",
     "ADMIN_RECOVERY_CODE_MALFORMED": "Ce n'est pas un code de récupération valide : copiez le code entier, qui commence par MFXREC1.",
     "ADMIN_RECOVERY_CODE_NON_CANONICAL": "Ce code de récupération a été modifié : demandez-en un nouveau à l'éditeur.",

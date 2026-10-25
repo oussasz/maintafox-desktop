@@ -24,7 +24,7 @@ fn validate_export_format(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![
-            "export_format must be pdf or xlsx.".into()
+            "GATE_REPORT_FORMAT_INVALID: export_format must be pdf or xlsx.".into(),
         ]))
     }
 }
@@ -76,7 +76,9 @@ pub async fn upsert_my_report_schedule(input: UpsertReportScheduleInput, state: 
             id: input.template_id.to_string(),
         })?;
     if !template.is_active {
-        return Err(AppError::ValidationFailed(vec!["template inactive.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPORT_TEMPLATE_INACTIVE: template inactive.".into(),
+        ]));
     }
     let schedule = Schedule::from_str(input.cron_expr.trim())
         .map_err(|e| AppError::ValidationFailed(vec![format!("cron: {e}")]))?;
@@ -136,7 +138,9 @@ pub async fn export_report_now(
             id: input.template_code.clone(),
         })?;
     if !t.is_active {
-        return Err(AppError::ValidationFailed(vec!["template inactive.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPORT_TEMPLATE_INACTIVE: template inactive.".into(),
+        ]));
     }
     let fmt = input.export_format.to_ascii_lowercase();
     let locale = ReportLocale::resolve(&state.db, input.locale.as_deref()).await;

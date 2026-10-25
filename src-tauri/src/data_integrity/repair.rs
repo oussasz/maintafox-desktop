@@ -120,7 +120,9 @@ pub async fn waive_data_integrity_finding(
     actor_id: i64,
 ) -> AppResult<DataIntegrityFindingRow> {
     if input.reason.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["waiver reason required".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_WAIVER_REASON_REQUIRED: waiver reason required".into(),
+        ]));
     }
     let txn = db.begin().await?;
     let f0 = get_finding(&txn, input.finding_id)
@@ -130,7 +132,9 @@ pub async fn waive_data_integrity_finding(
             id: input.finding_id.to_string(),
         })?;
     if f0.status != "open" {
-        return Err(AppError::ValidationFailed(vec!["finding is not open".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_FINDING_NOT_OPEN: finding is not open".into(),
+        ]));
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -138,12 +142,14 @@ pub async fn waive_data_integrity_finding(
         ]));
     }
     let waiver_approver = if f0.severity == "error" {
-        let appr = input
-            .approver_id
-            .ok_or_else(|| AppError::ValidationFailed(vec!["approver_id required for error severity".into()]))?;
+        let appr = input.approver_id.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_DI_INTEGRITY_APPROVER_REQUIRED: approver_id required for error severity".into(),
+            ])
+        })?;
         if appr == actor_id {
             return Err(AppError::ValidationFailed(vec![
-                "second-person approval required for error findings".into(),
+                "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED: second-person approval required for error findings".into(),
             ]));
         }
         appr
@@ -211,7 +217,7 @@ async fn ensure_failure_mode_is_dangling(txn: &impl ConnectionTrait, fd_id: i64)
     };
     match refusal {
         Some(why) => Err(AppError::ValidationFailed(vec![format!(
-            "Repair refused, the failure mode is not provably orphaned: {why}."
+            "GATE_DI_INTEGRITY_NOT_ORPHANED: Repair refused, the failure mode is not provably orphaned: {why}."
         )])),
         None => Ok(()),
     }
@@ -230,7 +236,9 @@ pub async fn apply_data_integrity_repair(
             id: input.finding_id.to_string(),
         })?;
     if f0.status != "open" {
-        return Err(AppError::ValidationFailed(vec!["finding is not open".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_FINDING_NOT_OPEN: finding is not open".into(),
+        ]));
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -434,12 +442,12 @@ pub async fn apply_data_integrity_repair(
         }
         ("WO_DOWNTIME_SUM_EXCEEDS_WINDOW", _) => {
             return Err(AppError::ValidationFailed(vec![
-                "no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually".into(),
+                "GATE_DI_INTEGRITY_NO_AUTO_REPAIR: no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually".into(),
             ]));
         }
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "unsupported repair for {} / {}",
+                "GATE_DI_INTEGRITY_REPAIR_UNSUPPORTED: unsupported repair for {} / {}",
                 f0.finding_code, input.repair_kind
             )]));
         }

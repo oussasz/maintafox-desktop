@@ -204,7 +204,7 @@ pub async fn export_audit_log(payload: ExportAuditInput, state: State<'_, AppSta
 
     if payload.export_reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "export_reason must not be empty".to_string()
+            "GATE_CMD_AUDIT_EXPORT_REASON_REQUIRED: export_reason must not be empty".to_string(),
         ]));
     }
 

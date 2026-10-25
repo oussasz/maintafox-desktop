@@ -9,7 +9,16 @@ import { formatLicenseDate } from "@/components/auth/activation/OrganizationLice
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
+import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   useProductLicenseGate,
   useProductLicenseGateReconcile,
@@ -18,7 +27,7 @@ import {
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorText } from "@/lib/app-error";
 import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
@@ -58,11 +67,20 @@ export function LoginPage() {
    * creation is allowed (`bootstrap_initial_tenant_admin`).
    */
   const [firstAdminPending, setFirstAdminPending] = useState(false);
+  /**
+   * The PC is activated and the plant has an administrator (`has_tenant_admin` of the same
+   * `get_activation_bootstrap_state` answer). A signed-out reset is then refused
+   * (`LICENSE_RESET_REQUIRES_ADMIN_SIGNIN`), so the screen offers the two routes that work instead:
+   * an administrator signed in with a fresh identity check, or a vendor recovery code.
+   */
+  const [plantAdministered, setPlantAdministered] = useState(false);
+  const [changeKeyOpen, setChangeKeyOpen] = useState(false);
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const signInAfterChangeKeyRef = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -82,6 +100,7 @@ export function LoginPage() {
       const ready = Boolean(s.complete && s.tenant_id && s.tenant_id.trim().length > 0);
       setActivationReady(ready);
       let pending = false;
+      let administered = false;
       if (ready) {
         try {
           const bootstrap = await getActivationBootstrapState();
@@ -89,14 +108,17 @@ export function LoginPage() {
             Boolean(bootstrap.tenant_id?.trim()) &&
             !bootstrap.has_tenant_admin &&
             bootstrap.plant_join !== "sign_in";
+          administered = bootstrap.has_tenant_admin;
         } catch {
           // No answer: offer nothing; the sign-in form stays available.
         }
       }
       setFirstAdminPending(pending);
+      setPlantAdministered(administered);
     } catch {
       setActivationReady(false);
       setFirstAdminPending(false);
+      setPlantAdministered(false);
     } finally {
       setActivationCheckLoading(false);
     }
@@ -133,9 +155,8 @@ export function LoginPage() {
       }
       navigate("/", { replace: true });
     } catch (e) {
-      setResetActivationError(
-        describeAppError(e).title || t("login.resetActivation.errorFallback"),
-      );
+      // A coded refusal (`LICENSE_RESET_*`) gives its translated reason, not the generic title.
+      setResetActivationError(appErrorText(e) || t("login.resetActivation.errorFallback"));
     } finally {
       if (mountedRef.current) {
         setResettingActivation(false);
@@ -337,12 +358,16 @@ export function LoginPage() {
             <AuthButton
               variant="secondary"
               className="mt-2"
-              onClick={() => setConfirmResetOpen(true)}
+              onClick={() =>
+                plantAdministered ? setChangeKeyOpen(true) : setConfirmResetOpen(true)
+              }
               disabled={resettingActivation}
             >
-              {resettingActivation
-                ? t("login.staleSession.resetting")
-                : t("login.staleSession.resetCta")}
+              {plantAdministered
+                ? t("login.changeKey.link")
+                : resettingActivation
+                  ? t("login.staleSession.resetting")
+                  : t("login.staleSession.resetCta")}
             </AuthButton>
           </AuthAlert>
         ) : session.error ? (
@@ -395,24 +420,88 @@ export function LoginPage() {
         destructive
         onConfirm={handleResetActivation}
       />
+      <Dialog open={changeKeyOpen} onOpenChange={setChangeKeyOpen}>
+        <DialogContent
+          className="max-w-md"
+          data-testid="login-change-key-dialog"
+          onCloseAutoFocus={(e) => {
+            // "Sign in as an administrator" puts the cursor in the username field.
+            if (signInAfterChangeKeyRef.current) {
+              signInAfterChangeKeyRef.current = false;
+              e.preventDefault();
+              usernameRef.current?.focus();
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{t("login.changeKey.title")}</DialogTitle>
+            <DialogDescription>{t("login.changeKey.description")}</DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal space-y-2 pl-5 text-sm text-text-secondary">
+            <li>{t("login.changeKey.signInRoute")}</li>
+            <li>{t("login.changeKey.recoveryRoute")}</li>
+          </ol>
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col">
+            <Button
+              type="button"
+              onClick={() => {
+                signInAfterChangeKeyRef.current = true;
+                setChangeKeyOpen(false);
+              }}
+            >
+              {t("login.changeKey.signIn")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setChangeKeyOpen(false);
+                setRecoveryCodeOpen(true);
+              }}
+            >
+              {t("login.changeKey.useRecoveryCode")}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setChangeKeyOpen(false)}>
+              {t("login.changeKey.close")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="mt-6 border-t border-surface-border pt-5 text-center">
-        <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
-        {resetActivationError ? (
-          <AuthAlert tone="danger" className="mb-2 text-left">
-            {resetActivationError}
-          </AuthAlert>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => setConfirmResetOpen(true)}
-          disabled={resettingActivation || activationCheckLoading}
-          className={mfAuth.linkPrimary}
-        >
-          {resettingActivation
-            ? t("login.resetActivation.resetting")
-            : t("login.resetActivation.cta")}
-        </button>
+        {plantAdministered && activationReady ? (
+          <>
+            <p className="mb-2 text-xs text-text-muted">{t("login.changeKey.hint")}</p>
+            <button
+              type="button"
+              onClick={() => setChangeKeyOpen(true)}
+              disabled={activationCheckLoading}
+              className={mfAuth.linkPrimary}
+              data-testid="login-change-key-link"
+            >
+              {t("login.changeKey.link")}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
+            {resetActivationError ? (
+              <AuthAlert tone="danger" className="mb-2 text-left">
+                {resetActivationError}
+              </AuthAlert>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setConfirmResetOpen(true)}
+              disabled={resettingActivation || activationCheckLoading}
+              className={mfAuth.linkPrimary}
+            >
+              {resettingActivation
+                ? t("login.resetActivation.resetting")
+                : t("login.resetActivation.cta")}
+            </button>
+          </>
+        )}
       </div>
     </AuthShell>
   );

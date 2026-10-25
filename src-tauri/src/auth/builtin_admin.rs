@@ -432,7 +432,7 @@ pub(crate) async fn after_inbound_user_account(
 pub async fn record_first_administrator_in(conn: &impl ConnectionTrait, admin_entity_sync_id: &str) -> AppResult<()> {
     if admin_entity_sync_id.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "The first administrator has no synchronisation identity.".into(),
+            "GATE_AUTH_ADMIN_SYNC_IDENTITY_MISSING: The first administrator has no synchronisation identity.".into(),
         ]));
     }
     let now = Utc::now().to_rfc3339();

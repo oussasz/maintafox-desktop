@@ -285,12 +285,12 @@ pub(crate) async fn renumber_local_record(
 ) -> AppResult<Option<Renumbered>> {
     if conflict.conflict_type != CODE_CLASH {
         return Err(AppError::ValidationFailed(vec![
-            "Renumbering is only available for a number clash.".to_string(),
+            "GATE_SYNC_RENUMBER_NOT_CLASH: Renumbering is only available for a number clash.".to_string(),
         ]));
     }
     let table = numbered_table(&conflict.entity_type).ok_or_else(|| {
         AppError::ValidationFailed(vec![format!(
-            "'{}' records have no generated number.",
+            "GATE_SYNC_ENTITY_NO_NUMBER:entity={0}: '{0}' records have no generated number.",
             conflict.entity_type
         )])
     })?;
@@ -298,7 +298,11 @@ pub(crate) async fn renumber_local_record(
         .inbound_payload_json
         .as_deref()
         .and_then(|p| inbound_number(table, p))
-        .ok_or_else(|| AppError::ValidationFailed(vec!["The received record carries no number.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_SYNC_RECEIVED_NO_NUMBER: The received record carries no number.".to_string(),
+            ])
+        })?;
     // The received record may already be here in a newer version (renumbered on its own device
     // meanwhile): applying this older copy would bring the clashing number back.
     if let (Some((applied, _)), Some(inbound)) = (
