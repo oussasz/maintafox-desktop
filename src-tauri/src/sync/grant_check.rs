@@ -506,7 +506,9 @@ async fn loss_time(conn: &impl ConnectionTrait, author: i64, permission: &str, a
 
 /// The author of a received grant may make it here (see the module rule); `None` when the grant is
 /// applied. `granted_at`: when the row says it was made (sender's clock); `review`: how it is
-/// listed when it is applied for review.
+/// listed when it is applied for review. Without one (`sync::credential_check`: a password or a
+/// re-enable is held back at no cost), an author never received after a complete pull, or whose
+/// loss of the right is not known here, is refused instead (a conflict).
 pub(crate) async fn author_check(
     conn: &impl ConnectionTrait,
     what: &str,
@@ -514,12 +516,17 @@ pub(crate) async fn author_check(
     permission: &str,
     admin_role: bool,
     granted_at: Option<&str>,
-    review: ReviewItem,
+    review: Option<ReviewItem>,
 ) -> AppResult<Option<ApplyOutcome>> {
     let Some(author) = local_id(conn, "user_accounts", author_sync).await? else {
         if caught_up() {
             // A complete pull did not bring the author: it will never arrive.
-            return accept_for_review(conn, review).await;
+            return match review {
+                Some(review) => accept_for_review(conn, review).await,
+                None => Ok(conflict(format!(
+                    "{what}: its author {author_sync} never arrived here; not applied"
+                ))),
+            };
         }
         return Ok(wait_for(
             "user_accounts",
@@ -547,7 +554,14 @@ pub(crate) async fn author_check(
     }
     let needed = if admin_only { "plant administration" } else { permission };
     let lost = match loss_time(conn, author, permission, admin_only).await? {
-        Loss::Unknown => return accept_for_review(conn, review).await,
+        Loss::Unknown => {
+            return match review {
+                Some(review) => accept_for_review(conn, review).await,
+                None => Ok(conflict(format!(
+                    "{what}: its author no longer holds {needed} here, since a time this PC does not know; not applied"
+                ))),
+            }
+        }
         Loss::Never => {
             return Ok(conflict(format!(
                 "{what}: made by someone who never held {needed} here; not applied, for an administrator to decide"
@@ -776,7 +790,16 @@ async fn assignment_check(
             day(granted_at)
         ),
     };
-    author_check(conn, &what, author_sync, ADM_USERS, admin_role, granted_at, review).await
+    author_check(
+        conn,
+        &what,
+        author_sync,
+        ADM_USERS,
+        admin_role,
+        granted_at,
+        Some(review),
+    )
+    .await
 }
 
 /// An assignment that names no author (see the module rule for the ones accepted).
@@ -897,7 +920,7 @@ async fn role_permission_check(conn: &impl ConnectionTrait, received: &Payload) 
         ADM_ROLES,
         ADMIN_ROLE_NAMES.contains(&role_name.as_str()),
         granted_at,
-        review,
+        Some(review),
     )
     .await
 }
@@ -1072,14 +1095,22 @@ async fn grants_made_by(
                JOIN permissions p ON p.id = rp.permission_id \
               WHERE rp.granted_by_id = ? \
              UNION ALL \
-             SELECT pw.password_changed_at AS at, \
+             SELECT CASE WHEN pw.password_set_by_id = ? THEN pw.password_set_at ELSE pw.password_changed_at END \
+                      AS at, \
                     'Mot de passe de / password of ' || COALESCE(pw.display_name, pw.username) AS line \
                FROM user_accounts pw \
-              WHERE pw.password_changed_by_id = ? AND pw.id <> ? \
+              WHERE (pw.password_set_by_id = ? OR pw.password_changed_by_id = ?) AND pw.id <> ? \
               ORDER BY at",
-            // Passwords of other accounts this person set (`sync::credential_check`; their own
-            // password is not a grant).
-            [user_id.into(), user_id.into(), user_id.into(), user_id.into()],
+            // Passwords of other accounts this person set (`sync::credential_check`), the account
+            // having changed it since included; their own password is not a grant.
+            [
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+                user_id.into(),
+            ],
         ))
         .await?;
     let cutoff = since.map(|t| t - chrono::Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES));

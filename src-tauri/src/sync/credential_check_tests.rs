@@ -14,6 +14,8 @@ type Payload = Map<String, Value>;
 
 const AUTHOR: &str = "password_changed_by_sync_id";
 const STATUS_AUTHOR: &str = "status_changed_by_sync_id";
+const SET_BY: &str = "password_set_by_sync_id";
+const SET_AT: &str = "password_set_at";
 const REMOTE_HASH: &str = "hash-set-on-pc-a";
 
 async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
@@ -148,12 +150,24 @@ async fn remote_reset(db: &DatabaseConnection, account: &str, author: Option<&st
     let mut row = payload(db, "user_accounts", &format!("{account}-sync")).await;
     row.insert("password_hash".into(), REMOTE_HASH.into());
     row.insert("password_changed_at".into(), at.into());
-    row.insert(
-        AUTHOR.into(),
-        author.map_or(Value::Null, |a| Value::String(a.to_string())),
-    );
+    let named = author.map_or(Value::Null, |a| Value::String(a.to_string()));
+    row.insert(AUTHOR.into(), named.clone());
+    // A reset names its administrator as who set the password too (`admin_set_user_password`).
+    row.insert(SET_BY.into(), named);
+    row.insert(SET_AT.into(), at.into());
     let on = flag(&row, "force_password_change", true);
     row.insert("force_password_change".into(), on);
+    row
+}
+
+/// The account row as PC A sends it after the account changed its own password at `at`: who set
+/// the password it replaces (`password_set_*`) is kept, as `change_password_and_rotate` does.
+fn own_change(mut row: Payload, account: &str, hash: &str, at: &str) -> Payload {
+    row.insert("password_hash".into(), hash.into());
+    row.insert("password_changed_at".into(), at.into());
+    row.insert(AUTHOR.into(), format!("{account}-sync").into());
+    let off = flag(&row, "force_password_change", false);
+    row.insert("force_password_change".into(), off);
     row
 }
 
@@ -252,7 +266,12 @@ async fn demote_manager(p: &Plant, at: &str) {
 async fn t01_03_own_change_and_authorised_resets_are_applied() {
     let p = plant().await;
     let at = now();
-    let own = remote_reset(&p.db, "worker", Some("worker-sync"), &at).await;
+    let own = own_change(
+        payload(&p.db, "user_accounts", "worker-sync").await,
+        "worker",
+        REMOTE_HASH,
+        &at,
+    );
     assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", own).await));
     assert_eq!(hash(&p.db, "worker").await.as_deref(), Some(REMOTE_HASH));
     assert_eq!(
@@ -392,30 +411,28 @@ async fn t06_07_a_reset_by_a_demoted_administrator_is_held_back() {
     assert_eq!(hash(&p.db, "worker").await.as_deref(), Some(REMOTE_HASH));
 }
 
-/// 8. An author whose role lost the right at a time not known here: applied and listed in the
-/// review notice. 9. An author who never held the right: held back.
+/// 8. An author whose role lost the right at a time not known here, 9. an author who never held the
+/// right: held back (review SHOULD-FIX: no "applied for review" for a password).
 #[tokio::test]
-async fn t08_09_loss_unknown_is_reviewed_never_held_is_refused() {
+async fn t08_09_loss_unknown_and_never_held_are_held_back() {
     let p = plant().await;
     let legacy = user(&p.db, "legacy").await;
     let old = custom_role(&p.db, "old-managers", &[OT_VIEW]).await;
     assign(&p.db, "legacy-role", legacy, old, Some(p.chef), &now()).await;
     let row = remote_reset(&p.db, "worker", Some("legacy-sync"), &now()).await;
     assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", row).await));
-    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some(REMOTE_HASH));
-    let review = notices(&p.db, "grants_from_former_authors").await;
-    assert_eq!(review.len(), 1);
-    assert!(
-        review[0].contains("password of worker") && review[0].contains("legacy"),
-        "{}",
-        review[0]
-    );
+    // Held back, not applied for review: a password costs nothing to keep.
+    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some("x"));
+    assert!(notices(&p.db, "grants_from_former_authors").await.is_empty());
+    let refused = notices(&p.db, "password_change_refused").await;
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].contains("legacy"), "{}", refused[0]);
 
     let mut row = remote_reset(&p.db, "worker", Some("clerk-sync"), &now()).await;
     row.insert("password_hash".into(), "hash-by-clerk".into());
     assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", row).await));
-    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some(REMOTE_HASH), "kept");
-    assert_eq!(audits(&p.db, PASSWORD_CHANGE_UNAUTHORISED).await, 1);
+    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some("x"), "kept");
+    assert_eq!(audits(&p.db, PASSWORD_CHANGE_UNAUTHORISED).await, 2);
 }
 
 // ── Waits ──────────────────────────────────────────────────────────────────────────────────────
@@ -454,7 +471,7 @@ async fn inbox_status(db: &DatabaseConnection, sync_id: &str) -> String {
 }
 
 /// 10. An author not applied here yet: the row waits for that account. 11. It never arrives: after a
-/// complete pull the change is applied and listed for review.
+/// complete pull the row ends, the password held back.
 #[tokio::test]
 async fn t10_11_an_author_not_here_makes_the_row_wait_until_a_complete_pull() {
     let p = plant().await;
@@ -480,11 +497,11 @@ async fn t10_11_an_author_not_here_makes_the_row_wait_until_a_complete_pull() {
     crate::sync::grant_check::release_after_complete_pull(&p.db)
         .await
         .expect("release");
+    // The author never arrived: the password is held back (not applied for review), the row ends.
     assert_eq!(inbox_status(&p.db, "worker-sync").await, "applied");
-    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some(REMOTE_HASH));
-    let review = notices(&p.db, "grants_from_former_authors").await;
-    assert_eq!(review.len(), 1, "{review:?}");
-    assert!(review[0].contains("password of worker"), "{}", review[0]);
+    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some("x"));
+    assert!(notices(&p.db, "grants_from_former_authors").await.is_empty());
+    assert_eq!(notices(&p.db, "password_change_refused").await.len(), 1);
 }
 
 /// The wire form of an account created on another PC, removed here so it arrives as new.
@@ -493,9 +510,11 @@ async fn remote_new_account(db: &DatabaseConnection, username: &str, author: Opt
     exec(
         db,
         "UPDATE user_accounts SET password_hash = ?, password_changed_at = ?, password_changed_by_id = ?, \
-          created_at = ?, force_password_change = 1 WHERE id = ?",
+          password_set_at = ?, password_set_by_id = ?, created_at = ?, force_password_change = 1 WHERE id = ?",
         vec![
             REMOTE_HASH.into(),
+            at.into(),
+            author.map_or(sea_orm::Value::BigInt(None), Into::into),
             at.into(),
             author.map_or(sea_orm::Value::BigInt(None), Into::into),
             at.into(),
@@ -509,9 +528,9 @@ async fn remote_new_account(db: &DatabaseConnection, username: &str, author: Opt
 }
 
 /// 12. Two accounts whose passwords name each other, neither here (first pull of a new PC): both
-/// wait, and the complete pull ends both waits: the first is applied for review, the second is then
-/// judged against the first, who never held the right here (created without its password). Bounded:
-/// nothing waits any longer, one review notice, one refusal notice.
+/// wait, and the complete pull ends both waits: the first is held back (its author never arrived),
+/// the second is then judged against the first, who never held the right here. Both are created
+/// without a password; nothing waits any longer.
 #[tokio::test]
 async fn t12_a_cycle_of_authors_ends_after_a_complete_pull() {
     let p = plant().await;
@@ -558,11 +577,11 @@ async fn t12_a_cycle_of_authors_ends_after_a_complete_pull() {
     .await;
     assert_eq!(
         with_password,
-        Some(1),
-        "one applied for review, one without its password"
+        Some(0),
+        "an author who never arrived, and one who never held the right: both without a password"
     );
-    assert_eq!(notices(&p.db, "grants_from_former_authors").await.len(), 1);
-    assert_eq!(notices(&p.db, "password_change_refused").await.len(), 1);
+    assert!(notices(&p.db, "grants_from_former_authors").await.is_empty());
+    assert_eq!(notices(&p.db, "password_change_refused").await.len(), 2);
 }
 
 // ── New accounts, older versions, unauthored ────────────────────────────────────────────────────
@@ -622,8 +641,9 @@ async fn t13_a_new_account_with_a_refused_password_arrives_without_one() {
 async fn t14_15_older_versions_and_unauthored_changes() {
     let p = plant().await;
     let mut old_row = remote_new_account(&p.db, "old-hire", None, &now()).await;
-    old_row.remove(AUTHOR);
-    old_row.remove(STATUS_AUTHOR);
+    for key in [AUTHOR, STATUS_AUTHOR, SET_BY, SET_AT] {
+        old_row.remove(key);
+    }
     assert!(applied(
         &receive(&p.db, "user_accounts", "old-hire-sync", old_row).await
     ));
@@ -908,4 +928,139 @@ async fn restoring_is_checked() {
         "stays deleted"
     );
     assert_eq!(audits(&p.db, ACCOUNT_REENABLE_UNAUTHORISED).await, 1);
+}
+
+// ── Who set the password (review BLOCKING: a takeover through the account's own change) ─────────
+
+/// The attack chain: the manager, demoted on B at T, resets the worker's password on a stale PC A
+/// after T, signs in as the worker on A with the temporary password and makes the forced change
+/// there (author: the worker itself; who set the password: still the manager). PC B receives both
+/// rows and keeps the worker's password each time, with a notice; a new PC C's first pull creates
+/// the account without the password.
+#[tokio::test]
+async fn the_takeover_through_a_forced_change_is_held_back() {
+    let b = plant().await;
+    demote_manager(&b, &stamp(chrono::Duration::hours(-1))).await;
+    let reset_at = now();
+    // On A: the reset, then the forced change made "as the worker".
+    let reset = remote_reset(&b.db, "worker", Some("manager-sync"), &reset_at).await;
+    let forced = own_change(
+        reset.clone(),
+        "worker",
+        "hash-chosen-by-the-attacker",
+        &stamp(chrono::Duration::minutes(2)),
+    );
+    assert_eq!(forced.get(SET_BY).and_then(Value::as_str), Some("manager-sync"));
+
+    assert!(applied(&receive(&b.db, "user_accounts", "worker-sync", reset).await));
+    assert_eq!(
+        hash(&b.db, "worker").await.as_deref(),
+        Some("x"),
+        "the reset is held back"
+    );
+    let outcome = receive(&b.db, "user_accounts", "worker-sync", forced.clone()).await;
+    assert!(applied(&outcome), "{outcome:?}");
+    assert_eq!(
+        hash(&b.db, "worker").await.as_deref(),
+        Some("x"),
+        "the change made with the temporary password is held back too"
+    );
+    assert_eq!(audits(&b.db, PASSWORD_CHANGE_UNAUTHORISED).await, 2);
+    let refused = notices(&b.db, "password_change_refused").await;
+    assert_eq!(refused.len(), 2);
+    assert!(
+        refused[1].contains("manager"),
+        "named: who set the password: {}",
+        refused[1]
+    );
+    assert_eq!(
+        scalar(
+            &b.db,
+            "SELECT password_set_by_id FROM user_accounts WHERE id = ?",
+            vec![b.worker.into()]
+        )
+        .await,
+        None,
+        "B keeps who set its password"
+    );
+
+    // A new PC C: its first pull brings the account after the manager's withdrawal.
+    let c = plant().await;
+    demote_manager(&c, &stamp(chrono::Duration::hours(-1))).await;
+    exec(&c.db, "DELETE FROM user_accounts WHERE id = ?", vec![c.worker.into()]).await;
+    let outcome = receive(&c.db, "user_accounts", "worker-sync", forced).await;
+    assert!(applied(&outcome), "{outcome:?}");
+    assert_eq!(hash(&c.db, "worker").await, None, "created without the password");
+    let id = scalar(&c.db, "SELECT id FROM user_accounts WHERE username = 'worker'", vec![])
+        .await
+        .expect("created");
+    assert!(crate::sync::credential_check::password_withheld_on_arrival(&c.db, id)
+        .await
+        .expect("check"));
+}
+
+/// A legitimate reset by the plant administrator, then the account's own change in its profile:
+/// accepted on a PC that received the reset first, and on one that receives only the change.
+#[tokio::test]
+async fn an_own_change_after_a_legitimate_reset_is_accepted() {
+    let p = plant().await;
+    let reset = remote_reset(&p.db, "worker", Some("chef-sync"), &now()).await;
+    let changed = own_change(
+        reset.clone(),
+        "worker",
+        "hash-chosen-by-the-worker",
+        &stamp(chrono::Duration::minutes(5)),
+    );
+    // Only the change (the reset row was superseded on the server).
+    assert!(applied(
+        &receive(&p.db, "user_accounts", "worker-sync", changed.clone()).await
+    ));
+    assert_eq!(
+        hash(&p.db, "worker").await.as_deref(),
+        Some("hash-chosen-by-the-worker")
+    );
+
+    // The reset first, then the change.
+    let q = plant().await;
+    assert!(applied(&receive(&q.db, "user_accounts", "worker-sync", reset).await));
+    assert_eq!(hash(&q.db, "worker").await.as_deref(), Some(REMOTE_HASH));
+    assert!(applied(&receive(&q.db, "user_accounts", "worker-sync", changed).await));
+    assert_eq!(
+        hash(&q.db, "worker").await.as_deref(),
+        Some("hash-chosen-by-the-worker")
+    );
+    assert_eq!(audits(&q.db, PASSWORD_CHANGE_UNAUTHORISED).await, 0);
+}
+
+/// Who set the password changed alone (same hash): judged like a password change; the key missing
+/// on an account held here (an older version): refused.
+#[tokio::test]
+async fn a_changed_or_missing_password_root_is_judged() {
+    let p = plant().await;
+    let mut row = payload(&p.db, "user_accounts", "worker-sync").await;
+    row.insert(SET_BY.into(), "clerk-sync".into());
+    row.insert(SET_AT.into(), now().into());
+    assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", row).await));
+    assert_eq!(
+        scalar(
+            &p.db,
+            "SELECT password_set_by_id FROM user_accounts WHERE id = ?",
+            vec![p.worker.into()]
+        )
+        .await,
+        None,
+        "not taken"
+    );
+    assert_eq!(audits(&p.db, PASSWORD_CHANGE_UNAUTHORISED).await, 1);
+
+    let mut row = own_change(
+        payload(&p.db, "user_accounts", "worker-sync").await,
+        "worker",
+        "hash-from-old-pc",
+        &now(),
+    );
+    row.remove(SET_BY);
+    assert!(applied(&receive(&p.db, "user_accounts", "worker-sync", row).await));
+    assert_eq!(hash(&p.db, "worker").await.as_deref(), Some("x"));
+    assert_eq!(notices(&p.db, "password_change_from_older_version").await.len(), 1);
 }

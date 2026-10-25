@@ -6,7 +6,9 @@
 //! withdrawn on PC B can still, on a PC A that has not received the withdrawal, reset another
 //! account's password (an administrator's included) or re-enable a disabled account; every PC would
 //! apply it. The row now names who did it (migration 261): `password_changed_by_id` and
-//! `status_changed_by_id`, sent as `password_changed_by_sync_id` / `status_changed_by_sync_id`.
+//! `status_changed_by_id`, sent as `password_changed_by_sync_id` / `status_changed_by_sync_id`, and
+//! `password_set_by_id` / `password_set_at`: who last set the password other than the account itself
+//! (an administrator's reset, the creator), and when, kept by the account's own later changes.
 //!
 //! Before a received account row is written ([`inbound_credential_check`], from
 //! `sync::row_codec::apply_row` right after `apply_hooks::before_upsert_checked`, so a row the other
@@ -14,12 +16,16 @@
 //! - **a password change** (on an account held here: another `password_hash`, or another
 //!   `password_changed_at`; on a new account: a password) is accepted when its author is the account
 //!   itself (a change of one's own password, the forced first change, the first administrator, a
-//!   vendor recovery account), or when the author held `adm.users` at that time (the rule of
+//!   vendor recovery account) **and** whoever set the password it replaces could (the received
+//!   `password_set_by` is the account itself, or held the right at `password_set_at`: otherwise a
+//!   demoted administrator resets an account, signs in with the temporary password and changes it
+//!   "as the account"), or when the author held `adm.users` at that time (the rule of
 //!   `sync::grant_check::author_check`; a plant administrator when the account is an administrator
 //!   account, `commands::admin_users::is_admin_account`). An author holding `adm.users` now without
 //!   being a plant administrator must also hold every permission the account can reach here
 //!   (`commands::admin_users::ensure_may_manage_account`; it cannot be rebuilt for the past). A
-//!   change of `force_password_change` alone is applied unchecked (it gives nothing).
+//!   change of `force_password_change` alone is applied unchecked (it gives nothing); a change of
+//!   who set the password, or when, is judged like a password change.
 //! - **a re-enable or restore** (`is_active` 0 → 1, `deleted_at` cleared) of an account held here:
 //!   the same rule for `status_changed_by_sync_id`, dated by the row's `updated_at`. Disabling or
 //!   deleting is never checked (it only takes access away).
@@ -38,9 +44,10 @@
 //! apply: when either cannot be written, the whole row waits and is tried again (a credential is
 //! never dropped untold). No Sync-centre conflict is opened (lead decision O7).
 //!
-//! The waits and the "applied for review" outcome are S3's (`sync::grant_check`): an author not
-//! applied yet makes the row wait for that account (released after a complete pull), an author whose
-//! loss of the right is not known here is applied and listed in the run's review notice.
+//! The waits are S3's (`sync::grant_check`): an author not applied yet makes the row wait for that
+//! account (released after a complete pull). S3's "applied for review" outcome is not used: an
+//! author still missing after a complete pull, or whose loss of the right is not known here, is
+//! refused (holding a password or a re-enable back costs nothing).
 //!
 //! On the PC that made the change, nothing is undone when the author's withdrawal arrives: the
 //! password they set is listed in S3's "grants to review" notice (`grant_check::grants_made_by`,
@@ -52,7 +59,7 @@ use serde_json::{json, Value};
 use crate::errors::AppResult;
 use crate::permit::sync_check::{field, Payload};
 use crate::rbac::permissions::ADM_USERS;
-use crate::sync::grant_check::{self, ReviewItem};
+use crate::sync::grant_check;
 use crate::sync::materialize::ApplyOutcome;
 use crate::sync::row_layout::EntityLayout;
 
@@ -63,10 +70,12 @@ pub(crate) const PASSWORD_CHANGE_UNAUTHORISED: &str = "PASSWORD_CHANGE_UNAUTHORI
 pub(crate) const ACCOUNT_REENABLE_UNAUTHORISED: &str = "ACCOUNT_REENABLE_UNAUTHORISED";
 
 /// Payload keys of the password: accepted or kept together.
-pub(crate) const CREDENTIAL_KEYS: [&str; 4] = [
+pub(crate) const CREDENTIAL_KEYS: [&str; 6] = [
     "password_hash",
     "password_changed_at",
     "password_changed_by_sync_id",
+    "password_set_by_sync_id",
+    "password_set_at",
     "force_password_change",
 ];
 
@@ -75,6 +84,9 @@ pub(crate) const STATUS_KEYS: [&str; 3] = ["is_active", "deleted_at", "status_ch
 
 const PASSWORD_AUTHOR_KEY: &str = "password_changed_by_sync_id";
 const STATUS_AUTHOR_KEY: &str = "status_changed_by_sync_id";
+/// Who last set the password other than the account itself, and when (migration 261).
+const SET_BY_KEY: &str = "password_set_by_sync_id";
+const SET_AT_KEY: &str = "password_set_at";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -143,7 +155,8 @@ fn password_changed(held: Option<&Payload>, received: &Payload) -> bool {
             field(held, "password_changed_at"),
             field(received, "password_changed_at"),
         );
-    hash_changed || date_changed
+    // Who set the password, or when, changed: judged like a password change.
+    hash_changed || date_changed || root_changed(Some(held), received)
 }
 
 /// The received row re-enables or restores the account held here.
@@ -186,102 +199,80 @@ async fn permissions_missing(conn: &impl ConnectionTrait, author: i64, target: i
     Ok(missing)
 }
 
-/// Judges one received change ([`Kind`]) against its author.
-async fn judge(
+/// What an author key of the received row says.
+enum Named {
+    /// Not in the row: sent by a PC with an older version.
+    Absent,
+    /// In the row, naming nobody.
+    Nobody,
+    Author(String),
+}
+
+fn named(received: &Payload, key: &str) -> Named {
+    match received.get(key) {
+        None => Named::Absent,
+        Some(_) => field(received, key).map_or(Named::Nobody, |a| Named::Author(a.to_string())),
+    }
+}
+
+fn refusal(
+    kind: Kind,
+    reason: Reason,
+    author_sync: Option<String>,
+    changed_at: Option<&str>,
+    detail: String,
+) -> Verdict {
+    Verdict::Refuse(Refusal {
+        kind,
+        reason,
+        author_sync,
+        changed_at: changed_at.map(str::to_string),
+        detail,
+    })
+}
+
+/// `author_sync` held `adm.users` here when it made the change (`at`, sender's clock): S3's
+/// `author_check` (a plant administrator for an administrator account), without its "applied for
+/// review" outcome: an author never received after a complete pull, or whose loss of the right is
+/// not known here, is refused (holding a password or a re-enable back costs nothing). An author
+/// holding `adm.users` now without being a plant administrator must also hold every permission the
+/// account can reach here.
+async fn judge_author(
     conn: &impl ConnectionTrait,
     kind: Kind,
     entity_sync_id: &str,
     target: Option<i64>,
-    account: &str,
     received: &Payload,
-    changed_at: Option<String>,
+    author_sync: &str,
+    at: Option<&str>,
 ) -> AppResult<Verdict> {
-    let author_key = match kind {
-        Kind::Password => PASSWORD_AUTHOR_KEY,
-        Kind::Status => STATUS_AUTHOR_KEY,
-    };
-    let refuse = |reason: Reason, author_sync: Option<String>, detail: String| {
-        Verdict::Refuse(Refusal {
-            kind,
-            reason,
-            author_sync,
-            changed_at: changed_at.clone(),
-            detail,
-        })
-    };
-    let held = target.is_some();
-    let author_sync = match received.get(author_key) {
-        None if held => {
-            return Ok(refuse(
-                Reason::OlderVersion,
-                None,
-                format!("{account}: sent by a PC with an older version, which does not say who made it"),
-            ))
-        }
-        None => return Ok(Verdict::Accept),
-        Some(_) => match field(received, author_key) {
-            Some(author) => author.to_string(),
-            None if held => {
-                return Ok(refuse(
-                    Reason::NoAuthor,
-                    None,
-                    format!("{account}: the row does not say who made it"),
-                ))
-            }
-            None => return Ok(Verdict::Accept),
-        },
-    };
-    // One's own password (self change, forced first change, first administrator, recovery account).
-    if kind == Kind::Password && author_sync == entity_sync_id {
-        return Ok(Verdict::Accept);
-    }
     let what = match kind {
         Kind::Password => format!("password of account {entity_sync_id}"),
         Kind::Status => format!("re-enable of account {entity_sync_id}"),
     };
-    let author_label = grant_check::person_label(conn, &author_sync).await?;
-    let review = ReviewItem {
-        entity_type: "user_accounts",
-        source: entity_sync_id.to_string(),
-        line: match kind {
-            Kind::Password => format!(
-                "Mot de passe de / password of {account}, par / by {author_label}, {}",
-                grant_check::day(changed_at.as_deref())
-            ),
-            Kind::Status => format!(
-                "Compte réactivé / account re-enabled {account}, par / by {author_label}, {}",
-                grant_check::day(changed_at.as_deref())
-            ),
-        },
-    };
     let admin = admin_target(conn, target, received).await?;
-    match grant_check::author_check(
-        conn,
-        &what,
-        &author_sync,
-        ADM_USERS,
-        admin,
-        changed_at.as_deref(),
-        review,
-    )
-    .await?
-    {
+    match grant_check::author_check(conn, &what, author_sync, ADM_USERS, admin, at, None).await? {
         None => {}
         Some(ApplyOutcome::Conflict { message, .. }) => {
-            return Ok(refuse(Reason::Unauthorised, Some(author_sync), message));
+            return Ok(refusal(
+                kind,
+                Reason::Unauthorised,
+                Some(author_sync.to_string()),
+                at,
+                message,
+            ));
         }
         Some(other) => return Ok(Verdict::Stop(Some(other))),
     }
-    if let (Some(target), Some(author)) = (
-        target,
-        grant_check::local_id(conn, "user_accounts", &author_sync).await?,
-    ) {
+    if let (Some(target), Some(author)) = (target, grant_check::local_id(conn, "user_accounts", author_sync).await?) {
         let missing = permissions_missing(conn, author, target).await?;
         if !missing.is_empty() {
             let shown: Vec<&str> = missing.iter().take(10).map(String::as_str).collect();
-            return Ok(refuse(
+            return Ok(refusal(
+                kind,
                 Reason::Unauthorised,
-                Some(author_sync),
+                Some(author_sync.to_string()),
+                at,
                 format!(
                     "{what}: its author does not hold every permission of that account here; missing: {}",
                     shown.join(", ")
@@ -290,6 +281,125 @@ async fn judge(
         }
     }
     Ok(Verdict::Accept)
+}
+
+/// The received row sets another root for the password than the one held here (who set it, when).
+fn root_changed(held: Option<&Payload>, received: &Payload) -> bool {
+    let Some(held) = held else {
+        return true;
+    };
+    (received.contains_key(SET_BY_KEY) && field(received, SET_BY_KEY) != field(held, SET_BY_KEY))
+        || (received.contains_key(SET_AT_KEY)
+            && instant_text_differs(field(held, SET_AT_KEY), field(received, SET_AT_KEY)))
+}
+
+/// A received password change (see the module rule): its author, then who set the password it
+/// carries (the root a change of one's own password keeps).
+async fn judge_password(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    held: Option<&Payload>,
+    target: Option<i64>,
+    account: &str,
+    received: &Payload,
+) -> AppResult<Verdict> {
+    let changed_at = field(received, "password_changed_at")
+        .or_else(|| {
+            if held.is_none() {
+                field(received, "created_at")
+            } else {
+                None
+            }
+        })
+        .map(str::to_string);
+    let at = changed_at.as_deref();
+    let is_held = held.is_some();
+    let older = |what: &str| {
+        refusal(
+            Kind::Password,
+            Reason::OlderVersion,
+            None,
+            at,
+            format!("{account}: sent by a PC with an older version, which does not say {what}"),
+        )
+    };
+    let author = match named(received, PASSWORD_AUTHOR_KEY) {
+        Named::Absent if is_held => return Ok(older("who made it")),
+        Named::Nobody if is_held => {
+            return Ok(refusal(
+                Kind::Password,
+                Reason::NoAuthor,
+                None,
+                at,
+                format!("{account}: the row does not say who made it"),
+            ))
+        }
+        // A new account: its password predates the upgrade, or comes from an older version.
+        Named::Absent | Named::Nobody => return Ok(Verdict::Accept),
+        Named::Author(a) => a,
+    };
+    if author != entity_sync_id {
+        match judge_author(conn, Kind::Password, entity_sync_id, target, received, &author, at).await? {
+            Verdict::Accept => {}
+            other => return Ok(other),
+        }
+    }
+    // Who set the password: a change of one's own password keeps it, so a temporary password set by
+    // someone without the right stays refused once its holder changes it.
+    let root = match named(received, SET_BY_KEY) {
+        Named::Absent if is_held => return Ok(older("who set the password")),
+        Named::Absent => return Ok(Verdict::Accept),
+        Named::Nobody => None,
+        Named::Author(r) => Some(r),
+    };
+    if !root_changed(held, received) {
+        // The root this PC holds: judged when it arrived, set here, or older than the upgrade.
+        return Ok(Verdict::Accept);
+    }
+    let set_at = field(received, SET_AT_KEY);
+    match root {
+        None if is_held => Ok(refusal(
+            Kind::Password,
+            Reason::NoAuthor,
+            None,
+            set_at.or(at),
+            format!("{account}: the row does not say who set the password"),
+        )),
+        None => Ok(Verdict::Accept),
+        // Its own root (the first administrator, a vendor recovery account).
+        Some(r) if r == entity_sync_id => Ok(Verdict::Accept),
+        // The author of this change set it: judged above.
+        Some(r) if r == author => Ok(Verdict::Accept),
+        Some(r) => judge_author(conn, Kind::Password, entity_sync_id, target, received, &r, set_at).await,
+    }
+}
+
+/// A received re-enable or restore of an account held here: its author (see the module rule).
+async fn judge_status(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    target: Option<i64>,
+    account: &str,
+    received: &Payload,
+) -> AppResult<Verdict> {
+    let at = field(received, "updated_at");
+    match named(received, STATUS_AUTHOR_KEY) {
+        Named::Absent => Ok(refusal(
+            Kind::Status,
+            Reason::OlderVersion,
+            None,
+            at,
+            format!("{account}: sent by a PC with an older version, which does not say who made it"),
+        )),
+        Named::Nobody => Ok(refusal(
+            Kind::Status,
+            Reason::NoAuthor,
+            None,
+            at,
+            format!("{account}: the row does not say who made it"),
+        )),
+        Named::Author(author) => judge_author(conn, Kind::Status, entity_sync_id, target, received, &author, at).await,
+    }
 }
 
 /// Received account row re-checked against the authors of its password and of its re-enable; `Some`
@@ -318,26 +428,7 @@ pub(crate) async fn inbound_credential_check(
     let mut refusals: Vec<Refusal> = Vec::new();
 
     if password_changed(held.as_ref(), payload) {
-        let changed_at = field(payload, "password_changed_at")
-            .or_else(|| {
-                if held.is_none() {
-                    field(payload, "created_at")
-                } else {
-                    None
-                }
-            })
-            .map(str::to_string);
-        match judge(
-            conn,
-            Kind::Password,
-            entity_sync_id,
-            target,
-            &account,
-            payload,
-            changed_at,
-        )
-        .await?
-        {
+        match judge_password(conn, entity_sync_id, held.as_ref(), target, &account, payload).await? {
             Verdict::Accept => {}
             Verdict::Stop(outcome) => return Ok(outcome),
             Verdict::Refuse(r) => refusals.push(r),
@@ -345,18 +436,7 @@ pub(crate) async fn inbound_credential_check(
     }
     if let Some(held) = &held {
         if status_widened(held, payload) {
-            let changed_at = field(payload, "updated_at").map(str::to_string);
-            match judge(
-                conn,
-                Kind::Status,
-                entity_sync_id,
-                target,
-                &account,
-                payload,
-                changed_at,
-            )
-            .await?
-            {
+            match judge_status(conn, entity_sync_id, target, &account, payload).await? {
                 Verdict::Accept => {}
                 Verdict::Stop(outcome) => return Ok(outcome),
                 Verdict::Refuse(r) => refusals.push(r),
@@ -376,6 +456,8 @@ pub(crate) async fn inbound_credential_check(
                 payload.insert("password_hash".into(), Value::Null);
                 payload.insert("password_changed_at".into(), Value::Null);
                 payload.insert(PASSWORD_AUTHOR_KEY.into(), Value::Null);
+                payload.insert(SET_BY_KEY.into(), Value::Null);
+                payload.insert(SET_AT_KEY.into(), Value::Null);
                 payload.insert("force_password_change".into(), Value::from(1));
             }
             Kind::Password => {
