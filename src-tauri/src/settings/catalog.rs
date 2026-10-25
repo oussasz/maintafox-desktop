@@ -398,28 +398,52 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn invalid(key: &str, message: impl Into<String>) -> AppError {
-    AppError::ValidationFailed(vec![format!("{key}: {}", message.into())])
+/// A refused setting value: `GATE_SET_<RULE>:key=<setting key>: <key>: <english detail>`.
+fn invalid(key: &str, code: &str, message: impl Into<String>) -> AppError {
+    AppError::ValidationFailed(vec![format!("{code}:key={key}: {key}: {}", message.into())])
+}
+
+/// Same refusal with the offending numeric value and the allowed bounds as parameters.
+fn invalid_range(key: &str, code: &str, min: f64, max: f64, got: f64, message: String) -> AppError {
+    AppError::ValidationFailed(vec![format!(
+        "{code}:key={key}:min={min}:max={max}:value={got}: {key}: {message}"
+    )])
 }
 
 /// Check a value against its definition and return the canonical JSON to store.
 pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<String> {
-    let value: serde_json::Value =
-        serde_json::from_str(value_json.trim()).map_err(|_| invalid(def.key, "the value is not valid JSON"))?;
+    let value: serde_json::Value = serde_json::from_str(value_json.trim())
+        .map_err(|_| invalid(def.key, "GATE_SET_VALUE_JSON_INVALID", "the value is not valid JSON"))?;
     match def.kind {
         SettingKind::Choice(options) => {
             let Some(s) = value.as_str() else {
-                return Err(invalid(def.key, "expected one of the listed values"));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_VALUE_NOT_ALLOWED",
+                    "expected one of the listed values",
+                ));
             };
             if !options.contains(&s) {
-                return Err(invalid(def.key, format!("'{s}' is not one of: {}", options.join(", "))));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_VALUE_NOT_ALLOWED",
+                    format!("'{s}' is not one of: {}", options.join(", ")),
+                ));
             }
             Ok(serde_json::to_string(s)?)
         }
         SettingKind::Integer { min, max } => {
-            let n = integer_of(&value).ok_or_else(|| invalid(def.key, "expected a whole number"))?;
+            let n = integer_of(&value)
+                .ok_or_else(|| invalid(def.key, "GATE_SET_VALUE_NOT_INTEGER", "expected a whole number"))?;
             if !(min..=max).contains(&n) {
-                return Err(invalid(def.key, format!("must be between {min} and {max} (got {n})")));
+                return Err(invalid_range(
+                    def.key,
+                    "GATE_SET_VALUE_OUT_OF_RANGE",
+                    min as f64,
+                    max as f64,
+                    n as f64,
+                    format!("must be between {min} and {max} (got {n})"),
+                ));
             }
             Ok(n.to_string())
         }
@@ -427,13 +451,18 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
             min_millionths,
             max_millionths,
         } => {
-            let n = decimal_of(&value).ok_or_else(|| invalid(def.key, "expected a number"))?;
+            let n =
+                decimal_of(&value).ok_or_else(|| invalid(def.key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))?;
             let millionths = (n * 1_000_000.0).round();
             #[allow(clippy::cast_precision_loss)]
             let (lo, hi) = (min_millionths as f64, max_millionths as f64);
             if !(lo..=hi).contains(&millionths) {
-                return Err(invalid(
+                return Err(invalid_range(
                     def.key,
+                    "GATE_SET_VALUE_OUT_OF_RANGE",
+                    lo / 1_000_000.0,
+                    hi / 1_000_000.0,
+                    n,
                     format!(
                         "must be between {} and {} (got {n})",
                         lo / 1_000_000.0,
@@ -444,35 +473,56 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
             Ok(serde_json::to_string(&(millionths / 1_000_000.0))?)
         }
         SettingKind::Month => {
-            let n = integer_of(&value).ok_or_else(|| invalid(def.key, "expected a month number"))?;
+            let n = integer_of(&value)
+                .ok_or_else(|| invalid(def.key, "GATE_SET_VALUE_NOT_INTEGER", "expected a month number"))?;
             if !(1..=12).contains(&n) {
-                return Err(invalid(def.key, format!("must be a month between 1 and 12 (got {n})")));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_MONTH_RANGE",
+                    format!("must be a month between 1 and 12 (got {n})"),
+                ));
             }
             Ok(n.to_string())
         }
         SettingKind::CurrencyCode => {
             let Some(s) = value.as_str() else {
-                return Err(invalid(def.key, "expected a currency code such as EUR"));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_CURRENCY_INVALID",
+                    "expected a currency code such as EUR",
+                ));
             };
             let code = crate::inventory::fx::normalize_currency_code(s)?;
             Ok(serde_json::to_string(&code)?)
         }
         SettingKind::DocumentHeader => {
             let Some(obj) = value.as_object() else {
-                return Err(invalid(def.key, "expected a header object"));
+                return Err(invalid(def.key, "GATE_SET_HEADER_INVALID", "expected a header object"));
             };
             if obj.get("version").and_then(serde_json::Value::as_i64) != Some(1) {
-                return Err(invalid(def.key, "unsupported header version (expected 1)"));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_HEADER_INVALID",
+                    "unsupported header version (expected 1)",
+                ));
             }
             let html = obj.get("html").and_then(serde_json::Value::as_str).unwrap_or("");
             if html.len() > 200_000 {
-                return Err(invalid(def.key, "the header is too large (200 KB maximum)"));
+                return Err(invalid(
+                    def.key,
+                    "GATE_SET_HEADER_INVALID",
+                    "the header is too large (200 KB maximum)",
+                ));
             }
-            validate_header_html(html).map_err(|m| invalid(def.key, m))?;
+            validate_header_html(html).map_err(|m| invalid(def.key, "GATE_SET_HEADER_INVALID", m))?;
             Ok(serde_json::to_string(&value)?)
         }
         SettingKind::ModuleManaged => Err(invalid(
             def.key,
+            match def.editor {
+                SettingEditor::NotInUse => "GATE_SET_NOT_IN_USE",
+                _ => "GATE_SET_OWN_SCREEN",
+            },
             match def.editor {
                 SettingEditor::NotInUse => "this setting is not used by the application and cannot be changed",
                 _ => "this setting is changed from its own screen",
@@ -496,7 +546,7 @@ fn decimal_of(value: &serde_json::Value) -> Option<f64> {
 pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<f64> {
     let def = definition(key)
         .filter(|d| matches!(d.kind, SettingKind::Decimal { .. }))
-        .ok_or_else(|| invalid(key, "not a decimal setting of the catalog"))?;
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: not a decimal setting of the catalog")]))?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -504,10 +554,10 @@ pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult
             [def.key.into(), def.scope.into()],
         ))
         .await?
-        .ok_or_else(|| invalid(key, "the setting is missing"))?;
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("{key}: the setting is missing")]))?;
     let raw: String = row.try_get("", "setting_value_json")?;
     let canonical = validate_value(def, &raw)?;
-    serde_json::from_str(&canonical).map_err(|_| invalid(key, "expected a number"))
+    serde_json::from_str(&canonical).map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
 }
 
 fn integer_of(value: &serde_json::Value) -> Option<i64> {

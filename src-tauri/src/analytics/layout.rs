@@ -11,23 +11,23 @@ pub const DEFAULT_ANALYTICS_DASHBOARD_LAYOUT_JSON: &str = r#"{"version":1,"widge
 fn validate_widget_array(widgets: &[Value]) -> AppResult<()> {
     if widgets.is_empty() || widgets.len() > 32 {
         return Err(AppError::ValidationFailed(vec![
-            "layout_json.widgets length invalid.".into()
+            "GATE_ANA_LAYOUT_INVALID: layout_json.widgets length invalid.".into(),
         ]));
     }
     for w in widgets {
-        let wo = w
-            .as_object()
-            .ok_or_else(|| AppError::ValidationFailed(vec!["each widget must be an object.".into()]))?;
+        let wo = w.as_object().ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: each widget must be an object.".into()])
+        })?;
         wo.get("id")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty() && s.len() <= 64)
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.id invalid.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: widget.id invalid.".into()]))?;
         wo.get("order")
             .and_then(|x| x.as_i64())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.order invalid.".into()]))?;
-        wo.get("visible")
-            .and_then(|x| x.as_bool())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["widget.visible invalid.".into()]))?;
+            .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: widget.order invalid.".into()]))?;
+        wo.get("visible").and_then(|x| x.as_bool()).ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: widget.visible invalid.".into()])
+        })?;
     }
     Ok(())
 }
@@ -35,32 +35,38 @@ fn validate_widget_array(widgets: &[Value]) -> AppResult<()> {
 fn validate_overview_kpis_array(kpis: &[Value]) -> AppResult<()> {
     if kpis.len() > 32 {
         return Err(AppError::ValidationFailed(vec![
-            "layout_json.overview_kpis length invalid.".into(),
+            "GATE_ANA_LAYOUT_INVALID: layout_json.overview_kpis length invalid.".into(),
         ]));
     }
     for w in kpis {
-        let wo = w
-            .as_object()
-            .ok_or_else(|| AppError::ValidationFailed(vec!["each overview_kpi must be an object.".into()]))?;
+        let wo = w.as_object().ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_ANA_LAYOUT_INVALID: each overview_kpi must be an object.".into()
+            ])
+        })?;
         wo.get("id")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty() && s.len() <= 64)
-            .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.id invalid.".into()]))?;
-        wo.get("order")
-            .and_then(|x| x.as_i64())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.order invalid.".into()]))?;
-        wo.get("visible")
-            .and_then(|x| x.as_bool())
-            .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.visible invalid.".into()]))?;
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: overview_kpi.id invalid.".into()])
+            })?;
+        wo.get("order").and_then(|x| x.as_i64()).ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: overview_kpi.order invalid.".into()])
+        })?;
+        wo.get("visible").and_then(|x| x.as_bool()).ok_or_else(|| {
+            AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: overview_kpi.visible invalid.".into()])
+        })?;
         if let Some(accent) = wo.get("accent") {
             if !accent.is_null() {
-                let s = accent
-                    .as_str()
-                    .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.accent invalid.".into()]))?;
+                let s = accent.as_str().ok_or_else(|| {
+                    AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: overview_kpi.accent invalid.".into()])
+                })?;
                 match s {
                     "default" | "brand" | "amber" | "danger" | "teal" => {}
                     _ => {
-                        return Err(AppError::ValidationFailed(vec!["overview_kpi.accent unknown.".into()]));
+                        return Err(AppError::ValidationFailed(vec![
+                            "GATE_ANA_LAYOUT_INVALID: overview_kpi.accent unknown.".into(),
+                        ]));
                     }
                 }
             }
@@ -71,20 +77,24 @@ fn validate_overview_kpis_array(kpis: &[Value]) -> AppResult<()> {
 
 pub fn validate_analytics_layout_json(raw: &str) -> AppResult<()> {
     if raw.len() > 48_000 {
-        return Err(AppError::ValidationFailed(vec!["layout_json too large.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ANA_LAYOUT_INVALID: layout_json too large.".into(),
+        ]));
     }
-    let v: Value =
-        serde_json::from_str(raw).map_err(|e| AppError::ValidationFailed(vec![format!("layout_json: {e}")]))?;
-    let obj = v
-        .as_object()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json must be an object.".into()]))?;
+    let v: Value = serde_json::from_str(raw)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_ANA_LAYOUT_INVALID: layout_json: {e}")]))?;
+    let obj = v.as_object().ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: layout_json must be an object.".into()])
+    })?;
     if obj.get("version").and_then(|x| x.as_u64()) != Some(1) {
         return Err(AppError::ValidationFailed(
             vec!["layout_json.version must be 1.".into()],
         ));
     }
     let Some(widgets) = obj.get("widgets").and_then(|x| x.as_array()) else {
-        return Err(AppError::ValidationFailed(vec!["layout_json.widgets required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ANA_LAYOUT_INVALID: layout_json.widgets required.".into(),
+        ]));
     };
     validate_widget_array(widgets)?;
     if let Some(overview) = obj.get("overview_kpis").and_then(|x| x.as_array()) {
