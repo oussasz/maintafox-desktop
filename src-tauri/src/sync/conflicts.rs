@@ -114,6 +114,16 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
         ]));
     };
     supersede_local_changes(conn, &conflict.entity_type, &conflict.entity_sync_id).await?;
+    // A count line refers to the count movement it names, held with it in the inbox: that movement
+    // is applied first, through every check, or nothing is taken
+    // (`inventory::count_four_eyes::apply_held_movement_of_taken_line`).
+    crate::inventory::count_four_eyes::apply_held_movement_of_taken_line(
+        conn,
+        &conflict.entity_type,
+        conflict.linked_inbox_id,
+        payload_json,
+    )
+    .await?;
     match apply_inbound_payload(
         conn,
         &conflict.entity_type,
