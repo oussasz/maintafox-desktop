@@ -1775,3 +1775,681 @@ fn finding_severity_maps_to_governed_urgency_codes() {
         ["low", "normal", "high", "urgent", "emergency"]
     );
 }
+
+/// An open anomaly on PMP-101 (bearing temperature beyond its warning limit): its id and version.
+async fn hot_bearing_anomaly(db: &DatabaseConnection, r: &InspectionRound) -> (i64, i64) {
+    let tech = technician(db).await;
+    let temp = checkpoint_id(db, "TEMP-BRG").await;
+    let hot = record_inspection_result(
+        db,
+        RecordInspectionResultInput {
+            numeric_value: Some(88.0),
+            comment: Some("Hot".into()),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("record");
+    open_anomaly(db, &format!("result_id = {}", hot.id)).await
+}
+
+/// The anomaly marked "revue permis requise": its new version.
+async fn require_permit_review(db: &DatabaseConnection, anomaly_id: i64) -> i64 {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_anomalies SET requires_permit_review = 1, row_version = row_version + 1 WHERE id = ?",
+        [anomaly_id.into()],
+    ))
+    .await
+    .expect("review flag");
+    scalar_i64(
+        db,
+        &format!("SELECT row_version FROM inspection_anomalies WHERE id = {anomaly_id}"),
+    )
+    .await
+}
+
+/// AU-72: the anomaly's "revue permis requise" requires the permit on the work order raised from it.
+#[tokio::test]
+async fn a_work_order_from_an_anomaly_keeps_its_permit_review() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    let rv = require_permit_review(&db, anomaly_id).await;
+    let (wo, _) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    assert!(wo.requires_permit, "the anomaly's permit review");
+    assert_eq!(wo.permit_rule_code, None, "no plant rule configured");
+}
+
+/// Owner decision D2 (a), audit finding AU-04 (with AU-72): the work order raised from an anomaly
+/// gets the plant's permit rule as well as the anomaly's permit review; both apply.
+#[tokio::test]
+async fn a_work_order_from_an_anomaly_gets_the_plant_rule_and_the_permit_review() {
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        serde_json::json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    let rv = require_permit_review(&db, anomaly_id).await;
+    let (wo, anomaly) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    assert!(anomaly.requires_permit_review, "the review flag is kept");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some("CORRECTIVE_LOTO"));
+    assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
+}
+
+// ── AU-71: a follow-up and its link to the anomaly are written together ──────────────────────
+
+async fn follow_ups_of(db: &DatabaseConnection, anomaly_id: i64) -> (i64, i64) {
+    (
+        scalar_i64(
+            db,
+            &format!("SELECT COUNT(*) FROM intervention_requests WHERE source_inspection_anomaly_id = {anomaly_id}"),
+        )
+        .await,
+        scalar_i64(
+            db,
+            &format!("SELECT COUNT(*) FROM work_orders WHERE source_inspection_anomaly_id = {anomaly_id}"),
+        )
+        .await,
+    )
+}
+
+/// The same anomaly sent twice at once (a double click, two screens): one request, linked; the
+/// other submission is refused as changed elsewhere.
+#[tokio::test]
+async fn a_double_submit_writes_one_request() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let submit =
+        || routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Hot bearing".into()), None);
+    let (first, second) = tokio::join!(submit(), submit());
+    let (ok, refused) = match (first, second) {
+        (Ok(done), Err(e)) | (Err(e), Ok(done)) => (done, e),
+        other => panic!("expected one request and one refusal, got {other:?}"),
+    };
+    assert_validation::<()>(Err(refused), "GATE_RECORD_CHANGED_ELSEWHERE");
+    assert_eq!(follow_ups_of(&db, anomaly_id).await, (1, 0), "one request");
+    assert_eq!(ok.1.linked_di_id, Some(ok.0.id));
+    assert_eq!(ok.1.resolution_status, "triaged");
+}
+
+/// The anomaly changed between its read and its link (here by a trigger standing for another
+/// writer): nothing is kept, neither the follow-up nor a half link, and the version error is
+/// returned; the anomaly stays open.
+#[tokio::test]
+async fn a_stale_anomaly_keeps_no_follow_up() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+
+    // A version already stale when sent.
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv - 1, admin, Some("Hot".into()), None).await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+
+    // Changed by another writer while the follow-up is written.
+    for sql in [
+        "CREATE TRIGGER au71_di AFTER INSERT ON intervention_requests WHEN NEW.source_inspection_anomaly_id IS NOT NULL \
+         BEGIN UPDATE inspection_anomalies SET row_version = row_version + 1 WHERE id = NEW.source_inspection_anomaly_id; END",
+        "CREATE TRIGGER au71_wo AFTER INSERT ON work_orders WHEN NEW.source_inspection_anomaly_id IS NOT NULL \
+         BEGIN UPDATE inspection_anomalies SET row_version = row_version + 1 WHERE id = NEW.source_inspection_anomaly_id; END",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("trigger");
+    }
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Hot".into()), None).await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Hot".into()),
+            None,
+        )
+        .await,
+        "GATE_RECORD_CHANGED_ELSEWHERE",
+    );
+    assert_eq!(follow_ups_of(&db, anomaly_id).await, (0, 0), "nothing kept");
+    let (still_open, same_rv) = open_anomaly(&db, &format!("id = {anomaly_id}")).await;
+    assert_eq!(
+        (still_open, same_rv),
+        (anomaly_id, rv),
+        "the anomaly is untouched and open"
+    );
+}
+
+// ── AU-72 S4: received anomalies keep the decision rules ─────────────────────────────────────
+
+/// Applies a received anomaly row as the inbox pass does (kept only when applied).
+async fn apply_received_anomaly(
+    db: &DatabaseConnection,
+    sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> crate::sync::materialize::ApplyOutcome {
+    use crate::sync::materialize::ApplyOutcome;
+    use sea_orm::TransactionTrait;
+    let layout = crate::sync::row_layout::layout(db, "inspection_anomalies")
+        .await
+        .expect("layout");
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        sync_id,
+        "upsert",
+        &serde_json::to_string(payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
+}
+
+fn conflict_code(outcome: &crate::sync::materialize::ApplyOutcome) -> Option<&str> {
+    match outcome {
+        crate::sync::materialize::ApplyOutcome::Conflict { code, .. } => Some(code.as_str()),
+        _ => None,
+    }
+}
+
+/// A received anomaly row is refused when it clears "revue permis requise", closes the anomaly
+/// without a decision, or reopens a decided one; a decision made as this PC makes it is applied.
+#[tokio::test]
+async fn a_received_anomaly_keeps_the_decision_rules() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    require_permit_review(&db, anomaly_id).await;
+    let sync_id: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT entity_sync_id FROM inspection_anomalies WHERE id = {anomaly_id}"),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "entity_sync_id")
+        .expect("sync id");
+    let held = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let with = |changes: &[(&str, Value)]| {
+        let mut p = held.clone();
+        for (k, v) in changes {
+            p.insert((*k).to_string(), v.clone());
+        }
+        p
+    };
+    for (changes, expected) in [
+        (
+            vec![("requires_permit_review", json!(0))],
+            "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
+        ),
+        (
+            vec![("resolution_status", json!("resolved"))],
+            "INSP_ANOMALY_DECISION_INVALID",
+        ),
+        (
+            vec![
+                ("resolution_status", json!("triaged")),
+                ("routing_decision", json!("wo")),
+            ],
+            "INSP_ANOMALY_DECISION_INVALID",
+        ),
+    ] {
+        let outcome = apply_received_anomaly(&db, &sync_id, &with(&changes)).await;
+        assert_eq!(conflict_code(&outcome), Some(expected), "{changes:?}: {outcome:?}");
+    }
+    // Deferred as here: applied; then reopened elsewhere: refused.
+    let deferred = with(&[
+        ("resolution_status", json!("deferred")),
+        ("routing_decision", json!("defer")),
+    ]);
+    let outcome = apply_received_anomaly(&db, &sync_id, &deferred).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    let mut reopened = deferred.clone();
+    reopened.insert("resolution_status".into(), json!("open"));
+    reopened.insert("routing_decision".into(), Value::Null);
+    let outcome = apply_received_anomaly(&db, &sync_id, &reopened).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("INSP_ANOMALY_DECISION_INVALID"),
+        "{outcome:?}"
+    );
+}
+
+/// AU-72 R2-S4: a deferred anomaly routed on another PC (allowed here too: routing checks only the
+/// link) is applied; its link, once set, is never removed or replaced by a received row
+/// (`INSP_ANOMALY_LINK_CHANGED`); a deferred anomaly is never cancelled or reopened.
+#[tokio::test]
+async fn a_received_route_of_a_deferred_anomaly_is_applied_and_its_link_kept() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let deferred = routing::defer_inspection_anomaly(&db, anomaly_id, rv)
+        .await
+        .expect("defer");
+    // Routed while deferred, as this PC allows: the row as the routing PC sends it.
+    let (_, routed) = routing::route_inspection_anomaly_to_di(
+        &db,
+        anomaly_id,
+        deferred.row_version,
+        admin,
+        Some("Bearing too hot on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route a deferred anomaly");
+    assert_eq!(routed.resolution_status, "triaged");
+    let sync_id = routed.entity_sync_id.clone();
+    let sent = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    assert!(
+        sent.get("linked_di_sync_id").and_then(Value::as_str).is_some(),
+        "{sent:?}"
+    );
+    // This PC still holds it deferred.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inspection_anomalies SET resolution_status = 'deferred', routing_decision = 'defer', \
+         linked_di_id = NULL WHERE id = ?",
+        [anomaly_id.into()],
+    ))
+    .await
+    .expect("held deferred");
+    let held = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let with = |base: &serde_json::Map<String, Value>, changes: &[(&str, Value)]| {
+        let mut p = base.clone();
+        for (k, v) in changes {
+            p.insert((*k).to_string(), v.clone());
+        }
+        p
+    };
+    // A deferred anomaly cancelled or reopened elsewhere: refused.
+    for status in ["cancelled", "open"] {
+        let moved = with(
+            &held,
+            &[("resolution_status", json!(status)), ("routing_decision", Value::Null)],
+        );
+        let outcome = apply_received_anomaly(&db, &sync_id, &moved).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("INSP_ANOMALY_DECISION_INVALID"),
+            "{status}: {outcome:?}"
+        );
+    }
+    // Routed elsewhere: applied, with its link.
+    let outcome = apply_received_anomaly(&db, &sync_id, &sent).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'triaged' \
+                 AND linked_di_id IS NOT NULL"
+            )
+        )
+        .await,
+        1
+    );
+    // The link, once set, is never replaced or removed.
+    for link in [json!("another-request"), Value::Null] {
+        let changed = with(&sent, &[("linked_di_sync_id", link.clone())]);
+        let outcome = apply_received_anomaly(&db, &sync_id, &changed).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("INSP_ANOMALY_LINK_CHANGED"),
+            "{link:?}: {outcome:?}"
+        );
+    }
+}
+
+// ── AU-72, CMMS Advisor decision (option B): a cancelled anomaly is never routed or deferred; a
+// routed anomaly whose condition is gone is cancelled, its follow-up kept, its responsible told ──
+
+/// The bearing reading of the round corrected into tolerance.
+async fn correct_bearing_reading(db: &DatabaseConnection, r: &InspectionRound) {
+    let tech = technician(db).await;
+    let temp = checkpoint_id(db, "TEMP-BRG").await;
+    record_inspection_result(
+        db,
+        RecordInspectionResultInput {
+            numeric_value: Some(60.0),
+            ..record(r.id, temp)
+        },
+        tech,
+    )
+    .await
+    .expect("corrected");
+}
+
+/// Safety notices of the "originating anomaly cancelled" category to `user`.
+async fn origin_cancelled_notices(db: &DatabaseConnection, user: i64) -> i64 {
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = 'insp_anomaly_origin_cancelled' AND n.recipient_user_id = {user}"
+        ),
+    )
+    .await
+}
+
+/// Option B: a cancelled anomaly (its reading corrected) can be neither routed nor deferred; the
+/// condition back opens a new open anomaly, which holds the round review.
+#[tokio::test]
+async fn a_cancelled_anomaly_is_never_routed_or_deferred_and_a_recurrence_opens_a_new_one() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+    correct_bearing_reading(&db, &r).await;
+    let rv = scalar_i64(
+        &db,
+        &format!(
+            "SELECT row_version FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled'"
+        ),
+    )
+    .await;
+    assert_validation(
+        routing::defer_inspection_anomaly(&db, anomaly_id, rv).await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_di(&db, anomaly_id, rv, admin, Some("Bearing".into()), None).await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    assert_validation(
+        routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Bearing".into()),
+            None,
+        )
+        .await,
+        "GATE_INSP_ANOMALY_CANCELLED",
+    );
+    // The condition back (a corrected reading still out of tolerance): its own new open anomaly.
+    let (again, _) = hot_bearing_anomaly(&db, &r).await;
+    assert_ne!(again, anomaly_id, "a new anomaly");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE round_id = {} AND resolution_status = 'open'",
+                r.id
+            ),
+        )
+        .await,
+        1,
+        "it holds the round review"
+    );
+}
+
+/// Option B: an anomaly routed to a work order whose reading is then corrected is cancelled, its
+/// decision and link kept; the work order is not changed (its permit review stays) and its
+/// responsible is told; with no responsible, its planner.
+#[tokio::test]
+async fn a_routed_anomaly_cancelled_keeps_its_work_order_and_tells_its_responsible() {
+    for case in ["responsible", "planner"] {
+        let db = setup().await;
+        let admin = admin_user(&db).await;
+        let responsible = i64::from(crate::auth::scope_tests::user(&db, "insp_wo_responsible").await);
+        let planner = i64::from(crate::auth::scope_tests::user(&db, "insp_wo_planner").await);
+        let (responsible_of_wo, told, not_told) = if case == "responsible" {
+            (Some(responsible), responsible, Some(planner))
+        } else {
+            (None, planner, None)
+        };
+        let planner_of_wo = Some(planner);
+        let r = scheduled_round(&db).await;
+        let (anomaly_id, _) = hot_bearing_anomaly(&db, &r).await;
+        let rv = require_permit_review(&db, anomaly_id).await;
+        let (wo, _) = routing::route_inspection_anomaly_to_wo(
+            &db,
+            anomaly_id,
+            rv,
+            admin,
+            "corrective".into(),
+            Some("Replace drive-end bearing on PMP-101".into()),
+            None,
+        )
+        .await
+        .expect("route to WO");
+        assert!(wo.requires_permit);
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET primary_responsible_id = ?, planner_id = ? WHERE id = ?",
+            [responsible_of_wo.into(), planner_of_wo.into(), wo.id.into()],
+        ))
+        .await
+        .expect("people of the work order");
+        let before = origin_cancelled_notices(&db, told).await;
+        let wo_version = scalar_i64(
+            &db,
+            &format!("SELECT row_version FROM work_orders WHERE id = {}", wo.id),
+        )
+        .await;
+        correct_bearing_reading(&db, &r).await;
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled' \
+                     AND routing_decision = 'wo' AND linked_work_order_id = {} AND requires_permit_review = 1",
+                    wo.id
+                ),
+            )
+            .await,
+            1,
+            "{case}: cancelled, its decision, link and permit review kept"
+        );
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM work_orders WHERE id = {} AND requires_permit = 1 AND row_version = {wo_version}",
+                    wo.id
+                ),
+            )
+            .await,
+            1,
+            "{case}: the work order is not changed"
+        );
+        assert_eq!(origin_cancelled_notices(&db, told).await, before + 1, "{case}: told");
+        if let Some(other) = not_told {
+            assert_eq!(
+                origin_cancelled_notices(&db, other).await,
+                0,
+                "only the responsible when there is one"
+            );
+        }
+    }
+}
+
+/// Option B on arrival: a received route or deferral of an anomaly cancelled here is refused; a
+/// received cancel of an anomaly routed here (its link kept) is applied and its responsible here told.
+#[tokio::test]
+async fn a_received_cancel_of_a_routed_anomaly_is_applied_and_a_route_of_a_cancelled_one_refused() {
+    use serde_json::{json, Value};
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let responsible = i64::from(crate::auth::scope_tests::user(&db, "insp_rx_responsible").await);
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let (wo, routed) = routing::route_inspection_anomaly_to_wo(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        "corrective".into(),
+        Some("Replace drive-end bearing on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to WO");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET primary_responsible_id = ? WHERE id = ?",
+        [responsible.into(), wo.id.into()],
+    ))
+    .await
+    .expect("responsible");
+    let sync_id = routed.entity_sync_id.clone();
+    let routed_row = crate::permit::sync_check::local_wire(&db, "inspection_anomalies", &sync_id)
+        .await
+        .expect("wire")
+        .expect("row");
+    let mut cancelled = routed_row.clone();
+    cancelled.insert("resolution_status".into(), json!("cancelled"));
+    let outcome = apply_received_anomaly(&db, &sync_id, &cancelled).await;
+    assert!(
+        matches!(outcome, crate::sync::materialize::ApplyOutcome::Applied),
+        "{outcome:?}"
+    );
+    assert_eq!(origin_cancelled_notices(&db, responsible).await, 1, "told here too");
+    // Cancelled here: a received route (back to triaged) or deferral is refused.
+    let mut deferred = cancelled.clone();
+    deferred.insert("resolution_status".into(), json!("deferred"));
+    deferred.insert("routing_decision".into(), json!("defer"));
+    deferred.insert("linked_work_order_sync_id".into(), Value::Null);
+    for (row, expected) in [
+        (routed_row, "INSP_ANOMALY_DECISION_INVALID"),
+        (deferred, "INSP_ANOMALY_LINK_CHANGED"),
+    ] {
+        let outcome = apply_received_anomaly(&db, &sync_id, &row).await;
+        assert_eq!(conflict_code(&outcome), Some(expected), "{outcome:?}");
+    }
+}
+
+/// Option B, request-linked (AU-72 R4-N6): an anomaly routed to a request whose reading is then
+/// corrected is cancelled with its link kept; the request is not changed and its reviewer is told
+/// (a request has no responsible or planner), not the inspection technician.
+#[tokio::test]
+async fn a_request_linked_anomaly_cancelled_keeps_its_request_and_tells_its_reviewer() {
+    let db = setup().await;
+    let r = scheduled_round(&db).await;
+    let admin = admin_user(&db).await;
+    let reviewer = i64::from(crate::auth::scope_tests::user(&db, "insp_di_reviewer").await);
+    let bystander = i64::from(crate::auth::scope_tests::user(&db, "insp_di_bystander").await);
+    let (anomaly_id, rv) = hot_bearing_anomaly(&db, &r).await;
+    let (di, _) = routing::route_inspection_anomaly_to_di(
+        &db,
+        anomaly_id,
+        rv,
+        admin,
+        Some("Bearing too hot on PMP-101".into()),
+        None,
+    )
+    .await
+    .expect("route to DI");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE intervention_requests SET reviewer_id = ? WHERE id = ?",
+        [reviewer.into(), di.id.into()],
+    ))
+    .await
+    .expect("reviewer");
+    let di_version = scalar_i64(
+        &db,
+        &format!("SELECT row_version FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await;
+    correct_bearing_reading(&db, &r).await;
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM inspection_anomalies WHERE id = {anomaly_id} AND resolution_status = 'cancelled' \
+                 AND routing_decision = 'di' AND linked_di_id = {}",
+                di.id
+            ),
+        )
+        .await,
+        1,
+        "cancelled, its decision and link kept"
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!("SELECT row_version FROM intervention_requests WHERE id = {}", di.id),
+        )
+        .await,
+        di_version,
+        "the request is not changed"
+    );
+    assert_eq!(origin_cancelled_notices(&db, reviewer).await, 1, "its reviewer is told");
+    assert_eq!(origin_cancelled_notices(&db, bystander).await, 0);
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+             WHERE e.category_code = 'insp_anomaly_origin_cancelled' \
+               AND (n.body LIKE '%corrected%' OR n.body LIKE '%corrigée%')",
+        )
+        .await,
+        0,
+        "the text claims no cause"
+    );
+}

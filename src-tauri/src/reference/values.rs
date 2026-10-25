@@ -533,7 +533,7 @@ pub async fn get_value(db: &DatabaseConnection, value_id: i64) -> AppResult<Refe
 pub async fn create_value(
     db: &DatabaseConnection,
     payload: CreateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
@@ -583,7 +583,9 @@ pub async fn create_value(
         payload.metadata_json.clone()
     };
 
-    db.execute(Statement::from_sql_and_values(
+    // The value and the permit rules it gives the open work orders commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
               color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
@@ -615,7 +617,7 @@ pub async fn create_value(
     })?;
 
     // Fetch by set_id + code (unique index)
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
@@ -625,6 +627,10 @@ pub async fn create_value(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after insert")))?;
 
     let created = map_value(&row)?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, created.set_id, Some(actor_id)).await?;
+    txn.commit().await?;
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
     Ok(created)
 }
@@ -641,7 +647,7 @@ pub async fn create_value(
 pub async fn create_operational_value(
     db: &DatabaseConnection,
     payload: CreateOperationalReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let domain_code = normalize_code(&payload.domain_code);
     if domain_code.is_empty() {
@@ -748,6 +754,9 @@ pub async fn create_operational_value(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after operational insert")))?;
 
     let created = map_value(&row)?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, created.set_id, Some(actor_id)).await?;
     txn.commit().await?;
 
     // Schedule details hang off the committed value; the helper runs on the pool connection.
@@ -761,7 +770,7 @@ pub async fn update_value(
     db: &DatabaseConnection,
     value_id: i64,
     payload: UpdateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
@@ -869,6 +878,9 @@ pub async fn update_value(
         .await?;
 
     let updated = get_value_by_id(&txn, value_id).await?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, updated.set_id, Some(actor_id)).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -909,7 +921,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
 /// Reactivates a previously deactivated reference value.
 ///
 /// Same mutation gate as `deactivate_value`.
-pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id: i64) -> AppResult<ReferenceValue> {
+pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, actor_id: i64) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -923,13 +935,19 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    // The value and the permit rules it gives the open work orders commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_values SET is_active = 1 WHERE id = ?",
         [value_id.into()],
     ))
     .await?;
 
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, existing.set_id, Some(actor_id)).await?;
+    txn.commit().await?;
     get_value_by_id(db, value_id).await
 }
 

@@ -79,6 +79,23 @@ describe("WoPermitRuleNote", () => {
     expect(permitRuleFlagActive(wo())).toBe(true);
   });
 
+  it("shows when several plant rules name different permit types (display only)", () => {
+    const { rerender } = render(<WoPermitRuleNote wo={wo()} />);
+    expect(screen.queryByTestId("wo-permit-rule-several")).toBeNull();
+    rerender(
+      <WoPermitRuleNote
+        wo={wo({
+          permit_rule_code: "PUMP_LOTO",
+          permit_rule_permit_type: "LOTO",
+          permit_rule_matching_types: ["HOT_WORK", "LOTO"],
+        })}
+      />,
+    );
+    expect(screen.getByTestId("wo-permit-rule-several")).toHaveTextContent(
+      'permitRule.severalTypes {"types":"HOT_WORK, LOTO"}',
+    );
+  });
+
   it("offers no clearing without the permit-issue right", () => {
     render(<WoPermitRuleNote wo={wo()} />);
     expect(screen.queryByRole("button", { name: "permitRule.clear" })).toBeNull();
