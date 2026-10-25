@@ -67,6 +67,8 @@ export const ReconciliationCountSchema = z.object({
   counted_by: z.string().nullable(),
   /** Who approved its variance, when it had one and the account is known on this PC. */
   approved_by: z.string().nullable(),
+  /** Auto-approbation, derived on every PC: flagged, or its variance approved by its own counter. */
+  self_approved: z.boolean(),
   device_code: z.string(),
   counted_at: z.string(),
   /** Stock on record the count was set against, on the PC that posted it. */

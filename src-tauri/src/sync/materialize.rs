@@ -658,6 +658,16 @@ pub(crate) fn applying_snapshot_row() -> bool {
     APPLYING_SNAPSHOT_ROW.try_with(|s| *s).unwrap_or(false)
 }
 
+/// Runs `judge` as if the inbox row of `server_batch_id` were being applied
+/// ([`applying_snapshot_row`]): a received row judged on behalf of another (a count line judged
+/// for its stock movement, `inventory::count_four_eyes`) is judged in its own context — a version
+/// from an exchange is never judged as a snapshot row because the row it is judged for is one.
+pub(crate) async fn judged_as_row_of_batch<F: std::future::Future>(server_batch_id: &str, judge: F) -> F::Output {
+    APPLYING_SNAPSHOT_ROW
+        .scope(server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX), judge)
+        .await
+}
+
 async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
     APPLYING_SNAPSHOT_ROW
         .scope(

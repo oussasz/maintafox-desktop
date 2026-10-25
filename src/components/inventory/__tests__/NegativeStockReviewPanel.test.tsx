@@ -230,6 +230,7 @@ describe("NegativeStockReviewPanel", () => {
               session_code: "CC-1",
               counted_by: "Alice",
               approved_by: "Alice",
+              self_approved: true,
               device_code: "7KQ2",
               counted_at: TS,
               counted_qty: 0,
@@ -242,6 +243,7 @@ describe("NegativeStockReviewPanel", () => {
               session_code: "CC-2",
               counted_by: "Bob",
               approved_by: "Bob",
+              self_approved: true,
               device_code: "M3XZ",
               counted_at: TS,
               counted_qty: 0,
@@ -263,6 +265,10 @@ describe("NegativeStockReviewPanel", () => {
     expect(
       screen.getByText(/Alice on PC 7KQ2, .*, by stock-to-reconcile list: counted 0/),
     ).toBeInTheDocument();
+    // CMMS Advisor Q13: a count approved by its own counter is listed as an auto-approbation.
+    expect(
+      screen.getAllByText(/· self-approval \(variance approved by its counter\)$/),
+    ).toHaveLength(2);
     expect(
       screen.getByText(/Bob on PC M3XZ, .*, by count session CC-2: counted 0/),
     ).toBeInTheDocument();
@@ -616,6 +622,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "reconciliation",
             counted_by: "Alice",
             approved_by: "Alice",
+            self_approved: true,
             device_code: "7KQ2",
             counted_at: TS,
             system_qty: 10,
@@ -634,7 +641,7 @@ describe("NegativeStockReviewPanel", () => {
     fireEvent.click(await screen.findByLabelText("Show reconciled items"));
     expect(
       await screen.findByText(
-        /Over-receipt — to reconcile · PO-77 · Closed by count CC-9 from the stock-to-reconcile list: counted by Alice, .+, variance approved by Alice$/,
+        /Over-receipt — to reconcile · PO-77 · Closed by count CC-9 from the stock-to-reconcile list: counted by Alice, .+, variance approved by Alice · self-approval \(variance approved by its counter\)$/,
       ),
     ).toBeInTheDocument();
   });
@@ -691,6 +698,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "count_session",
             counted_by: "Dan",
             approved_by: null,
+            self_approved: false,
             device_code: "M3XZ",
             counted_at: TS,
             system_qty: 5,
@@ -748,6 +756,7 @@ describe("NegativeStockReviewPanel", () => {
             path: "count_session",
             counted_by: "Erin",
             approved_by: "Frank",
+            self_approved: false,
             device_code: "Q8LW",
             counted_at: TS,
             system_qty: 6,

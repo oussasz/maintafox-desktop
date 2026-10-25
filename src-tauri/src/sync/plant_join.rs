@@ -100,11 +100,43 @@ async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
     Ok(row.map(|r| r.try_get::<i64>("", "present")).transpose()?.unwrap_or(0) == 1)
 }
 
+/// `system_config` key: this PC has completed a full pull (its first join is over); its value is the
+/// tenant id the pull ran for. Unlike [`SERVER_CONFIRMED_NO_ACCOUNTS_KEY`] it is never erased by a
+/// later pull (accounts or not): only a local data reset deletes it, which makes the PC join again.
+/// A snapshot received once it is recorded (a re-bootstrap after the server refused the checkpoint)
+/// is not a first join (`inventory::count_four_eyes`, CMMS Advisor Q9).
+pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
+
+/// Whether this PC has completed a full pull since it joined (or since its last local data reset).
+pub(crate) async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 AS d FROM system_config WHERE key = ?",
+            [COMPLETE_PULL_DONE_KEY.into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
-/// exchanges caught up with the server head, received rows materialized). Records the fact when
-/// this PC holds no user account and received none; erases it otherwise. Returns whether the fact
-/// holds now.
+/// exchanges caught up with the server head, received rows materialized). Records that a complete
+/// pull was done ([`COMPLETE_PULL_DONE_KEY`]), then the fact when this PC holds no user account and
+/// received none; erases the fact otherwise. Returns whether the fact holds now.
 pub(crate) async fn record_complete_pull(conn: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
+    if !tenant_id.trim().is_empty() {
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            [
+                COMPLETE_PULL_DONE_KEY.into(),
+                tenant_id.into(),
+                Utc::now().to_rfc3339().into(),
+            ],
+        ))
+        .await?;
+    }
     if tenant_id.trim().is_empty() || accounts_present(conn).await? {
         forget(conn).await?;
         return Ok(false);
@@ -239,6 +271,7 @@ mod tests {
     async fn the_fact_names_one_organisation_and_ends_when_an_account_arrives() {
         let db = crate::db::test_db::seeded().await;
         assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
+        assert!(!complete_pull_done(&db).await.expect("done"), "not joined yet");
         // The dev built-in "admin" of the seed does not count.
         assert!(record_complete_pull(&db, PLANT).await.expect("record"));
         assert!(server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
@@ -271,8 +304,13 @@ mod tests {
         .await
         .expect("ingest");
         assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
-        // The next complete pull erases it.
+        // The next complete pull erases it, and records that a complete pull was done (kept).
+        assert!(complete_pull_done(&db).await.expect("done"));
         assert!(!record_complete_pull(&db, PLANT).await.expect("record"));
+        assert!(
+            complete_pull_done(&db).await.expect("done"),
+            "a pull that brought accounts is still a complete pull"
+        );
         let stored = db
             .query_one(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,

@@ -3289,7 +3289,33 @@ async fn a_variance_above_the_tolerance_is_approved_by_someone_other_than_its_co
     let approved = controls::approve_count_line(&db, approval(&within, 1))
         .await
         .expect("the counter approves a variance within the tolerance");
-    assert_eq!(approved.self_approved, 0, "not a self-approval: no four-eyes needed");
+    // No four-eyes was needed, so nothing is stored as a self-approval; read, a line approved by its
+    // own counter is shown as an auto-approbation on every PC (CMMS Advisor Q13).
+    assert_eq!(
+        approved.self_approved, 1,
+        "approved by its counter: shown as an auto-approbation"
+    );
+    assert_eq!(
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT self_approved FROM inventory_count_lines WHERE id = ?",
+            [approved.id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("line")
+        .try_get::<i64>("", "self_approved")
+        .expect("stored"),
+        0,
+        "nothing stored is rewritten"
+    );
+    let listed = controls::list_count_lines(&db, approved.session_id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.id == approved.id)
+        .expect("listed");
+    assert_eq!(listed.self_approved, 1, "listed as an auto-approbation");
     let short = controls::approve_count_line(
         &db,
         ApproveInventoryCountLineInput {

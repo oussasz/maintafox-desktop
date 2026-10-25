@@ -3396,7 +3396,11 @@ export interface InventoryCountLine {
   /** Who entered the counted quantity (null for lines entered before the four-eyes update). */
   counted_by_id: number | null;
   counted_by_name: string | null;
-  /** 1: approved by its counter above the tolerance under the site's opt-out ("auto-approbation"). */
+  /**
+   * 1: an "auto-approbation", derived on read on every PC (CMMS Advisor Q13): flagged where it was
+   * approved (above the tolerance under the site's opt-out), or its variance approved by its own
+   * counter. Nothing stored is rewritten.
+   */
   self_approved: number;
   /**
    * Second approval of a self-approved line by another person, so that a PC where four-eyes

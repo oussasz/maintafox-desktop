@@ -2604,11 +2604,44 @@ async fn a_count_posted_twice_is_an_item_that_a_new_count_closes() {
             "{pc}: closed by the new count"
         );
         assert_eq!(
+            all.closed_double_postings[0]
+                .closed_by
+                .as_ref()
+                .map(|c| c.self_approved),
+            Some(false),
+            "{pc}: approved by a second person"
+        );
+        assert_eq!(
             negative_stock::summary(db).await.expect("summary").double_posting_count,
             0,
             "{pc}"
         );
     }
+    // CMMS Advisor Q13: a count approved by its own counter is listed as an auto-approbation,
+    // derived on read, although nothing stored says so (here a line as another PC's version would
+    // hold it: approver = counter, not flagged).
+    exec_unsent(
+        &a,
+        "UPDATE inventory_count_lines SET approved_by_id = counted_by_id, self_approved = 0
+         WHERE session_id = (SELECT id FROM inventory_count_sessions WHERE session_code = ?)",
+        vec![resolved.session_code.clone().into()],
+    )
+    .await;
+    let all = negative_stock::list_reviews(&a, true).await.expect("list");
+    let closed_by = all.closed_double_postings[0].closed_by.as_ref().expect("closed by");
+    assert!(closed_by.self_approved, "shown as an auto-approbation");
+    assert_eq!(closed_by.approved_by, closed_by.counted_by);
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM inventory_count_lines cl JOIN inventory_count_sessions s ON s.id = cl.session_id
+             WHERE s.session_code = ? AND cl.self_approved = 0",
+            vec![resolved.session_code.clone().into()],
+        )
+        .await,
+        1,
+        "nothing stored is rewritten"
+    );
 }
 
 /// A count posted twice is not closed by a count entered before the second movement was here: its
@@ -4163,6 +4196,28 @@ async fn a_held_adjustment_is_never_applied_without_its_reversal() {
         -5000,
         "the stock does not move"
     );
+
+    // Review of 435c9410 (SF3): the missing person arrives — the group is tried again and recovers:
+    // the adjustment and its reversal are applied together, the stock nets to zero, the conflict
+    // closes.
+    let late = crate::auth::scope_tests::user(&b, "heldgrouplate").await;
+    exec_unsent(
+        &b,
+        "UPDATE user_accounts SET entity_sync_id = 'a-person-not-applied-on-b' WHERE id = ?",
+        vec![late.into()],
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&b, 200, true)
+        .await
+        .expect("tried again");
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "both together: net zero"
+    );
+    assert!(conflict_kinds(&b).await.is_empty(), "the conflict closed by itself");
 }
 
 /// Review of a9c38354 (S1, S3): a received count line is checked on what it names — a second
@@ -4511,6 +4566,40 @@ async fn a_received_line_is_judged_on_its_quantities_and_the_cost_it_was_entered
     );
 }
 
+/// A snapshot of every plant row on the server, in its order, stored in `db`'s inbox under `batch`
+/// (a `snapshot-…` batch this PC asked for) and materialized.
+async fn snapshot_into(server: &TestServer, db: &DatabaseConnection, batch: &str) {
+    let mut rows: Vec<_> = server
+        .state
+        .iter()
+        .filter(|((entity_type, _), _)| {
+            crate::sync::registry::entity(entity_type).map(|e| e.scope) != Some(crate::sync::registry::SyncScope::User)
+        })
+        .collect();
+    rows.sort_by_key(|(_, row)| row.seq);
+    for ((entity_type, sync_id), row) in rows {
+        exec(
+            db,
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                     row_version, payload_json, payload_hash, apply_status)
+             VALUES (?, 'c1', ?, ?, ?, ?, ?, ?, 'pending')",
+            vec![
+                batch.into(),
+                entity_type.clone().into(),
+                sync_id.clone().into(),
+                row.operation.clone().into(),
+                row.row_version.into(),
+                row.payload_json.clone().into(),
+                row.payload_hash.clone().into(),
+            ],
+        )
+        .await;
+    }
+    crate::sync::materialize::materialize_inbox(db, 200, true)
+        .await
+        .expect("materialize");
+}
+
 /// CMMS Advisor Q9: a PC joining the plant receives its history in the snapshot of its first join:
 /// a count self-approved on another PC, where four-eyes applies on the PC joining, is applied as
 /// history (no four-eyes judgement) with its movement, its self-approval flag kept for review.
@@ -4524,34 +4613,7 @@ async fn a_self_approved_count_received_in_a_first_join_snapshot_is_applied_as_h
     crate::inventory::tests::single_site_opting_out(&c, &mut RowFactory::for_device(9), false).await;
     crate::sync::capture::end_suppression(&c).await.expect("unsuppress");
     // The snapshot of C's first join: every plant row on the server, in its order.
-    let mut rows: Vec<_> = server
-        .state
-        .iter()
-        .filter(|((entity_type, _), _)| {
-            crate::sync::registry::entity(entity_type).map(|e| e.scope) != Some(crate::sync::registry::SyncScope::User)
-        })
-        .collect();
-    rows.sort_by_key(|(_, row)| row.seq);
-    for ((entity_type, sync_id), row) in rows {
-        exec(
-            &c,
-            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                                     row_version, payload_json, payload_hash, apply_status)
-             VALUES ('snapshot-all-firstjoin', 'c1', ?, ?, ?, ?, ?, ?, 'pending')",
-            vec![
-                entity_type.clone().into(),
-                sync_id.clone().into(),
-                row.operation.clone().into(),
-                row.row_version.into(),
-                row.payload_json.clone().into(),
-                row.payload_hash.clone().into(),
-            ],
-        )
-        .await;
-    }
-    crate::sync::materialize::materialize_inbox(&c, 200, true)
-        .await
-        .expect("materialize");
+    snapshot_into(&server, &c, "snapshot-all-firstjoin").await;
     let kinds = conflict_kinds(&c).await;
     assert!(
         !kinds.iter().any(|k| k.starts_with("inventory_")),
@@ -4568,5 +4630,460 @@ async fn a_self_approved_count_received_in_a_first_join_snapshot_is_applied_as_h
         on_hand_milli(&c, art, loc).await,
         0,
         "the count's stock, as on the other PCs"
+    );
+}
+
+// ── Re-bootstrap judged, reversal checked (reviews of 536cb792 and 435c9410) ──────────────────
+
+/// A row stored in `db`'s inbox as received under `batch`, with `status`.
+async fn inbox_put(
+    db: &DatabaseConnection,
+    batch: &str,
+    entity_type: &str,
+    sync_id: &str,
+    row_version: i64,
+    payload: &serde_json::Map<String, serde_json::Value>,
+    status: &str,
+) {
+    let json = serde_json::to_string(payload).expect("json");
+    exec(
+        db,
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                                 row_version, payload_json, payload_hash, apply_status)
+         VALUES (?, 'c1', ?, ?, 'upsert', ?, ?, ?, ?)",
+        vec![
+            batch.into(),
+            entity_type.into(),
+            sync_id.into(),
+            row_version.into(),
+            json.clone().into(),
+            crate::sync::queries::hash_payload(&json).into(),
+            status.into(),
+        ],
+    )
+    .await;
+}
+
+/// The verdict on a received count line, judged as a row of `batch` (snapshot or exchange).
+async fn line_judged_in(
+    db: &DatabaseConnection,
+    batch: &str,
+    sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let verdict = crate::sync::materialize::judged_as_row_of_batch(
+        batch,
+        crate::inventory::count_four_eyes::inbound_count_line_check(db, sync_id, received),
+    )
+    .await
+    .expect("judged");
+    verdict_code(verdict.as_ref())
+}
+
+/// The sync id of the count line of a session on `db`.
+async fn line_sync_of(db: &DatabaseConnection, session_code: &str) -> String {
+    text_of(
+        db,
+        "SELECT cl.entity_sync_id FROM inventory_count_lines cl
+         JOIN inventory_count_sessions s ON s.id = cl.session_id WHERE s.session_code = ?",
+        vec![session_code.into()],
+    )
+    .await
+}
+
+async fn session_sync_of(db: &DatabaseConnection, session_code: &str) -> String {
+    text_of(
+        db,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE session_code = ?",
+        vec![session_code.into()],
+    )
+    .await
+}
+
+/// Review of 536cb792 (S1): a snapshot asked for again (a re-bootstrap after the server refused the
+/// checkpoint, e.g. after a server restore) brings back a count line held here in conflict, with its
+/// held adjustment: it is not a first join — the line is judged again, both stay held and the stock
+/// does not move. The movement is judged with its line in the line's own context.
+#[tokio::test]
+async fn a_re_bootstrap_keeps_a_held_count_held() {
+    let HeldCount {
+        a,
+        b,
+        server,
+        pair_b,
+        session_code,
+        ..
+    } = held_count("rebootstrapcounter").await;
+    let session_sync = session_sync_of(&a, &session_code).await;
+    let adjustment = movement_sync_id(&a, &session_sync, "COUNT_ADJUST").await;
+    let adjustment_row = wire_row(&a, "inventory_transactions", &adjustment).await;
+    // The movement judged as a snapshot row: its line's version came from an exchange, judged so.
+    let verdict = crate::sync::materialize::judged_as_row_of_batch(
+        "snapshot-all-rebootstrap",
+        crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &adjustment, &adjustment_row),
+    )
+    .await
+    .expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "wait", "held with its line");
+
+    snapshot_into(&server, &b, "snapshot-all-rebootstrap").await;
+    assert!(
+        conflict_kinds(&b)
+            .await
+            .contains(&"inventory_count_lines:COUNT_SELF_APPROVAL".to_string()),
+        "still held"
+    );
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "the adjustment is not applied by the snapshot"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        -5000,
+        "the stock does not move"
+    );
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_count_lines WHERE entity_sync_id = ?",
+            vec![line_sync_of(&a, &session_code).await.into()],
+        )
+        .await,
+        0,
+        "the line is not applied"
+    );
+}
+
+/// Review of 536cb792 (S1): a snapshot row is the plant's history only for a line new here, and only
+/// until this PC completed a full pull; a line already here, or a version from an exchange, is judged.
+#[tokio::test]
+async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "snapshotjudgedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 1, "blank tolerance: strict");
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let counter_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![counter.into()],
+    )
+    .await;
+    // Approved by its counter, not flagged: four-eyes refuses it wherever it is judged.
+    let mut received = crate::permit::sync_check::local_wire(&db, "inventory_count_lines", &line_sync)
+        .await
+        .expect("wire")
+        .expect("line");
+    for (k, v) in [
+        ("approved_by_sync_id", serde_json::json!(counter_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Recompté avec le magasinier")),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let held = crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL;
+    let snapshot = "snapshot-all-join";
+    assert_eq!(
+        line_judged_in(&db, snapshot, &line_sync, &received).await,
+        held,
+        "a line already here: judged"
+    );
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        "pass",
+        "new here, first join: history"
+    );
+    assert_eq!(
+        line_judged_in(&db, "delta-42", &fresh, &received).await,
+        held,
+        "from an exchange: judged"
+    );
+    crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+        .await
+        .expect("complete pull");
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        held,
+        "after a complete pull, a snapshot is no first join"
+    );
+}
+
+/// Review of 435c9410 (SF1, SF2, SF3): the reversal a received count line names must undo exactly
+/// the adjustment it names as posted — a token reversal, or the real reversal of another count of
+/// the same article and location, is refused; a reversal named without a posted adjustment is
+/// refused, and such a reversal movement waits (never applied alone).
+#[tokio::test]
+async fn a_received_reversal_must_undo_the_adjustment_its_line_names() {
+    use crate::inventory::domain::ReverseInventoryCountSessionInput;
+    let HeldCount {
+        a,
+        b,
+        pair_a,
+        counter,
+        session_code,
+        ..
+    } = held_count("reversalqtycounter").await;
+    exec_unsent(
+        &a,
+        "UPDATE stock_balances SET on_hand_qty = on_hand_qty + 10 WHERE article_id = ? AND location_id = ?",
+        vec![pair_a.0.into(), pair_a.1.into()],
+    )
+    .await;
+    let approver = second_person(&a, counter).await;
+    let reverse = |session: crate::inventory::domain::InventoryCountSession| {
+        let a = a.clone();
+        async move {
+            crate::inventory::controls::reverse_count_session(
+                &a,
+                ReverseInventoryCountSessionInput {
+                    session_id: session.id,
+                    expected_row_version: session.row_version,
+                    reason: "Pas de seconde approbation possible".into(),
+                    actor_id: Some(i64::from(approver)),
+                },
+            )
+            .await
+            .expect("reversed");
+        }
+    };
+    reverse(session_by_code(&a, &session_code).await).await;
+    // Another count of the same article and location, approved by another person, then reversed: a
+    // real COUNT_REVERSAL of another count.
+    let other = enter_count(&a, counter, pair_a.0, pair_a.1, 8.0).await;
+    let other = post_count_approved_by(&a, counter, approver, other).await;
+    reverse(session_by_code(&a, &other.session_code).await).await;
+
+    let reversal = movement_sync_id(&a, &session_sync_of(&a, &session_code).await, "COUNT_REVERSAL").await;
+    let other_reversal = movement_sync_id(&a, &session_sync_of(&a, &other.session_code).await, "COUNT_REVERSAL").await;
+    let line_sync = line_sync_of(&a, &session_code).await;
+    let reversed_line = wire_row(&a, "inventory_count_lines", &line_sync).await;
+    assert_eq!(
+        reversed_line.get("reversed_transaction_sync_id"),
+        Some(&serde_json::json!(reversal))
+    );
+    // On B the adjustment is held (deferred); the movements reach its inbox.
+    let real = wire_row(&a, "inventory_transactions", &reversal).await;
+    inbox_put(&b, "delta-r", "inventory_transactions", &reversal, 1, &real, "pending").await;
+    let mut token = real.clone();
+    token.insert("quantity".into(), serde_json::json!(-0.001));
+    let token_sync = crate::sync::identity::new_entity_sync_id();
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_transactions",
+        &token_sync,
+        1,
+        &token,
+        "pending",
+    )
+    .await;
+    let other_row = wire_row(&a, "inventory_transactions", &other_reversal).await;
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_transactions",
+        &other_reversal,
+        1,
+        &other_row,
+        "pending",
+    )
+    .await;
+
+    let naming = |reversal: &str, posted: Option<serde_json::Value>| {
+        let mut p = reversed_line.clone();
+        p.insert("reversed_transaction_sync_id".into(), serde_json::json!(reversal));
+        if let Some(posted) = posted {
+            p.insert("posted_transaction_sync_id".into(), posted);
+        }
+        p
+    };
+    let invalid = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID;
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&reversal, None)).await,
+        "pass",
+        "its real reversal"
+    );
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&token_sync, None)).await,
+        invalid,
+        "a token reversal of −0.001"
+    );
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &naming(&other_reversal, None)).await,
+        invalid,
+        "the reversal of another count"
+    );
+    let no_posted = naming(&reversal, Some(serde_json::Value::Null));
+    assert_eq!(
+        line_judged_in(&b, "delta-r", &line_sync, &no_posted).await,
+        invalid,
+        "a reversal without a posted adjustment"
+    );
+    // The reversal movement, whose latest line version names no adjustment for it to undo, waits.
+    inbox_put(
+        &b,
+        "delta-r",
+        "inventory_count_lines",
+        &line_sync,
+        99,
+        &no_posted,
+        "pending",
+    )
+    .await;
+    let verdict = crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &reversal, &real)
+        .await
+        .expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "wait", "never applied alone");
+}
+
+/// Review of 435c9410 (N1): when the version of a count line naming a movement was set aside by a
+/// person's decision on its conflict, the movement says it waits for that conflict to be settled,
+/// not for the line to arrive.
+#[tokio::test]
+async fn a_movement_whose_line_version_was_set_aside_waits_for_that_conflict() {
+    let HeldCount { a, b, session_code, .. } = held_count("setasidecounter").await;
+    let adjustment = movement_sync_id(&a, &session_sync_of(&a, &session_code).await, "COUNT_ADJUST").await;
+    let payload = wire_row(&a, "inventory_transactions", &adjustment).await;
+    exec(
+        &b,
+        "UPDATE sync_inbox SET apply_status = 'superseded'
+         WHERE entity_type = 'inventory_count_lines' AND apply_status = 'conflict'",
+        vec![],
+    )
+    .await;
+    match crate::inventory::count_four_eyes::inbound_count_movement_hold(&b, &adjustment, &payload)
+        .await
+        .expect("judged")
+    {
+        Some(crate::settings::site::InboundVerdict::Defer(why)) => {
+            assert!(
+                why.contains("waits for the conflict of its count line") && why.contains("COUNT_SELF_APPROVAL"),
+                "{why}"
+            );
+            assert!(!why.contains("has not arrived yet"), "{why}");
+        }
+        other => panic!("the movement waits: {other:?}"),
+    }
+}
+
+/// Review of 435c9410 (SF3): a held count of two lines raises one notice to the count-approval
+/// holders, not one per line.
+#[tokio::test]
+async fn a_held_count_of_two_lines_raises_one_notice() {
+    use crate::inventory::controls;
+    use crate::inventory::domain::{
+        ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, PostInventoryCountSessionInput,
+        UpsertInventoryCountLineInput,
+    };
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    let second = factory.create(&a, "articles").await.expect("article");
+    exec(
+        &a,
+        "UPDATE articles SET requires_serial_tracking = 0, requires_batch_tracking = 0,
+                requires_expiration = 0, is_critical_spare = 0, is_active = 1 WHERE id = ?",
+        vec![second.rowid.into()],
+    )
+    .await;
+    adjust(&a, second.rowid, location.rowid, 10.0).await.expect("stock in");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, true, false).await;
+    let counter = user_with(&a, "twolinecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let warehouse_id = scalar_i64(
+        &a,
+        "SELECT warehouse_id FROM stock_locations WHERE id = ?",
+        vec![location.rowid.into()],
+    )
+    .await;
+    let session = controls::create_count_session(
+        &a,
+        CreateInventoryCountSessionInput {
+            warehouse_id,
+            location_id: Some(location.rowid),
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("session");
+    let session = controls::transition_count_session(&a, move_to(&session, "counting", counter))
+        .await
+        .expect("counting");
+    let mut lines = Vec::new();
+    for article_id in [article.rowid, second.rowid] {
+        lines.push(
+            controls::upsert_count_line(
+                &a,
+                UpsertInventoryCountLineInput {
+                    session_id: session.id,
+                    article_id,
+                    location_id: location.rowid,
+                    counted_qty: 7.0,
+                    variance_reason_code: Some("COUNT_ERROR".into()),
+                    expected_row_version: None,
+                    actor_id: Some(i64::from(counter)),
+                },
+            )
+            .await
+            .expect("line"),
+        );
+    }
+    let session = controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    for line in &lines {
+        let approved = controls::approve_count_line(
+            &a,
+            ApproveInventoryCountLineInput {
+                line_id: line.id,
+                expected_row_version: line.row_version,
+                reviewer_id: i64::from(counter),
+                reviewer_evidence: "Bac vérifié au comptage".into(),
+            },
+        )
+        .await
+        .expect("self-approved under A's opt-out");
+        assert_eq!(approved.self_approved, 1);
+    }
+    let session = controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    controls::post_count_session(
+        &a,
+        PostInventoryCountSessionInput {
+            session_id: session.id,
+            expected_row_version: session.row_version,
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("posted");
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    let kinds = conflict_kinds(&b).await;
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| k.as_str() == "inventory_count_lines:COUNT_SELF_APPROVAL")
+            .count(),
+        2,
+        "both lines held: {kinds:?}"
+    );
+    assert_eq!(
+        notice_events(&b, crate::inventory::count_four_eyes::SECOND_APPROVAL_CATEGORY).await,
+        1,
+        "one notice per held count, not per line"
     );
 }

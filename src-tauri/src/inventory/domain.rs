@@ -1181,8 +1181,9 @@ pub struct InventoryCountLine {
     /// Who entered the counted quantity (the signed-in person; `None` before migration 259).
     pub counted_by_id: Option<i64>,
     pub counted_by_name: Option<String>,
-    /// 1: approved by its counter above the tolerance under the site's four-eyes opt-out
-    /// ("auto-approbation").
+    /// 1: an "auto-approbation", derived on read on every PC (CMMS Advisor Q13,
+    /// `count_four_eyes::SELF_APPROVED_ON_READ_SQL`): flagged where it was approved (above the
+    /// tolerance under the site's four-eyes opt-out), or its variance approved by its own counter.
     pub self_approved: i64,
     /// The second approval of a self-approved variance above the tolerance, by someone other than
     /// its counter, given where the count is applied so that a PC where four-eyes applies accepts

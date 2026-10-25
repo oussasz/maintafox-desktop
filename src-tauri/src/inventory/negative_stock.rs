@@ -179,6 +179,9 @@ pub struct ReconciliationCount {
     /// had one and the account is known here; a count without variance needs no approval and
     /// names none.
     pub approved_by: Option<String>,
+    /// An auto-approbation (CMMS Advisor Q13, derived on read on every PC): flagged, or its variance
+    /// approved by its own counter (`count_four_eyes::SELF_APPROVED_ON_READ_SQL`).
+    pub self_approved: bool,
     pub device_code: String,
     pub counted_at: String,
     /// The stock on record the count was set against, on the PC that posted it.
@@ -707,10 +710,11 @@ struct CountNode {
 async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: i64) -> AppResult<Vec<CountNode>> {
     let rows = conn
         .query_all(sqlite(
-            "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
+            &format!(
+                "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
                     cl.count_path, cs.posted_at, COALESCE(uc.display_name, ua.display_name) AS display_name,
                     CASE WHEN uc.id IS NOT NULL THEN uc.username ELSE ua.username END AS username,
-                    cl.system_qty, cl.counted_qty,
+                    {} AS self_approved, cl.system_qty, cl.counted_qty,
                     cl.variance_qty, cs.reversed_at, ra.display_name AS reversed_display, ra.username AS reversed_username,
                     aa.display_name AS approved_display, aa.username AS approved_username,
                     (ABS(cl.variance_qty) <= 1e-9
@@ -728,6 +732,8 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
                AND cs.status IN ('posted', 'reversed')
                AND cl.article_id = ? AND cl.location_id = ?
              ORDER BY cs.posted_at, cl.entity_sync_id",
+                crate::inventory::count_four_eyes::SELF_APPROVED_ON_READ_SQL
+            ),
             vec![article_id.into(), location_id.into()],
         ))
         .await?;
@@ -766,6 +772,7 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
                     .unwrap_or_else(|| COUNT_PATH_COUNT_SESSION.to_string()),
                 counted_by: display.filter(|d| !d.trim().is_empty()).or(username),
                 approved_by,
+                self_approved: row.try_get::<i64>("", "self_approved")? != 0,
                 device_code: if replica_id.is_empty() {
                     String::new()
                 } else {

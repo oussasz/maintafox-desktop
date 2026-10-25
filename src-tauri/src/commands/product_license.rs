@@ -894,11 +894,15 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         }
 
         // `system_config` is kept, the accounts and the sync checkpoint are not: "the server
-        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`).
+        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`), and
+        // the PC joins the plant again (its next snapshot is a first join).
         tx.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "DELETE FROM system_config WHERE key = ?",
-            [crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into()],
+            "DELETE FROM system_config WHERE key IN (?, ?)",
+            [
+                crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into(),
+                crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into(),
+            ],
         ))
         .await?;
 

@@ -47,8 +47,8 @@ import { mfAlert } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { appErrorReason } from "@/lib/app-error";
 import {
-  NEGATIVE_STOCK_REASON_MIN_CHARS,
   type DoublePostedMovement,
+  NEGATIVE_STOCK_REASON_MIN_CHARS,
   type NegativeStockReview,
   type NegativeStockReviewList,
   type OverQuantityMovement,
@@ -124,6 +124,10 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
     void load();
   }, [load, reloadToken]);
 
+  /** " · auto-approbation" for a count approved by its own counter (derived on every PC). */
+  const selfApproval = (c: ReconciliationCount | null) =>
+    c?.self_approved ? ` · ${t("negativeStock.selfApproved")}` : "";
+
   const countLine = (c: ReconciliationCount) =>
     t("negativeStock.doubleCount.countLine", {
       who: c.counted_by ?? t("negativeStock.doubleCount.unknownUser"),
@@ -132,7 +136,7 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
       date: c.counted_at ? formatDateTime(c.counted_at) : "—",
       counted: qty(c.counted_qty),
       variance: qty(c.variance_qty),
-    });
+    }) + selfApproval(c);
 
   const movementLine = (m: DoublePostedMovement) =>
     t(
@@ -179,17 +183,19 @@ export function NegativeStockReviewPanel({ reloadToken = 0 }: NegativeStockRevie
    */
   const countClosure = (by: ReconciliationCount | null) => {
     const unknown = t("negativeStock.doubleCount.unknownUser");
-    return t(
-      by?.approved_by
-        ? "negativeStock.overQuantity.closedByCountApproved"
-        : "negativeStock.overQuantity.closedByCount",
-      {
-        session: by?.session_code ?? "—",
-        path: by ? t(`negativeStock.overQuantity.closedPath.${by.path}`) : "",
-        who: by?.counted_by ?? unknown,
-        date: by?.counted_at ? formatDateTime(by.counted_at) : "—",
-        approver: by?.approved_by ?? "",
-      },
+    return (
+      t(
+        by?.approved_by
+          ? "negativeStock.overQuantity.closedByCountApproved"
+          : "negativeStock.overQuantity.closedByCount",
+        {
+          session: by?.session_code ?? "—",
+          path: by ? t(`negativeStock.overQuantity.closedPath.${by.path}`) : "",
+          who: by?.counted_by ?? unknown,
+          date: by?.counted_at ? formatDateTime(by.counted_at) : "—",
+          approver: by?.approved_by ?? "",
+        },
+      ) + selfApproval(by)
     );
   };
 

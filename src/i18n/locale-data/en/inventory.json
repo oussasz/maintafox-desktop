@@ -22,6 +22,7 @@
     "balance": "On hand {{onHand}}, reserved {{reserved}}, available {{available}}",
     "openedAt": "Found below zero on {{date}} (last exit: {{movement}})",
     "recordCount": "Record a count",
+    "selfApproved": "self-approval (variance approved by its counter)",
     "overReservedTitle": "Reservations above stock (warning)",
     "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
     "closure": {
@@ -1605,7 +1606,7 @@
       "criticalMeaning": "Above the four-eyes tolerance: approved by someone other than the counter.",
       "counterNotRecorded": "not recorded",
       "selfApproved": "Self-approval",
-      "selfApprovedMeaning": "Approved by its counter above the tolerance, under the site's four-eyes opt-out.",
+      "selfApprovedMeaning": "Approved by its own counter (no second person): flagged on every PC for a manager to review.",
       "secondApprove": "Second approval",
       "secondApproveMeaning": "Someone other than the counter approves this variance: the PCs where four-eyes applies, which hold this count back, then apply it.",
       "secondApprovedBy": "Second approval by {{name}} on {{date}}"

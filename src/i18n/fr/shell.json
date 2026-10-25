@@ -80,7 +80,7 @@
     "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
     "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
     "usernameClash": "Le même identifiant « {{username}} » a été créé sur deux PC. Renommez l'un des deux comptes (Utilisateurs) sur le PC qui l'a créé, puis synchronisez. Si vous avez renommé le compte de ce PC, prenez ensuite le compte reçu.",
-    "countHeldRecord": "Comptage {{session}} — compté et approuvé par {{counter}}, comptabilisé le {{postedAt}}",
+    "countHeldRecord": "Comptage {{session}} — compté et approuvé par {{counter}}, passé en stock le {{postedAt}}",
     "countSettledAtOrigin": "À régler sur le poste d'origine du comptage (celui où il est appliqué) : seconde approbation par une autre personne, ou annulation (contre-passation) du comptage. Ce conflit se ferme de lui-même quand l'une ou l'autre arrive ici.",
     "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
     "conflictKind": {

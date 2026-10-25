@@ -22,6 +22,7 @@
     "balance": "En stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
     "openedAt": "Constaté sous zéro le {{date}} (dernière sortie : {{movement}})",
     "recordCount": "Enregistrer un comptage",
+    "selfApproved": "auto-approbation (écart approuvé par la personne qui a compté)",
     "overReservedTitle": "Réservations supérieures au stock (avertissement)",
     "overReservedLine": "{{article}} à {{location}} : {{reserved}} réservé(s) pour {{onHand}} en stock",
     "closure": {
@@ -1605,7 +1606,7 @@
       "criticalMeaning": "Au-dessus de la tolérance de double validation : approuvé par une autre personne que celle qui a compté.",
       "counterNotRecorded": "non enregistré",
       "selfApproved": "Auto-approbation",
-      "selfApprovedMeaning": "Approuvé par la personne qui a compté, au-dessus de la tolérance, le site ayant levé la double validation.",
+      "selfApprovedMeaning": "Approuvé par la personne qui a compté (sans seconde personne) : signalé sur tous les postes pour être revu par un responsable.",
       "secondApprove": "Seconde approbation",
       "secondApproveMeaning": "Une autre personne que celle qui a compté approuve cet écart : les postes où la double validation s'applique, qui retiennent ce comptage, l'appliquent alors.",
       "secondApprovedBy": "Seconde approbation par {{name}} le {{date}}"

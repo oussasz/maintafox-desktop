@@ -1770,26 +1770,36 @@ pub async fn list_count_sessions(db: &DatabaseConnection) -> AppResult<Vec<Inven
     rows.into_iter().map(map_count_session).collect()
 }
 
+/// The count line read model, then `tail` (its WHERE / ORDER BY). `self_approved` is derived on
+/// read (CMMS Advisor Q13, `count_four_eyes::SELF_APPROVED_ON_READ_SQL`): flagged, or approved by
+/// its own counter.
+fn count_line_sql(tail: &str) -> String {
+    format!(
+        "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
+                sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
+                cl.is_critical, cl.approval_required, cl.approved_by_id,
+                COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
+                cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name,
+                {self_approved} AS self_approved,
+                cl.second_approved_by_id, COALESCE(us.display_name, us.username) AS second_approved_by_name,
+                cl.second_approved_at, cl.second_approval_note,
+                cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
+         FROM inventory_count_lines cl
+         JOIN articles a ON a.id = cl.article_id
+         JOIN stock_locations sl ON sl.id = cl.location_id
+         LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
+         LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
+         LEFT JOIN user_accounts us ON us.id = cl.second_approved_by_id
+         {tail}",
+        self_approved = crate::inventory::count_four_eyes::SELF_APPROVED_ON_READ_SQL,
+    )
+}
+
 pub async fn list_count_lines(db: &DatabaseConnection, session_id: i64) -> AppResult<Vec<InventoryCountLine>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
-                    sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id,
-                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
-                    cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
-                    cl.second_approved_by_id, COALESCE(us.display_name, us.username) AS second_approved_by_name,
-                    cl.second_approved_at, cl.second_approval_note,
-                    cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
-             FROM inventory_count_lines cl
-             JOIN articles a ON a.id = cl.article_id
-             JOIN stock_locations sl ON sl.id = cl.location_id
-             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
-             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
-             LEFT JOIN user_accounts us ON us.id = cl.second_approved_by_id
-             WHERE cl.session_id = ?
-             ORDER BY cl.id ASC",
+            count_line_sql("WHERE cl.session_id = ? ORDER BY cl.id ASC"),
             [session_id.into()],
         ))
         .await?;
@@ -1835,21 +1845,7 @@ async fn get_count_line<C: ConnectionTrait>(db: &C, line_id: i64) -> AppResult<I
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT cl.id, cl.session_id, cl.article_id, a.article_code, a.article_name, cl.warehouse_id, cl.location_id,
-                    sl.code AS location_code, cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code,
-                    cl.is_critical, cl.approval_required, cl.approved_by_id,
-                    COALESCE(ua.display_name, ua.username) AS approved_by_name, cl.approved_at, cl.approval_note,
-                    cl.counted_by_id, COALESCE(uc.display_name, uc.username) AS counted_by_name, cl.self_approved,
-                    cl.second_approved_by_id, COALESCE(us.display_name, us.username) AS second_approved_by_name,
-                    cl.second_approved_at, cl.second_approval_note,
-                    cl.posted_transaction_id, cl.reversed_transaction_id, cl.row_version, cl.created_at, cl.updated_at
-             FROM inventory_count_lines cl
-             JOIN articles a ON a.id = cl.article_id
-             JOIN stock_locations sl ON sl.id = cl.location_id
-             LEFT JOIN user_accounts ua ON ua.id = cl.approved_by_id
-             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
-             LEFT JOIN user_accounts us ON us.id = cl.second_approved_by_id
-             WHERE cl.id = ?",
+            count_line_sql("WHERE cl.id = ?"),
             [line_id.into()],
         ))
         .await?

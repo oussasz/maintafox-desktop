@@ -36,7 +36,6 @@ import {
   type InventoryArticleRow,
   type InventoryCountLineRow,
   approveInventoryCountLine,
-  secondApproveInventoryCountLine,
   createInventoryCountSession,
   getInventoryCountTolerance,
   listInventoryArticles,
@@ -50,6 +49,7 @@ import {
   postInventoryCountSession,
   reverseInventoryCountSession,
   runInventoryReconciliation,
+  secondApproveInventoryCountLine,
   transitionInventoryCountSession,
   upsertInventoryCountLine,
 } from "@/services/inventory-service";
@@ -373,6 +373,7 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   })}
                 </span>
               ) : line.self_approved === 1 &&
+                line.is_critical === 1 &&
                 line.posted_transaction_id !== null &&
                 line.reversed_transaction_id === null ? (
                 <PermissionGate permission={P.INV_MANAGE} fallback={null}>
