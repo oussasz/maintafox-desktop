@@ -12,7 +12,7 @@ record can be wrong, incomplete or need review) · **UX** (slower or less conven
 plant owner · **Release** = must be done when the version is released · **Accepted** = accepted by
 design, documented.
 
-Last updated: 2026-10-24 (permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
+Last updated: 2026-10-25 (planning four-eyes: break-ins signed by a second planner at the crew's site, unfreeze decided at the site, both re-checked on arrival; permit requirement from a safety-flagged request; close-out gates re-checked on received completions and closes; negative stock flagged on the stock screens; four-eyes on permit approval; notice to the settings administrators when a safety rule changed on another PC).
 
 ---
 
@@ -35,6 +35,7 @@ Last updated: 2026-10-24 (permit requirement from a safety-flagged request; clos
 | Personnel and document list values found in existing data but not in the new lists are kept exactly as stored, added to their list and flagged "à revoir"; an administrator must review them (filter "à revoir"). People whose stored employment status is not a known status are listed for review. | Data | Release |
 | QR labels printed before this version must be reprinted: they carried a local database id, which identifies a different asset on another device. Scanning one is refused with "Label to reprint"; reprint from each asset record (no bulk reprint from the asset list yet). | Data | Release |
 | Permit hand-over roles come from the plant's list "Rôles de passation de permis" (PERMIT.HANDOVER_ROLES, Données de référence). The list starts with three roles flagged "à revoir" (Maintenance, Exploitation, HSE; owner decision) that an administrator reviews, renames, deactivates or completes: they are added once, by the upgrade, only to a list holding no role the plant added, and never over an existing value (a role already there under the same name, ignoring case, is not added twice). If every role is deactivated, no hand-over can be recorded, so no permit can be handed back. Roles typed as free text before this version are kept exactly as stored, added to the list and flagged "à revoir". Hand-overs recorded before this version have no signer (nobody is invented). | Data | Release (review the starter and flagged roles) |
+| Planning four-eyes (break-ins signed by a second planner, unfreeze decided at the site, migration 260): **upgrade all PCs together before the first sync**. A PC still on the previous version records break-ins named only (no signature) or approved by their requester, and commits into frozen weeks without a break-in: on an upgraded PC those rows are conflicts for review (`PLANNING_BREAK_IN_UNSIGNED`, `PLANNING_BREAK_IN_SELF_APPROVAL`, `PLANNING_WEEK_FROZEN`), never applied silently. Break-ins already recorded by earlier versions are judged the same way when they first reach an upgraded PC (CMMS Advisor Q4: fail closed). | Safety | Release |
 
 ## Owner-approved items for Step 7 (validation)
 
@@ -187,6 +188,10 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Break-ins, displaced jobs and available hours use the site's crews of today, not the crews at freeze time (a crew moved to another site takes its history with it). | Data | After pilot |
 | The planning page shows a fixed window of 8 weeks of KPIs (the current one and the 7 before it). | UX | After pilot |
 | The home week load pools the current frozen week of every site; sites with different weeks are shown as one range (earliest start to latest end), with the sites not frozen counted apart. | UX | Accepted |
+| A break-in received from another PC keeps its approver's signature as a date (`approver_signed_at`): the password was checked on the PC that recorded it and cannot be checked again on arrival (as for the FMECA close-out signer). Requester ≠ approver, the approver's plan.confirm right at the crew's site and the urgent / forced checks are checked again. | Safety | Accepted |
+| Rights are judged as held now: a received break-in or unfreeze is checked against the plan.confirm rights the approver or decider holds on this PC at arrival, not at the time they signed (a right removed since makes it a conflict; one given since lets it in). Rights still waiting in the inbox make it wait, only for plant-wide assignments (a site-scoped right on its way gives a conflict). | Safety | Accepted |
+| Work entering a frozen week by sync without its break-in is a `PLANNING_WEEK_FROZEN` conflict at once; the other PC's change time is shown next to the freeze time here but never used to let it in (sender clock not trusted). It closes by itself, audited, when its signed break-in arrives; otherwise the sync centre offers only escalate or dismiss, and the work is planned again here as a break-in. | Data | Accepted |
+| An urgent break-in, or one forcing a blocking check, cannot be recorded when nobody else holds plan.confirm at the crew's site (no self-approval fallback, CMMS Advisor Q1b): emergency work runs as an unscheduled work order. | UX | Accepted |
 
 ## Personnel, qualifications, shifts
 
