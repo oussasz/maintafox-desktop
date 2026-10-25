@@ -32,7 +32,12 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("", "job input json: "),
     ("", "work_order_statuses."),
     ("", "report subscriber id out of range"),
-    // Bare machine codes read by the screen's own code, not shown as a sentence.
+    // Internal: stored config / parse fault.
+    ("backup/scheduler.rs", "{key} must be a non-negative integer"),
+    ("settings/catalog.rs", "{key}: not a decimal setting"),
+    ("settings/catalog.rs", "{key}: the setting is missing"),
+    ("sync/row_codec.rs", "{table}: invalid payload_json"),
+    // Machine code + payload, not yet translated by a screen text.
     ("commands/reliability_study.rs", "ADVANCED_TOOL_DISABLED"),
     ("commands/settings.rs", "SETTING_REASON_REQUIRED"),
     ("", "READINESS_DENY:"),
@@ -71,7 +76,7 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// The first string literal inside the `[...]` that starts `text` (the text starts right after the
 /// `[`), unescaped for line continuations. `None` when the first element is not a literal
 /// (a variable, a call): such a refusal forwards a message built elsewhere.
-fn first_literal(text: &str) -> Option<String> {
+fn first_literal(text: &str) -> Option<(String, usize)> {
     let bytes = text.as_bytes();
     let (mut depth, mut i) = (1usize, 0usize);
     while i < bytes.len() {
@@ -97,7 +102,7 @@ fn first_literal(text: &str) -> Option<String> {
                     lit.push_str(&text[i..i + ch_len]);
                     i += ch_len;
                 }
-                return Some(lit);
+                return Some((lit, i + 1));
             }
             b'[' | b'(' | b'{' => depth += 1,
             b']' | b')' | b'}' => {
@@ -113,6 +118,62 @@ fn first_literal(text: &str) -> Option<String> {
     None
 }
 
+/// Whether a message starting with a format placeholder is coded at run time: the placeholder is a
+/// code (`{code}`, `{gate}`, `{head}`, a `{..GATE..}` constant) or a bare `{}` whose first format
+/// argument (`rest` follows the literal) is a gate constant.
+fn placeholder_is_code(literal: &str, rest: &str) -> bool {
+    let Some(end) = literal.find('}') else {
+        return false;
+    };
+    let name = &literal[1..end];
+    match name {
+        "code" | "gate" | "head" => true,
+        "" => {
+            let arg: String = rest
+                .trim_start_matches(|c: char| c.is_whitespace() || c == ',')
+                .chars()
+                .take_while(|c| *c != ',' && *c != ')')
+                .collect();
+            arg.contains("GATE_") || arg.contains("_codes::")
+        }
+        n => n.contains("GATE"),
+    }
+}
+
+/// Byte ranges of the inline `#[cfg(test)] mod x { ... }` bodies (braces matched, string and
+/// character literals skipped), so production code after a test module is still scanned.
+fn test_module_ranges(text: &str) -> Vec<(usize, usize)> {
+    let header = regex::Regex::new(r"#\[cfg\(test\)\]\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+\w+\s*\{").expect("regex");
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    for m in header.find_iter(text) {
+        let (mut depth, mut i) = (1usize, m.end());
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        i += if bytes[i] == b'\\' { 2 } else { 1 };
+                    }
+                }
+                b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+                b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => i += 3,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push((m.start(), i));
+    }
+    out
+}
+
 /// Index of the first `ALLOWLIST` entry that covers this refusal.
 fn allowed_by(rel: &str, literal: &str) -> Option<usize> {
     ALLOWLIST
@@ -125,8 +186,9 @@ fn every_user_facing_refusal_is_gate_coded() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     source_files(&src, &mut files);
-    // Inline test modules sit at the end of their file.
-    let test_module = regex::Regex::new(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{").expect("regex");
+    let site = regex::Regex::new(r"ValidationFailed\(\s*vec!\s*\[").expect("regex");
+    let files_scanned = files.len();
+    assert!(files_scanned > 100, "the source scan found only {files_scanned} files");
 
     let mut offenders: Vec<String> = Vec::new();
     let mut used = vec![false; ALLOWLIST.len()];
@@ -137,16 +199,20 @@ fn every_user_facing_refusal_is_gate_coded() {
             .to_string_lossy()
             .replace('\\', "/");
         let text = std::fs::read_to_string(&path).expect("read source");
-        let text = match test_module.find(&text) {
-            Some(m) => &text[..m.start()],
-            None => &text[..],
-        };
-        for (at, _) in text.match_indices("ValidationFailed(vec![") {
-            let args = &text[at + "ValidationFailed(vec![".len()..];
-            let Some(literal) = first_literal(args) else {
+        let skipped = test_module_ranges(&text);
+        for m in site.find_iter(&text) {
+            let at = m.start();
+            if skipped.iter().any(|(from, to)| at >= *from && at <= *to) {
+                continue;
+            }
+            let args = &text[m.end()..];
+            let Some((literal, end)) = first_literal(args) else {
                 continue;
             };
-            if literal.starts_with("GATE_") || literal.starts_with('{') {
+            if literal.starts_with("GATE_") {
+                continue;
+            }
+            if literal.starts_with('{') && placeholder_is_code(&literal, &args[end..]) {
                 continue;
             }
             if let Some(entry) = allowed_by(&rel, &literal) {
