@@ -534,6 +534,7 @@ pub fn run() {
         commands::planning::create_schedule_commitment,
         commands::planning::reschedule_schedule_commitment,
         commands::planning::create_schedule_break_in,
+        commands::planning::list_break_in_approvers,
         commands::planning::freeze_schedule_period,
         commands::planning::get_weekly_schedule,
         commands::planning::get_planning_kpis,

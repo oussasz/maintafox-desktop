@@ -9381,6 +9381,17 @@ export interface ScheduleBreakIn {
   approved_by_display_name: string | null;
   old_assignee_name: string | null;
   new_assignee_name: string | null;
+  /** When the approver's password was verified (null: nobody signed, or recorded before 0.9.2). */
+  approver_signed_at: string | null;
+  /** Blocking checks the break-in forced: crew_capacity, locked_window, readiness, shutdown_window. */
+  forced_checks: string[];
+}
+
+/** A person who may sign a break-in of a crew (plan.confirm at the crew's site). */
+export interface BreakInApproverOption {
+  user_id: number;
+  display_name: string;
+  personnel_id: number;
 }
 
 export interface ScheduleBreakInFilter {
@@ -9404,6 +9415,8 @@ export interface CreateScheduleBreakInInput {
   bypass_availability?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
   acknowledged_assignee_issues?: string[];
 }
@@ -11302,6 +11315,8 @@ export interface AssessCriticalityResult {
 export interface CommitBreakIn {
   reason: string;
   approved_by_user_id?: number | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   dangerous_override_reason?: string | null;
 }
 

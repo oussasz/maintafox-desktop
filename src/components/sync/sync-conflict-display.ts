@@ -78,6 +78,15 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "INVALID_VALUE",
   "SETTING_LOCKED",
   "WEEK_LIFECYCLE_BACKWARDS",
+  // Planning four-eyes re-checked on arrival (`planning::sync_check`, AU-06, AU-102, S4).
+  "PLANNING_WEEK_FROZEN",
+  "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+  "PLANNING_BREAK_IN_SELF_APPROVAL",
+  "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED",
+  "PLANNING_BREAK_IN_UNSIGNED",
+  "WEEK_UNFREEZE_UNDECIDED",
+  "WEEK_UNFREEZE_SAME_PERSON",
+  "WEEK_UNFREEZE_UNAUTHORISED",
   "DECISION_SELF_APPROVAL",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
@@ -301,6 +310,17 @@ export const KNOWN_WAIT_REASONS = new Set([
 export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",
+  // Planning four-eyes (CMMS Advisor Q2-Q4): never taken as received from the sync centre. Work
+  // entering a frozen week is let in by its signed break-in (the conflict then closes by itself) or
+  // re-planned here as a break-in; a week reopens here only through its four-eyes unfreeze.
+  "PLANNING_WEEK_FROZEN",
+  "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+  "PLANNING_BREAK_IN_SELF_APPROVAL",
+  "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED",
+  "PLANNING_BREAK_IN_UNSIGNED",
+  "WEEK_UNFREEZE_UNDECIDED",
+  "WEEK_UNFREEZE_SAME_PERSON",
+  "WEEK_UNFREEZE_UNAUTHORISED",
 ]);
 
 /**
