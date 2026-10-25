@@ -362,7 +362,9 @@ async fn tenant_initialisation_uses_the_stored_token_never_a_pending_one() {
 }
 
 #[tokio::test]
-async fn tenant_initialisation_is_not_sent_for_an_organisation_stored_as_initialised() {
+async fn tenant_initialisation_is_still_sent_for_an_organisation_stored_as_initialised() {
+    // The first initialisation's answer was lost and a refresh has since stored
+    // `is_initialized: true`: the gate's retry must still finish (the server answers idempotently).
     let db = crate::db::test_db::seeded().await;
     let slot = PendingActivationClaimSlot::default();
     let mut answer = claim_answer(CLAIM_TOKEN);
@@ -375,8 +377,9 @@ async fn tenant_initialisation_is_not_sent_for_an_organisation_stored_as_initial
     let result = mark_activation_tenant_initialized_in(&db, &stub.base_url)
         .await
         .expect("initialise");
-    assert!(matches!(result, ActivationCallResult::NotActivated), "{result:?}");
-    assert!(stub.requests().is_empty());
+    assert!(matches!(result, ActivationCallResult::Answered { .. }), "{result:?}");
+    assert_eq!(stub.requests().len(), 1);
+    let stub = start_stub(200, json!({ "tenant_id": TENANT, "is_initialized": true }).to_string()).await;
 
     // Stored as not initialised: the retry after a failed initialisation still sends.
     let db = crate::db::test_db::seeded().await;

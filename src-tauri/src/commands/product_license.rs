@@ -1827,7 +1827,7 @@ fn offline_grace_raised(
 /// The licence a change would bring to this PC: read from the claim, or from the control plane's
 /// preview of that claim before it is taken (`check_product_license_key_entry`). Only what the
 /// rule reads.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct LicenceChangeTarget {
     pub tenant_id: String,
     pub license_id: String,
@@ -1863,6 +1863,40 @@ pub(crate) struct LicenceChangeTarget {
     /// The entitlement envelope that comes with the claim, if any.
     #[serde(skip)]
     pub envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+}
+
+/// Written by hand so a `?target` in a log line can never print the activation token.
+impl std::fmt::Debug for LicenceChangeTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LicenceChangeTarget")
+            .field("tenant_id", &self.tenant_id)
+            .field("license_id", &self.license_id)
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field(
+                "activation_token",
+                &self.activation_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("has_demo_data", &self.has_demo_data)
+            .field("is_initialized", &self.is_initialized)
+            .field("expires_at", &self.expires_at)
+            .field("device_limit", &self.device_limit)
+            .field("license_tier", &self.license_tier)
+            .field("license_plan", &self.license_plan)
+            .field("offline_grace_hours", &self.offline_grace_hours)
+            .field("force_update_required", &self.force_update_required)
+            .field("force_min_app_version", &self.force_min_app_version)
+            .field("update_channel", &self.update_channel)
+            .field(
+                "trust_revocation_disconnects_immediately",
+                &self.trust_revocation_disconnects_immediately,
+            )
+            .field(
+                "reconnect_requires_fresh_heartbeat",
+                &self.reconnect_requires_fresh_heartbeat,
+            )
+            .field("envelope", &self.envelope)
+            .finish()
+    }
 }
 
 impl LicenceChangeTarget {
@@ -3696,16 +3730,16 @@ pub(crate) async fn submit_pending_product_license_key_in(
 }
 
 /// The activation token the tenant initialisation uses: the stored activation's, when it is a valid
-/// claim whose organisation is not known as initialised (`is_initialized` not `Some(true)`, as the
-/// gate decides to initialise). Never a pending claim's: one not recorded yet may be for another
-/// organisation than the one stored here (a claim taken, then its key entry abandoned). The gate
-/// initialises only after a recorded key entry, which stored the claim and cleared the pending one.
+/// claim. Never a pending claim's: one not recorded yet may be for another organisation than the
+/// one stored here (a claim taken, then its key entry abandoned). The gate initialises only after a
+/// recorded key entry, which stored the claim and cleared the pending one. Sent even when the
+/// stored claim already says initialised: the server answers it idempotently, and a retry whose
+/// first answer was lost (a refresh having since stored `is_initialized: true`) must still finish.
 async fn tenant_call_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
     let token = load_state_record_from_db(db)
         .await?
         .filter(record_has_valid_activation_claim)
         .and_then(|record| record.activation_claim)
-        .filter(|claim| claim.is_initialized != Some(true))
         .map(|claim| claim.activation_token);
     Ok(token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
 }
