@@ -372,9 +372,10 @@ pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             // Accounts too: a password change or a re-enable waits for its author
-            // (`sync::credential_check`).
+            // (`sync::credential_check`); and delegation policies ([`delegation_policy_check`]).
             "SELECT 1 AS w FROM sync_inbox WHERE apply_status = 'deferred' \
-               AND entity_type IN ('user_scope_assignments', 'role_permissions', 'user_accounts') LIMIT 1"
+               AND entity_type IN ('user_scope_assignments', 'role_permissions', 'user_accounts', \
+                                   'delegated_admin_policies') LIMIT 1"
                 .to_string(),
         ))
         .await?
