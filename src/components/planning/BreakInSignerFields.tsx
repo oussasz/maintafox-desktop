@@ -25,6 +25,8 @@ type BreakInSignerFieldsProps = {
   open: boolean;
   /** The crew the break-in is for: the approver holds plan.confirm at its site. */
   teamId: number | null;
+  /** The crew the work leaves, when it changes crew: the approver holds the right there too. */
+  fromTeamId?: number | null;
   approverUserId: number | null;
   onApproverChange: (userId: number | null) => void;
   password: string;
@@ -37,6 +39,7 @@ type BreakInSignerFieldsProps = {
 export function BreakInSignerFields({
   open,
   teamId,
+  fromTeamId = null,
   approverUserId,
   onApproverChange,
   password,
@@ -53,7 +56,7 @@ export function BreakInSignerFields({
       return;
     }
     let cancelled = false;
-    listBreakInApprovers(teamId)
+    listBreakInApprovers(teamId, fromTeamId != null && fromTeamId !== teamId ? fromTeamId : null)
       .then((list) => {
         if (!cancelled) setApprovers(list);
       })
@@ -63,7 +66,7 @@ export function BreakInSignerFields({
     return () => {
       cancelled = true;
     };
-  }, [open, teamId]);
+  }, [open, teamId, fromTeamId]);
 
   // An approver who is no longer offered (another crew chosen) is not kept.
   useEffect(() => {

@@ -135,7 +135,7 @@ describe("Planning without the user administration right", () => {
         />
       </PermissionContext.Provider>,
     );
-    await waitFor(() => expect(planningService.listBreakInApprovers).toHaveBeenCalledWith(3));
+    await waitFor(() => expect(planningService.listBreakInApprovers).toHaveBeenCalledWith(3, null));
     expect(rbac.listUsers).not.toHaveBeenCalled();
     expect(screen.queryByTestId("list-access-users")).not.toBeInTheDocument();
   });

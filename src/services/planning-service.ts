@@ -233,6 +233,10 @@ const ScheduleBreakInSchema = z.object({
   new_assignee_name: z.string().nullable(),
   approver_signed_at: z.string().nullable(),
   forced_checks: z.array(z.string()),
+  old_team_id: z.number().nullable(),
+  new_team_id: z.number().nullable(),
+  sync_refused_at: z.string().nullable(),
+  sync_refused_reason: z.string().nullable(),
 });
 
 const BreakInApproverOptionSchema = z.object({
@@ -431,8 +435,19 @@ export function createScheduleBreakIn(input: CreateScheduleBreakInInput): Promis
 }
 
 /** Who may sign a break-in of the crew `teamId` (plan.confirm at its site, not the caller). */
-export function listBreakInApprovers(teamId: number): Promise<BreakInApproverOption[]> {
-  return invokeParsed("list_break_in_approvers", { teamId }, z.array(BreakInApproverOptionSchema));
+/**
+ * Who may sign a break-in of the crew `teamId` (taken from `fromTeamId` when the work changes
+ * crew): plan.confirm at each crew's site, never the caller.
+ */
+export function listBreakInApprovers(
+  teamId: number,
+  fromTeamId: number | null = null,
+): Promise<BreakInApproverOption[]> {
+  return invokeParsed(
+    "list_break_in_approvers",
+    { teamId, fromTeamId },
+    z.array(BreakInApproverOptionSchema),
+  );
 }
 
 export function freezeSchedulePeriod(input: FreezeSchedulePeriodInput): Promise<number> {

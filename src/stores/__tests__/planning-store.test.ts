@@ -195,6 +195,10 @@ function makeBreakIn(overrides: Partial<ScheduleBreakIn> = {}): ScheduleBreakIn 
     new_assignee_name: null,
     approver_signed_at: TS,
     forced_checks: [],
+    old_team_id: 3,
+    new_team_id: 3,
+    sync_refused_at: null,
+    sync_refused_reason: null,
     ...overrides,
   };
 }

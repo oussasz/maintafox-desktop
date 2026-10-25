@@ -279,6 +279,7 @@ export function BreakInDialog({
             <BreakInSignerFields
               open={open}
               teamId={targetTeamId}
+              fromTeamId={selected?.assigned_team_id ?? null}
               approverUserId={approverUserId}
               onApproverChange={setApproverUserId}
               password={approverPassword}
@@ -377,6 +378,14 @@ export function BreakInDialog({
                 {entry.cost_impact_delta != null
                   ? ` · Δ ${formatCurrency(entry.cost_impact_delta)}`
                   : null}
+                {entry.sync_refused_at ? (
+                  <span
+                    className="ms-1 font-medium text-tone-danger-fg"
+                    title={entry.sync_refused_reason ?? undefined}
+                  >
+                    · {t("breakIns.syncRefused")}
+                  </span>
+                ) : null}
               </div>
             ))}
             {breakIns.length === 0 && <p className="text-text-muted">{t("breakIns.empty")}</p>}

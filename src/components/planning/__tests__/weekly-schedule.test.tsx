@@ -300,7 +300,7 @@ describe("FrozenWeekBreakInDialog", () => {
     await screen.findByRole("option", { name: "Emergency" });
     await screen.findByRole("option", { name: "K. Benali" });
     // Approvers of the crew's site, not the user administration list.
-    expect(planning.listBreakInApprovers).toHaveBeenCalledWith(3);
+    expect(planning.listBreakInApprovers).toHaveBeenCalledWith(3, null);
     const confirm = screen.getByRole("button", { name: "Commit as break-in" });
     expect(confirm).toBeDisabled();
 
