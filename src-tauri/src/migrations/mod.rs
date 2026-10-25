@@ -237,6 +237,7 @@ pub(crate) mod m20261022_000254_pm_version_number_not_unique;
 mod m20261022_000255_wo_permit_safety_origin;
 mod m20261022_000256_wo_task_outcome_evidence;
 mod m20261022_000257_stock_reserved_dirty;
+mod m20261023_000259_inventory_count_four_eyes;
 mod m20261025_000261_user_credential_authors;
 mod m20261025_000262_delegation_policy_author;
 mod m20261101_000036_activity_audit_log;
@@ -484,6 +485,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261022_000255_wo_permit_safety_origin::Migration),
             Box::new(m20261022_000256_wo_task_outcome_evidence::Migration),
             Box::new(m20261022_000257_stock_reserved_dirty::Migration),
+            Box::new(m20261023_000259_inventory_count_four_eyes::Migration),
             Box::new(m20261025_000261_user_credential_authors::Migration),
             Box::new(m20261025_000262_delegation_policy_author::Migration),
         ]

@@ -15,9 +15,10 @@
 //!
 //! Also: a PC already in service (it holds a sync checkpoint, so its first download finished under
 //! an earlier version) records that a complete pull is done (`sync::plant_join::
-//! COMPLETE_PULL_DONE_KEY`, value `before-0.9.2`), so a new account received with the first
-//! administrator flag stays refused there from the first cycle after the upgrade
-//! (`sync::grant_check`). A new PC (no checkpoint) records it at its own first complete pull.
+//! COMPLETE_PULL_DONE_KEY`, value: the organisation of its current activation), so a new account
+//! received with the first administrator flag stays refused there from the first cycle after the
+//! upgrade (`sync::grant_check`). A new PC (no checkpoint) or a PC not activated records it at its
+//! own first complete pull.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
@@ -56,14 +57,24 @@ impl MigrationTrait for Migration {
             ))
             .await?
             .is_some();
-        if synced_before {
+        // The fact names the organisation the pull ran for (`plant_join::complete_pull_done`): the
+        // one of the current activation, the only one this checkpoint can belong to.
+        let tenant_id = if synced_before {
+            crate::commands::product_license::get_activation_claim_tenant_id(&txn)
+                .await
+                .map_err(|e| DbErr::Custom(format!("migration 262: activation: {e}")))?
+                .filter(|t| !t.trim().is_empty())
+        } else {
+            None
+        };
+        if let Some(tenant_id) = tenant_id {
             txn.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "INSERT OR IGNORE INTO system_config (key, value, updated_at) \
-                 SELECT ?, 'before-0.9.2', strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+                 SELECT ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now') \
                   WHERE EXISTS (SELECT 1 FROM sync_checkpoint \
                                  WHERE id = 1 AND COALESCE(trim(checkpoint_token), '') <> '')",
-                [crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into()],
+                [crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into(), tenant_id.into()],
             ))
             .await?;
         }
@@ -141,8 +152,9 @@ mod tests {
     /// (no checkpoint token) does not.
     #[tokio::test]
     async fn a_pc_in_service_records_its_complete_pull() {
-        let done = "SELECT COUNT(*) FROM system_config WHERE key = ?";
-        for (token, expected) in [(Some("cp-123"), 1), (None, 0)] {
+        let done = "SELECT COUNT(*) FROM system_config WHERE key = ? AND value = 'tenant-plant'";
+        // (checkpoint token, activated, recorded)
+        for (token, activated, expected) in [(Some("cp-123"), true, 1), (Some("cp-123"), false, 0), (None, true, 0)] {
             let db = started_db_before_migration("m20261025_000262_delegation_policy_author").await;
             exec(
                 &db,
@@ -150,6 +162,16 @@ mod tests {
                 vec![crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into()],
             )
             .await;
+            if activated {
+                crate::commands::product_license::record_activation_claim_for_tests(
+                    &db,
+                    "tenant-plant",
+                    "fp-1",
+                    "token-1",
+                )
+                .await
+                .expect("claim");
+            }
             exec(
                 &db,
                 "INSERT INTO sync_checkpoint (id, checkpoint_token) VALUES (1, ?) \
@@ -161,7 +183,11 @@ mod tests {
             assert_eq!(
                 scalar_i64(&db, done, vec![crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into()]).await,
                 expected,
-                "checkpoint {token:?}"
+                "checkpoint {token:?}, activated {activated}"
+            );
+            assert_eq!(
+                crate::sync::plant_join::complete_pull_done(&db).await.expect("done"),
+                expected == 1
             );
         }
     }

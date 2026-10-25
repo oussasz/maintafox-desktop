@@ -907,6 +907,9 @@ async fn a_new_bootstrap_account_is_refused_once_this_pc_has_its_first_administr
     .await;
 
     // Once a complete pull is done, a new one is a second first administrator.
+    crate::commands::product_license::record_activation_claim_for_tests(&p.db, "tenant-test", "fp-1", "token-1")
+        .await
+        .expect("activated");
     crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
         .await
         .expect("complete pull");
@@ -1291,6 +1294,9 @@ async fn a_delegation_policy_is_checked_against_its_author() {
     );
 
     // Once a complete pull is done, a new policy that names nobody is a conflict.
+    crate::commands::product_license::record_activation_claim_for_tests(&p.db, "tenant-test", "fp-1", "token-1")
+        .await
+        .expect("activated");
     crate::sync::plant_join::record_complete_pull(&p.db, "tenant-test")
         .await
         .expect("complete pull");

@@ -350,6 +350,21 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ),
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
+    // A count line's approver and counter are the same generic account (one parent row per
+    // reference): within the four-eyes tolerance and not a self-approval, as such a line must be
+    // (`inventory::count_four_eyes::inbound_count_line_check`).
+    ("inventory_count_lines", "is_critical", "0"),
+    ("inventory_count_lines", "self_approved", "0"),
+    // ... and no variance: a variance is judged again on arrival, from counted − system.
+    ("inventory_count_lines", "counted_qty", "1"),
+    ("inventory_count_lines", "system_qty", "1"),
+    ("inventory_count_lines", "variance_qty", "0"),
+    // ... neither approved a second time nor reversed: a second approval is only given to a variance
+    // its counter approved above the tolerance, and a reversal named by a line is checked to be the
+    // reversal of that count (`inbound_count_line_check`); a generic movement is neither.
+    ("inventory_count_lines", "second_approved_by_id", "NULL"),
+    ("inventory_count_lines", "second_approved_at", "NULL"),
+    ("inventory_count_lines", "reversed_transaction_id", "NULL"),
     // The next run is computed from it on every device.
     ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
     // Only tenant settings are synchronised (device settings stay on the device).

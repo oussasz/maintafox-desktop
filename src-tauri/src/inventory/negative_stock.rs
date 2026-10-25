@@ -112,6 +112,16 @@ pub const REFUSED_COUNT_INVALID: &str = "NEGATIVE_STOCK_COUNT_INVALID";
 pub const REFUSED_VARIANCE_REASON_REQUIRED: &str = "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED";
 pub const REFUSED_NOT_OPEN: &str = "NEGATIVE_STOCK_NOT_OPEN";
 pub const REFUSED_ENTRY_REASON_SHORT: &str = "NEGATIVE_STOCK_ENTRY_REASON_SHORT";
+/// Refusal: the list count to approve is no longer waiting for its approval (approved, replaced by
+/// a new count, or cancelled).
+pub const REFUSED_COUNT_NOT_PENDING: &str = "NEGATIVE_STOCK_COUNT_NOT_PENDING";
+/// Refusal: the stock on record changed since the count waiting for approval was made: its variance
+/// would no longer bring the stock to the counted quantity; the location is counted again.
+pub const REFUSED_COUNT_STALE: &str = "NEGATIVE_STOCK_COUNT_STALE";
+
+/// Notification category of the notice to the counter of a list count whose approval was refused
+/// because the stock on record moved since it (migration 259): count again.
+pub const RECOUNT_CATEGORY: &str = "stock_count_recount";
 
 /// A balance to reconcile (open) or reconciled (closed), with the location's balance now.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,18 +172,46 @@ pub struct ReconciliationCount {
     pub session_code: String,
     /// [`COUNT_PATH_RECONCILIATION`] or [`COUNT_PATH_COUNT_SESSION`].
     pub path: String,
-    /// Who posted it (the session's poster; the person counting on the list).
+    /// Who counted it: the line's counter (migration 259); for a line entered before, the session's
+    /// poster.
     pub counted_by: Option<String>,
     /// Who approved its variance (the line's reviewer; on the list, the person counting), when it
     /// had one and the account is known here; a count without variance needs no approval and
     /// names none.
     pub approved_by: Option<String>,
+    /// An auto-approbation (CMMS Advisor Q13, derived on read on every PC): flagged, or its variance
+    /// approved by its own counter (`count_four_eyes::SELF_APPROVED_ON_READ_SQL`).
+    pub self_approved: bool,
     pub device_code: String,
     pub counted_at: String,
     /// The stock on record the count was set against, on the PC that posted it.
     pub system_qty: f64,
     pub counted_qty: f64,
     pub variance_qty: f64,
+}
+
+/// A count recorded from this list above the four-eyes tolerance, waiting for a second person's
+/// approval before it moves the stock ("comptage en attente d'approbation", D11 Q4a).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingReconciliationCount {
+    /// The count line (approved with [`approve_pending_count`]).
+    pub line_id: i64,
+    pub row_version: i64,
+    pub session_code: String,
+    pub article_id: i64,
+    pub article_code: String,
+    pub article_name: String,
+    pub location_id: i64,
+    pub location_code: String,
+    pub warehouse_code: String,
+    /// Who counted it (never the one who approves it, unless the site opted out).
+    pub counted_by_id: Option<i64>,
+    pub counted_by: Option<String>,
+    pub counted_at: String,
+    pub system_qty: f64,
+    pub counted_qty: f64,
+    pub variance_qty: f64,
+    pub variance_reason_code: Option<String>,
 }
 
 /// The reversal of a count session that ended a double count (CMMS Advisor ruling on SF2): "clos par
@@ -396,6 +434,12 @@ pub struct NegativeStockReviewList {
     pub over_quantities: Vec<OverQuantityReview>,
     pub closed_over_quantities: Vec<OverQuantityReview>,
     pub over_reservations: Vec<OverReservationWarning>,
+    /// Counts recorded here above the four-eyes tolerance, waiting for a second person: the item of
+    /// their article and location shows "comptage en attente d'approbation".
+    pub pending_counts: Vec<PendingReconciliationCount>,
+    /// The stores' site opted out of four-eyes: the counter may approve a count waiting here
+    /// (flagged "auto-approbation"); otherwise someone else approves it.
+    pub self_approval_allowed: bool,
 }
 
 /// Counts for the sync centre, derived from the balances and the count sessions.
@@ -429,6 +473,20 @@ pub struct NegativeStockResolution {
     pub counted_qty: f64,
     pub variance_qty: f64,
     pub review: Option<NegativeStockReview>,
+    /// The count is above the four-eyes tolerance and waits for a second person's approval: nothing
+    /// moved yet, the item stays open.
+    pub pending_approval: bool,
+    /// Approved by the person counting under the site's opt-out ("auto-approbation").
+    pub self_approved: bool,
+}
+
+/// The approval of a list count waiting for it ([`approve_pending_count`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovePendingCountInput {
+    pub line_id: i64,
+    pub expected_row_version: i64,
+    /// The approver's note (at least [`REVIEW_REASON_MIN_CHARS`] characters, as a count line's).
+    pub reason: String,
 }
 
 fn refused(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
@@ -652,8 +710,11 @@ struct CountNode {
 async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: i64) -> AppResult<Vec<CountNode>> {
     let rows = conn
         .query_all(sqlite(
-            "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
-                    cl.count_path, cs.posted_at, ua.display_name, ua.username, cl.system_qty, cl.counted_qty,
+            &format!(
+                "SELECT cl.entity_sync_id, cs.session_code, cs.status, cl.count_replica_id, cl.count_follows_json,
+                    cl.count_path, cs.posted_at, COALESCE(uc.display_name, ua.display_name) AS display_name,
+                    CASE WHEN uc.id IS NOT NULL THEN uc.username ELSE ua.username END AS username,
+                    {} AS self_approved, cl.system_qty, cl.counted_qty,
                     cl.variance_qty, cs.reversed_at, ra.display_name AS reversed_display, ra.username AS reversed_username,
                     aa.display_name AS approved_display, aa.username AS approved_username,
                     (ABS(cl.variance_qty) <= 1e-9
@@ -664,12 +725,15 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
              FROM inventory_count_lines cl
              JOIN inventory_count_sessions cs ON cs.id = cl.session_id
              LEFT JOIN user_accounts ua ON ua.id = cs.posted_by_id
+             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
              LEFT JOIN user_accounts ra ON ra.id = cs.reversed_by_id
              LEFT JOIN user_accounts aa ON aa.id = cl.approved_by_id
              WHERE cl.count_follows_json IS NOT NULL AND cl.entity_sync_id IS NOT NULL
                AND cs.status IN ('posted', 'reversed')
                AND cl.article_id = ? AND cl.location_id = ?
              ORDER BY cs.posted_at, cl.entity_sync_id",
+                crate::inventory::count_four_eyes::SELF_APPROVED_ON_READ_SQL
+            ),
             vec![article_id.into(), location_id.into()],
         ))
         .await?;
@@ -708,6 +772,7 @@ async fn count_nodes(conn: &impl ConnectionTrait, article_id: i64, location_id: 
                     .unwrap_or_else(|| COUNT_PATH_COUNT_SESSION.to_string()),
                 counted_by: display.filter(|d| !d.trim().is_empty()).or(username),
                 approved_by,
+                self_approved: row.try_get::<i64>("", "self_approved")? != 0,
                 device_code: if replica_id.is_empty() {
                     String::new()
                 } else {
@@ -1923,6 +1988,45 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
+    let pending_counts = db
+        .query_all(sqlite(
+            "SELECT cl.id AS line_id, cl.row_version, cs.session_code, cl.article_id, a.article_code, a.article_name,
+                    cl.location_id, sl.code AS location_code, w.code AS warehouse_code, cl.counted_by_id,
+                    COALESCE(NULLIF(TRIM(uc.display_name), ''), uc.username) AS counted_by, cs.created_at AS counted_at,
+                    cl.system_qty, cl.counted_qty, cl.variance_qty, cl.variance_reason_code
+             FROM inventory_count_lines cl
+             JOIN inventory_count_sessions cs ON cs.id = cl.session_id
+             JOIN articles a ON a.id = cl.article_id
+             JOIN stock_locations sl ON sl.id = cl.location_id
+             JOIN warehouses w ON w.id = sl.warehouse_id
+             LEFT JOIN user_accounts uc ON uc.id = cl.counted_by_id
+             WHERE cl.count_path = ? AND cl.approved_by_id IS NULL AND cs.status = 'submitted'
+             ORDER BY cs.created_at, cl.id",
+            vec![COUNT_PATH_RECONCILIATION.into()],
+        ))
+        .await?
+        .iter()
+        .map(|row| -> AppResult<PendingReconciliationCount> {
+            Ok(PendingReconciliationCount {
+                line_id: row.try_get("", "line_id")?,
+                row_version: row.try_get("", "row_version")?,
+                session_code: row.try_get("", "session_code")?,
+                article_id: row.try_get("", "article_id")?,
+                article_code: row.try_get("", "article_code")?,
+                article_name: row.try_get("", "article_name")?,
+                location_id: row.try_get("", "location_id")?,
+                location_code: row.try_get("", "location_code")?,
+                warehouse_code: row.try_get("", "warehouse_code")?,
+                counted_by_id: row.try_get("", "counted_by_id")?,
+                counted_by: row.try_get("", "counted_by")?,
+                counted_at: row.try_get("", "counted_at")?,
+                system_qty: row.try_get("", "system_qty")?,
+                counted_qty: row.try_get("", "counted_qty")?,
+                variance_qty: row.try_get("", "variance_qty")?,
+                variance_reason_code: row.try_get("", "variance_reason_code")?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     Ok(NegativeStockReviewList {
         items,
         double_counts,
@@ -1932,6 +2036,9 @@ pub async fn list_reviews(db: &DatabaseConnection, include_closed: bool) -> AppR
         over_quantities,
         closed_over_quantities,
         over_reservations,
+        pending_counts,
+        self_approval_allowed: crate::inventory::count_four_eyes::store_rule(db).await?.rule
+            == crate::reliability::study::decisions::SelfApprovalRule::Allowed,
     })
 }
 
@@ -2031,9 +2138,12 @@ pub(crate) async fn negative_crossing(
 /// or a count posted twice to verify, an over-issue or over-receipt, or several — by a stock count recorded there by `user_id`: needs `inv.manage`
 /// (plant-wide: stores have no site yet, as for stock adjustments), a reason of at least
 /// [`REVIEW_REASON_MIN_CHARS`] characters, the quantity counted (zero or more) and a code of the
-/// variance-reason list. The count is posted through the count workflow, marked as knowing every
-/// count of the pair this PC knows ([`count_mark`]), and audited; the negative item closes since the
-/// stock is now the counted quantity.
+/// variance-reason list. The count is recorded through the count workflow, marked as knowing every
+/// count of the pair this PC knows ([`count_mark`]), and audited. Within the four-eyes tolerance (or
+/// above it under the opt-out of the organisation's only site, flagged "auto-approbation") it is
+/// posted at once and the negative item closes since the stock is now the counted quantity; above
+/// it elsewhere it is saved as counted, moves nothing and waits for a second person
+/// ([`approve_pending_count`], D11 Q4a).
 pub async fn resolve_by_count(
     db: &DatabaseConnection,
     user_id: i32,
@@ -2127,7 +2237,11 @@ pub async fn resolve_by_count(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "Stock to reconcile resolved by a count",
+                "summary": if posted.pending_approval {
+                    "Count recorded from the stock to reconcile, waiting for a second person's approval (nothing posted)"
+                } else {
+                    "Stock to reconcile resolved by a count"
+                },
                 "article_id": input.article_id,
                 "location_id": input.location_id,
                 "negative_review_id": item_id,
@@ -2145,6 +2259,10 @@ pub async fn resolve_by_count(
                 "count_session_code": posted.session_code,
                 "count_line_id": posted.line_id,
                 "transaction_id": posted.transaction_id,
+                "four_eyes_tolerance": posted.tolerance_json,
+                "pending_approval": posted.pending_approval,
+                "self_approved": posted.self_approved,
+                "replaced_session_codes": posted.replaced_sessions,
             })),
         },
     )
@@ -2159,5 +2277,217 @@ pub async fn resolve_by_count(
         counted_qty: input.counted_qty,
         variance_qty: posted.variance_qty,
         review,
+        pending_approval: posted.pending_approval,
+        self_approved: posted.self_approved,
     })
+}
+
+/// Approves a count recorded from this list above the four-eyes tolerance and waiting for it, by
+/// `user_id` (D11 Q4a): needs `inv.manage` (the right of a count line's approval), a note of at least
+/// [`REVIEW_REASON_MIN_CHARS`] characters, someone other than the counter (unless the
+/// organisation's only site opted out: then flagged "auto-approbation"), and the stock on record
+/// still the one the count was set against (otherwise refused: the location is counted again). In
+/// one transaction the count's movement is posted, its session posted and the item of the pair
+/// closed as today ([`reconcile_pair_in`]); audited.
+pub async fn approve_pending_count(
+    db: &DatabaseConnection,
+    user_id: i32,
+    input: ApprovePendingCountInput,
+) -> AppResult<NegativeStockResolution> {
+    let allowed = crate::auth::rbac::check_permission(
+        db,
+        user_id,
+        crate::rbac::permissions::INV_MANAGE,
+        &crate::auth::rbac::PermissionScope::Global,
+    )
+    .await?;
+    if !allowed {
+        return Err(AppError::PermissionDenied(format!(
+            "Permission requise : {}",
+            crate::rbac::permissions::INV_MANAGE
+        )));
+    }
+    let reason = input.reason.trim();
+    if reason.chars().count() < REVIEW_REASON_MIN_CHARS {
+        return Err(refused(
+            REFUSED_REASON_SHORT,
+            format!("Give the reason of the approval (at least {REVIEW_REASON_MIN_CHARS} characters)."),
+            &[("min", REVIEW_REASON_MIN_CHARS.to_string())],
+        ));
+    }
+    let tx = db.begin().await?;
+    let Some(pending) = crate::inventory::controls::pending_location_count_in(&tx, input.line_id).await? else {
+        return Err(refused(
+            REFUSED_COUNT_NOT_PENDING,
+            "This count is no longer waiting for its approval: refresh the list.",
+            &[],
+        ));
+    };
+    if pending.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: count line row_version mismatch.".to_string(),
+        ]));
+    }
+    let actor_id = i64::from(user_id);
+    let self_approved = crate::inventory::count_four_eyes::check_approval(
+        &tx,
+        true,
+        pending.is_critical,
+        pending.counted_by_id,
+        actor_id,
+    )
+    .await?;
+    // The stock on record, whatever moved it: a movement made here or received from another PC
+    // (applied to the balance when it arrives).
+    let (_, on_hand) = crate::inventory::controls::get_balance(&tx, pending.article_id, pending.location_id).await?;
+    if (on_hand - pending.system_qty).abs() > QTY_TOLERANCE {
+        tx.rollback().await?;
+        // The counter is told to count again (the approver sees the refusal).
+        notify_recount(db, &pending, on_hand).await;
+        return Err(refused(
+            REFUSED_COUNT_STALE,
+            format!(
+                "The stock of this location moved since the count {} (from {} to {on_hand}): count it again.",
+                pending.session_code, pending.system_qty
+            ),
+            &[("session", pending.session_code.clone())],
+        ));
+    }
+    // The negative item open when the count is approved (none when only a double count, a count
+    // posted twice or an over-quantity was to reconcile): the posting closes it.
+    reconcile_pair_in(&tx, pending.article_id, pending.location_id).await?;
+    let item_id = tx
+        .query_one(sqlite(
+            "SELECT id FROM stock_negative_reviews WHERE article_id = ? AND location_id = ? AND status = 'open'",
+            vec![pending.article_id.into(), pending.location_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<i64>("", "id"))
+        .transpose()?;
+    let posted =
+        crate::inventory::controls::approve_location_count_in(&tx, &pending, actor_id, reason, self_approved).await?;
+    reconcile_pair_in(&tx, pending.article_id, pending.location_id).await?;
+    crate::audit::writer::write_audit_event_in(
+        &tx,
+        crate::audit::writer::AuditEventInput {
+            action_code: "inventory.negative_stock.count_approved".to_string(),
+            target_type: Some("stock_location_article".to_string()),
+            target_id: Some(format!("{}:{}", pending.article_id, pending.location_id)),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": if self_approved {
+                    "Count waiting for approval self-approved (site opt-out) and posted"
+                } else {
+                    "Count waiting for approval approved by a second person and posted"
+                },
+                "article_id": pending.article_id,
+                "location_id": pending.location_id,
+                "counted_by_id": pending.counted_by_id,
+                "self_approved": self_approved,
+                "system_qty": pending.system_qty,
+                "counted_qty": pending.counted_qty,
+                "variance_qty": pending.variance_qty,
+                "reason": reason,
+                "count_session_id": posted.session_id,
+                "count_session_code": posted.session_code,
+                "count_line_id": posted.line_id,
+                "transaction_id": posted.transaction_id,
+                "negative_review_id": item_id,
+                "four_eyes_tolerance": posted.tolerance_json,
+            })),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    let review = match item_id {
+        Some(id) => Some(load_review(db, id).await?),
+        None => None,
+    };
+    Ok(NegativeStockResolution {
+        session_code: posted.session_code,
+        counted_qty: pending.counted_qty,
+        variance_qty: posted.variance_qty,
+        review,
+        pending_approval: false,
+        self_approved,
+    })
+}
+
+/// The in-app notice to the counter of a list count whose approval was refused because the stock on
+/// record moved since the count: the article, the location and why, to count again (fire-and-log:
+/// the refusal stands whatever happens to the notice).
+async fn notify_recount(
+    db: &DatabaseConnection,
+    pending: &crate::inventory::controls::PendingLocationCount,
+    on_hand: f64,
+) {
+    let names = db
+        .query_one(sqlite(
+            "SELECT a.article_code, a.article_name, w.code AS warehouse_code, sl.code AS location_code
+             FROM articles a, stock_locations sl JOIN warehouses w ON w.id = sl.warehouse_id
+             WHERE a.id = ? AND sl.id = ?",
+            vec![pending.article_id.into(), pending.location_id.into()],
+        ))
+        .await;
+    let row = match names {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, line_id = pending.line_id, "recount notice: names not read");
+            return;
+        }
+    };
+    let text = |col: &str| row.try_get::<String>("", col).unwrap_or_default();
+    let (code, name) = (text("article_code"), text("article_name"));
+    let line_sync_id = match db
+        .query_one(sqlite(
+            "SELECT COALESCE(NULLIF(TRIM(entity_sync_id), ''), CAST(id AS TEXT)) AS sid FROM inventory_count_lines WHERE id = ?",
+            vec![pending.line_id.into()],
+        ))
+        .await
+    {
+        Ok(Some(r)) => r.try_get::<String>("", "sid").unwrap_or_default(),
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, line_id = pending.line_id, "recount notice: line not read");
+            return;
+        }
+    };
+    let location = format!("{}/{}", text("warehouse_code"), text("location_code"));
+    let input = crate::notifications::emitter::NotificationEventInput {
+        source_module: "inventory_count_lines".into(),
+        source_record_id: Some(pending.line_id.to_string()),
+        event_code: "stock_count_stale".into(),
+        category_code: RECOUNT_CATEGORY.into(),
+        severity: "warning".into(),
+        // Named by the line's sync id (the same on every PC), never its local id.
+        dedupe_key: Some(format!("stock-count-recount|{line_sync_id}")),
+        payload_json: None,
+        title: format!("Recomptage demandé — {code} à {location}"),
+        body: Some(format!(
+            "{name} : le stock de {location} a bougé depuis le comptage {} (de {} à {on_hand}) ; \
+             son approbation a été refusée. Recomptez l'emplacement.",
+            pending.session_code, pending.system_qty
+        )),
+        action_url: Some(LIST_URL.to_string()),
+    };
+    let message = crate::notifications::emitter::NotificationMessage::new(
+        RECOUNT_CATEGORY,
+        serde_json::json!({
+            "code": code,
+            "title": name,
+            "location": location,
+            "session": pending.session_code,
+            "system_qty": pending.system_qty,
+            "on_hand": on_hand,
+        }),
+    );
+    if let Err(err) = crate::notifications::emitter::emit_event_with(db, input, Some(&message)).await {
+        tracing::warn!(error = %err, line_id = pending.line_id, "recount notice not raised");
+    }
 }

@@ -21,6 +21,9 @@ pub enum SettingKind {
     /// A JSON number within `min..=max`, kept to 6 decimals. The bounds are in millionths
     /// (`1_000_000` = 1) so the catalog stays exact and comparable.
     Decimal { min_millionths: i64, max_millionths: i64 },
+    /// A [`SettingKind::Decimal`] that may be blank: never seeded (no row = blank, never read as
+    /// zero). Its shipped value is JSON `null`; writing `null` deletes the row.
+    OptionalDecimal { min_millionths: i64, max_millionths: i64 },
     /// An ISO 4217 code (three letters) as a JSON string.
     CurrencyCode,
     /// A month 1..=12 as a JSON integer.
@@ -114,15 +117,28 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         risk: "low",
     },
     // ── Inventory ───────────────────────────────────────────────────────────────────────────
-    // A counted line whose variance (in the article's unit) is at least this much is critical and
-    // needs approval. Shipped 5, the value the count screen used (migration 232).
+    // Four-eyes tolerance of a stock count variance (D11, migration 259): above it ("critique"), the
+    // variance is approved by someone other than the counter. Above = any threshold set is exceeded
+    // (`>`); both blank = every variance (`inventory::count_four_eyes`). Not seeded: blank until set.
     SettingDefinition {
-        key: crate::inventory::controls::SETTING_COUNT_CRITICAL_VARIANCE,
+        key: crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD,
         category: "inventory",
         scope: "tenant",
-        shipped_value_json: r"5",
-        kind: SettingKind::Decimal {
-            min_millionths: 1_000,
+        shipped_value_json: "null",
+        kind: SettingKind::OptionalDecimal {
+            min_millionths: 0,
+            max_millionths: 1_000_000_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "low",
+    },
+    SettingDefinition {
+        key: crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        category: "inventory",
+        scope: "tenant",
+        shipped_value_json: "null",
+        kind: SettingKind::OptionalDecimal {
+            min_millionths: 0,
             max_millionths: 1_000_000_000_000,
         },
         editor: SettingEditor::Section,
@@ -295,6 +311,17 @@ pub fn definition(key: &str) -> Option<&'static SettingDefinition> {
     SETTINGS_CATALOG.iter().find(|d| d.key == key)
 }
 
+/// Plant parameters removed from the catalog whose change history keeps its values (the last value
+/// was written there when the key was retired): `inventory.count_critical_variance`, replaced by
+/// the four-eyes tolerance (migration 259).
+pub const RETIRED_PLANT_PARAMETERS: &[&str] = &["inventory.count_critical_variance"];
+
+/// The seeder writes this setting's shipped value when its row is missing; an optional setting is
+/// never seeded (no row = blank).
+pub fn is_seeded(def: &SettingDefinition) -> bool {
+    !matches!(def.kind, SettingKind::OptionalDecimal { .. })
+}
+
 /// Plant policy domains (`policy_snapshots`) whose change history keeps the snapshot values.
 pub const POLICY_DOMAINS_WITH_VALUE_HISTORY: &[&str] = &["session", "backup"];
 
@@ -304,6 +331,7 @@ pub const POLICY_DOMAINS_WITH_VALUE_HISTORY: &[&str] = &["session", "backup"];
 /// by hash only — the history is synced to every device and readable by settings administrators.
 pub fn keeps_value_history(key_or_domain: &str) -> bool {
     POLICY_DOMAINS_WITH_VALUE_HISTORY.contains(&key_or_domain)
+        || RETIRED_PLANT_PARAMETERS.contains(&key_or_domain)
         || key_or_domain.starts_with(RBAC_HISTORY_PREFIX)
         || is_plant_parameter(key_or_domain)
 }
@@ -450,27 +478,16 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
         SettingKind::Decimal {
             min_millionths,
             max_millionths,
+        } => bounded_decimal(def.key, &value, min_millionths, max_millionths),
+        SettingKind::OptionalDecimal {
+            min_millionths,
+            max_millionths,
         } => {
-            let n =
-                decimal_of(&value).ok_or_else(|| invalid(def.key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))?;
-            let millionths = (n * 1_000_000.0).round();
-            #[allow(clippy::cast_precision_loss)]
-            let (lo, hi) = (min_millionths as f64, max_millionths as f64);
-            if !(lo..=hi).contains(&millionths) {
-                return Err(invalid_range(
-                    def.key,
-                    "GATE_SET_VALUE_OUT_OF_RANGE",
-                    lo / 1_000_000.0,
-                    hi / 1_000_000.0,
-                    n,
-                    format!(
-                        "must be between {} and {} (got {n})",
-                        lo / 1_000_000.0,
-                        hi / 1_000_000.0
-                    ),
-                ));
+            // Blank: JSON null or an empty string.
+            if value.is_null() || value.as_str().is_some_and(|s| s.trim().is_empty()) {
+                return Ok("null".to_string());
             }
-            Ok(serde_json::to_string(&(millionths / 1_000_000.0))?)
+            bounded_decimal(def.key, &value, min_millionths, max_millionths)
         }
         SettingKind::Month => {
             let n = integer_of(&value)
@@ -531,6 +548,34 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
     }
 }
 
+/// A decimal within `min..=max` (millionths), kept to 6 decimals, as canonical JSON.
+fn bounded_decimal(
+    key: &str,
+    value: &serde_json::Value,
+    min_millionths: i64,
+    max_millionths: i64,
+) -> AppResult<String> {
+    let n = decimal_of(value).ok_or_else(|| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))?;
+    let millionths = (n * 1_000_000.0).round();
+    #[allow(clippy::cast_precision_loss)]
+    let (lo, hi) = (min_millionths as f64, max_millionths as f64);
+    if !(lo..=hi).contains(&millionths) {
+        return Err(invalid_range(
+            key,
+            "GATE_SET_VALUE_OUT_OF_RANGE",
+            lo / 1_000_000.0,
+            hi / 1_000_000.0,
+            n,
+            format!(
+                "must be between {} and {} (got {n})",
+                lo / 1_000_000.0,
+                hi / 1_000_000.0
+            ),
+        ));
+    }
+    Ok(serde_json::to_string(&(millionths / 1_000_000.0))?)
+}
+
 /// A finite number given as a JSON number or a numeric string.
 fn decimal_of(value: &serde_json::Value) -> Option<f64> {
     match value {
@@ -558,6 +603,29 @@ pub async fn decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult
     let raw: String = row.try_get("", "setting_value_json")?;
     let canonical = validate_value(def, &raw)?;
     serde_json::from_str(&canonical).map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
+}
+
+/// An optional decimal setting's value: `None` when blank (no row), never read as zero. A stored
+/// value is checked against its catalog bounds (out of bounds is an error: nothing is computed on a
+/// guessed tolerance).
+pub async fn optional_decimal_setting<C: ConnectionTrait>(db: &C, key: &str) -> AppResult<Option<f64>> {
+    let def = definition(key)
+        .filter(|d| matches!(d.kind, SettingKind::OptionalDecimal { .. }))
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!("{key}: not an optional decimal setting of the catalog")])
+        })?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [def.key.into(), def.scope.into()],
+        ))
+        .await?;
+    let Some(row) = row else { return Ok(None) };
+    let raw: String = row.try_get("", "setting_value_json")?;
+    let canonical = validate_value(def, &raw)?;
+    serde_json::from_str::<Option<f64>>(&canonical)
+        .map_err(|_| invalid(key, "GATE_SET_VALUE_NOT_NUMBER", "expected a number"))
 }
 
 fn integer_of(value: &serde_json::Value) -> Option<i64> {
@@ -632,7 +700,8 @@ pub struct SettingDefinitionView {
     pub key: String,
     pub category: String,
     pub scope: String,
-    /// `choice` | `integer` | `decimal` | `currency` | `month` | `document_header` | `module`
+    /// `choice` | `integer` | `decimal` | `optional_decimal` | `currency` | `month` |
+    /// `document_header` | `module`
     pub kind: String,
     pub options: Vec<String>,
     /// Bounds of an `integer`, `decimal` or `month` value.
@@ -667,6 +736,15 @@ fn kind_view(kind: SettingKind) -> (&'static str, Vec<String>, Option<f64>, Opti
             max_millionths,
         } => (
             "decimal",
+            Vec::new(),
+            Some(min_millionths as f64 / 1_000_000.0),
+            Some(max_millionths as f64 / 1_000_000.0),
+        ),
+        SettingKind::OptionalDecimal {
+            min_millionths,
+            max_millionths,
+        } => (
+            "optional_decimal",
             Vec::new(),
             Some(min_millionths as f64 / 1_000_000.0),
             Some(max_millionths as f64 / 1_000_000.0),
@@ -774,11 +852,20 @@ mod tests {
         assert_eq!(validate_value(month, "\"7\"").unwrap(), "7");
         assert!(validate_value(month, "13").is_err());
 
-        let critical = definition("inventory.count_critical_variance").expect("defined");
-        assert_eq!(validate_value(critical, "5").unwrap(), "5.0");
-        assert_eq!(validate_value(critical, "\"2.5\"").unwrap(), "2.5");
-        assert!(validate_value(critical, "0").is_err(), "below the minimum");
-        assert!(validate_value(critical, "\"abc\"").is_err());
+        assert!(
+            definition("inventory.count_critical_variance").is_none(),
+            "retired (migration 259)"
+        );
+        let value = definition("inventory.count_four_eyes_value_threshold").expect("defined");
+        assert_eq!(validate_value(value, "500").unwrap(), "500.0");
+        assert_eq!(validate_value(value, "0").unwrap(), "0.0", "zero is a value, not blank");
+        assert_eq!(validate_value(value, "null").unwrap(), "null", "blank");
+        assert_eq!(validate_value(value, "\"\"").unwrap(), "null", "blank");
+        assert!(validate_value(value, "-1").is_err(), "below the minimum");
+        assert!(validate_value(value, "\"abc\"").is_err());
+        let percent = definition("inventory.count_four_eyes_percent_threshold").expect("defined");
+        assert_eq!(validate_value(percent, "\"2.5\"").unwrap(), "2.5");
+        assert!(!is_seeded(percent) && !is_seeded(value), "never seeded");
         let drift = definition("inventory.reconciliation_drift_break").expect("defined");
         assert_eq!(validate_value(drift, "0.01").unwrap(), "0.01");
         assert_eq!(
@@ -809,6 +896,10 @@ mod tests {
         assert!(keeps_value_history("session"));
         assert!(!keeps_value_history("product.license_onboarding"));
         assert!(!keeps_value_history("appearance.density"), "not in use");
+        assert!(
+            keeps_value_history("inventory.count_critical_variance"),
+            "retired plant parameter"
+        );
         assert!(!keeps_value_history(crate::reliability::study::scales::SETTING_KEY));
     }
 

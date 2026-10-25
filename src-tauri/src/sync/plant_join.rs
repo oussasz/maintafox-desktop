@@ -42,14 +42,6 @@ use crate::sync::transport::worker::{SyncWorkerState, SyncWorkerStatus, BLOCKER_
 /// `system_config` key of the fact; its value is the tenant id the complete pull ran for.
 pub const SERVER_CONFIRMED_NO_ACCOUNTS_KEY: &str = "server_confirmed_no_user_accounts";
 
-/// `system_config` key of "this PC has finished a complete pull" (value: the tenant id of the last
-/// one), accounts or not. Until then every account the server holds may still be on its way, a
-/// plant's several first administrators of older versions included (`sync::grant_check`). A PC in
-/// service before 0.9.2 gets it from migration 262 (value `before-0.9.2`). Erased by a local data
-/// reset with the accounts; only its presence counts (the accounts it vouches for are those held
-/// here, whatever organisation the pull ran for).
-pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
-
 /// Whether the licence includes sync, i.e. this PC belongs to a plant it must join before a first
 /// administrator is created (`entitlements::queries::licence_includes_capability`, whatever the
 /// entitlement state). `false`, a single-PC plant, only when the envelope in force says so and was
@@ -108,27 +100,52 @@ async fn accounts_present(conn: &impl ConnectionTrait) -> AppResult<bool> {
     Ok(row.map(|r| r.try_get::<i64>("", "present")).transpose()?.unwrap_or(0) == 1)
 }
 
-/// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
-/// exchanges caught up with the server head, received rows materialized). Records the fact when
-/// this PC holds no user account and received none; erases it otherwise. Records in every case that
-/// a complete pull is done ([`complete_pull_done`]). Returns whether the fact holds now.
-pub(crate) async fn record_complete_pull(conn: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
-    if tenant_id.trim().is_empty() {
-        forget(conn).await?;
+/// `system_config` key: this PC has completed a full pull (its first join is over); its value is the
+/// tenant id the pull ran for. Unlike [`SERVER_CONFIRMED_NO_ACCOUNTS_KEY`] it is never erased by a
+/// later pull (accounts or not): only a local data reset deletes it, which makes the PC join again.
+/// A snapshot received once it is recorded (a re-bootstrap after the server refused the checkpoint)
+/// is not a first join (`inventory::count_four_eyes`, CMMS Advisor Q9).
+pub const COMPLETE_PULL_DONE_KEY: &str = "sync_complete_pull_done";
+
+/// Whether this PC has completed a full pull of the organisation it is activated for now, since it
+/// joined (or since its last local data reset). A pull recorded for another organisation (the PC
+/// re-activated into another one without a local data reset) is not: that organisation's first
+/// snapshot here is its first join. Not activated: none.
+pub(crate) async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult<bool> {
+    let Some(tenant_id) = crate::commands::product_license::get_activation_claim_tenant_id(conn).await? else {
         return Ok(false);
+    };
+    let recorded = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT value FROM system_config WHERE key = ?",
+            [COMPLETE_PULL_DONE_KEY.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "value"))
+        .transpose()?;
+    Ok(!tenant_id.trim().is_empty() && recorded.as_deref() == Some(tenant_id.as_str()))
+}
+
+/// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
+/// exchanges caught up with the server head, received rows materialized). Records that a complete
+/// pull was done ([`COMPLETE_PULL_DONE_KEY`]), then the fact when this PC holds no user account and
+/// received none; erases the fact otherwise. Returns whether the fact holds now.
+pub(crate) async fn record_complete_pull(conn: &impl ConnectionTrait, tenant_id: &str) -> AppResult<bool> {
+    if !tenant_id.trim().is_empty() {
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            [
+                COMPLETE_PULL_DONE_KEY.into(),
+                tenant_id.into(),
+                Utc::now().to_rfc3339().into(),
+            ],
+        ))
+        .await?;
     }
-    conn.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        [
-            COMPLETE_PULL_DONE_KEY.into(),
-            tenant_id.into(),
-            Utc::now().to_rfc3339().into(),
-        ],
-    ))
-    .await?;
-    if accounts_present(conn).await? {
+    if tenant_id.trim().is_empty() || accounts_present(conn).await? {
         forget(conn).await?;
         return Ok(false);
     }
@@ -162,19 +179,6 @@ pub async fn server_confirmed_no_accounts(conn: &impl ConnectionTrait, tenant_id
         return Ok(false);
     }
     Ok(!accounts_present(conn).await?)
-}
-
-/// True once this PC has finished a complete pull ([`record_complete_pull`]): from then on it holds
-/// every account the server had.
-pub async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult<bool> {
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT 1 AS c FROM system_config WHERE key = ?",
-            [COMPLETE_PULL_DONE_KEY.into()],
-        ))
-        .await?
-        .is_some())
 }
 
 /// Erases the fact: the first administrator has been created (caller's transaction), or a complete
@@ -274,7 +278,11 @@ mod tests {
     #[tokio::test]
     async fn the_fact_names_one_organisation_and_ends_when_an_account_arrives() {
         let db = crate::db::test_db::seeded().await;
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
         assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
+        assert!(!complete_pull_done(&db).await.expect("done"), "not joined yet");
         // The dev built-in "admin" of the seed does not count.
         assert!(record_complete_pull(&db, PLANT).await.expect("record"));
         assert!(server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
@@ -307,8 +315,13 @@ mod tests {
         .await
         .expect("ingest");
         assert!(!server_confirmed_no_accounts(&db, PLANT).await.expect("fact"));
-        // The next complete pull erases it.
+        // The next complete pull erases it, and records that a complete pull was done (kept).
+        assert!(complete_pull_done(&db).await.expect("done"));
         assert!(!record_complete_pull(&db, PLANT).await.expect("record"));
+        assert!(
+            complete_pull_done(&db).await.expect("done"),
+            "a pull that brought accounts is still a complete pull"
+        );
         let stored = db
             .query_one(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -319,6 +332,28 @@ mod tests {
             .expect("query")
             .map(|r| r.try_get::<i64>("", "c").expect("count"));
         assert_eq!(stored, Some(0));
+    }
+
+    /// Review of 93817231 (NOTE 1): the complete pull is recorded for one organisation; a PC
+    /// re-activated into another one without a local data reset has not pulled that one yet.
+    #[tokio::test]
+    async fn a_complete_pull_counts_only_for_the_organisation_it_was_made_for() {
+        let db = crate::db::test_db::seeded().await;
+        assert!(record_complete_pull(&db, PLANT).await.expect("record"));
+        assert!(!complete_pull_done(&db).await.expect("done"), "not activated: none");
+        crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-1", "token-1")
+            .await
+            .expect("claim");
+        assert!(complete_pull_done(&db).await.expect("done"), "the organisation pulled");
+        crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-other", "fp-1", "token-1")
+            .await
+            .expect("claim");
+        assert!(
+            !complete_pull_done(&db).await.expect("done"),
+            "re-activated into another organisation: its first pull is still to come"
+        );
+        record_complete_pull(&db, "tenant-other").await.expect("record");
+        assert!(complete_pull_done(&db).await.expect("done"), "now pulled");
     }
 
     #[tokio::test]

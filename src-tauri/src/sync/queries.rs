@@ -88,6 +88,7 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
+        t if settled_at_origin_conflict(t) => ("remote", true, "escalate", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
 }
@@ -107,6 +108,21 @@ const REVIEW_ONLY_ACTIONS: &[&str] = &["dismiss", "escalate"];
 
 fn review_only_conflict(conflict_type: &str) -> bool {
     REVIEW_ONLY_CONFLICTS.contains(&conflict_type)
+}
+
+/// Conflicts settled on the PC where the record is applied, never here (CMMS Advisor Q8): a stock
+/// count approved by its counter above the four-eyes tolerance, held with its movement where
+/// four-eyes applies. "Keep mine" / "take theirs" are local only and would let the PCs differ;
+/// dismissing it would hide a count held back. It closes by itself when the count's second
+/// approval or its reversal arrives (`inventory::count_four_eyes`); only "retry later" and
+/// "escalate" are accepted ([`resolve_sync_conflict`]).
+const SETTLED_AT_ORIGIN_CONFLICTS: &[&str] = &[crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL];
+
+/// Actions accepted on a [`SETTLED_AT_ORIGIN_CONFLICTS`] conflict.
+const SETTLED_AT_ORIGIN_ACTIONS: &[&str] = &["retry_later", "escalate"];
+
+fn settled_at_origin_conflict(conflict_type: &str) -> bool {
+    SETTLED_AT_ORIGIN_CONFLICTS.contains(&conflict_type)
 }
 
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
@@ -366,6 +382,7 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
             .map_err(|e| decode_err("inbound_row_version", e))?,
         detail_message,
         reason,
+        count_hold: None,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1842,7 +1859,21 @@ pub async fn list_sync_conflicts(
         ))
         .await?;
 
-    rows.into_iter().map(|row| to_sync_conflict(&row)).collect()
+    let mut conflicts = Vec::with_capacity(rows.len());
+    for row in rows {
+        conflicts.push(with_count_hold(db, to_sync_conflict(&row)?).await?);
+    }
+    Ok(conflicts)
+}
+
+/// A conflict as the sync centre shows it: a stock count held back here names its count, counter
+/// and posting time (CMMS Advisor Q12, `inventory::count_four_eyes::count_hold_context`).
+async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRecord) -> AppResult<SyncConflictRecord> {
+    if conflict.conflict_type == crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL {
+        conflict.count_hold =
+            crate::inventory::count_four_eyes::count_hold_context(db, conflict.inbound_payload_json.as_deref()).await?;
+    }
+    Ok(conflict)
 }
 
 /// Action code of the audit event written for every choice made on a sync conflict. The event
@@ -1926,6 +1957,17 @@ pub async fn resolve_sync_conflict(
              fois le travail arrêté, ou « Escalader ». (Conflict {} is for review only: dismiss it with the \
              reason once the work is stopped, or escalate it.)",
             conflict.id, conflict.id
+        )]));
+    }
+
+    if settled_at_origin_conflict(&conflict.conflict_type)
+        && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
+    {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
+             (a second approval by another person, or the count's reversal); it closes by itself when that \
+             arrives.",
+            conflict.id
         )]));
     }
 
@@ -2044,7 +2086,7 @@ pub async fn resolve_sync_conflict(
             entity: "sync_conflict".to_string(),
             id: input.conflict_id.to_string(),
         })?;
-    to_sync_conflict(&row)
+    with_count_hold(db, to_sync_conflict(&row)?).await
 }
 
 pub async fn replay_sync_failures(

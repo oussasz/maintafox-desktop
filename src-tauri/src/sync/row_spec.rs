@@ -1286,7 +1286,20 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("reversed_by_id", USER),
         ],
     ),
-    spec("inventory_count_lines", &[r("approved_by_id", USER)]),
+    RowSpec {
+        // The row version at which this PC raised the line's "above the tolerance" flag from a
+        // received "within" (`inventory::count_four_eyes::store_judged_critique`): it describes this
+        // PC's own judgement, so it never travels.
+        device_local: &["critique_raised_version"],
+        ..spec(
+            "inventory_count_lines",
+            &[
+                r("approved_by_id", USER),
+                r("counted_by_id", USER),
+                r("second_approved_by_id", USER),
+            ],
+        )
+    },
     spec(
         "inventory_document_links",
         &[

@@ -11,7 +11,7 @@ use sea_orm::DatabaseConnection;
 
 use super::negative_stock_tests::{
     enter_count, local_pair, on_hand_milli, post_count, post_count_approved_by, refusal_code, resolution,
-    second_location, session_by_code, stocked_pair, user_with,
+    resolve_approved, second_location, session_by_code, stocked_pair, user_with,
 };
 use crate::inventory::domain::{
     InventoryIssueInput, InventoryReserveInput, InventoryReturnInput, ReceiveGoodsInput, ReceivePurchaseOrderLineInput,
@@ -301,13 +301,13 @@ async fn an_over_issue_is_closed_only_by_a_count_made_where_every_movement_was_h
     }
 
     let (art_a, loc_a, _) = ids[0];
-    let short = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "court"))
+    let short = resolve_approved(&a, manager, resolution(art_a, loc_a, 0.0, "court"))
         .await
         .expect_err("a short reason");
     assert_eq!(refusal_code(short), REFUSED_REASON_SHORT);
     assert_eq!(over_items(&a, art_a, loc_a).await.0.len(), 1, "still open");
 
-    let resolved = negative_stock::resolve_by_count(
+    let resolved = resolve_approved(
         &a,
         manager,
         resolution(art_a, loc_a, 0.0, "Bac recompté : 5 sortis deux fois"),
@@ -342,7 +342,7 @@ async fn an_over_issue_is_closed_only_by_a_count_made_where_every_movement_was_h
         negative_stock::summary(&a).await.expect("summary").over_quantity_count,
         0
     );
-    let again = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté encore"))
+    let again = resolve_approved(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté encore"))
         .await
         .expect_err("nothing left to reconcile");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -558,7 +558,7 @@ async fn an_over_receipt_from_two_pcs_is_listed_on_both_and_a_count_closes_it() 
 
     let manager = user_with(b, "overreceiptmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art_b, loc_b, _, _) = ids[1];
-    let resolved = negative_stock::resolve_by_count(
+    let resolved = resolve_approved(
         b,
         manager,
         resolution(art_b, loc_b, 6.0, "Livraison reçue deux fois, recompté"),
@@ -685,7 +685,7 @@ async fn a_return_of_the_reservation_closes_the_over_issue_and_keeps_it_listed()
         sync(&mut server, name, db).await;
     }
     let (art_a, loc_a, reservation_a) = ids[0];
-    let counted = negative_stock::resolve_by_count(
+    let counted = resolve_approved(
         &a,
         manager,
         resolution(art_a, loc_a, 0.0, "Bac recompté : 5 sortis deux fois"),
@@ -763,7 +763,7 @@ async fn a_return_of_the_reservation_closes_the_over_issue_and_keeps_it_listed()
         seen.push((movement_ids(item), by.movement_sync_id.clone()));
     }
     assert!(seen.windows(2).all(|w| w[0] == w[1]), "the same on every PC: {seen:?}");
-    let again = negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 5.0, "Recompté après retour"))
+    let again = resolve_approved(&a, manager, resolution(art_a, loc_a, 5.0, "Recompté après retour"))
         .await
         .expect_err("nothing left to reconcile");
     assert_eq!(refusal_code(again), REFUSED_NOT_OPEN);
@@ -849,8 +849,9 @@ async fn an_over_receipt_into_two_locations_is_closed_by_each_locations_own_coun
 
     let manager = user_with(a, "overrcptlocmgr", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art_a, loc_a, _, _) = ids[0];
-    // 1 + 5 on hand, 1 missing: a variance, which the person counting approves.
-    negative_stock::resolve_by_count(a, manager, resolution(art_a, loc_a, 5.0, "Premier bac recompté"))
+    // 1 + 5 on hand, 1 missing: a variance above the (blank, so strict) tolerance: a second person
+    // approves it (four-eyes, D11).
+    resolve_approved(a, manager, resolution(art_a, loc_a, 5.0, "Premier bac recompté"))
         .await
         .expect("the first location's count");
     sync(&mut server, "A", a).await;
@@ -863,8 +864,8 @@ async fn an_over_receipt_into_two_locations_is_closed_by_each_locations_own_coun
         assert_eq!(by.variance_qty, -1.0, "{pc}");
         assert_eq!(
             by.approved_by.as_deref(),
-            Some("overrcptlocmgr"),
-            "{pc}: a variance counted from the list is approved by the person counting"
+            Some("Administrateur Maintafox"),
+            "{pc}: a variance counted from the list above the tolerance is approved by a second person"
         );
         let (open, closed) = over_items(db, second.0, second.1).await;
         assert_eq!((open.len(), closed.len()), (1, 0), "{pc}: not the second one");
@@ -917,7 +918,7 @@ async fn an_issue_arriving_after_the_closing_count_reopens_the_over_issue() {
         sync(&mut server, name, db).await;
     }
     let (art_a, loc_a, _) = ids[0];
-    negative_stock::resolve_by_count(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté sur le poste A"))
+    resolve_approved(&a, manager, resolution(art_a, loc_a, 0.0, "Recompté sur le poste A"))
         .await
         .expect("closed by the count");
     assert!(over_items(&a, art_a, loc_a).await.0.is_empty());
@@ -989,7 +990,7 @@ async fn a_receipt_line_and_its_stock_entry_arriving_apart_give_the_same_item_ev
     );
 
     let manager = user_with(&dbs[2], "overrcptheld", &[crate::rbac::permissions::INV_MANAGE]).await;
-    negative_stock::resolve_by_count(
+    resolve_approved(
         &dbs[2],
         manager,
         resolution(art_c, loc_c, 11.0, "Recompté sur le poste C"),
@@ -1041,10 +1042,9 @@ async fn reversing_the_closing_count_reopens_the_over_receipt() {
     }
     let manager = user_with(b, "overrcptreverse", &[crate::rbac::permissions::INV_MANAGE]).await;
     let (art_b, loc_b, _, _) = ids[1];
-    let resolved =
-        negative_stock::resolve_by_count(b, manager, resolution(art_b, loc_b, 6.0, "Livraison reçue deux fois"))
-            .await
-            .expect("closed by the count");
+    let resolved = resolve_approved(b, manager, resolution(art_b, loc_b, 6.0, "Livraison reçue deux fois"))
+        .await
+        .expect("closed by the count");
     assert!(over_items(b, art_b, loc_b).await.0.is_empty());
     let session = session_by_code(b, &resolved.session_code).await;
     crate::inventory::controls::reverse_count_session(
@@ -1218,7 +1218,7 @@ async fn a_count_stays_followed_when_its_rows_no_longer_make_an_item() {
         sync(&mut server, name, db).await;
     }
     let (art_a, loc_a, reservation_a) = ids[0];
-    let counted = negative_stock::resolve_by_count(
+    let counted = resolve_approved(
         &a,
         manager,
         resolution(art_a, loc_a, 0.0, "Bac recompté : 5 sortis deux fois"),

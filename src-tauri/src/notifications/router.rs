@@ -7,7 +7,8 @@
 //!
 //! - `assignee`, `requester`, `planner`, `reviewer`, `submitter`, `watcher`: the people the record
 //!   names (work order responsible / requester / planner, request reviewer / submitter, inspection
-//!   round technician, the work order of a permit or a PM occurrence …).
+//!   round technician, the work order of a permit or a PM occurrence, the counter of a stock count
+//!   line …).
 //! - `team`: members of the record's team, `team_lead`: its leads (crew assignments in force, and
 //!   team-scoped role assignments).
 //! - `supervisor`: the supervisor (personnel record) of the person concerned, or of the assignee.
@@ -203,6 +204,18 @@ pub async fn load_context(conn: &impl ConnectionTrait, payload: &serde_json::Val
                         work_order_context(conn, wo, &mut ctx).await?;
                     }
                     ctx.org_node_id = opt(&r, "entity_id").or(ctx.org_node_id);
+                }
+            }
+            // A stock count line: its counter (`inventory::negative_stock`, recount notice).
+            "inventory_count_lines" => {
+                if let Some(r) = one(
+                    conn,
+                    "SELECT counted_by_id FROM inventory_count_lines WHERE id = ?",
+                    id,
+                )
+                .await?
+                {
+                    push(&mut ctx.assignees, opt(&r, "counted_by_id"));
                 }
             }
             "personnel" => {

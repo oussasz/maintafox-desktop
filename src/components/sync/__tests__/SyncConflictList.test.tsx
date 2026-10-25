@@ -230,6 +230,40 @@ describe("SyncConflictList", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "sync.panel.action.dismiss" })).toBeInTheDocument();
   });
+
+  it("names the count held back: its reference, its counter and when it was posted (Q12)", async () => {
+    inbox = [
+      {
+        ...conflict,
+        id: 21,
+        entity_type: "inventory_count_lines",
+        conflict_type: "COUNT_SELF_APPROVAL",
+        recommended_action: "escalate",
+        local_payload_json: null,
+        count_hold: {
+          session_code: "CC-2026-0007",
+          counter: "Karim",
+          posted_at: "2026-10-24T09:30:00Z",
+        },
+      },
+      { ...conflict, id: 22 },
+    ];
+    mockRefresh.mockResolvedValue(undefined);
+
+    render(<SyncConflictList />);
+
+    expect(await screen.findByText("sync.countSettledAtOrigin")).toBeInTheDocument();
+    // Once, for the held count only.
+    expect(screen.getAllByText("sync.countHeldRecord")).toHaveLength(1);
+    for (const lang of ["fr", "en"]) {
+      const shell = JSON.parse(readFileSync(`src/i18n/${lang}/shell.json`, "utf8")) as {
+        sync: { countHeldRecord: string };
+      };
+      for (const param of ["{{session}}", "{{counter}}", "{{postedAt}}"]) {
+        expect(shell.sync.countHeldRecord).toContain(param);
+      }
+    }
+  });
 });
 
 describe("conflict reason minimum follows the server", () => {
