@@ -35,6 +35,9 @@ pub(crate) const DEFER_NO_MATERIALIZER: &str = "NO_MATERIALIZER";
 pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
 /// Deferral code for an entity type this version of the app does not know.
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
+/// Code kept on an inbox row marked applied without being written: a version of a history row
+/// older than the one applied here.
+pub(crate) const SKIPPED_OLDER_VERSION: &str = "OLDER_VERSION_SKIPPED";
 
 #[derive(Debug, Clone)]
 pub(crate) struct InboxRow {
@@ -120,7 +123,26 @@ pub(crate) async fn apply_inbox_row_in(tx: &impl ConnectionTrait, item: &InboxRo
 }
 
 async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult<()> {
-    mark_inbox(tx, item.id, "applied", None, None).await?;
+    // A version older than the one applied here (a history row, skipped by `concurrency_check`) was
+    // not written: the inbox row keeps the received record and says so, as evidence (a stale
+    // version of a count movement may be the only trace left of a forged one).
+    let history = registry::entity(&item.entity_type).is_some_and(|d| d.conflict_policy == ConflictPolicy::AppendOnly);
+    match synced_row_version(tx, &item.entity_type, &item.entity_sync_id).await? {
+        Some((applied, _)) if history && item.row_version < applied => {
+            let message = format!(
+                "v{} is older than v{applied} applied here: not written (a history row keeps its newer version)",
+                item.row_version
+            );
+            tracing::warn!(
+                target: "maintafox::sync",
+                "{} {}: {message}",
+                item.entity_type,
+                item.entity_sync_id
+            );
+            mark_inbox(tx, item.id, "applied", Some(SKIPPED_OLDER_VERSION), Some(&message)).await?;
+        }
+        _ => mark_inbox(tx, item.id, "applied", None, None).await?,
+    }
     crate::sync::code_clash::close_outdated_clashes(tx, &item.entity_type, &item.entity_sync_id, item.row_version)
         .await?;
     crate::sync::username_clash::close_outdated_username_clashes(

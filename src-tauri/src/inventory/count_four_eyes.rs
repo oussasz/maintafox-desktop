@@ -84,8 +84,15 @@
 //! whatever their order of arrival, and the adjustment stays held with it (a reversal of it is
 //! refused with it, so it never moves the stock on its own) until that conflict is settled: a
 //! later version of the line judged clean here, or "take theirs" once the adjustment is the line's
-//! own. A reversal, even of a count whose adjustment is applied here, is applied only with the line
-//! version naming it and only if it undoes that line's adjustment.
+//! own. A reversal, even of a count whose adjustment is applied here, is applied with the line
+//! version naming it, and only if it undoes that line's adjustment. Only the count's own reversal
+//! (its seeded id) that no version of its line names here is matched against the ledger instead:
+//! it must undo an adjustment of that count held here, not reversed yet, or it is a
+//! `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal. A count movement already applied
+//! here is never moved again by a later version of it received from the server that changes its
+//! quantity (a `COUNT_APPROVAL_RECORD_INVALID` conflict on that movement): only this PC's own
+//! posting, never synchronised, takes the version posted first on another PC
+//! (`inventory::count_sync`).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -1017,10 +1024,12 @@ pub(crate) async fn apply_held_movement_of_taken_line(
     }
 }
 
-/// Why a received reversal of a count whose adjustment is applied here is not the reversal of one
-/// of that count's adjustments held here (`None`: it is): its quantity undoes one of them (within
-/// [`QUANTITY_AGREEMENT`]) and that count has fewer reversals here than adjustments (a count is
-/// reversed once per posting: a second reversal of one posting would move the stock again).
+/// Why a received reversal of a count whose adjustment is applied here, which no version of its
+/// line names here, is not the reversal of one of that count's adjustments held here (`None`: it
+/// is): its quantity undoes one of them (within [`QUANTITY_AGREEMENT`]) and that count has fewer
+/// reversals here than adjustments (a count is reversed once per posting: a second reversal of one
+/// posting would move the stock again). Only for the count's own reversal (its seeded id): see
+/// [`inbound_count_movement_hold`].
 async fn reversal_of_adjustment_here(
     conn: &impl ConnectionTrait,
     received: &serde_json::Map<String, serde_json::Value>,
@@ -1221,7 +1230,10 @@ async fn reversal_check(
         None => Ok(None),
         Some(why) => conflict(
             SYNC_APPROVAL_RECORD_INVALID,
-            format!("count line {entity_sync_id}: its reversal {reversal} does not undo its posted adjustment {posted}: {why}"),
+            format!(
+                "count line {entity_sync_id}: its reversal {reversal} does not undo its posted adjustment \
+                 {posted}: {why}"
+            ),
         ),
     }
 }
@@ -1300,6 +1312,68 @@ pub(crate) async fn count_movement_group(
     )))
 }
 
+/// A received version of a count movement already held here (review of 07d895a9, B1). The same
+/// count posted on two PCs makes the PC whose posting lost take the version the server received
+/// first, and move its stock by the difference (`inventory::count_sync::adopt_first_posted`): only
+/// for that PC's own posting, never synchronised (no version of it received or acknowledged here).
+/// A movement synchronised here (received from another PC, or this PC's posting the server
+/// acknowledged) was judged when it was applied (with its line, or posted here): a later version
+/// changing its quantity — a forged or corrupted record, the server accepting a new version of
+/// any row — would move the stock with no line or four-eyes behind it, on every PC including the
+/// one where the count was posted. It is a `COUNT_APPROVAL_RECORD_INVALID` conflict for a person
+/// on that movement, not applied: "take theirs" judges it again (refused), "keep mine" sends the
+/// movement as held here again. Its quantity is compared with the one held here, which is its
+/// line's variance on every PC but the one whose divergent posting lost (there the line held is
+/// that PC's own, and a version matching it would still move the stock). A version differing in
+/// another field only is taken as before (audited, the stock does not move).
+async fn received_version_of_movement_here(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    const MOVEMENTS: &str = "inventory_transactions";
+    let Some(held) =
+        crate::inventory::count_sync::seeded_count_local(conn, MOVEMENTS, entity_sync_id, received).await?
+    else {
+        return Ok(None);
+    };
+    if crate::inventory::count_sync::adoption_delta(&held, received).is_none()
+        || crate::sync::queries::synced_row_version(conn, MOVEMENTS, entity_sync_id)
+            .await?
+            .is_none()
+    {
+        return Ok(None);
+    }
+    let quantity = |m: &serde_json::Map<String, serde_json::Value>| {
+        m.get("quantity")
+            .and_then(serde_json::Value::as_f64)
+            .map_or_else(|| "?".to_string(), |q| q.to_string())
+    };
+    let line = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT cl.entity_sync_id AS line FROM inventory_count_lines cl
+             JOIN inventory_transactions t ON t.id IN (cl.posted_transaction_id, cl.reversed_transaction_id)
+             WHERE t.entity_sync_id = ? LIMIT 1",
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "line"))
+        .transpose()?
+        .flatten();
+    let of_line = line.map_or_else(String::new, |line| format!(" (count line {line})"));
+    conflict(
+        SYNC_APPROVAL_RECORD_INVALID,
+        format!(
+            "count movement {entity_sync_id}{of_line} is applied here with the quantity {}; a later version \
+             received with the quantity {} would move the stock by the difference: it is not applied and the stock \
+             does not move",
+            quantity(&held),
+            quantity(received),
+        ),
+    )
+}
+
 /// A received stock movement of a count (`COUNT_ADJUST`, `COUNT_REVERSAL` of a count session) is
 /// held with its count line (CMMS Advisor Q8, see the module documentation). It is applied only
 /// with a received version of its line that NAMES it (posted / reversed movement) and passes the
@@ -1309,7 +1383,8 @@ pub(crate) async fn count_movement_group(
 /// naming it always comes from the inbox, with it or after it. A reversal waits for the adjustment
 /// it undoes; an adjustment whose line arrives reversed is applied with its reversal, in one
 /// transaction ([`count_movement_group`], net zero). A movement already here (a replay, the same
-/// posting received twice) is not held.
+/// posting received twice) is not held, unless the version received would move the stock again
+/// ([`received_version_of_movement_here`]).
 pub(crate) async fn inbound_count_movement_hold(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -1318,41 +1393,58 @@ pub(crate) async fn inbound_count_movement_hold(
     let Some(kind) = field(received, "movement_type").filter(|k| COUNT_MOVEMENTS.contains(k)) else {
         return Ok(None);
     };
-    if field(received, "source_type") != Some("COUNT_SESSION")
-        || crate::permit::sync_check::local_id(conn, "inventory_transactions", entity_sync_id)
-            .await?
-            .is_some()
-    {
+    if field(received, "source_type") != Some("COUNT_SESSION") {
         return Ok(None);
+    }
+    if crate::permit::sync_check::local_id(conn, "inventory_transactions", entity_sync_id)
+        .await?
+        .is_some()
+    {
+        return received_version_of_movement_here(conn, entity_sync_id, received).await;
     }
     let adjust = kind == "COUNT_ADJUST";
     // The count's adjustment is already applied here (under this id or another: the same count
     // posted on two PCs, `inventory::count_sync`): its line was judged when it arrived; another
-    // adjustment of it goes on as before (applied, listed "posted twice"). A reversal of it is
-    // applied only if it undoes an adjustment of that count held here, not reversed yet (review of
-    // 2faa97d5, N1): the version of its line naming it may never come here (a line left in
-    // conflict on the PC whose posting lost), so it is matched against the ledger as it is held.
-    if count_adjusted_here(conn, received).await? {
-        if adjust {
-            return Ok(None);
-        }
-        return Ok(reversal_of_adjustment_here(conn, received).await?.map(|why| {
-            InboundVerdict::Defer(format!(
-                "count reversal {entity_sync_id} is held ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
-            ))
-        }));
+    // adjustment of it goes on as before (applied, listed "posted twice").
+    let count_here = count_adjusted_here(conn, received).await?;
+    if count_here && adjust {
+        return Ok(None);
     }
     let key = if adjust {
         "posted_transaction_sync_id"
     } else {
         "reversed_transaction_sync_id"
     };
+    let naming = waiting_line_naming(conn, key, entity_sync_id).await?;
+    // A reversal of it is judged with the version of its line naming it, as any (review of
+    // 07d895a9, S1). Only the count's own reversal (its seeded id: the same on every PC) that no
+    // version of its line names here — waiting, refused or set aside — is matched against the
+    // ledger as it is held: that version may never come here (the line of the PC whose divergent
+    // posting lost stays in conflict there). It must undo an adjustment of that count held here,
+    // not reversed yet; otherwise it is a conflict for a person on that reversal, not a silent wait
+    // (review of 07d895a9, S2). A reversal under another id waits for the line version naming it.
+    if count_here
+        && naming.is_none()
+        && crate::inventory::count_sync::is_seeded_count_movement(entity_sync_id, received)
+        && set_aside_line_naming(conn, key, entity_sync_id).await?.is_none()
+    {
+        return match reversal_of_adjustment_here(conn, received).await? {
+            None => Ok(None),
+            Some(why) => conflict(
+                SYNC_APPROVAL_RECORD_INVALID,
+                format!(
+                    "count reversal {entity_sync_id}, which no count line here names, is not the reversal of a \
+                     posting of its count held here: {why}; it is not applied and the stock does not move"
+                ),
+            ),
+        };
+    }
     let Some(NamingLine {
         sync_id: line_sync_id,
         payload: line,
         server_batch_id,
         apply_status,
-    }) = waiting_line_naming(conn, key, entity_sync_id).await?
+    }) = naming
     else {
         // The version of its line naming it was set aside by a person's decision on that line's
         // conflict ("keep mine", "dismiss"): it waits for that line to be settled, not to arrive.

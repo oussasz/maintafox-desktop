@@ -122,7 +122,7 @@ async fn local_payload(
 }
 
 /// `entity_sync_id` is the seeded id of the count movement `payload` describes.
-fn is_seeded_count_movement(entity_sync_id: &str, payload: &Map<String, Value>) -> bool {
+pub(crate) fn is_seeded_count_movement(entity_sync_id: &str, payload: &Map<String, Value>) -> bool {
     let Some(kind) = text(payload, "movement_type").and_then(count_movement_kind) else {
         return false;
     };
@@ -510,6 +510,14 @@ async fn write_posted_twice_audit(
     .await
 }
 
+/// How much adopting the received version `inbound` of a count movement over the row held here
+/// (`local`, wire form) moves this PC's stock ([`adopt_first_posted`]): the difference of their
+/// quantities, `None` when they agree (or one is not given).
+pub(crate) fn adoption_delta(local: &Map<String, Value>, inbound: &Map<String, Value>) -> Option<f64> {
+    let delta = qty(inbound)? - qty(local)?;
+    (delta.abs() > QTY_TOLERANCE).then_some(delta)
+}
+
 /// A received count movement or audit link that this PC already holds under the same seeded id,
 /// for the same count ([`seeded_count_local`]), with content that differs in meaning (this PC posted
 /// the same count too and its push lost): `true` tells the caller to write the received content over
@@ -519,7 +527,9 @@ async fn write_posted_twice_audit(
 /// the difference here, in the same transaction, and the location's negative-stock item is brought
 /// in line: every PC then holds the same ledger and the same stock. This PC's own posting is audited
 /// ([`AUDIT_POSTED_TWICE`]) and the event is queued for synchronisation (this apply runs with capture
-/// suppressed).
+/// suppressed). Only this PC's own posting, never synchronised, is replaced so: a received version
+/// changing the quantity of a count movement received or acknowledged here is refused before it
+/// gets here (`count_four_eyes::inbound_count_movement_hold`).
 pub(crate) async fn adopt_first_posted(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -533,11 +543,10 @@ pub(crate) async fn adopt_first_posted(
         return Ok(false);
     }
     if entity_type == MOVEMENTS {
-        let (Some(local_qty), Some(kept_qty)) = (qty(&local), qty(inbound)) else {
+        let (Some(_), Some(kept_qty)) = (qty(&local), qty(inbound)) else {
             return Ok(false);
         };
-        let delta = kept_qty - local_qty;
-        if delta.abs() > QTY_TOLERANCE {
+        if let Some(delta) = adoption_delta(&local, inbound) {
             let row = conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
