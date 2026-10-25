@@ -77,6 +77,12 @@
 //!
 //! When the conflict opens, the count-approval holders are told once per count
 //! ([`after_count_conflict_recorded`]).
+//!
+//! A received adjustment is released only by a line version naming it that is its own (the line's
+//! count, article, location and variance). One that is not — a forged or corrupted record — is
+//! never applied: the line naming it is a `COUNT_APPROVAL_RECORD_INVALID` conflict for a person,
+//! whatever their order of arrival, and the adjustment stays held with it (a reversal of it is
+//! refused with it, so it never moves the stock on its own).
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -342,8 +348,69 @@ fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerd
 /// - a line new here received with the snapshot of a first join is the plant's history (CMMS
 ///   Advisor Q9): applied as it is, no four-eyes judgement, its `self_approved` flag kept and shown
 ///   with the other self-approved lines for a manager to review — only before this PC completed a
-///   full pull and while nothing of that line is held here ([`first_join_history`]).
+///   full pull and while nothing of that line is held here ([`first_join_history`]);
+/// - the count adjustment it names as posted, when it waits here, is its own, or the record
+///   contradicts itself ([`forged_adjustment_named`]): a visible conflict, the adjustment held.
 pub(crate) async fn inbound_count_line_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    if let Some(verdict) = forged_adjustment_named(conn, entity_sync_id, received).await? {
+        return Ok(Some(verdict));
+    }
+    judge_count_line(conn, entity_sync_id, received).await
+}
+
+/// A received count line naming as its posted adjustment a count adjustment not applied here but
+/// waiting in the inbox that is not the line's own ([`adjustment_mismatch`], against the line as it
+/// is judged: the received row completed by the copy held here) contradicts itself: a
+/// `COUNT_APPROVAL_RECORD_INVALID` conflict for a person (review of d6562b88, §5), never a silent
+/// wait. The adjustment stays held ([`inbound_count_movement_hold`]: the line version naming it is
+/// in conflict, or set aside by a person's decision), so the stock does not move; it is settled
+/// where the count is applied. A movement of another kind named as posted is not held, so not
+/// judged here; one not arrived yet is judged when it arrives (the line, waiting for it, is judged
+/// again then).
+async fn forged_adjustment_named(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<InboundVerdict>> {
+    let local = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await?;
+    let line = crate::permit::sync_check::overlay(local.as_ref(), received);
+    let Some(posted) = field(&line, "posted_transaction_sync_id") else {
+        return Ok(None);
+    };
+    if crate::permit::sync_check::local_id(conn, "inventory_transactions", posted)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let Some((_, movement)) = waiting_movement(conn, posted).await? else {
+        return Ok(None);
+    };
+    if field(&movement, "movement_type") != Some("COUNT_ADJUST")
+        || field(&movement, "source_type") != Some("COUNT_SESSION")
+    {
+        return Ok(None);
+    }
+    match adjustment_mismatch(&movement, &line) {
+        Some(why) => conflict(
+            SYNC_APPROVAL_RECORD_INVALID,
+            format!(
+                "count line {entity_sync_id} names movement {posted} as its posted adjustment, but {why}: that \
+                 movement is held here and the stock does not move"
+            ),
+        ),
+        None => Ok(None),
+    }
+}
+
+/// The judgement of a received count line ([`inbound_count_line_check`]) without the check of the
+/// adjustment it names ([`forged_adjustment_named`]): [`inbound_count_movement_hold`] makes that
+/// check itself, against the movement it holds.
+async fn judge_count_line(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &serde_json::Map<String, serde_json::Value>,
@@ -1153,19 +1220,25 @@ pub(crate) async fn inbound_count_movement_hold(
     }
     // The adjustment its line releases must be that line's own (review of 5ead90e8, S2), as a
     // reversal must be the reversal of its count (`reversal_check`): otherwise a line judged here
-    // would release a movement of another count, article, location or quantity.
+    // would release a movement of another count, article, location or quantity. The line naming it
+    // is then itself a visible conflict ([`forged_adjustment_named`]), recorded when that line is
+    // judged — on the same pass (movements go before the lines that name them) or when it arrives
+    // or is tried again; a line version naming it cannot be applied here before it (it refers to
+    // it), so this hold never has to record it.
     let line_here = crate::permit::sync_check::local_wire(conn, LINES, &line_sync_id).await?;
     if let Some(why) = adjustment_mismatch(received, &crate::permit::sync_check::overlay(line_here.as_ref(), &line)) {
         return Ok(Some(InboundVerdict::Defer(format!(
-            "count movement {entity_sync_id} is held with its count line {line_sync_id}              ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
+            "count movement {entity_sync_id} is held with its count line {line_sync_id} \
+             ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
         ))));
     }
     // Its line judged here, in the line's own context (a version from a snapshot or an exchange):
     // a line arriving reversed passes once its reversal is shown to be this count's
-    // (`reversal_check`), and the adjustment is then applied with it (`count_movement_group`).
+    // (`reversal_check`), and the adjustment is then applied with it (`count_movement_group`). The
+    // adjustment this line names is the one just checked against it.
     let judged = crate::sync::materialize::judged_as_row_of_batch(
         &server_batch_id,
-        inbound_count_line_check(conn, &line_sync_id, &line),
+        judge_count_line(conn, &line_sync_id, &line),
     )
     .await?;
     Ok(match judged {
