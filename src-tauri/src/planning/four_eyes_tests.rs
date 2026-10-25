@@ -9,8 +9,8 @@ use serde_json::Value;
 use super::domain::{CommitBreakIn, CreateScheduleBreakInInput, ScheduleCommitment};
 use super::scheduling;
 use super::tests::{
-    commit_input, create_planning_wo, ensure_personnel_with_rate, exec_sql, insert_candidate, local, scalar,
-    setup_db, signing_approver, week_ref, weekly_site, APPROVER_PASSWORD,
+    commit_input, create_planning_wo, ensure_personnel_with_rate, exec_sql, insert_candidate, local, scalar, setup_db,
+    signing_approver, week_ref, weekly_site, APPROVER_PASSWORD,
 };
 use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
 
@@ -124,7 +124,13 @@ async fn wo_commitment(db: &DatabaseConnection, team: i64, title: &str, start: &
 }
 
 /// A commitment of the crew `team` on a slot of the open week after 2026-05-03.
-async fn open_commitment(db: &DatabaseConnection, team: i64, source_id: i64, start: &str, end: &str) -> ScheduleCommitment {
+async fn open_commitment(
+    db: &DatabaseConnection,
+    team: i64,
+    source_id: i64,
+    start: &str,
+    end: &str,
+) -> ScheduleCommitment {
     let candidate = insert_candidate(db, "manual_test", source_id, "ready", 100.0).await;
     scheduling::create_schedule_commitment(db, 1, commit_input(candidate, team, start, end))
         .await
@@ -208,17 +214,27 @@ async fn an_urgent_move_is_signed_by_another_planner_of_the_crews_site_with_thei
     let err = scheduling::create_schedule_break_in(&db, 1, signed(urgent(), here, ""))
         .await
         .expect_err("no password");
-    assert!(code_of(&err).contains("GATE_PLAN_APPROVER_PASSWORD_REQUIRED"), "{err:?}");
+    assert!(
+        code_of(&err).contains("GATE_PLAN_APPROVER_PASSWORD_REQUIRED"),
+        "{err:?}"
+    );
     let before = failed_attempts(&db, here).await;
     let err = scheduling::create_schedule_break_in(&db, 1, signed(urgent(), here, "wrong"))
         .await
         .expect_err("wrong password");
     assert!(code_of(&err).contains("GATE_PLAN_APPROVER_AUTH_FAILED"), "{err:?}");
-    assert_eq!(failed_attempts(&db, here).await, before + 1, "counted outside the transaction");
+    assert_eq!(
+        failed_attempts(&db, here).await,
+        before + 1,
+        "counted outside the transaction"
+    );
     assert_eq!(
         scalar(
             &db,
-            &format!("SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {}", c.id)
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {}",
+                c.id
+            )
         )
         .await,
         0,
@@ -312,7 +328,11 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         .expect_err("self");
     assert!(code_of(&err).contains("GATE_PLAN_APPROVER_SELF"), "{err:?}");
     // Not linked to a personnel record.
-    exec_sql(&db, &format!("UPDATE user_accounts SET personnel_id = NULL WHERE id = {approver}")).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE user_accounts SET personnel_id = NULL WHERE id = {approver}"),
+    )
+    .await;
     input.frozen_week_break_in = Some(with(Some(approver), Some(APPROVER_PASSWORD)));
     let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
         .await
@@ -367,7 +387,11 @@ async fn the_approver_list_holds_plan_confirm_at_the_crews_site_linked_people_bu
     let here = site_approver(&db, 141, "FE3-HERE", site).await;
     let elsewhere = site_approver(&db, 142, "FE3-ELSE", other_site).await;
     let unlinked = site_approver(&db, 143, "FE3-UNLINKED", site).await;
-    exec_sql(&db, &format!("UPDATE user_accounts SET personnel_id = NULL WHERE id = {unlinked}")).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE user_accounts SET personnel_id = NULL WHERE id = {unlinked}"),
+    )
+    .await;
     let windows = windows_only_user(&db, 144, "FE3-WIN").await;
 
     let ids = |caller: i64| {
@@ -431,7 +455,10 @@ async fn the_unfreeze_decider_holds_plan_confirm_at_the_site() {
         }
     };
     let err = decide(elsewhere).await.expect_err("another site");
-    assert!(code_of(&err).contains("PLANNING_UNFREEZE_NOT_ALLOWED_AT_SITE"), "{err:?}");
+    assert!(
+        code_of(&err).contains("PLANNING_UNFREEZE_NOT_ALLOWED_AT_SITE"),
+        "{err:?}"
+    );
     let err = decide(requester).await.expect_err("requester");
     assert!(code_of(&err).contains("PLANNING_UNFREEZE_SAME_PERSON"), "{err:?}");
     decide(here).await.expect("decided at the site");
@@ -507,13 +534,25 @@ struct Received {
 async fn received_setup(code: &str) -> Received {
     let db = setup_db().await;
     // Rows get their sync identity as on a device (capture installed, seeded identities given).
-    crate::sync::capture::install_capture_in(&db)
-        .await
-        .expect("capture");
+    crate::sync::capture::install_capture_in(&db).await.expect("capture");
     let (site, team) = weekly_site(&db, code).await;
     let approver = site_approver(&db, 160, &format!("{code}-APP"), site).await;
-    let commitment = wo_commitment(&db, team, &format!("{code} received"), "2026-05-12T08:00", "2026-05-12T09:00").await;
-    let template_of = wo_commitment(&db, team, &format!("{code} template"), "2026-05-13T08:00", "2026-05-13T09:00").await;
+    let commitment = wo_commitment(
+        &db,
+        team,
+        &format!("{code} received"),
+        "2026-05-12T08:00",
+        "2026-05-12T09:00",
+    )
+    .await;
+    let template_of = wo_commitment(
+        &db,
+        team,
+        &format!("{code} template"),
+        "2026-05-13T08:00",
+        "2026-05-13T09:00",
+    )
+    .await;
     let bi = scheduling::create_schedule_break_in(
         &db,
         1,
@@ -567,7 +606,10 @@ impl Received {
         self.db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                format!("SELECT committed_start FROM schedule_commitments WHERE id = {}", self.commitment.id),
+                format!(
+                    "SELECT committed_start FROM schedule_commitments WHERE id = {}",
+                    self.commitment.id
+                ),
             ))
             .await
             .expect("q")
@@ -586,7 +628,10 @@ async fn work_moved_into_a_frozen_week_by_sync_without_its_break_in_is_a_conflic
     assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
     match &outcome {
         ApplyOutcome::Conflict { message, .. } => {
-            assert!(message.contains("2026-05-02T09:00:00Z"), "the sender's change time: {message}");
+            assert!(
+                message.contains("2026-05-02T09:00:00Z"),
+                "the sender's change time: {message}"
+            );
             assert!(message.contains("frozen here at"), "{message}");
         }
         other => panic!("{other:?}"),
@@ -657,7 +702,11 @@ async fn a_self_approved_break_in_refuses_its_commitment_too() {
         .expect("pass");
     assert_eq!(r.slot_here().await, before, "nothing of the group is kept");
     assert_eq!(
-        scalar(&r.db, "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = 'recv-bi-fe7b'").await,
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = 'recv-bi-fe7b'"
+        )
+        .await,
         0
     );
     assert_eq!(
@@ -688,7 +737,11 @@ async fn a_received_break_in_is_judged_on_its_signature_and_its_approvers_right_
         None => None,
     };
     let valid = r.break_in("2026-05-12T10:00", "2026-05-12T11:00", |_| {});
-    assert_eq!(verdict_code(check(valid.clone()).await), None, "signed at the crew's site");
+    assert_eq!(
+        verdict_code(check(valid.clone()).await),
+        None,
+        "signed at the crew's site"
+    );
 
     let unsigned = r.break_in("2026-05-12T10:00", "2026-05-12T11:00", |p| {
         p.insert("approver_signed_at".into(), Value::Null);
@@ -709,7 +762,11 @@ async fn a_received_break_in_is_judged_on_its_signature_and_its_approvers_right_
     );
     let mut ordinary = unapproved.clone();
     ordinary.insert("break_in_reason".into(), "other".into());
-    assert_eq!(verdict_code(check(ordinary.clone()).await), None, "an ordinary reason needs no signer");
+    assert_eq!(
+        verdict_code(check(ordinary.clone()).await),
+        None,
+        "an ordinary reason needs no signer"
+    );
     ordinary.insert("forced_checks_json".into(), "[\"locked_window\"]".into());
     assert_eq!(
         verdict_code(check(ordinary).await).as_deref(),
@@ -775,11 +832,13 @@ async fn a_frozen_week_conflict_closes_when_its_signed_break_in_arrives() {
 #[tokio::test]
 async fn a_week_reopened_by_sync_needs_its_four_eyes_unfreeze_decision() {
     let r = received_setup("FE10").await;
-    let week_sid: String = r
-        .db
-        .query_one(Statement::from_string(
+    let week_sid: String =
+        r.db.query_one(Statement::from_string(
             DbBackend::Sqlite,
-            format!("SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = {}", r.site),
+            format!(
+                "SELECT entity_sync_id FROM weekly_schedules WHERE entity_id = {}",
+                r.site
+            ),
         ))
         .await
         .expect("q")
@@ -793,7 +852,11 @@ async fn a_week_reopened_by_sync_needs_its_four_eyes_unfreeze_decision() {
         let db = r.db.clone();
         let site = r.site;
         async move {
-            scalar_text(&db, &format!("SELECT status FROM weekly_schedules WHERE entity_id = {site}")).await
+            scalar_text(
+                &db,
+                &format!("SELECT status FROM weekly_schedules WHERE entity_id = {site}"),
+            )
+            .await
         }
     };
 
@@ -819,13 +882,29 @@ async fn a_week_reopened_by_sync_needs_its_four_eyes_unfreeze_decision() {
     let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
 
     // Decided by its own requester: a conflict.
-    inbox(&r.db, "weekly_schedule_events", "recv-ev-self", &event(&requester_sid, &requester_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "recv-ev-self",
+        &event(&requester_sid, &requester_sid),
+    )
+    .await;
     let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened.clone()).await;
-    assert_eq!(conflict_code(&outcome), Some("WEEK_UNFREEZE_SAME_PERSON"), "{outcome:?}");
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("WEEK_UNFREEZE_SAME_PERSON"),
+        "{outcome:?}"
+    );
     exec_sql(&r.db, "DELETE FROM sync_inbox WHERE entity_sync_id = 'recv-ev-self'").await;
 
     // Decided by someone else holding plan.confirm at the site: applied.
-    inbox(&r.db, "weekly_schedule_events", "recv-ev-ok", &event(&requester_sid, &approver_sid)).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "recv-ev-ok",
+        &event(&requester_sid, &approver_sid),
+    )
+    .await;
     let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened).await;
     assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
     assert_eq!(status().await, "approved");

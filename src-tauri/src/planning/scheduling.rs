@@ -8,6 +8,7 @@ use crate::errors::{AppError, AppResult};
 use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
+use super::break_in_approval::{self, ForcedCheck};
 use super::domain::{
     AbsenceAccess, AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow,
     CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput,
@@ -17,7 +18,6 @@ use super::domain::{
     ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput,
     UpdatePlanningWindowInput,
 };
-use super::break_in_approval::{self, ForcedCheck};
 use super::load;
 use super::person_load;
 use super::windows::{self, JobLocation, WINDOW_COLS};
@@ -1638,207 +1638,210 @@ pub async fn create_schedule_break_in(
     let mut password_checked = None;
     let tx = db.begin().await?;
     let in_tx = async {
-    let current = get_commitment(&tx, input.schedule_commitment_id).await?;
-    if current.row_version != input.expected_commitment_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
-                .to_string(),
-        ]));
-    }
-    ensure_held(&current)?;
-
-    let next_team_id = input.new_assigned_team_id.unwrap_or(current.assigned_team_id);
-    // "Unassigned" chosen explicitly clears the technician; otherwise the current one stays.
-    let next_personnel_id = if input.clear_assignee.unwrap_or(false) {
-        None
-    } else {
-        input.new_assigned_personnel_id.or(current.assigned_personnel_id)
-    };
-    // The hours this commitment books (its slot length for one from before migration 205).
-    let labour_hours = match current.planned_labor_hours {
-        Some(hours) => hours,
-        None => hours_between(&current.committed_start, &current.committed_end)?,
-    };
-    let bypass_availability = input.bypass_availability.unwrap_or(false);
-    let override_reason = input
-        .override_reason
-        .as_ref()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    // The OT behind the job: not counted twice against the crew or the technician.
-    let own_work_order = person_load::source_work_order(&tx, &current.source_type, current.source_id).await?;
-
-    if let Some(personnel_id) = next_personnel_id {
-        if let Err(err) =
-            enforce_assignee_availability(&tx, personnel_id, &input.new_slot_start, &input.new_slot_end).await
-        {
-            if !bypass_availability || override_reason.is_none() {
-                return Err(err);
-            }
+        let current = get_commitment(&tx, input.schedule_commitment_id).await?;
+        if current.row_version != input.expected_commitment_row_version {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Schedule commitment was modified elsewhere (stale row_version)."
+                    .to_string(),
+            ]));
         }
-        // Qualifications are not bypassed here: a supervisor override (trn.certify, step-up,
-        // audited) is recorded first with `record_qualification_override`.
-        enforce_assignee_qualifications(
-            &tx,
-            &current.source_type,
-            current.source_id,
-            personnel_id,
-            &input.new_slot_start,
-        )
-        .await?;
-        let overlaps = check_double_booking(
-            &tx,
-            personnel_id,
-            &input.new_slot_start,
-            &input.new_slot_end,
-            Some(current.id),
-        )
-        .await?;
-        if overlaps > 0 && override_reason.is_none() {
-            return Err(crate::errors::org_validation_failed(
+        ensure_held(&current)?;
+
+        let next_team_id = input.new_assigned_team_id.unwrap_or(current.assigned_team_id);
+        // "Unassigned" chosen explicitly clears the technician; otherwise the current one stays.
+        let next_personnel_id = if input.clear_assignee.unwrap_or(false) {
+            None
+        } else {
+            input.new_assigned_personnel_id.or(current.assigned_personnel_id)
+        };
+        // The hours this commitment books (its slot length for one from before migration 205).
+        let labour_hours = match current.planned_labor_hours {
+            Some(hours) => hours,
+            None => hours_between(&current.committed_start, &current.committed_end)?,
+        };
+        let bypass_availability = input.bypass_availability.unwrap_or(false);
+        let override_reason = input
+            .override_reason
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        // The OT behind the job: not counted twice against the crew or the technician.
+        let own_work_order = person_load::source_work_order(&tx, &current.source_type, current.source_id).await?;
+
+        if let Some(personnel_id) = next_personnel_id {
+            if let Err(err) =
+                enforce_assignee_availability(&tx, personnel_id, &input.new_slot_start, &input.new_slot_end).await
+            {
+                if !bypass_availability || override_reason.is_none() {
+                    return Err(err);
+                }
+            }
+            // Qualifications are not bypassed here: a supervisor override (trn.certify, step-up,
+            // audited) is recorded first with `record_qualification_override`.
+            enforce_assignee_qualifications(
+                &tx,
+                &current.source_type,
+                current.source_id,
+                personnel_id,
+                &input.new_slot_start,
+            )
+            .await?;
+            let overlaps = check_double_booking(
+                &tx,
+                personnel_id,
+                &input.new_slot_start,
+                &input.new_slot_end,
+                Some(current.id),
+            )
+            .await?;
+            if overlaps > 0 && override_reason.is_none() {
+                return Err(crate::errors::org_validation_failed(
                 "PLANNING_DOUBLE_BOOKING",
                 "The technician already holds another job at this time: give the override reason to break in anyway.",
                 std::collections::HashMap::new(),
             ));
+            }
+            // The technician's own day: in the crew, working, enough hours left. Each refusal is
+            // overridden only when acknowledged, with the break-in's reason, and logged.
+            let person_hours = commitment_person_hours(&tx, &current).await?;
+            let issues = person_load::assignee_issues(
+                &tx,
+                next_team_id,
+                personnel_id,
+                &input.new_slot_start,
+                &input.new_slot_end,
+                person_hours,
+                Some(current.id),
+                own_work_order,
+            )
+            .await?;
+            if !issues.is_empty() {
+                let all_acknowledged = issues
+                    .iter()
+                    .all(|i| input.acknowledged_assignee_issues.iter().any(|a| a == &i.code));
+                let Some(reason) = override_reason.clone().filter(|_| all_acknowledged) else {
+                    return Err(crate::errors::org_validation_failed_issues(issues));
+                };
+                let overridden: Vec<String> = issues.iter().map(|i| i.code.clone()).collect();
+                append_change_log(
+                    &tx,
+                    Some(current.id),
+                    "override_assignee",
+                    Some(actor_id),
+                    Some("assignment_window".to_string()),
+                    None,
+                    Some(format!("{} -> {}", input.new_slot_start, input.new_slot_end)),
+                    Some(overridden.join(",")),
+                    Some(reason.clone()),
+                    Some(reason),
+                    Some(
+                        json!({
+                            "personnel_id": personnel_id,
+                            "committed_start": input.new_slot_start,
+                            "committed_end": input.new_slot_end,
+                            "overridden": overridden,
+                            "issues": issues,
+                            "break_in": true,
+                        })
+                        .to_string(),
+                    ),
+                )
+                .await?;
+            }
         }
-        // The technician's own day: in the crew, working, enough hours left. Each refusal is
-        // overridden only when acknowledged, with the break-in's reason, and logged.
-        let person_hours = commitment_person_hours(&tx, &current).await?;
-        let issues = person_load::assignee_issues(
+
+        // The first overloaded day is reported by the error; nothing is stored as a "feasible window".
+        let (capacity_ok, _overloaded_day) = compute_capacity_gate(
             &tx,
             next_team_id,
-            personnel_id,
             &input.new_slot_start,
             &input.new_slot_end,
-            person_hours,
+            labour_hours,
             Some(current.id),
             own_work_order,
         )
         .await?;
-        if !issues.is_empty() {
-            let all_acknowledged = issues
-                .iter()
-                .all(|i| input.acknowledged_assignee_issues.iter().any(|a| a == &i.code));
-            let Some(reason) = override_reason.clone().filter(|_| all_acknowledged) else {
-                return Err(crate::errors::org_validation_failed_issues(issues));
-            };
-            let overridden: Vec<String> = issues.iter().map(|i| i.code.clone()).collect();
-            append_change_log(
-                &tx,
-                Some(current.id),
-                "override_assignee",
-                Some(actor_id),
-                Some("assignment_window".to_string()),
-                None,
-                Some(format!("{} -> {}", input.new_slot_start, input.new_slot_end)),
-                Some(overridden.join(",")),
-                Some(reason.clone()),
-                Some(reason),
-                Some(
-                    json!({
-                        "personnel_id": personnel_id,
-                        "committed_start": input.new_slot_start,
-                        "committed_end": input.new_slot_end,
-                        "overridden": overridden,
-                        "issues": issues,
-                        "break_in": true,
-                    })
-                    .to_string(),
-                ),
-            )
-            .await?;
+        // A blocking check is forced only with a recorded dangerous-override reason and the signature
+        // of a second planner (CMMS Advisor answer Q1, `break_in_approval`).
+        let mut forced: Vec<ForcedCheck> = Vec::new();
+        if !capacity_ok {
+            if dangerous_override_reason.is_none() {
+                return Err(crate::errors::org_validation_failed(
+                    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED",
+                    "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
+                    std::collections::HashMap::new(),
+                ));
+            }
+            forced.push(ForcedCheck::CrewCapacity);
         }
-    }
 
-    // The first overloaded day is reported by the error; nothing is stored as a "feasible window".
-    let (capacity_ok, _overloaded_day) = compute_capacity_gate(
-        &tx,
-        next_team_id,
-        &input.new_slot_start,
-        &input.new_slot_end,
-        labour_hours,
-        Some(current.id),
-        own_work_order,
-    )
-    .await?;
-    // A blocking check is forced only with a recorded dangerous-override reason and the signature
-    // of a second planner (CMMS Advisor answer Q1, `break_in_approval`).
-    let mut forced: Vec<ForcedCheck> = Vec::new();
-    if !capacity_ok {
-        if dangerous_override_reason.is_none() {
-            return Err(crate::errors::org_validation_failed(
-                "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED",
-                "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
-                std::collections::HashMap::new(),
-            ));
-        }
-        forced.push(ForcedCheck::CrewCapacity);
-    }
-
-    let location = windows::job_location(&tx, &current.source_type, current.source_id).await?;
-    let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end, location).await?;
-    if locked_window.is_some() {
-        if dangerous_override_reason.is_none() {
-            return Err(AppError::ValidationFailed(vec![
+        let location = windows::job_location(&tx, &current.source_type, current.source_id).await?;
+        let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end, location).await?;
+        if locked_window.is_some() {
+            if dangerous_override_reason.is_none() {
+                return Err(AppError::ValidationFailed(vec![
                 "GATE_PLAN_BREAKIN_LOCKED_WINDOW: Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
             ]));
-        }
-        forced.push(ForcedCheck::LockedWindow);
-    }
-
-    // The same blocking checks as a commitment (the job's blocking conflicts, re-derived now, and
-    // the shutdown window over the new slot). A break-in passes them only with the recorded
-    // dangerous-override reason and the signature, and then stays critical on the board.
-    let readiness = enforce_candidate_ready(&tx, current.schedule_candidate_id, None)
-        .await
-        .map(|_| ());
-    let shutdown = enforce_shutdown_window(
-        &tx,
-        current.schedule_candidate_id,
-        &input.new_slot_start,
-        &input.new_slot_end,
-        location,
-    )
-    .await;
-    for (check, code) in [(readiness, ForcedCheck::Readiness), (shutdown, ForcedCheck::ShutdownWindow)] {
-        if let Err(err) = check {
-            if dangerous_override_reason.is_none() {
-                return Err(err);
             }
-            forced.push(code);
+            forced.push(ForcedCheck::LockedWindow);
         }
-    }
-    let forced_blocking = !forced.is_empty();
-    // An urgent reason or a forced check: signed by a second planner holding plan.confirm at the
-    // crew's site, with their password (never the requester; no fallback).
-    let approval = break_in_approval::validate_break_in_approval(
-        &tx,
-        &break_in_approval::ApprovalRequest {
-            actor_id,
-            team_id: next_team_id,
-            reason_code: &reason,
-            urgent: break_in_reason.urgent,
-            forced: &forced,
-            approver: input.approved_by_user_id,
-            password,
-        },
-        &mut password_checked,
-    )
-    .await?;
 
-    let next_cost = estimate_labor_cost(&tx, next_personnel_id, labour_hours).await?;
-    let old_cost = current.estimated_labor_cost.unwrap_or(0.0);
-    let cost_delta = next_cost.map(|v| ((v - old_cost) * 100.0).round() / 100.0);
-    let next_period_start = parse_rfc3339(&input.new_slot_start, "new_slot_start")?
-        .date_naive()
-        .to_string();
-    let next_period_end = parse_rfc3339(&input.new_slot_end, "new_slot_end")?
-        .date_naive()
-        .to_string();
+        // The same blocking checks as a commitment (the job's blocking conflicts, re-derived now, and
+        // the shutdown window over the new slot). A break-in passes them only with the recorded
+        // dangerous-override reason and the signature, and then stays critical on the board.
+        let readiness = enforce_candidate_ready(&tx, current.schedule_candidate_id, None)
+            .await
+            .map(|_| ());
+        let shutdown = enforce_shutdown_window(
+            &tx,
+            current.schedule_candidate_id,
+            &input.new_slot_start,
+            &input.new_slot_end,
+            location,
+        )
+        .await;
+        for (check, code) in [
+            (readiness, ForcedCheck::Readiness),
+            (shutdown, ForcedCheck::ShutdownWindow),
+        ] {
+            if let Err(err) = check {
+                if dangerous_override_reason.is_none() {
+                    return Err(err);
+                }
+                forced.push(code);
+            }
+        }
+        let forced_blocking = !forced.is_empty();
+        // An urgent reason or a forced check: signed by a second planner holding plan.confirm at the
+        // crew's site, with their password (never the requester; no fallback).
+        let approval = break_in_approval::validate_break_in_approval(
+            &tx,
+            &break_in_approval::ApprovalRequest {
+                actor_id,
+                team_id: next_team_id,
+                reason_code: &reason,
+                urgent: break_in_reason.urgent,
+                forced: &forced,
+                approver: input.approved_by_user_id,
+                password,
+            },
+            &mut password_checked,
+        )
+        .await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE schedule_commitments
+        let next_cost = estimate_labor_cost(&tx, next_personnel_id, labour_hours).await?;
+        let old_cost = current.estimated_labor_cost.unwrap_or(0.0);
+        let cost_delta = next_cost.map(|v| ((v - old_cost) * 100.0).round() / 100.0);
+        let next_period_start = parse_rfc3339(&input.new_slot_start, "new_slot_start")?
+            .date_naive()
+            .to_string();
+        let next_period_end = parse_rfc3339(&input.new_slot_end, "new_slot_end")?
+            .date_naive()
+            .to_string();
+
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE schedule_commitments
          SET schedule_period_start = ?, schedule_period_end = ?,
              committed_start = ?, committed_end = ?,
              assigned_team_id = ?, assigned_personnel_id = ?,
@@ -1847,29 +1850,29 @@ pub async fn create_schedule_break_in(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            next_period_start.clone().into(),
-            next_period_end.clone().into(),
-            input.new_slot_start.clone().into(),
-            input.new_slot_end.clone().into(),
-            next_team_id.into(),
-            next_personnel_id.into(),
-            next_cost.into(),
-            None::<String>.into(),
-            // Forced over a blocking check (capacity, locked window, readiness, shutdown window):
-            // the bar stays critical.
-            i64::from(forced_blocking).into(),
-            current.id.into(),
-            input.expected_commitment_row_version.into(),
-        ],
-    ))
-    .await?;
+            [
+                next_period_start.clone().into(),
+                next_period_end.clone().into(),
+                input.new_slot_start.clone().into(),
+                input.new_slot_end.clone().into(),
+                next_team_id.into(),
+                next_personnel_id.into(),
+                next_cost.into(),
+                None::<String>.into(),
+                // Forced over a blocking check (capacity, locked window, readiness, shutdown window):
+                // the bar stays critical.
+                i64::from(forced_blocking).into(),
+                current.id.into(),
+                input.expected_commitment_row_version.into(),
+            ],
+        ))
+        .await?;
 
-    let dedupe_key = format!(
-        "planning.breakin.{}.{}.{}",
-        current.id, next_period_start, next_period_end
-    );
-    let inserted = tx
+        let dedupe_key = format!(
+            "planning.breakin.{}.{}.{}",
+            current.id, next_period_start, next_period_end
+        );
+        let inserted = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO schedule_break_ins
@@ -1897,78 +1900,78 @@ pub async fn create_schedule_break_in(
             ],
         ))
         .await?;
-    let break_in_id = i64::try_from(inserted.last_insert_id())
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64")))?;
+        let break_in_id = i64::try_from(inserted.last_insert_id())
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64")))?;
 
-    let reason_note = override_reason
-        .clone()
-        .or(dangerous_override_reason.clone())
-        .or_else(|| Some("approved break-in".to_string()));
-    append_change_log(
-        &tx,
-        Some(current.id),
-        "break_in_override",
-        Some(actor_id),
-        Some("commitment_slot".to_string()),
-        Some(format!("{} -> {}", current.committed_start, current.committed_end)),
-        Some(format!("{} -> {}", input.new_slot_start, input.new_slot_end)),
-        Some(reason.clone()),
-        reason_note.clone(),
-        Some(reason.clone()),
-        Some(
-            json!({
-                "break_in_id": break_in_id,
-                // Both names: who asked for the break-in and who signed it.
-                "requested_by_user_id": actor_id,
-                "approved_by_user_id": approval.approver,
-                "approved_by_personnel_id": approval.approver_personnel,
-                "approved_by_display_name": approval.approver_name,
-                "approver_signed": approval.signed_at.is_some(),
-                "dangerous_override": dangerous_override_reason.is_some(),
-                "dangerous_override_reason": dangerous_override_reason,
-                // A blocking check (capacity, locked window, readiness, shutdown) was forced.
-                "forced_blocking": forced_blocking,
-                "forced_checks": forced.iter().map(|c| c.code()).collect::<Vec<_>>(),
-                "bypass_availability": bypass_availability,
-                "cost_impact_delta": cost_delta
-            })
-            .to_string(),
-        ),
-    )
-    .await?;
+        let reason_note = override_reason
+            .clone()
+            .or(dangerous_override_reason.clone())
+            .or_else(|| Some("approved break-in".to_string()));
+        append_change_log(
+            &tx,
+            Some(current.id),
+            "break_in_override",
+            Some(actor_id),
+            Some("commitment_slot".to_string()),
+            Some(format!("{} -> {}", current.committed_start, current.committed_end)),
+            Some(format!("{} -> {}", input.new_slot_start, input.new_slot_end)),
+            Some(reason.clone()),
+            reason_note.clone(),
+            Some(reason.clone()),
+            Some(
+                json!({
+                    "break_in_id": break_in_id,
+                    // Both names: who asked for the break-in and who signed it.
+                    "requested_by_user_id": actor_id,
+                    "approved_by_user_id": approval.approver,
+                    "approved_by_personnel_id": approval.approver_personnel,
+                    "approved_by_display_name": approval.approver_name,
+                    "approver_signed": approval.signed_at.is_some(),
+                    "dangerous_override": dangerous_override_reason.is_some(),
+                    "dangerous_override_reason": dangerous_override_reason,
+                    // A blocking check (capacity, locked window, readiness, shutdown) was forced.
+                    "forced_blocking": forced_blocking,
+                    "forced_checks": forced.iter().map(|c| c.code()).collect::<Vec<_>>(),
+                    "bypass_availability": bypass_availability,
+                    "cost_impact_delta": cost_delta
+                })
+                .to_string(),
+            ),
+        )
+        .await?;
 
-    let wo_sync = maybe_sync_work_order(
-        &tx,
-        actor_id,
-        current.schedule_candidate_id,
-        &current.source_type,
-        current.source_id,
-        &input.new_slot_start,
-        &input.new_slot_end,
-        next_team_id,
-        next_personnel_id,
-        // Only the explicit "Unassigned" removes the OT's responsible.
-        input.clear_assignee.unwrap_or(false),
-    )
-    .await?;
+        let wo_sync = maybe_sync_work_order(
+            &tx,
+            actor_id,
+            current.schedule_candidate_id,
+            &current.source_type,
+            current.source_id,
+            &input.new_slot_start,
+            &input.new_slot_end,
+            next_team_id,
+            next_personnel_id,
+            // Only the explicit "Unassigned" removes the OT's responsible.
+            input.clear_assignee.unwrap_or(false),
+        )
+        .await?;
 
-    let payload = json!({
-        "break_in_id": break_in_id,
-        "schedule_commitment_id": current.id,
-        "reason_code": reason,
-        "impacted_assignee_id": next_personnel_id,
-        "old_slot_start": current.committed_start,
-        "old_slot_end": current.committed_end,
-        "new_slot_start": input.new_slot_start,
-        "new_slot_end": input.new_slot_end,
-        "slot_delta": {
-            "from": [current.committed_start, current.committed_end],
-            "to": [input.new_slot_start, input.new_slot_end]
-        },
-        "cost_impact_estimate": cost_delta,
-        "team_id": next_team_id
-    });
-    Ok::<_, AppError>((current, break_in_id, dedupe_key, payload, wo_sync, approval, forced))
+        let payload = json!({
+            "break_in_id": break_in_id,
+            "schedule_commitment_id": current.id,
+            "reason_code": reason,
+            "impacted_assignee_id": next_personnel_id,
+            "old_slot_start": current.committed_start,
+            "old_slot_end": current.committed_end,
+            "new_slot_start": input.new_slot_start,
+            "new_slot_end": input.new_slot_end,
+            "slot_delta": {
+                "from": [current.committed_start, current.committed_end],
+                "to": [input.new_slot_start, input.new_slot_end]
+            },
+            "cost_impact_estimate": cost_delta,
+            "team_id": next_team_id
+        });
+        Ok::<_, AppError>((current, break_in_id, dedupe_key, payload, wo_sync, approval, forced))
     };
     let (current, break_in_id, dedupe_key, payload, wo_sync, approval, forced) = match in_tx.await {
         Ok(done) => done,
@@ -1987,11 +1990,22 @@ pub async fn create_schedule_break_in(
     };
     tx.commit().await?;
     // Committed: a failure to count the password outcome is logged, never turned into an error.
-    if let Err(e) = break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, Some(current.id)).await {
+    if let Err(e) =
+        break_in_approval::record_signer_outcome(db, actor_id, signer, password_checked, Some(current.id)).await
+    {
         tracing::error!(error = %e, commitment_id = current.id, "break-in: approver password outcome not recorded");
     }
-    break_in_approval::audit_signed_break_in(db, actor_id, current.id, break_in_id, "move", &reason, &approval, &forced)
-        .await;
+    break_in_approval::audit_signed_break_in(
+        db,
+        actor_id,
+        current.id,
+        break_in_id,
+        "move",
+        &reason,
+        &approval,
+        &forced,
+    )
+    .await;
     if let Some(outcome) = wo_sync {
         wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "break_in").await;
     }
@@ -2047,80 +2061,80 @@ pub async fn create_schedule_commitment(
     let mut password_checked = None;
     let tx = db.begin().await?;
     let in_tx = async {
-    let gate = run_commitment_gates(
-        &tx,
-        input.schedule_candidate_id,
-        input.expected_candidate_row_version,
-        &input.committed_start,
-        &input.committed_end,
-        input.assigned_team_id,
-        input.assigned_personnel_id,
-        input.allow_double_booking_override.unwrap_or(false),
-        input.override_reason.clone(),
-        &input.acknowledged_assignee_issues,
-        input.budget_threshold,
-        actor_id,
-        None,
-    )
-    .await?;
+        let gate = run_commitment_gates(
+            &tx,
+            input.schedule_candidate_id,
+            input.expected_candidate_row_version,
+            &input.committed_start,
+            &input.committed_end,
+            input.assigned_team_id,
+            input.assigned_personnel_id,
+            input.allow_double_booking_override.unwrap_or(false),
+            input.override_reason.clone(),
+            &input.acknowledged_assignee_issues,
+            input.budget_threshold,
+            actor_id,
+            None,
+        )
+        .await?;
 
-    // New work enters a frozen week only as a recorded break-in.
-    let frozen_week = super::weekly_schedule::frozen_week_for_slot(
-        &tx,
-        input.assigned_team_id,
-        &input.committed_start,
-        &input.committed_end,
-        chrono::Utc::now(),
-    )
-    .await?;
-    let break_in = match (&frozen_week, &input.frozen_week_break_in) {
-        (None, _) => None,
-        (Some(week), None) => {
-            return Err(crate::errors::org_validation_failed(
-                "PLANNING_WEEK_FROZEN",
-                format!(
-                    "The week of {} is frozen: new work enters it only as a break-in, with its reason.",
-                    week.week_start
-                ),
-                std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
-            ))
-        }
-        (Some(_), Some(b)) => {
-            let reason = super::break_in_reasons::resolve_break_in_reason(&tx, &b.reason).await?;
-            let dangerous = b
-                .dangerous_override_reason
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty());
-            // New work passes every blocking check of a commitment (`run_commitment_gates`): nothing
-            // is forced. An urgent reason is signed by a second planner holding plan.confirm at the
-            // crew's site (a dangerous-override reason no longer stands in for the signature).
-            let approval = break_in_approval::validate_break_in_approval(
-                &tx,
-                &break_in_approval::ApprovalRequest {
-                    actor_id,
-                    team_id: input.assigned_team_id,
-                    reason_code: &reason.code,
-                    urgent: reason.urgent,
-                    forced: &[],
-                    approver: b.approved_by_user_id,
-                    password,
-                },
-                &mut password_checked,
-            )
-            .await?;
-            Some((reason, approval, dangerous))
-        }
-    };
+        // New work enters a frozen week only as a recorded break-in.
+        let frozen_week = super::weekly_schedule::frozen_week_for_slot(
+            &tx,
+            input.assigned_team_id,
+            &input.committed_start,
+            &input.committed_end,
+            chrono::Utc::now(),
+        )
+        .await?;
+        let break_in = match (&frozen_week, &input.frozen_week_break_in) {
+            (None, _) => None,
+            (Some(week), None) => {
+                return Err(crate::errors::org_validation_failed(
+                    "PLANNING_WEEK_FROZEN",
+                    format!(
+                        "The week of {} is frozen: new work enters it only as a break-in, with its reason.",
+                        week.week_start
+                    ),
+                    std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
+                ))
+            }
+            (Some(_), Some(b)) => {
+                let reason = super::break_in_reasons::resolve_break_in_reason(&tx, &b.reason).await?;
+                let dangerous = b
+                    .dangerous_override_reason
+                    .as_ref()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty());
+                // New work passes every blocking check of a commitment (`run_commitment_gates`): nothing
+                // is forced. An urgent reason is signed by a second planner holding plan.confirm at the
+                // crew's site (a dangerous-override reason no longer stands in for the signature).
+                let approval = break_in_approval::validate_break_in_approval(
+                    &tx,
+                    &break_in_approval::ApprovalRequest {
+                        actor_id,
+                        team_id: input.assigned_team_id,
+                        reason_code: &reason.code,
+                        urgent: reason.urgent,
+                        forced: &[],
+                        approver: b.approved_by_user_id,
+                        password,
+                    },
+                    &mut password_checked,
+                )
+                .await?;
+                Some((reason, approval, dangerous))
+            }
+        };
 
-    let period_start = parse_rfc3339(&input.committed_start, "committed_start")?
-        .date_naive()
-        .to_string();
-    let period_end = parse_rfc3339(&input.committed_end, "committed_end")?
-        .date_naive()
-        .to_string();
+        let period_start = parse_rfc3339(&input.committed_start, "committed_start")?
+            .date_naive()
+            .to_string();
+        let period_end = parse_rfc3339(&input.committed_end, "committed_end")?
+            .date_naive()
+            .to_string();
 
-    let inserted = tx
+        let inserted = tx
         .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO schedule_commitments
@@ -2148,132 +2162,133 @@ pub async fn create_schedule_commitment(
         ],
     ))
         .await?;
-    let id = i64::try_from(inserted.last_insert_id())
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
-    // The candidate is derived on each device; the commitment depends on it, so it travels now.
-    crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
-    let mut inserted_break_in = None;
-    if let Some((reason, approval, dangerous)) = &break_in {
-        // Part of the frozen week from now on (not of its baseline: unplanned work), recorded as a
-        // break-in of kind `insert`: no old slot, and the approver only when someone signed it.
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE schedule_commitments SET frozen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-            [id.into()],
-        ))
-        .await?;
-        let dedupe_key = format!(
-            "planning.breakin.{id}.{}.{}",
-            input.committed_start, input.committed_end
-        );
-        let inserted = tx
-            .execute(Statement::from_sql_and_values(
+        let id = i64::try_from(inserted.last_insert_id())
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
+        // The candidate is derived on each device; the commitment depends on it, so it travels now.
+        crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
+        let mut inserted_break_in = None;
+        if let Some((reason, approval, dangerous)) = &break_in {
+            // Part of the frozen week from now on (not of its baseline: unplanned work), recorded as a
+            // break-in of kind `insert`: no old slot, and the approver only when someone signed it.
+            tx.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO schedule_break_ins
+                "UPDATE schedule_commitments SET frozen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+                [id.into()],
+            ))
+            .await?;
+            let dedupe_key = format!(
+                "planning.breakin.{id}.{}.{}",
+                input.committed_start, input.committed_end
+            );
+            let inserted = tx
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO schedule_break_ins
                     (schedule_commitment_id, break_in_reason, kind, approved_by_user_id, approved_by_personnel_id,
                      override_reason, old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_assignee_id,
                      new_assignee_id, cost_impact_delta, notification_dedupe_key, created_by_id, approver_signed_at,
                      forced_checks_json)
                  VALUES (?, ?, 'insert', ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, NULL, ?, ?, ?, NULL)",
-                [
-                    id.into(),
-                    reason.code.clone().into(),
-                    approval.approver.into(),
-                    approval.approver_personnel.into(),
-                    dangerous.clone().into(),
-                    input.committed_start.clone().into(),
-                    input.committed_end.clone().into(),
-                    input.assigned_personnel_id.into(),
-                    Some(dedupe_key.clone()).into(),
-                    Some(actor_id).into(),
-                    approval.signed_at.clone().into(),
-                ],
-            ))
+                    [
+                        id.into(),
+                        reason.code.clone().into(),
+                        approval.approver.into(),
+                        approval.approver_personnel.into(),
+                        dangerous.clone().into(),
+                        input.committed_start.clone().into(),
+                        input.committed_end.clone().into(),
+                        input.assigned_personnel_id.into(),
+                        Some(dedupe_key.clone()).into(),
+                        Some(actor_id).into(),
+                        approval.signed_at.clone().into(),
+                    ],
+                ))
+                .await?;
+            let break_in_id = i64::try_from(inserted.last_insert_id()).map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64"))
+            })?;
+            let payload = json!({
+                "break_in_id": break_in_id,
+                "kind": "insert",
+                "schedule_commitment_id": id,
+                "reason_code": reason.code,
+                "impacted_assignee_id": input.assigned_personnel_id,
+                "new_slot_start": input.committed_start,
+                "new_slot_end": input.committed_end,
+                "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
+                "team_id": input.assigned_team_id
+            });
+            inserted_break_in = Some((
+                break_in_id,
+                dedupe_key,
+                payload,
+                dangerous.is_some(),
+                reason.code.clone(),
+            ));
+            append_change_log(
+                &tx,
+                Some(id),
+                "break_in_insert",
+                Some(actor_id),
+                Some("commitment_slot".to_string()),
+                None,
+                Some(format!("{} -> {}", input.committed_start, input.committed_end)),
+                Some(reason.code.clone()),
+                dangerous.clone(),
+                Some(reason.code.clone()),
+                Some(
+                    json!({
+                        "break_in_id": break_in_id,
+                        // Both names: who asked for the break-in and who signed it.
+                        "requested_by_user_id": actor_id,
+                        "approved_by_user_id": approval.approver,
+                        "approved_by_display_name": approval.approver_name,
+                        "approver_signed": approval.signed_at.is_some(),
+                        "dangerous_override_reason": dangerous,
+                        "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
+                    })
+                    .to_string(),
+                ),
+            )
             .await?;
-        let break_in_id = i64::try_from(inserted.last_insert_id())
-            .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64")))?;
-        let payload = json!({
-            "break_in_id": break_in_id,
-            "kind": "insert",
-            "schedule_commitment_id": id,
-            "reason_code": reason.code,
-            "impacted_assignee_id": input.assigned_personnel_id,
-            "new_slot_start": input.committed_start,
-            "new_slot_end": input.committed_end,
-            "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
-            "team_id": input.assigned_team_id
-        });
-        inserted_break_in = Some((
-            break_in_id,
-            dedupe_key,
-            payload,
-            dangerous.is_some(),
-            reason.code.clone(),
-        ));
+        }
         append_change_log(
             &tx,
             Some(id),
-            "break_in_insert",
+            "create_commitment",
             Some(actor_id),
             Some("commitment_slot".to_string()),
             None,
             Some(format!("{} -> {}", input.committed_start, input.committed_end)),
-            Some(reason.code.clone()),
-            dangerous.clone(),
-            Some(reason.code.clone()),
+            Some("commitment_create".to_string()),
+            input.override_reason.clone(),
+            input.override_reason,
             Some(
                 json!({
-                    "break_in_id": break_in_id,
-                    // Both names: who asked for the break-in and who signed it.
-                    "requested_by_user_id": actor_id,
-                    "approved_by_user_id": approval.approver,
-                    "approved_by_display_name": approval.approver_name,
-                    "approver_signed": approval.signed_at.is_some(),
-                    "dangerous_override_reason": dangerous,
-                    "frozen_week": frozen_week.as_ref().map(|w| w.week_start.clone()),
+                    "schedule_candidate_id": input.schedule_candidate_id,
+                    "committed_start": input.committed_start,
+                    "committed_end": input.committed_end
                 })
                 .to_string(),
             ),
         )
         .await?;
-    }
-    append_change_log(
-        &tx,
-        Some(id),
-        "create_commitment",
-        Some(actor_id),
-        Some("commitment_slot".to_string()),
-        None,
-        Some(format!("{} -> {}", input.committed_start, input.committed_end)),
-        Some("commitment_create".to_string()),
-        input.override_reason.clone(),
-        input.override_reason,
-        Some(
-            json!({
-                "schedule_candidate_id": input.schedule_candidate_id,
-                "committed_start": input.committed_start,
-                "committed_end": input.committed_end
-            })
-            .to_string(),
-        ),
-    )
-    .await?;
 
-    let wo_sync = maybe_sync_work_order(
-        &tx,
-        actor_id,
-        input.schedule_candidate_id,
-        &gate.source_type,
-        gate.source_id,
-        &input.committed_start,
-        &input.committed_end,
-        input.assigned_team_id,
-        input.assigned_personnel_id,
-        false,
-    )
-    .await?;
-    let approval = break_in.map(|(_, approval, _)| approval).unwrap_or_default();
-    Ok::<_, AppError>((id, wo_sync, inserted_break_in, approval))
+        let wo_sync = maybe_sync_work_order(
+            &tx,
+            actor_id,
+            input.schedule_candidate_id,
+            &gate.source_type,
+            gate.source_id,
+            &input.committed_start,
+            &input.committed_end,
+            input.assigned_team_id,
+            input.assigned_personnel_id,
+            false,
+        )
+        .await?;
+        let approval = break_in.map(|(_, approval, _)| approval).unwrap_or_default();
+        Ok::<_, AppError>((id, wo_sync, inserted_break_in, approval))
     };
     let (id, wo_sync, inserted_break_in, approval) = match in_tx.await {
         Ok(done) => done,

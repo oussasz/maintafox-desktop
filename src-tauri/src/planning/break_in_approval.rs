@@ -103,8 +103,12 @@ pub async fn list_break_in_approvers(
         .map(|r| {
             Ok(BreakInApproverOption {
                 user_id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                display_name: r.try_get("", "display_name").map_err(|e| decode_err("display_name", e))?,
-                personnel_id: r.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?,
+                display_name: r
+                    .try_get("", "display_name")
+                    .map_err(|e| decode_err("display_name", e))?,
+                personnel_id: r
+                    .try_get("", "personnel_id")
+                    .map_err(|e| decode_err("personnel_id", e))?,
             })
         })
         .collect()

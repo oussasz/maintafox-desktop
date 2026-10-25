@@ -222,7 +222,10 @@ pub(crate) async fn inbound_commitment_check(
             return wait(blocked);
         }
         let (week, frozen_at) = match &frozen_week {
-            Some(w) => (w.week_start.clone(), w.frozen_at.clone().unwrap_or_else(|| "not recorded".into())),
+            Some(w) => (
+                w.week_start.clone(),
+                w.frozen_at.clone().unwrap_or_else(|| "not recorded".into()),
+            ),
             None => (
                 "of its current slot".to_string(),
                 local
@@ -244,7 +247,10 @@ pub(crate) async fn inbound_commitment_check(
         return Ok(None);
     };
     if reopening_waiting(conn, &week.week_start).await? {
-        return wait(format!("the reopening of the week {} is still in the inbox", week.week_start));
+        return wait(format!(
+            "the reopening of the week {} is still in the inbox",
+            week.week_start
+        ));
     }
     conflict(
         WEEK_FROZEN,

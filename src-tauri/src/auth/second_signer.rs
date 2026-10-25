@@ -96,7 +96,11 @@ pub(crate) async fn record_outcome(
         return crate::auth::lockout::clear_failed_attempts(db, signer).await;
     }
     let policy = crate::auth::lockout::LockoutPolicy::load(db).await;
-    tracing::warn!(signer_id = signer, context = ctx.context, "second signer: wrong password");
+    tracing::warn!(
+        signer_id = signer,
+        context = ctx.context,
+        "second signer: wrong password"
+    );
     let signer_ref = signer.to_string();
     let mut detail = serde_json::json!({ "context": ctx.context });
     if let (Some(base), Some(extra)) = (detail.as_object_mut(), ctx.detail.as_object()) {
