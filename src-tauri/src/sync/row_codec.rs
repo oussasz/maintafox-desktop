@@ -1020,6 +1020,14 @@ pub(crate) async fn apply_row(
     {
         return Ok(outcome);
     }
+    // `user_accounts`: a password change or a re-enable whose author could not make it here is held
+    // back (its keys leave the payload; the rest of the row applies), after the checks above so a
+    // row they refuse records nothing (`sync::credential_check`).
+    if let Some(outcome) =
+        crate::sync::credential_check::inbound_credential_check(conn, layout, entity_sync_id, &mut payload).await?
+    {
+        return Ok(outcome);
+    }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
     let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
     // Columns the row passed its checks with but that are kept as held here (`apply_hooks::before_write`).

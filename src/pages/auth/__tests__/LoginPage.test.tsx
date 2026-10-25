@@ -20,6 +20,12 @@ const ipc = vi.hoisted(() => ({
   calls: [] as string[],
 }));
 
+// The sign-in refusal the session store holds (code from the backend `AppError`).
+const session = vi.hoisted(() => ({
+  error: null as string | null,
+  errorCode: null as string | null,
+}));
+
 // The IPC boundary: the page and the product-licence service's schemas run for real.
 vi.mock("@/lib/ipc-invoke", () => ({
   invoke: vi.fn((cmd: string) => {
@@ -50,8 +56,8 @@ vi.mock("@/lib/ipc-invoke", () => ({
 vi.mock("@/hooks/use-session", () => ({
   useSession: () => ({
     isLoading: false,
-    error: null,
-    errorCode: null,
+    error: session.error,
+    errorCode: session.errorCode,
     login: vi.fn(),
     refresh: vi.fn(),
   }),
@@ -132,6 +138,27 @@ describe("LoginPage: first administrator", () => {
     await formReady();
     await waitFor(() => expect(ipc.calls).toContain("get_activation_bootstrap_state"));
     expect(screen.queryByTestId("login-first-admin")).not.toBeInTheDocument();
+  });
+});
+
+describe("LoginPage: account received without its password", () => {
+  beforeEach(() => {
+    ipc.calls.length = 0;
+    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: true, plant_join: "sign_in" };
+  });
+
+  it("says the password was not received instead of the generic failure", async () => {
+    session.error = "PASSWORD_NOT_RECEIVED: le mot de passe de ce compte n'a pas été reçu";
+    session.errorCode = "PASSWORD_NOT_RECEIVED";
+    try {
+      renderLogin();
+      expect(await screen.findByText("login.passwordNotReceived.title")).toBeInTheDocument();
+      expect(screen.getByText("login.passwordNotReceived.message")).toBeInTheDocument();
+      expect(screen.queryByText(/PASSWORD_NOT_RECEIVED/)).not.toBeInTheDocument();
+    } finally {
+      session.error = null;
+      session.errorCode = null;
+    }
   });
 });
 

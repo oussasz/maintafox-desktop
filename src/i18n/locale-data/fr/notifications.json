@@ -373,6 +373,18 @@
     "grants_from_former_authors": {
       "title": "Droits reçus d’une personne qui n’a plus ce droit",
       "body": "{{count}} attribution(s) reçues d’un autre poste ont été appliquées, mais leur auteur n’a plus le droit de les accorder et ce poste ne sait pas depuis quand : {{grants}}. Vérifiez-les."
+    },
+    "password_change_refused": {
+      "title": "Changement de mot de passe reçu sans droit : non appliqué",
+      "body": "{{account}} : mot de passe changé le {{changed_at}} par {{author}}, qui n’avait pas (ou plus) le droit de gérer les utilisateurs ici. Ce poste garde le mot de passe actuel (un compte arrivé ainsi n’a pas de mot de passe sur ce poste). Si ce changement était voulu, un administrateur le refait ; cela corrige aussi les autres postes."
+    },
+    "password_change_from_older_version": {
+      "title": "Changement de mot de passe reçu d’une ancienne version : non appliqué",
+      "body": "{{account}} : mot de passe changé sur un poste qui a une ancienne version de Maintafox (elle ne dit pas qui l’a fait) : non appliqué. Mettez ce poste à jour, puis changez de nouveau le mot de passe."
+    },
+    "account_reenable_refused": {
+      "title": "Réactivation de compte reçue sans droit : non appliquée",
+      "body": "{{account}} : compte réactivé le {{changed_at}} par {{author}}, qui n’avait pas (ou plus) le droit de gérer les utilisateurs ici. Le compte reste désactivé sur ce poste. Si c’était voulu, un administrateur le réactive de nouveau ; cela corrige aussi les autres postes."
     }
   },
   "audience": {

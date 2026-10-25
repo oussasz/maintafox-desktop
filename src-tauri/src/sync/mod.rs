@@ -7,6 +7,7 @@ pub mod apply_reason;
 pub mod capture;
 pub mod code_clash;
 pub mod conflicts;
+pub(crate) mod credential_check;
 pub mod device_code;
 pub mod domain;
 pub(crate) mod grant_check;
@@ -29,6 +30,8 @@ pub mod waiting;
 mod audit_targets_tests;
 #[cfg(test)]
 mod convergence_tests;
+#[cfg(test)]
+mod credential_check_tests;
 #[cfg(test)]
 mod foundation_tests;
 #[cfg(test)]

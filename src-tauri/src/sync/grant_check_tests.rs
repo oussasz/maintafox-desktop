@@ -836,6 +836,8 @@ async fn re_enabling_an_account_with_administration_rights_is_a_conflict() {
     let mut worker = payload(&p.db, "user_accounts", "worker-sync").await;
     let on = flag(&worker, true);
     worker.insert("is_active".into(), on);
+    // Re-enabled by the plant administrator: a re-enable names its author (`sync::credential_check`).
+    worker.insert("status_changed_by_sync_id".into(), "chef-sync".into());
     exec(
         &p.db,
         "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
@@ -844,6 +846,16 @@ async fn re_enabling_an_account_with_administration_rights_is_a_conflict() {
     .await;
     let outcome = receive(&p.db, "user_accounts", "worker-sync", "upsert", worker).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "plain account: {outcome:?}");
+    assert_eq!(
+        scalar(
+            &p.db,
+            "SELECT is_active FROM user_accounts WHERE id = ?",
+            vec![p.worker.into()]
+        )
+        .await,
+        Some(1),
+        "re-enabled"
+    );
 }
 
 /// A new account with the bootstrap flag: received on a PC joining the plant (no first

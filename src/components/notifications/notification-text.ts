@@ -54,6 +54,10 @@ export const MESSAGE_KEYS = [
   // Grants received by sync from an author who lost the right (administrators).
   "admin_grants_to_review",
   "grants_from_former_authors",
+  // A password change or account re-enable received without a right author (administrators).
+  "password_change_refused",
+  "password_change_from_older_version",
+  "account_reenable_refused",
   // A running work order put on hold by its permit's suspension (its responsible).
   "permit_suspended_work_held",
   // A permit ended on another PC before or while its work ran here (responsible, close-right holders).
