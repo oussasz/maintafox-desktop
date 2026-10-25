@@ -9,7 +9,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { appErrorText, describeAppError } from "@/lib/app-error";
+import { i18n, initI18n, issueNamespacesReady } from "@/i18n";
+import { describeAppError } from "@/lib/app-error";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { SyncWorkerStatus } from "@shared/ipc-types";
 
@@ -82,6 +83,8 @@ function workerStatus(state: SyncWorkerStatus["state"]): SyncWorkerStatus {
 }
 
 vi.mock("react-i18next", () => ({
+  // The app's i18n instance still initialises (coded reasons are translated through it).
+  initReactI18next: { type: "3rdParty", init: () => undefined },
   useTranslation: () => ({
     t: (key: string) => key,
     i18n: { language: "fr", changeLanguage: vi.fn() },
@@ -103,6 +106,7 @@ describe("SetupInitialAdminPage: joining the plant first", () => {
   beforeEach(() => {
     ipc.calls.length = 0;
     ipc.joinRefused = null;
+    ipc.resetRefused = null;
     sync.initialize.mockClear();
     sync.shutdown.mockClear();
     useSyncOrchestratorStore.setState({ worker: null });
@@ -165,6 +169,10 @@ describe("SetupInitialAdminPage: joining the plant first", () => {
   });
 
   it("shows the coded reason of a refused reset, not a generic title (F8)", async () => {
+    // The coded reason is translated through the app's i18n instance (react-i18next is mocked).
+    initI18n();
+    await i18n.changeLanguage("fr");
+    await issueNamespacesReady();
     ipc.plantJoin = "create_first_admin";
     ipc.resetRefused = {
       code: "VALIDATION_FAILED",
@@ -183,7 +191,9 @@ describe("SetupInitialAdminPage: joining the plant first", () => {
     );
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(appErrorText(ipc.resetRefused));
+    const reason = String(i18n.t("settings:errors.LICENSE_RESET_BUILTIN_ADMIN_PENDING"));
+    expect(reason).toContain("créez le premier administrateur");
+    expect(alert).toHaveTextContent(reason);
     expect(alert.textContent).not.toBe(describeAppError(ipc.resetRefused).title);
   });
 });
