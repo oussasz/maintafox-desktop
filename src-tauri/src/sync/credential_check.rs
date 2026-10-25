@@ -315,7 +315,12 @@ fn same_root(held: &Payload, received: &Payload) -> bool {
 /// on each PC with its own `created_at` (dev builds and versions before 0.9.0 only): its legacy
 /// dates may differ between PCs, which refuses its own changes (fails closed).
 fn date_undated_password(payload: &mut Payload) {
-    if field(payload, "password_hash").is_none() || field(payload, SET_AT_KEY).is_some() {
+    // Only the shape a PC before 0.9.2 sends (no setter named): a row naming a setter without its
+    // date is not dated here, so no date is stored that this setter never vouched for.
+    if field(payload, "password_hash").is_none()
+        || field(payload, SET_AT_KEY).is_some()
+        || field(payload, SET_BY_KEY).is_some()
+    {
         return;
     }
     let dated = field(payload, "password_changed_at")
