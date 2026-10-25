@@ -994,6 +994,7 @@ pub(crate) async fn apply_row(
         return Ok(outcome);
     }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
+    let held = crate::sync::apply_hooks::held_before_write(conn, layout, entity_sync_id, &payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1131,7 +1132,7 @@ pub(crate) async fn apply_row(
         .await?;
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
-    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload).await?;
+    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted, &payload, held).await?;
     if let Some(group) = group {
         if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {
             return Ok(outcome);

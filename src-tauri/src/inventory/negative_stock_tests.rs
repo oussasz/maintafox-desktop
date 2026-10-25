@@ -5019,6 +5019,298 @@ async fn a_received_line_cleared_of_its_critique_but_above_here_is_an_auto_appro
     );
 }
 
+/// A plant tolerance set on `db` only (capture suppressed: never sent), as an edit another PC has
+/// not received yet.
+async fn tolerance_here_only(db: &DatabaseConnection, key: &str, value: &str) {
+    crate::sync::capture::begin_suppression(db).await.expect("suppress");
+    crate::settings::set_setting(db, key, "tenant", value, None, "test")
+        .await
+        .expect("tolerance");
+    crate::sync::capture::end_suppression(db).await.expect("unsuppress");
+}
+
+/// Review of b4f8b2fd (B1): a count line accepted here within the tolerance, approved by its
+/// counter, is not judged again by a later version whose checked fields are unchanged — here the
+/// version that carries its posting, after the tolerance was tightened on this PC. The version is
+/// accepted, the count's movement is applied with it, no conflict.
+#[tokio::test]
+async fn a_line_accepted_within_the_tolerance_is_not_judged_again_by_its_posting() {
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    let counter = user_with(&a, "rejudgedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10: 30 %, within 50 %: its counter approves it (no auto-approbation).
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance");
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!(approved.self_approved, 0);
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = text_of(
+        &a,
+        "SELECT entity_sync_id FROM inventory_count_sessions WHERE id = ?",
+        vec![session.id.into()],
+    )
+    .await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "accepted on B within the tolerance"
+    );
+
+    // The tolerance tightened on B (10 %: the 30 % variance is above it now), then A posts.
+    tolerance_here_only(&b, crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD, "10").await;
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "the posting version is not judged again: no COUNT_SELF_APPROVAL"
+    );
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_ADJUST").await, (1, 1));
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        7000,
+        "the movement is applied with its line"
+    );
+    // Not judged again in what B stores either: within, no auto-approbation (hence no second
+    // approval offered for it on B).
+    let listed = crate::inventory::controls::list_count_lines(&b, session_by_sync_id(&b, &session_sync).await.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .next()
+        .expect("the line");
+    assert_eq!(
+        (listed.is_critical, listed.self_approved),
+        (0, 0),
+        "kept within the tolerance as accepted"
+    );
+}
+
+/// Review of b4f8b2fd (S1, S2): a received version may clear the "above the tolerance" flag held
+/// here without a new entry only when this PC raised that flag itself from a received "within"
+/// and the line has not changed here since (its device-local mark). Never a flag entered here,
+/// whatever the inbox holds; never once the last version applied here said "above" itself; and
+/// the flag lowered that way is stored as this PC judges the line now.
+#[tokio::test]
+async fn only_a_flag_raised_here_from_a_received_within_may_be_cleared_without_a_new_entry() {
+    use crate::inventory::count_four_eyes::{inbound_count_line_check, SETTING_PERCENT_THRESHOLD};
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "raisedmarkcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    // Entered here, 5 of 10, tolerance blank: above (strict).
+    let (session, local) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(local.is_critical, 1);
+    let local_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![local.id.into()],
+    )
+    .await;
+    let changed = crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_CHANGED;
+    let judged = |sync_id: String, payload: serde_json::Map<String, serde_json::Value>| {
+        let db = &db;
+        async move {
+            let verdict = inbound_count_line_check(db, &sync_id, &payload).await.expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    let with_critique = |mut p: serde_json::Map<String, serde_json::Value>, critique: i64| {
+        p.insert("is_critical".into(), serde_json::json!(critique));
+        p
+    };
+
+    // A flag entered here is never lowered, even with an applied version saying "within" in the
+    // inbox (the rule before this fix took that as a raise of its own).
+    let entered = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    inbox_put(
+        &db,
+        "exchange-raised",
+        "inventory_count_lines",
+        &local_sync,
+        1,
+        &with_critique(entered.clone(), 0),
+        "applied",
+    )
+    .await;
+    assert_eq!(
+        judged(local_sync.clone(), with_critique(entered, 0)).await,
+        changed,
+        "entered here"
+    );
+
+    // A line received from another PC (another location of the session), not approved, sent as
+    // within the tolerance: applied, raised here (blank tolerance: strict) and marked.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let mut received = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    for (k, v) in [
+        (
+            "location_sync_id",
+            serde_json::json!(
+                text_of(
+                    &db,
+                    "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+                    vec![other.rowid.into()]
+                )
+                .await
+            ),
+        ),
+        (
+            "warehouse_sync_id",
+            serde_json::json!(
+                text_of(
+                    &db,
+                    "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id
+                     WHERE l.id = ?",
+                    vec![other.rowid.into()]
+                )
+                .await
+            ),
+        ),
+        ("is_critical", serde_json::json!(0)),
+    ] {
+        received.insert(k.into(), v);
+    }
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let mut version = 1;
+    let mut apply = |payload: serde_json::Map<String, serde_json::Value>| {
+        version += 1;
+        let (db, fresh, version) = (&db, fresh.clone(), version);
+        async move {
+            let json = serde_json::Value::Object(payload).to_string();
+            apply_inbound_payload(db, "inventory_count_lines", &fresh, "upsert", version, &json)
+                .await
+                .expect("apply")
+        }
+    };
+    let state = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            scalar_i64(
+                db,
+                "SELECT is_critical * 10 + (critique_raised_version IS NOT NULL
+                        AND critique_raised_version = row_version)
+                 FROM inventory_count_lines WHERE entity_sync_id = ?",
+                vec![fresh.into()],
+            )
+            .await
+        }
+    };
+    let outcome = apply(received.clone()).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "raised here from the received within, marked");
+    let held = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move { wire_row(db, "inventory_count_lines", &fresh).await }
+    };
+    assert_eq!(
+        held().await.get("critique_raised_version"),
+        None,
+        "the mark never travels"
+    );
+
+    // Its later version, still within: no lowering of a flag raised here; applied, raised again.
+    assert_eq!(judged(fresh.clone(), with_critique(held().await, 0)).await, "pass");
+    let outcome = apply(with_critique(held().await, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "still above here: raised again");
+
+    // Entered again here (same quantity): the line changed here, its flag is an entry of its own.
+    let session = session_by_code(&db, &session.session_code).await;
+    let line_here = crate::inventory::controls::list_count_lines(&db, session.id)
+        .await
+        .expect("lines")
+        .into_iter()
+        .find(|l| l.location_id == other.rowid)
+        .expect("the received line");
+    crate::inventory::controls::upsert_count_line(
+        &db,
+        crate::inventory::domain::UpsertInventoryCountLineInput {
+            session_id: session.id,
+            article_id: article.rowid,
+            location_id: other.rowid,
+            counted_qty: 5.0,
+            variance_reason_code: Some("COUNT_ERROR".into()),
+            expected_row_version: Some(line_here.row_version),
+            actor_id: Some(i64::from(counter)),
+        },
+    )
+    .await
+    .expect("entered again");
+    assert_eq!(state().await, 10, "entered here: not marked");
+    assert_eq!(
+        judged(fresh.clone(), with_critique(held().await, 0)).await,
+        changed,
+        "entered again here"
+    );
+
+    // The last version applied here said "above" itself: the flag held is that one, not a raise.
+    let outcome = apply(with_critique(held().await, 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 10, "received above: not marked");
+    assert_eq!(
+        judged(fresh.clone(), with_critique(held().await, 0)).await,
+        changed,
+        "the last applied version said above"
+    );
+
+    // A new entry received within: raised here again and marked. Then the tolerance loosened (70 %:
+    // the 60 % variance is within it now): the next version within, unchanged, is accepted (the
+    // flag raised here, no lowering) and not judged again — the flag held stays raised and marked;
+    // only a new entry is judged with the tolerance of now, stored within.
+    let mut entry = with_critique(held().await, 0);
+    entry.insert("counted_qty".into(), serde_json::json!(4.0));
+    entry.insert("variance_qty".into(), serde_json::json!(-6.0));
+    let outcome = apply(entry).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "a new entry, raised here");
+    tolerance_here_only(&db, SETTING_PERCENT_THRESHOLD, "70").await;
+    assert_eq!(judged(fresh.clone(), with_critique(held().await, 0)).await, "pass");
+    let outcome = apply(with_critique(held().await, 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "unchanged: kept as judged when it arrived");
+    let mut entry = with_critique(held().await, 0);
+    entry.insert("counted_qty".into(), serde_json::json!(5.0));
+    entry.insert("variance_qty".into(), serde_json::json!(-5.0));
+    let outcome = apply(entry).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 0, "a new entry within here now: stored within, no mark");
+}
+
 /// Review of 435c9410 (SF1, SF2, SF3): the reversal a received count line names must undo exactly
 /// the adjustment it names as posted — a token reversal, or the real reversal of another count of
 /// the same article and location, is refused; a reversal named without a posted adjustment is

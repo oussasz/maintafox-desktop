@@ -36,7 +36,9 @@
 //! counter of a line held here, nor give it another counter or lower its "above the tolerance" flag
 //! without a new entry (another counted or system quantity) — `COUNT_APPROVAL_RECORD_CHANGED`. A
 //! re-entry by another person of the same quantity on another PC is therefore a conflict for a
-//! person to decide, the safe direction (CMMS Advisor Q11).
+//! person to decide, the safe direction (CMMS Advisor Q11). A received version whose checked fields
+//! are those held here (only its posting or another unchecked field changed) is accepted as already
+//! judged: it is not judged again against this PC's tolerance or cost of today.
 //!
 //! "Above the tolerance" is judged again on arrival, from the line's own quantities (its variance
 //! must be its counted less its system quantity, or the record is refused) and this PC's tolerance;
@@ -329,7 +331,10 @@ fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerd
 /// - `self_approved` is set only on such a line (never without an approver, by a second person, or
 ///   within the tolerance);
 /// - a line whose counter or approver is not recorded (entered on a PC before the update) passes;
-/// - an approval held here as received passes (judged when it arrived);
+/// - a version whose checked fields (quantities, counter, approval, second approval, reversal,
+///   flags) are those held here passes without a new judgement: the line was judged when it arrived
+///   or was entered, and an edit of the tolerance or a move of the cost since does not judge it
+///   again (a held "above" with a received "within" passed the lowering check first);
 /// - the record held here is kept: its counter is never cleared, and is changed, like its "above the
 ///   tolerance" flag is lowered, only with a new entry (another counted or system quantity);
 /// - its quantities agree (variance = counted − system), or the record contradicts itself;
@@ -357,20 +362,8 @@ pub(crate) async fn inbound_count_line_check(
     let approver = field(&line, "approved_by_sync_id");
     let counter = field(&line, "counted_by_sync_id");
     let self_approved = flag(&line, "self_approved");
-    // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
-    // quantities: a received flag can make a line stricter, never more lenient. The flag held here
-    // is that same judgement (`store_judged_critique`), so it is compared with this one.
-    let above = flag(&line, "is_critical") || above_here(conn, &line).await?;
     if let Some(l) = &local {
-        let quantity =
-            |p: &serde_json::Map<String, serde_json::Value>, key: &str| p.get(key).and_then(serde_json::Value::as_f64);
-        let same_quantities =
-            ["counted_qty", "system_qty", "variance_qty"]
-                .iter()
-                .all(|k| match (quantity(l, k), quantity(&line, k)) {
-                    (Some(held), Some(got)) => (held - got).abs() <= QTY_TOLERANCE,
-                    (held, got) => held.is_none() && got.is_none(),
-                });
+        let same_quantities = same_quantities(l, &line);
         let held_counter = field(l, "counted_by_sync_id");
         if held_counter.is_some() && counter.is_none() {
             return conflict(
@@ -400,12 +393,15 @@ pub(crate) async fn inbound_count_line_check(
             );
         }
         // Lowered: the flag held here (this PC's judgement) is cleared by the received version
-        // without a new entry. Not when it was raised here from the sender's own flag
-        // ([`store_judged_critique`]): the last version applied from it already said within.
+        // without a new entry. Not when this PC raised it itself from the "within" of the last
+        // version applied here (from any PC: the inbox does not record a sender) and the line has
+        // not changed here since ([`critique_raised_here`]): the sender's own flag again, accepted;
+        // the flag held stays raised ([`store_judged_critique`]). A flag entered here, or received
+        // as "above", is never lowered so.
         if same_quantities
             && flag(l, "is_critical")
             && !flag(&line, "is_critical")
-            && last_applied_critique(conn, entity_sync_id).await? != Some(false)
+            && !critique_raised_here(conn, entity_sync_id).await?
         {
             return conflict(
                 SYNC_APPROVAL_RECORD_CHANGED,
@@ -415,23 +411,14 @@ pub(crate) async fn inbound_count_line_check(
                 ),
             );
         }
-        let same = same_quantities
-            && [
-                "approved_by_sync_id",
-                "approved_at",
-                "counted_by_sync_id",
-                "second_approved_by_sync_id",
-                "second_approved_at",
-                "reversed_transaction_sync_id",
-            ]
-            .iter()
-            .all(|k| field(l, k) == field(&line, k))
-            && flag(l, "self_approved") == self_approved
-            && flag(l, "is_critical") == above;
-        if same {
+        // A held "above" over a received "within" passed the lowering check above.
+        if already_judged(l, &line) {
             return Ok(None);
         }
     }
+    // "Above the tolerance" is judged here again, from this PC's tolerance and the line's own
+    // quantities: a received flag can make a line stricter, never more lenient.
+    let above = flag(&line, "is_critical") || above_here(conn, &line).await?;
     // The variance is what "above the tolerance" is judged on: it must be the counted quantity less
     // the system quantity (a variance of 0 with another counted quantity would hide a variance).
     if let Some(why) = quantities_disagree(&line) {
@@ -521,6 +508,63 @@ pub(crate) async fn inbound_count_line_check(
     }
 }
 
+/// Whether a count line's quantities (counted, system, variance) are the same in both versions.
+fn same_quantities(
+    held: &serde_json::Map<String, serde_json::Value>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let quantity =
+        |p: &serde_json::Map<String, serde_json::Value>, key: &str| p.get(key).and_then(serde_json::Value::as_f64);
+    ["counted_qty", "system_qty", "variance_qty"]
+        .iter()
+        .all(|k| match (quantity(held, k), quantity(line, k)) {
+            (Some(held), Some(got)) => (held - got).abs() <= QTY_TOLERANCE,
+            (held, got) => held.is_none() && got.is_none(),
+        })
+}
+
+/// Whether a received version (`line`: the received row completed by the one held here) is one this
+/// PC already judged (review of b4f8b2fd, B1): its checked fields (quantities, counter, approval,
+/// second approval, reversal, self-approval flag) are those held here, and its "above the
+/// tolerance" flag is not above the one held here. The flag held is compared with the received
+/// one, never with a judgement of now: an edit of the tolerance or a move of the cost since does
+/// not judge the line again ([`inbound_count_line_check`] accepts it, [`store_judged_critique`]
+/// keeps the flag held). A received "above" over a held "within" is judged.
+fn already_judged(
+    held: &serde_json::Map<String, serde_json::Value>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    same_quantities(held, line)
+        && [
+            "approved_by_sync_id",
+            "approved_at",
+            "counted_by_sync_id",
+            "second_approved_by_sync_id",
+            "second_approved_at",
+            "reversed_transaction_sync_id",
+        ]
+        .iter()
+        .all(|k| field(held, k) == field(line, k))
+        && flag(held, "self_approved") == flag(line, "self_approved")
+        && (flag(held, "is_critical") || !flag(line, "is_critical"))
+}
+
+/// What a received count line's write must know of the line held here, read before the write
+/// (`sync::apply_hooks::count_line_before_write`): the "above the tolerance" flag held, when the
+/// received version is one this PC already judged ([`already_judged`]); `None` otherwise (new
+/// here, or changed: judged again after the write).
+pub(crate) async fn held_judgement(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<Option<bool>> {
+    let Some(local) = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await? else {
+        return Ok(None);
+    };
+    let line = crate::permit::sync_check::overlay(Some(&local), received);
+    Ok(already_judged(&local, &line).then(|| flag(&local, "is_critical")))
+}
+
 /// Whether a count line new here, received with a snapshot, is taken as the plant's history (CMMS
 /// Advisor Q9, review of 536cb792): only while this PC has not completed its first full pull
 /// (`sync::plant_join::complete_pull_done`) AND nothing of that line is held here — no open sync
@@ -555,44 +599,68 @@ async fn first_join_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -
 /// suppressed): its "above the tolerance" flag is this PC's judgement (CMMS Advisor Q14) — the
 /// received flag OR [`above_here`] (the line's quantities, this PC's tolerance, the Q10 cost
 /// check) — so every read of it, the derived auto-approbation first, rests on that judgement, never
-/// on the peer's flag alone. Only ever raised: a received flag is never lowered here.
-pub(crate) async fn store_judged_critique(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+/// on the peer's flag alone. This hook never lowers the flag, and a received "within" over a flag
+/// this PC raised itself ([`critique_raised_here`]) without a new entry leaves it raised: it falls
+/// only with a new entry judged within (or a local entry within).
+///
+/// A raise is marked on the line (`critique_raised_version`, device-local, never sent: migration
+/// 259, `sync::row_spec`) with the row version it was made at; any other outcome clears the mark.
+///
+/// `held`: the flag held here before the write when the received version was one this PC already
+/// judged ([`held_judgement`]). That version is not judged again with today's tolerance or cost:
+/// the flag held is kept as it was judged when the line arrived or was entered — a flag this PC
+/// raised over a received "within" stays raised (and marked), a "within" is not raised.
+pub(crate) async fn store_judged_critique(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    held: Option<bool>,
+) -> AppResult<()> {
     let Some(line) = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await? else {
         return Ok(());
     };
     let counted = |key: &str| line.get(key).and_then(serde_json::Value::as_f64).is_some();
-    // A line not counted yet has no variance to judge.
-    if !(counted("counted_qty") && counted("system_qty"))
-        || flag(&line, "is_critical")
-        || !above_here(conn, &line).await?
-    {
-        return Ok(());
-    }
+    let raise = match held {
+        // Already judged: kept, never judged again (a received "within" over a held "above").
+        Some(held) => held && !flag(&line, "is_critical"),
+        // A line not counted yet has no variance to judge.
+        None => {
+            counted("counted_qty")
+                && counted("system_qty")
+                && !flag(&line, "is_critical")
+                && above_here(conn, &line).await?
+        }
+    };
+    let sql = if raise {
+        "UPDATE inventory_count_lines SET is_critical = 1, critique_raised_version = row_version
+         WHERE entity_sync_id = ?"
+    } else {
+        "UPDATE inventory_count_lines SET critique_raised_version = NULL
+         WHERE entity_sync_id = ? AND critique_raised_version IS NOT NULL"
+    };
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE inventory_count_lines SET is_critical = 1 WHERE entity_sync_id = ?",
+        sql,
         [entity_sync_id.into()],
     ))
     .await?;
     Ok(())
 }
 
-/// The "above the tolerance" flag of the last version of a count line applied here from another PC,
-/// as it was received (`None`: none applied, or not readable).
-async fn last_applied_critique(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<Option<bool>> {
-    let payload = conn
+/// Whether the "above the tolerance" flag held here on a count line is one this PC raised itself
+/// from a received "within" ([`store_judged_critique`]) and the line has not changed here since:
+/// its mark names the line's current row version. Every change of the line bumps `row_version` (an
+/// entry or an approval here, another received version applied), so a flag entered here, or
+/// received as "above", never carries a matching mark.
+async fn critique_raised_here(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<bool> {
+    Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT payload_json FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'applied'
-             ORDER BY row_version DESC, id DESC LIMIT 1",
-            [LINES.into(), entity_sync_id.into()],
+            "SELECT 1 AS raised FROM inventory_count_lines
+             WHERE entity_sync_id = ? AND is_critical = 1 AND critique_raised_version = row_version",
+            [entity_sync_id.into()],
         ))
         .await?
-        .map(|r| r.try_get::<String>("", "payload_json"))
-        .transpose()?;
-    Ok(payload
-        .and_then(|p| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&p).ok())
-        .map(|p| flag(&p, "is_critical")))
+        .is_some())
 }
 
 /// Why a received line's variance is not its counted less its system quantity (`None`: they

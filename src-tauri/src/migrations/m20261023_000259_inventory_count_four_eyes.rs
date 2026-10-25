@@ -34,6 +34,11 @@
 //!   receiving the line judges "above the tolerance" with that cost when it is consistent and close
 //!   to its own, so a cost that drifted between PCs does not make a legitimate approval a conflict
 //!   (`inventory::count_four_eyes`, CMMS Advisor Q10). Lines entered before have none.
+//! - `inventory_count_lines.critique_raised_version` (device-local, never sent: `sync::row_spec`):
+//!   the row version at which this PC raised the line's "above the tolerance" flag itself, from a
+//!   received version that said "within" (`count_four_eyes::store_judged_critique`). Only such a
+//!   flag, while the line has not changed here since (every change bumps `row_version`), may be
+//!   cleared again by a later received version without a new entry; a flag entered here never.
 //! - The notification category `stock_count_second_approval` and its rule (audience
 //!   `permission:inv.manage`): the count-approval holders are told once per count held back here.
 //! - The notification category `stock_count_recount` and its rule (audience `assignee`: the counter
@@ -323,6 +328,7 @@ impl MigrationTrait for Migration {
             ("second_approval_note", "TEXT NULL"),
             ("entry_unit_cost", "REAL NULL"),
             ("entry_variance_value", "REAL NULL"),
+            ("critique_raised_version", "INTEGER NULL"),
         ] {
             if !has_column(db, "inventory_count_lines", column).await? {
                 db.execute_unprepared(&format!(

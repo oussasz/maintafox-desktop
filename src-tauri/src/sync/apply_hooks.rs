@@ -567,12 +567,36 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
 }
 
 /// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
+/// What [`after_upsert`] must know of the row held here, read before a received row is written.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HeldBeforeWrite {
+    /// A count line: the "above the tolerance" flag held here when the received version is one
+    /// this PC already judged (`inventory::count_four_eyes::held_judgement`).
+    pub count_line_judged: Option<bool>,
+}
+
+/// Reads [`HeldBeforeWrite`] for a received row about to be written.
+pub(crate) async fn held_before_write(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<HeldBeforeWrite> {
+    Ok(match layout.def.entity_type {
+        "inventory_count_lines" => HeldBeforeWrite {
+            count_line_judged: crate::inventory::count_four_eyes::held_judgement(conn, entity_sync_id, payload).await?,
+        },
+        _ => HeldBeforeWrite::default(),
+    })
+}
+
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,
     row: &RowLocator,
     inserted: bool,
     payload: &serde_json::Map<String, serde_json::Value>,
+    held: HeldBeforeWrite,
 ) -> AppResult<()> {
     match layout.def.entity_type {
         "inventory_transactions" if inserted => {
@@ -589,10 +613,10 @@ pub(crate) async fn after_upsert(
         }
         // A received count line's "above the tolerance" flag is this PC's judgement (CMMS Advisor
         // Q14, `inventory::count_four_eyes::store_judged_critique`): the derived auto-approbation
-        // and the "critique" badge read it.
+        // and the "critique" badge read it. A version already judged here keeps the flag held.
         "inventory_count_lines" => match row {
             RowLocator::Identity(sync_id) => {
-                crate::inventory::count_four_eyes::store_judged_critique(conn, sync_id).await
+                crate::inventory::count_four_eyes::store_judged_critique(conn, sync_id, held.count_line_judged).await
             }
             RowLocator::Natural(_) => Err(hook_err(layout.table(), "count line located without its sync id")),
         },
