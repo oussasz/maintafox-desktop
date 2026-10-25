@@ -1229,6 +1229,13 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
         let new_id: i64 = id_row.try_get("", "id")?;
+        // The administrator chose the password: the account is its author (`sync::credential_check`).
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE user_accounts SET password_changed_by_id = id WHERE id = ?",
+            [new_id.into()],
+        ))
+        .await?;
 
         let assign_sync = Uuid::new_v4().to_string();
         let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

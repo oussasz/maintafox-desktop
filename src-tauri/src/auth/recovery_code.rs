@@ -716,6 +716,13 @@ async fn write_recovery(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?
         .try_get("", "id")?;
+    // The person chose the password: the account is its author (`sync::credential_check`).
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_by_id = id WHERE id = ?",
+        [user_id.into()],
+    ))
+    .await?;
     // As at first start: an administrator created on this PC closes the first-start screen for
     // good (keeps a marker that still names an existing account).
     crate::auth::builtin_admin::record_first_administrator_in(txn, &entity_sync_id).await?;

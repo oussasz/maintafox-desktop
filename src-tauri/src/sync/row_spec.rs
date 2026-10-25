@@ -289,7 +289,18 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
         // Users exist before the personnel records they are later linked to (and personnel
         // reference org data that references users): the link is completed when it arrives.
-        ..spec("user_accounts", &[soft("personnel_id", "personnel")])
+        // Who wrote the password and who last enabled or disabled the account (migration 261,
+        // checked on arrival by `sync::credential_check`): soft, because a change of one's own
+        // password names the row itself, and an author not applied yet never holds the account
+        // back as a parent (the check makes the row wait for that author instead).
+        ..spec(
+            "user_accounts",
+            &[
+                soft("personnel_id", "personnel"),
+                soft("password_changed_by_id", USER),
+                soft("status_changed_by_id", USER),
+            ],
+        )
     },
     spec(
         "user_scope_assignments",

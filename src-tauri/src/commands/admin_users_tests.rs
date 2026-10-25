@@ -2380,3 +2380,121 @@ async fn simultaneous_first_checks_record_one_clock_anomaly() {
     let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
     assert_eq!(anomalies.len(), 1, "{anomalies:?}");
 }
+
+/// Every local password and status write names its author (migration 261, checked on the other PCs
+/// by `sync::credential_check`), and the account row sent to them carries it.
+#[tokio::test]
+async fn every_local_password_and_status_write_names_its_author() {
+    use crate::auth::session_manager::change_password_and_rotate;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let admin_id = i64::from(caller.user_id);
+    let authors = |user: i64| {
+        let db = db.clone();
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT password_changed_by_id, status_changed_by_id, password_changed_at \
+                       FROM user_accounts WHERE id = ?",
+                    [user.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("row");
+            (
+                row.try_get::<Option<i64>>("", "password_changed_by_id").expect("pw"),
+                row.try_get::<Option<i64>>("", "status_changed_by_id").expect("status"),
+                row.try_get::<Option<String>>("", "password_changed_at").expect("at"),
+            )
+        }
+    };
+
+    // Created with a password: dated (O5), the creator named for both.
+    let readonly = role_id(&db, "Readonly").await;
+    let created = create_user_impl(
+        &state,
+        &caller,
+        CreateUserInput {
+            username: "authored.user".into(),
+            identity_mode: "local".into(),
+            role_id: readonly,
+            scope_node_id: None,
+            personnel_id: None,
+            initial_password: Some("ValidPass1".into()),
+            force_password_change: None,
+        },
+    )
+    .await
+    .expect("created");
+    let (pw, status, at) = authors(created.id).await;
+    assert_eq!((pw, status), (Some(admin_id), Some(admin_id)));
+    assert!(at.is_some(), "a password set at creation is dated");
+
+    // Reset by the administrator.
+    let worker = insert_user(&db, "authored_worker").await;
+    admin_set_user_password_impl(
+        &state,
+        &caller,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    assert_eq!(authors(worker).await.0, Some(admin_id));
+    let admin_sync: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            [admin_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "entity_sync_id")
+        .unwrap();
+    let sent = crate::sync::test_support::current_payload(
+        &db,
+        "user_accounts",
+        "authored_worker-sync",
+        &serde_json::Map::default(),
+    )
+    .await
+    .expect("payload")
+    .expect("row");
+    assert_eq!(
+        sent.get("password_changed_by_sync_id")
+            .and_then(serde_json::Value::as_str),
+        Some(admin_sync.as_str()),
+        "the author travels with the account"
+    );
+
+    // Changed by the account itself (forced first change, then a change in the profile).
+    let uid = i32::try_from(worker).unwrap();
+    for forced in [true, false] {
+        open_session(&state, &db, worker, "authored_worker").await;
+        change_password_and_rotate(&db, &state.session, uid, "own-hash", forced)
+            .await
+            .expect("own change");
+        assert_eq!(authors(worker).await.0, Some(worker), "forced: {forced}");
+    }
+
+    // Disabled, then enabled again: who did it is named each time.
+    for active in [false, true] {
+        set_user_active_impl(
+            &state,
+            &caller,
+            SetUserActiveInput {
+                user_id: worker,
+                reason: "Shift change".into(),
+            },
+            active,
+        )
+        .await
+        .expect("status");
+        assert_eq!(authors(worker).await.1, Some(admin_id), "active: {active}");
+    }
+}

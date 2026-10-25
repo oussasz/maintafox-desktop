@@ -817,16 +817,27 @@ pub(crate) async fn create_user_impl(
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
-                 is_active, is_admin, force_password_change, \
-                 failed_login_attempts, created_at, updated_at, row_version) \
-             VALUES (?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, 1)",
+                 is_active, is_admin, force_password_change, password_changed_at, password_changed_by_id, \
+                 status_changed_by_id, failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, 0, ?, ?, 1)",
+        // A password set here is dated and names its creator, who also enabled the account (the
+        // other PCs check they could, `sync::credential_check`); no password (SSO): neither.
         vec![
             entity_sync_id.into(),
             username.clone().into(),
             identity_mode.clone().into(),
-            password_hash.map_or(sea_orm::Value::String(None), |h| h.into()),
+            password_hash
+                .as_ref()
+                .map_or(sea_orm::Value::String(None), |h| h.clone().into()),
             input.personnel_id.into(),
             i32::from(force_pw).into(),
+            password_hash
+                .as_ref()
+                .map_or(sea_orm::Value::String(None), |_| now.clone().into()),
+            password_hash
+                .as_ref()
+                .map_or(sea_orm::Value::BigInt(None), |_| i64::from(caller.user_id).into()),
+            i64::from(caller.user_id).into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -1339,8 +1350,16 @@ pub(crate) async fn set_user_active_impl(
     let admins_before = active_admin_holders(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET is_active = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-        [i32::from(active).into(), now.into(), user_id.into()],
+        "UPDATE user_accounts SET is_active = ?, status_changed_by_id = ?, updated_at = ? \
+          WHERE id = ? AND deleted_at IS NULL",
+        // Who enabled or disabled it is named: the other PCs check a re-enable
+        // (`sync::credential_check`).
+        [
+            i32::from(active).into(),
+            i64::from(caller.user_id).into(),
+            now.into(),
+            user_id.into(),
+        ],
     ))
     .await?;
     ensure_an_admin_remains(&tx, admins_before).await?;
@@ -3144,14 +3163,18 @@ async fn admin_set_user_password_impl(
          SET password_hash = ?, \
              force_password_change = 1, \
              password_changed_at = ?, \
+             password_changed_by_id = ?, \
              failed_login_attempts = 0, \
              locked_until = NULL, \
              consecutive_lockouts = 0, \
              updated_at = ? \
          WHERE id = ?",
+        // The administrator who reset it is named: the other PCs check they could
+        // (`sync::credential_check`).
         [
             password_hash.into(),
             now.clone().into(),
+            i64::from(admin.user_id).into(),
             now.into(),
             input.user_id.into(),
         ],
@@ -3509,7 +3532,7 @@ async fn is_plant_admin<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult
 
 /// The account has (or may get back by re-enabling) administrator access: the bootstrap flag or
 /// any live assignment of an administrator role, emergency included, whatever the account state.
-async fn is_admin_account<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
+pub(crate) async fn is_admin_account<C: ConnectionTrait>(conn: &C, user_id: i64) -> AppResult<bool> {
     let placeholders = vec!["?"; ADMIN_ROLE_NAMES.len()].join(",");
     let sql = format!(
         "SELECT CASE WHEN EXISTS (SELECT 1 FROM user_accounts WHERE id = ? AND is_admin = 1) \
