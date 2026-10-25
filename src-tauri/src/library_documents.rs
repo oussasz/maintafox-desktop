@@ -285,12 +285,14 @@ pub async fn save_library_document(
 ) -> AppResult<LibraryDocumentRow> {
     let category = checked_category(db, &input.category).await?;
     if input.file_bytes.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["The file is empty.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_EMPTY: The file is empty.".into(),
+        ]));
     }
 
     if input.file_bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "File exceeds {} MB limit.",
+            "GATE_LIB_DOC_TOO_LARGE:max_mb={0}: File exceeds {0} MB limit.",
             MAX_FILE_SIZE_BYTES / (1024 * 1024)
         )]));
     }
@@ -300,7 +302,9 @@ pub async fn save_library_document(
         .and_then(|n| n.to_str())
         .unwrap_or("document");
     if sanitized_name.is_empty() || sanitized_name.contains("..") {
-        return Err(AppError::ValidationFailed(vec!["Invalid file name.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_NAME_INVALID: Invalid file name.".into(),
+        ]));
     }
 
     // Resolved before the transaction: the helper reads through the pool connection.

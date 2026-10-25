@@ -87,9 +87,9 @@ pub fn validate_analytics_layout_json(raw: &str) -> AppResult<()> {
         AppError::ValidationFailed(vec!["GATE_ANA_LAYOUT_INVALID: layout_json must be an object.".into()])
     })?;
     if obj.get("version").and_then(|x| x.as_u64()) != Some(1) {
-        return Err(AppError::ValidationFailed(
-            vec!["layout_json.version must be 1.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ANA_LAYOUT_INVALID: layout_json.version must be 1.".into(),
+        ]));
     }
     let Some(widgets) = obj.get("widgets").and_then(|x| x.as_array()) else {
         return Err(AppError::ValidationFailed(vec![

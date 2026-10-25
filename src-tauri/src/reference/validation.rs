@@ -139,7 +139,7 @@ pub async fn validate_reference_set(
     let set = sets::get_reference_set(db, set_id).await?;
     if set.status != sets::SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de valider un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_VALIDATABLE: Impossible de valider un jeu en statut '{}'. \
              Seul un brouillon ('draft') peut etre valide.",
             set.status
         )]));

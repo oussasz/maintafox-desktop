@@ -75,7 +75,7 @@ impl DatabaseKey {
         let compact: String = input.chars().filter(char::is_ascii_hexdigit).collect();
         if compact.len() != KEY_LEN * 2 {
             return Err(AppError::ValidationFailed(vec![
-                "La clé de récupération doit contenir 64 caractères hexadécimaux. \
+                "GATE_DB_RECOVERY_KEY_FORMAT: La clé de récupération doit contenir 64 caractères hexadécimaux. \
                  (The recovery key must contain 64 hexadecimal characters.)"
                     .into(),
             ]));

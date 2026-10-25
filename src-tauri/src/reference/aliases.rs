@@ -288,7 +288,7 @@ pub async fn create_alias(
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
             AppError::ValidationFailed(vec![format!(
-                "Un alias '{label}' existe déjà pour cette valeur, locale '{locale}', \
+                "GATE_REF_ALIAS_EXISTS: Un alias '{label}' existe déjà pour cette valeur, locale '{locale}', \
                  et type '{alias_type}'."
             )])
         } else {
