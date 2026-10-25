@@ -208,7 +208,7 @@ const EDITABLE_RBAC_SETTINGS: &[(&str, RbacSettingRule)] = &[
 fn validate_rbac_setting(key: &str, value: &str) -> AppResult<String> {
     let Some((_, rule)) = EDITABLE_RBAC_SETTINGS.iter().find(|(k, _)| *k == key) else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The security setting '{key}' cannot be changed here."
+            "GATE_RBAC_SETTING_LOCKED: The security setting '{key}' cannot be changed here."
         )]));
     };
     let value = value.trim();
@@ -217,12 +217,14 @@ fn validate_rbac_setting(key: &str, value: &str) -> AppResult<String> {
             "0" | "1" => Ok(value.to_string()),
             "true" => Ok("1".into()),
             "false" => Ok("0".into()),
-            _ => Err(AppError::ValidationFailed(vec![format!("{key} must be 0 or 1.")])),
+            _ => Err(AppError::ValidationFailed(vec![format!(
+                "GATE_RBAC_SETTING_FLAG: {key} must be 0 or 1."
+            )])),
         },
         RbacSettingRule::Range(min, max) => match value.parse::<i64>() {
             Ok(n) if (*min..=*max).contains(&n) => Ok(n.to_string()),
             _ => Err(AppError::ValidationFailed(vec![format!(
-                "{key} must be a whole number between {min} and {max}."
+                "GATE_RBAC_SETTING_RANGE:min={min},max={max}: {key} must be a whole number between {min} and {max}."
             )])),
         },
     }
@@ -307,7 +309,7 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
     let number = || -> AppResult<i64> {
         value
             .parse()
-            .map_err(|_| AppError::ValidationFailed(vec![format!("{key} must be a number.")]))
+            .map_err(|_| AppError::ValidationFailed(vec![format!("GATE_RBAC_SETTING_NUMBER: {key} must be a number.")]))
     };
     if key == "password_warn_days" {
         if let Some(max_age) = stored_rbac_number(&state.db, "password_max_age_days").await? {
@@ -325,7 +327,7 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
 fn check_warn_within_max_age(warn_days: i64, max_age_days: i64) -> AppResult<()> {
     if max_age_days > 0 && warn_days > max_age_days {
         return Err(AppError::ValidationFailed(vec![
-            "The expiry warning cannot start before the password's maximum age.".into(),
+            "GATE_RBAC_WARN_AFTER_MAX_AGE: The expiry warning cannot start before the password's maximum age.".into(),
         ]));
     }
     Ok(())

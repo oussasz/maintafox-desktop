@@ -335,7 +335,7 @@ pub async fn get_media_file_states(
     let _user = require_session!(state);
     if relative_paths.len() > MAX_MEDIA_FILE_STATES {
         return Err(crate::errors::AppError::ValidationFailed(vec![format!(
-            "At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
+            "GATE_CMD_SYNC_MEDIA_BATCH_LARGE:max={MAX_MEDIA_FILE_STATES}: At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
         )]));
     }
     crate::sync::media::media_file_states(&state.db, &media_root(&app)?, &relative_paths).await
