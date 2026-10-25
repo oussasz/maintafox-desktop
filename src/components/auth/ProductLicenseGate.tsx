@@ -30,15 +30,12 @@ import {
   LICENSE_RECHECK_REQUESTED_EVENT,
   POST_ACTIVATION_LOGIN_HINT_KEY,
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY,
-  PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY,
-  type ProductActivationClaim,
   type ProductActivationPreview,
   type ProductLicenseDiagnostics,
   type ProductLicenseOnboardingState,
   type UserFacingActivationError,
   activationRequiresLocalDataReset,
   applyProductLicenseReconciliation,
-  assertClaimSerializableForDesktop,
   checkProductLicenseKeyEntry,
   claimProductActivation,
   getActivationBootstrapState,
@@ -46,7 +43,9 @@ import {
   getProductLicenseOnboardingState,
   markActivationTenantInitialized,
   previewProductActivation,
+  reclaimProductActivation,
   refreshProductActivationPolicy,
+  removeLegacyProductLicenseKeyCache,
   resetLocalTenantRuntimeData,
   submitProductLicenseKey,
   toUserFacingActivationError,
@@ -132,8 +131,11 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   );
   /** Successful preview awaiting user activation (no slot consumed yet). */
   const [pendingPreview, setPendingPreview] = useState<ProductActivationPreview | null>(null);
-  /** Claim/submit succeeded but control-plane mark-initialized still needs retry. */
-  const [pendingMarkToken, setPendingMarkToken] = useState<string | null>(null);
+  /**
+   * Claim/submit succeeded but control-plane mark-initialized still needs retry (Rust holds the
+   * activation token it is sent with).
+   */
+  const [initializeRetryPending, setInitializeRetryPending] = useState(false);
   /**
    * A licence change this PC refused only for lack of a fresh identity check (`StepUpRequired`:
    * the signed-in user may administer). Holds the same change, to apply once the identity is
@@ -158,7 +160,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   stateRef.current = state;
   isOnlineRef.current = isOnline;
 
-  const keyCacheStorage = PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY;
   const deviceFingerprint = useState(() => {
     const storageKey = PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY;
     const existing = localStorage.getItem(storageKey);
@@ -188,6 +189,11 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    // The licence key stays in Rust now: drop the copy an earlier version kept here.
+    removeLegacyProductLicenseKeyCache();
   }, []);
 
   useEffect(() => {
@@ -234,10 +240,10 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     [],
   );
 
+  /** Records a licence check that got no licence answer (a success is recorded by Rust). */
   const recordOutcome = useCallback(
     async (
       outcome:
-        | { kind: "success"; claim: ProductActivationClaim }
         | { kind: "network_error"; error_code?: string; error_message: string }
         | { kind: "http_error"; error_code?: string; error_message: string }
         | { kind: "denied"; error_code?: string; error_message: string },
@@ -246,7 +252,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         ...outcome,
         app_version: appVersion,
       });
-      await showRecordedState(next, outcome.kind === "success");
+      await showRecordedState(next, false);
       return next;
     },
     [appVersion, showRecordedState],
@@ -263,10 +269,23 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     return outcome.state;
   }, [runningAppVersion, showRecordedState]);
 
+  /**
+   * Claims this PC's activation again with the licence key stored in Rust (its activation token
+   * is unusable or absent); Rust records the new claim. Null when no key is stored here.
+   */
+  const reclaimActivation = useCallback(async () => {
+    const outcome = await reclaimProductActivation({
+      machine_label: deviceName.trim() || defaultDeviceName(),
+      ...(runningAppVersion ? { app_version: runningAppVersion } : {}),
+    });
+    if (outcome.kind === "not_activated") return null;
+    await showRecordedState(outcome.state, true);
+    return outcome.state;
+  }, [deviceName, runningAppVersion, showRecordedState]);
+
   const recordOutcomeSafely = useCallback(
     async (
       outcome:
-        | { kind: "success"; claim: ProductActivationClaim }
         | { kind: "network_error"; error_code?: string; error_message: string }
         | { kind: "http_error"; error_code?: string; error_message: string }
         | { kind: "denied"; error_code?: string; error_message: string },
@@ -322,10 +341,11 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       setReconciling(true);
       setWarning(null);
       setStepUpRetry(null);
-      let claim: ProductActivationClaim | null = null;
+      let reclaimed = false;
       try {
         // Prefer policy-refresh (no slot consumption) when a local activation token exists.
         let refreshed: ProductLicenseOnboardingState | null;
+        let tokenError: unknown = null;
         try {
           refreshed = await refreshPolicy();
         } catch (refreshErr) {
@@ -335,16 +355,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
           if (!refreshCode || !CLAIM_FALLBACK_TOKEN_ERRORS.has(refreshCode)) {
             throw refreshErr;
           }
-          const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
-          if (!cachedKey || cachedKey.length < 8) {
-            throw refreshErr;
-          }
-          claim = await claimProductActivation({
-            license_key: cachedKey,
-            machine_fingerprint: deviceFingerprint,
-            machine_label: deviceName.trim() || defaultDeviceName(),
-            app_version: appVersion,
-          });
+          tokenError = refreshErr;
           refreshed = null;
         }
         if (refreshed) {
@@ -354,35 +365,28 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
           }
           return;
         }
-        if (!claim) {
-          // No activation token on this PC: claim with the cached key, if any.
-          const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
-          if (!cachedKey || cachedKey.length < 8) {
-            if (stateRef.current?.status === "pending_online_validation") {
-              setWarning(t("activation.subtitle"));
-            }
-            return;
+        // The token is unusable, or this PC has none: Rust claims again with the stored key.
+        reclaimed = true;
+        const next = await reclaimActivation();
+        if (!next) {
+          // No licence key stored here: the token failure stands as it is.
+          if (tokenError) throw tokenError;
+          if (stateRef.current?.status === "pending_online_validation") {
+            setWarning(t("activation.subtitle"));
           }
-          claim = await claimProductActivation({
-            license_key: cachedKey,
-            machine_fingerprint: deviceFingerprint,
-            machine_label: deviceName.trim() || defaultDeviceName(),
-            app_version: appVersion,
-          });
+          return;
         }
-        const next = await recordOutcomeSafely({ kind: "success", claim });
-        if (next?.status === "active") {
+        if (next.status === "active") {
           setWarning(null);
         }
       } catch (err) {
         // This PC refused to apply the claim (a licence change needs an administrator signed
-        // in): say what to do, record nothing (it is not a network or server failure). The same
-        // claim is applied again once the administrator confirms their identity; a refusal of
-        // the policy refresh (no claim here: Rust applies it) runs the refresh again.
-        const refusedClaim = claim;
+        // in): say what to do, record nothing (it is not a network or server failure). Once the
+        // administrator confirms their identity, the same call runs again (Rust applies its
+        // answer): the re-claim, or the policy refresh.
         const reapply = async () => {
-          if (refusedClaim) {
-            await recordOutcome({ kind: "success", claim: refusedClaim });
+          if (reclaimed) {
+            await reclaimActivation();
           } else {
             await refreshPolicy();
           }
@@ -420,17 +424,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         setReconciling(false);
       }
     },
-    [
-      appVersion,
-      deviceFingerprint,
-      deviceName,
-      keyCacheStorage,
-      recordOutcome,
-      recordOutcomeSafely,
-      refreshPolicy,
-      showLicenceRefusal,
-      t,
-    ],
+    [reclaimActivation, recordOutcomeSafely, refreshPolicy, showLicenceRefusal, t],
   );
 
   const reconcileProductLicense = useCallback(async () => {
@@ -473,25 +467,21 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     }
   };
 
-  const completeLocalActivation = useCallback(
-    async (claim: ProductActivationClaim, trimmedKey: string) => {
-      localStorage.setItem(keyCacheStorage, trimmedKey);
-      setKey("");
-      setPendingPreview(null);
-      setPendingMarkToken(null);
-      await refresh();
-      await finalizeActivationAndRoute();
-    },
-    [finalizeActivationAndRoute, keyCacheStorage, refresh],
-  );
+  const completeLocalActivation = useCallback(async () => {
+    setKey("");
+    setPendingPreview(null);
+    setInitializeRetryPending(false);
+    await refresh();
+    await finalizeActivationAndRoute();
+  }, [finalizeActivationAndRoute, refresh]);
 
   const onRetryMarkInitialized = async () => {
-    if (!pendingMarkToken) return;
+    if (!initializeRetryPending) return;
     setSubmitting(true);
     setError(null);
     try {
-      await markActivationTenantInitialized(pendingMarkToken);
-      setPendingMarkToken(null);
+      await markActivationTenantInitialized();
+      setInitializeRetryPending(false);
       setPendingPreview(null);
       setKey("");
       await refresh();
@@ -516,7 +506,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     setError(null);
     setWarning(null);
     setStepUpRetry(null);
-    setPendingMarkToken(null);
+    setInitializeRetryPending(false);
     const preview = pendingPreview;
     /** The activation itself; throws a refusal so the identity check can run it again. */
     const activate = async (): Promise<void> => {
@@ -530,31 +520,28 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         machine_label: label,
         app_version: appVersion,
       });
-      // Validate desktop claim shape BEFORE wiping local tenant data.
-      // Previous bug: reset ran, then submit failed on alias-duplicate claim JSON.
-      assertClaimSerializableForDesktop(claim);
+      // Rust answers a claim only once it holds it as a complete, recordable claim, so local
+      // tenant data is never wiped for a claim the key entry would then fail to record.
       if (activationRequiresLocalDataReset(stateRef.current?.tenant_id, claim.tenant_id)) {
         await resetLocalTenantRuntimeData();
       }
       await submitProductLicenseKey({
         key: trimmed,
-        claim,
-        machine_fingerprint: deviceFingerprint,
+        tenant_id: claim.tenant_id,
         app_version: appVersion,
       });
       notifyEntitlementsUpdated();
       if (claim.is_initialized !== true) {
         try {
-          await markActivationTenantInitialized(claim.activation_token);
+          await markActivationTenantInitialized();
         } catch (markErr) {
-          setPendingMarkToken(claim.activation_token);
-          localStorage.setItem(keyCacheStorage, trimmed);
+          setInitializeRetryPending(true);
           setError(toUserFacingActivationError(markErr));
           await refresh({ includeDiagnostics: false });
           return;
         }
       }
-      await completeLocalActivation(claim, trimmed);
+      await completeLocalActivation();
     };
     try {
       await activate();
@@ -770,7 +757,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
   const allowLoginEscape =
     preferLoginView && (location.pathname === "/login" || location.pathname === "/admin-setup");
   /** Keep gate UI when control-plane finalize (mark initialized) still needs retry. */
-  const needsMarkRetry = pendingMarkToken != null;
+  const needsMarkRetry = initializeRetryPending;
 
   const stepId = pendingPreview || needsMarkRetry ? "activate" : "validate";
   const companyName =
@@ -987,7 +974,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
             {licenceRefusalBlock}
 
             <div className="flex flex-col gap-2.5">
-              {pendingMarkToken ? (
+              {initializeRetryPending ? (
                 <AuthButton
                   disabled={submitting}
                   loading={submitting}
@@ -997,12 +984,12 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
                 </AuthButton>
               ) : null}
               <AuthButton
-                variant={pendingMarkToken ? "secondary" : "primary"}
-                disabled={submitting || pendingMarkToken != null}
-                loading={submitting && !pendingMarkToken}
+                variant={initializeRetryPending ? "secondary" : "primary"}
+                disabled={submitting || initializeRetryPending}
+                loading={submitting && !initializeRetryPending}
                 onClick={() => void onActivateDevice()}
               >
-                {submitting && !pendingMarkToken
+                {submitting && !initializeRetryPending
                   ? t("activation.activating")
                   : t("activation.activateCta")}
               </AuthButton>
@@ -1011,7 +998,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
                 disabled={submitting}
                 onClick={() => {
                   setPendingPreview(null);
-                  setPendingMarkToken(null);
+                  setInitializeRetryPending(false);
                   setError(null);
                 }}
               >

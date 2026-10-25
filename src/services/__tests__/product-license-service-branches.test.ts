@@ -1,25 +1,21 @@
 /**
  * Product licence service: the paths the activation/claim suites do not reach. Error copy when the
- * server gave no status or no code, the configurable control-plane origin, the local licence IPC
- * commands (argument shaping + payload validation), reconciliation, browser-state clearing and the
- * defensive guards on the claim stored on the device.
+ * server gave no status or no code, the local licence IPC commands (argument shaping + payload
+ * validation), reconciliation and browser-state clearing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CLAIM_FALLBACK_TOKEN_ERRORS,
+  LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY,
   LICENSE_RECHECK_REQUESTED_EVENT,
   POST_ACTIVATION_LOGIN_HINT_KEY,
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY,
-  PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY,
-  type ProductActivationClaim,
   activationRequiresLocalDataReset,
   applyProductLicenseReconciliation,
-  assertClaimSerializableForDesktop,
   bootstrapInitialTenantAdmin,
   claimProductActivation,
   clearProductLicenseBrowserState,
-  controlPlaneApiBase,
   getActivationBootstrapState,
   getActivationLicenseMetadata,
   getProductLicenseDiagnostics,
@@ -28,8 +24,8 @@ import {
   requestLicenseRecheck,
   requestPlantJoin,
   resetLocalTenantRuntimeData,
+  removeLegacyProductLicenseKeyCache,
   resetProductLicenseActivation,
-  serializeClaimJsonForDesktop,
   submitProductLicenseKey,
   toUserFacingActivationError,
 } from "@/services/product-license-service";
@@ -44,71 +40,20 @@ const FAKE_KEY = "TEST-0000-0000-0000";
 const INPUT = { license_key: FAKE_KEY, machine_fingerprint: "fp-test" };
 const BASE = { tenant_id: "t-test", license_id: "l-test", machine_fingerprint: "fp-test" };
 
-function respond(status: number, body: unknown): Response {
-  const text = typeof body === "string" ? body : JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: () => Promise.resolve(text),
-    json: () => Promise.resolve(typeof body === "string" ? JSON.parse(body) : body),
-  } as unknown as Response;
-}
-
-const fetchMock = vi.fn();
-
 beforeEach(() => {
-  fetchMock.mockReset();
   ipc.invoke.mockReset();
-  vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   localStorage.clear();
   sessionStorage.clear();
 });
 
-describe("control-plane origin", () => {
-  it("uses the configured origin and drops one trailing slash", async () => {
-    vi.stubEnv("VITE_ADMIN_API_BASE_URL", "  https://cp.example.test/  ");
-    expect(controlPlaneApiBase()).toBe("https://cp.example.test");
-
-    fetchMock.mockResolvedValue(respond(200, BASE));
-    await previewProductActivation(INPUT);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "https://cp.example.test/api/v1/activation/preview",
-    );
-  });
-
-  it("falls back to the shared default origin when the override is blank or absent", () => {
-    vi.stubEnv("VITE_ADMIN_API_BASE_URL", "   ");
-    const blank = controlPlaneApiBase();
-    vi.stubEnv("VITE_ADMIN_API_BASE_URL", "");
-    const empty = controlPlaneApiBase();
-    expect(blank).toMatch(/^https?:\/\//);
-    expect(blank).not.toMatch(/\/$/);
-    expect(empty).toBe(blank);
-  });
-});
-
 describe("claim request and its errors", () => {
-  it("posts the claim as JSON to the claim endpoint", async () => {
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, activation_token: "tok-test" }));
-    await claimProductActivation({ ...INPUT, machine_label: "Bench PC", app_version: "1.2.3" });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toMatch(/\/api\/v1\/activation\/claim$/);
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(String(init.body))).toEqual({
-      ...INPUT,
-      machine_label: "Bench PC",
-      app_version: "1.2.3",
-    });
-  });
-
   it("labels a failed claim as an activation failure, not a licence validation", async () => {
-    fetchMock.mockResolvedValue(respond(500, ""));
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 500, details: null });
     await expect(claimProductActivation(INPUT)).rejects.toMatchObject({
       message: "Activation failed (500)",
       status: 500,
@@ -116,44 +61,37 @@ describe("claim request and its errors", () => {
     });
   });
 
-  it("rejects a claim response that has no activation token", async () => {
-    fetchMock.mockResolvedValue(respond(200, BASE));
-    await expect(claimProductActivation(INPUT)).rejects.toThrow(/activation_token/);
-  });
-
   it("rejects a preview response missing the tenant identifier", async () => {
-    fetchMock.mockResolvedValue(respond(200, { license_id: "l", machine_fingerprint: "f" }));
+    ipc.invoke.mockResolvedValue({
+      kind: "answered",
+      answer: { license_id: "l", machine_fingerprint: "f" },
+    });
     await expect(previewProductActivation(INPUT)).rejects.toThrow(/tenant_id/);
   });
 
-  it("an error object without a code leaves the code unset but keeps its message", async () => {
-    fetchMock.mockResolvedValue(respond(400, { error: { message: "Nope" } }));
+  it("an error answer without a code leaves the code unset but keeps its message", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 400, message: "Nope" });
     const err = await previewProductActivation(INPUT).catch((e: unknown) => e);
     expect(err).toMatchObject({ message: "Nope", status: 400 });
     expect((err as { code?: string }).code).toBeUndefined();
   });
 
-  it("an unreadable response body still yields a coded error for a 409", async () => {
-    const res = respond(409, "");
-    (res as unknown as { text: () => Promise<string> }).text = (): Promise<string> =>
-      Promise.reject(new Error("stream closed"));
-    fetchMock.mockResolvedValue(res);
-    await expect(previewProductActivation(INPUT)).rejects.toMatchObject({
-      code: "slot_limit_reached",
-      technicalDetails: "License validation HTTP 409",
-    });
+  it("refuses an answer Rust does not send", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "exploded" });
+    await expect(previewProductActivation(INPUT)).rejects.toThrow();
   });
 
   it("ignores nested values of the wrong type when normalising the payload", async () => {
-    fetchMock.mockResolvedValue(
-      respond(200, {
+    ipc.invoke.mockResolvedValue({
+      kind: "answered",
+      answer: {
         ...BASE,
         claim: { slot_limit: true, tier: 7 },
         entitlement: { slot_limit: {}, tier: ["x"] },
         tenant: { display_name: 12 },
         limits: { activated: "many" },
-      }),
-    );
+      },
+    });
     const preview = await previewProductActivation(INPUT);
     expect(preview.device_limit).toBeUndefined();
     expect(preview.license_tier).toBeUndefined();
@@ -270,53 +208,23 @@ describe("local licence commands", () => {
     expect(ipc.invoke).toHaveBeenCalledWith("bootstrap_initial_tenant_admin", { input });
   });
 
-  it("submits the key with the canonical claim JSON and camelCase argument names", async () => {
+  it("submits the key with the organisation and version only, never a claim or token", async () => {
     ipc.invoke.mockResolvedValue(undefined);
-    const claim: ProductActivationClaim = {
-      ...BASE,
-      activation_token: "tok-test",
-      edition: "core",
-      license_tier: "core",
-      license_plan: "core",
-    };
-    await submitProductLicenseKey({
-      key: FAKE_KEY,
-      claim,
-      machine_fingerprint: "fp-test",
-      app_version: "9.9.9",
-    });
-    const [command, args] = ipc.invoke.mock.calls[0] as [string, Record<string, unknown>];
-    expect(command).toBe("submit_product_license_key");
-    expect(Object.keys(args).sort()).toEqual([
-      "appVersion",
-      "claimJson",
-      "key",
-      "machineFingerprint",
-    ]);
-    expect(args["key"]).toBe(FAKE_KEY);
-    expect(args["machineFingerprint"]).toBe("fp-test");
-    expect(args["appVersion"]).toBe("9.9.9");
-    const stored = JSON.parse(String(args["claimJson"])) as Record<string, unknown>;
-    expect(stored).not.toHaveProperty("edition");
-    expect(stored["license_tier"]).toBe("core");
-  });
-
-  it("submits nulls when no claim, fingerprint or version is supplied", async () => {
-    ipc.invoke.mockResolvedValue(undefined);
-    await submitProductLicenseKey({ key: FAKE_KEY });
+    await submitProductLicenseKey({ key: FAKE_KEY, tenant_id: "t-test", app_version: "9.9.9" });
     expect(ipc.invoke).toHaveBeenCalledWith("submit_product_license_key", {
       key: FAKE_KEY,
-      claimJson: null,
-      machineFingerprint: null,
-      appVersion: null,
+      tenantId: "t-test",
+      appVersion: "9.9.9",
     });
-    await submitProductLicenseKey({ key: FAKE_KEY, claim: null });
-    expect(ipc.invoke.mock.calls[1]?.[1]).toMatchObject({ claimJson: null });
+    await submitProductLicenseKey({ key: FAKE_KEY, tenant_id: "t-test" });
+    expect(ipc.invoke.mock.calls[1]?.[1]).toMatchObject({ appVersion: null });
   });
 
   it("propagates a rejected submit so the caller can map it", async () => {
     ipc.invoke.mockRejectedValue(new Error("disk full"));
-    await expect(submitProductLicenseKey({ key: FAKE_KEY })).rejects.toThrow("disk full");
+    await expect(submitProductLicenseKey({ key: FAKE_KEY, tenant_id: "t-test" })).rejects.toThrow(
+      "disk full",
+    );
   });
 });
 
@@ -448,26 +356,6 @@ describe("licence diagnostics", () => {
 
 describe("licence reconciliation", () => {
   const onboarding = { complete: true, status: "active", pending_online_validation: false };
-  const envelope = {
-    envelope_id: "env-test",
-    lineage_version: 1,
-    issuer: "test-issuer",
-    key_id: "k-test",
-    signature_alg: "test-alg",
-    tier: "core",
-    state: "active",
-    channel: "stable",
-    machine_slots: 2,
-    feature_flags_json: "{}",
-    capabilities_json: "{}",
-    policy_json: "{}",
-    issued_at: "2026-01-01T00:00:00Z",
-    valid_from: "2026-01-01T00:00:00Z",
-    valid_until: "2027-01-01T00:00:00Z",
-    offline_grace_until: "2026-02-01T00:00:00Z",
-    signature: "sig-test",
-  };
-
   function sentOutcome(): Record<string, unknown> {
     const [command, args] = ipc.invoke.mock.calls[0] as [string, { outcomeJson: string }];
     expect(command).toBe("apply_product_license_reconciliation");
@@ -492,47 +380,12 @@ describe("licence reconciliation", () => {
     });
   });
 
-  it("sends a successful claim in desktop-canonical form, with its envelope at the top level", async () => {
-    ipc.invoke.mockResolvedValue(onboarding);
-    await applyProductLicenseReconciliation({
-      kind: "success",
-      claim: {
-        ...BASE,
-        activation_token: "tok-test",
-        edition: "core",
-        slot_limit: 3,
-        entitlement_envelope: envelope,
-      } as never,
-    });
-    const sent = sentOutcome();
-    expect(sent["entitlement_envelope"]).toEqual(envelope);
-    const claim = sent["claim"] as Record<string, unknown>;
-    expect(claim["license_tier"]).toBe("core");
-    expect(claim).not.toHaveProperty("edition");
-    expect(claim).not.toHaveProperty("entitlement_envelope");
-    expect(claim["tenant_id"]).toBe("t-test");
-  });
-
-  it("prefers an explicit envelope over the one carried by the claim", async () => {
-    ipc.invoke.mockResolvedValue(onboarding);
-    await applyProductLicenseReconciliation({
-      kind: "success",
-      claim: {
-        ...BASE,
-        activation_token: "tok-test",
-        entitlement_envelope: { ...envelope, envelope_id: "from-claim" },
-      },
-      entitlement_envelope: { ...envelope, envelope_id: "explicit" },
-    });
-    expect((sentOutcome()["entitlement_envelope"] as { envelope_id: string }).envelope_id).toBe(
-      "explicit",
-    );
-  });
-
   it("refuses an outcome of an unknown kind before calling the backend", async () => {
     await expect(
       applyProductLicenseReconciliation({ kind: "exploded" } as never),
     ).rejects.toThrow();
+    // A success is recorded by Rust from the answer it received, never sent from here.
+    await expect(applyProductLicenseReconciliation({ kind: "success" } as never)).rejects.toThrow();
     expect(ipc.invoke).not.toHaveBeenCalled();
   });
 
@@ -543,28 +396,31 @@ describe("licence reconciliation", () => {
 });
 
 describe("browser-side licence state", () => {
-  it("clears the cached key and the login hint but keeps the device fingerprint", () => {
-    localStorage.setItem(PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY, FAKE_KEY);
+  it("clears a legacy cached key and the login hint but keeps the device fingerprint", () => {
+    localStorage.setItem(LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY, FAKE_KEY);
     localStorage.setItem(PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY, "fp-test");
     sessionStorage.setItem(POST_ACTIVATION_LOGIN_HINT_KEY, "1");
     clearProductLicenseBrowserState();
-    expect(localStorage.getItem(PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY)).toBeNull();
     expect(sessionStorage.getItem(POST_ACTIVATION_LOGIN_HINT_KEY)).toBeNull();
     expect(localStorage.getItem(PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY)).toBe("fp-test");
   });
 
   it("still clears the key when session storage is unavailable", () => {
-    localStorage.setItem(PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY, FAKE_KEY);
+    localStorage.setItem(LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY, FAKE_KEY);
     vi.stubGlobal("sessionStorage", undefined);
     expect(() => clearProductLicenseBrowserState()).not.toThrow();
-    expect(localStorage.getItem(PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY)).toBeNull();
   });
 
-  it("does nothing, and does not throw, without any storage", () => {
-    const removed = vi.spyOn(Storage.prototype, "removeItem");
+  it("does not throw without any storage, or when storage refuses access", () => {
     vi.stubGlobal("localStorage", undefined);
     expect(() => clearProductLicenseBrowserState()).not.toThrow();
-    expect(removed).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    expect(() => removeLegacyProductLicenseKeyCache()).not.toThrow();
   });
 
   it("announces a licence re-check with its reason", () => {
@@ -606,66 +462,5 @@ describe("rules for re-claiming and wiping local data", () => {
       "token_superseded",
     ]);
     expect(CLAIM_FALLBACK_TOKEN_ERRORS.has("license_revoked")).toBe(false);
-  });
-});
-
-describe("guards on the claim stored on the device", () => {
-  const claim: ProductActivationClaim = {
-    ...BASE,
-    activation_token: "tok-test",
-  };
-
-  /** Makes the next serialisation produce `output`, as a broken serializer would. */
-  function serializerReturns(output: string): void {
-    vi.spyOn(JSON, "stringify").mockReturnValueOnce(output);
-  }
-
-  it("rejects output that is not a JSON object literal", () => {
-    serializerReturns('"just a string"');
-    expect(() => assertClaimSerializableForDesktop(claim)).toThrow(/produced invalid JSON/);
-  });
-
-  it("reports the parse error when the output is malformed JSON", () => {
-    serializerReturns("{not json");
-    expect(() => assertClaimSerializableForDesktop(claim)).toThrow(/produced invalid JSON: .+/);
-  });
-
-  it("rejects a record carrying the edition alias", () => {
-    serializerReturns(
-      '{"tenant_id":"t","license_id":"l","machine_fingerprint":"f","activation_token":"a","edition":"core"}',
-    );
-    expect(() => assertClaimSerializableForDesktop(claim)).toThrow(/alias field: edition/);
-  });
-
-  it.each(["slot_limit", "seat_limit"])("rejects a record carrying %s", (alias) => {
-    serializerReturns(
-      `{"tenant_id":"t","license_id":"l","machine_fingerprint":"f","activation_token":"a","${alias}":2}`,
-    );
-    expect(() => assertClaimSerializableForDesktop(claim)).toThrow(/slot_limit\/seat_limit/);
-  });
-
-  it.each(["company_display_name", "company_name", "tenant_name"])(
-    "rejects a record carrying %s",
-    (alias) => {
-      serializerReturns(
-        `{"tenant_id":"t","license_id":"l","machine_fingerprint":"f","activation_token":"a","${alias}":"Acme"}`,
-      );
-      expect(() => assertClaimSerializableForDesktop(claim)).toThrow(/company_display_name/);
-    },
-  );
-
-  it.each(["tenant_id", "license_id", "machine_fingerprint"] as const)(
-    "refuses a claim whose %s is blank",
-    (field) => {
-      expect(() => assertClaimSerializableForDesktop({ ...claim, [field]: "  " })).toThrow(
-        `missing required field: ${field}`,
-      );
-    },
-  );
-
-  it("serialises a claim without an envelope as the bare record", () => {
-    const json = JSON.parse(serializeClaimJsonForDesktop(claim)) as Record<string, unknown>;
-    expect(json).not.toHaveProperty("entitlement_envelope");
-    expect(json["activation_token"]).toBe("tok-test");
   });
 });
