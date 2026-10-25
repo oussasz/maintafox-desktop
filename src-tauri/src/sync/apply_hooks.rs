@@ -566,7 +566,6 @@ fn hook_err(table: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("{table} apply hook: {e}"))
 }
 
-/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
 /// What [`after_upsert`] must know of the row held here, read before a received row is written.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HeldBeforeWrite {
@@ -590,6 +589,7 @@ pub(crate) async fn held_before_write(
     })
 }
 
+/// After an inbound row was inserted (`inserted`) or updated; `payload` is the row as received.
 pub(crate) async fn after_upsert(
     conn: &impl ConnectionTrait,
     layout: &EntityLayout,

@@ -5311,6 +5311,333 @@ async fn only_a_flag_raised_here_from_a_received_within_may_be_cleared_without_a
     assert_eq!(state().await, 0, "a new entry within here now: stored within, no mark");
 }
 
+/// Review of 5ead90e8 (gap): the one path where a received version lowers the flag held here
+/// without a new entry — a flag this PC raised itself (marked), the same quantities, another
+/// approval, judged within the tolerance of now: stored within, the mark cleared.
+#[tokio::test]
+async fn a_flag_raised_here_is_lowered_by_a_changed_version_judged_within_now() {
+    use crate::inventory::count_four_eyes::{inbound_count_line_check, SETTING_PERCENT_THRESHOLD};
+    use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let counter = user_with(&db, "loweredmarkcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let (_, local) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    let local_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![local.id.into()],
+    )
+    .await;
+    // A line of the same session received from another PC (another location), 5 of 10, sent as
+    // within; the tolerance here is blank (strict): raised here and marked.
+    let other = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    let mut received = wire_row(&db, "inventory_count_lines", &local_sync).await;
+    received.insert(
+        "location_sync_id".into(),
+        serde_json::json!(
+            text_of(
+                &db,
+                "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+                vec![other.rowid.into()]
+            )
+            .await
+        ),
+    );
+    received.insert(
+        "warehouse_sync_id".into(),
+        serde_json::json!(
+            text_of(
+                &db,
+                "SELECT w.entity_sync_id FROM warehouses w JOIN stock_locations l ON l.warehouse_id = w.id
+                 WHERE l.id = ?",
+                vec![other.rowid.into()]
+            )
+            .await
+        ),
+    );
+    received.insert("is_critical".into(), serde_json::json!(0));
+    let fresh = crate::sync::identity::new_entity_sync_id();
+    let apply = |payload: serde_json::Map<String, serde_json::Value>, version: i64| {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            let json = serde_json::Value::Object(payload).to_string();
+            apply_inbound_payload(db, "inventory_count_lines", &fresh, "upsert", version, &json)
+                .await
+                .expect("apply")
+        }
+    };
+    let state = || {
+        let (db, fresh) = (&db, fresh.clone());
+        async move {
+            scalar_i64(
+                db,
+                "SELECT is_critical * 10 + (critique_raised_version IS NOT NULL
+                        AND critique_raised_version = row_version)
+                 FROM inventory_count_lines WHERE entity_sync_id = ?",
+                vec![fresh.into()],
+            )
+            .await
+        }
+    };
+    let outcome = apply(received, 2).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 11, "raised here, marked");
+
+    // The tolerance loosened here (70 %: the 50 % variance is within it now); a version with the
+    // same quantities, still "within", now approved by another person: a changed version, judged
+    // again — within — and the flag this PC raised is lowered, its mark cleared.
+    tolerance_here_only(&db, SETTING_PERCENT_THRESHOLD, "70").await;
+    let approver = second_person(&db, counter).await;
+    let approver_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+        vec![approver.into()],
+    )
+    .await;
+    let mut approved = wire_row(&db, "inventory_count_lines", &fresh).await;
+    for (k, v) in [
+        ("is_critical", serde_json::json!(0)),
+        ("approved_by_sync_id", serde_json::json!(approver_sync)),
+        ("approved_at", serde_json::json!("2026-10-25T09:00:00Z")),
+        ("approval_note", serde_json::json!("Écart vérifié par un second")),
+    ] {
+        approved.insert(k.into(), v);
+    }
+    let verdict = inbound_count_line_check(&db, &fresh, &approved).await.expect("judged");
+    assert_eq!(
+        verdict_code(verdict.as_ref()),
+        "pass",
+        "the lowering of a flag raised here"
+    );
+    let outcome = apply(approved, 3).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state().await, 0, "judged within now: stored within, no mark");
+}
+
+/// Review of 5ead90e8 (S1, N1): a received version of a line held here is "already judged" only
+/// under the same count, article and location (whose cost judges it) and the same "approval
+/// required"; otherwise it is judged again. A line accepted within the tolerance, approved by its
+/// counter, re-sent under a costlier location is judged there — above: refused — not accepted
+/// unchanged.
+#[tokio::test]
+async fn a_line_held_within_re_sent_under_another_location_is_judged_again() {
+    use crate::inventory::count_four_eyes::{held_judgement, inbound_count_line_check, SYNC_SELF_APPROVAL};
+    let db = started_device_db().await;
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
+    let costly = second_location(&db, &mut factory, article.rowid, 10.0).await;
+    for (place, cost) in [(location.rowid, 1.0), (costly.rowid, 100.0)] {
+        exec(
+            &db,
+            "UPDATE stock_balances SET moving_avg_unit_cost = ? WHERE article_id = ? AND location_id = ?",
+            vec![cost.into(), article.rowid.into(), place.into()],
+        )
+        .await;
+    }
+    crate::settings::set_setting(
+        &db,
+        crate::inventory::count_four_eyes::SETTING_VALUE_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("value threshold");
+    let counter = user_with(&db, "movedlinecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    // 5 of 10 at a cost of 1: a value of 5, within 50; its counter approves it.
+    let (session, line) = enter_count(&db, counter, article.rowid, location.rowid, 5.0).await;
+    assert_eq!(line.is_critical, 0, "within the tolerance");
+    crate::inventory::controls::transition_count_session(&db, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    let approved = crate::inventory::controls::approve_count_line(
+        &db,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    assert_eq!((approved.is_critical, approved.self_approved), (0, 0));
+    let line_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM inventory_count_lines WHERE id = ?",
+        vec![line.id.into()],
+    )
+    .await;
+    let held = wire_row(&db, "inventory_count_lines", &line_sync).await;
+    let changed = |key: &str, value: serde_json::Value| {
+        let mut p = held.clone();
+        p.insert(key.into(), value);
+        p
+    };
+    let costly_sync = text_of(
+        &db,
+        "SELECT entity_sync_id FROM stock_locations WHERE id = ?",
+        vec![costly.rowid.into()],
+    )
+    .await;
+
+    // The same version: already judged (the flag held, within, is kept).
+    assert_eq!(held_judgement(&db, &line_sync, &held).await.expect("held"), Some(false));
+    let verdict = inbound_count_line_check(&db, &line_sync, &held).await.expect("judged");
+    assert_eq!(verdict_code(verdict.as_ref()), "pass");
+    // Another count, article, location or "approval required": judged again.
+    for (key, value) in [
+        (
+            "session_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        (
+            "article_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        ("location_sync_id", serde_json::json!(costly_sync)),
+        ("approval_required", serde_json::json!(0)),
+    ] {
+        assert_eq!(
+            held_judgement(&db, &line_sync, &changed(key, value))
+                .await
+                .expect("held"),
+            None,
+            "{key} changed: not already judged"
+        );
+    }
+    // Under the costlier location (5 × 100 = 500, above 50), approved by its counter without a
+    // self-approval: refused, not accepted as the line held.
+    let verdict = inbound_count_line_check(
+        &db,
+        &line_sync,
+        &changed("location_sync_id", serde_json::json!(costly_sync)),
+    )
+    .await
+    .expect("judged");
+    assert_eq!(
+        verdict_code(verdict.as_ref()),
+        SYNC_SELF_APPROVAL,
+        "judged at the costlier location"
+    );
+}
+
+/// Review of 5ead90e8 (S2): a received count adjustment is released by the line version naming it
+/// only when it is that line's own adjustment — the line's count session, article and location,
+/// of the line's variance — as a reversal must be the reversal of its count. Otherwise it waits
+/// (COUNT_APPROVAL_RECORD_INVALID) and the stock does not move.
+#[tokio::test]
+async fn a_count_adjustment_is_released_only_if_it_is_the_one_of_its_line() {
+    use crate::inventory::count_four_eyes::inbound_count_movement_hold;
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    let mut factory = RowFactory::new();
+    let (article, location) = stocked_pair(&a, &mut factory, 10.0).await;
+    crate::settings::set_setting(
+        &a,
+        crate::inventory::count_four_eyes::SETTING_PERCENT_THRESHOLD,
+        "tenant",
+        "50",
+        None,
+        "test",
+    )
+    .await
+    .expect("percent threshold");
+    let other_location = second_location(&a, &mut factory, article.rowid, 10.0).await;
+    sync_clean(&mut server, "A", &a).await;
+    sync_clean(&mut server, "B", &b).await;
+    sites_made_locally(&a, &b, false, false).await;
+    let counter = user_with(&a, "ownadjustcounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let pair_b = local_pair(&b, &article, &location).await;
+    // 7 counted of 10: 30 %, within 50 %: its counter approves it, accepted on B.
+    let (session, line) = enter_count(&a, counter, article.rowid, location.rowid, 7.0).await;
+    let session = crate::inventory::controls::transition_count_session(&a, move_to(&session, "submitted", counter))
+        .await
+        .expect("submitted");
+    crate::inventory::controls::approve_count_line(
+        &a,
+        crate::inventory::domain::ApproveInventoryCountLineInput {
+            line_id: line.id,
+            expected_row_version: line.row_version,
+            reviewer_id: i64::from(counter),
+            reviewer_evidence: "Bac vérifié au comptage".into(),
+        },
+    )
+    .await
+    .expect("approved by its counter");
+    crate::inventory::controls::transition_count_session(&a, move_to(&session, "approved", counter))
+        .await
+        .expect("approved");
+    let session_sync = session_sync_of(&a, &session.session_code).await;
+    sync_applied(&mut server, "A", &a).await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        conflict_kinds(&b).await.is_empty(),
+        "accepted on B within the tolerance"
+    );
+
+    // A posts; B receives an adjustment of another quantity than the line's variance (−3).
+    post_on(&a, counter, &session_sync).await;
+    sync_applied(&mut server, "A", &a).await;
+    let adjustment = movement_sync_id(&a, &session_sync, "COUNT_ADJUST").await;
+    let real = wire_row(&a, "inventory_transactions", &adjustment).await;
+    assert_eq!(real.get("quantity"), Some(&serde_json::json!(-3.0)));
+    {
+        let row = server
+            .state
+            .get_mut(&("inventory_transactions".to_string(), adjustment.clone()))
+            .expect("the adjustment is on the server");
+        let mut payload: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&row.payload_json).expect("payload");
+        payload.insert("quantity".into(), serde_json::json!(-8.0));
+        row.payload_json = serde_json::to_string(&payload).expect("json");
+        row.payload_hash = crate::sync::queries::hash_payload(&row.payload_json);
+    }
+    sync_applied(&mut server, "B", &b).await;
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_ADJUST").await,
+        (0, 0),
+        "not the line's adjustment: it waits"
+    );
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "the stock does not move"
+    );
+
+    // Judged against the line version naming it, waiting on B: its own adjustment passes; another
+    // quantity, article, location or count waits.
+    let hold = |payload: serde_json::Map<String, serde_json::Value>| {
+        let (b, adjustment) = (&b, adjustment.clone());
+        async move {
+            let verdict = inbound_count_movement_hold(b, &adjustment, &payload)
+                .await
+                .expect("judged");
+            verdict_code(verdict.as_ref())
+        }
+    };
+    assert_eq!(hold(real.clone()).await, "pass", "the line's own adjustment");
+    for (key, value) in [
+        ("quantity", serde_json::json!(-8.0)),
+        (
+            "article_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+        ("location_sync_id", serde_json::json!(other_location.entity_sync_id)),
+        (
+            "source_sync_id",
+            serde_json::json!(crate::sync::identity::new_entity_sync_id()),
+        ),
+    ] {
+        let mut tampered = real.clone();
+        tampered.insert(key.into(), value);
+        assert_eq!(hold(tampered).await, "wait", "{key} is not the line's");
+    }
+}
+
 /// Review of 435c9410 (SF1, SF2, SF3): the reversal a received count line names must undo exactly
 /// the adjustment it names as posted — a token reversal, or the real reversal of another count of
 /// the same article and location, is refused; a reversal named without a posted adjustment is

@@ -524,9 +524,11 @@ fn same_quantities(
 }
 
 /// Whether a received version (`line`: the received row completed by the one held here) is one this
-/// PC already judged (review of b4f8b2fd, B1): its checked fields (quantities, counter, approval,
-/// second approval, reversal, self-approval flag) are those held here, and its "above the
-/// tolerance" flag is not above the one held here. The flag held is compared with the received
+/// PC already judged (review of b4f8b2fd, B1): its checked fields (quantities, the count, article
+/// and location it belongs to, counter, approval, whether approval is required, second approval,
+/// reversal, self-approval flag) are those held here, and its "above the tolerance" flag is not
+/// above the one held here. A version of the line under another count, article or location (whose
+/// cost judges it) is judged again (review of 5ead90e8, S1). The flag held is compared with the received
 /// one, never with a judgement of now: an edit of the tolerance or a move of the cost since does
 /// not judge the line again ([`inbound_count_line_check`] accepts it, [`store_judged_critique`]
 /// keeps the flag held). A received "above" over a held "within" is judged.
@@ -536,6 +538,9 @@ fn already_judged(
 ) -> bool {
     same_quantities(held, line)
         && [
+            "session_sync_id",
+            "article_sync_id",
+            "location_sync_id",
             "approved_by_sync_id",
             "approved_at",
             "counted_by_sync_id",
@@ -545,12 +550,14 @@ fn already_judged(
         ]
         .iter()
         .all(|k| field(held, k) == field(line, k))
-        && flag(held, "self_approved") == flag(line, "self_approved")
+        && ["self_approved", "approval_required"]
+            .iter()
+            .all(|k| flag(held, k) == flag(line, k))
         && (flag(held, "is_critical") || !flag(line, "is_critical"))
 }
 
 /// What a received count line's write must know of the line held here, read before the write
-/// (`sync::apply_hooks::count_line_before_write`): the "above the tolerance" flag held, when the
+/// (`sync::apply_hooks::held_before_write`): the "above the tolerance" flag held, when the
 /// received version is one this PC already judged ([`already_judged`]); `None` otherwise (new
 /// here, or changed: judged again after the write).
 pub(crate) async fn held_judgement(
@@ -1130,6 +1137,15 @@ pub(crate) async fn inbound_count_movement_hold(
             ))
         }));
     }
+    // The adjustment its line releases must be that line's own (review of 5ead90e8, S2), as a
+    // reversal must be the reversal of its count (`reversal_check`): otherwise a line judged here
+    // would release a movement of another count, article, location or quantity.
+    let line_here = crate::permit::sync_check::local_wire(conn, LINES, &line_sync_id).await?;
+    if let Some(why) = adjustment_mismatch(received, &crate::permit::sync_check::overlay(line_here.as_ref(), &line)) {
+        return Ok(Some(InboundVerdict::Defer(format!(
+            "count movement {entity_sync_id} is held with its count line {line_sync_id}              ({SYNC_APPROVAL_RECORD_INVALID}: {why})"
+        ))));
+    }
     // Its line judged here, in the line's own context (a version from a snapshot or an exchange):
     // a line arriving reversed passes once its reversal is shown to be this count's
     // (`reversal_check`), and the adjustment is then applied with it (`count_movement_group`).
@@ -1148,6 +1164,34 @@ pub(crate) async fn inbound_count_movement_hold(
                  settled where the count is applied: a second approval, or its reversal"
         ))),
     })
+}
+
+/// Why a received count adjustment is not the one of the count line naming it as posted (`None`: it
+/// is): the adjustment of a count is a `COUNT_ADJUST` of that line's count session, article and
+/// location, of the line's variance (within [`QUANTITY_AGREEMENT`]).
+fn adjustment_mismatch(
+    movement: &serde_json::Map<String, serde_json::Value>,
+    line: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let same = |movement_key: &str, line_key: &str| {
+        field(line, line_key).is_some() && field(movement, movement_key) == field(line, line_key)
+    };
+    if !(same("source_sync_id", "session_sync_id")
+        && same("article_sync_id", "article_sync_id")
+        && same("location_sync_id", "location_sync_id"))
+    {
+        return Some("it is not the adjustment of this count (session, article and location)".to_string());
+    }
+    let number =
+        |p: &serde_json::Map<String, serde_json::Value>, key: &str| p.get(key).and_then(serde_json::Value::as_f64);
+    match (number(movement, "quantity"), number(line, "variance_qty")) {
+        (Some(moved), Some(variance)) if (moved - variance).abs() <= QUANTITY_AGREEMENT => None,
+        (moved, variance) => Some(format!(
+            "its quantity ({}) is not the count's variance ({})",
+            moved.map_or_else(|| "?".to_string(), |q| q.to_string()),
+            variance.map_or_else(|| "?".to_string(), |q| q.to_string()),
+        )),
+    }
 }
 
 /// Display parameters of a count line notice: article, location, count and counter, read from what
