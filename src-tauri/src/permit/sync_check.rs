@@ -578,7 +578,7 @@ pub(crate) struct Children {
 /// for an isolation or a handover log, when it keeps the isolation or hand-over rules (otherwise it
 /// is left to be refused on its own). A row moved to another parent by its waiting version no longer
 /// counts.
-async fn children(
+pub(crate) async fn children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     parent_table: &str,

@@ -9385,6 +9385,23 @@ export interface ScheduleBreakIn {
   approved_by_display_name: string | null;
   old_assignee_name: string | null;
   new_assignee_name: string | null;
+  /** When the approver's password was verified (null: nobody signed, or recorded before 0.9.2). */
+  approver_signed_at: string | null;
+  /** Blocking checks the break-in forced: crew_capacity, locked_window, readiness, shutdown_window. */
+  forced_checks: string[];
+  /** The crew the work leaves (null: new work, or before 0.9.2) and the crew it goes to. */
+  old_team_id: number | null;
+  new_team_id: number | null;
+  /** Refused by a planner on a PC that received it ("refusé (sync)"): history, never valid. */
+  sync_refused_at: string | null;
+  sync_refused_reason: string | null;
+}
+
+/** A person who may sign a break-in of a crew (plan.confirm at the crew's site). */
+export interface BreakInApproverOption {
+  user_id: number;
+  display_name: string;
+  personnel_id: number;
 }
 
 export interface ScheduleBreakInFilter {
@@ -9408,6 +9425,8 @@ export interface CreateScheduleBreakInInput {
   bypass_availability?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
   acknowledged_assignee_issues?: string[];
 }
@@ -10604,8 +10623,21 @@ export interface SyncConflictRecord {
   reason: SyncConflictReason | null;
   /** A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): what it is. */
   count_hold?: SyncConflictCountHold | null;
+  /** Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the two times the card shows. */
+  planning_times?: SyncConflictPlanningTimes | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The two times a `PLANNING_WEEK_FROZEN` conflict card shows (CMMS Advisor decision 4,
+ * `planning::sync_check::planning_conflict_times`); neither is used to let the work in.
+ */
+export interface SyncConflictPlanningTimes {
+  /** When the other PC changed the commitment, by that PC's clock (as received). */
+  changed_at: string | null;
+  /** When the week froze here (or was due to freeze); `null`: not recorded. */
+  frozen_at: string | null;
 }
 
 /**
@@ -11306,6 +11338,8 @@ export interface AssessCriticalityResult {
 export interface CommitBreakIn {
   reason: string;
   approved_by_user_id?: number | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   dangerous_override_reason?: string | null;
 }
 

@@ -12,6 +12,7 @@ import {
 } from "@/design-system/resource-timeline-tokens";
 import type {
   ConflictReason,
+  CreateScheduleCommitmentInput,
   PlanningBlockedInterval,
   PlanningGanttSnapshot,
   PlanningWindow,
@@ -929,6 +930,17 @@ export function isAssigneeOverridableError(codes: string[]): boolean {
 /** The overridable refusals among `codes` (shown in the override dialog, acknowledged on retry). */
 export function overridableCodes(codes: string[]): string[] {
   return codes.filter((c) => (ASSIGNEE_OVERRIDABLE_CODES as readonly string[]).includes(c));
+}
+
+/**
+ * The input kept for the retry after an assignee override (review N7): the approver's password is
+ * never kept for a later submit, so a break-in into a frozen week is dropped and signed again after
+ * the override (the server then refuses PLANNING_WEEK_FROZEN and the signature dialog opens).
+ */
+export function overrideRetryInput(
+  input: CreateScheduleCommitmentInput,
+): CreateScheduleCommitmentInput {
+  return input.frozen_week_break_in ? { ...input, frozen_week_break_in: null } : input;
 }
 
 /** The crew's load would exceed its capacity plus overtime ceiling (`PLANNING_CAPACITY_EXCEEDED`). */

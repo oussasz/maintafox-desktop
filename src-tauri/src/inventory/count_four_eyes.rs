@@ -88,8 +88,10 @@
 //! version naming it, and only if it undoes that line's adjustment, applied here, that adjustment
 //! and the line held here are of the reversal's own count (session, article and location: checked
 //! against what this PC holds, never only against the line version), that count is not reversed
-//! here yet and the line held here names no other reversal (otherwise a
-//! `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal: a count is reversed once per posting).
+//! here yet, that adjustment is not reversed here yet (a count posted twice accepts one reversal of
+//! each of its adjustments, never two of one) and the line held here names no other reversal
+//! (otherwise a `COUNT_APPROVAL_RECORD_INVALID` conflict on that reversal: a count is reversed once
+//! per posting).
 //! Likewise an adjustment named by a version of a line held here under another count is a conflict
 //! on that adjustment (a line is never moved: it would be posted a second time elsewhere). Only the
 //! count's own reversal (its seeded id) that no version of its line names here is matched against
@@ -1150,10 +1152,18 @@ async fn count_movements_here(
 /// although the count holds two adjustments (review of 5fdad581, N1). Safe: both PCs hold the same
 /// stock (each one adjustment reversed, the other kept), each with a visible conflict on the other
 /// reversal for a person, and the count is listed "posted twice" to be checked by a new count.
+///
+/// Each adjustment is reversed once here (review of 006d8057, N1): a count with two adjustments
+/// here accepts two reversals, but not two of the same adjustment (`posted`, the one its line
+/// version names). Otherwise a reversal under a new id, named by a line under a new id (no line
+/// held here to compare with), would undo an adjustment already undone here a second time. Which
+/// adjustment a reversal held here undid is read from the count line versions that paired them
+/// ([`adjustment_reversed_here`]); a reversal of the other adjustment still passes.
 async fn second_reversal_here(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &serde_json::Map<String, serde_json::Value>,
+    posted: &str,
     line_here: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> AppResult<Option<String>> {
     let undone = received
@@ -1165,10 +1175,57 @@ async fn second_reversal_here(
             return Ok(Some(ALREADY_REVERSED_HERE.to_string()));
         }
     }
+    if let Some(other) = adjustment_reversed_here(conn, posted, entity_sync_id).await? {
+        return Ok(Some(format!(
+            "the adjustment it undoes ({posted}) is already reversed here by {other}"
+        )));
+    }
     Ok(line_here
         .and_then(|line| field(line, "reversed_transaction_sync_id"))
         .filter(|other| *other != entity_sync_id)
         .map(|other| format!("its count line here names another reversal ({other})")))
+}
+
+/// The sync id of a count reversal held here, other than `reversal_sync_id`, that undid the
+/// adjustment `adjustment_sync_id` (`None`: none did). A reversal is paired with the adjustment it
+/// undoes by its count line, which names both (posted, reversed): a line held here, a line version
+/// applied here (its reversal was checked to undo that adjustment, [`reversal_check`]), or a line
+/// version this PC staged for the server (its own reversal of its own posting). Only the reversals
+/// of that adjustment's own count (session, article and location) are looked at.
+async fn adjustment_reversed_here(
+    conn: &impl ConnectionTrait,
+    adjustment_sync_id: &str,
+    reversal_sync_id: &str,
+) -> AppResult<Option<String>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT r.entity_sync_id AS other FROM inventory_transactions x
+             JOIN inventory_transactions r
+               ON r.source_type = 'COUNT_SESSION' AND r.source_id = x.source_id
+              AND r.article_id = x.article_id AND r.location_id = x.location_id
+             WHERE x.entity_sync_id = ? AND x.source_type = 'COUNT_SESSION'
+               AND r.movement_type = 'COUNT_REVERSAL' AND r.entity_sync_id <> ?
+               AND (EXISTS (SELECT 1 FROM inventory_count_lines cl
+                             WHERE cl.reversed_transaction_id = r.id AND cl.posted_transaction_id = x.id)
+                    OR EXISTS (SELECT 1 FROM sync_inbox i
+                                WHERE i.entity_type = 'inventory_count_lines' AND i.apply_status = 'applied'
+                                  AND json_extract(i.payload_json, '$.posted_transaction_sync_id') = ?
+                                  AND json_extract(i.payload_json, '$.reversed_transaction_sync_id') = r.entity_sync_id)
+                    OR EXISTS (SELECT 1 FROM sync_outbox o
+                                WHERE o.entity_type = 'inventory_count_lines'
+                                  AND json_extract(o.payload_json, '$.posted_transaction_sync_id') = ?
+                                  AND json_extract(o.payload_json, '$.reversed_transaction_sync_id') = r.entity_sync_id))
+             ORDER BY r.id LIMIT 1",
+            [
+                adjustment_sync_id.into(),
+                reversal_sync_id.into(),
+                adjustment_sync_id.into(),
+                adjustment_sync_id.into(),
+            ],
+        ))
+        .await?;
+    Ok(row.map(|r| r.try_get::<String>("", "other")).transpose()?)
 }
 
 /// Whether this PC holds a `COUNT_ADJUST` of the received movement's count session, article and
@@ -1592,11 +1649,12 @@ pub(crate) async fn inbound_count_movement_hold(
         // adjustment (review of 2faa97d5, N1: an adjustment applied here does not release any
         // reversal of its count). A line naming no adjustment for it to undo, or another reversal,
         // is refused when it is judged (`reversal_check`): the reversal is never applied alone.
-        let adjustment = match field(&line, "posted_transaction_sync_id") {
+        let posted = field(&line, "posted_transaction_sync_id").map(str::to_string);
+        let adjustment = match posted.as_deref() {
             Some(posted) => crate::permit::sync_check::local_wire(conn, "inventory_transactions", posted).await?,
             None => None,
         };
-        let Some(adjustment) = adjustment else {
+        let (Some(posted), Some(adjustment)) = (posted, adjustment) else {
             return Ok(Some(InboundVerdict::Defer(format!(
                 "count reversal {entity_sync_id}: the adjustment it undoes is not applied here (held with count line \
                  {line_sync_id})"
@@ -1635,9 +1693,9 @@ pub(crate) async fn inbound_count_movement_hold(
             );
         }
         // Its count's adjustment is applied here (the one just checked): its line version is not
-        // enough, the count must not be reversed here already (review of ab58cd53, B2) — a visible
-        // conflict on that reversal.
-        if let Some(why) = second_reversal_here(conn, entity_sync_id, received, line_here.as_ref()).await? {
+        // enough, the count must not be reversed here already (review of ab58cd53, B2), nor that
+        // adjustment (review of 006d8057, N1) — a visible conflict on that reversal.
+        if let Some(why) = second_reversal_here(conn, entity_sync_id, received, &posted, line_here.as_ref()).await? {
             return conflict(
                 SYNC_APPROVAL_RECORD_INVALID,
                 format!(

@@ -78,6 +78,15 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "INVALID_VALUE",
   "SETTING_LOCKED",
   "WEEK_LIFECYCLE_BACKWARDS",
+  // Planning four-eyes re-checked on arrival (`planning::sync_check`, AU-06, AU-102, S4).
+  "PLANNING_WEEK_FROZEN",
+  "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+  "PLANNING_BREAK_IN_SELF_APPROVAL",
+  "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED",
+  "PLANNING_BREAK_IN_UNSIGNED",
+  "WEEK_UNFREEZE_UNDECIDED",
+  "WEEK_UNFREEZE_SAME_PERSON",
+  "WEEK_UNFREEZE_UNAUTHORISED",
   "DECISION_SELF_APPROVAL",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
@@ -304,6 +313,25 @@ export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
 ]);
 
 /**
+ * Planning four-eyes refusals (CMMS Advisor decision 2026-10-25): only "keep this PC's plan"
+ * (plan.confirm at the crew's site, with the reason; a refused row new here is kept in its refused
+ * form and sent, never deleted) and "escalate". Nothing is taken as received or dismissed: a
+ * legitimate change is redone here with a fresh signed break-in (`PLANNING_ACTIONS` in
+ * `src-tauri/src/sync/queries.rs`). A frozen-week or reopened-week refusal closes by itself when
+ * its signed break-in or its unfreeze decision arrives.
+ */
+export const PLANNING_CONFLICT_KINDS = new Set([
+  "PLANNING_WEEK_FROZEN",
+  "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+  "PLANNING_BREAK_IN_SELF_APPROVAL",
+  "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED",
+  "PLANNING_BREAK_IN_UNSIGNED",
+  "WEEK_UNFREEZE_UNDECIDED",
+  "WEEK_UNFREEZE_SAME_PERSON",
+  "WEEK_UNFREEZE_UNAUTHORISED",
+]);
+
+/**
  * Conflicts settled on the PC where the record is applied (a stock count approved by its counter
  * above the four-eyes tolerance, held here with its movement, CMMS Advisor Q8): the server refuses
  * "keep mine", "take theirs" and "dismiss" (`SETTLED_AT_ORIGIN_CONFLICTS` in
@@ -320,6 +348,7 @@ export function conflictActions(
   withTriage: boolean,
 ): ResolveSyncConflictInput["action"][] {
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
     return withTriage ? ["retry_later", "escalate"] : ["escalate"];
   }

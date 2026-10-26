@@ -661,6 +661,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.personnel_id", "personnel"),
             json_ref_hist("details_json", "$.break_in_id", "schedule_break_ins"),
             json_ref_hist("details_json", "$.approved_by_user_id", USER),
+            json_ref_hist("details_json", "$.requested_by_user_id", USER),
             json_ref_hist("details_json", "$.approved_by_personnel_id", "personnel"),
             json_ref_hist("details_json", "$.schedule_candidate_id", "schedule_candidates"),
             json_ref_hist("details_json", "$.team_id", "teams"),
@@ -1007,6 +1008,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
+                        // A break-in signed by a second planner, and a frozen-week conflict closed
+                        // by its break-in (`planning::break_in_approval`, `planning::sync_check`).
+                        ("schedule_commitment", "schedule_commitments"),
+                        // A reopened-week conflict closed by its decision (`planning::sync_check`).
+                        ("weekly_schedule", "weekly_schedules"),
                         // A work-order type given its maintenance nature (`wo::types`): the target
                         // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
                         // so the audit is unchanged when the value is deleted later (a discarded

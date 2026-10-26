@@ -82,6 +82,11 @@
     "usernameClash": "Le même identifiant « {{username}} » a été créé sur deux PC. Renommez l'un des deux comptes (Utilisateurs) sur le PC qui l'a créé, puis synchronisez. Si vous avez renommé le compte de ce PC, prenez ensuite le compte reçu.",
     "countHeldRecord": "Comptage {{session}} — compté et approuvé par {{counter}}, passé en stock le {{postedAt}}",
     "countSettledAtOrigin": "À régler sur le poste d'origine du comptage (celui où il est appliqué) : seconde approbation par une autre personne, ou annulation (contre-passation) du comptage. Ce conflit se ferme de lui-même quand l'une ou l'autre arrive ici.",
+    "planningTimes": {
+      "changedAt": "Modifié sur l'autre poste (son horloge)",
+      "frozenAt": "Semaine gelée ici",
+      "notRecorded": "non enregistré"
+    },
     "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
     "conflictKind": {
       "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
@@ -100,6 +105,14 @@
       "INVALID_VALUE": "Une modification reçue contient une valeur refusée par cette version",
       "SETTING_LOCKED": "Un paramètre qui ne peut plus changer ici (des écritures en dépendent)",
       "WEEK_LIFECYCLE_BACKWARDS": "Une semaine de planification reviendrait en arrière dans son cycle",
+      "PLANNING_WEEK_FROZEN": "Un travail entre dans une semaine gelée ici sans break-in signé valide (les heures sont indiquées ci-dessous : modification sur l'autre poste, gel ici). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé. Le conflit se ferme seul si son break-in signé arrive",
+      "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "Un break-in urgent, ou qui force un contrôle bloquant, reçu sans approbateur. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
+      "PLANNING_BREAK_IN_SELF_APPROVAL": "Un break-in approuvé par la personne qui l'a demandé (quatre yeux). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
+      "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED": "Un break-in approuvé par quelqu'un sans plan.confirm sur le site de l'équipe ici. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
+      "PLANNING_BREAK_IN_UNSIGNED": "Un break-in dont l'approbateur n'a pas signé avec son mot de passe (ancienne version). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
+      "WEEK_UNFREEZE_UNDECIDED": "Une semaine dégelée sans sa décision de dégel. Le conflit se ferme seul si la décision arrive ; sinon gardez le planning de ce poste (la semaine reste gelée)",
+      "WEEK_UNFREEZE_SAME_PERSON": "Une semaine dégelée par une décision de la personne qui l'a demandé (quatre yeux). Gardez le planning de ce poste : la semaine reste gelée",
+      "WEEK_UNFREEZE_UNAUTHORISED": "Une semaine dégelée par quelqu'un sans plan.confirm sur le site ici. Gardez le planning de ce poste : la semaine reste gelée",
       "DECISION_SELF_APPROVAL": "Une décision approuvée par la personne qui l'a proposée (quatre yeux)",
       "WO_PART_LINE_HAS_USE": "Une ligne de pièce planifiée a été annulée sur un autre poste, mais des pièces ont déjà été utilisées ou sorties du magasin pour elle ici : vérifiez la ligne avec le planificateur et le magasin avant de décider",
       "SITE_SETTING_UNAUDITED": "Une règle de site modifiée sans sa trace d'audit (réauthentification, motif, droit paramètres)",

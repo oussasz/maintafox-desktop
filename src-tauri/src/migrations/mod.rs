@@ -238,6 +238,7 @@ mod m20261022_000255_wo_permit_safety_origin;
 mod m20261022_000256_wo_task_outcome_evidence;
 mod m20261022_000257_stock_reserved_dirty;
 mod m20261023_000259_inventory_count_four_eyes;
+mod m20261025_000260_break_in_signature;
 mod m20261025_000261_user_credential_authors;
 mod m20261025_000262_delegation_policy_author;
 mod m20261026_000263_availability_block_version;
@@ -489,6 +490,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261023_000259_inventory_count_four_eyes::Migration),
             Box::new(m20261025_000261_user_credential_authors::Migration),
             Box::new(m20261025_000262_delegation_policy_author::Migration),
+            Box::new(m20261025_000260_break_in_signature::Migration),
             Box::new(m20261026_000263_availability_block_version::Migration),
         ]
     }
