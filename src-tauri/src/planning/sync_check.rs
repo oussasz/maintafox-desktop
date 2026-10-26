@@ -387,6 +387,57 @@ async fn back_to_baseline(
     Ok(false)
 }
 
+/// For a commitment new here: whether `to` is its place in the baseline of a week frozen here, by a
+/// baseline item of that week and baseline waiting in the inbox (a PC receiving a frozen week with
+/// its commitments: they are the plan, not work entering it).
+async fn in_received_baseline(conn: &impl ConnectionTrait, sid: &str, to: &Place) -> AppResult<bool> {
+    let commitment_key = key("schedule_commitment_id");
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT payload_json FROM sync_inbox WHERE entity_type = 'weekly_schedule_baseline_items' \
+                   AND {WAITING} AND json_extract(payload_json, '$.{commitment_key}') = ?"
+            ),
+            [sid.into()],
+        ))
+        .await?;
+    for r in rows {
+        let json: String = r.try_get("", "payload_json").map_err(sync_err)?;
+        let Ok(Value::Object(item)) = serde_json::from_str::<Value>(&json) else {
+            continue;
+        };
+        let (Some(start), Some(end), Some(week), Some(baseline)) = (
+            field(&item, "committed_start"),
+            field(&item, "committed_end"),
+            field(&item, &key("weekly_schedule_id")),
+            int(&item, "baseline_no"),
+        ) else {
+            continue;
+        };
+        if !same_instant(start, &to.start)
+            || !same_instant(end, &to.end)
+            || field(&item, &key("team_id")) != to.crew.as_deref()
+            || to.crew.is_none()
+        {
+            continue;
+        }
+        let frozen_at_that_baseline = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS f FROM weekly_schedules WHERE entity_sync_id = ? AND baseline_no = ? \
+                    AND status IN ('frozen', 'published')",
+                [week.into(), baseline.into()],
+            ))
+            .await?
+            .is_some();
+        if frozen_at_that_baseline {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// What the break-ins of a received commitment say.
 enum BreakInSupport {
     /// A valid run is applied here: the commitment may enter.
@@ -620,6 +671,9 @@ async fn judge_commitment(
                     undoes_refused(&here, from, &ctx.to)
                 }
             }
+            // New here (a PC receiving the plan): its baseline item of the week frozen here, at
+            // that baseline, waiting in the inbox with it.
+            (None, _) => in_received_baseline(conn, entity_sync_id, &ctx.to).await?,
             _ => false,
         };
         if restored {
@@ -1389,10 +1443,16 @@ async fn conflict_crews(
 /// "Keep this PC's plan" on a planning four-eyes conflict, before the generic keep
 /// (`sync::conflicts::keep_local_version`, which then sends this PC's version):
 /// - the person holds plan.confirm at the site of every crew involved (a week: its site here);
-/// - a commitment refused while new here is stored here cancelled ("refusé (sync)", by this
-///   person, now), a break-in refused while new here is stored here marked refused: that version is
-///   what is sent, so every PC ends with the same row (never a delete);
-/// - a row held here is simply sent again (a week stays frozen; its unfreeze event stays history).
+/// - the received version is still refused by this PC's rules: one let in now (its break-in or
+///   decision arrived, its week open here since) is not kept, its conflict closes by itself
+///   (`GATE_SYNC_KEEP_PLAN_NOT_REFUSED`, review R2-S2);
+/// - a commitment refused while new here is stored here cancelled ("refusé (sync) : semaine gelée
+///   — reason", by this person, now), a break-in refused while new here is stored here marked
+///   refused: that version is what is sent, so every PC ends with the same row (never a delete);
+/// - a row held here is sent again (a week stays frozen; its unfreeze event stays history); the
+///   other PC lets it in as the plan put back (`judge_commitment`, review R2-B1);
+/// - the break-ins that brought a refused commitment are refused with it and sent
+///   ([`refuse_break_ins_of`]), so the PC they came from never counts them again.
 pub(crate) async fn keep_planning_plan(
     conn: &impl ConnectionTrait,
     conflict: &crate::sync::domain::SyncConflictRecord,
@@ -1451,13 +1511,38 @@ pub(crate) async fn keep_planning_plan(
                 .to_string(),
         ));
     }
-    if local.is_some() || entity_type == "weekly_schedules" {
+    // Let in by this PC's rules now (its break-ins or its unfreeze decision arrived, its rights
+    // arrived, or its week is open here since): keeping would send a stale plan back, and the other PC
+    // would take it (review R2-S2). The conflict closes by itself at the next synchronisation.
+    let still_refused = match entity_type {
+        "schedule_commitments" => inbound_commitment_check(conn, sid, &received).await?.is_some(),
+        "schedule_break_ins" => local.is_some() || inbound_break_in_check(conn, sid, &received).await?.is_some(),
+        "weekly_schedules" => inbound_unfreeze_check(conn, sid, &received).await?.is_some(),
+        _ => true,
+    };
+    if !still_refused {
+        return Err(keep_refused(
+            "GATE_SYNC_KEEP_PLAN_NOT_REFUSED: This PC's rules accept the received version now (its break-in or its \
+             unfreeze decision has arrived, or its week is open here): there is no plan to keep; the conflict closes \
+             by itself at the next synchronisation."
+                .to_string(),
+        ));
+    }
+    if entity_type == "weekly_schedules" {
+        return Ok(());
+    }
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let refusal = refusal_text(&conflict.conflict_type, reason);
+    if local.is_some() {
+        // The break-ins that brought the refused version, marked refused and sent with it.
+        if entity_type == "schedule_commitments" {
+            refuse_break_ins_of(conn, sid, &received, local.as_ref(), user_id, &refusal, &now, reason).await?;
+        }
         return Ok(());
     }
 
     // Absent here: stored here in its refused form, then sent as this PC's version.
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let refusal = format!("refusé (sync) : {} — {reason}", conflict.conflict_type);
     let mut refused = received.clone();
     match entity_type {
         "schedule_commitments" => {
@@ -1482,13 +1567,52 @@ pub(crate) async fn keep_planning_plan(
         _ => return Ok(()),
     }
     let version = conflict.inbound_row_version.unwrap_or(1);
+    store_refused(conn, entity_type, sid, version, &refused).await?;
+    // Its break-ins waited for it: stored refused too, now that it is here.
+    if entity_type == "schedule_commitments" {
+        refuse_break_ins_of(
+            conn,
+            sid,
+            &received,
+            None,
+            user_id,
+            &refusal_text(&conflict.conflict_type, reason),
+            &now,
+            reason,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// The planner-facing words of a refusal (review N-g): "refusé (sync) : <what> — <reason>".
+fn refusal_text(conflict_type: &str, reason: &str) -> String {
+    let what = match conflict_type {
+        WEEK_FROZEN => "semaine gelée",
+        BREAK_IN_APPROVAL_REQUIRED => "break-in sans approbateur",
+        BREAK_IN_SELF_APPROVAL => "break-in approuvé par son demandeur",
+        BREAK_IN_APPROVER_UNAUTHORISED => "approbateur sans droit sur le site",
+        BREAK_IN_UNSIGNED => "break-in non signé",
+        _ => "règle de planification",
+    };
+    format!("refusé (sync) : {what} — {reason}")
+}
+
+/// Stores a refused version received from another PC (a commitment cancelled, a break-in marked).
+async fn store_refused(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    sid: &str,
+    version: i64,
+    refused: &Payload,
+) -> AppResult<()> {
     match crate::sync::materialize::apply_inbound_payload(
         conn,
         entity_type,
         sid,
         "upsert",
         version,
-        &Value::Object(refused).to_string(),
+        &Value::Object(refused.clone()).to_string(),
     )
     .await?
     {
@@ -1498,4 +1622,165 @@ pub(crate) async fn keep_planning_plan(
             "GATE_SYNC_KEEP_PLAN_NOT_YET: The refused version cannot be recorded here yet: {message}"
         ))),
     }
+}
+
+/// Audit action of a break-in refused with its commitment's kept plan.
+pub(crate) const BREAK_IN_REFUSED_WITH_PLAN_EVENT: &str = "planning.break_in.refused_with_kept_plan";
+
+/// "Keep this PC's plan" on a commitment refused as `PLANNING_WEEK_FROZEN`: the break-ins that brought
+/// its refused version are refused with it (CMMS Advisor decisions 2-3, review R2-B1), so the PC
+/// they came from takes the marks with the kept version and never counts them again:
+/// - those received and not held here (waiting in the inbox, or refused there on their own): stored
+///   here marked refused, their open conflict closed with this decision (audited), and sent;
+/// - those held here that describe moves not made here (they arrived before their commitment: a run
+///   of the latest break-ins here starting where the job is here): marked refused here, and sent.
+///
+/// `local`: the commitment as held here before the decision (`None`: new here, nothing held here
+/// describes its moves).
+#[allow(clippy::too_many_arguments)]
+async fn refuse_break_ins_of(
+    conn: &impl ConnectionTrait,
+    sid: &str,
+    received: &Payload,
+    local: Option<&Payload>,
+    user_id: i64,
+    refusal: &str,
+    now: &str,
+    reason: &str,
+) -> AppResult<()> {
+    let mut refused_sids: Vec<String> = Vec::new();
+    // Held here, moves not made here: the longest run of the latest ones starting at the job's place.
+    if let (Some(from), Some(_)) = (local.and_then(Place::of), Place::of(&overlay(local, received))) {
+        let (here, _) = break_in_moves(conn, sid).await?;
+        let mut run: &[BreakInMove] = &[];
+        for taken in 1..=here.len() {
+            let candidate = &here[here.len() - taken..];
+            if candidate.iter().any(|m| m.refused) {
+                break;
+            }
+            let mut at = from.clone();
+            if candidate.iter().all(|m| match m.step(&at) {
+                Some(next) => {
+                    at = next;
+                    true
+                }
+                None => false,
+            }) {
+                run = candidate;
+            }
+        }
+        for m in run {
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE schedule_break_ins SET sync_refused_at = ?, sync_refused_reason = ?, \
+                        row_version = row_version + 1 \
+                  WHERE entity_sync_id = ? AND sync_refused_at IS NULL",
+                [now.into(), refusal.into(), m.sid.clone().into()],
+            ))
+            .await?;
+            refused_sids.push(m.sid.clone());
+        }
+    }
+    // Received, not held here: the latest version of each.
+    let commitment_key = key("schedule_commitment_id");
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT i.entity_sync_id AS sid, i.row_version, i.payload_json FROM sync_inbox i \
+                  WHERE i.entity_type = 'schedule_break_ins' \
+                    AND i.apply_status IN ('pending', 'deferred', 'conflict') \
+                    AND i.operation NOT IN ('delete', 'archive') \
+                    AND json_extract(i.payload_json, '$.{commitment_key}') = ? \
+                    AND json_extract(i.payload_json, '$.sync_refused_at') IS NULL \
+                    AND NOT EXISTS (SELECT 1 FROM schedule_break_ins sb WHERE sb.entity_sync_id = i.entity_sync_id) \
+                  ORDER BY i.id DESC"
+            ),
+            [sid.into()],
+        ))
+        .await?;
+    let mut seen: Vec<String> = Vec::new();
+    for r in rows {
+        let break_in: String = r.try_get("", "sid").map_err(sync_err)?;
+        if seen.contains(&break_in) {
+            continue;
+        }
+        seen.push(break_in.clone());
+        let version: i64 = r.try_get("", "row_version").map_err(sync_err)?;
+        let json: String = r.try_get("", "payload_json").map_err(sync_err)?;
+        let Ok(Value::Object(mut marked)) = serde_json::from_str::<Value>(&json) else {
+            continue;
+        };
+        marked.insert("sync_refused_at".into(), now.into());
+        marked.insert("sync_refused_reason".into(), refusal.into());
+        store_refused(conn, "schedule_break_ins", &break_in, version, &marked).await?;
+        // Sent on top of the version the server holds, as "keep mine" does.
+        crate::sync::queries::overwrite_synced_state(
+            conn,
+            "schedule_break_ins",
+            &break_in,
+            version,
+            &crate::sync::queries::hash_payload(&json),
+            "conflict_keep_local",
+        )
+        .await?;
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE sync_inbox SET apply_status = 'superseded', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+              WHERE entity_type = 'schedule_break_ins' AND entity_sync_id = ? \
+                AND apply_status IN ('pending', 'deferred', 'conflict')",
+            [break_in.clone().into()],
+        ))
+        .await?;
+        crate::sync::capture::restage_current_state(conn, "schedule_break_ins", &break_in, &[Some(&json)]).await?;
+        refused_sids.push(break_in);
+    }
+    // Their own open conflicts are settled by this decision, audited with it.
+    for break_in in &refused_sids {
+        let open = conn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, conflict_type FROM sync_conflicts WHERE entity_type = 'schedule_break_ins' \
+                    AND entity_sync_id = ? AND status IN ('new', 'triaged', 'escalated')",
+                [break_in.clone().into()],
+            ))
+            .await?;
+        for c in open {
+            let conflict_id: i64 = c.try_get("", "id").map_err(sync_err)?;
+            let conflict_type: String = c.try_get("", "conflict_type").map_err(sync_err)?;
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE sync_conflicts SET status = 'resolved_local', resolution_action = 'accept_local', \
+                        resolution_note = ?, resolved_by_id = ?, \
+                        resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1, \
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+                  WHERE id = ?",
+                [reason.into(), user_id.into(), conflict_id.into()],
+            ))
+            .await?;
+            crate::audit::writer::write_audit_event_in(
+                conn,
+                crate::audit::writer::AuditEventInput {
+                    action_code: BREAK_IN_REFUSED_WITH_PLAN_EVENT.to_string(),
+                    target_type: Some("sync_conflict".to_string()),
+                    target_id: Some(conflict_id.to_string()),
+                    actor_id: Some(user_id),
+                    auth_context: "session".to_string(),
+                    result: "success".to_string(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "operations".to_string(),
+                    details_json: Some(json!({
+                        "conflict_type": conflict_type,
+                        "entity_type": "schedule_break_ins",
+                        "entity_sync_id": break_in,
+                        "commitment_sync_id": sid,
+                        "reason": reason,
+                    })),
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }

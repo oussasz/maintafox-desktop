@@ -1690,3 +1690,314 @@ async fn frozen_week_conflicts_close_once_the_reopened_week_is_applied() {
         "un-frozen as on the other PC"
     );
 }
+
+#[tokio::test]
+async fn a_conflict_this_pc_lets_in_now_is_not_kept() {
+    let r = received_setup_at("FE23", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let mut unfrozen = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
+    unfrozen.insert("frozen_at".into(), Value::Null);
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &unfrozen).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("pass");
+    // The week is reopened here since (its decision judged), before the next synchronisation.
+    let (week_sid, mut reopened) = week_payload(&r).await;
+    reopened.insert("status".into(), "approved".into());
+    reopened.insert("frozen_at".into(), Value::Null);
+    let requester = signing_approver(&r.db, 193, "FE23-REQ").await;
+    let requester_sid = sync_id(&r.db, "user_accounts", requester).await;
+    let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe23-ev1",
+        &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid),
+    )
+    .await;
+    let outcome = receive(&r.db, "weekly_schedules", &week_sid, reopened).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    // Keeping would send a frozen commitment back into a week open on both PCs: refused.
+    let err = resolve(&r.db, r.approver, &r.commitment_sid, "accept_local")
+        .await
+        .expect_err("not refused any more");
+    assert!(code_of(&err).contains("GATE_SYNC_KEEP_PLAN_NOT_REFUSED"), "{err:?}");
+    // The next synchronisation closes it.
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("next pass");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{}' AND status = 'resolved_remote'",
+                r.commitment_sid
+            )
+        )
+        .await,
+        1
+    );
+}
+
+// ── Two PCs: "keep this PC's plan" converges (review R2-B1, CMMS Advisor decision 2 and Q2) ─────
+
+/// Every received row applied, with no error (the inbox rows that are not are listed). The test's
+/// site rights are inserted raw, with no granting administrator: a receiving PC holds them back for
+/// review (`GRANT_BY_UNAUTHORISED_ADMIN`), so they are left out here.
+async fn assert_exchange_clean(
+    device: &str,
+    report: &crate::sync::test_support::ExchangeReport,
+    db: &DatabaseConnection,
+) {
+    let waiting: Vec<String> = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT entity_type || ' ' || apply_status || ' ' || COALESCE(rejection_code, '') || ' ' || \
+                    COALESCE(rejection_message, '') AS v \
+               FROM sync_inbox WHERE apply_status IN ('pending', 'deferred', 'conflict') \
+                AND entity_type <> 'user_scope_assignments'"
+                .to_string(),
+        ))
+        .await
+        .expect("inbox")
+        .iter()
+        .map(|r| r.try_get::<String>("", "v").unwrap_or_default())
+        .collect();
+    assert!(
+        report.materialized.errors.is_empty() && waiting.is_empty(),
+        "{device}: {:?} {waiting:?}",
+        report.materialized.errors
+    );
+}
+
+async fn open_planning_conflicts(db: &DatabaseConnection) -> i64 {
+    scalar(
+        db,
+        "SELECT COUNT(*) FROM sync_conflicts WHERE status IN ('new', 'triaged', 'escalated') \
+           AND entity_type <> 'user_scope_assignments'",
+    )
+    .await
+}
+
+/// The commitment's slot, crew and status on a PC, by its sync id (the crew by its sync id).
+async fn commitment_state(db: &DatabaseConnection, sid: &str) -> (String, String, String, String) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT c.committed_start, c.committed_end, t.entity_sync_id AS crew, c.status \
+               FROM schedule_commitments c JOIN teams t ON t.id = c.assigned_team_id WHERE c.entity_sync_id = ?",
+            [sid.into()],
+        ))
+        .await
+        .expect("q")
+        .expect("commitment");
+    (
+        row.try_get("", "committed_start").expect("start"),
+        row.try_get("", "committed_end").expect("end"),
+        row.try_get("", "crew").expect("crew"),
+        row.try_get("", "status").expect("status"),
+    )
+}
+
+/// A planner holding plan.confirm at `site` on `db` other than `not` (an elevated administrator here).
+async fn keeper(db: &DatabaseConnection, site: i64, not: Option<i64>) -> i64 {
+    super::break_in_approval::break_in_approvers(db, Some(site))
+        .await
+        .expect("approvers")
+        .into_iter()
+        .find(|u| Some(*u) != not)
+        .expect("a planner holding plan.confirm at the site on this PC")
+}
+
+#[tokio::test]
+async fn keeping_the_plan_after_a_refused_break_in_converges_on_both_pcs() {
+    use crate::sync::test_support::{started_device_db, TestServer};
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    // On A: a job at S0 in a week frozen on A, signed break-ins possible (approver at the site).
+    let (site_a, team_a) = weekly_site(&a, "RT1").await;
+    let approver_a = site_approver(&a, 160, "RT1-APP", site_a).await;
+    let job = wo_commitment(&a, team_a, "RT1 job", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    super::weekly_schedule::freeze_weekly_schedule(&a, 1, week_ref(site_a, "2026-05-04", None))
+        .await
+        .expect("frozen on A");
+    let job_sid = sync_id(&a, "schedule_commitments", job.id).await;
+    for (device, db) in [("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    let s0 = commitment_state(&a, &job_sid).await;
+    assert_eq!(commitment_state(&b, &job_sid).await, s0, "the same plan on both PCs");
+
+    // On B the approver holds no right at the site (withdrawn here, not sent).
+    exec_sql(
+        &b,
+        "DELETE FROM user_scope_assignments WHERE user_id = \
+           (SELECT id FROM user_accounts WHERE entity_sync_id = 'site-approver-160')",
+    )
+    .await;
+    exec_sql(&b, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&b, "DELETE FROM sync_outbox").await;
+
+    // On A: the job moved to S1 by a break-in A judges valid.
+    let mut current = job.clone();
+    current.row_version = scalar(
+        &a,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", job.id),
+    )
+    .await;
+    let bi = scheduling::create_schedule_break_in(
+        &a,
+        1,
+        signed(
+            move_input(&current, "emergency", "2026-05-06T08:00", "2026-05-06T09:00"),
+            approver_a,
+            APPROVER_PASSWORD,
+        ),
+    )
+    .await
+    .expect("signed on A");
+    let bi_sid = sync_id(&a, "schedule_break_ins", bi.id).await;
+    let s1 = commitment_state(&a, &job_sid).await;
+    assert_ne!(s1, s0);
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    // B refuses the move: its break-in is not valid here.
+    assert_eq!(commitment_state(&b, &job_sid).await, s0, "B keeps S0");
+    let (conflict_id, conflict_rv) = open_conflict_of(&b, &job_sid).await;
+    let site_b = scalar(&b, "SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-node-RT1'").await;
+    let approver_b = scalar(
+        &b,
+        "SELECT id FROM user_accounts WHERE entity_sync_id = 'site-approver-160'",
+    )
+    .await;
+    let planner_b = keeper(&b, site_b, Some(approver_b)).await;
+    crate::sync::queries::resolve_sync_conflict(
+        &b,
+        planner_b,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: conflict_rv,
+            action: "accept_local".to_string(),
+            resolution_note: Some("Approver has no right at this site here".to_string()),
+        },
+    )
+    .await
+    .expect("kept on B");
+    // The break-in is refused on B with the kept plan, its own conflict closed with the decision.
+    assert_eq!(
+        scalar(
+            &b,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = '{bi_sid}' \
+                   AND sync_refused_at IS NOT NULL AND sync_refused_reason LIKE 'refusé (sync) : semaine gelée%'"
+            )
+        )
+        .await,
+        1,
+        "stored on B, marked refused"
+    );
+    assert_eq!(open_planning_conflicts(&b).await, 0, "nothing left to decide on B");
+
+    // Exchanged: A takes B's kept version (back on its plan) and the refusal marks.
+    for (device, db) in [("B", &b), ("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    assert_eq!(open_planning_conflicts(&a).await, 0, "no new conflict on A");
+    assert_eq!(open_planning_conflicts(&b).await, 0, "no new conflict on B");
+    assert_eq!(commitment_state(&a, &job_sid).await, s0, "A is back on the kept plan");
+    assert_eq!(commitment_state(&b, &job_sid).await, s0);
+    for (device, db) in [("A", &a), ("B", &b)] {
+        assert_eq!(
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = '{bi_sid}' \
+                       AND sync_refused_at IS NOT NULL"
+                )
+            )
+            .await,
+            1,
+            "{device}: the break-in is refused there too"
+        );
+    }
+    // Nothing is left to send either way: the PCs agree.
+    let report = server.exchange("A", &a).await;
+    assert_eq!(report.sent, 0, "A has nothing more to send");
+}
+
+#[tokio::test]
+async fn a_change_made_before_the_freeze_reached_its_pc_converges_once_kept() {
+    use crate::sync::test_support::{started_device_db, TestServer};
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    // The job sits in the open week after the one about to freeze.
+    let (_, team_a) = weekly_site(&a, "RT2").await;
+    let job = wo_commitment(&a, team_a, "RT2 job", "2026-05-12T08:00", "2026-05-12T09:00").await;
+    let job_sid = sync_id(&a, "schedule_commitments", job.id).await;
+    for (device, db) in [("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    let s0 = commitment_state(&b, &job_sid).await;
+
+    // B freezes the week; A, not knowing it yet, moves the job into that week (open on A).
+    let site_b = scalar(&b, "SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-node-RT2'").await;
+    super::weekly_schedule::freeze_weekly_schedule(&b, 1, week_ref(site_b, "2026-05-04", None))
+        .await
+        .expect("frozen on B");
+    let rv = scalar(
+        &a,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", job.id),
+    )
+    .await;
+    scheduling::reschedule_schedule_commitment(
+        &a,
+        1,
+        super::domain::RescheduleCommitmentInput {
+            commitment_id: job.id,
+            expected_row_version: rv,
+            committed_start: local("2026-05-06T08:00"),
+            committed_end: local("2026-05-06T09:00"),
+            assigned_team_id: team_a,
+            assigned_personnel_id: None,
+            allow_double_booking_override: None,
+            override_reason: None,
+            budget_threshold: None,
+            acknowledged_assignee_issues: Vec::new(),
+        },
+    )
+    .await
+    .expect("moved on A while the week is open there");
+    server.exchange("B", &b).await;
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    // B: the job enters its frozen week with no break-in (the sender's clock is never trusted).
+    assert_eq!(commitment_state(&b, &job_sid).await, s0);
+    let (conflict_id, conflict_rv) = open_conflict_of(&b, &job_sid).await;
+    let planner_b = keeper(&b, site_b, None).await;
+    crate::sync::queries::resolve_sync_conflict(
+        &b,
+        planner_b,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: conflict_rv,
+            action: "accept_local".to_string(),
+            resolution_note: Some("Week frozen here before this change".to_string()),
+        },
+    )
+    .await
+    .expect("kept on B");
+    for (device, db) in [("B", &b), ("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    assert_eq!(open_planning_conflicts(&a).await, 0, "no new conflict on A");
+    assert_eq!(open_planning_conflicts(&b).await, 0);
+    assert_eq!(commitment_state(&a, &job_sid).await, s0, "A is back on B's kept plan");
+    assert_eq!(commitment_state(&b, &job_sid).await, s0);
+}
