@@ -759,3 +759,471 @@ async fn the_backfill_seals_decided_decisions_and_audits_name_sync_ids() {
         assert!(details.get(local).is_none(), "{local} is a local id");
     }
 }
+
+// ── Review of AU-76b (B1, S1-S4, S7) ──────────────────────────────────────────────────────────
+
+/// A payload as another PC receives it: written to JSON text and parsed back (the real wire path).
+fn through_text(p: &Payload) -> Payload {
+    serde_json::from_str(&serde_json::to_string(p).expect("json")).expect("parse")
+}
+
+/// A one-off work-order decision proposed by the admin with these study baselines (as computed by
+/// a real study: full-precision hours), approved by the reviewer.
+async fn approved_with_baselines(f: &Fixture, study_id: i64, mtbf: f64, exposure: f64) -> (i64, String) {
+    let d = wo_decision(f, study_id, None).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE {ENTITY} SET baseline_mtbf_hours = {mtbf:?}, baseline_exposure_hours = {exposure:?} \
+             WHERE id = {}",
+            d.id
+        ),
+    )
+    .await;
+    let current = crate::reliability::study::decisions::get_decision(&f.db, d.id)
+        .await
+        .expect("get");
+    let a = approve_decision(&f.db, decide(&current, None), f.reviewer)
+        .await
+        .expect("approve");
+    (a.id, decision_sync_id(f, a.id).await)
+}
+
+/// B1: full-precision baselines survive the JSON text of sync: a decision new here and a decision
+/// held here are both accepted, never refused as changed.
+#[tokio::test]
+async fn full_precision_baselines_keep_the_seal_through_json_text() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let values = [
+        (181_716.114_897_673_02, 2_725_741.723_464_595_3),
+        (8_760.0 / 3.0, 26_280.0 / 7.0),
+        (1_234.567_890_123_456_7, 98_765.432_109_876_54),
+        (100.1 * 3.0, 0.1 + 0.2),
+        (54_321.987_654_321_01 / 11.0, 7.0 / 9.0),
+    ];
+    for (n, (mtbf, exposure)) in values.into_iter().enumerate() {
+        let (_, sid) = approved_with_baselines(&f, study_id, mtbf, exposure).await;
+        let wire = wire_of(&f, ENTITY, &sid).await;
+        // Held here: received again through its text form.
+        let o = apply_wire(&f, ENTITY, &sid, "upsert", &through_text(&wire)).await;
+        assert_eq!(conflict_code(&o), None, "held, {mtbf}: {o:?}");
+        // New here: the same decision as another PC first receives it.
+        let (new_sid, p) = as_new(&wire, &format!("text-{n}"));
+        let o = apply_wire(&f, ENTITY, &new_sid, "upsert", &through_text(&p)).await;
+        assert!(matches!(o, ApplyOutcome::Applied), "new here, {mtbf}: {o:?}");
+        // The seal recomputed on the receiving side is the one sent.
+        let id = scalar(
+            &f.db,
+            &format!("SELECT id FROM {ENTITY} WHERE entity_sync_id = '{new_sid}'"),
+        )
+        .await;
+        assert_eq!(
+            local_approval_seal(&f.db, id).await.expect("seal").as_deref(),
+            wire.get("approval_seal").and_then(Value::as_str)
+        );
+    }
+}
+
+/// S1 and the empty mark: an unknown status never overwrites the status held here; an empty refusal
+/// mark counts as a mark, as the gates read it.
+#[tokio::test]
+async fn an_unknown_status_is_refused_and_an_empty_mark_is_a_mark() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (a, sid) = approved(&f, study_id).await;
+    let current = crate::reliability::study::decisions::get_decision(&f.db, a.id)
+        .await
+        .expect("get");
+    apply_decision(&f.db, decide(&current, None), f.admin)
+        .await
+        .expect("apply");
+    for status in [
+        Value::from("Applied"),
+        Value::from("applied "),
+        Value::from("x"),
+        Value::from(2),
+    ] {
+        let mut w = wire_of(&f, ENTITY, &sid).await;
+        w.insert("status".into(), status.clone());
+        let o = apply_wire(&f, ENTITY, &sid, "upsert", &w).await;
+        assert_eq!(conflict_code(&o), Some("DECISION_STATUS_REGRESSION"), "{status}: {o:?}");
+    }
+    assert_eq!(decision_status(&f, a.id).await, "applied");
+
+    let (b, bsid) = approved(&f, study_id).await;
+    let mut w = wire_of(&f, ENTITY, &bsid).await;
+    w.insert("sync_refused_at".into(), "".into());
+    let o = apply_wire(&f, ENTITY, &bsid, "upsert", &w).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    let b = crate::reliability::study::decisions::get_decision(&f.db, b.id)
+        .await
+        .expect("get");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&b, None), f.admin).await),
+        "GATE_REL_DECISION_SYNC_REFUSED"
+    );
+    // Received without it afterwards: the mark is never cleared.
+    let mut cleared = wire_of(&f, ENTITY, &bsid).await;
+    cleared.insert("sync_refused_at".into(), Value::Null);
+    let o = apply_wire(&f, ENTITY, &bsid, "upsert", &cleared).await;
+    assert_eq!(conflict_code(&o), Some("DECISION_STATUS_REGRESSION"), "{o:?}");
+}
+
+/// S2: an approval from a PC that does not seal, accepted here over the proposal held here, is
+/// sealed here, so this PC never sends it unsealed.
+#[tokio::test]
+async fn an_unsealed_approval_accepted_over_the_proposal_is_sealed_here() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let d = wo_decision(&f, study_id, None).await;
+    let sid = decision_sync_id(&f, d.id).await;
+    let mut w = wire_of(&f, ENTITY, &sid).await;
+    w.insert("status".into(), "approved".into());
+    w.insert("decided_by_sync_id".into(), user_sync(&f, f.reviewer).await.into());
+    w.insert("decided_at".into(), "2026-10-26T08:00:00+00:00".into());
+    w.remove("approval_seal");
+    let o = apply_wire(&f, ENTITY, &sid, "upsert", &through_text(&w)).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    let stored = text(&f, &format!("SELECT approval_seal FROM {ENTITY} WHERE id = {}", d.id)).await;
+    assert_eq!(
+        local_approval_seal(&f.db, d.id).await.expect("seal").as_deref(),
+        Some(stored.as_str())
+    );
+    // Sent from here, it carries the seal another upgraded PC accepts.
+    let sent = wire_of(&f, ENTITY, &sid).await;
+    assert_eq!(sent.get("approval_seal").and_then(Value::as_str), Some(stored.as_str()));
+    let (n, p) = as_new(&sent, "resealed");
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+}
+
+/// S3: the work order is held here but the decision is new here: a refused decision arriving, or
+/// one refused here by "keep this PC's decision", tells the work order's people.
+#[tokio::test]
+async fn a_refused_decision_new_here_tells_of_the_work_order_held_here() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (a, sid) = approved(&f, study_id).await;
+    let current = crate::reliability::study::decisions::get_decision(&f.db, a.id)
+        .await
+        .expect("get");
+    let applied = apply_decision(&f.db, decide(&current, None), f.admin)
+        .await
+        .expect("apply");
+    let wo = applied.linked_work_order_id.expect("work order");
+    let wire = wire_of(&f, ENTITY, &sid).await;
+    let notices = |decision_sid: String| {
+        let db = &f.db;
+        async move {
+            let event = crate::sync::identity::seeded_entity_sync_id(
+                "notification_events",
+                &format!("rel_decision_refused_wo_kept|{decision_sid}"),
+            );
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+                      WHERE e.entity_sync_id = '{event}'"
+                ),
+            )
+            .await
+        }
+    };
+
+    // Arriving already refused, new here, naming the work order held here.
+    let (n, mut p) = as_new(&wire, "marked-new");
+    p.insert("sync_refused_at".into(), "2026-10-26T10:00:00Z".into());
+    p.insert("sync_refused_reason".into(), "refusé (sync) : test".into());
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &p).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    assert!(notices(n.clone()).await >= 1, "the proposer is told");
+
+    // Refused here by "keep this PC's decision" while new here: links cleared, the people told.
+    let (k, mut q) = as_new(&wire, "keep-new-wo");
+    q.insert("title".into(), "Changé".into());
+    inbox(&f, &k, &q, 2).await;
+    materialize(&f).await;
+    assert_eq!(open_conflict(&f, &k).await.2, "DECISION_CONTENT_CHANGED");
+    resolve(&f, f.reviewer, &k, "accept_local").await.expect("keep");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM {ENTITY} WHERE entity_sync_id = '{k}' AND linked_work_order_id IS NULL")
+        )
+        .await,
+        1
+    );
+    assert!(notices(k).await >= 1, "the proposer is told of the work order kept");
+    assert_eq!(
+        scalar(&f.db, &format!("SELECT COUNT(*) FROM work_orders WHERE id = {wo}")).await,
+        1
+    );
+}
+
+/// A plan with one published version of P-101, approved: ready for a decision's PM revision.
+async fn approved_plan(f: &Fixture, code: &str) -> i64 {
+    use crate::pm::queries::{create_pm_plan, create_pm_plan_version};
+    let plan = create_pm_plan(
+        &f.db,
+        CreatePmPlanInput {
+            code: code.into(),
+            title: "Roulement pompe".into(),
+            description: None,
+            asset_scope_type: "equipment".into(),
+            asset_scope_id: Some(f.p101),
+            strategy_type: "fixed".into(),
+            criticality_value_id: None,
+            assigned_team_id: None,
+            requires_shutdown: false,
+            requires_permit: false,
+            is_active: Some(true),
+        },
+    )
+    .await
+    .expect("plan");
+    create_pm_plan_version(&f.db, plan.id, pm_version_input())
+        .await
+        .expect("version 1");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plans SET lifecycle_status = 'approved' WHERE id = {}",
+            plan.id
+        ),
+    )
+    .await;
+    plan.id
+}
+
+fn pm_version_input() -> CreatePmPlanVersionInput {
+    CreatePmPlanVersionInput {
+        effective_from: "2025-01-01T00:00:00Z".into(),
+        effective_to: None,
+        trigger_definition_json: r#"{"interval_unit":"week","interval_value":36}"#.into(),
+        task_package_json: None,
+        required_parts_json: None,
+        required_skills_json: Some("[]".into()),
+        required_tools_json: None,
+        estimated_duration_hours: Some(3.0),
+        planned_crew_size: None,
+        estimated_labor_cost: None,
+        estimated_parts_cost: None,
+        estimated_service_cost: None,
+        change_reason: None,
+    }
+}
+
+async fn publish(f: &Fixture, version: i64) -> AppResult<crate::pm::domain::PmPlanVersion> {
+    let rv = scalar(
+        &f.db,
+        &format!("SELECT row_version FROM pm_plan_versions WHERE id = {version}"),
+    )
+    .await;
+    crate::pm::queries::publish_pm_plan_version(
+        &f.db,
+        crate::pm::domain::PublishPmPlanVersionInput {
+            version_id: version,
+            expected_row_version: rv,
+        },
+    )
+    .await
+}
+
+/// S4 (CMMS Advisor, option A): a PM version already published from a decision refused since keeps
+/// running; its planners and the decision's proposer are told, naming the version; the plan shows
+/// "to review" while its current version comes from a decision refused or not accepted here, until
+/// another version is published.
+#[tokio::test]
+async fn a_published_version_of_a_refused_decision_runs_flagged_and_told() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let plan = approved_plan(&f, "PM-ST-76B-S4").await;
+    let flag = |plan: i64| {
+        let db = &f.db;
+        async move {
+            crate::pm::queries::get_pm_plan(db, plan)
+                .await
+                .expect("plan")
+                .source_decision_to_review
+        }
+    };
+    let d = pm_decision(&f, study_id, plan).await;
+    let a = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    let applied = apply_decision(&f.db, decide(&a, None), f.admin).await.expect("apply");
+    let version = applied.linked_pm_plan_version_id.expect("draft");
+    publish(&f, version).await.expect("published while accepted");
+    assert!(!flag(plan).await, "accepted here: nothing to review");
+
+    // The refusal arrives from another PC: the version stays published, flagged, and told of.
+    let sid = decision_sync_id(&f, d.id).await;
+    let mut marked = wire_of(&f, ENTITY, &sid).await;
+    marked.insert("sync_refused_at".into(), "2026-10-26T10:00:00Z".into());
+    marked.insert("sync_refused_reason".into(), "refusé (sync) : test".into());
+    let o = apply_wire(&f, ENTITY, &sid, "upsert", &marked).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    assert_eq!(
+        text(&f, &format!("SELECT status FROM pm_plan_versions WHERE id = {version}")).await,
+        "published"
+    );
+    assert!(flag(plan).await, "refused: to review");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+                  WHERE e.category_code = 'rel_decision_refused_wo_kept' AND e.message_key = 'rel_decision_refused_pm_kept' \
+                    AND n.recipient_user_id = {}",
+                f.admin
+            ),
+        )
+        .await,
+        1,
+        "the proposer is told, the version named"
+    );
+
+    // A planner publishes another version (normal PM versioning): the flag clears.
+    let next = crate::pm::queries::create_pm_plan_version(&f.db, plan, pm_version_input())
+        .await
+        .expect("next version");
+    publish(&f, next.id).await.expect("publish another version");
+    assert!(!flag(plan).await, "another version in force");
+
+    // A version received published from a decision not here (waiting): flagged too.
+    let other = approved_plan(&f, "PM-ST-76B-WAIT").await;
+    let foreign = crate::pm::queries::create_pm_plan_version(&f.db, other, pm_version_input())
+        .await
+        .expect("draft");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plan_versions SET status = 'published', source_type = 'reliability_study_decision', \
+             source_id = NULL WHERE id = {}",
+            foreign.id
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plans SET current_version_id = {} WHERE id = {other}",
+            foreign.id
+        ),
+    )
+    .await;
+    assert!(flag(other).await, "decision not accepted here: to review");
+}
+
+/// S7: the backfill re-sends a sealed decision once from the PC whose version the server holds (or
+/// that has not sent it yet), not from the others; a sealed version applied here closes the
+/// unsealed version that waited for it.
+#[tokio::test]
+async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (_, mine) = approved(&f, study_id).await;
+    let (_, theirs) = approved(&f, study_id).await;
+    let (_, unsent) = approved(&f, study_id).await;
+    exec(&f.db, &format!("UPDATE {ENTITY} SET approval_seal = NULL")).await;
+    exec(&f.db, "DELETE FROM sync_capture_journal").await;
+    exec(&f.db, "DELETE FROM sync_outbox").await;
+    for (sid, source) in [(&mine, "outbox_ack"), (&theirs, "inbound_apply")] {
+        exec(
+            &f.db,
+            &format!(
+                "INSERT OR REPLACE INTO sync_entity_state (entity_type, entity_sync_id, synced_row_version, \
+                 synced_payload_hash, source) VALUES ('{ENTITY}', '{sid}', 3, 'h', '{source}')"
+            ),
+        )
+        .await;
+    }
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, \
+             payload_json, payload_hash, status) VALUES ('k-unsent', '{ENTITY}', '{unsent}', 'upsert', 1, '{{}}', \
+             'h', 'pending')"
+        ),
+    )
+    .await;
+    crate::migrations::m20261026_000264_reliability_decision_seal::Migration
+        .up(&SchemaManager::new(&f.db))
+        .await
+        .expect("migration 264");
+    let journaled = |sid: String| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_capture_journal WHERE entity_type = '{ENTITY}' \
+                       AND entity_sync_id = '{sid}' AND operation = 'upsert'"
+                ),
+            )
+            .await
+        }
+    };
+    assert_eq!(journaled(mine.clone()).await, 1, "the last writer re-sends it");
+    assert_eq!(journaled(theirs.clone()).await, 0, "a receiver does not");
+    assert_eq!(journaled(unsent.clone()).await, 1, "an unsent version is sent sealed");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{unsent}'")
+        )
+        .await,
+        0,
+        "its unsealed pending version is dropped"
+    );
+
+    // On a receiver: the unsealed version waits, the sealed one arrives and closes the wait.
+    let wire = wire_of(&f, ENTITY, &mine).await;
+    let (n, mut legacy) = as_new(&wire, "legacy-wait");
+    legacy.remove("approval_seal");
+    inbox(&f, &n, &legacy, 1).await;
+    materialize(&f).await;
+    assert_eq!(
+        text(
+            &f,
+            &format!("SELECT rejection_code FROM sync_inbox WHERE entity_sync_id = '{n}'")
+        )
+        .await,
+        "SENDER_OUTDATED"
+    );
+    inbox(&f, &n, &wire, 2).await;
+    materialize(&f).await;
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM {ENTITY} WHERE entity_sync_id = '{n}'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_inbox WHERE entity_sync_id = '{n}' AND apply_status IN ('deferred', 'conflict')"
+            ),
+        )
+        .await,
+        0,
+        "the wait closed, no stale-version conflict"
+    );
+}
