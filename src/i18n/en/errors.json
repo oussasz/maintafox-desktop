@@ -904,6 +904,7 @@
     "GATE_REL_WO_TITLE_REQUIRED": "Work order refused: enter a title.",
     "GATE_REL_WO_LINK_FAILED": "Work order {{wo_code}} was created, but it could not be linked to its source. Open it to check it.",
     "GATE_REL_DECISION_APPLY_ONLY": "Action refused: a reliability study decision is carried out only from the study's decision log, once approved. Apply it there.",
+    "GATE_PM_SOURCE_DECISION_NOT_APPLIED": "Publication refused: this version comes from a reliability study decision that is not applied on this computer. Apply the decision from the study's decision log (or wait for it to arrive by synchronisation), then publish its own version.",
     "GATE_REL_DECISION_ALREADY_DECIDED": "Action refused: this decision has already been approved, rejected or applied. It can no longer be withdrawn or rejected. Reload the decision log.",
     "GATE_REL_MODE_RATIO_REQUIRED": "Criticality impossible: there is no failure history for this mode. Enter the failure mode ratio α.",
     "GATE_REL_FAILURE_RATE_REQUIRED": "Criticality impossible: no failure rate is known for this equipment. Enter λp (failures per hour).",
