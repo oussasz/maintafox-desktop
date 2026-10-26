@@ -186,6 +186,15 @@ fn supported_repair_mode(mode: &str) -> bool {
     mode == "checkpoint_realign"
 }
 
+/// A checkpoint realign touches no data row: a plan never names outbox items, conflicts or a batch
+/// it would not act on.
+fn repair_scope_given(scope: &SyncRepairPreviewInput) -> bool {
+    scope.outbox_ids.is_some() || scope.conflict_ids.is_some() || scope.server_batch_id.is_some()
+}
+
+const REPAIR_SCOPE_REFUSED: &str =
+    "GATE_SYNC_REPAIR_MODE_BLOCKED: A checkpoint realign takes no outbox, conflict or batch scope.";
+
 fn parse_checkpoint_sequence(token: &str) -> Option<i64> {
     let last = token.rsplit('-').next()?;
     last.parse::<i64>().ok()
@@ -1949,7 +1958,16 @@ async fn ensure_conflict_action_allowed(
             conflict.id, conflict.status
         )]));
     }
+    ensure_conflict_kind_allows(conn, conflict, action).await
+}
 
+/// Refuses `action` when the kind of `conflict` never accepts it, open or closed: review only,
+/// planning four-eyes, settled at origin, or a refused history row not held here.
+async fn ensure_conflict_kind_allows(
+    conn: &impl ConnectionTrait,
+    conflict: &SyncConflictRecord,
+    action: &str,
+) -> AppResult<()> {
     if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&action) {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
@@ -2346,13 +2364,12 @@ pub async fn replay_sync_failures(
                 }
             }
             if let Some(outbox_id) = resend {
-                // Every open conflict over the change re-sent (a change given up after its delivery
+                // Every conflict over the change re-sent (a change given up after its delivery
                 // attempts has its own `OUTBOX_DEAD_LETTER` conflict, next to the one that refused
-                // it): each must accept "retry later", and all are reopened with the send.
-                let sql = format!(
-                    "SELECT {CONFLICT_COLUMNS} FROM sync_conflicts
-                     WHERE linked_outbox_id = ? AND status IN ('new', 'triaged', 'escalated')"
-                );
+                // it; a new refusal never closes an earlier one). Each open one must accept "retry
+                // later" and is reopened with the send; a closed one of a kind that never accepts it
+                // (a review-only refusal dismissed, a plan kept) refuses the send.
+                let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE linked_outbox_id = ?");
                 for row in tx
                     .query_all(Statement::from_sql_and_values(
                         DatabaseBackend::Sqlite,
@@ -2362,9 +2379,13 @@ pub async fn replay_sync_failures(
                     .await?
                 {
                     let conflict = to_sync_conflict(&row)?;
-                    ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
-                    if !conflict_ids.contains(&conflict.id) {
-                        conflict_ids.push(conflict.id);
+                    if matches!(conflict.status.as_str(), "new" | "triaged" | "escalated") {
+                        ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
+                        if !conflict_ids.contains(&conflict.id) {
+                            conflict_ids.push(conflict.id);
+                        }
+                    } else {
+                        ensure_conflict_kind_allows(&tx, &conflict, "retry_later").await?;
                     }
                 }
             }
@@ -2522,6 +2543,9 @@ pub async fn preview_sync_repair(
             &mut validation_errors,
         );
     }
+    if repair_scope_given(&input) {
+        validation_errors.push(REPAIR_SCOPE_REFUSED.to_string());
+    }
     if !validation_errors.is_empty() {
         return Err(AppError::ValidationFailed(validation_errors));
     }
@@ -2649,15 +2673,54 @@ pub async fn execute_sync_repair(
         ]));
     }
     let mode: String = plan_row.try_get("", "mode").map_err(|e| decode_err("mode", e))?;
-    if !supported_repair_mode(&mode) || mode.contains("reset") {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive or unsupported repair mode blocked.".to_string(),
-        ]));
-    }
     let scope_json: String = plan_row
         .try_get("", "scope_json")
         .map_err(|e| decode_err("scope_json", e))?;
     let preview_scope: SyncRepairPreviewInput = serde_json::from_str(&scope_json).map_err(AppError::Serialization)?;
+    let audit_actor_id = actor_id_for_audit(db, user_id).await?;
+
+    let refusal = if !supported_repair_mode(&mode) || mode.contains("reset") {
+        Some("GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive or unsupported repair mode blocked.")
+    } else if repair_scope_given(&preview_scope) {
+        Some(REPAIR_SCOPE_REFUSED)
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal {
+        // A plan stored before its mode was refused (or naming a scope that does not apply) is
+        // closed as blocked, with its audit event, so it is never executed later.
+        let tx = db.begin().await?;
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_repair_actions
+             SET status = 'blocked', executed_by_id = ?, executed_at = ?
+             WHERE plan_id = ?",
+            [
+                user_id.into(),
+                chrono::Utc::now().to_rfc3339().into(),
+                input.plan_id.clone().into(),
+            ],
+        ))
+        .await?;
+        crate::audit::writer::write_audit_event_in(
+            &tx,
+            AuditEventInput {
+                action_code: "sync.repair.execute".to_string(),
+                target_type: Some("sync_repair_actions".to_string()),
+                target_id: Some(input.plan_id.clone()),
+                actor_id: audit_actor_id,
+                auth_context: "step_up".to_string(),
+                result: "blocked".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "operations".to_string(),
+                details_json: Some(serde_json::json!({ "mode": mode, "refusal": refusal })),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        return Err(AppError::ValidationFailed(vec![refusal.to_string()]));
+    }
 
     let tx = db.begin().await?;
     let requeued_outbox_count = 0_i64;
@@ -2727,11 +2790,9 @@ pub async fn execute_sync_repair(
         ],
     ))
     .await?;
-    tx.commit().await?;
-
-    let audit_actor_id = actor_id_for_audit(db, user_id).await?;
-    write_audit_event(
-        db,
+    // Written with the repair, or neither is kept.
+    crate::audit::writer::write_audit_event_in(
+        &tx,
         AuditEventInput {
             action_code: "sync.repair.execute".to_string(),
             target_type: Some("sync_repair_actions".to_string()),
@@ -2751,6 +2812,7 @@ pub async fn execute_sync_repair(
         },
     )
     .await?;
+    tx.commit().await?;
 
     Ok(SyncRepairExecutionResult {
         plan_id: input.plan_id,
