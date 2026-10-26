@@ -7736,16 +7736,18 @@ async fn a_reversal_with_an_attempt_counted_is_never_rewritten() {
 
 /// Review of 5524098b (note): A's posting is applied on B while B's own posting is dead-lettered:
 /// B's held reversal is still made the undo of the posting kept (+3), and B's stock does not move.
+/// The posting kept being here, the reversal is then sent at the next exchange, though B's own
+/// posting stays dead-lettered: both PCs end at 10.
 #[tokio::test]
-async fn adoption_while_the_posting_is_dead_lettered_rewrites_the_held_reversal() {
+async fn adoption_while_the_posting_is_dead_lettered_rewrites_and_sends_the_held_reversal() {
     let ApprovedOnBoth {
         a,
         b,
         mut server,
         users,
+        pair_a,
         pair_b,
         session_sync_id,
-        ..
     } = approved_on_both().await;
     divergent_on_b(&b, &session_sync_id).await;
     post_on(&a, users.0, &session_sync_id).await;
@@ -7768,6 +7770,28 @@ async fn adoption_while_the_posting_is_dead_lettered_rewrites_the_held_reversal(
         10_000,
         "B: posted and reversed, the stock does not move"
     );
+
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        server
+            .state
+            .contains_key(&("inventory_transactions".to_string(), reversal.clone())),
+        "sent at the next exchange: the posting kept is here"
+    );
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = ? AND status = 'dead_letter'",
+            vec![posting.into()],
+        )
+        .await,
+        1,
+        "B's own posting is still dead-lettered"
+    );
+    for (pc, db) in [("A", &a), ("B", &b), ("A", &a)] {
+        sync_applied(&mut server, pc, db).await;
+    }
+    converged_back_to_ten((&a, &b), (pair_a, pair_b), &session_sync_id, &reversal, -3.0).await;
 }
 
 /// Review of 5524098b (note): the count's own reversal (its seeded id) that no count line here names,

@@ -76,10 +76,11 @@ pub const AUDIT_POSTED_TWICE: &str = "inventory.count.posted_twice";
 
 /// SQL condition on an outbox entry (alias `o`): it is a count reversal (`COUNT_REVERSAL` of a
 /// count session) whose count's adjustment, posted on this PC, is not settled with the server yet.
-/// That adjustment's push is unsent, in flight, in conflict, or dead-lettered (its delivery failed
-/// too often: the server may have received it and answered that the same count was posted first
-/// elsewhere, piece F review SF-2); or it was superseded by the same count posted first on another
-/// PC ([`COUNT_ALREADY_POSTED`]) and the server's version is not applied here yet. The reversal
+/// That adjustment's push is unsent, in flight or in conflict; or it is dead-lettered (its delivery
+/// failed too often: the server may have received it and answered that the same count was posted
+/// first elsewhere, piece F review SF-2) or superseded by the same count posted first on another PC
+/// ([`COUNT_ALREADY_POSTED`]), and in both cases the server's version is not applied here yet. The
+/// reversal
 /// waits in the outbox (`sync::queries::get_sync_push_payload`): when the posting kept has another
 /// quantity, the reversal is made the exact undo of that one before it is sent
 /// ([`adopt_first_posted`]), so every PC goes back to the same stock (review of ab58cd53, §4). An
@@ -93,10 +94,11 @@ pub(crate) const REVERSAL_AWAITING_ITS_POSTING_SQL: &str = "EXISTS (
       AND r.movement_type = 'COUNT_REVERSAL' AND r.source_type = 'COUNT_SESSION'
       AND (EXISTS (SELECT 1 FROM sync_outbox xo
                     WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
-                      AND xo.status IN ('pending', 'in_flight', 'conflict', 'dead_letter'))
+                      AND xo.status IN ('pending', 'in_flight', 'conflict'))
            OR (EXISTS (SELECT 1 FROM sync_outbox xo
                         WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
-                          AND xo.status = 'superseded' AND xo.rejection_code = 'COUNT_ALREADY_POSTED')
+                          AND (xo.status = 'dead_letter'
+                               OR (xo.status = 'superseded' AND xo.rejection_code = 'COUNT_ALREADY_POSTED')))
                AND NOT EXISTS (SELECT 1 FROM sync_entity_state s
                                 WHERE s.entity_type = 'inventory_transactions'
                                   AND s.entity_sync_id = x.entity_sync_id))))";
