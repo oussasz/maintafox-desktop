@@ -539,6 +539,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("personnel_schedule_exceptions", "valid_from", "'2026-12-01'"),
     ("personnel_schedule_exceptions", "valid_to", "NULL"),
     ("personnel_schedule_exceptions", "work_percent", "50.0"),
+    // A break-in is judged again on arrival (`planning::sync_check`): the generic one gives a reason
+    // of the shipped list that is not urgent, forces nothing and names no approver.
+    ("schedule_break_ins", "break_in_reason", "'other'"),
+    ("schedule_break_ins", "approved_by_user_id", "NULL"),
+    ("schedule_break_ins", "approved_by_personnel_id", "NULL"),
+    ("schedule_break_ins", "approver_signed_at", "NULL"),
+    ("schedule_break_ins", "forced_checks_json", "NULL"),
+    ("schedule_break_ins", "old_team_id", "NULL"),
+    ("schedule_break_ins", "new_team_id", "NULL"),
+    ("schedule_break_ins", "sync_refused_at", "NULL"),
+    ("schedule_break_ins", "sync_refused_reason", "NULL"),
 ];
 
 #[derive(Debug, Clone)]

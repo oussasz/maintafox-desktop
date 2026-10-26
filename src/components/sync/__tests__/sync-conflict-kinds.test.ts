@@ -11,6 +11,7 @@ import {
   KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_WAIT_REASONS,
+  PLANNING_CONFLICT_KINDS,
   REVIEW_ONLY_CONFLICT_KINDS,
   SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   conflictActions,
@@ -76,6 +77,27 @@ describe("sync conflict kinds", () => {
       "PERMIT_ENDED_DURING_WORK",
     ]) {
       expect(KNOWN_CONFLICT_KINDS.has(code)).toBe(true);
+    }
+  });
+
+  it("offer only keep this PC's plan and escalate on the planning four-eyes refusals", () => {
+    const planning = [
+      "PLANNING_WEEK_FROZEN",
+      "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
+      "PLANNING_BREAK_IN_SELF_APPROVAL",
+      "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED",
+      "PLANNING_BREAK_IN_UNSIGNED",
+      "WEEK_UNFREEZE_UNDECIDED",
+      "WEEK_UNFREEZE_SAME_PERSON",
+      "WEEK_UNFREEZE_UNAUTHORISED",
+    ];
+    expect([...PLANNING_CONFLICT_KINDS].sort()).toEqual([...planning].sort());
+    for (const kind of planning) {
+      expect(KNOWN_CONFLICT_KINDS.has(kind)).toBe(true);
+      expect(REVIEW_ONLY_CONFLICT_KINDS.has(kind)).toBe(false);
+      for (const triage of [false, true]) {
+        expect(conflictActions(kind, triage)).toEqual(["accept_local", "escalate"]);
+      }
     }
   });
 

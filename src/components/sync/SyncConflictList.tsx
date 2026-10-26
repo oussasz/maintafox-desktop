@@ -222,6 +222,24 @@ export function SyncConflictList({
                   })}
                 </p>
               ) : null}
+              {c.planning_times ? (
+                // Work entering a week frozen here (CMMS Advisor decision 4): the other PC's change
+                // time next to the freeze time here, on the card itself.
+                <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-xs text-text-secondary">
+                  <dt>{t("sync.planningTimes.changedAt")}</dt>
+                  <dd className="text-text-primary">
+                    {c.planning_times.changed_at
+                      ? formatDateTime(c.planning_times.changed_at)
+                      : t("sync.planningTimes.notRecorded")}
+                  </dd>
+                  <dt>{t("sync.planningTimes.frozenAt")}</dt>
+                  <dd className="text-text-primary">
+                    {c.planning_times.frozen_at
+                      ? formatDateTime(c.planning_times.frozen_at)
+                      : t("sync.planningTimes.notRecorded")}
+                  </dd>
+                </dl>
+              ) : null}
               {c.conflict_type === "USERNAME_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">
                   {t("sync.usernameClash", {

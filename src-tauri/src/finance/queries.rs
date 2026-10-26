@@ -3965,7 +3965,7 @@ pub async fn build_budget_report_pack(
             // reassignments (planning change log) and break-ins.
             "SELECT (SELECT COUNT(*) FROM schedule_change_log \
                       WHERE action_type IN ('reschedule_commitment', 'emergency_reassign')) \
-                  + (SELECT COUNT(*) FROM schedule_break_ins) AS churn",
+                  + (SELECT COUNT(*) FROM schedule_break_ins WHERE sync_refused_at IS NULL) AS churn",
             [],
         ))
         .await?;

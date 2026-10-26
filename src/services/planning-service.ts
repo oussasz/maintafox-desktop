@@ -5,6 +5,7 @@ import type { PlanningKpiFilter, PlanningKpis } from "@shared/ipc-types";
 import type {
   AssigneeCapacity,
   AssigneeCapacityInput,
+  BreakInApproverOption,
   CapacityRule,
   CapacityRuleFilter,
   CreateCapacityRuleInput,
@@ -230,6 +231,18 @@ const ScheduleBreakInSchema = z.object({
   approved_by_display_name: z.string().nullable(),
   old_assignee_name: z.string().nullable(),
   new_assignee_name: z.string().nullable(),
+  approver_signed_at: z.string().nullable(),
+  forced_checks: z.array(z.string()),
+  old_team_id: z.number().nullable(),
+  new_team_id: z.number().nullable(),
+  sync_refused_at: z.string().nullable(),
+  sync_refused_reason: z.string().nullable(),
+});
+
+const BreakInApproverOptionSchema = z.object({
+  user_id: z.number(),
+  display_name: z.string(),
+  personnel_id: z.number(),
 });
 
 const TeamCapacityLoadSchema = z.object({
@@ -419,6 +432,22 @@ export function rescheduleScheduleCommitment(
 
 export function createScheduleBreakIn(input: CreateScheduleBreakInInput): Promise<ScheduleBreakIn> {
   return invokeParsed("create_schedule_break_in", { input }, ScheduleBreakInSchema);
+}
+
+/** Who may sign a break-in of the crew `teamId` (plan.confirm at its site, not the caller). */
+/**
+ * Who may sign a break-in of the crew `teamId` (taken from `fromTeamId` when the work changes
+ * crew): plan.confirm at each crew's site, never the caller.
+ */
+export function listBreakInApprovers(
+  teamId: number,
+  fromTeamId: number | null = null,
+): Promise<BreakInApproverOption[]> {
+  return invokeParsed(
+    "list_break_in_approvers",
+    { teamId, fromTeamId },
+    z.array(BreakInApproverOptionSchema),
+  );
 }
 
 export function freezeSchedulePeriod(input: FreezeSchedulePeriodInput): Promise<number> {

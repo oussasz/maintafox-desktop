@@ -19,6 +19,7 @@ pub mod pin;
 pub mod rbac;
 pub mod recovery_code;
 pub mod scope;
+pub(crate) mod second_signer;
 pub mod session_manager;
 
 #[cfg(test)]

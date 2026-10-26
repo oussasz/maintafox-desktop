@@ -264,6 +264,42 @@ describe("SyncConflictList", () => {
       }
     }
   });
+
+  it("shows the other PC's change time next to the freeze time here on a frozen-week card (CMMS Advisor 4)", async () => {
+    inbox = [
+      {
+        ...conflict,
+        id: 31,
+        entity_type: "schedule_commitments",
+        conflict_type: "PLANNING_WEEK_FROZEN",
+        recommended_action: "escalate",
+        planning_times: { changed_at: "2026-05-02T09:00:00Z", frozen_at: null },
+      },
+      { ...conflict, id: 32 },
+    ];
+    mockRefresh.mockResolvedValue(undefined);
+
+    render(<SyncConflictList />);
+
+    const changed = await screen.findByText("sync.planningTimes.changedAt");
+    // Once, for the frozen-week card only, outside the collapsed technical details.
+    expect(screen.getAllByText("sync.planningTimes.changedAt")).toHaveLength(1);
+    expect(changed.closest("details")).toBeNull();
+    const changedAt = changed.nextElementSibling;
+    expect(changedAt?.textContent).not.toBe("");
+    expect(changedAt?.textContent).not.toBe("sync.planningTimes.notRecorded");
+    expect(changedAt?.textContent).toMatch(/2026|02\/05|05\/02/);
+    const frozen = screen.getByText("sync.planningTimes.frozenAt");
+    expect(frozen.nextElementSibling).toHaveTextContent("sync.planningTimes.notRecorded");
+    for (const lang of ["fr", "en"]) {
+      const shell = JSON.parse(readFileSync(`src/i18n/${lang}/shell.json`, "utf8")) as {
+        sync: { planningTimes: Record<string, string> };
+      };
+      for (const key of ["changedAt", "frozenAt", "notRecorded"]) {
+        expect(shell.sync.planningTimes[key], `${lang} ${key}`).toBeTruthy();
+      }
+    }
+  });
 });
 
 describe("conflict reason minimum follows the server", () => {
