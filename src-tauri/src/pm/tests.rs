@@ -1858,6 +1858,83 @@ async fn a_refused_part_reservation_leaves_no_work_order_and_the_occurrence_unch
     assert_eq!(crate::wo::tasks::list_tasks(&db, wo_id).await.expect("tasks").len(), 2);
 }
 
+/// AU-73, review S4: a PM execution whose finding asks for a follow-up on equipment retired since
+/// is refused before anything is written (no completed occurrence without its follow-up).
+#[tokio::test]
+async fn an_execution_with_a_follow_up_on_retired_equipment_writes_nothing() {
+    let db = setup_db().await;
+    let mut occ = generated_occurrence(&db, "PM-EXEC-RETIRED").await;
+    for next in ["ready_for_scheduling", "scheduled", "in_progress"] {
+        occ = queries::transition_pm_occurrence(
+            &db,
+            TransitionPmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_row_version: occ.row_version,
+                next_status: next.to_string(),
+                reason_code: None,
+                note: None,
+                generate_work_order: Some(false),
+                work_order_type_id: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect(next);
+    }
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("status tags");
+    db.execute_unprepared("UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = 1")
+        .await
+        .expect("retire equipment");
+
+    for (di, wo, code) in [
+        (true, false, "GATE_DI_EQUIPMENT_RETIRED"),
+        (false, true, "GATE_WO_EQUIPMENT_RETIRED"),
+    ] {
+        let err = queries::execute_pm_occurrence(
+            &db,
+            crate::pm::domain::ExecutePmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_occurrence_row_version: occ.row_version,
+                execution_result: "completed_with_findings".to_string(),
+                note: None,
+                actor_id: Some(1),
+                work_order_id: None,
+                defer_reason_code: None,
+                miss_reason_code: None,
+                findings: Some(vec![crate::pm::domain::PmExecutionFindingInput {
+                    finding_type: "LEAK".to_string(),
+                    severity: None,
+                    description: "Fuite au presse-étoupe".to_string(),
+                    create_follow_up_di: Some(di),
+                    create_follow_up_work_order: Some(wo),
+                    follow_up_work_order_type_id: None,
+                }]),
+            },
+        )
+        .await
+        .expect_err("retired equipment");
+        assert!(
+            matches!(&err, AppError::ValidationFailed(l) if l.iter().any(|m| m.starts_with(code))),
+            "{code}: {err:?}"
+        );
+        let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+        assert_eq!(after.status, "in_progress", "{code}: occurrence unchanged");
+        assert_eq!(after.row_version, occ.row_version);
+        assert_eq!(
+            count_for(
+                &db,
+                "SELECT COUNT(*) AS c FROM pm_executions WHERE pm_occurrence_id = ?",
+                occ.id
+            )
+            .await,
+            0,
+            "{code}: no execution recorded"
+        );
+    }
+}
+
 async fn count_for(db: &DatabaseConnection, sql: &str, id: i64) -> i64 {
     db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [id.into()]))
         .await

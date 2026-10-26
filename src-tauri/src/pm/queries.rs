@@ -1959,6 +1959,47 @@ fn follow_up_title(occurrence: &PmOccurrence, finding: &PmExecutionFindingInput)
     crate::pm::wo_content::compose_title(&base, occurrence.asset_code.as_deref())
 }
 
+/// The refusals the follow-up of a finding would meet once the execution is written: a plan
+/// without an equipment scope, and a retired equipment (Déclassé / Rebuté).
+async fn refuse_follow_ups_that_cannot_be_created(
+    db: &DatabaseConnection,
+    occurrence_id: i64,
+    findings: &[PmExecutionFindingInput],
+) -> AppResult<()> {
+    let wants_di = findings.iter().any(|f| f.create_follow_up_di == Some(true));
+    let wants_wo = findings.iter().any(|f| f.create_follow_up_work_order == Some(true));
+    if !wants_di && !wants_wo {
+        return Ok(());
+    }
+    let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
+    let plan_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
+            [occurrence.pm_plan_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_plan".to_string(),
+            id: occurrence.pm_plan_id.to_string(),
+        })?;
+    let asset_scope_type: String = plan_row.try_get("", "asset_scope_type")?;
+    let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
+    let Some(equipment_id) = asset_scope_id.filter(|_| asset_scope_type == "equipment") else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: A PM finding follow-up requires a PM plan scoped to one equipment."
+                .to_string(),
+        ]));
+    };
+    if wants_di {
+        crate::di::queries::refuse_retired_equipment(db, equipment_id).await?;
+    }
+    if wants_wo {
+        crate::wo::queries::refuse_retired_equipment(db, equipment_id).await?;
+    }
+    Ok(())
+}
+
 async fn create_follow_up_di_from_finding(
     db: &DatabaseConnection,
     occurrence: &PmOccurrence,
@@ -2344,6 +2385,10 @@ pub async fn execute_pm_occurrence(
         "cancelled" => "cancelled".to_string(),
         _ => unreachable!(),
     };
+
+    // The follow-ups the findings ask for are checked before anything is written: an execution
+    // is never recorded with its follow-up refused halfway (AU-73, review S4).
+    refuse_follow_ups_that_cannot_be_created(db, input.occurrence_id, &findings_input).await?;
 
     let occurrence = transition_pm_occurrence(
         db,
