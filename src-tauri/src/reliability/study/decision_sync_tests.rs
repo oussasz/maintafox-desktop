@@ -5,7 +5,8 @@ use serde_json::{Map, Value};
 
 use super::*;
 use crate::reliability::study::decision_sync::{
-    approval_seal, local_approval_seal, retry_decision_conflicts, CONFLICT_CLOSED_EVENT, REFUSED_EVENT,
+    approval_seal, local_approval_seal, resend_sealed_after_complete_pull, retry_decision_conflicts,
+    CONFLICT_CLOSED_EVENT, REFUSED_EVENT, SEAL_RESEND_KEY,
 };
 use crate::sync::materialize::ApplyOutcome;
 
@@ -1178,9 +1179,13 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
             .await
         }
     };
-    assert_eq!(journaled(mine.clone()).await, 1, "the last writer re-sends it");
-    assert_eq!(journaled(theirs.clone()).await, 0, "a receiver does not");
-    assert_eq!(journaled(unsent.clone()).await, 1, "an unsent version is sent sealed");
+    // Nothing is sent at the upgrade: before a pull, "my version is the server's" may be stale.
+    assert_eq!(
+        journaled(mine.clone()).await,
+        0,
+        "nothing sent before the first complete pull"
+    );
+    assert_eq!(journaled(unsent.clone()).await, 0);
     assert_eq!(
         scalar(
             &f.db,
@@ -1190,6 +1195,37 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
         0,
         "its unsealed pending version is dropped"
     );
+    // After the first complete pull: the last writer and the never-sent decision are sent sealed.
+    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 2);
+    let sent_sealed = |sid: String| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_outbox WHERE entity_type = '{ENTITY}' AND entity_sync_id = '{sid}' AND json_extract(payload_json, '$.approval_seal') LIKE 'v1:%'"
+                ),
+            )
+            .await
+        }
+    };
+    assert_eq!(sent_sealed(mine.clone()).await, 1, "the last writer re-sends it");
+    assert_eq!(sent_sealed(theirs.clone()).await, 0, "a receiver does not");
+    assert_eq!(
+        sent_sealed(unsent.clone()).await,
+        1,
+        "a never-sent decision is sent sealed"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM system_config WHERE key = '{SEAL_RESEND_KEY}'")
+        )
+        .await,
+        0,
+        "judged once"
+    );
+    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("again"), 0);
 
     // On a receiver: the unsealed version waits, the sealed one arrives and closes the wait.
     let wire = wire_of(&f, ENTITY, &mine).await;
@@ -1226,4 +1262,146 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
         0,
         "the wait closed, no stale-version conflict"
     );
+}
+
+// ── Review round 2 (R2-S8, R2-N3, R2-N4) ──────────────────────────────────────────────────────
+
+/// R2-S8: PC B approved the decision (v2, acknowledged), PC A applied it since (v3); B is upgraded
+/// before it pulls v3. B sends nothing at the upgrade; its first complete pull brings v3, B ends
+/// applied, and B re-sends nothing: no conflict, and B cannot apply it a second time.
+#[tokio::test]
+async fn a_stale_last_writer_upgraded_before_its_pull_resends_nothing() {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (b, sid) = approved(&f, study_id).await;
+    // As on PC B before the upgrade: approved v2, acknowledged by the server, nothing unsent.
+    exec(&f.db, &format!("UPDATE {ENTITY} SET approval_seal = NULL")).await;
+    exec(&f.db, "DELETE FROM sync_capture_journal").await;
+    exec(&f.db, "DELETE FROM sync_outbox").await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT OR REPLACE INTO sync_entity_state (entity_type, entity_sync_id, synced_row_version, synced_payload_hash, source) VALUES ('{ENTITY}', '{sid}', 2, 'h-v2', 'outbox_ack')"
+        ),
+    )
+    .await;
+    crate::migrations::m20261026_000264_reliability_decision_seal::Migration
+        .up(&SchemaManager::new(&f.db))
+        .await
+        .expect("migration 264");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{sid}'")
+        )
+        .await,
+        0,
+        "nothing sent at the upgrade"
+    );
+    // The first pull brings PC A's v3: applied by the admin (sealed by A's upgrade).
+    let mut v3 = wire_of(&f, ENTITY, &sid).await;
+    v3.insert("status".into(), "applied".into());
+    v3.insert("applied_by_sync_id".into(), user_sync(&f, f.admin).await.into());
+    v3.insert("applied_at".into(), "2026-10-26T09:00:00Z".into());
+    inbox(&f, &sid, &through_text(&v3), 3).await;
+    materialize(&f).await;
+    assert_eq!(decision_status(&f, b.id).await, "applied");
+    // After the complete pull: B is no longer the last writer, it re-sends nothing.
+    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 0);
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{sid}'")
+        )
+        .await,
+        0,
+        "no re-send, so no conflict"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{sid}'")
+        )
+        .await,
+        0
+    );
+    let held = crate::reliability::study::decisions::get_decision(&f.db, b.id)
+        .await
+        .expect("get");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&held, None), f.admin).await),
+        "DECISION_NOT_APPROVED",
+        "no second work order"
+    );
+}
+
+/// R2-N3: "keep this PC's decision" on a decision new here with an unknown status says to escalate.
+#[tokio::test]
+async fn keeping_a_new_decision_with_an_unknown_status_says_to_escalate() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (_, sid) = approved(&f, study_id).await;
+    let (n, mut p) = as_new(&wire_of(&f, ENTITY, &sid).await, "unknown-status");
+    p.insert("status".into(), "Applied".into());
+    inbox(&f, &n, &p, 1).await;
+    materialize(&f).await;
+    assert_eq!(open_conflict(&f, &n).await.2, "DECISION_STATUS_REGRESSION");
+    assert_eq!(
+        refusal_code(resolve(&f, f.reviewer, &n, "accept_local").await),
+        "GATE_SYNC_KEEP_DECISION_UNKNOWN_STATUS"
+    );
+    resolve(&f, f.reviewer, &n, "escalate").await.expect("escalate");
+}
+
+/// R2-N4: a PM version received published after its decision was already refused here is told of.
+#[tokio::test]
+async fn a_version_published_after_the_refusal_arrived_is_told_of() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let plan = approved_plan(&f, "PM-ST-76B-N4").await;
+    let d = pm_decision(&f, study_id, plan).await;
+    let a = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    let applied = apply_decision(&f.db, decide(&a, None), f.admin).await.expect("apply");
+    let version = applied.linked_pm_plan_version_id.expect("draft");
+    // The refusal arrives first, the version still a draft here: no notice yet.
+    let sid = decision_sync_id(&f, d.id).await;
+    let mut marked = wire_of(&f, ENTITY, &sid).await;
+    marked.insert("sync_refused_at".into(), "2026-10-26T10:00:00Z".into());
+    marked.insert("sync_refused_reason".into(), "refusé (sync) : test".into());
+    let o = apply_wire(&f, ENTITY, &sid, "upsert", &marked).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    let told = || {
+        let db = &f.db;
+        let admin = f.admin;
+        async move {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id WHERE e.message_key = 'rel_decision_refused_pm_kept' AND n.recipient_user_id = {admin}"
+                ),
+            )
+            .await
+        }
+    };
+    assert_eq!(told().await, 0, "a draft runs nothing");
+    // Then the version arrives published (published on the PC that applied it before the refusal).
+    let version_sid = text(
+        &f,
+        &format!("SELECT entity_sync_id FROM pm_plan_versions WHERE id = {version}"),
+    )
+    .await;
+    let mut published = wire_of(&f, "pm_plan_versions", &version_sid).await;
+    published.insert("status".into(), "published".into());
+    let o = apply_wire(&f, "pm_plan_versions", &version_sid, "upsert", &published).await;
+    assert_eq!(conflict_code(&o), None, "{o:?}");
+    assert_eq!(told().await, 1, "the proposer is told, the version named");
 }
