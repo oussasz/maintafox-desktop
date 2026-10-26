@@ -2397,6 +2397,48 @@ async fn a_break_in_arriving_after_its_jobs_plan_was_kept_is_refused_with_that_d
             >= 1,
         "sent to the other PCs"
     );
+
+    // A later signed break-in of another move (S0 -> S2), whose job version is not applied in that
+    // run: it is not the move the planner refused, so it is never refused with that decision (F4-S1).
+    let later = r.break_in("2026-05-07T08:00", "2026-05-07T09:00", |_| {});
+    inbox(&r.db, "schedule_break_ins", "fe30-bi2", &later).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("third pass");
+    assert!(
+        refused_at(&r.db, "fe30-bi2").await.is_none(),
+        "a later break-in to another slot stays valid"
+    );
+}
+
+#[tokio::test]
+async fn a_job_cancelled_here_and_received_committed_again_is_judged_as_entering() {
+    let r = received_setup_at("FE33", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let received = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
+    // Cancelled here (as a kept plan does), then the other PC sends it committed, same slot.
+    exec_sql(
+        &r.db,
+        &format!(
+            "UPDATE schedule_commitments SET status = 'cancelled', status_reason = 'refusé (sync) : semaine gelée — test' \
+              WHERE id = {}",
+            r.commitment.id
+        ),
+    )
+    .await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, received).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PLANNING_WEEK_FROZEN"),
+        "re-entering a frozen week needs its break-in: {outcome:?}"
+    );
+    assert_eq!(
+        scalar_text(
+            &r.db,
+            &format!("SELECT status FROM schedule_commitments WHERE id = {}", r.commitment.id)
+        )
+        .await,
+        "cancelled"
+    );
 }
 
 #[tokio::test]

@@ -793,7 +793,10 @@ async fn judge_commitment(
         return Ok(Judgement::Admitted(Admitted::NotEntering));
     }
     let local = ctx.local.as_ref();
-    let moved = ctx.from.as_ref().is_none_or(|from| !from.same(&ctx.to));
+    // Cancelled or released here (by a keep, for one) and received committed again: it re-enters the
+    // schedule, even at the same slot, and is judged like new work (review N4-d).
+    let reentering = local.is_some_and(|l| field(l, "status") != Some("committed"));
+    let moved = reentering || ctx.from.as_ref().is_none_or(|from| !from.same(&ctx.to));
     let frozen_here = local.and_then(|l| field(l, "frozen_at")).is_some();
     let unfrozen = frozen_here && field(&ctx.merged, "frozen_at").is_none();
     if !moved && !unfrozen {
@@ -816,6 +819,8 @@ async fn judge_commitment(
         // The baseline counted is the one of the week frozen here for the received slot (R3-S1).
         let schedule = frozen_week.as_ref().and_then(|w| w.schedule);
         let restored = match (ctx.local_id, ctx.from.as_ref()) {
+            // Re-entering work is never "back on the plan": it needs its break-in (N4-d).
+            _ if reentering => false,
             (Some(id), Some(from)) => {
                 let (here, _) = break_in_moves(conn, entity_sync_id, false).await?;
                 undoes_refused(&here, from, &ctx.to)
@@ -1491,21 +1496,30 @@ pub(crate) async fn retry_break_in_conflicts(db: &DatabaseConnection) -> AppResu
         if inbound_break_in_check(db, &sid, &received).await?.is_some() {
             continue;
         }
-        let closed = reapply_conflicted(
-            db,
-            inbox_id,
-            conflict_id,
-            "judged_valid",
-            "The break-in is judged valid here now (its approver's account or right has arrived or been granted): \
-             it is applied.",
-        )
-        .await?;
+        // Held here since (another row of it applied, refused or not): nothing was judged valid
+        // (review N4-b).
+        let held = local_id(db, "schedule_break_ins", &sid).await?.is_some();
+        let (action, note, summary) = if held {
+            (
+                "held_here",
+                "The break-in is held here already (another version of it was applied): nothing more to apply.",
+                "Break-in conflict closed: the break-in is held here already",
+            )
+        } else {
+            (
+                "judged_valid",
+                "The break-in is judged valid here now (its approver's account or right has arrived or been \
+                 granted): it is applied.",
+                "Break-in conflict closed: the break-in is judged valid here",
+            )
+        };
+        let closed = reapply_conflicted(db, inbox_id, conflict_id, action, note).await?;
         if closed {
             applied += 1;
             audit_closed(
                 db,
                 BREAK_IN_CLOSED_EVENT,
-                "Break-in conflict closed: the break-in is judged valid here",
+                summary,
                 "schedule_break_in",
                 "schedule_break_ins",
                 conflict_id,
@@ -1538,7 +1552,7 @@ pub(crate) async fn refuse_break_ins_after_kept_plan(db: &DatabaseConnection) ->
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT sb.entity_sync_id AS bsid, c.entity_sync_id AS csid, k.id AS kept, k.resolved_by_id AS by_id, \
-                    k.resolution_note AS note \
+                    k.resolution_note AS note, k.inbound_payload_json AS kept_payload \
                FROM schedule_break_ins sb \
                JOIN schedule_commitments c ON c.id = sb.schedule_commitment_id \
                JOIN sync_conflicts k ON k.entity_type = 'schedule_commitments' AND k.entity_sync_id = c.entity_sync_id \
@@ -1564,6 +1578,7 @@ pub(crate) async fn refuse_break_ins_after_kept_plan(db: &DatabaseConnection) ->
         let kept: i64 = r.try_get("", "kept").map_err(sync_err)?;
         let planner: Option<i64> = r.try_get("", "by_id").map_err(sync_err)?;
         let note: Option<String> = r.try_get("", "note").map_err(sync_err)?;
+        let kept_payload: Option<String> = r.try_get("", "kept_payload").map_err(sync_err)?;
         let (Some(job), Some(move_)) = (
             local_wire(db, "schedule_commitments", &commitment).await?,
             local_wire(db, "schedule_break_ins", &break_in).await?,
@@ -1580,8 +1595,15 @@ pub(crate) async fn refuse_break_ins_after_kept_plan(db: &DatabaseConnection) ->
             refused: false,
             by_sync: true,
         };
-        // Only a move away from where the job is here (the refused move came late).
-        if m.step(&at).is_none() || m.no_op() {
+        // Only the refused move itself, come late: from where the job is here to the slot and crew
+        // the kept conflict refused (review F4-S1); a later break-in of another move is never touched.
+        let Some(Ok(Value::Object(kept_version))) = kept_payload.as_deref().map(serde_json::from_str::<Value>) else {
+            continue;
+        };
+        let Some(refused_place) = Place::of(&overlay(Some(&job), &kept_version)) else {
+            continue;
+        };
+        if m.no_op() || !chains(&at, &refused_place, &[], std::slice::from_ref(&m), true).is_ok_and(|c| !c.is_empty()) {
             continue;
         }
         let reason = note.unwrap_or_default();
@@ -1840,8 +1862,8 @@ pub(crate) async fn keep_planning_plan(
     if !still_refused {
         return Err(keep_refused(
             "GATE_SYNC_KEEP_PLAN_NOT_REFUSED: This PC's rules accept the received version now (its break-in or its \
-             unfreeze decision has arrived, or its week is open here): there is no plan to keep; the conflict closes \
-             by itself at the next synchronisation."
+             unfreeze decision has arrived, its approver's right has arrived or been granted, or its week is open \
+             here): there is no plan to keep; the conflict closes by itself at the next synchronisation."
                 .to_string(),
         ));
     }
