@@ -467,12 +467,24 @@ fn retry_after_of(err: &TransportError) -> Option<Duration> {
 }
 
 /// Stable reason of a failed attempt (`SyncWorkerError::kind`) from its raw code and HTTP status.
-/// The server's codes are open-ended, so an HTTP failure is read by its status first.
+/// The server's codes are open-ended, so an HTTP failure is read by its status first; an error
+/// read back from the worker state has no status, and the server codes known to the worker
+/// ([`classify`]) give its reason then.
 pub fn error_kind(code: &str, http_status: Option<u16>) -> &'static str {
     match (http_status, code) {
         (Some(401 | 403), _) => "access_refused",
         (Some(408 | 429 | 500..=599), _) => "server_unavailable",
         (Some(_), _) => "request_refused",
+        (None, "rate_limited" | "sync_exchange_failed") => "server_unavailable",
+        (None, "invalid_token" | "activation_revoked") => "access_refused",
+        (
+            None,
+            "tenant_config_mismatch"
+            | "invalid_checkpoint_token"
+            | "checkpoint_ahead_of_server"
+            | "idempotency_key_reused"
+            | "validation_error",
+        ) => "request_refused",
         (None, "offline") => "network_unreachable",
         (None, "interrupted") => "connection_interrupted",
         (None, "invalid_server_response") => "invalid_server_response",
@@ -1516,7 +1528,11 @@ mod tests {
         );
         // A persisted error read back without its HTTP status.
         assert_eq!(error_kind(BLOCKER_NOT_CONFIGURED, None), "not_configured");
-        assert_eq!(error_kind("rate_limited", None), "other");
+        assert_eq!(error_kind("rate_limited", None), "server_unavailable");
+        assert_eq!(error_kind("invalid_token", None), "access_refused");
+        assert_eq!(error_kind("tenant_config_mismatch", None), "request_refused");
+        assert_eq!(error_kind("http_error", None), "other");
+        assert_eq!(error_kind("something_new", None), "other");
         assert_eq!(error_kind("offline", None), "network_unreachable");
     }
 

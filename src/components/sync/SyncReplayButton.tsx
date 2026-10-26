@@ -14,6 +14,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { appErrorReason } from "@/lib/app-error";
 import { pushAppToast } from "@/store/app-toast-store";
 import { type SyncReplayTarget, useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
+import { toErrorMessage } from "@/utils/errors";
 import type { ReplaySyncFailuresResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -23,6 +24,9 @@ export interface SyncReplayButtonProps {
   record: string;
   disabled?: boolean;
 }
+
+/** The server's refusal of an outgoing change that is not the one the conflict holds. */
+const REPLAY_OUTBOX_MISMATCH = "GATE_SYNC_REPLAY_OUTBOX_MISMATCH";
 
 /** What the replay actually did: a change queued again, only the conflict reopened, or nothing. */
 function doneKey(
@@ -48,7 +52,13 @@ export function SyncReplayButton({ target, record, disabled = false }: SyncRepla
       const result = await replayItem(target, t("sync.replay.reason"));
       pushAppToast({ title: t(doneKey(result)), variant: "success" });
     } catch (err) {
-      setError(appErrorReason(err));
+      // The replay's own refusal has its text here; the conflict rules (closed, review only…) are
+      // the shared gate texts.
+      setError(
+        toErrorMessage(err).includes(REPLAY_OUTBOX_MISMATCH)
+          ? t("sync.replay.outboxMismatch")
+          : appErrorReason(err),
+      );
       // Keeps the dialog open, with the reason, so the operator can try again.
       throw err;
     }

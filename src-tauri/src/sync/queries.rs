@@ -1939,6 +1939,64 @@ async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRe
 /// keeps it out of the audit rows that travel.
 pub const CONFLICT_RESOLVED_ACTION: &str = "sync.conflict_resolved";
 
+/// Refuses `action` on `conflict` when the conflict is closed or its kind does not accept it:
+/// review only, planning four-eyes, settled at origin, or a refused history row not held here.
+/// One rule set for a person's choice ([`resolve_sync_conflict`]) and for a replay, which is
+/// "retry later" on the conflict ([`replay_sync_failures`]).
+async fn ensure_conflict_action_allowed(
+    conn: &impl ConnectionTrait,
+    conflict: &SyncConflictRecord,
+    action: &str,
+) -> AppResult<()> {
+    if matches!(
+        conflict.status.as_str(),
+        "resolved_local" | "resolved_remote" | "merged" | "dismissed"
+    ) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
+            conflict.id, conflict.status
+        )]));
+    }
+
+    if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
+             le motif une fois le point vérifié ou réglé, ou « Escalader ». (Conflict {} is for review only: \
+             dismiss it with the reason once the matter has been checked or settled, or escalate it.)",
+            conflict.id, conflict.id
+        )]));
+    }
+
+    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
+             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
+             here with a fresh signed break-in.",
+            conflict.id
+        )]));
+    }
+
+    if settled_at_origin_conflict(&conflict.conflict_type) && !SETTLED_AT_ORIGIN_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
+             (a second approval by another person, or the count's reversal); it closes by itself when that \
+             arrives.",
+            conflict.id
+        )]));
+    }
+
+    if !REVIEW_ONLY_ACTIONS.contains(&action) && refused_history_row_absent(conn, conflict).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} porte sur un enregistrement d'historique refusé, absent de \
+             ce poste : rien à garder ni à reprendre ; choisissez « Ignorer » avec le motif, ou « Escalader ». \
+             (Conflict {} is over a refused history record not held here: nothing to keep or take; dismiss it \
+             with the reason, or escalate it.)",
+            conflict.id, conflict.id
+        )]));
+    }
+    Ok(())
+}
+
 /// Resolves a sync conflict with the person's choice. Every choice needs a reason of at least
 /// [`crate::settings::catalog::MIN_REASON_CHARS`] characters (trimmed, counted in characters),
 /// stored on the conflict and written with the choice to the audit trail
@@ -1999,54 +2057,7 @@ pub async fn resolve_sync_conflict(
             "GATE_RECORD_CHANGED_ELSEWHERE: Sync conflict was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
-    if matches!(
-        conflict.status.as_str(),
-        "resolved_local" | "resolved_remote" | "merged" | "dismissed"
-    ) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
-            conflict.id, conflict.status
-        )]));
-    }
-
-    if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
-             le motif une fois le point vérifié ou réglé, ou « Escalader ». (Conflict {} is for review only: \
-             dismiss it with the reason once the matter has been checked or settled, or escalate it.)",
-            conflict.id, conflict.id
-        )]));
-    }
-
-    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
-             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
-             here with a fresh signed break-in.",
-            conflict.id
-        )]));
-    }
-
-    if settled_at_origin_conflict(&conflict.conflict_type)
-        && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
-    {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
-             (a second approval by another person, or the count's reversal); it closes by itself when that \
-             arrives.",
-            conflict.id
-        )]));
-    }
-
-    if !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) && refused_history_row_absent(&tx, &conflict).await? {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} porte sur un enregistrement d'historique refusé, absent de \
-             ce poste : rien à garder ni à reprendre ; choisissez « Ignorer » avec le motif, ou « Escalader ». \
-             (Conflict {} is over a refused history record not held here: nothing to keep or take; dismiss it \
-             with the reason, or escalate it.)",
-            conflict.id, conflict.id
-        )]));
-    }
+    ensure_conflict_action_allowed(&tx, &conflict, &input.action).await?;
 
     // The person's choice is applied to the data in the same transaction as the status change.
     let mut renumbered = None;
@@ -2172,6 +2183,9 @@ pub async fn resolve_sync_conflict(
         })?;
     with_count_hold(db, to_sync_conflict(&row)?).await
 }
+
+/// Replay code: the outgoing change named is not the one the named conflict holds.
+pub const REPLAY_OUTBOX_MISMATCH: &str = "GATE_SYNC_REPLAY_OUTBOX_MISMATCH";
 
 pub async fn replay_sync_failures(
     db: &DatabaseConnection,
@@ -2309,6 +2323,52 @@ pub async fn replay_sync_failures(
     let mut transitioned_conflict_count = 0_i64;
     match input.mode.as_str() {
         "single_item" => {
+            // A replay is "retry later" on the conflict it names: the same rules as that choice, on
+            // an open conflict, with the outgoing change the conflict holds (never another one).
+            let mut conflict_ids = Vec::new();
+            if let Some(conflict_id) = input.conflict_id {
+                let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE id = ?");
+                let row = tx
+                    .query_one(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        &sql,
+                        [conflict_id.into()],
+                    ))
+                    .await?
+                    .ok_or_else(|| AppError::NotFound {
+                        entity: "sync_conflict".to_string(),
+                        id: conflict_id.to_string(),
+                    })?;
+                let conflict = to_sync_conflict(&row)?;
+                ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
+                if input.outbox_id.is_some_and(|o| conflict.linked_outbox_id != Some(o)) {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "{REPLAY_OUTBOX_MISMATCH}: outbox item {} is not the change held by sync conflict {}.",
+                        input.outbox_id.unwrap_or_default(),
+                        conflict.id
+                    )]));
+                }
+                conflict_ids.push(conflict.id);
+            } else if let Some(outbox_id) = input.outbox_id {
+                // A change given up after its delivery attempts has its own conflict
+                // (`OUTBOX_DEAD_LETTER`): one replay sends the change and reopens that conflict.
+                let sql = format!(
+                    "SELECT {CONFLICT_COLUMNS} FROM sync_conflicts
+                     WHERE linked_outbox_id = ? AND status IN ('new', 'triaged', 'escalated')"
+                );
+                for row in tx
+                    .query_all(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        &sql,
+                        [outbox_id.into()],
+                    ))
+                    .await?
+                {
+                    let conflict = to_sync_conflict(&row)?;
+                    ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
+                    conflict_ids.push(conflict.id);
+                }
+            }
             if let Some(outbox_id) = input.outbox_id {
                 let result = tx
                     .execute(Statement::from_sql_and_values(
@@ -2327,7 +2387,7 @@ pub async fn replay_sync_failures(
                     .await?;
                 requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
             }
-            if let Some(conflict_id) = input.conflict_id {
+            for conflict_id in conflict_ids {
                 let result = tx
                     .execute(Statement::from_sql_and_values(
                         DatabaseBackend::Sqlite,
@@ -2339,7 +2399,7 @@ pub async fn replay_sync_failures(
                              resolved_at = NULL,
                              row_version = row_version + 1,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE id = ?",
+                         WHERE id = ? AND status IN ('new', 'triaged', 'escalated')",
                         [user_id.into(), conflict_id.into()],
                     ))
                     .await?;

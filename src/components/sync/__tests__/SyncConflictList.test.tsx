@@ -334,6 +334,37 @@ describe("send again on the conflict itself (AU-44)", () => {
   });
 });
 
+describe("send again follows the conflict rules (review of 0a3421b5)", () => {
+  it.each([
+    ["PERMIT_ENDED_BEFORE_START", "permits", undefined],
+    ["PERMIT_ENDED_DURING_WORK", "permits", undefined],
+    ["PLANNING_WEEK_FROZEN", "work_orders", undefined],
+    ["COUNT_APPROVAL_RECORD_INVALID", "inventory_transactions", false],
+  ])("is not offered on a %s conflict, which refuses retry later", async (kind, entity, held) => {
+    inbox = [
+      {
+        ...conflict,
+        conflict_type: kind,
+        entity_type: entity,
+        linked_outbox_id: 501,
+        history_row_held: held,
+      },
+    ];
+    mockRefresh.mockResolvedValue(undefined);
+    render(<SyncConflictList showTriageActions />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync\.replay\.action/ })).toBeNull();
+  });
+
+  it("is offered where retry later is (a count settled at its origin)", async () => {
+    inbox = [{ ...conflict, conflict_type: "COUNT_SELF_APPROVAL", linked_outbox_id: 501 }];
+    mockRefresh.mockResolvedValue(undefined);
+    render(<SyncConflictList showTriageActions />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sync\.replay\.action/ })).toBeInTheDocument();
+  });
+});
+
 describe("conflict reason minimum follows the server", () => {
   it("is MIN_REASON_CHARS, which resolve_sync_conflict checks", () => {
     const catalog = readFileSync("src-tauri/src/settings/catalog.rs", "utf8");

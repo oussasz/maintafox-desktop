@@ -1,7 +1,9 @@
 /**
  * Settings → sync diagnostics: the changes of this device given up after their delivery attempts
  * (outbox `dead_letter`), each named by its record, with "send again" on the item itself
- * (`SyncReplayButton`, sync.replay). Listing them is `list_outbox_items` (sync.view).
+ * (`SyncReplayButton`, sync.replay). Listing them is `list_outbox_items` (sync.view). Each one also
+ * has its `OUTBOX_DEAD_LETTER` conflict in the conflict list: a replay from either place sends the
+ * change and reopens that conflict (`replay_sync_failures`).
  */
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -86,6 +88,7 @@ export function SyncDeadLetterList({ count }: SyncDeadLetterListProps) {
                 <p className="mt-1 break-all font-mono">
                   {item.entity_type} · {item.entity_sync_id} · {item.operation}
                 </p>
+                {/* Server-controlled text (the delivery failure): shown only here, for support. */}
                 {item.last_error ? (
                   <p className="mt-1 break-all font-mono">{item.last_error}</p>
                 ) : null}

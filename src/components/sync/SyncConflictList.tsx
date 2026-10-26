@@ -6,8 +6,9 @@
  * later" and "escalate" (diagnostics only) included, opens a dialog that says what it does and
  * asks why (at least `CONFLICT_REASON_MIN` characters): the reason is stored on the conflict and
  * written to the audit trail with the choice. In diagnostics, a conflict that holds an outgoing
- * change of this device can also be sent again (`SyncReplayButton`, sync.replay). A failed inbox
- * load is an error with retry, never "nothing to review".
+ * change of this device and accepts "retry later" can also be sent again (`SyncReplayButton`,
+ * sync.replay; the server applies the same rules). A failed inbox load is an error with retry,
+ * never "nothing to review".
  */
 import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -312,7 +313,10 @@ export function SyncConflictList({
                   {t("sync.resolveNeedsRight")}
                 </p>
               )}
-              {showTriageActions && canReplay && c.linked_outbox_id !== null ? (
+              {showTriageActions &&
+              canReplay &&
+              c.linked_outbox_id !== null &&
+              actions.includes("retry_later") ? (
                 <div className="mt-2 flex flex-wrap gap-2">
                   <SyncReplayButton
                     target={{
