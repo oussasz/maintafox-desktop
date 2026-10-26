@@ -583,7 +583,7 @@
     "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY": "Ce conflit est un refus du contrôle à quatre yeux du planning : gardez le planning de ce poste (droit de confirmation du planning sur le site de l'équipe, avec le motif) ou escaladez-le. Une modification légitime se refait ici avec un nouveau break-in signé.",
     "GATE_SYNC_KEEP_PLAN_NOT_ALLOWED": "Garder le planning de ce poste demande le droit de confirmation du planning (plan.confirm) sur le site de chaque équipe concernée.",
     "GATE_SYNC_KEEP_PLAN_NOT_YET": "La version refusée ne peut pas encore être enregistrée ici : un élément qu'elle cite n'est pas encore reçu. Réessayez après la prochaine synchronisation.",
-    "GATE_SYNC_KEEP_PLAN_NOT_REFUSED": "Ce poste accepte maintenant la modification reçue (son break-in signé ou sa décision de dégel est arrivé, ou la semaine est de nouveau ouverte ici) : il n'y a pas de planning à garder. Le conflit se ferme de lui-même à la prochaine synchronisation.",
+    "GATE_SYNC_KEEP_PLAN_NOT_REFUSED": "Ce poste accepte maintenant la modification reçue (son break-in signé ou sa décision de dégel est arrivée, le droit de son approbateur est arrivé ou a été accordé, ou la semaine est de nouveau ouverte ici) : il n'y a pas de planning à garder. Le conflit se ferme de lui-même à la prochaine synchronisation.",
     "GATE_PLAN_BREAKIN_LOCKED_WINDOW": "Insertion refusée : le créneau chevauche une fenêtre verrouillée. Indiquez un motif de dérogation pour continuer.",
     "GATE_PLAN_COMMITMENT_FROZEN": "Reprogrammation refusée : cet engagement est gelé.",
     "GATE_PLAN_WO_STATUS_NOT_SYNCABLE": "Synchronisation refusée : l'OT n°{{wo}} n'est pas au statut planifié ou prêt.",

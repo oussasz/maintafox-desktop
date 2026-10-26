@@ -105,7 +105,7 @@
       "INVALID_VALUE": "Une modification reçue contient une valeur refusée par cette version",
       "SETTING_LOCKED": "Un paramètre qui ne peut plus changer ici (des écritures en dépendent)",
       "WEEK_LIFECYCLE_BACKWARDS": "Une semaine de planification reviendrait en arrière dans son cycle",
-      "PLANNING_WEEK_FROZEN": "Un travail entre dans une semaine gelée ici sans break-in signé valide (heure de modification sur l'autre poste et heure de gel ici ci-dessous). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé. Le conflit se ferme seul si son break-in signé arrive",
+      "PLANNING_WEEK_FROZEN": "Un travail entre dans une semaine gelée ici sans break-in signé valide (les heures sont indiquées ci-dessous : modification sur l'autre poste, gel ici). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé. Le conflit se ferme seul si son break-in signé arrive",
       "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "Un break-in urgent, ou qui force un contrôle bloquant, reçu sans approbateur. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
       "PLANNING_BREAK_IN_SELF_APPROVAL": "Un break-in approuvé par la personne qui l'a demandé (quatre yeux). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
       "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED": "Un break-in approuvé par quelqu'un sans plan.confirm sur le site de l'équipe ici. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",

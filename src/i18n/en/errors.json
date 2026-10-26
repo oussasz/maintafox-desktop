@@ -583,7 +583,7 @@
     "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY": "This conflict is a planning four-eyes refusal: keep this PC's plan (planning confirm right at the crew's site, with the reason) or escalate it. A legitimate change is redone here with a fresh signed break-in.",
     "GATE_SYNC_KEEP_PLAN_NOT_ALLOWED": "Keeping this PC's plan needs the planning confirm right (plan.confirm) at the site of each crew involved.",
     "GATE_SYNC_KEEP_PLAN_NOT_YET": "The refused version cannot be recorded here yet: a record it names has not been received. Try again after the next synchronisation.",
-    "GATE_SYNC_KEEP_PLAN_NOT_REFUSED": "This PC now accepts the received change (its signed break-in or its unfreeze decision has arrived, or the week is open here again): there is no plan to keep. The conflict closes by itself at the next synchronisation.",
+    "GATE_SYNC_KEEP_PLAN_NOT_REFUSED": "This PC now accepts the received change (its signed break-in or its unfreeze decision has arrived, its approver's right has arrived or been granted, or the week is open here again): there is no plan to keep. The conflict closes by itself at the next synchronisation.",
     "GATE_PLAN_BREAKIN_LOCKED_WINDOW": "Break-in refused: the slot overlaps a locked window. Give an override reason to proceed.",
     "GATE_PLAN_COMMITMENT_FROZEN": "Reschedule refused: this commitment is frozen.",
     "GATE_PLAN_WO_STATUS_NOT_SYNCABLE": "Sync refused: work order no. {{wo}} is not in the planned or ready status.",
