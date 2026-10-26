@@ -474,9 +474,21 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
 
 /// Creates a draft PM plan version from the plan's latest version (new trigger when given),
 /// records its source, and links the source to it. The version stays a draft: publishing it
-/// goes through the normal PM review.
+/// goes through the normal PM review. The version and its links are written together.
 pub async fn create_pm_revision_from_source(
     db: &DatabaseConnection,
+    input: PmRevisionFromSourceInput,
+) -> AppResult<SourceAction> {
+    let txn = db.begin().await?;
+    let action = create_pm_revision_from_source_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(action)
+}
+
+/// [`create_pm_revision_from_source`] inside the caller's transaction, for any source (the
+/// reliability decision path claims the decision first, `study::decisions::apply_decision`).
+pub(crate) async fn create_pm_revision_from_source_in(
+    db: &impl ConnectionTrait,
     input: PmRevisionFromSourceInput,
 ) -> AppResult<SourceAction> {
     let ctx = load_source(db, &input.source_type, input.source_id).await?;
@@ -517,7 +529,7 @@ pub async fn create_pm_revision_from_source(
         Some(t) => t,
         None => get_s("trigger_definition_json")?.ok_or_else(|| decode_err("trigger_definition_json", "missing"))?,
     };
-    let version = crate::pm::queries::create_pm_plan_version(
+    let version = crate::pm::queries::create_pm_plan_version_in(
         db,
         input.pm_plan_id,
         crate::pm::domain::CreatePmPlanVersionInput {
@@ -545,43 +557,32 @@ pub async fn create_pm_revision_from_source(
     )
     .await?;
 
-    // The draft exists from here: link it in one transaction; on failure the error names it.
-    let link = async {
-        let txn = db.begin().await?;
-        txn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE pm_plan_versions SET source_type = ?, source_id = ? WHERE id = ?",
-            [
-                input.source_type.clone().into(),
-                input.source_id.into(),
-                version.id.into(),
-            ],
-        ))
-        .await?;
-        let table = source_table(&input.source_type);
-        txn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "UPDATE {table} SET linked_pm_plan_id = ?, linked_pm_plan_version_id = ?, \
-                 row_version = row_version + 1, updated_at = ? WHERE id = ?"
-            ),
-            [
-                input.pm_plan_id.into(),
-                version.id.into(),
-                Utc::now().to_rfc3339().into(),
-                input.source_id.into(),
-            ],
-        ))
-        .await?;
-        txn.commit().await?;
-        AppResult::Ok(())
-    };
-    link.await.map_err(|e| {
-        AppError::ValidationFailed(vec![format!(
-            "GATE_REL_PM_DRAFT_LINK_FAILED:version_no={0}: Draft version {0} was created but could not be linked to its source: {e}",
-            version.version_no
-        )])
-    })?;
+    // Linked both ways in the caller's transaction: no draft is left without its source.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plan_versions SET source_type = ?, source_id = ? WHERE id = ?",
+        [
+            input.source_type.clone().into(),
+            input.source_id.into(),
+            version.id.into(),
+        ],
+    ))
+    .await?;
+    let table = source_table(&input.source_type);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!(
+            "UPDATE {table} SET linked_pm_plan_id = ?, linked_pm_plan_version_id = ?, \
+             row_version = row_version + 1, updated_at = ? WHERE id = ?"
+        ),
+        [
+            input.pm_plan_id.into(),
+            version.id.into(),
+            Utc::now().to_rfc3339().into(),
+            input.source_id.into(),
+        ],
+    ))
+    .await?;
     Ok(SourceAction {
         source_type: input.source_type,
         source_id: input.source_id,
@@ -602,9 +603,22 @@ pub struct WoFromSourceInput {
     pub title: Option<String>,
 }
 
-/// Creates a work order on the source's equipment and links the source to it.
+/// Creates a work order on the source's equipment and links the source to it, together.
 pub async fn create_wo_from_source(
     db: &DatabaseConnection,
+    input: WoFromSourceInput,
+    actor_id: i64,
+) -> AppResult<SourceAction> {
+    let txn = db.begin().await?;
+    let action = create_wo_from_source_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(action)
+}
+
+/// [`create_wo_from_source`] inside the caller's transaction, for any source (the reliability
+/// decision path claims the decision first, `study::decisions::apply_decision`).
+pub(crate) async fn create_wo_from_source_in(
+    db: &impl ConnectionTrait,
     input: WoFromSourceInput,
     actor_id: i64,
 ) -> AppResult<SourceAction> {
@@ -625,7 +639,7 @@ pub async fn create_wo_from_source(
             "GATE_REL_WO_TITLE_REQUIRED: A work order title is required.".into(),
         ]));
     }
-    let wo = crate::wo::queries::create_work_order(
+    let wo = crate::wo::queries::create_work_order_in(
         db,
         crate::wo::domain::WoCreateInput {
             type_code: input.type_code.clone(),
@@ -660,13 +674,7 @@ pub async fn create_wo_from_source(
         ),
         [wo.id.into(), Utc::now().to_rfc3339().into(), input.source_id.into()],
     ))
-    .await
-    .map_err(|e| {
-        AppError::ValidationFailed(vec![format!(
-            "GATE_REL_WO_LINK_FAILED:wo_code={0}: Work order {0} was created but could not be linked to its source: {e}",
-            wo.code
-        )])
-    })?;
+    .await?;
     Ok(SourceAction {
         source_type: input.source_type,
         source_id: input.source_id,

@@ -2471,3 +2471,131 @@ async fn site_rule_times_are_instants_and_never_in_the_future() {
         Some(true)
     );
 }
+
+// ── Audit findings AU-69, AU-76 and owner decision D10 ─────────────────────────────────────────
+
+/// A one-off work-order decision on P-101 proposed by the admin.
+async fn wo_decision(
+    f: &Fixture,
+    study_id: i64,
+    approver: Option<i64>,
+) -> crate::reliability::study::domain::StudyDecision {
+    create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Contrôle d'alignement P-101".into(),
+            action_kind: "one_off_wo".into(),
+            equipment_id: Some(f.p101),
+            pm_plan_id: None,
+            proposed_interval_hours: None,
+            wo_type_code: Some("corrective".into()),
+            approver_id: approver,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: None,
+            failure_cost: None,
+        },
+        f.admin,
+    )
+    .await
+    .expect("wo decision")
+}
+
+fn decide(d: &crate::reliability::study::domain::StudyDecision, note: Option<&str>) -> DecideDecisionInput {
+    DecideDecisionInput {
+        decision_id: d.id,
+        expected_row_version: d.row_version,
+        note: note.map(str::to_string),
+    }
+}
+
+fn refusal_code<T: std::fmt::Debug>(r: AppResult<T>) -> String {
+    match r {
+        Err(AppError::ValidationFailed(m)) => m[0].split(':').next().unwrap_or_default().to_string(),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// Work orders raised from reliability study decisions.
+async fn decision_wos(f: &Fixture) -> i64 {
+    scalar(
+        &f.db,
+        "SELECT COUNT(*) FROM work_orders WHERE source_rca_cause_text LIKE 'reliability_study_decision:%'",
+    )
+    .await
+}
+
+async fn decision_status(f: &Fixture, id: i64) -> String {
+    text(
+        f,
+        &format!("SELECT status FROM reliability_study_decisions WHERE id = {id}"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn applying_a_decision_twice_creates_one_work_order() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+
+    // Two applies at the same time, on the version both screens show: exactly one work order.
+    let d = wo_decision(&f, study_id, None).await;
+    let approved = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    let (a, b) = tokio::join!(
+        apply_decision(&f.db, decide(&approved, None), f.admin),
+        apply_decision(&f.db, decide(&approved, None), f.reviewer),
+    );
+    let (ok, refused): (Vec<_>, Vec<_>) = [a, b].into_iter().partition(Result::is_ok);
+    assert_eq!((ok.len(), refused.len()), (1, 1), "one apply wins");
+    assert_eq!(
+        refusal_code(refused.into_iter().next().expect("refused")),
+        "DECISION_NOT_APPROVED"
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+    // Again, later, with the version that was shown: refused, still one work order.
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&approved, None), f.admin).await),
+        "DECISION_NOT_APPROVED"
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+
+    // An approved decision applied from an older version than the current one: reload first.
+    let d2 = wo_decision(&f, study_id, None).await;
+    let approved2 = approve_decision(&f.db, decide(&d2, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&d2, None), f.admin).await),
+        "DECISION_STALE"
+    );
+    // A failure while creating the work order leaves the decision approved, nothing created.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE reliability_study_decisions SET wo_type_code = 'NO_SUCH_TYPE' WHERE id = {}",
+            d2.id
+        ),
+    )
+    .await;
+    assert!(apply_decision(&f.db, decide(&approved2, None), f.admin).await.is_err());
+    assert_eq!(decision_status(&f, d2.id).await, "approved");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM reliability_study_decisions WHERE id = {} \
+                 AND linked_work_order_id IS NULL AND applied_at IS NULL AND applied_by_id IS NULL",
+                d2.id
+            ),
+        )
+        .await,
+        1
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+}

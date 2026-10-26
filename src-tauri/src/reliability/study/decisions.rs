@@ -13,11 +13,11 @@
 //! is checked when a decision arrives by synchronisation (`inbound_self_approval_check`).
 
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::rcm_loop::{
-    create_pm_revision_from_source, create_wo_from_source, PmRevisionFromSourceInput, WoFromSourceInput,
+    create_pm_revision_from_source_in, create_wo_from_source_in, PmRevisionFromSourceInput, WoFromSourceInput,
     SOURCE_RELIABILITY_DECISION,
 };
 use crate::reliability::study::analysis::{life_analysis, meter_counts_hours, operating_ratios};
@@ -719,67 +719,104 @@ pub async fn reject_decision(
 
 /// Carry out an approved decision in maintenance: a draft PM plan version with the proposed
 /// trigger, or a work order on the decision's equipment. Both stay linked to the decision.
+///
+/// One transaction: the decision is claimed first (`approved` → `applied`, guarded by its status and
+/// the row version the caller saw), then the PM version or work order is created and linked. A
+/// second apply of the same decision (double click, two screens, two people) finds nothing to claim
+/// and is refused; a failure leaves the decision approved with nothing created (audit finding AU-76).
 pub async fn apply_decision(
     db: &DatabaseConnection,
     input: DecideDecisionInput,
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
-    let d = get_decision(db, input.decision_id).await?;
-    if d.status != STATUS_APPROVED {
-        return Err(invalid("DECISION_NOT_APPROVED"));
+    let txn = db.begin().await?;
+    let ts = Utc::now().to_rfc3339();
+    let claimed = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reliability_study_decisions SET status = ?, applied_by_id = ?, applied_at = ?,
+                row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND status = ? AND row_version = ?",
+            [
+                STATUS_APPLIED.into(),
+                actor_id.into(),
+                ts.clone().into(),
+                ts.into(),
+                input.decision_id.into(),
+                STATUS_APPROVED.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if claimed.rows_affected() == 0 {
+        let status = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT status FROM reliability_study_decisions WHERE id = ?",
+                [input.decision_id.into()],
+            ))
+            .await?
+            .map(|r| get::<String>(&r, "status"))
+            .transpose()?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "reliability_study_decision".into(),
+                id: input.decision_id.to_string(),
+            })?;
+        // Not approved (or already applied by someone else): nothing to apply. Approved, but at
+        // another version than the one shown: reload first.
+        return Err(invalid(if status == STATUS_APPROVED {
+            "DECISION_STALE"
+        } else {
+            "DECISION_NOT_APPROVED"
+        }));
     }
-    if d.row_version != input.expected_row_version {
-        return Err(invalid("DECISION_STALE"));
-    }
-    let trig = db
+    // The claimed row: the version the caller saw (its row version matched).
+    let r = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT proposed_trigger_definition_json FROM reliability_study_decisions WHERE id = ?",
-            [d.id.into()],
+            "SELECT action_kind, title, pm_plan_id, wo_type_code, proposed_trigger_definition_json \
+             FROM reliability_study_decisions WHERE id = ?",
+            [input.decision_id.into()],
         ))
         .await?
-        .map(|r| get::<Option<String>>(&r, "proposed_trigger_definition_json"))
-        .transpose()?
-        .flatten();
-    if d.action_kind == DECISION_PM_INTERVAL {
-        let plan_id = d.pm_plan_id.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
-        let note = d.title.clone();
-        create_pm_revision_from_source(
-            db,
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: input.decision_id.to_string(),
+        })?;
+    let action_kind: String = get(&r, "action_kind")?;
+    let title: String = get(&r, "title")?;
+    if action_kind == DECISION_PM_INTERVAL {
+        let plan_id = get::<Option<i64>>(&r, "pm_plan_id")?.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
+        let trig = get::<Option<String>>(&r, "proposed_trigger_definition_json")?
+            .ok_or_else(|| invalid("DECISION_TRIGGER_MISSING"))?;
+        create_pm_revision_from_source_in(
+            &txn,
             PmRevisionFromSourceInput {
                 source_type: SOURCE_RELIABILITY_DECISION.into(),
-                source_id: d.id,
+                source_id: input.decision_id,
                 pm_plan_id: plan_id,
-                trigger_definition_json: Some(trig.ok_or_else(|| invalid("DECISION_TRIGGER_MISSING"))?),
-                change_note: note,
+                trigger_definition_json: Some(trig),
+                change_note: title,
             },
         )
         .await?;
     } else {
-        create_wo_from_source(
-            db,
+        let type_code =
+            get::<Option<String>>(&r, "wo_type_code")?.ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?;
+        create_wo_from_source_in(
+            &txn,
             WoFromSourceInput {
                 source_type: SOURCE_RELIABILITY_DECISION.into(),
-                source_id: d.id,
-                type_code: d
-                    .wo_type_code
-                    .clone()
-                    .ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?,
-                title: Some(d.title.clone()),
+                source_id: input.decision_id,
+                type_code,
+                title: Some(title),
             },
             actor_id,
         )
         .await?;
     }
-    let ts = Utc::now().to_rfc3339();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE reliability_study_decisions SET status = 'applied', applied_by_id = ?, applied_at = ?,
-            row_version = row_version + 1, updated_at = ? WHERE id = ?",
-        [actor_id.into(), ts.clone().into(), ts.into(), d.id.into()],
-    ))
-    .await?;
-    get_decision(db, d.id).await
+    txn.commit().await?;
+    get_decision(db, input.decision_id).await
 }
 
 /// What to do with a decision received by synchronisation.
