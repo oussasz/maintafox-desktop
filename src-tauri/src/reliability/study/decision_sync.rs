@@ -603,16 +603,15 @@ pub(crate) async fn keep_held_progress(
 
 /// Whether the decision held here (`sync_id`) carries no refusal mark (`None`: not held here).
 pub(crate) async fn held_unrefused(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<Option<bool>> {
-    Ok(conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT sync_refused_at IS NULL AS open FROM reliability_study_decisions WHERE entity_sync_id = ?",
-            [sync_id.into()],
-        ))
-        .await?
-        .map(|r| r.try_get::<bool>("", "open"))
-        .transpose()
-        .map_err(sync_err)?)
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT sync_refused_at IS NULL AS open FROM reliability_study_decisions WHERE entity_sync_id = ?",
+        [sync_id.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<bool>("", "open"))
+    .transpose()
+    .map_err(sync_err)
 }
 
 /// When the decision `sync_id` is refused here and a work order created from it is held here, or a
@@ -681,24 +680,122 @@ pub(crate) async fn after_decision_written(
     }
     // An unsealed version of this decision waiting here for its sender's update is superseded by the
     // version just written (the updated sender re-sent it sealed, migration 264): it is closed as
-    // an older version, never retried into a stale-version conflict (review S7).
+    // an older version, never retried into a stale-version conflict (review S7). Only a version
+    // older than the newest other received version of it: a newer unsealed state is never closed
+    // as older (review R2-N2).
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE sync_inbox SET apply_status = 'applied', rejection_code = ?, \
                 rejection_message = 'superseded by a later version of the decision applied here', \
                 waits_for_entity_type = NULL, waits_for_sync_id = NULL, \
                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-          WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'deferred' AND rejection_code = ?",
+          WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'deferred' AND rejection_code = ? \
+            AND row_version < (SELECT MAX(o.row_version) FROM sync_inbox o \
+                                WHERE o.entity_type = sync_inbox.entity_type \
+                                  AND o.entity_sync_id = sync_inbox.entity_sync_id \
+                                  AND NOT (o.apply_status = 'deferred' AND COALESCE(o.rejection_code, '') = ?))",
         [
             crate::sync::materialize::SKIPPED_OLDER_VERSION.into(),
             ENTITY.into(),
             sync_id.into(),
+            crate::sync::materialize::DEFER_SENDER_OUTDATED.into(),
             crate::sync::materialize::DEFER_SENDER_OUTDATED.into(),
         ],
     ))
     .await?;
     if refused && (inserted || was_unrefused == Some(true)) {
         after_refusal_received(conn, sync_id).await?;
+    }
+    Ok(())
+}
+
+// ── Re-send of the decisions sealed by the upgrade (migration 264) ────────────────────────────
+
+/// `system_config` key (local to this PC): the decisions sealed by migration 264, to be sent once
+/// more, sealed, after the first complete pull that follows the upgrade (JSON array of sync ids).
+pub const SEAL_RESEND_KEY: &str = "reliability.decisions.seal_resend_pending";
+
+/// After a complete pull (`sync::transport::worker`, all received rows applied, the outbox drained):
+/// each decision listed by migration 264 is sent once more, sealed, by this PC only when the version
+/// the server holds is still the one this PC sent (`sync_entity_state.source = 'outbox_ack'`: any
+/// newer version received since moves it to `inbound_apply`), or when the server never received it
+/// (no known server version: it was created here and its unsealed send was dropped by the
+/// migration). Another PC's newer version (a decision applied elsewhere since this PC approved it)
+/// is never overwritten: that PC re-sends, or the decision is already sealed everywhere (review
+/// R2-S8). A version still in flight at the upgrade is acknowledged by then, so it is re-sent too.
+/// The list is cleared once judged. Returns how many were staged (drained into the outbox here).
+pub(crate) async fn resend_sealed_after_complete_pull(conn: &impl ConnectionTrait) -> AppResult<i64> {
+    let held: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT value FROM system_config WHERE key = ?",
+            [SEAL_RESEND_KEY.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "value"))
+        .transpose()
+        .map_err(sync_err)?;
+    let Some(held) = held else {
+        return Ok(0);
+    };
+    let mut staged = 0;
+    for sync_id in serde_json::from_str::<Vec<String>>(&held).unwrap_or_default() {
+        let row = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT (SELECT s.source FROM sync_entity_state s \
+                          WHERE s.entity_type = ? AND s.entity_sync_id = d.entity_sync_id) AS source, \
+                        d.approval_seal IS NOT NULL AS sealed \
+                   FROM reliability_study_decisions d WHERE d.entity_sync_id = ?",
+                [ENTITY.into(), sync_id.as_str().into()],
+            ))
+            .await?;
+        let Some(row) = row else {
+            continue;
+        };
+        let source: Option<String> = row.try_get("", "source").map_err(sync_err)?;
+        let sealed: bool = row.try_get("", "sealed").map_err(sync_err)?;
+        let ours = matches!(source.as_deref(), None | Some("outbox_ack"));
+        if sealed && ours {
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, \
+                   owner_user_sync_id) VALUES (?, ?, NULL, 'upsert', NULL)",
+                [ENTITY.into(), sync_id.as_str().into()],
+            ))
+            .await?;
+            staged += 1;
+        }
+    }
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM system_config WHERE key = ?",
+        [SEAL_RESEND_KEY.into()],
+    ))
+    .await?;
+    if staged > 0 {
+        crate::sync::capture::drain_capture_journal(conn).await?;
+    }
+    Ok(staged)
+}
+
+/// After a received PM version was written (`sync::apply_hooks::after_upsert`): published, from a
+/// decision already refused here (its refusal arrived before the version): the version keeps
+/// running and its planners and the decision's proposer are told, as when the refusal arrives
+/// after the version (review R2-N4).
+pub(crate) async fn after_version_written(conn: &impl ConnectionTrait, version_id: i64) -> AppResult<()> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.id FROM pm_plan_versions v JOIN reliability_study_decisions d ON d.id = v.source_id \
+              WHERE v.id = ? AND v.status = 'published' AND v.source_type = 'reliability_study_decision' \
+                AND d.sync_refused_at IS NOT NULL",
+            [version_id.into()],
+        ))
+        .await?;
+    if let Some(r) = row {
+        let decision: i64 = r.try_get("", "id").map_err(sync_err)?;
+        crate::settings::received_notice::announce_refused_decision(conn, decision, None, Some(version_id)).await;
     }
     Ok(())
 }
@@ -824,6 +921,17 @@ pub(crate) async fn keep_this_pc_decision(
         ))
         .await?;
     } else {
+        // A status that is none of a decision's cannot be recorded here, now or later: escalate
+        // (review R2-N3).
+        if received
+            .get("status")
+            .is_some_and(|s| !s.as_str().is_some_and(|s| STATUSES.contains(&s)))
+        {
+            return Err(keep_refused(
+                "GATE_SYNC_KEEP_DECISION_UNKNOWN_STATUS: The received decision has a status that is not a status of a \
+                 decision: it can never be recorded here. Escalate the conflict.",
+            ));
+        }
         // What it gave that is held here, named before its links are cleared: a work order, or a
         // PM version published here (review S3).
         let work_order = match text(&received, "linked_work_order_sync_id") {

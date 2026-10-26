@@ -9,13 +9,15 @@
 //!   version that did not seal.
 //! - `sync_refused_at` / `sync_refused_reason`: a decision refused by a person on a PC that
 //!   received it ("keep this PC's decision" on its sync conflict): kept, sent back with these
-//!   marks, never applied and its PM version never published on any PC.
+//!   marks; from then on no PC approves or applies it or publishes a PM version from it (what it
+//!   produced before stays, `docs/KNOWN_LIMITS.md`).
 //!
 //! Backfill: every decision approved or applied on this PC gets its seal computed from its own
 //! content (the same function as at approval), so every PC holding the same decision computes the
-//! same seal. The decision is sent once more, sealed, only by the PC whose version the server holds
-//! (or that has not sent it yet), so a PC that received it unsealed and waits for it gets it
-//! ([`resend_sealed`]). A row that cannot be read is left unsealed and logged. Proposed and rejected
+//! same seal. Each sealed decision is listed to be sent once more, sealed, after the first complete
+//! pull that follows the upgrade, by the PC whose version the server then holds (or that never sent
+//! it), so a PC that received it unsealed and waits for it gets it ([`mark_for_resend`]). A row that
+//! cannot be read is left unsealed and logged. Proposed and rejected
 //! decisions keep NULL. No refusal is guessed. Already-present columns and seals are left alone (a
 //! re-run changes nothing).
 
@@ -58,41 +60,58 @@ async fn table_exists(conn: &impl ConnectionTrait, table: &str) -> Result<bool, 
         .is_some())
 }
 
-/// Sends the sealed decision once more when this PC is the one whose version the server holds
-/// (the server acknowledged it from here, `sync_entity_state.source = 'outbox_ack'`), or when its
-/// unsealed version is still waiting to be sent here (that version is dropped): a PC that received
-/// the decision unsealed from this PC waits for it (`SENDER_OUTDATED`, review S7). One PC per
-/// decision re-sends it, on top of the version the server holds, so no other PC is in conflict;
-/// the PCs holding it already compute the same seal and keep it as it is. The capture drain after
-/// start-up stages it (`sync::capture::drain_capture_journal`), as migration 201 does.
-async fn resend_sealed(conn: &impl ConnectionTrait, sync_id: &str) -> Result<(), DbErr> {
-    let pending = conn
-        .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "DELETE FROM sync_outbox WHERE entity_type = 'reliability_study_decisions' AND entity_sync_id = ? \
-               AND status = 'pending' AND operation NOT IN ('delete', 'archive')",
-            [sync_id.into()],
-        ))
-        .await?
-        .rows_affected();
-    let last_writer = conn
+/// Marks the sealed decision to be sent once more, sealed, after the first complete pull that
+/// follows this upgrade (`reliability::study::decision_sync::resend_sealed_after_complete_pull`,
+/// review S7 and R2-S8): only then does this PC know whether the version the server holds is still
+/// its own. Here, before any pull, that knowledge may be stale (another PC may have applied the
+/// decision since), and a re-send of an old version would be a conflict on a PC that changed
+/// nothing. Its unsealed version still waiting to be sent here is dropped (it would only make the
+/// other PCs wait); the sealed one replaces it after the pull, as migration 201 restages rows.
+async fn mark_for_resend(conn: &impl ConnectionTrait, sync_id: &str, marked: &mut Vec<String>) -> Result<(), DbErr> {
+    conn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "DELETE FROM sync_outbox WHERE entity_type = 'reliability_study_decisions' AND entity_sync_id = ? \
+           AND status = 'pending' AND operation NOT IN ('delete', 'archive')",
+        [sync_id.into()],
+    ))
+    .await?;
+    if !marked.iter().any(|s| s == sync_id) {
+        marked.push(sync_id.to_string());
+    }
+    Ok(())
+}
+
+/// Stores the decisions to re-send after the next complete pull (`system_config`, local to this
+/// PC), keeping those already listed by an earlier run.
+async fn store_resend_list(conn: &impl ConnectionTrait, mut marked: Vec<String>) -> Result<(), DbErr> {
+    if marked.is_empty() {
+        return Ok(());
+    }
+    let key = crate::reliability::study::decision_sync::SEAL_RESEND_KEY;
+    let held: Option<String> = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT 1 AS w FROM sync_entity_state \
-              WHERE entity_type = 'reliability_study_decisions' AND entity_sync_id = ? AND source = 'outbox_ack'",
-            [sync_id.into()],
+            "SELECT value FROM system_config WHERE key = ?",
+            [key.into()],
         ))
         .await?
-        .is_some();
-    if pending > 0 || last_writer {
-        conn.execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, \
-               owner_user_sync_id) VALUES ('reliability_study_decisions', ?, NULL, 'upsert', NULL)",
-            [sync_id.into()],
-        ))
-        .await?;
+        .map(|r| r.try_get::<String>("", "value"))
+        .transpose()?;
+    if let Some(held) = held {
+        for id in serde_json::from_str::<Vec<String>>(&held).unwrap_or_default() {
+            if !marked.contains(&id) {
+                marked.push(id);
+            }
+        }
     }
+    let list = serde_json::to_string(&marked).map_err(|e| DbErr::Custom(e.to_string()))?;
+    conn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        [key.into(), list.into()],
+    ))
+    .await?;
     Ok(())
 }
 
@@ -116,9 +135,8 @@ impl MigrationTrait for Migration {
                   WHERE status IN ('approved', 'applied') AND approval_seal IS NULL",
             ))
             .await?;
-        let resend = table_exists(&txn, "sync_capture_journal").await?
-            && table_exists(&txn, "sync_entity_state").await?
-            && table_exists(&txn, "sync_outbox").await?;
+        let resend = table_exists(&txn, "sync_outbox").await? && table_exists(&txn, "system_config").await?;
+        let mut marked = Vec::new();
         for row in rows {
             let id: i64 = row.try_get("", "id")?;
             let sync_id: Option<String> = row.try_get("", "entity_sync_id")?;
@@ -144,8 +162,11 @@ impl MigrationTrait for Migration {
                 continue;
             };
             if resend {
-                resend_sealed(&txn, &sync_id).await?;
+                mark_for_resend(&txn, &sync_id, &mut marked).await?;
             }
+        }
+        if resend {
+            store_resend_list(&txn, marked).await?;
         }
         txn.commit().await
     }

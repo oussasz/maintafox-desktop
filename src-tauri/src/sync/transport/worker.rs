@@ -863,6 +863,9 @@ impl SyncWorker {
         // Grants still waiting for an author or for rights that a complete pull did not bring wait
         // no longer (`sync::grant_check`).
         crate::sync::grant_check::release_after_complete_pull(&self.db).await?;
+        // Decisions sealed by the upgrade are sent once more by the PC whose version the server
+        // holds, now that this PC knows it (migration 264, review R2-S8).
+        crate::reliability::study::decision_sync::resend_sealed_after_complete_pull(&self.db).await?;
         let Some(tenant_id) = pulled_for else {
             return Ok(());
         };

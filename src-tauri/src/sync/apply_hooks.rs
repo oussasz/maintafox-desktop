@@ -746,11 +746,15 @@ pub(crate) async fn after_upsert(
         }
         // Two concurrent versions of a PM plan, or an occurrence due twice: the PM planners are told
         // (`pm::version_clash`).
-        "pm_plan_versions" if inserted => {
+        "pm_plan_versions" => {
             let id = located_row_id(conn, layout, row)
                 .await?
-                .ok_or_else(|| hook_err(layout.table(), "version not found after insert"))?;
-            crate::pm::version_clash::after_received_version(conn, id).await
+                .ok_or_else(|| hook_err(layout.table(), "version not found after apply"))?;
+            if inserted {
+                crate::pm::version_clash::after_received_version(conn, id).await?;
+            }
+            // Published from a decision already refused here: kept running and told of (R2-N4).
+            crate::reliability::study::decision_sync::after_version_written(conn, id).await
         }
         "pm_occurrences" if inserted => {
             let id = located_row_id(conn, layout, row)

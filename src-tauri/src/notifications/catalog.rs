@@ -189,9 +189,10 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // An inspection anomaly cancelled after it was routed (CMMS Advisor decision on AU-72, option B):
     // the responsible of its work order (or of the work order its request was converted to).
     ("insp_anomaly_origin_cancelled", "assignee"),
-    // A reliability decision refused at synchronisation whose work order is kept (AU-76b, CMMS
-    // Advisor Q6): the work order's planner and the decision's proposer (named in the event as its
-    // watcher, `settings::received_notice::announce_refused_decision_work_order`).
+    // A reliability decision refused at synchronisation whose work order is kept, or whose PM
+    // version stays published (AU-76b, CMMS Advisor Q6 and S4): the work order's planner, and as
+    // the event's watchers the decision's proposer, the work order's responsible when it has no
+    // planner, or the PM planners (`settings::received_notice::announce_refused_decision`).
     ("rel_decision_refused_wo_kept", "planner"),
     ("rel_decision_refused_wo_kept", "watcher"),
 ];
