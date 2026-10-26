@@ -88,6 +88,7 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
+        t if planning_conflict(t) => ("local", true, "accept_local", "manual_review_required"),
         t if settled_at_origin_conflict(t) => ("remote", true, "escalate", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
@@ -102,6 +103,17 @@ const REVIEW_ONLY_CONFLICTS: &[&str] = &[
     crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
     crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
 ];
+
+/// Actions accepted on a planning four-eyes conflict (`planning::sync_check::PLANNING_CONFLICTS`,
+/// CMMS Advisor decision 2026-10-25): "keep this PC's plan" (by a planner holding plan.confirm at
+/// the site of each crew involved, with the reason, audited; a refused row new here is kept in its
+/// refused form and sent, never deleted) and "escalate". Nothing is ever taken as received, and
+/// nothing is dismissed: a legitimate change is redone here with a fresh signed break-in.
+const PLANNING_ACTIONS: &[&str] = &["accept_local", "escalate"];
+
+fn planning_conflict(conflict_type: &str) -> bool {
+    crate::planning::sync_check::PLANNING_CONFLICTS.contains(&conflict_type)
+}
 
 /// Actions accepted on a [`REVIEW_ONLY_CONFLICTS`] conflict.
 const REVIEW_ONLY_ACTIONS: &[&str] = &["dismiss", "escalate"];
@@ -131,17 +143,26 @@ fn settled_at_origin_conflict(conflict_type: &str) -> bool {
 /// send again) and "take theirs" judges it again (refused): only "dismiss" and "escalate" are
 /// accepted ([`resolve_sync_conflict`]).
 async fn refused_history_row_absent(conn: &impl ConnectionTrait, conflict: &SyncConflictRecord) -> AppResult<bool> {
+    Ok(history_row_held(conn, conflict).await? == Some(false))
+}
+
+/// For a `COUNT_APPROVAL_RECORD_INVALID` conflict on an append-only history row (a count's stock
+/// movement or its audit link): whether that row is held here. `Some(false)`: only "dismiss" and
+/// "escalate" are accepted ([`refused_history_row_absent`]); `Some(true)`: "keep mine" sends the
+/// row held here again, the repair of a forged later version of a movement applied here. `None`
+/// for any other conflict.
+async fn history_row_held(conn: &impl ConnectionTrait, conflict: &SyncConflictRecord) -> AppResult<Option<bool>> {
     if conflict.conflict_type != crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID
         || registry::entity(&conflict.entity_type)
             .is_none_or(|def| def.conflict_policy != registry::ConflictPolicy::AppendOnly)
     {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(
+    Ok(Some(
         crate::permit::sync_check::local_wire(conn, &conflict.entity_type, &conflict.entity_sync_id)
             .await?
-            .is_none(),
-    )
+            .is_some(),
+    ))
 }
 
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
@@ -402,6 +423,8 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
         detail_message,
         reason,
         count_hold: None,
+        planning_times: None,
+        history_row_held: None,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1895,6 +1918,19 @@ async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRe
         conflict.count_hold =
             crate::inventory::count_four_eyes::count_hold_context(db, conflict.inbound_payload_json.as_deref()).await?;
     }
+    // Work entering a week frozen here: the change time there next to the freeze time here
+    // (CMMS Advisor decision 4, `planning::sync_check::planning_conflict_times`).
+    conflict.planning_times = crate::planning::sync_check::planning_conflict_times(
+        db,
+        &conflict.conflict_type,
+        &conflict.entity_type,
+        &conflict.entity_sync_id,
+        conflict.inbound_payload_json.as_deref(),
+    )
+    .await?;
+    // A refused count movement or audit link: whether the row is held here, so the screen offers
+    // "keep mine" only where the server accepts it (`history_row_held`).
+    conflict.history_row_held = history_row_held(db, &conflict).await?;
     Ok(conflict)
 }
 
@@ -1982,6 +2018,15 @@ pub async fn resolve_sync_conflict(
         )]));
     }
 
+    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
+             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
+             here with a fresh signed break-in.",
+            conflict.id
+        )]));
+    }
+
     if settled_at_origin_conflict(&conflict.conflict_type)
         && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
     {
@@ -2006,7 +2051,14 @@ pub async fn resolve_sync_conflict(
     // The person's choice is applied to the data in the same transaction as the status change.
     let mut renumbered = None;
     match input.action.as_str() {
-        "accept_local" => crate::sync::conflicts::keep_local_version(&tx, &conflict).await?,
+        "accept_local" => {
+            // A planning four-eyes refusal: the right at the site, and a refused row new here stored
+            // in its refused form before it is sent (`planning::sync_check::keep_planning_plan`).
+            if planning_conflict(&conflict.conflict_type) {
+                crate::planning::sync_check::keep_planning_plan(&tx, &conflict, user_id, &reason).await?;
+            }
+            crate::sync::conflicts::keep_local_version(&tx, &conflict).await?
+        }
         "accept_remote" => crate::sync::conflicts::take_remote_version(&tx, &conflict).await?,
         "renumber_local" => renumbered = crate::sync::code_clash::renumber_local_record(&tx, &conflict).await?,
         _ => {}

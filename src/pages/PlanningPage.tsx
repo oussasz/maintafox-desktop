@@ -80,12 +80,10 @@ import { mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
-import { formatPersonLabel } from "@/lib/display";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
 import { cancelScheduleCommitment, releaseScheduleCommitment } from "@/services/planning-service";
-import { listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
 import { extractIpcValidationDetails } from "@/utils/errors";
@@ -102,7 +100,6 @@ import { P } from "@shared/rbac/permissions.generated";
 
 type CrewOption = { id: number; label: string };
 type PersonnelOption = { id: number; label: string };
-type ApproverOption = { id: number; label: string };
 
 type PendingReschedule = {
   input: RescheduleCommitmentInput;
@@ -116,9 +113,10 @@ export function PlanningPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { can } = usePermissions();
-  // Crews and people come from the personnel module and approvers from user administration: each
-  // list is read only when the user may read it, so a missing right never costs the whole page.
-  const readable = useReadableLists(["teams", "people", "users"] as const);
+  // Crews and people come from the personnel module: each list is read only when the user may
+  // read it, so a missing right never costs the whole page. Break-in approvers are listed by the
+  // break-in dialogs themselves (plan.confirm at the crew's site).
+  const readable = useReadableLists(["teams", "people"] as const);
   const rightsLoading = usePermissionsLoading();
   const { toast } = useToast();
   const { formatDateTime } = useFormatters();
@@ -156,7 +154,6 @@ export function PlanningPage() {
 
   const [teams, setTeams] = useState<CrewOption[]>([]);
   const [personnel, setPersonnel] = useState<PersonnelOption[]>([]);
-  const [approvers, setApprovers] = useState<ApproverOption[]>([]);
 
   const [boardScope, setBoardScope] = useState<PlanningBoardScope>({ kind: "all" });
   const teamId = boardScope.kind === "crew" ? boardScope.teamId : null;
@@ -333,30 +330,6 @@ export function PlanningPage() {
       cancelled = true;
     };
   }, [readable.people]);
-
-  useEffect(() => {
-    if (!readable.users) {
-      setApprovers([]);
-      return;
-    }
-    let cancelled = false;
-    listUsers({})
-      .then((users) => {
-        if (cancelled) return;
-        setApprovers(
-          users.map((user) => ({
-            id: user.id,
-            label: formatPersonLabel(user.display_name, user.username),
-          })),
-        );
-      })
-      .catch(() => {
-        // The IPC layer already shows the failure as a toast.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [readable.users]);
 
   function selectBoardScope(next: PlanningBoardScope) {
     setBoardScope(next);
@@ -1035,7 +1008,6 @@ export function PlanningPage() {
         visibleEnd={visibleEnd}
         saving={saving}
         onSubmit={handleCreateCommitment}
-        approvers={approvers}
       />
       <ProductionWindowDialog
         open={windowOpen}
@@ -1054,7 +1026,6 @@ export function PlanningPage() {
         breakIns={breakIns}
         teamId={teamId}
         initialCommitmentId={breakInCommitmentId}
-        approvers={approvers}
         personnel={personnel}
         saving={saving}
         onSubmit={handleCreateBreakIn}

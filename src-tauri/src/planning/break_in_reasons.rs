@@ -1,7 +1,7 @@
 //! Why work breaks into a frozen schedule: the COMPANY list `PLANNING.BREAK_IN_REASONS` (each
 //! plant words and extends its own reasons; Maximo "schedule break-in" reasons, SAP PM emergency
-//! orders). A reason tagged [`TAG_URGENT`] (the starter `emergency` and `safety`) needs approver
-//! evidence or the recorded dangerous-override reason; the others need neither.
+//! orders). A reason tagged [`TAG_URGENT`] (the starter `emergency` and `safety`) needs the
+//! signature of a second planner (`planning::break_in_approval`); the others do not.
 
 use std::collections::HashMap;
 
@@ -91,6 +91,18 @@ pub struct BreakInReason {
 
 /// The active reason with this code (case and spaces ignored), or a coded refusal.
 pub async fn resolve_break_in_reason(db: &impl ConnectionTrait, code: &str) -> AppResult<BreakInReason> {
+    match find_break_in_reason(db, code).await? {
+        Some(reason) => Ok(reason),
+        None => Err(org_validation_failed(
+            "PLANNING_BREAK_IN_REASON_UNKNOWN",
+            format!("'{code}' is not an active break-in reason (Données de référence, {BREAK_IN_REASONS_DOMAIN})."),
+            HashMap::from([("code".to_string(), code.to_string())]),
+        )),
+    }
+}
+
+/// The active reason with this code (case and spaces ignored); `None` when the list here has none.
+pub async fn find_break_in_reason(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<BreakInReason>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -103,15 +115,11 @@ pub async fn resolve_break_in_reason(db: &impl ConnectionTrait, code: &str) -> A
             [BREAK_IN_REASONS_DOMAIN.into(), code.into()],
         ))
         .await?;
-    match row {
-        Some(r) => Ok(BreakInReason {
+    row.map(|r| {
+        Ok(BreakInReason {
             code: r.try_get("", "code").map_err(|e| decode_err("code", e))?,
             urgent: r.try_get::<String>("", "tag").map_err(|e| decode_err("tag", e))? == TAG_URGENT,
-        }),
-        None => Err(org_validation_failed(
-            "PLANNING_BREAK_IN_REASON_UNKNOWN",
-            format!("'{code}' is not an active break-in reason (Données de référence, {BREAK_IN_REASONS_DOMAIN})."),
-            HashMap::from([("code".to_string(), code.to_string())]),
-        )),
-    }
+        })
+    })
+    .transpose()
 }

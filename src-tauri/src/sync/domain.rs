@@ -294,6 +294,15 @@ pub struct SyncConflictRecord {
     /// counter and posting time, read from what this PC holds (CMMS Advisor Q12).
     #[serde(default)]
     pub count_hold: Option<crate::inventory::count_four_eyes::CountHoldContext>,
+    /// Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the other PC's change time and the
+    /// freeze time here, shown side by side on the card (CMMS Advisor decision 4).
+    #[serde(default)]
+    pub planning_times: Option<crate::planning::sync_check::PlanningConflictTimes>,
+    /// A `COUNT_APPROVAL_RECORD_INVALID` conflict on an append-only history row (a count's stock
+    /// movement or its audit link): whether that row is held here (`false`: only "dismiss" and
+    /// "escalate" are accepted). `None` for any other conflict.
+    #[serde(default)]
+    pub history_row_held: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }

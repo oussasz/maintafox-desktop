@@ -6320,6 +6320,18 @@ async fn open_conflict_on(db: &DatabaseConnection, entity_sync_id: &str) -> (i64
     )
 }
 
+/// What the conflict list says of the open conflict on `entity_sync_id`: whether its refused
+/// history row is held here (piece F review: the screen offers "keep mine" only when it is).
+async fn listed_history_row_held(db: &DatabaseConnection, entity_sync_id: &str) -> Option<bool> {
+    crate::sync::queries::list_sync_conflicts(db, Default::default())
+        .await
+        .expect("listed")
+        .into_iter()
+        .find(|c| c.entity_sync_id == entity_sync_id && matches!(c.status.as_str(), "new" | "triaged" | "escalated"))
+        .expect("the open conflict is listed")
+        .history_row_held
+}
+
 /// "Take theirs" on conflict `(id, row_version)` of `db`, by `user`.
 async fn take_theirs(db: &DatabaseConnection, user: i32, conflict: (i64, i64)) -> crate::errors::AppResult<()> {
     resolve_conflict(db, user, conflict, "accept_remote").await
@@ -6404,6 +6416,11 @@ async fn a_later_version_of_a_count_movement_applied_here_never_moves_the_stock_
         assert!(
             detail.contains("count line") && detail.contains("would move the stock by the difference"),
             "{pc}: {detail}"
+        );
+        assert_eq!(
+            listed_history_row_held(db, &adjustment).await,
+            Some(true),
+            "{pc}: the list says the movement is held here, so \"keep mine\" is offered"
         );
     }
     let refused = format!(
@@ -6715,6 +6732,11 @@ async fn a_count_reversed_here_is_never_reversed_again_by_a_line_version_naming_
     );
 
     // S-a: nothing to keep or take for a history row not held here.
+    assert_eq!(
+        listed_history_row_held(&b, &second).await,
+        Some(false),
+        "the list says the reversal is not held here: only dismiss and escalate are offered"
+    );
     let user = second_person(&b, counter).await;
     for action in ["accept_local", "accept_remote", "retry_later"] {
         let refused = format!(

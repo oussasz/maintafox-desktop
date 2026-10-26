@@ -139,6 +139,17 @@ const SyncConflictRecordSchema = z.object({
     .nullable()
     .optional()
     .default(null),
+  /** Work entering a week frozen here (CMMS Advisor decision 4): the other PC's change time and the freeze time here. */
+  planning_times: z
+    .object({
+      changed_at: z.string().nullable(),
+      frozen_at: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
+  /** A refused count movement or audit link (COUNT_APPROVAL_RECORD_INVALID): whether it is held here. */
+  history_row_held: z.boolean().nullable().optional().default(null),
   created_at: z.string(),
   updated_at: z.string(),
 });
