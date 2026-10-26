@@ -1,12 +1,14 @@
 /**
  * Sync state for the UI. Sync itself runs in Rust (background task `sync`, protocol v2) and keeps
  * running while the window is hidden; this store mirrors its status (`sync-worker-status` event),
- * forwards operator actions (sync now, pause, resume) and lists conflicts for the Sync Center.
+ * forwards operator actions (sync now, pause, resume, replay of one refused item) and lists
+ * conflicts for the Sync Center.
  */
 import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { i18n } from "@/i18n/config";
+import { appErrorReason } from "@/lib/app-error";
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import { requestLicenseRecheck } from "@/services/product-license-service";
 import {
@@ -24,12 +26,13 @@ import {
   resumeSync,
 } from "@/services/sync-service";
 import { type SyncStatus, useAppStore } from "@/store/app-store";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   ReplaySyncFailuresInput,
+  ReplaySyncFailuresResult,
   ResolveSyncConflictInput,
   SyncConflictRecord,
   SyncStateSummary,
+  SyncWorkerError,
   SyncWorkerStatus,
 } from "@shared/ipc-types";
 
@@ -47,6 +50,34 @@ export function syncBlockerText(blocker: string | null): string | null {
   const key = KNOWN_BLOCKERS.has(blocker) ? blocker : "other";
   return String(i18n.t(`shell:sync.worker.blocker.${key}`));
 }
+
+/** Worker failure reasons (`SyncWorkerError.kind`) with a text in `shell:sync.worker.errorKind`. */
+const KNOWN_ERROR_KINDS = new Set([
+  "network_unreachable",
+  "connection_interrupted",
+  "server_unavailable",
+  "access_refused",
+  "request_refused",
+  "invalid_server_response",
+  "local_error",
+  "not_configured",
+]);
+
+/** The translated reason of a worker failure; its raw text (`message`) is never shown as such. */
+export function syncWorkerErrorText(error: SyncWorkerError | null): string | null {
+  if (!error) return null;
+  const key = KNOWN_ERROR_KINDS.has(error.kind) ? error.kind : "other";
+  return String(i18n.t(`shell:sync.worker.errorKind.${key}`));
+}
+
+/**
+ * One refused item to send again: a conflict (with the outgoing change it holds, if any) or an
+ * outgoing change given up after its delivery attempts (dead letter). Always named: there is no
+ * "replay whatever comes first".
+ */
+export type SyncReplayTarget =
+  | { kind: "conflict"; conflictId: number; outboxId: number | null }
+  | { kind: "outbox"; outboxId: number };
 
 /** Top bar / status bar state for a worker status. */
 function appSyncState(worker: SyncWorkerStatus): SyncStatus["state"] {
@@ -79,7 +110,7 @@ function reflectInAppStore(worker: SyncWorkerStatus) {
     lastSyncAt: worker.last_success_at,
     errorMessage:
       worker.state === "error" || worker.state === "retrying"
-        ? (worker.last_error?.message ?? null)
+        ? syncWorkerErrorText(worker.last_error)
         : null,
     blockerReason: syncBlockerText(worker.blocker),
     retryAttempt: worker.consecutive_failures,
@@ -125,7 +156,8 @@ interface SyncOrchestratorState {
   runSyncNow: () => Promise<void>;
   pauseForMinutes: (minutes: number) => Promise<void>;
   resumeNow: () => Promise<void>;
-  runReplayRecovery: (scope?: Partial<ReplaySyncFailuresInput>) => Promise<void>;
+  /** Sends one refused item again (`replay_sync_failures`, sync.replay); rethrows a refusal. */
+  replayItem: (target: SyncReplayTarget, reason: string) => Promise<ReplaySyncFailuresResult>;
   resolveConflictAction: (input: ResolveSyncConflictInput) => Promise<void>;
   refreshInbox: () => Promise<void>;
   exportDiagnostics: () => SyncDiagnosticsExport;
@@ -238,7 +270,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
     try {
       await requestSyncNow();
     } catch (error) {
-      set({ actionError: toErrorMessage(error) });
+      set({ actionError: appErrorReason(error) });
     }
   },
 
@@ -247,7 +279,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
     try {
       await pauseSync(minutes);
     } catch (error) {
-      set({ actionError: toErrorMessage(error) });
+      set({ actionError: appErrorReason(error) });
     }
   },
 
@@ -256,32 +288,31 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
     try {
       await resumeSync();
     } catch (error) {
-      set({ actionError: toErrorMessage(error) });
+      set({ actionError: appErrorReason(error) });
     }
   },
 
-  runReplayRecovery: async (scope = {}) => {
-    const first = get().conflictInbox[0];
+  replayItem: async (target, reason) => {
+    const id = target.kind === "conflict" ? target.conflictId : target.outboxId;
     const payload: ReplaySyncFailuresInput = {
-      replay_key: `replay-${Date.now()}`,
+      replay_key: `replay-${target.kind}-${id}-${Date.now()}`,
       mode: "single_item",
-      reason: "Operator-triggered replay recovery",
-      conflict_id: first?.id ?? null,
-      outbox_id: first?.linked_outbox_id ?? null,
+      reason,
+      conflict_id: target.kind === "conflict" ? target.conflictId : null,
+      outbox_id: target.outboxId,
       server_batch_id: null,
       window_start: null,
       window_end: null,
       checkpoint_token: null,
-      ...scope,
     };
-    set({ actionError: null });
-    try {
-      await replaySyncFailures(payload);
-      await get().refreshInbox();
-      await requestSyncNow();
-    } catch (error) {
-      set({ actionError: toErrorMessage(error) });
-    }
+    const result = await replaySyncFailures(payload);
+    // The item is queued again: refreshing the list and sending now are follow-ups whose own
+    // failures show in the list (load error) and the worker status, not as a failed replay.
+    await get()
+      .refreshInbox()
+      .catch(() => {});
+    await requestSyncNow().catch(() => {});
+    return result;
   },
 
   resolveConflictAction: async (input) => {

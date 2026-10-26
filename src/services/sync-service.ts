@@ -436,6 +436,7 @@ export async function getSyncObservabilityReport(): Promise<SyncObservabilityRep
 
 const SyncWorkerErrorSchema = z.object({
   code: z.string(),
+  kind: z.string(),
   message: z.string(),
   http_status: z.number().nullable(),
   at: z.string(),

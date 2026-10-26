@@ -31,8 +31,13 @@ import type {
   SyncStateSummary,
   SyncWorkerStatus,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
-import { syncBlockerText, useSyncOrchestratorStore } from "../sync-orchestrator-store";
+import {
+  syncBlockerText,
+  syncWorkerErrorText,
+  useSyncOrchestratorStore,
+} from "../sync-orchestrator-store";
 
 type SyncServiceModule = typeof SyncServiceNs;
 
@@ -268,6 +273,33 @@ describe("syncBlockerText", () => {
   });
 });
 
+// ── syncWorkerErrorText ───────────────────────────────────────────────────────
+
+describe("syncWorkerErrorText (AU-44)", () => {
+  const error = (kind: string) => ({
+    code: "x",
+    kind,
+    message: "HTTP 503: upstream connect error (reqwest)",
+    http_status: 503,
+    at: "x",
+  });
+
+  it("translates the stable reason and never returns the raw transport text", () => {
+    expect(syncWorkerErrorText(null)).toBeNull();
+    expect(syncWorkerErrorText(error("server_unavailable"))).toBe(
+      "The server is temporarily unavailable or overloaded. Retrying automatically.",
+    );
+    expect(syncWorkerErrorText(error("network_unreachable"))).toContain("cannot be reached");
+    expect(syncWorkerErrorText(error("server_unavailable"))).not.toContain("HTTP");
+  });
+
+  it("falls back to the generic text for an unknown reason", () => {
+    expect(syncWorkerErrorText(error("something_new"))).toBe(
+      String(i18n.t("shell:sync.worker.errorKind.other")),
+    );
+  });
+});
+
 // ── initialize / shutdown ─────────────────────────────────────────────────────
 
 describe("initialize", () => {
@@ -472,12 +504,20 @@ describe("worker status reflection in the app store", () => {
   });
 
   it.each<SyncWorkerStatus["state"]>(["error", "retrying"])(
-    "shows the last error message only in %s",
+    "shows the translated last error only in %s",
     async (state) => {
       await initAndSettle();
-      const last_error = { code: "rate_limited", message: "slow down", http_status: 429, at: "x" };
+      const last_error = {
+        code: "rate_limited",
+        kind: "server_unavailable",
+        message: "HTTP 429: slow down",
+        http_status: 429,
+        at: "x",
+      };
       emit(makeWorker({ state, last_error }));
-      expect(useAppStore.getState().syncStatus.errorMessage).toBe("slow down");
+      expect(useAppStore.getState().syncStatus.errorMessage).toBe(
+        "The server is temporarily unavailable or overloaded. Retrying automatically.",
+      );
 
       emit(makeWorker({ state: "running", last_error }));
       expect(useAppStore.getState().syncStatus.errorMessage).toBeNull();
@@ -507,7 +547,13 @@ describe("worker status side effects", () => {
     const refused = makeWorker({
       state: "blocked",
       blocker: "activation_refused",
-      last_error: { code: "device_revoked", message: "revoked", http_status: 403, at: "x" },
+      last_error: {
+        code: "device_revoked",
+        kind: "access_refused",
+        message: "revoked",
+        http_status: 403,
+        at: "x",
+      },
     });
 
     emit(refused);
@@ -615,30 +661,48 @@ describe("operator actions", () => {
     await useSyncOrchestratorStore.getState().resumeNow();
     expect(useSyncOrchestratorStore.getState().actionError).toBe("resume failed");
   });
+
+  it("records a refused right as the translated refusal, never the raw permission code (AU-44)", async () => {
+    mockPause.mockRejectedValueOnce({
+      code: "PERMISSION_DENIED",
+      message: `Permission requise : ${P.SYNC_MANAGE}`,
+    });
+    await useSyncOrchestratorStore.getState().pauseForMinutes(15);
+    const actionError = useSyncOrchestratorStore.getState().actionError;
+    expect(actionError).toBe(String(i18n.t("errors:appError.PERMISSION_DENIED")));
+    expect(actionError).not.toContain(P.SYNC_MANAGE);
+  });
 });
 
-// ── runReplayRecovery ─────────────────────────────────────────────────────────
+// ── replayItem ────────────────────────────────────────────────────────────────
 
-describe("runReplayRecovery", () => {
-  it("targets the first inbox conflict, then refreshes and syncs", async () => {
+describe("replayItem (AU-44)", () => {
+  const at = Date.parse("2026-10-12T10:00:00Z");
+
+  it("replays the named conflict with its outgoing change, then refreshes and syncs", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-10-12T10:00:00Z"));
+    vi.setSystemTime(new Date(at));
+    // The first conflict of the inbox is never a hidden default target.
     useSyncOrchestratorStore.setState({
       conflictInbox: [makeConflict({ id: 11, linked_outbox_id: 501 }), makeConflict({ id: 12 })],
-      actionError: "old",
     });
-    mockReplay.mockResolvedValueOnce(makeReplayResult());
-    const refreshed = [makeConflict({ id: 12 })];
+    const result = makeReplayResult();
+    mockReplay.mockResolvedValueOnce(result);
+    const refreshed = [makeConflict({ id: 11 })];
     primeInbox(refreshed, [makeReplayRun(), makeReplayRun({ id: 2 })]);
 
-    await useSyncOrchestratorStore.getState().runReplayRecovery();
+    await expect(
+      useSyncOrchestratorStore
+        .getState()
+        .replayItem({ kind: "conflict", conflictId: 12, outboxId: 777 }, "Renvoi demandé"),
+    ).resolves.toBe(result);
 
     expect(mockReplay).toHaveBeenCalledWith({
-      replay_key: `replay-${Date.parse("2026-10-12T10:00:00Z")}`,
+      replay_key: `replay-conflict-12-${at}`,
       mode: "single_item",
-      reason: "Operator-triggered replay recovery",
-      conflict_id: 11,
-      outbox_id: 501,
+      reason: "Renvoi demandé",
+      conflict_id: 12,
+      outbox_id: 777,
       server_batch_id: null,
       window_start: null,
       window_end: null,
@@ -647,47 +711,45 @@ describe("runReplayRecovery", () => {
     const s = useSyncOrchestratorStore.getState();
     expect(s.conflictInbox).toEqual(refreshed);
     expect(s.replayHistoryCount).toBe(2);
-    expect(s.actionError).toBeNull();
     expect(mockRunSyncNow).toHaveBeenCalledTimes(1);
     const replayOrder = mockReplay.mock.invocationCallOrder[0] ?? 0;
     const syncOrder = mockRunSyncNow.mock.invocationCallOrder[0] ?? 0;
     expect(replayOrder).toBeLessThan(syncOrder);
   });
 
-  it("lets the caller override the scope", async () => {
+  it("replays a given-up outgoing change by its own id, without a conflict", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(at));
     mockReplay.mockResolvedValueOnce(makeReplayResult());
-    await useSyncOrchestratorStore.getState().runReplayRecovery({
-      mode: "window",
-      window_start: "2026-10-01",
-      window_end: "2026-10-02",
-      reason: "custom",
-    });
+    await useSyncOrchestratorStore.getState().replayItem({ kind: "outbox", outboxId: 42 }, "why");
     expect(mockReplay).toHaveBeenCalledWith(
       expect.objectContaining({
-        mode: "window",
-        window_start: "2026-10-01",
-        window_end: "2026-10-02",
-        reason: "custom",
+        replay_key: `replay-outbox-42-${at}`,
+        mode: "single_item",
         conflict_id: null,
-        outbox_id: null,
+        outbox_id: 42,
       }),
     );
   });
 
-  it("records a replay failure and does not refresh or sync", async () => {
-    mockReplay.mockRejectedValueOnce(new Error("replay refused"));
-    await expect(useSyncOrchestratorStore.getState().runReplayRecovery()).resolves.toBeUndefined();
-    expect(useSyncOrchestratorStore.getState().actionError).toBe("replay refused");
+  it("rethrows a refused replay without refreshing or syncing", async () => {
+    const refusal = { code: "PERMISSION_DENIED", message: `Permission requise : ${P.SYNC_REPLAY}` };
+    mockReplay.mockRejectedValueOnce(refusal);
+    await expect(
+      useSyncOrchestratorStore.getState().replayItem({ kind: "outbox", outboxId: 1 }, "why"),
+    ).rejects.toBe(refusal);
     expect(mockListConflicts).not.toHaveBeenCalled();
     expect(mockRunSyncNow).not.toHaveBeenCalled();
   });
 
-  it("records a refresh failure after a successful replay and skips the sync", async () => {
-    mockReplay.mockResolvedValueOnce(makeReplayResult());
+  it("still reports the replay as done when the follow-up refresh fails", async () => {
+    const result = makeReplayResult();
+    mockReplay.mockResolvedValueOnce(result);
     mockSummary.mockRejectedValueOnce(new Error("summary failed"));
-    await useSyncOrchestratorStore.getState().runReplayRecovery();
-    expect(useSyncOrchestratorStore.getState().actionError).toBe("summary failed");
-    expect(mockRunSyncNow).not.toHaveBeenCalled();
+    await expect(
+      useSyncOrchestratorStore.getState().replayItem({ kind: "outbox", outboxId: 1 }, "why"),
+    ).resolves.toBe(result);
+    expect(mockRunSyncNow).toHaveBeenCalledTimes(1);
   });
 });
 
