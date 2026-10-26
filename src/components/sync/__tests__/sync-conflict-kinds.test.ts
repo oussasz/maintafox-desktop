@@ -13,6 +13,7 @@ import {
   KNOWN_CONFLICT_KINDS,
   KNOWN_WAIT_REASONS,
   PLANNING_CONFLICT_KINDS,
+  RELIABILITY_DECISION_CONFLICT_KINDS,
   REVIEW_ONLY_CONFLICT_KINDS,
   SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   conflictActions,
@@ -98,6 +99,28 @@ describe("sync conflict kinds", () => {
       expect(REVIEW_ONLY_CONFLICT_KINDS.has(kind)).toBe(false);
       for (const triage of [false, true]) {
         expect(conflictActions(kind, triage, "work_orders", null)).toEqual([
+          "accept_local",
+          "escalate",
+        ]);
+      }
+    }
+  });
+
+  it("offer only keep this PC's decision and escalate on refused reliability decisions", () => {
+    const kinds = [
+      "DECISION_STATUS_REGRESSION",
+      "DECISION_CONTENT_CHANGED",
+      "DECISION_APPROVAL_UNSEALED",
+      "DECISION_NOT_DESIGNATED_APPROVER",
+      "DECISION_APPROVER_UNAUTHORISED",
+      "DECISION_APPLIER_UNAUTHORISED",
+    ];
+    expect([...RELIABILITY_DECISION_CONFLICT_KINDS].sort()).toEqual([...kinds].sort());
+    expect(KNOWN_WAIT_REASONS.has("SENDER_OUTDATED")).toBe(true);
+    for (const kind of kinds) {
+      expect(KNOWN_CONFLICT_KINDS.has(kind)).toBe(true);
+      for (const triage of [false, true]) {
+        expect(conflictActions(kind, triage, "reliability_study_decisions", null)).toEqual([
           "accept_local",
           "escalate",
         ]);

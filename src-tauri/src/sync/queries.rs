@@ -88,7 +88,9 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         t if review_only_conflict(t) => ("remote", true, "dismiss", "manual_review_required"),
-        t if planning_conflict(t) => ("local", true, "accept_local", "manual_review_required"),
+        t if planning_conflict(t) || reliability_decision_conflict(t) => {
+            ("local", true, "accept_local", "manual_review_required")
+        }
         t if settled_at_origin_conflict(t) => ("remote", true, "escalate", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
@@ -113,6 +115,15 @@ const PLANNING_ACTIONS: &[&str] = &["accept_local", "escalate"];
 
 fn planning_conflict(conflict_type: &str) -> bool {
     crate::planning::sync_check::PLANNING_CONFLICTS.contains(&conflict_type)
+}
+
+/// A received reliability decision refused on arrival (AU-76b, CMMS Advisor answers 2026-10-26):
+/// like the planning refusals, only "keep this PC's decision" (`ram.manage`, with the reason,
+/// audited; the decision is marked refused and sent, never deleted, and no PC applies it or
+/// publishes its PM version) and "escalate" ([`PLANNING_ACTIONS`]). A rights conflict closes by
+/// itself when the rights arrive (`reliability::study::decision_sync::retry_decision_conflicts`).
+fn reliability_decision_conflict(conflict_type: &str) -> bool {
+    crate::reliability::study::decision_sync::RELIABILITY_DECISION_CONFLICTS.contains(&conflict_type)
 }
 
 /// Actions accepted on a [`REVIEW_ONLY_CONFLICTS`] conflict.
@@ -1483,6 +1494,11 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         if crate::permit::ended_hold::settle_crossed_hold_server_conflict(&tx, conflict).await? {
             continue;
         }
+        // A decision re-sent sealed by an upgraded PC, crossing this PC's unsent change of it: this
+        // change is staged again on top, no item for a person (`reliability::study::decision_sync`).
+        if crate::reliability::study::decision_sync::settle_seal_resend_server_conflict(&tx, conflict).await? {
+            continue;
+        }
         if let Some(outbox_id) = linked_outbox_id {
             let base_label = conflict
                 .local_base_row_version
@@ -1986,6 +2002,15 @@ async fn ensure_conflict_kind_allows(
         )]));
     }
 
+    if reliability_decision_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_DECISION_KEEP_ONLY: conflict {} is a reliability decision refused on arrival: keep \
+             this PC's decision (ram.manage, with the reason; the decision is then refused on every PC) or escalate \
+             it; a legitimate decision is proposed and approved again.",
+            conflict.id
+        )]));
+    }
+
     if settled_at_origin_conflict(&conflict.conflict_type) && !SETTLED_AT_ORIGIN_ACTIONS.contains(&action) {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
@@ -2077,6 +2102,12 @@ pub async fn resolve_sync_conflict(
             // in its refused form before it is sent (`planning::sync_check::keep_planning_plan`).
             if planning_conflict(&conflict.conflict_type) {
                 crate::planning::sync_check::keep_planning_plan(&tx, &conflict, user_id, &reason).await?;
+            }
+            // A refused reliability decision: marked refused here (stored refused when new here)
+            // before it is sent (`reliability::study::decision_sync::keep_this_pc_decision`).
+            if reliability_decision_conflict(&conflict.conflict_type) {
+                crate::reliability::study::decision_sync::keep_this_pc_decision(&tx, &conflict, user_id, &reason)
+                    .await?;
             }
             crate::sync::conflicts::keep_local_version(&tx, &conflict).await?
         }

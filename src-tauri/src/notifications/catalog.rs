@@ -155,6 +155,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "permit_ended_under_work",
     "wo_permit_rule_missing",
     "insp_anomaly_origin_cancelled",
+    "rel_decision_refused_wo_kept",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -188,6 +189,12 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // An inspection anomaly cancelled after it was routed (CMMS Advisor decision on AU-72, option B):
     // the responsible of its work order (or of the work order its request was converted to).
     ("insp_anomaly_origin_cancelled", "assignee"),
+    // A reliability decision refused at synchronisation whose work order is kept, or whose PM
+    // version stays published (AU-76b, CMMS Advisor Q6 and S4): the work order's planner, and as
+    // the event's watchers the decision's proposer, the work order's responsible when it has no
+    // planner, or the PM planners (`settings::received_notice::announce_refused_decision`).
+    ("rel_decision_refused_wo_kept", "planner"),
+    ("rel_decision_refused_wo_kept", "watcher"),
 ];
 
 /// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
@@ -203,6 +210,8 @@ pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
     // when it has none).
     ("insp_anomaly_origin_cancelled", "planner"),
     ("insp_anomaly_origin_cancelled", "reviewer"),
+    // Neither a planner nor a proposer active here: the holders of the right to approve decisions.
+    ("rel_decision_refused_wo_kept", "permission:ram.manage"),
 ];
 
 /// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).

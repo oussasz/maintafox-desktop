@@ -585,6 +585,10 @@ pub struct StudyDecision {
     pub linked_work_order_id: Option<i64>,
     pub linked_work_order_code: Option<String>,
     pub effect: DecisionEffect,
+    /// Refused at synchronisation (here, or on another PC): never applied, its PM version never
+    /// published (AU-76b). `sync_refused_reason` says why ("refusé (sync) : … — reason").
+    pub sync_refused_at: Option<String>,
+    pub sync_refused_reason: Option<String>,
     pub row_version: i64,
 }
 

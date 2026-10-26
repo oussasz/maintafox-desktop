@@ -237,6 +237,17 @@ export function StudyDecisionsStep({
                         tone={toneOf(RELIABILITY_DECISION_STATUS_TONE, d.status)}
                         label={t(`rams.decisions.status.${statusKey(d)}`)}
                       />
+                      {d.sync_refused_at != null ? (
+                        <StatusChip
+                          className="ml-1"
+                          tone="danger"
+                          label={t("rams.decisions.syncRefused")}
+                          title={t("rams.decisions.syncRefusedHint")}
+                        />
+                      ) : null}
+                      {d.sync_refused_at != null && d.sync_refused_reason ? (
+                        <p className="mt-1 text-xs text-text-muted">{d.sync_refused_reason}</p>
+                      ) : null}
                       {d.self_approved ? (
                         <StatusChip
                           className="ml-1"
@@ -283,7 +294,10 @@ export function StudyDecisionsStep({
                               })}
                             </span>
                           ) : null}
-                          {canManage && d.status === "proposed" && !designatedElsewhere(d) ? (
+                          {canManage &&
+                          d.status === "proposed" &&
+                          d.sync_refused_at == null &&
+                          !designatedElsewhere(d) ? (
                             ownProposal(d) ? (
                               <span className="self-center text-xs text-text-muted">
                                 {t("rams.decisions.ownProposal")}
@@ -314,7 +328,10 @@ export function StudyDecisionsStep({
                               {t(isMine(d) ? "rams.decisions.withdraw" : "rams.decisions.reject")}
                             </Button>
                           ) : null}
-                          {canManage && d.status === "approved" && canApply(d) ? (
+                          {canManage &&
+                          d.status === "approved" &&
+                          d.sync_refused_at == null &&
+                          canApply(d) ? (
                             <Button
                               className="h-10"
                               disabled={busy}
@@ -324,7 +341,10 @@ export function StudyDecisionsStep({
                               {t("rams.decisions.apply")}
                             </Button>
                           ) : null}
-                          {canManage && d.status === "approved" && !canApply(d) ? (
+                          {canManage &&
+                          d.status === "approved" &&
+                          d.sync_refused_at == null &&
+                          !canApply(d) ? (
                             <span className="text-xs text-text-muted" role="note">
                               {t(
                                 d.action_kind === "pm_interval"

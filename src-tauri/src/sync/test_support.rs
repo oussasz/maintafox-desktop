@@ -326,6 +326,15 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // What a reliability decision proposes never changes once proposed (a received change is a
+    // `DECISION_CONTENT_CHANGED` conflict, `reliability::study::decision_sync`, AU-76b): these are
+    // set at creation and never the column the round trip edits (its decision note is).
+    ("reliability_study_decisions", "title", "'Décision de test'"),
+    ("reliability_study_decisions", "action_kind", "'one_off_wo'"),
+    ("reliability_study_decisions", "wo_type_code", "'corrective'"),
+    ("reliability_study_decisions", "justification", "''"),
+    // Only the four statuses of a decision are received (review S1).
+    ("reliability_study_decisions", "status", "'proposed'"),
     // A received audit chain stub must be well formed (`audit::chain::inbound_stub_check`): a
     // position after 1 with its link, a stub-era hash and its content digest.
     (

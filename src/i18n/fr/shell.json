@@ -68,6 +68,7 @@
       "own": {
         "MISSING_PARENT": "En attente de données liées pas encore reçues (une personne, un droit, une règle)",
         "MISSING_FIELD": "Envoyé par une version plus ancienne de l'application : en attente de la mise à jour de l'autre PC",
+        "SENDER_OUTDATED": "En attente : PC émetteur pas à jour (décision approuvée sans sceau par une version plus ancienne ; appliquée dès que ce PC renvoie la décision à jour)",
         "NO_MATERIALIZER": "Nécessite une version plus récente de l'application sur ce PC",
         "UNKNOWN_ENTITY_TYPE": "Nécessite une version plus récente de l'application sur ce PC",
         "other": "En attente (voir les détails techniques)"
@@ -114,6 +115,12 @@
       "WEEK_UNFREEZE_SAME_PERSON": "Une semaine dégelée par une décision de la personne qui l'a demandé (quatre yeux). Gardez le planning de ce poste : la semaine reste gelée",
       "WEEK_UNFREEZE_UNAUTHORISED": "Une semaine dégelée par quelqu'un sans plan.confirm sur le site ici. Gardez le planning de ce poste : la semaine reste gelée",
       "DECISION_SELF_APPROVAL": "Une décision approuvée par la personne qui l'a proposée (quatre yeux)",
+      "DECISION_STATUS_REGRESSION": "Une décision de fiabilité reçue reviendrait en arrière (appliquée → approuvée, approuvée → proposée, ou refus effacé). Gardez la décision de ce poste : elle est alors refusée sur tous les postes",
+      "DECISION_CONTENT_CHANGED": "Une décision de fiabilité reçue dont le contenu a changé après sa proposition ou ne correspond plus à son sceau d'approbation. Gardez la décision de ce poste : elle est alors refusée sur tous les postes ; une décision légitime se propose et s'approuve de nouveau",
+      "DECISION_APPROVAL_UNSEALED": "Une décision de fiabilité approuvée sans sceau d'approbation par une version qui scelle. Gardez la décision de ce poste : elle est alors refusée sur tous les postes",
+      "DECISION_NOT_DESIGNATED_APPROVER": "Une décision de fiabilité approuvée par une autre personne que l'approbateur désigné. Gardez la décision de ce poste : elle est alors refusée sur tous les postes",
+      "DECISION_APPROVER_UNAUTHORISED": "Une décision de fiabilité approuvée par quelqu'un sans le droit d'approuver (ram.manage, toute l'usine) ici. Le conflit se ferme seul si le droit arrive ; sinon gardez la décision de ce poste",
+      "DECISION_APPLIER_UNAUTHORISED": "Une décision de fiabilité appliquée par quelqu'un sans les droits d'appliquer (ram.manage et pm.edit ou ot.create) ici. Le conflit se ferme seul si les droits arrivent ; sinon gardez la décision de ce poste",
       "WO_PART_LINE_HAS_USE": "Une ligne de pièce planifiée a été annulée sur un autre poste, mais des pièces ont déjà été utilisées ou sorties du magasin pour elle ici : vérifiez la ligne avec le planificateur et le magasin avant de décider",
       "SITE_SETTING_UNAUDITED": "Une règle de site modifiée sans sa trace d'audit (réauthentification, motif, droit paramètres)",
       "SITE_SETTING_INVALID": "Une règle de site dont la valeur ou la date est illisible",

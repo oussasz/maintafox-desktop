@@ -345,6 +345,7 @@ fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
         asset_code: row.try_get("", "asset_code")?,
         asset_name: row.try_get("", "asset_name")?,
         asset_scope_label: row.try_get("", "asset_scope_label")?,
+        source_decision_to_review: row.try_get("", "source_decision_to_review")?,
     })
 }
 
@@ -388,7 +389,13 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
                   WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
                   WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
                   WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
-                END AS asset_scope_label
+                END AS asset_scope_label,
+                EXISTS (SELECT 1 FROM pm_plan_versions cv
+                         WHERE cv.id = p.current_version_id AND cv.source_type = 'reliability_study_decision'
+                           AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
+                                            WHERE d.id = cv.source_id AND d.status = 'applied'
+                                              AND d.linked_pm_plan_version_id = cv.id
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -412,7 +419,13 @@ pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<P
                   WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
                   WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
                   WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
-                END AS asset_scope_label
+                END AS asset_scope_label,
+                EXISTS (SELECT 1 FROM pm_plan_versions cv
+                         WHERE cv.id = p.current_version_id AND cv.source_type = 'reliability_study_decision'
+                           AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
+                                            WHERE d.id = cv.source_id AND d.status = 'applied'
+                                              AND d.linked_pm_plan_version_id = cv.id
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -651,6 +664,24 @@ async fn ensure_source_decision_applied(
         return Ok(());
     }
     let source_id: Option<i64> = version.try_get("", "source_id")?;
+    // A decision refused at synchronisation (here, or on another PC, received with its mark) never
+    // has its version published, on any PC (AU-76b, CMMS Advisor Q5).
+    if let Some(id) = source_id {
+        let refused = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS r FROM reliability_study_decisions WHERE id = ? AND sync_refused_at IS NOT NULL",
+                [id.into()],
+            ))
+            .await?
+            .is_some();
+        if refused {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_SOURCE_DECISION_REFUSED: This version comes from a reliability study decision refused at synchronisation; it cannot be published."
+                    .to_string(),
+            ]));
+        }
+    }
     let applied = match source_id {
         Some(id) => db
             .query_one(Statement::from_sql_and_values(

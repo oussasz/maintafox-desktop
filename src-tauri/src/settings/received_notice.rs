@@ -1100,6 +1100,189 @@ async fn received_anomaly_cancel(
     Ok(())
 }
 
+/// Notification category of a reliability decision refused at synchronisation after a work order
+/// was created from it, or a PM version from it was published (AU-76b, CMMS Advisor Q6 and S4
+/// option A): the work order is kept (never cancelled by the refusal) and the published version
+/// keeps running; the work order's planner (else its responsible), the PM planners and the
+/// decision's proposer are told, on the PC that refused it and on each PC that receives the
+/// refusal while holding the work order or the published version. It cannot be muted or re-routed
+/// (`notifications::catalog::ALWAYS_DELIVERED`).
+pub const DECISION_REFUSED_WO_KEPT_CATEGORY: &str = "rel_decision_refused_wo_kept";
+
+/// Message key of the notice when it names a published PM version.
+pub const DECISION_REFUSED_PM_KEPT_MESSAGE: &str = "rel_decision_refused_pm_kept";
+
+/// The notice of [`DECISION_REFUSED_WO_KEPT_CATEGORY`] for the decision `decision_id` (local id):
+/// the work order `work_order` (local id) created from it and held here, else the PM version
+/// `pm_version` (local id) published from it here. Its event has an identity built from the
+/// decision's sync id, so the PCs that each raise it share one event and one notification per
+/// person. Written in a savepoint: a notice that cannot be written is logged, the refusal is kept.
+pub(crate) async fn announce_refused_decision(
+    conn: &impl ConnectionTrait,
+    decision_id: i64,
+    work_order: Option<i64>,
+    pm_version: Option<i64>,
+) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT decision_refused_notice").await?;
+        match decision_refused_notice(conn, decision_id, work_order, pm_version).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO decision_refused_notice").await?;
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            decision_id,
+            error = %err,
+            "refused decision notice not written; the refusal, the work order and the PM version are kept"
+        );
+    }
+}
+
+async fn decision_refused_notice(
+    conn: &impl ConnectionTrait,
+    decision_id: i64,
+    work_order: Option<i64>,
+    pm_version: Option<i64>,
+) -> AppResult<()> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, title, proposed_by_id FROM reliability_study_decisions WHERE id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten().unwrap_or_default();
+    let decision_sync = get("entity_sync_id");
+    let title = get("title");
+    let proposer: Option<i64> = row.try_get("", "proposed_by_id").map_err(hook_err)?;
+    let mut watchers: Vec<i64> = proposer.into_iter().collect();
+    let (source_module, source_record, action_url, key, params, title_text, body_text);
+    if let Some(wo) = work_order {
+        let Some(w) = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code, planner_id, primary_responsible_id FROM work_orders WHERE id = ?",
+                [wo.into()],
+            ))
+            .await?
+        else {
+            return Ok(());
+        };
+        let code: String = w.try_get("", "code").map_err(hook_err)?;
+        let planner: Option<i64> = w.try_get("", "planner_id").map_err(hook_err)?;
+        // No planner: the work order's responsible, who will run it (review note i).
+        if planner.is_none() {
+            let responsible: Option<i64> = w.try_get("", "primary_responsible_id").map_err(hook_err)?;
+            watchers.extend(responsible);
+        }
+        // The work order routes its planner; the others are its watchers.
+        source_module = "work_orders".to_string();
+        source_record = wo.to_string();
+        action_url = Some(format!("/work-orders?openWo={wo}"));
+        key = DECISION_REFUSED_WO_KEPT_CATEGORY;
+        params = json!({ "code": code, "decision": title });
+        title_text =
+            format!("Décision de fiabilité refusée : {code} conservé / Reliability decision refused: {code} kept");
+        body_text = format!(
+            "La décision « {title} » a été refusée à la synchronisation (son approbation n'est pas valable sur un \
+             poste). L'OT {code} créé à partir d'elle est conservé : vérifiez s'il reste nécessaire. / The decision \
+             \"{title}\" was refused at synchronisation (its approval is not valid on a PC). Work order {code} \
+             created from it is kept: check whether it is still needed."
+        );
+    } else if let Some(version) = pm_version {
+        let Some(v) = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT v.entity_sync_id, p.code AS plan_code, \
+                        (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS version_no \
+                   FROM pm_plan_versions v JOIN pm_plans p ON p.id = v.pm_plan_id WHERE v.id = ?",
+                [version.into()],
+            ))
+            .await?
+        else {
+            return Ok(());
+        };
+        let version_sync: Option<String> = v.try_get("", "entity_sync_id").map_err(hook_err)?;
+        let plan: String = v.try_get("", "plan_code").map_err(hook_err)?;
+        let number: Option<i64> = v.try_get("", "version_no").map_err(hook_err)?;
+        let number = number.map_or_else(|| "?".to_string(), |n| n.to_string());
+        // The PM planners (plant-wide) and the proposer; the version is named by its sync id.
+        watchers.extend(
+            crate::notifications::router::permission_holder_user_ids(conn, crate::rbac::permissions::PM_EDIT, None)
+                .await?,
+        );
+        source_module = "settings".to_string();
+        source_record = version_sync.unwrap_or_default();
+        action_url = None;
+        key = DECISION_REFUSED_PM_KEPT_MESSAGE;
+        params = json!({ "plan": plan, "version": number, "decision": title });
+        title_text = format!(
+            "Décision de fiabilité refusée : plan {plan} v{number} publié, à revoir / Reliability decision refused: \
+             plan {plan} v{number} published, to review"
+        );
+        body_text = format!(
+            "La décision « {title} » a été refusée à la synchronisation (son approbation n'est pas valable sur un \
+             poste). La version {number} du plan {plan}, publiée à partir d'elle, reste en vigueur : revoyez-la et \
+             publiez une autre version si elle ne convient pas. / The decision \"{title}\" was refused at \
+             synchronisation (its approval is not valid on a PC). Version {number} of plan {plan}, published from it, \
+             stays in force: review it and publish another version if it does not fit."
+        );
+    } else {
+        return Ok(());
+    }
+    watchers.sort_unstable();
+    watchers.dedup();
+    ensure_category_rows(
+        conn,
+        DECISION_REFUSED_WO_KEPT_CATEGORY,
+        "Reliability decision refused at synchronisation, work order or PM version kept",
+    )
+    .await?;
+    let event_id = crate::sync::identity::seeded_entity_sync_id(
+        "notification_events",
+        &format!("{DECISION_REFUSED_WO_KEPT_CATEGORY}|{decision_sync}"),
+    );
+    emit(
+        conn,
+        &NotificationEventInput {
+            source_module,
+            source_record_id: Some(source_record),
+            event_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            category_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            severity: "warning".to_string(),
+            dedupe_key: None,
+            payload_json: Some(
+                json!({
+                    "entity_type": "reliability_study_decisions",
+                    "entity_sync_id": decision_sync,
+                    "watcher_user_ids": watchers,
+                })
+                .to_string(),
+            ),
+            title: title_text,
+            body: Some(body_text),
+            action_url,
+        },
+        Some(event_id),
+        Some(&NotificationMessage::new(key, params)),
+        Arrival::New,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
 /// of the received row. A notice that cannot be written is logged and the row still applies: a
 /// version or an occurrence is never held back by its notice (nothing is changed by either).

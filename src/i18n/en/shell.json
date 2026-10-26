@@ -68,6 +68,7 @@
       "own": {
         "MISSING_PARENT": "Waiting for related data not received yet (a person, a right, a rule)",
         "MISSING_FIELD": "Sent by an older app version: waiting for the other PC to be updated",
+        "SENDER_OUTDATED": "Waiting: sending PC not up to date (a decision approved without a seal by an older version; applied once that PC sends the decision again, updated)",
         "NO_MATERIALIZER": "Needs a newer app version on this PC",
         "UNKNOWN_ENTITY_TYPE": "Needs a newer app version on this PC",
         "other": "Waiting (see the technical details)"
@@ -114,6 +115,12 @@
       "WEEK_UNFREEZE_SAME_PERSON": "A week unfrozen by a decision of the person who asked for it (four-eyes). Keep this PC's plan: the week stays frozen",
       "WEEK_UNFREEZE_UNAUTHORISED": "A week unfrozen by someone without plan.confirm at the site here. Keep this PC's plan: the week stays frozen",
       "DECISION_SELF_APPROVAL": "A decision approved by the person who proposed it (four-eyes)",
+      "DECISION_STATUS_REGRESSION": "A received reliability decision would go backwards (applied → approved, approved → proposed, or a refusal cleared). Keep this PC's decision: it is then refused on every PC",
+      "DECISION_CONTENT_CHANGED": "A received reliability decision whose content changed after it was proposed, or no longer matches its approval seal. Keep this PC's decision: it is then refused on every PC; a legitimate decision is proposed and approved again",
+      "DECISION_APPROVAL_UNSEALED": "A reliability decision approved without an approval seal by a version that seals. Keep this PC's decision: it is then refused on every PC",
+      "DECISION_NOT_DESIGNATED_APPROVER": "A reliability decision approved by someone other than its designated approver. Keep this PC's decision: it is then refused on every PC",
+      "DECISION_APPROVER_UNAUTHORISED": "A reliability decision approved by someone without the right to approve (ram.manage, plant-wide) here. The conflict closes by itself if the right arrives; otherwise keep this PC's decision",
+      "DECISION_APPLIER_UNAUTHORISED": "A reliability decision applied by someone without the rights to apply it (ram.manage and pm.edit or ot.create) here. The conflict closes by itself if the rights arrive; otherwise keep this PC's decision",
       "WO_PART_LINE_HAS_USE": "A planned part line was cancelled on another device, but parts were already used or issued from the store for it here: check the line with the planner and the store before deciding",
       "SITE_SETTING_UNAUDITED": "A site rule changed without its audited change (step-up, reason, settings right)",
       "SITE_SETTING_INVALID": "A site rule with an unreadable value or time",

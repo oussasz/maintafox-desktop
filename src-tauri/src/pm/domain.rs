@@ -33,6 +33,12 @@ pub struct PmPlan {
     /// Name of the family / location / criticality group a fanned-out plan targets.
     #[serde(default)]
     pub asset_scope_label: Option<String>,
+    /// The plan's current (published) version comes from a reliability study decision that is not
+    /// accepted here: refused at synchronisation, or not applied here yet (waiting, or not received).
+    /// Derived on read: "issue d'une décision refusée / en attente — à revoir" until the decision is
+    /// accepted here or a planner publishes another version (AU-76b, CMMS Advisor S4 option A).
+    #[serde(default)]
+    pub source_decision_to_review: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

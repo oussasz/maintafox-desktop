@@ -486,5 +486,9 @@
     "rolloverUnavailable": "No maximum value is set on this meter.",
     "replacement": "A meter replacement",
     "replacementHint": "A new meter was fitted; enter the new meter's reading."
+  },
+  "sourceDecision": {
+    "toReview": "From a refused / waiting decision — to review",
+    "toReviewHint": "The version in force comes from a reliability decision refused at synchronisation or not yet accepted on this PC. Review it; publishing another version clears this flag."
   }
 }

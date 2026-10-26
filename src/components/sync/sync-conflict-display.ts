@@ -88,6 +88,13 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WEEK_UNFREEZE_SAME_PERSON",
   "WEEK_UNFREEZE_UNAUTHORISED",
   "DECISION_SELF_APPROVAL",
+  // A reliability decision received approved or applied, re-checked on arrival (AU-76b).
+  "DECISION_STATUS_REGRESSION",
+  "DECISION_CONTENT_CHANGED",
+  "DECISION_APPROVAL_UNSEALED",
+  "DECISION_NOT_DESIGNATED_APPROVER",
+  "DECISION_APPROVER_UNAUTHORISED",
+  "DECISION_APPLIER_UNAUTHORISED",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
   "SITE_SETTING_UNAUDITED",
@@ -298,6 +305,8 @@ export const KNOWN_APPLY_REASONS = new Set([
 export const KNOWN_WAIT_REASONS = new Set([
   "MISSING_PARENT",
   "MISSING_FIELD",
+  // A reliability decision approved on a PC whose version does not seal approvals (AU-76b).
+  "SENDER_OUTDATED",
   "NO_MATERIALIZER",
   "UNKNOWN_ENTITY_TYPE",
 ]);
@@ -329,6 +338,22 @@ export const PLANNING_CONFLICT_KINDS = new Set([
   "WEEK_UNFREEZE_UNDECIDED",
   "WEEK_UNFREEZE_SAME_PERSON",
   "WEEK_UNFREEZE_UNAUTHORISED",
+]);
+
+/**
+ * Reliability decisions refused on arrival (AU-76b, CMMS Advisor answers 2026-10-26): like the
+ * planning refusals, only "keep this PC's decision" (ram.manage, with the reason; the decision is
+ * then refused on every PC, never applied or published, never deleted) and "escalate"
+ * (`reliability_decision_conflict` in `src-tauri/src/sync/queries.rs`). A rights conflict closes by
+ * itself when the rights arrive.
+ */
+export const RELIABILITY_DECISION_CONFLICT_KINDS = new Set([
+  "DECISION_STATUS_REGRESSION",
+  "DECISION_CONTENT_CHANGED",
+  "DECISION_APPROVAL_UNSEALED",
+  "DECISION_NOT_DESIGNATED_APPROVER",
+  "DECISION_APPROVER_UNAUTHORISED",
+  "DECISION_APPLIER_UNAUTHORISED",
 ]);
 
 /**
@@ -382,7 +407,12 @@ export function conflictActions(
       "dismiss",
     ];
   }
-  if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
+  if (
+    PLANNING_CONFLICT_KINDS.has(conflictType) ||
+    RELIABILITY_DECISION_CONFLICT_KINDS.has(conflictType)
+  ) {
+    return ["accept_local", "escalate"];
+  }
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
     return withTriage ? ["retry_later", "escalate"] : ["escalate"];
   }

@@ -393,6 +393,14 @@ export function PmPlanDetailDialog({
               size="md"
             />
             {asset ? <StatusChip label={asset} tone="info" size="md" /> : null}
+            {plan.source_decision_to_review ? (
+              <StatusChip
+                label={t("sourceDecision.toReview")}
+                title={t("sourceDecision.toReviewHint")}
+                tone="warning"
+                size="md"
+              />
+            ) : null}
             {plan.assigned_team_label || plan.assigned_team_name ? (
               <StatusChip
                 label={plan.assigned_team_label || plan.assigned_team_name || ""}

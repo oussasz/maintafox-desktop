@@ -6,6 +6,7 @@ pub mod advanced;
 pub mod analysis;
 pub mod clock;
 pub mod data_quality;
+pub mod decision_sync;
 pub mod decisions;
 pub mod domain;
 pub mod fleet_view;

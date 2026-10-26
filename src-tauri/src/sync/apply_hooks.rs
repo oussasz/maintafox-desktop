@@ -28,7 +28,13 @@
 //!   conflict unless the decision's site opted out of four-eyes; a decision still proposed or
 //!   rejected that names a work order or PM version created from it is refused (`INVALID_VALUE`,
 //!   audit finding AU-69); a study, equipment or site not applied yet makes it wait
-//!   (`reliability::study::decisions::inbound_self_approval_check`);
+//!   (`reliability::study::decisions::inbound_self_approval_check`); an approved or applied one is
+//!   re-checked (status never backwards, content and approval seal unchanged, designated approver,
+//!   the approver's and applier's rights here; a decision approved by a PC that does not seal yet
+//!   waits, shown as waiting for that PC's update); a decision refused on another PC is taken as
+//!   history, or its marks only over the one held here, which keeps its status and links; a work
+//!   order created here from a decision refused since is kept and told of
+//!   (`reliability::study::decision_sync`, AU-76b);
 //! - `site_settings` / `site_setting_events`: a per-site rule relaxing a site is applied only with
 //!   its audited change (step-up, reason, settings right), waiting for that event while it is in
 //!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts; a rule
@@ -212,26 +218,10 @@ pub(crate) async fn before_upsert_checked(
     {
         return Ok(Some(outcome));
     }
+    // Refusal marks, four-eyes, then the approval re-check: status, content and seal, designated
+    // approver, the approver's and applier's rights here (`reliability::study::decision_sync`).
     if layout.def.entity_type == "reliability_study_decisions" {
-        use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
-        return Ok(inbound_self_approval_check(conn, entity_sync_id, payload)
-            .await?
-            .map(|verdict| match verdict {
-                InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
-                    code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
-                    message,
-                    waits_for: None,
-                },
-                InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
-                    code: "DECISION_SELF_APPROVAL".into(),
-                    message,
-                },
-                // A rule re-checked on the received row (the screens list it as a refused value).
-                InboundDecisionVerdict::LinkedWhileUnapproved(message) => ApplyOutcome::Conflict {
-                    code: "INVALID_VALUE".into(),
-                    message,
-                },
-            }));
+        return crate::reliability::study::decision_sync::inbound_decision_check(conn, entity_sync_id, payload).await;
     }
     // A suspension made and lifted on another PC around a start here: raised for review and told
     // (`permit::ended_under_work::after_suspension_check`, CMMS Advisor answer to S3). Rolled back
@@ -648,6 +638,8 @@ pub(crate) struct HeldBeforeWrite {
     /// A count line: the "above the tolerance" flag held here when the received version is one
     /// this PC already judged (`inventory::count_four_eyes::held_judgement`).
     pub count_line_judged: Option<bool>,
+    /// A reliability decision held here without a refusal mark (`Some(true)`), before the write.
+    pub decision_unrefused: Option<bool>,
 }
 
 /// Reads [`HeldBeforeWrite`] for a received row about to be written.
@@ -660,6 +652,11 @@ pub(crate) async fn held_before_write(
     Ok(match layout.def.entity_type {
         "inventory_count_lines" => HeldBeforeWrite {
             count_line_judged: crate::inventory::count_four_eyes::held_judgement(conn, entity_sync_id, payload).await?,
+            ..HeldBeforeWrite::default()
+        },
+        "reliability_study_decisions" => HeldBeforeWrite {
+            decision_unrefused: crate::reliability::study::decision_sync::held_unrefused(conn, entity_sync_id).await?,
+            ..HeldBeforeWrite::default()
         },
         _ => HeldBeforeWrite::default(),
     })
@@ -679,6 +676,12 @@ pub(crate) async fn before_write(
 ) -> AppResult<Option<crate::permit::sync_check::HeldRule>> {
     match layout.def.entity_type {
         "work_orders" => crate::permit::sync_check::keep_held_rule_trace(conn, entity_sync_id, payload).await,
+        // A refused decision received over the one held here takes the marks only; a refusal held
+        // here keeps its marks (`reliability::study::decision_sync::keep_held_progress`).
+        "reliability_study_decisions" => {
+            crate::reliability::study::decision_sync::keep_held_progress(conn, entity_sync_id, payload).await?;
+            Ok(None)
+        }
         _ => Ok(None),
     }
 }
@@ -720,6 +723,21 @@ pub(crate) async fn after_upsert(
         // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
         // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC:
         // this log's two roles only.
+        // A received decision: sealed here when accepted unsealed over the proposal held here; refused
+        // (new here, or newly here), the work order or PM version it gave is kept and told of
+        // (CMMS Advisor Q6, S4; `reliability::study::decision_sync::after_decision_written`).
+        "reliability_study_decisions" => match row {
+            RowLocator::Identity(sync_id) => {
+                crate::reliability::study::decision_sync::after_decision_written(
+                    conn,
+                    sync_id,
+                    inserted,
+                    held.decision_unrefused,
+                )
+                .await
+            }
+            RowLocator::Natural(_) => Ok(()),
+        },
         "permit_handover_logs" => {
             let id = located_row_id(conn, layout, row)
                 .await?
@@ -728,11 +746,15 @@ pub(crate) async fn after_upsert(
         }
         // Two concurrent versions of a PM plan, or an occurrence due twice: the PM planners are told
         // (`pm::version_clash`).
-        "pm_plan_versions" if inserted => {
+        "pm_plan_versions" => {
             let id = located_row_id(conn, layout, row)
                 .await?
-                .ok_or_else(|| hook_err(layout.table(), "version not found after insert"))?;
-            crate::pm::version_clash::after_received_version(conn, id).await
+                .ok_or_else(|| hook_err(layout.table(), "version not found after apply"))?;
+            if inserted {
+                crate::pm::version_clash::after_received_version(conn, id).await?;
+            }
+            // Published from a decision already refused here: kept running and told of (R2-N4).
+            crate::reliability::study::decision_sync::after_version_written(conn, id).await
         }
         "pm_occurrences" if inserted => {
             let id = located_row_id(conn, layout, row)

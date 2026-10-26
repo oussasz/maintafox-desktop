@@ -2212,6 +2212,10 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
             wire.insert("decided_by_sync_id".into(), admin_sync.into());
             wire.insert("site_node_sync_id".into(), site.into());
             wire.insert("site_recorded".into(), 1.into());
+            // Sealed, as an app version that seals approvals sends it (AU-76b).
+            wire.insert("decided_at".into(), "2026-10-02T08:00:00Z".into());
+            let seal = crate::reliability::study::decision_sync::approval_seal(&wire);
+            wire.insert("approval_seal".into(), seal.into());
             apply_wire(f, "reliability_study_decisions", &sync_id, "upsert", &wire).await
         }
     };
@@ -2959,3 +2963,6 @@ async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_app
     let published = publish(own).await.expect("publish the applied decision's draft");
     assert_eq!(published.status, "published");
 }
+
+#[path = "decision_sync_tests.rs"]
+mod decision_sync_tests;

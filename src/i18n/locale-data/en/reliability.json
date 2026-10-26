@@ -1167,7 +1167,9 @@
       "approveTitle": "Approve this decision?",
       "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order).",
       "selfApproved": "Self-approved",
-      "selfApprovedHint": "Approved by the person who proposed it."
+      "selfApprovedHint": "Approved by the person who proposed it.",
+      "syncRefused": "Refused at synchronisation",
+      "syncRefusedHint": "This decision's approval is not valid on a PC: it can no longer be approved or applied. Propose a new decision."
     },
     "backToModule": "Fleet and studies",
     "fmeca": {

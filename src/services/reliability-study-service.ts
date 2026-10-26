@@ -429,6 +429,9 @@ const DecisionSchema = z.object({
   linked_work_order_id: optNum,
   linked_work_order_code: optStr,
   effect: EffectSchema,
+  /** Refused at synchronisation (AU-76b): never approved or applied again, on any PC. */
+  sync_refused_at: optStr.optional(),
+  sync_refused_reason: optStr.optional(),
   row_version: num,
 });
 
