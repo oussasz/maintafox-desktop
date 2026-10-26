@@ -7667,9 +7667,9 @@ async fn a_reversal_waits_while_its_posting_is_dead_lettered() {
 
 /// Piece F review (SF-1): a count reversal whose delivery was attempted (it may have reached the
 /// server) is never rewritten when the posting kept arrives: the version the server may hold and
-/// the one sent stay the same.
-#[tokio::test]
-async fn a_reversal_once_attempted_is_never_rewritten() {
+/// the one sent stay the same. `attempts`: how its outbox entry records the attempt (an SQL `SET`
+/// list).
+async fn attempted_reversal_is_never_rewritten(attempts: &str) {
     let ApprovedOnBoth {
         a,
         b,
@@ -7687,8 +7687,9 @@ async fn a_reversal_once_attempted_is_never_rewritten() {
     crate::sync::capture::drain_capture_journal(&b).await.expect("staged");
     exec(
         &b,
-        "UPDATE sync_outbox SET attempt_count = 1, last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-         WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?",
+        &format!(
+            "UPDATE sync_outbox SET {attempts} WHERE entity_type = 'inventory_transactions' AND entity_sync_id = ?"
+        ),
         vec![reversal.clone().into()],
     )
     .await;
@@ -7710,6 +7711,226 @@ async fn a_reversal_once_attempted_is_never_rewritten() {
     .await;
     let audit: serde_json::Value = serde_json::from_str(&audit).expect("details");
     assert!(audit["reversal_undoes_kept"].is_null(), "{audit}");
+}
+
+/// SF-1: attempted once and failed (`attempt_count` and `last_attempt_at` both set).
+#[tokio::test]
+async fn a_reversal_once_attempted_is_never_rewritten() {
+    attempted_reversal_is_never_rewritten("attempt_count = 1, last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        .await;
+}
+
+/// SF-1 (review of 5524098b): returned unsent or requeued — its attempt count back to 0, the time of
+/// its last attempt kept (`return_unsent_outbox_items`, the replay or repair requeue).
+#[tokio::test]
+async fn a_reversal_returned_unsent_or_requeued_is_never_rewritten() {
+    attempted_reversal_is_never_rewritten("attempt_count = 0, last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+        .await;
+}
+
+/// SF-1 (review of 5524098b): an attempt counted with no time recorded is an attempt too.
+#[tokio::test]
+async fn a_reversal_with_an_attempt_counted_is_never_rewritten() {
+    attempted_reversal_is_never_rewritten("attempt_count = 1, last_attempt_at = NULL").await;
+}
+
+/// Review of 5524098b (note): A's posting is applied on B while B's own posting is dead-lettered:
+/// B's held reversal is still made the undo of the posting kept (+3), and B's stock does not move.
+#[tokio::test]
+async fn adoption_while_the_posting_is_dead_lettered_rewrites_the_held_reversal() {
+    let ApprovedOnBoth {
+        a,
+        b,
+        mut server,
+        users,
+        pair_b,
+        session_sync_id,
+        ..
+    } = approved_on_both().await;
+    divergent_on_b(&b, &session_sync_id).await;
+    post_on(&a, users.0, &session_sync_id).await;
+    sync_applied(&mut server, "A", &a).await;
+    post_on(&b, users.1, &session_sync_id).await;
+    reverse_on(&b, users.1, &session_sync_id).await;
+    let posting = movement_sync_id(&b, &session_sync_id, "COUNT_ADJUST").await;
+    let reversal = movement_sync_id(&b, &session_sync_id, "COUNT_REVERSAL").await;
+    outbox_status(&b, &posting, "dead_letter").await;
+    sync_applied(&mut server, "B", &b).await;
+    assert!(
+        !server
+            .state
+            .contains_key(&("inventory_transactions".to_string(), reversal.clone())),
+        "still held"
+    );
+    reversal_waits_in_outbox(&b, &reversal, 3.0).await;
+    assert_eq!(
+        on_hand_milli(&b, pair_b.0, pair_b.1).await,
+        10_000,
+        "B: posted and reversed, the stock does not move"
+    );
+}
+
+/// Review of 5524098b (note): the count's own reversal (its seeded id) that no count line here names,
+/// arriving when its count is already reversed here (under another id), is refused: a visible
+/// conflict saying the count is already reversed here; the stock does not move.
+#[tokio::test]
+async fn a_seeded_reversal_no_line_names_is_refused_where_its_count_is_already_reversed() {
+    let ForgedAdjustment {
+        b,
+        mut server,
+        pair_b,
+        session_sync,
+        line_sync,
+        real,
+        ..
+    } = posted_count("seededtwicecounter").await;
+    sync_applied(&mut server, "B", &b).await;
+    let text = |key: &str| real.get(key).and_then(|v| v.as_str()).expect("sync id").to_string();
+    let seeded = crate::sync::identity::seeded_entity_sync_id(
+        "count_reversal",
+        &format!(
+            "{}:{}:{}",
+            text("source_sync_id"),
+            text("article_sync_id"),
+            text("location_sync_id")
+        ),
+    );
+    let mut undo = real.clone();
+    undo.insert("movement_type".into(), serde_json::json!("COUNT_REVERSAL"));
+    undo.insert("quantity".into(), serde_json::json!(3.0));
+    // The count reversed here first under another id, named by a line version naming it.
+    let line = wire_row(&b, "inventory_count_lines", &line_sync).await;
+    let first = push_forged_reversal(&b, &crate::sync::identity::new_entity_sync_id(), 1, line, &undo).await;
+    assert_eq!(
+        scalar_i64(
+            &b,
+            "SELECT COUNT(*) FROM inventory_transactions WHERE entity_sync_id = ?",
+            vec![first.into()],
+        )
+        .await,
+        1,
+        "the first reversal is applied"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+    exec(
+        &b,
+        "UPDATE sync_conflicts SET status = 'dismissed' WHERE status IN ('new', 'triaged', 'escalated')",
+        vec![],
+    )
+    .await;
+
+    inbox_put(
+        &b,
+        "delta-seeded",
+        "inventory_transactions",
+        &seeded,
+        1,
+        &undo,
+        "pending",
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&b, 200, true)
+        .await
+        .expect("tried");
+    assert_forged_movement_refused(&b, &seeded, "which no count line here names").await;
+    let detail = text_of(
+        &b,
+        "SELECT detail_message FROM sync_conflicts WHERE entity_sync_id = ?",
+        vec![seeded.clone().into()],
+    )
+    .await;
+    assert!(detail.contains("this count is already reversed here"), "{detail}");
+    assert_eq!(count_movements(&b, &session_sync, "COUNT_REVERSAL").await, (1, 1));
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 10_000);
+}
+
+/// CMMS Advisor decision 2026-10-26: a count posted twice by an older version (two adjustments here),
+/// then reversed by the count's own reversal that no line names (matched against the ledger by its
+/// quantity only): the "comptage passé deux fois — à vérifier" item stays open — that reversal
+/// never closes it — until a new count of that article and location closes it.
+#[tokio::test]
+async fn a_count_posted_twice_reversed_by_quantity_only_stays_to_verify_until_a_new_count() {
+    let (
+        ForgedAdjustment {
+            b,
+            pair_b,
+            session_sync,
+            real,
+            ..
+        },
+        _legacy,
+    ) = posted_twice_on_b("fallbackreversalcounter").await;
+    let text = |key: &str| real.get(key).and_then(|v| v.as_str()).expect("sync id").to_string();
+    let seeded = crate::sync::identity::seeded_entity_sync_id(
+        "count_reversal",
+        &format!(
+            "{}:{}:{}",
+            text("source_sync_id"),
+            text("article_sync_id"),
+            text("location_sync_id")
+        ),
+    );
+    let mut undo = real.clone();
+    undo.insert("movement_type".into(), serde_json::json!("COUNT_REVERSAL"));
+    undo.insert("quantity".into(), serde_json::json!(3.0));
+    inbox_put(
+        &b,
+        "delta-seeded",
+        "inventory_transactions",
+        &seeded,
+        1,
+        &undo,
+        "pending",
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&b, 200, true)
+        .await
+        .expect("tried");
+    assert_eq!(
+        count_movements(&b, &session_sync, "COUNT_REVERSAL").await,
+        (1, 1),
+        "the reversal matched by its quantity is applied"
+    );
+    assert_eq!(on_hand_milli(&b, pair_b.0, pair_b.1).await, 7_000);
+
+    let list = negative_stock::list_reviews(&b, true).await.expect("list");
+    assert_eq!(
+        list.double_postings.len(),
+        1,
+        "still to verify: {:?}",
+        list.double_postings
+    );
+    let item = &list.double_postings[0];
+    assert_eq!(item.movement_type, "COUNT_ADJUST");
+    assert!(item.closed_by.is_none());
+    assert!(list.closed_double_postings.is_empty(), "not closed by the reversal");
+    assert_eq!(
+        negative_stock::summary(&b).await.expect("summary").double_posting_count,
+        1
+    );
+
+    let user = user_with(&b, "fallbackrecounter", &[crate::rbac::permissions::INV_MANAGE]).await;
+    let recount = resolve_approved(
+        &b,
+        user,
+        resolution(pair_b.0, pair_b.1, 6.0, "Recompté après double passage"),
+    )
+    .await
+    .expect("a new count");
+    let list = negative_stock::list_reviews(&b, true).await.expect("list");
+    assert!(list.double_postings.is_empty(), "closed");
+    assert_eq!(
+        list.closed_double_postings
+            .first()
+            .and_then(|d| d.closed_by.as_ref())
+            .map(|c| c.session_code.clone()),
+        Some(recount.session_code),
+        "closed by the new count"
+    );
+    assert_eq!(
+        negative_stock::summary(&b).await.expect("summary").double_posting_count,
+        0
+    );
 }
 
 /// The same approved count posted on B with a counted quantity of 6 (−4) where A counts 7 (−3).
