@@ -888,7 +888,8 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
         .map_err(|e| decode_err("checkpoint_token", e))?;
 
     // Unsent changes in staging order. An entity whose earlier change is waiting for a person
-    // (`conflict`) is held back: its later changes were built on the refused one.
+    // (`conflict`) is held back: its later changes were built on the refused one. A count reversal
+    // waits for the posting it undoes to be settled with the server (`inventory::count_sync`).
     let page_size = limit.unwrap_or(200).clamp(1, 1000);
     let tx = db.begin().await?;
     // Changes captured by the table triggers become outbox envelopes first.
@@ -902,8 +903,10 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
                  AND c.entity_sync_id = o.entity_sync_id
                  AND c.status = 'conflict'
            )
+           AND NOT {held_reversal}
          ORDER BY o.id ASC
-         LIMIT ?"
+         LIMIT ?",
+        held_reversal = crate::inventory::count_sync::REVERSAL_AWAITING_ITS_POSTING_SQL,
     );
     let rows = tx
         .query_all(Statement::from_sql_and_values(

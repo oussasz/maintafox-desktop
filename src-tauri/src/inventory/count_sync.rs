@@ -17,6 +17,14 @@
 //!   PC's moves this PC's stock by the difference in the same transaction, so every PC holds the
 //!   same ledger and the same stock.
 //!
+//! A count reversed on this PC before its posting is settled with the server (posted and reversed
+//! offline) waits in the outbox ([`REVERSAL_AWAITING_ITS_POSTING_SQL`]): it is sent once the
+//! posting is acknowledged, or once the version posted first on another PC is applied here. When
+//! that version has another quantity, the reversal is first made the exact undo of it and this PC's
+//! stock follows ([`undo_kept_posting`]): the other PCs receive the reversal of the posting they
+//! hold and every PC goes back to the same stock (review of ab58cd53, §4). Sent before the posting
+//! was settled, it would undo a posting no other PC holds and be refused there.
+//!
 //! This PC's posting (who, when, the PC, its reason and quantity) is kept in an audit event
 //! [`AUDIT_POSTED_TWICE`] for the session, the movement and the audit link; the event is
 //! synchronised. Rows that are identical on both PCs need nothing: the server acknowledges the second
@@ -65,6 +73,35 @@ const LINK_LINE_FIELDS: &[&str] = &["reviewer_sync_id", "reviewer_evidence"];
 
 /// Audit action of a count posting superseded by the same posting made first on another PC.
 pub const AUDIT_POSTED_TWICE: &str = "inventory.count.posted_twice";
+
+/// SQL condition on an outbox entry (alias `o`): it is a count reversal (`COUNT_REVERSAL` of a
+/// count session) whose count's adjustment, posted on this PC, is not settled with the server yet.
+/// That adjustment's push is unsent, in flight or in conflict; or it is dead-lettered (its delivery
+/// failed too often: the server may have received it and answered that the same count was posted
+/// first elsewhere, piece F review SF-2) or superseded by the same count posted first on another PC
+/// ([`COUNT_ALREADY_POSTED`]), and in both cases the server's version is not applied here yet. The
+/// reversal
+/// waits in the outbox (`sync::queries::get_sync_push_payload`): when the posting kept has another
+/// quantity, the reversal is made the exact undo of that one before it is sent
+/// ([`adopt_first_posted`]), so every PC goes back to the same stock (review of ab58cd53, §4). An
+/// adjustment the server rejected, or acknowledged, holds nothing.
+pub(crate) const REVERSAL_AWAITING_ITS_POSTING_SQL: &str = "EXISTS (
+    SELECT 1 FROM inventory_transactions r
+    JOIN inventory_transactions x
+      ON x.movement_type = 'COUNT_ADJUST' AND x.source_type = 'COUNT_SESSION' AND x.source_id = r.source_id
+     AND x.article_id = r.article_id AND x.location_id = r.location_id
+    WHERE o.entity_type = 'inventory_transactions' AND r.entity_sync_id = o.entity_sync_id
+      AND r.movement_type = 'COUNT_REVERSAL' AND r.source_type = 'COUNT_SESSION'
+      AND (EXISTS (SELECT 1 FROM sync_outbox xo
+                    WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
+                      AND xo.status IN ('pending', 'in_flight', 'conflict'))
+           OR (EXISTS (SELECT 1 FROM sync_outbox xo
+                        WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
+                          AND (xo.status = 'dead_letter'
+                               OR (xo.status = 'superseded' AND xo.rejection_code = 'COUNT_ALREADY_POSTED')))
+               AND NOT EXISTS (SELECT 1 FROM sync_entity_state s
+                                WHERE s.entity_type = 'inventory_transactions'
+                                  AND s.entity_sync_id = x.entity_sync_id))))";
 
 /// Quantities closer than this are equal (decimal movements).
 const QTY_TOLERANCE: f64 = 1e-9;
@@ -334,7 +371,7 @@ pub(crate) async fn settle_count_server_conflict(
                 return Ok(false);
             };
             if entity_type == SESSIONS && !differing_keys(&local, &server).is_empty() {
-                write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &server).await?;
+                write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &server, None).await?;
             }
         }
         _ => return Ok(false),
@@ -398,7 +435,7 @@ pub(crate) async fn settle_concurrent_posting(
         return Ok(false);
     }
     if entity_type == SESSIONS {
-        write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &received).await?;
+        write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, &received, None).await?;
     }
     close_outbox(
         conn,
@@ -456,13 +493,15 @@ async fn version_details(conn: &impl ConnectionTrait, entity_type: &str, p: &Map
 /// Audit event [`AUDIT_POSTED_TWICE`] for one row of a count posted on two PCs: this PC's version
 /// (who posted or reversed it, when, its reason and quantity), the version kept, this PC, and
 /// whether the count lines differed (`line_differs`) or the quantity did (`quantity_differs`, read
-/// by `negative_stock` to list the count as divergent). Returns the event's id.
+/// by `negative_stock` to list the count as divergent), and this PC's reversal of it made the undo
+/// of the posting kept (`reversal_undoes_kept`, [`undo_kept_posting`]). Returns the event's id.
 async fn write_posted_twice_audit(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
     local: &Map<String, Value>,
     kept: &Map<String, Value>,
+    reversal: Option<&Value>,
 ) -> AppResult<i64> {
     let differing = differing_keys(local, kept);
     let line_fields: &[&str] = match entity_type {
@@ -504,6 +543,7 @@ async fn write_posted_twice_audit(
                 "replica_id": replica_id,
                 "this_pc_posting": version_details(conn, entity_type, local).await?,
                 "kept_posting": version_details(conn, entity_type, kept).await?,
+                "reversal_undoes_kept": reversal,
             })),
         },
     )
@@ -543,6 +583,7 @@ pub(crate) async fn adopt_first_posted(
     if differing_keys(&local, inbound).is_empty() {
         return Ok(false);
     }
+    let mut reversal = None;
     if entity_type == MOVEMENTS {
         let (Some(_), Some(kept_qty)) = (qty(&local), qty(inbound)) else {
             return Ok(false);
@@ -592,10 +633,120 @@ pub(crate) async fn adopt_first_posted(
                 [kept_qty.into(), entity_sync_id.into()],
             ))
             .await?;
+            if movement_type == "COUNT_ADJUST" {
+                reversal = undo_kept_posting(conn, &local, kept_qty).await?;
+            }
             crate::inventory::negative_stock::reconcile_pair_in(conn, article_id, location_id).await?;
         }
     }
-    let audit_id = write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, inbound).await?;
+    let audit_id =
+        write_posted_twice_audit(conn, entity_type, entity_sync_id, &local, inbound, reversal.as_ref()).await?;
     crate::sync::capture::capture_row_change(conn, "audit_events", audit_id).await?;
     Ok(true)
+}
+
+/// This PC's reversal of its own posting of a count, still waiting in the outbox for that posting
+/// to be settled with the server ([`REVERSAL_AWAITING_ITS_POSTING_SQL`]), when the posting kept (the
+/// one the server received first, `kept_qty`) has another quantity than this PC's (`local`, wire
+/// form): the reversal is made the exact undo of the posting kept (`-kept_qty`) and this PC's
+/// stock follows, in the adoption's transaction (review of ab58cd53, §4). Its unsent outbox entry
+/// carries the new quantity, so every PC receives the reversal of the posting it holds and goes
+/// back to the same stock; with the adoption the stock here does not move at all (posted, then
+/// reversed). Only a reversal never sent (no version of it synchronised, no outbox entry of it
+/// beyond `pending`, nor one ever attempted: a delivery that failed may have reached the server,
+/// piece F review SF-1) that undoes exactly this PC's posting. Returns what the audit keeps of it.
+async fn undo_kept_posting(
+    conn: &impl ConnectionTrait,
+    local: &Map<String, Value>,
+    kept_qty: f64,
+) -> AppResult<Option<Value>> {
+    let (Some(session), Some(article), Some(location), Some(posted)) = (
+        text(local, "source_sync_id"),
+        text(local, "article_sync_id"),
+        text(local, "location_sync_id"),
+        qty(local),
+    ) else {
+        return Ok(None);
+    };
+    let reversal_sync_id =
+        crate::sync::identity::seeded_entity_sync_id("count_reversal", &format!("{session}:{article}:{location}"));
+    let Some(reversal) = local_payload(conn, MOVEMENTS, &reversal_sync_id).await? else {
+        return Ok(None);
+    };
+    let Some(undone) = qty(&reversal) else {
+        return Ok(None);
+    };
+    if text(&reversal, "movement_type") != Some("COUNT_REVERSAL")
+        || !is_seeded_count_movement(&reversal_sync_id, &reversal)
+        || (undone + posted).abs() > QTY_TOLERANCE
+    {
+        return Ok(None);
+    }
+    if crate::sync::queries::synced_row_version(conn, MOVEMENTS, &reversal_sync_id)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let sent = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS sent FROM sync_outbox WHERE entity_type = ? AND entity_sync_id = ?
+               AND (status <> 'pending' OR attempt_count > 0 OR last_attempt_at IS NOT NULL)
+             LIMIT 1",
+            [MOVEMENTS.into(), reversal_sync_id.clone().into()],
+        ))
+        .await?;
+    if sent.is_some() {
+        return Ok(None);
+    }
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT article_id, warehouse_id, location_id FROM inventory_transactions WHERE entity_sync_id = ?",
+            [reversal_sync_id.clone().into()],
+        ))
+        .await?
+        .ok_or_else(|| crate::errors::AppError::SyncError(format!("count reversal {reversal_sync_id} vanished")))?;
+    let undo = -kept_qty;
+    crate::inventory::ledger::apply_received_movement(
+        conn,
+        row.try_get("", "article_id")?,
+        row.try_get("", "warehouse_id")?,
+        row.try_get("", "location_id")?,
+        "COUNT_REVERSAL",
+        undo - undone,
+    )
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE inventory_transactions SET quantity = ? WHERE entity_sync_id = ?",
+        [undo.into(), reversal_sync_id.clone().into()],
+    ))
+    .await?;
+    // Its unsent outbox entry (staged before the adoption, with this PC's undo) is rewritten with
+    // the row as it now is: the reversal has never left this PC, so no version of it is replaced
+    // anywhere else. Not staged yet (still in the capture journal), it is staged as it now is.
+    let layout = crate::sync::row_layout::layout(conn, MOVEMENTS).await?;
+    if let Some(row) = load_row_payload(conn, &layout, &RowLocator::Identity(reversal_sync_id.clone())).await? {
+        let payload_json = row.payload_json()?;
+        let payload_hash = crate::sync::queries::hash_payload(&payload_json);
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE sync_outbox SET payload_json = ?, payload_hash = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE entity_type = ? AND entity_sync_id = ? AND status = 'pending'",
+            [
+                payload_json.into(),
+                payload_hash.into(),
+                MOVEMENTS.into(),
+                reversal_sync_id.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(Some(serde_json::json!({
+        "movement_sync_id": reversal_sync_id,
+        "this_pc_quantity": undone,
+        "sent_quantity": undo,
+    })))
 }
