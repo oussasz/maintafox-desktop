@@ -10,13 +10,13 @@ use crate::{activity, notifications};
 
 use super::break_in_approval::{self, ForcedCheck};
 use super::domain::{
-    AbsenceAccess, ApproverPassword, AbsenceDetail, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter, CapacityWindow,
-    CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput,
-    ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput,
-    NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter, PlanningGanttSnapshot,
-    PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter,
-    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput,
-    UpdatePlanningWindowInput,
+    AbsenceAccess, AbsenceDetail, ApproverPassword, AssigneeCapacityInput, CapacityRule, CapacityRuleFilter,
+    CapacityWindow, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
+    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
+    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter,
+    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn,
+    ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
+    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use super::load;
 use super::person_load;
@@ -347,8 +347,12 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
             .map_err(|e| decode_err("forced_checks_json", e))?
             .and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok())
             .unwrap_or_default(),
-        old_team_id: row.try_get("", "old_team_id").map_err(|e| decode_err("old_team_id", e))?,
-        new_team_id: row.try_get("", "new_team_id").map_err(|e| decode_err("new_team_id", e))?,
+        old_team_id: row
+            .try_get("", "old_team_id")
+            .map_err(|e| decode_err("old_team_id", e))?,
+        new_team_id: row
+            .try_get("", "new_team_id")
+            .map_err(|e| decode_err("new_team_id", e))?,
         sync_refused_at: row
             .try_get("", "sync_refused_at")
             .map_err(|e| decode_err("sync_refused_at", e))?,
@@ -2068,7 +2072,12 @@ pub async fn create_schedule_commitment(
     let (break_in_approver, break_in_password) = input
         .frozen_week_break_in
         .as_ref()
-        .map(|b| (b.approved_by_user_id, b.approver_password.as_ref().map(ApproverPassword::expose)))
+        .map(|b| {
+            (
+                b.approved_by_user_id,
+                b.approver_password.as_ref().map(ApproverPassword::expose),
+            )
+        })
         .unwrap_or((None, None));
     let signer = break_in_approval::signer_account(break_in_approver, break_in_password);
     let password = break_in_approval::signer_password_state(db, signer, break_in_password).await?;
