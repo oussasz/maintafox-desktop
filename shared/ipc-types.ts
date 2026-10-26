@@ -7196,6 +7196,8 @@ export interface AvailabilityBlockUpdateInput {
   keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
+  /** The block's `row_version` as read; a block changed since is refused (GATE_RECORD_CHANGED_ELSEWHERE). */
+  expected_row_version: number;
 }
 
 export interface PersonnelAvailabilityBlock {
@@ -7213,6 +7215,8 @@ export interface PersonnelAvailabilityBlock {
   created_by_id: number | null;
   created_by_label: string | null;
   created_at: string;
+  /** Sent back on update, end and delete, which refuse a block changed since. */
+  row_version: number;
   /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
   reason_masked: boolean;
   /** The absence type withheld: show the neutral tag only. */
@@ -10546,6 +10550,13 @@ export type SyncWorkerState =
 export interface SyncWorkerError {
   /** Server error code (e.g. `rate_limited`), `offline`, `interrupted` or `local_error`. */
   code: string;
+  /**
+   * Stable reason the screens translate (`shell:sync.worker.errorKind.*`): `network_unreachable`,
+   * `connection_interrupted`, `server_unavailable`, `access_refused`, `request_refused`,
+   * `invalid_server_response`, `local_error`, `not_configured` or `other`.
+   */
+  kind: string;
+  /** Raw text ("HTTP 503: …"): technical details and support only, never the message shown. */
   message: string;
   http_status: number | null;
   at: string;
@@ -10722,7 +10733,7 @@ export interface ResolveSyncConflictInput {
 
 export interface ReplaySyncFailuresInput {
   replay_key: string;
-  mode: "single_item" | "batch" | "window" | "checkpoint_rollback";
+  mode: "single_item" | "checkpoint_rollback";
   reason: string;
   conflict_id?: number | null;
   outbox_id?: number | null;
@@ -10845,7 +10856,8 @@ export interface EntitlementDiagnostics {
 }
 
 export interface SyncRepairPreviewInput {
-  mode: "requeue_rejected_outbox" | "retry_operator_conflicts" | "checkpoint_realign";
+  /** Only the checkpoint is realigned; bulk requeue / conflict retry are refused (AU-44). */
+  mode: "checkpoint_realign";
   reason: string;
   outbox_ids?: number[] | null;
   conflict_ids?: number[] | null;

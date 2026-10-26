@@ -91,6 +91,7 @@ function block(id: number, personnel_id: number, start: string): PersonnelAvaila
     created_by_id: null,
     created_by_label: null,
     created_at: start,
+    row_version: 1,
     reason_masked: false,
     type_masked: false,
     critical_for_planning: false,

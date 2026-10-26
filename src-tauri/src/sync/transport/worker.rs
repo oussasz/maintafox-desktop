@@ -225,6 +225,9 @@ pub enum SyncWorkerState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SyncWorkerError {
     pub code: String,
+    /// Why the attempt failed, as a stable reason the screens translate (`error_kind`).
+    pub kind: &'static str,
+    /// Raw text ("HTTP 503: …", the network library's): log and technical details only.
     pub message: String,
     pub http_status: Option<u16>,
     pub at: String,
@@ -360,6 +363,7 @@ impl SyncWorkerHandle {
             s.blocker = Some(BLOCKER_NOT_CONFIGURED.to_string());
             s.last_error = Some(SyncWorkerError {
                 code: BLOCKER_NOT_CONFIGURED.to_string(),
+                kind: error_kind(BLOCKER_NOT_CONFIGURED, None),
                 message: message.to_string(),
                 http_status: None,
                 at: store::now_utc(),
@@ -462,9 +466,38 @@ fn retry_after_of(err: &TransportError) -> Option<Duration> {
     }
 }
 
+/// Stable reason of a failed attempt (`SyncWorkerError::kind`) from its raw code and HTTP status.
+/// The server's codes are open-ended, so an HTTP failure is read by its status first; an error
+/// read back from the worker state has no status, and the server codes known to the worker
+/// ([`classify`]) give its reason then.
+pub fn error_kind(code: &str, http_status: Option<u16>) -> &'static str {
+    match (http_status, code) {
+        (Some(401 | 403), _) => "access_refused",
+        (Some(408 | 429 | 500..=599), _) => "server_unavailable",
+        (Some(_), _) => "request_refused",
+        (None, "rate_limited" | "sync_exchange_failed") => "server_unavailable",
+        (None, "invalid_token" | "activation_revoked") => "access_refused",
+        (
+            None,
+            "tenant_config_mismatch"
+            | "invalid_checkpoint_token"
+            | "checkpoint_ahead_of_server"
+            | "idempotency_key_reused"
+            | "validation_error",
+        ) => "request_refused",
+        (None, "offline") => "network_unreachable",
+        (None, "interrupted") => "connection_interrupted",
+        (None, "invalid_server_response") => "invalid_server_response",
+        (None, "local_error") => "local_error",
+        (None, BLOCKER_NOT_CONFIGURED) => "not_configured",
+        _ => "other",
+    }
+}
+
 fn worker_error(err: &TransportError) -> SyncWorkerError {
     SyncWorkerError {
         code: err.code().to_string(),
+        kind: error_kind(err.code(), err.http_status()),
         message: err.message(),
         http_status: err.http_status(),
         at: store::now_utc(),
@@ -474,6 +507,7 @@ fn worker_error(err: &TransportError) -> SyncWorkerError {
 fn local_error(err: &AppError) -> SyncWorkerError {
     SyncWorkerError {
         code: "local_error".to_string(),
+        kind: error_kind("local_error", None),
         message: err.to_string(),
         http_status: None,
         at: store::now_utc(),
@@ -703,12 +737,16 @@ impl SyncWorker {
             .ok()
             .map(|d| (chrono::Utc::now() + d).format("%Y-%m-%dT%H:%M:%SZ").to_string());
         let last_error = match (&state.last_error_code, &state.last_error_message, &state.last_error_at) {
-            (Some(code), Some(message), Some(at)) => Some(SyncWorkerError {
-                code: code.clone(),
-                message: message.clone(),
-                http_status: error.as_ref().and_then(|e| e.http_status),
-                at: at.clone(),
-            }),
+            (Some(code), Some(message), Some(at)) => {
+                let http_status = error.as_ref().and_then(|e| e.http_status);
+                Some(SyncWorkerError {
+                    code: code.clone(),
+                    kind: error_kind(code, http_status),
+                    message: message.clone(),
+                    http_status,
+                    at: at.clone(),
+                })
+            }
             _ => None,
         };
         self.handle.publish(SyncWorkerStatus {
@@ -1450,6 +1488,52 @@ mod tests {
         assert_eq!(high, SYNC_RETRY_MAX_DELAY.mul_f64(1.0 + SYNC_RETRY_JITTER_RATIO));
         // Never below the base delay.
         assert!(retry_delay(1, &t, 0.0) >= SYNC_RETRY_BASE_DELAY);
+    }
+
+    #[test]
+    fn worker_errors_carry_a_stable_reason_and_keep_the_raw_text_as_detail() {
+        let http = |status: u16, code: Option<&str>| TransportError::Http {
+            status,
+            code: code.map(str::to_string),
+            message: "upstream down".to_string(),
+            retry_after: None,
+        };
+        let cases = [
+            (TransportError::Offline("dns error".into()), "network_unreachable"),
+            (
+                TransportError::Interrupted("timed out".into()),
+                "connection_interrupted",
+            ),
+            (TransportError::Contract("bad json".into()), "invalid_server_response"),
+            (http(503, None), "server_unavailable"),
+            (http(500, Some("sync_exchange_failed")), "server_unavailable"),
+            (http(429, Some("rate_limited")), "server_unavailable"),
+            (http(408, None), "server_unavailable"),
+            (http(401, Some("invalid_token")), "access_refused"),
+            (http(403, None), "access_refused"),
+            (http(409, Some("tenant_config_mismatch")), "request_refused"),
+            (http(400, None), "request_refused"),
+        ];
+        for (err, kind) in cases {
+            let worker = worker_error(&err);
+            assert_eq!(worker.kind, kind, "{err:?}");
+            // The raw text stays available for the log and the technical details.
+            assert_eq!(worker.message, err.message());
+            assert_eq!(worker.code, err.code());
+        }
+        assert_eq!(worker_error(&http(503, None)).message, "HTTP 503: upstream down");
+        assert_eq!(
+            local_error(&AppError::SyncError("disk full".into())).kind,
+            "local_error"
+        );
+        // A persisted error read back without its HTTP status.
+        assert_eq!(error_kind(BLOCKER_NOT_CONFIGURED, None), "not_configured");
+        assert_eq!(error_kind("rate_limited", None), "server_unavailable");
+        assert_eq!(error_kind("invalid_token", None), "access_refused");
+        assert_eq!(error_kind("tenant_config_mismatch", None), "request_refused");
+        assert_eq!(error_kind("http_error", None), "other");
+        assert_eq!(error_kind("something_new", None), "other");
+        assert_eq!(error_kind("offline", None), "network_unreachable");
     }
 
     #[test]

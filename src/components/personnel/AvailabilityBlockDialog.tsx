@@ -169,6 +169,7 @@ export function AvailabilityBlockDialog({
             : { reason_note: reason.trim() || null }),
           is_critical: forcedCritical || isCritical,
           ...(confirmOverlap ? { confirm_overlap: true as const } : {}),
+          expected_row_version: editingBlock.row_version,
         };
         await updateAvailabilityBlock(updateInput);
       } else if (personnelId != null) {

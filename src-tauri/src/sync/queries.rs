@@ -189,21 +189,22 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
     }
 }
 
-fn parse_rfc3339(value: &str, field: &str) -> AppResult<()> {
-    chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
-        AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
-        )])
-    })?;
-    Ok(())
+/// Repair modes accepted. Requeuing every refused change and reopening every open conflict (by
+/// batch or globally) are not: they skipped the rules a person's "retry later" follows
+/// ([`ensure_conflict_action_allowed`]) and re-sent changes whose conflict a person had closed; one
+/// named item is replayed instead ([`replay_sync_failures`]). Nothing in the app used them.
+fn supported_repair_mode(mode: &str) -> bool {
+    mode == "checkpoint_realign"
 }
 
-fn supported_repair_mode(mode: &str) -> bool {
-    matches!(
-        mode,
-        "requeue_rejected_outbox" | "retry_operator_conflicts" | "checkpoint_realign"
-    )
+/// A checkpoint realign touches no data row: a plan never names outbox items, conflicts or a batch
+/// it would not act on.
+fn repair_scope_given(scope: &SyncRepairPreviewInput) -> bool {
+    scope.outbox_ids.is_some() || scope.conflict_ids.is_some() || scope.server_batch_id.is_some()
 }
+
+const REPAIR_SCOPE_REFUSED: &str =
+    "GATE_SYNC_REPAIR_MODE_BLOCKED: A checkpoint realign takes no outbox, conflict or batch scope.";
 
 fn parse_checkpoint_sequence(token: &str) -> Option<i64> {
     let last = token.rsplit('-').next()?;
@@ -1950,6 +1951,82 @@ async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRe
 /// keeps it out of the audit rows that travel.
 pub const CONFLICT_RESOLVED_ACTION: &str = "sync.conflict_resolved";
 
+/// Refuses `action` on `conflict` when the conflict is closed or its kind does not accept it:
+/// review only, planning four-eyes, settled at origin, or a refused history row not held here.
+/// One rule set for a person's choice ([`resolve_sync_conflict`]) and for a replay, which is
+/// "retry later" on the conflict ([`replay_sync_failures`]).
+async fn ensure_conflict_action_allowed(
+    conn: &impl ConnectionTrait,
+    conflict: &SyncConflictRecord,
+    action: &str,
+) -> AppResult<()> {
+    if matches!(
+        conflict.status.as_str(),
+        "resolved_local" | "resolved_remote" | "merged" | "dismissed"
+    ) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
+            conflict.id, conflict.status
+        )]));
+    }
+    ensure_conflict_kind_allows(conn, conflict, action).await
+}
+
+/// Refuses `action` when the kind of `conflict` never accepts it, open or closed: review only,
+/// planning four-eyes, settled at origin, or a refused history row not held here.
+async fn ensure_conflict_kind_allows(
+    conn: &impl ConnectionTrait,
+    conflict: &SyncConflictRecord,
+    action: &str,
+) -> AppResult<()> {
+    if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
+             le motif une fois le point vérifié ou réglé, ou « Escalader ». (Conflict {} is for review only: \
+             dismiss it with the reason once the matter has been checked or settled, or escalate it.)",
+            conflict.id, conflict.id
+        )]));
+    }
+
+    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
+             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
+             here with a fresh signed break-in.",
+            conflict.id
+        )]));
+    }
+
+    if reliability_decision_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_DECISION_KEEP_ONLY: conflict {} is a reliability decision refused on arrival: keep \
+             this PC's decision (ram.manage, with the reason; the decision is then refused on every PC) or escalate \
+             it; a legitimate decision is proposed and approved again.",
+            conflict.id
+        )]));
+    }
+
+    if settled_at_origin_conflict(&conflict.conflict_type) && !SETTLED_AT_ORIGIN_ACTIONS.contains(&action) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
+             (a second approval by another person, or the count's reversal); it closes by itself when that \
+             arrives.",
+            conflict.id
+        )]));
+    }
+
+    if !REVIEW_ONLY_ACTIONS.contains(&action) && refused_history_row_absent(conn, conflict).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} porte sur un enregistrement d'historique refusé, absent de \
+             ce poste : rien à garder ni à reprendre ; choisissez « Ignorer » avec le motif, ou « Escalader ». \
+             (Conflict {} is over a refused history record not held here: nothing to keep or take; dismiss it \
+             with the reason, or escalate it.)",
+            conflict.id, conflict.id
+        )]));
+    }
+    Ok(())
+}
+
 /// Resolves a sync conflict with the person's choice. Every choice needs a reason of at least
 /// [`crate::settings::catalog::MIN_REASON_CHARS`] characters (trimmed, counted in characters),
 /// stored on the conflict and written with the choice to the audit trail
@@ -2010,63 +2087,7 @@ pub async fn resolve_sync_conflict(
             "GATE_RECORD_CHANGED_ELSEWHERE: Sync conflict was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
-    if matches!(
-        conflict.status.as_str(),
-        "resolved_local" | "resolved_remote" | "merged" | "dismissed"
-    ) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_CLOSED: Sync conflict {} is already closed ({}).",
-            conflict.id, conflict.status
-        )]));
-    }
-
-    if review_only_conflict(&conflict.conflict_type) && !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} est à examiner seulement : choisissez « Ignorer » en indiquant \
-             le motif une fois le point vérifié ou réglé, ou « Escalader ». (Conflict {} is for review only: \
-             dismiss it with the reason once the matter has been checked or settled, or escalate it.)",
-            conflict.id, conflict.id
-        )]));
-    }
-
-    if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
-             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
-             here with a fresh signed break-in.",
-            conflict.id
-        )]));
-    }
-
-    if reliability_decision_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_DECISION_KEEP_ONLY: conflict {} is a reliability decision refused on arrival: keep \
-             this PC's decision (ram.manage, with the reason; the decision is then refused on every PC) or escalate \
-             it; a legitimate decision is proposed and approved again.",
-            conflict.id
-        )]));
-    }
-
-    if settled_at_origin_conflict(&conflict.conflict_type)
-        && !SETTLED_AT_ORIGIN_ACTIONS.contains(&input.action.as_str())
-    {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_SETTLED_AT_ORIGIN: conflict {} is settled on the PC where the count is applied \
-             (a second approval by another person, or the count's reversal); it closes by itself when that \
-             arrives.",
-            conflict.id
-        )]));
-    }
-
-    if !REVIEW_ONLY_ACTIONS.contains(&input.action.as_str()) && refused_history_row_absent(&tx, &conflict).await? {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_REVIEW_ONLY: Le conflit {} porte sur un enregistrement d'historique refusé, absent de \
-             ce poste : rien à garder ni à reprendre ; choisissez « Ignorer » avec le motif, ou « Escalader ». \
-             (Conflict {} is over a refused history record not held here: nothing to keep or take; dismiss it \
-             with the reason, or escalate it.)",
-            conflict.id, conflict.id
-        )]));
-    }
+    ensure_conflict_action_allowed(&tx, &conflict, &input.action).await?;
 
     // The person's choice is applied to the data in the same transaction as the status change.
     let mut renumbered = None;
@@ -2208,33 +2229,13 @@ pub async fn replay_sync_failures(
     validate_non_empty("replay_key", &input.replay_key, &mut validation_errors);
     validate_non_empty("mode", &input.mode, &mut validation_errors);
     validate_non_empty("reason", &input.reason, &mut validation_errors);
-    match input.mode.as_str() {
-        "single_item" | "batch" | "window" | "checkpoint_rollback" => {}
-        _ => {
-            validation_errors.push("mode must be one of: single_item, batch, window, checkpoint_rollback.".to_string())
-        }
+    // No whole-batch or time-window replay: they reopened conflicts without the rules of "retry
+    // later" and re-sent changes a person had dismissed, and nothing in the app used them.
+    if !matches!(input.mode.as_str(), "single_item" | "checkpoint_rollback") {
+        validation_errors.push("mode must be one of: single_item, checkpoint_rollback.".to_string());
     }
     if input.mode == "single_item" && input.outbox_id.is_none() && input.conflict_id.is_none() {
         validation_errors.push("single_item replay requires outbox_id or conflict_id scope.".to_string());
-    }
-    if input.mode == "batch" {
-        validate_non_empty(
-            "server_batch_id",
-            input.server_batch_id.as_deref().unwrap_or_default(),
-            &mut validation_errors,
-        );
-    }
-    if input.mode == "window" {
-        if let Some(start) = &input.window_start {
-            parse_rfc3339(start, "window_start")?;
-        } else {
-            validation_errors.push("window_start is required for window mode.".to_string());
-        }
-        if let Some(end) = &input.window_end {
-            parse_rfc3339(end, "window_end")?;
-        } else {
-            validation_errors.push("window_end is required for window mode.".to_string());
-        }
     }
     if input.mode == "checkpoint_rollback" {
         validate_non_empty(
@@ -2280,7 +2281,7 @@ pub async fn replay_sync_failures(
         .ok_or_else(|| AppError::SyncError("Failed to count unresolved operator conflicts.".to_string()))?
         .try_get("", "count")
         .map_err(|e| decode_err("unresolved_operator_conflicts", e))?;
-    let guard_applied = input.mode == "checkpoint_rollback" || input.mode == "window";
+    let guard_applied = input.mode == "checkpoint_rollback";
     if guard_applied && unresolved_operator_conflicts > 0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_SYNC_REPLAY_BLOCKED: Replay blocked by checkpoint safety guard: unresolved operator-required conflicts exist.".to_string(),
@@ -2335,7 +2336,86 @@ pub async fn replay_sync_failures(
     let mut transitioned_conflict_count = 0_i64;
     match input.mode.as_str() {
         "single_item" => {
-            if let Some(outbox_id) = input.outbox_id {
+            // A replay is "retry later" on the conflict it names: the same rules as that choice, on
+            // an open conflict, with the outgoing change the conflict holds (never another one).
+            let mut conflict_ids = Vec::new();
+            // The change sent again: the one named, or the one the named conflict holds.
+            let mut resend = input.outbox_id;
+            if let Some(conflict_id) = input.conflict_id {
+                let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE id = ?");
+                let row = tx
+                    .query_one(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        &sql,
+                        [conflict_id.into()],
+                    ))
+                    .await?
+                    .ok_or_else(|| AppError::NotFound {
+                        entity: "sync_conflict".to_string(),
+                        id: conflict_id.to_string(),
+                    })?;
+                let conflict = to_sync_conflict(&row)?;
+                ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
+                if input.outbox_id.is_some_and(|o| conflict.linked_outbox_id != Some(o)) {
+                    // The screen sends the change the conflict held when it was listed: another one
+                    // means the conflict changed since.
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "GATE_RECORD_CHANGED_ELSEWHERE: outbox item {} is not the change held by sync conflict {}.",
+                        input.outbox_id.unwrap_or_default(),
+                        conflict.id
+                    )]));
+                }
+                conflict_ids.push(conflict.id);
+                resend = resend.or(conflict.linked_outbox_id);
+            } else if let Some(outbox_id) = input.outbox_id {
+                // Named alone, only a change given up after its delivery attempts is sent again. A
+                // change the server refused goes back through its conflict, whose rules apply even
+                // when a person closed it (a refusal dismissed, a plan kept and already sent).
+                let status: Option<String> = tx
+                    .query_one(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        "SELECT status FROM sync_outbox WHERE id = ?",
+                        [outbox_id.into()],
+                    ))
+                    .await?
+                    .map(|r| r.try_get("", "status"))
+                    .transpose()
+                    .map_err(|e| decode_err("status", e))?;
+                if status.as_deref() != Some("dead_letter") {
+                    // The screen lists given-up changes: another state means it changed since.
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "GATE_RECORD_CHANGED_ELSEWHERE: outbox item {outbox_id} is not a change given up after its delivery attempts ({}).",
+                        status.as_deref().unwrap_or("missing")
+                    )]));
+                }
+            }
+            if let Some(outbox_id) = resend {
+                // Every conflict over the change re-sent (a change given up after its delivery
+                // attempts has its own `OUTBOX_DEAD_LETTER` conflict, next to the one that refused
+                // it; a new refusal never closes an earlier one). Each open one must accept "retry
+                // later" and is reopened with the send; a closed one of a kind that never accepts it
+                // (a review-only refusal dismissed, a plan kept) refuses the send.
+                let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE linked_outbox_id = ?");
+                for row in tx
+                    .query_all(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        &sql,
+                        [outbox_id.into()],
+                    ))
+                    .await?
+                {
+                    let conflict = to_sync_conflict(&row)?;
+                    if matches!(conflict.status.as_str(), "new" | "triaged" | "escalated") {
+                        ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
+                        if !conflict_ids.contains(&conflict.id) {
+                            conflict_ids.push(conflict.id);
+                        }
+                    } else {
+                        ensure_conflict_kind_allows(&tx, &conflict, "retry_later").await?;
+                    }
+                }
+            }
+            if let Some(outbox_id) = resend {
                 let result = tx
                     .execute(Statement::from_sql_and_values(
                         DatabaseBackend::Sqlite,
@@ -2353,7 +2433,7 @@ pub async fn replay_sync_failures(
                     .await?;
                 requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
             }
-            if let Some(conflict_id) = input.conflict_id {
+            for conflict_id in conflict_ids {
                 let result = tx
                     .execute(Statement::from_sql_and_values(
                         DatabaseBackend::Sqlite,
@@ -2365,92 +2445,12 @@ pub async fn replay_sync_failures(
                              resolved_at = NULL,
                              row_version = row_version + 1,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE id = ?",
+                         WHERE id = ? AND status IN ('new', 'triaged', 'escalated')",
                         [user_id.into(), conflict_id.into()],
                     ))
                     .await?;
                 transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
             }
-        }
-        "batch" => {
-            let batch_id = input.server_batch_id.unwrap_or_default();
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_outbox
-                     SET status = 'pending',
-                         attempt_count = 0,
-                         dead_lettered_at = NULL,
-                         rejection_code = NULL,
-                         rejection_message = NULL,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE id IN (
-                        SELECT linked_outbox_id
-                        FROM sync_conflicts
-                        WHERE source_batch_id = ?
-                          AND linked_outbox_id IS NOT NULL
-                     )
-                       AND status IN ('rejected', 'dead_letter')",
-                    [batch_id.clone().into()],
-                ))
-                .await?;
-            requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_conflicts
-                     SET status = 'triaged',
-                         resolution_action = 'retry_later',
-                         resolution_note = 'Batch replay requested by operator.',
-                         resolved_by_id = ?,
-                         resolved_at = NULL,
-                         row_version = row_version + 1,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE source_batch_id = ?
-                       AND status IN ('new', 'escalated', 'triaged')",
-                    [user_id.into(), batch_id.into()],
-                ))
-                .await?;
-            transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-        }
-        "window" => {
-            let start = input.window_start.unwrap_or_default();
-            let end = input.window_end.unwrap_or_default();
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_outbox
-                     SET status = 'pending',
-                         attempt_count = 0,
-                         dead_lettered_at = NULL,
-                         rejection_code = NULL,
-                         rejection_message = NULL,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE status IN ('rejected', 'dead_letter')
-                       AND updated_at >= ?
-                       AND updated_at <= ?",
-                    [start.clone().into(), end.clone().into()],
-                ))
-                .await?;
-            requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_conflicts
-                     SET status = 'triaged',
-                         resolution_action = 'retry_later',
-                         resolution_note = 'Window replay requested by operator.',
-                         resolved_by_id = ?,
-                         resolved_at = NULL,
-                         row_version = row_version + 1,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE updated_at >= ?
-                       AND updated_at <= ?
-                       AND status IN ('new', 'escalated', 'triaged')",
-                    [user_id.into(), start.into(), end.into()],
-                ))
-                .await?;
-            transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
         }
         "checkpoint_rollback" => {
             let checkpoint_token = input.checkpoint_token.unwrap_or_default();
@@ -2554,10 +2554,8 @@ pub async fn preview_sync_repair(
     validate_non_empty("mode", &input.mode, &mut validation_errors);
     validate_non_empty("reason", &input.reason, &mut validation_errors);
     if !supported_repair_mode(&input.mode) {
-        validation_errors.push(
-            "GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode. Allowed: requeue_rejected_outbox, retry_operator_conflicts, checkpoint_realign."
-                .to_string(),
-        );
+        validation_errors
+            .push("GATE_SYNC_REPAIR_MODE_BLOCKED: Unsupported repair mode. Allowed: checkpoint_realign.".to_string());
     }
     if input.mode.contains("reset") {
         validation_errors.push(
@@ -2571,143 +2569,21 @@ pub async fn preview_sync_repair(
             &mut validation_errors,
         );
     }
+    if repair_scope_given(&input) {
+        validation_errors.push(REPAIR_SCOPE_REFUSED.to_string());
+    }
     if !validation_errors.is_empty() {
         return Err(AppError::ValidationFailed(validation_errors));
     }
 
     let plan_id = format!("repair-{}", chrono::Utc::now().timestamp_millis());
-    let mut affected_outbox_count = 0_i64;
-    let mut affected_conflict_count = 0_i64;
+    // Only the checkpoint is realigned (`supported_repair_mode`): no data row is affected.
+    let affected_outbox_count = 0_i64;
+    let affected_conflict_count = 0_i64;
     let mut warnings = Vec::new();
     let projected_checkpoint_token: Option<String>;
 
     match input.mode.as_str() {
-        "requeue_rejected_outbox" => {
-            if let Some(ids) = &input.outbox_ids {
-                if ids.is_empty() {
-                    warnings.push("No outbox_ids supplied; no rows will be affected.".to_string());
-                } else {
-                    for outbox_id in ids {
-                        let count: i64 = db
-                            .query_one(Statement::from_sql_and_values(
-                                DatabaseBackend::Sqlite,
-                                "SELECT COUNT(*) AS count
-                                 FROM sync_outbox
-                                 WHERE id = ? AND status = 'rejected'",
-                                [(*outbox_id).into()],
-                            ))
-                            .await?
-                            .ok_or_else(|| AppError::SyncError("Failed to count rejected outbox rows.".to_string()))?
-                            .try_get("", "count")
-                            .map_err(|e| decode_err("count", e))?;
-                        affected_outbox_count += count;
-                    }
-                }
-            } else if let Some(server_batch_id) = &input.server_batch_id {
-                affected_outbox_count = db
-                    .query_one(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "SELECT COUNT(*) AS count
-                         FROM sync_outbox
-                         WHERE status = 'rejected'
-                           AND id IN (
-                                SELECT linked_outbox_id
-                                FROM sync_conflicts
-                                WHERE source_batch_id = ?
-                                  AND linked_outbox_id IS NOT NULL
-                           )",
-                        [server_batch_id.clone().into()],
-                    ))
-                    .await?
-                    .ok_or_else(|| AppError::SyncError("Failed to count batch-scoped outbox rows.".to_string()))?
-                    .try_get("", "count")
-                    .map_err(|e| decode_err("count", e))?;
-            } else {
-                affected_outbox_count = db
-                    .query_one(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'rejected'",
-                        [],
-                    ))
-                    .await?
-                    .ok_or_else(|| AppError::SyncError("Failed to count rejected outbox rows.".to_string()))?
-                    .try_get("", "count")
-                    .map_err(|e| decode_err("count", e))?;
-            }
-            projected_checkpoint_token = db
-                .query_one(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "SELECT checkpoint_token FROM sync_checkpoint WHERE id = 1",
-                    [],
-                ))
-                .await?
-                .as_ref()
-                .map(|r| r.try_get("", "checkpoint_token"))
-                .transpose()
-                .map_err(|e| decode_err("checkpoint_token", e))?;
-        }
-        "retry_operator_conflicts" => {
-            if let Some(conflict_ids) = &input.conflict_ids {
-                if conflict_ids.is_empty() {
-                    warnings.push("No conflict_ids supplied; no rows will be affected.".to_string());
-                } else {
-                    for conflict_id in conflict_ids {
-                        let count: i64 = db
-                            .query_one(Statement::from_sql_and_values(
-                                DatabaseBackend::Sqlite,
-                                "SELECT COUNT(*) AS count
-                                 FROM sync_conflicts
-                                 WHERE id = ?
-                                   AND status IN ('new', 'triaged', 'escalated')",
-                                [(*conflict_id).into()],
-                            ))
-                            .await?
-                            .ok_or_else(|| AppError::SyncError("Failed to count scoped conflicts.".to_string()))?
-                            .try_get("", "count")
-                            .map_err(|e| decode_err("count", e))?;
-                        affected_conflict_count += count;
-                    }
-                }
-            } else if let Some(server_batch_id) = &input.server_batch_id {
-                affected_conflict_count = db
-                    .query_one(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "SELECT COUNT(*) AS count
-                         FROM sync_conflicts
-                         WHERE source_batch_id = ?
-                           AND status IN ('new', 'triaged', 'escalated')",
-                        [server_batch_id.clone().into()],
-                    ))
-                    .await?
-                    .ok_or_else(|| AppError::SyncError("Failed to count batch-scoped conflicts.".to_string()))?
-                    .try_get("", "count")
-                    .map_err(|e| decode_err("count", e))?;
-            } else {
-                affected_conflict_count = db
-                    .query_one(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "SELECT COUNT(*) AS count
-                         FROM sync_conflicts
-                         WHERE status IN ('new', 'triaged', 'escalated')",
-                        [],
-                    ))
-                    .await?
-                    .ok_or_else(|| AppError::SyncError("Failed to count conflicts.".to_string()))?
-                    .try_get("", "count")
-                    .map_err(|e| decode_err("count", e))?;
-            }
-            projected_checkpoint_token = db
-                .query_one(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "SELECT checkpoint_token FROM sync_checkpoint WHERE id = 1",
-                    [],
-                ))
-                .await?
-                .as_ref()
-                .map(|r| r.try_get("", "checkpoint_token"))
-                .transpose()
-                .map_err(|e| decode_err("checkpoint_token", e))?;
-        }
         "checkpoint_realign" => {
             projected_checkpoint_token = input.checkpoint_token.clone();
             warnings.push("Checkpoint realign updates token pointer only; data rows are untouched.".to_string());
@@ -2823,139 +2699,60 @@ pub async fn execute_sync_repair(
         ]));
     }
     let mode: String = plan_row.try_get("", "mode").map_err(|e| decode_err("mode", e))?;
-    if !supported_repair_mode(&mode) || mode.contains("reset") {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive or unsupported repair mode blocked.".to_string(),
-        ]));
-    }
     let scope_json: String = plan_row
         .try_get("", "scope_json")
         .map_err(|e| decode_err("scope_json", e))?;
     let preview_scope: SyncRepairPreviewInput = serde_json::from_str(&scope_json).map_err(AppError::Serialization)?;
+    let audit_actor_id = actor_id_for_audit(db, user_id).await?;
+
+    let refusal = if !supported_repair_mode(&mode) || mode.contains("reset") {
+        Some("GATE_SYNC_REPAIR_MODE_BLOCKED: Destructive or unsupported repair mode blocked.")
+    } else if repair_scope_given(&preview_scope) {
+        Some(REPAIR_SCOPE_REFUSED)
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal {
+        // A plan stored before its mode was refused (or naming a scope that does not apply) is
+        // closed as blocked, with its audit event, so it is never executed later.
+        let tx = db.begin().await?;
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_repair_actions
+             SET status = 'blocked', executed_by_id = ?, executed_at = ?
+             WHERE plan_id = ?",
+            [
+                user_id.into(),
+                chrono::Utc::now().to_rfc3339().into(),
+                input.plan_id.clone().into(),
+            ],
+        ))
+        .await?;
+        crate::audit::writer::write_audit_event_in(
+            &tx,
+            AuditEventInput {
+                action_code: "sync.repair.execute".to_string(),
+                target_type: Some("sync_repair_actions".to_string()),
+                target_id: Some(input.plan_id.clone()),
+                actor_id: audit_actor_id,
+                auth_context: "step_up".to_string(),
+                result: "blocked".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "operations".to_string(),
+                details_json: Some(serde_json::json!({ "mode": mode, "refusal": refusal })),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        return Err(AppError::ValidationFailed(vec![refusal.to_string()]));
+    }
 
     let tx = db.begin().await?;
-    let mut requeued_outbox_count = 0_i64;
-    let mut transitioned_conflict_count = 0_i64;
+    let requeued_outbox_count = 0_i64;
+    let transitioned_conflict_count = 0_i64;
 
     match mode.as_str() {
-        "requeue_rejected_outbox" => {
-            if let Some(outbox_ids) = preview_scope.outbox_ids {
-                for outbox_id in outbox_ids {
-                    let result = tx
-                        .execute(Statement::from_sql_and_values(
-                            DatabaseBackend::Sqlite,
-                            "UPDATE sync_outbox
-                             SET status = 'pending',
-                                 attempt_count = 0,
-                                 dead_lettered_at = NULL,
-                                 rejection_code = NULL,
-                                 rejection_message = NULL,
-                                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                             WHERE id = ?
-                               AND status = 'rejected'",
-                            [outbox_id.into()],
-                        ))
-                        .await?;
-                    requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-                }
-            } else if let Some(server_batch_id) = preview_scope.server_batch_id {
-                let result = tx
-                    .execute(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "UPDATE sync_outbox
-                         SET status = 'pending',
-                             attempt_count = 0,
-                             dead_lettered_at = NULL,
-                             rejection_code = NULL,
-                             rejection_message = NULL,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE status = 'rejected'
-                           AND id IN (
-                                SELECT linked_outbox_id
-                                FROM sync_conflicts
-                                WHERE source_batch_id = ?
-                                  AND linked_outbox_id IS NOT NULL
-                           )",
-                        [server_batch_id.into()],
-                    ))
-                    .await?;
-                requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            } else {
-                let result = tx
-                    .execute(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "UPDATE sync_outbox
-                         SET status = 'pending',
-                             attempt_count = 0,
-                             dead_lettered_at = NULL,
-                             rejection_code = NULL,
-                             rejection_message = NULL,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE status = 'rejected'",
-                        [],
-                    ))
-                    .await?;
-                requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            }
-        }
-        "retry_operator_conflicts" => {
-            if let Some(conflict_ids) = preview_scope.conflict_ids {
-                for conflict_id in conflict_ids {
-                    let result = tx
-                        .execute(Statement::from_sql_and_values(
-                            DatabaseBackend::Sqlite,
-                            "UPDATE sync_conflicts
-                             SET status = 'triaged',
-                                 resolution_action = 'retry_later',
-                                 resolution_note = 'Retry queued from repair workflow.',
-                                 resolved_by_id = ?,
-                                 resolved_at = NULL,
-                                 row_version = row_version + 1,
-                                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                             WHERE id = ?
-                               AND status IN ('new', 'triaged', 'escalated')",
-                            [user_id.into(), conflict_id.into()],
-                        ))
-                        .await?;
-                    transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-                }
-            } else if let Some(server_batch_id) = preview_scope.server_batch_id {
-                let result = tx
-                    .execute(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "UPDATE sync_conflicts
-                         SET status = 'triaged',
-                             resolution_action = 'retry_later',
-                             resolution_note = 'Retry queued from batch-scoped repair workflow.',
-                             resolved_by_id = ?,
-                             resolved_at = NULL,
-                             row_version = row_version + 1,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE source_batch_id = ?
-                           AND status IN ('new', 'triaged', 'escalated')",
-                        [user_id.into(), server_batch_id.into()],
-                    ))
-                    .await?;
-                transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            } else {
-                let result = tx
-                    .execute(Statement::from_sql_and_values(
-                        DatabaseBackend::Sqlite,
-                        "UPDATE sync_conflicts
-                         SET status = 'triaged',
-                             resolution_action = 'retry_later',
-                             resolution_note = 'Retry queued from global repair workflow.',
-                             resolved_by_id = ?,
-                             resolved_at = NULL,
-                             row_version = row_version + 1,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                         WHERE status IN ('new', 'triaged', 'escalated')",
-                        [user_id.into()],
-                    ))
-                    .await?;
-                transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            }
-        }
         "checkpoint_realign" => {
             let checkpoint_token = preview_scope.checkpoint_token.ok_or_else(|| {
                 AppError::ValidationFailed(vec![
@@ -3019,11 +2816,9 @@ pub async fn execute_sync_repair(
         ],
     ))
     .await?;
-    tx.commit().await?;
-
-    let audit_actor_id = actor_id_for_audit(db, user_id).await?;
-    write_audit_event(
-        db,
+    // Written with the repair, or neither is kept.
+    crate::audit::writer::write_audit_event_in(
+        &tx,
         AuditEventInput {
             action_code: "sync.repair.execute".to_string(),
             target_type: Some("sync_repair_actions".to_string()),
@@ -3043,6 +2838,7 @@ pub async fn execute_sync_repair(
         },
     )
     .await?;
+    tx.commit().await?;
 
     Ok(SyncRepairExecutionResult {
         plan_id: input.plan_id,

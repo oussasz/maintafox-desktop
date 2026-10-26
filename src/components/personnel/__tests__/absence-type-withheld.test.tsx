@@ -54,6 +54,7 @@ function block(extra: Partial<PersonnelAvailabilityBlock>): PersonnelAvailabilit
     created_by_id: null,
     created_by_label: null,
     created_at: "2026-10-01T00:00:00Z",
+    row_version: 1,
     reason_masked: true,
     type_masked: true,
     critical_for_planning: false,

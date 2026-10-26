@@ -14,7 +14,11 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { PermissionContext } from "@/contexts/PermissionContext";
 import type { Tone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { syncBlockerText, useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
+import {
+  syncBlockerText,
+  syncWorkerErrorText,
+  useSyncOrchestratorStore,
+} from "@/stores/sync-orchestrator-store";
 import type { SyncWorkerState } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -196,9 +200,18 @@ export function SyncWorkerStatusCard() {
         </p>
       ) : null}
       {worker?.last_error && state !== "idle" ? (
-        <p className="break-words text-tone-danger-fg">
-          {t("sync.worker.lastError", { message: worker.last_error.message })}
-        </p>
+        <div className="text-tone-danger-fg">
+          <p className="break-words">
+            {t("sync.worker.lastError", { message: syncWorkerErrorText(worker.last_error) })}
+          </p>
+          {/* The raw text (HTTP status, network library) is for support, never the message. */}
+          <details className="mt-1 text-text-muted">
+            <summary className="cursor-pointer select-none">{t("sync.technicalDetails")}</summary>
+            <p className="mt-1 break-all font-mono">
+              {worker.last_error.code} · {worker.last_error.message}
+            </p>
+          </details>
+        </div>
       ) : null}
       {actionError ? (
         <p className="break-words text-tone-danger-fg">

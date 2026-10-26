@@ -869,7 +869,11 @@ pub async fn update_availability_block(
 }
 
 #[tauri::command]
-pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn delete_availability_block(
+    id: i64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -877,12 +881,13 @@ pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> A
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    availability::delete_availability_block(&state.db, id).await
+    availability::delete_availability_block(&state.db, id, expected_row_version).await
 }
 
 #[tauri::command]
 pub async fn end_availability_block(
     id: i64,
+    expected_row_version: i64,
     state: State<'_, AppState>,
 ) -> AppResult<availability::PersonnelAvailabilityBlock> {
     let user = require_session!(state);
@@ -892,7 +897,7 @@ pub async fn end_availability_block(
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    let block = availability::end_availability_block(&state.db, id).await?;
+    let block = availability::end_availability_block(&state.db, id, expected_row_version).await?;
     readable_block(&state, user.user_id, block).await
 }
 

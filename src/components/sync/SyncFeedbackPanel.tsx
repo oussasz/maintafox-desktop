@@ -1,10 +1,11 @@
-import { Download, LifeBuoy, Play, ShieldAlert } from "lucide-react";
+import { Download, LifeBuoy, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SupportBundleDialog } from "@/components/SupportBundleDialog";
 import { SyncConflictList } from "@/components/sync/SyncConflictList";
+import { SyncDeadLetterList } from "@/components/sync/SyncDeadLetterList";
 import { SyncWorkerStatusCard } from "@/components/sync/SyncWorkerStatusCard";
 import { Button } from "@/components/ui/button";
 import { saveBlobWithDialog } from "@/export/download";
@@ -14,24 +15,17 @@ import { pushAppToast } from "@/store/app-toast-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import { P } from "@shared/rbac/permissions.generated";
 
-/** Settings → sync diagnostics: worker status, recovery actions and the conflict list. */
+/**
+ * Settings → sync diagnostics: worker status, the changes given up after their delivery attempts
+ * and the conflict list. "Send again" sits on each refused item, never as one global button.
+ */
 export function SyncFeedbackPanel() {
   const { t } = useTranslation("shell");
-  const runReplayRecovery = useSyncOrchestratorStore((s) => s.runReplayRecovery);
   const exportDiagnostics = useSyncOrchestratorStore((s) => s.exportDiagnostics);
+  const deadLetterCount = useSyncOrchestratorStore((s) => s.worker?.dead_letter_outbox_count ?? 0);
 
   const [supportOpen, setSupportOpen] = useState(false);
-  const [replaying, setReplaying] = useState(false);
   const [exporting, setExporting] = useState(false);
-
-  const replay = async () => {
-    setReplaying(true);
-    try {
-      await runReplayRecovery();
-    } finally {
-      setReplaying(false);
-    }
-  };
 
   const exportFile = async () => {
     setExporting(true);
@@ -70,16 +64,6 @@ export function SyncFeedbackPanel() {
             type="button"
             variant="outline"
             className="h-10 gap-2"
-            disabled={replaying}
-            onClick={() => void replay()}
-          >
-            <Play className="h-4 w-4" aria-hidden />
-            {t("sync.panel.replay")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 gap-2"
             disabled={exporting}
             onClick={() => void exportFile()}
           >
@@ -100,7 +84,10 @@ export function SyncFeedbackPanel() {
 
       <SyncWorkerStatusCard />
 
-      {/* The conflict list is `list_sync_conflicts` (sync.view). */}
+      {/* The conflict and given-up lists are `list_sync_conflicts` / `list_outbox_items` (sync.view). */}
+      <PermissionGate permission={P.SYNC_VIEW}>
+        <SyncDeadLetterList count={deadLetterCount} />
+      </PermissionGate>
       <PermissionGate permission={P.SYNC_VIEW}>
         <div className="rounded-md border border-surface-border bg-surface-0 p-3">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
