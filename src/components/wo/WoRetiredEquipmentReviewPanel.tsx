@@ -3,14 +3,15 @@
  * crossed in sync with the retirement (backend `wo::retired_equipment_review`).
  *
  * Read only. Each item is settled with the existing actions: cancel the work order or reject the
- * request with a reason (opened from here), or return the equipment to service. A closed item
- * keeps who, when and how; the closed ones are listed under the history toggle. Shown only when
- * there is something to show.
+ * request with a reason (opened from here), or return the equipment to service. The open items
+ * are read on mount and again whenever the work-order list reloads (after an action on the page).
+ * A closed item keeps who, when and how: the history (bounded on the backend) is read only when it
+ * is opened. With nothing open the card is hidden; a small link keeps the history reachable.
  */
 
 import type { TFunction } from "i18next";
 import { AlertTriangle, ChevronDown, ChevronRight, Eye } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -32,19 +33,50 @@ function closureText(t: TFunction<"ot">, item: RetiredEquipmentReview): string {
   });
 }
 
-export function WoRetiredEquipmentReviewPanel() {
+function History({ items }: { items: RetiredEquipmentReview[] }) {
   const { t } = useTranslation("ot");
   const { formatDateTime } = useFormatters();
+  return (
+    <ul className="mt-1 divide-y rounded-md border bg-background text-xs">
+      {items.map((item) => (
+        <li key={item.id} className="px-3 py-2">
+          <div className="font-medium">{closureText(t, item)}</div>
+          <div className="text-muted-foreground">
+            {item.closed_by
+              ? t("retiredEquipment.closedBy", {
+                  who: item.closed_by,
+                  when: formatDateTime(item.closed_at),
+                })
+              : t("retiredEquipment.closedAt", { when: formatDateTime(item.closed_at) })}
+            {item.closure_note
+              ? ` · ${t("retiredEquipment.note", { note: item.closure_note })}`
+              : ""}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function WoRetiredEquipmentReviewPanel() {
+  const { t } = useTranslation("ot");
   const openWo = useWoStore((s) => s.openWo);
-  const [items, setItems] = useState<RetiredEquipmentReview[]>([]);
+  // The work-order list reloads after every action on the page: read the open items again then.
+  const reloadSignal = useWoStore((s) => s.items);
+  const [open, setOpen] = useState<RetiredEquipmentReview[]>([]);
+  const [closedCount, setClosedCount] = useState(0);
+  const [history, setHistory] = useState<RetiredEquipmentReview[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const list = await listRetiredEquipmentReviews(true);
-      setItems(list.items);
+      const list = await listRetiredEquipmentReviews(false);
+      setOpen(list.items.filter((i) => i.status === "open"));
+      setClosedCount(list.closed_count);
+      setHistory(null);
+      setShowHistory(false);
       setFailed(false);
     } catch {
       setFailed(true);
@@ -53,10 +85,22 @@ export function WoRetiredEquipmentReviewPanel() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadSignal]);
 
-  const open = useMemo(() => items.filter((i) => i.status === "open"), [items]);
-  const closed = useMemo(() => items.filter((i) => i.status === "closed"), [items]);
+  const toggleHistory = useCallback(async () => {
+    if (showHistory) {
+      setShowHistory(false);
+      return;
+    }
+    setShowHistory(true);
+    if (history !== null) return;
+    try {
+      const list = await listRetiredEquipmentReviews(true);
+      setHistory(list.items.filter((i) => i.status === "closed"));
+    } catch {
+      setFailed(true);
+    }
+  }, [history, showHistory]);
 
   if (failed) {
     return (
@@ -68,7 +112,28 @@ export function WoRetiredEquipmentReviewPanel() {
       </p>
     );
   }
-  if (items.length === 0) return null;
+  if (open.length === 0 && closedCount === 0) return null;
+
+  const historyBlock =
+    closedCount > 0 ? (
+      <div>
+        <button
+          type="button"
+          className="text-xs font-medium text-muted-foreground hover:underline"
+          onClick={() => void toggleHistory()}
+          aria-expanded={showHistory}
+        >
+          {open.length === 0
+            ? t("retiredEquipment.historyLink", { count: closedCount })
+            : t("retiredEquipment.history", { count: closedCount })}
+        </button>
+        {showHistory && history ? <History items={history} /> : null}
+      </div>
+    ) : null;
+
+  if (open.length === 0) {
+    return <div className="mx-4 mt-2">{historyBlock}</div>;
+  }
 
   return (
     <Card
@@ -95,11 +160,7 @@ export function WoRetiredEquipmentReviewPanel() {
 
       {!collapsed && (
         <CardContent className="space-y-2 px-4 pb-3 pt-0 text-xs">
-          {open.length > 0 ? (
-            <p className="text-muted-foreground">{t("retiredEquipment.intro")}</p>
-          ) : (
-            <p className="text-muted-foreground">{t("retiredEquipment.noneOpen")}</p>
-          )}
+          <p className="text-muted-foreground">{t("retiredEquipment.intro")}</p>
           <ul className="divide-y rounded-md border bg-background">
             {open.map((item) => (
               <li key={item.id} className="flex items-center gap-3 px-3 py-2">
@@ -142,40 +203,7 @@ export function WoRetiredEquipmentReviewPanel() {
               </li>
             ))}
           </ul>
-          {closed.length > 0 ? (
-            <div>
-              <button
-                type="button"
-                className="text-xs font-medium text-muted-foreground hover:underline"
-                onClick={() => setShowHistory((v) => !v)}
-                aria-expanded={showHistory}
-              >
-                {t("retiredEquipment.history", { count: closed.length })}
-              </button>
-              {showHistory ? (
-                <ul className="mt-1 divide-y rounded-md border bg-background">
-                  {closed.map((item) => (
-                    <li key={item.id} className="px-3 py-2">
-                      <div className="font-medium">{closureText(t, item)}</div>
-                      <div className="text-muted-foreground">
-                        {item.closed_by
-                          ? t("retiredEquipment.closedBy", {
-                              who: item.closed_by,
-                              when: formatDateTime(item.closed_at),
-                            })
-                          : t("retiredEquipment.closedAt", {
-                              when: formatDateTime(item.closed_at),
-                            })}
-                        {item.closure_note
-                          ? ` · ${t("retiredEquipment.note", { note: item.closure_note })}`
-                          : ""}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
+          {historyBlock}
         </CardContent>
       )}
     </Card>

@@ -11,14 +11,15 @@ import frOt from "@/i18n/locale-data/fr/ot.json";
 const mocks = vi.hoisted(() => ({
   listRetiredEquipmentReviews: vi.fn(),
   openWo: vi.fn(),
+  store: { items: [] as unknown[] },
 }));
 
 vi.mock("@/services/retired-equipment-review-service", () => ({
   listRetiredEquipmentReviews: mocks.listRetiredEquipmentReviews,
 }));
 vi.mock("@/stores/wo-store", () => ({
-  useWoStore: (sel: (s: { openWo: (id: number) => Promise<void> }) => unknown) =>
-    sel({ openWo: mocks.openWo }),
+  useWoStore: (sel: (s: { openWo: (id: number) => Promise<void>; items: unknown[] }) => unknown) =>
+    sel({ openWo: mocks.openWo, items: mocks.store.items }),
 }));
 
 function review(overrides: Record<string, unknown> = {}) {
@@ -47,12 +48,37 @@ function review(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const CLOSED = [
+  review({
+    status: "closed",
+    closed_at: "2026-10-26T10:00:00Z",
+    closure_kind: "wo_cancelled",
+    closed_by: "Amine",
+    closure_note: "Equipment scrapped",
+  }),
+  review({
+    id: 3,
+    kind: "intervention_request",
+    record_code: "DI-0009",
+    status: "closed",
+    closed_at: "2026-10-26T09:00:00Z",
+    closure_kind: "di_converted",
+    converted_to_wo_code: "OT-0050",
+  }),
+];
+
 function renderPanel() {
   return render(
     <MemoryRouter>
       <WoRetiredEquipmentReviewPanel />
     </MemoryRouter>,
   );
+}
+
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 describe("WoRetiredEquipmentReviewPanel", () => {
@@ -75,9 +101,10 @@ describe("WoRetiredEquipmentReviewPanel", () => {
   beforeEach(() => {
     mocks.listRetiredEquipmentReviews.mockReset();
     mocks.openWo.mockReset();
+    mocks.store.items = [];
   });
 
-  it("lists an open work order and an open request with no dismiss action, and opens them", async () => {
+  it("lists the open items only, with no dismiss action, and opens them", async () => {
     mocks.listRetiredEquipmentReviews.mockResolvedValue({
       items: [
         review(),
@@ -90,11 +117,13 @@ describe("WoRetiredEquipmentReviewPanel", () => {
           record_title: "Vibration",
         }),
       ],
+      closed_count: 0,
     });
     renderPanel();
 
     expect(await screen.findByText("Retired equipment — to review")).toBeInTheDocument();
-    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledWith(true);
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(1);
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledWith(false);
     expect(screen.getByText("OT-0041")).toBeInTheDocument();
     expect(screen.getByText("DI-0007")).toBeInTheDocument();
     // Settled only with the existing actions: nothing to dismiss, accept or close here.
@@ -110,35 +139,22 @@ describe("WoRetiredEquipmentReviewPanel", () => {
     );
   });
 
-  it("keeps who, when and how of a closed item in the history", async () => {
-    mocks.listRetiredEquipmentReviews.mockResolvedValue({
-      items: [
-        review({
-          status: "closed",
-          closed_at: "2026-10-26T10:00:00Z",
-          closure_kind: "wo_cancelled",
-          closed_by: "Amine",
-          closure_note: "Equipment scrapped",
-        }),
-        review({
-          id: 3,
-          kind: "intervention_request",
-          record_code: "DI-0009",
-          status: "closed",
-          closed_at: "2026-10-26T09:00:00Z",
-          closure_kind: "di_converted",
-          converted_to_wo_code: "OT-0050",
-          closed_by: null,
-        }),
-      ],
-    });
+  it("reads the history only when it is opened, and keeps who, when and how", async () => {
+    mocks.listRetiredEquipmentReviews.mockImplementation(async (includeClosed: boolean) => ({
+      items: [review(), ...(includeClosed ? CLOSED : [])],
+      closed_count: 2,
+    }));
     renderPanel();
 
-    expect(await screen.findByText(/Nothing left to review/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "History (2)" }));
+    const toggle = await screen.findByRole("button", { name: "History (2)" });
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Closed by/)).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
     expect(
-      screen.getByText("Closed by the cancellation of work order OT-0041"),
+      await screen.findByText("Closed by the cancellation of work order OT-0041"),
     ).toBeInTheDocument();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true);
     expect(screen.getByText(/Amine, .*Reason: Equipment scrapped/)).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -147,12 +163,43 @@ describe("WoRetiredEquipmentReviewPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides the card when nothing is open, keeping a link to the history", async () => {
+    mocks.listRetiredEquipmentReviews.mockImplementation(async (includeClosed: boolean) => ({
+      items: includeClosed ? CLOSED : [],
+      closed_count: 2,
+    }));
+    renderPanel();
+
+    const link = await screen.findByRole("button", { name: "Retired equipment: history (2)" });
+    expect(screen.queryByTestId("retired-equipment-review")).not.toBeInTheDocument();
+    fireEvent.click(link);
+    expect(
+      await screen.findByText("Closed by the cancellation of work order OT-0041"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads the open items again when the work-order list reloads", async () => {
+    mocks.listRetiredEquipmentReviews.mockResolvedValueOnce({ items: [review()], closed_count: 0 });
+    mocks.listRetiredEquipmentReviews.mockResolvedValue({ items: [], closed_count: 1 });
+    const view = renderPanel();
+    expect(await screen.findByText("OT-0041")).toBeInTheDocument();
+
+    // The work order was cancelled from the page: the list reloads.
+    mocks.store.items = [{ id: 41 }];
+    view.rerender(
+      <MemoryRouter>
+        <WoRetiredEquipmentReviewPanel />
+      </MemoryRouter>,
+    );
+    await flush();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("OT-0041")).not.toBeInTheDocument();
+  });
+
   it("shows nothing when there is nothing to review", async () => {
-    mocks.listRetiredEquipmentReviews.mockResolvedValue({ items: [] });
+    mocks.listRetiredEquipmentReviews.mockResolvedValue({ items: [], closed_count: 0 });
     const { container } = renderPanel();
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flush();
     expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalled();
     expect(container).toBeEmptyDOMElement();
   });

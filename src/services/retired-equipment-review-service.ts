@@ -49,10 +49,15 @@ export type RetiredEquipmentReview = z.infer<typeof RetiredEquipmentReviewSchema
 
 export const RetiredEquipmentReviewListSchema = z.object({
   items: z.array(RetiredEquipmentReviewSchema),
+  /** Every closed item the reader may see (the history lists the latest 100). */
+  closed_count: z.number(),
 });
 export type RetiredEquipmentReviewList = z.infer<typeof RetiredEquipmentReviewListSchema>;
 
-/** Open items first, then (when asked) the closed ones; ot.view, requests only where di.view. */
+/**
+ * Open items, then (when asked: the history) the latest closed ones; ot.view, requests only where
+ * di.view.
+ */
 export async function listRetiredEquipmentReviews(
   includeClosed: boolean,
 ): Promise<RetiredEquipmentReviewList> {
