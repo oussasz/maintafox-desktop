@@ -18,13 +18,31 @@ env:
 jobs:
   startup-timing:
     name: Cold start < 4s
-    runs-on: ubuntu-latest
+    # Pinned: `ubuntu-latest` is moving to Ubuntu 26, and this job was losing its runner (exit 143).
+    runs-on: ubuntu-24.04
     # Skip PRs from forks (no secrets / display available)
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    env:
+      # Same build settings as the Rust Quality job (see ci.yml): line tables instead of full debug info,
+      # no incremental compilation.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Safety net against an out-of-memory kill during the test build. On the runner's temporary disk.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -m
+          df -h / /mnt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,9 +68,19 @@ jobs:
           key: cargo-${{ runner.os }}-timing-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-timing-
 
+      # `--lib`: every startup test lives in the library crate (src/startup_tests.rs). Without it cargo also
+      # builds and links the five integration-test executables, the binary and the doc tests, none of which
+      # contain a startup test, and that is where this job lost its runner.
       - name: Run startup timing unit tests
         working-directory: src-tauri
-        run: cargo test startup_tests
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          # Memory and disk every 30 s, so a lost runner leaves its last readings in the log.
+          ( while true; do echo "[mon] $(date +%H:%M:%S) mem_used_mb=$(free -m | awk 'NR==2{print $3}') swap_used_mb=$(free -m | awk 'NR==3{print $3}') disk_free=$(df -h / | awk 'NR==2{print $4}')"; sleep 30; done ) &
+          MON=$!
+          trap 'kill "$MON" 2>/dev/null || true' EXIT
+          cargo test --lib startup_tests
 
       # Note: Full integration-level startup time measurement (launching Tauri,
       # reading tracing logs, asserting < 4s) requires a display server and
