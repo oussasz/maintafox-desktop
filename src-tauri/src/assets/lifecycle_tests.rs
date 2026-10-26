@@ -460,7 +460,10 @@ mod tests {
         .await
         .expect("reactivate node");
 
-        // A retired asset: refused like the move action.
+        // A retired asset (status tagged `retired` in the published list): refused like the move action.
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = ?",
@@ -477,6 +480,25 @@ mod tests {
         assert_eq!(unchanged.org_node_id, Some(node_id), "nothing moved");
         assert_eq!(unchanged.row_version, asset.row_version);
         assert_eq!(moved_events(&db, asset.id).await, 0, "no event recorded");
+    }
+
+    /// AU-77, review S5: the origin of a MOVED event is the asset's current node, never a value
+    /// sent by the caller.
+    #[tokio::test]
+    async fn au77_a_move_event_records_the_asset_s_actual_origin() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "MV-ORIGIN", node_id).await;
+
+        let mut payload = move_payload(asset.id, node_id_2, Some(asset.row_version));
+        payload.from_org_node_id = Some(node_id_2); // not where the asset is
+        let event = lifecycle::record_lifecycle_event(&db, payload, 1)
+            .await
+            .expect("move event");
+        assert_eq!(event.from_org_node_id, Some(node_id), "the asset's actual origin");
+        assert_eq!(event.to_org_node_id, Some(node_id_2));
     }
 
     // ── V2 — Replacement traceability ─────────────────────────────────────

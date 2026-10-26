@@ -367,9 +367,10 @@ pub(crate) async fn record_lifecycle_event_in(
     let (current_status, current_node_id, _current_class_id) = assert_asset_exists(txn, payload.asset_id).await?;
 
     // ── 2b. Auto-enrich payload from current asset state ─────────────────
-    // For MOVED events, capture the current org node as from_org_node_id
-    // if the caller did not supply it explicitly.
-    if payload.event_type == "MOVED" && payload.from_org_node_id.is_none() {
+    // For MOVED events, the origin is the asset's current org node, read in this transaction
+    // (the move below is checked against the version the person saw): a value sent by the caller
+    // is never recorded in its place, so the history never shows a move from elsewhere.
+    if payload.event_type == "MOVED" {
         payload.from_org_node_id = current_node_id;
     }
     // For status-changing events, capture the current status as from_status.

@@ -528,6 +528,10 @@ mod tests {
         setup_equipment_class(&db).await;
 
         let asset = create_test_asset(&db, "DEC-A", node_id).await;
+        // Retired statuses are the ones tagged `retired` in the published list.
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
 
         // Decommission the asset directly
         db.execute(Statement::from_sql_and_values(

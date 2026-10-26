@@ -454,7 +454,8 @@ pub(crate) async fn move_asset_org_node_in(
     let status: String = current
         .try_get("", "lifecycle_status")
         .map_err(|e| decode_err("lifecycle_status", e))?;
-    if status == "DECOMMISSIONED" || status == "SCRAPPED" {
+    // Retired as the reference data says (tag `retired` of EQUIPMENT.STATUS), as for new work.
+    if identity::is_retired_status_code(txn, &status).await? {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_ASSET_HIER_MOVE_STATUS:status={status}: L'équipement {asset_id} a le statut '{status}' et ne peut pas \
              être déplacé. Contactez un administrateur pour forcer le \
