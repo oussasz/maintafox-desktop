@@ -1100,6 +1100,111 @@ async fn received_anomaly_cancel(
     Ok(())
 }
 
+/// Notification category of a reliability decision refused at synchronisation after a work order
+/// was created from it here (AU-76b, CMMS Advisor Q6): the work order is kept (never cancelled by
+/// the refusal), its planner and the decision's proposer are told, on the PC that refused it and
+/// on each PC that receives the refusal while holding the work order. It cannot be muted or
+/// re-routed (`notifications::catalog::ALWAYS_DELIVERED`).
+pub const DECISION_REFUSED_WO_KEPT_CATEGORY: &str = "rel_decision_refused_wo_kept";
+
+/// The notice of [`DECISION_REFUSED_WO_KEPT_CATEGORY`] for the decision `decision_id` (local id)
+/// and the work order linked to it here. Its event has an identity built from the decision's sync
+/// id, so the PCs that each raise it share one event and one notification per person. Written in a
+/// savepoint: a notice that cannot be written is logged, the refusal is kept.
+pub(crate) async fn announce_refused_decision_work_order(conn: &impl ConnectionTrait, decision_id: i64) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT decision_refused_notice").await?;
+        match decision_refused_notice(conn, decision_id).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO decision_refused_notice").await?;
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            decision_id,
+            error = %err,
+            "refused decision notice not written; the refusal and the work order are kept"
+        );
+    }
+}
+
+async fn decision_refused_notice(conn: &impl ConnectionTrait, decision_id: i64) -> AppResult<()> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.entity_sync_id, d.title, d.proposed_by_id, d.linked_work_order_id, w.code AS wo_code \
+               FROM reliability_study_decisions d JOIN work_orders w ON w.id = d.linked_work_order_id \
+              WHERE d.id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten().unwrap_or_default();
+    let decision_sync = get("entity_sync_id");
+    let title = get("title");
+    let code = get("wo_code");
+    let wo: i64 = row.try_get("", "linked_work_order_id").map_err(hook_err)?;
+    let proposer: Option<i64> = row.try_get("", "proposed_by_id").map_err(hook_err)?;
+    ensure_category_rows(
+        conn,
+        DECISION_REFUSED_WO_KEPT_CATEGORY,
+        "Reliability decision refused at synchronisation, work order kept",
+    )
+    .await?;
+    let event_id = crate::sync::identity::seeded_entity_sync_id(
+        "notification_events",
+        &format!("{DECISION_REFUSED_WO_KEPT_CATEGORY}|{decision_sync}"),
+    );
+    emit(
+        conn,
+        &NotificationEventInput {
+            // The work order routes its planner; the decision's proposer is its watcher.
+            source_module: "work_orders".to_string(),
+            source_record_id: Some(wo.to_string()),
+            event_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            category_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            severity: "warning".to_string(),
+            dedupe_key: None,
+            payload_json: Some(
+                json!({
+                    "entity_type": "reliability_study_decisions",
+                    "entity_sync_id": decision_sync,
+                    "watcher_user_ids": proposer.into_iter().collect::<Vec<_>>(),
+                })
+                .to_string(),
+            ),
+            title: format!(
+                "Décision de fiabilité refusée : {code} conservé / Reliability decision refused: {code} kept"
+            ),
+            body: Some(format!(
+                "La décision « {title} » a été refusée à la synchronisation (approbation non valable sur un poste). \
+                 L'OT {code} créé à partir d'elle est conservé : vérifiez s'il reste nécessaire. / The decision \
+                 \"{title}\" was refused at synchronisation (its approval is not valid on a PC). Work order {code} \
+                 created from it is kept: check whether it is still needed."
+            )),
+            action_url: Some(format!("/work-orders?openWo={wo}")),
+        },
+        Some(event_id),
+        Some(&NotificationMessage::new(
+            DECISION_REFUSED_WO_KEPT_CATEGORY,
+            json!({ "code": code, "decision": title }),
+        )),
+        Arrival::New,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
 /// of the received row. A notice that cannot be written is logged and the row still applies: a
 /// version or an occurrence is never held back by its notice (nothing is changed by either).
