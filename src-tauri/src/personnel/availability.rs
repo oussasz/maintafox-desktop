@@ -79,7 +79,8 @@ pub struct AvailabilityBlockUpdateInput {
 /// Refusal of an update, end or deletion of a block changed since the screen read it.
 fn block_changed_elsewhere() -> AppError {
     AppError::ValidationFailed(vec![
-        "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cette absence a été modifiée par un autre utilisateur.          Veuillez recharger et réessayer."
+        "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cette absence a été modifiée par un autre utilisateur. \
+         Veuillez recharger et réessayer."
             .to_string(),
     ])
 }
