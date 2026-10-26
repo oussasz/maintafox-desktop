@@ -7196,6 +7196,8 @@ export interface AvailabilityBlockUpdateInput {
   keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
+  /** The block's `row_version` as read; a block changed since is refused (GATE_RECORD_CHANGED_ELSEWHERE). */
+  expected_row_version: number;
 }
 
 export interface PersonnelAvailabilityBlock {
@@ -7213,6 +7215,8 @@ export interface PersonnelAvailabilityBlock {
   created_by_id: number | null;
   created_by_label: string | null;
   created_at: string;
+  /** Sent back on update, end and delete, which refuse a block changed since. */
+  row_version: number;
   /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
   reason_masked: boolean;
   /** The absence type withheld: show the neutral tag only. */

@@ -252,6 +252,7 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   created_by_id: z.number().nullable(),
   created_by_label: z.string().nullable(),
   created_at: z.string(),
+  row_version: z.number(),
   /** `reason_note` withheld (no per.sensitiveview, not own record). */
   reason_masked: z.boolean().optional().default(false),
   type_masked: z.boolean(),
@@ -857,14 +858,20 @@ export async function updateAvailabilityBlock(
   return row as PersonnelAvailabilityBlock;
 }
 
-export async function deleteAvailabilityBlock(id: number): Promise<void> {
-  await invoke("delete_availability_block", { id });
+export async function deleteAvailabilityBlock(
+  id: number,
+  expectedRowVersion: number,
+): Promise<void> {
+  await invoke("delete_availability_block", { id, expectedRowVersion });
 }
 
-export async function endAvailabilityBlock(id: number): Promise<PersonnelAvailabilityBlock> {
+export async function endAvailabilityBlock(
+  id: number,
+  expectedRowVersion: number,
+): Promise<PersonnelAvailabilityBlock> {
   const row = await invokeParsed(
     "end_availability_block",
-    { id },
+    { id, expectedRowVersion },
     PersonnelAvailabilityBlockSchema,
   );
   return row as PersonnelAvailabilityBlock;

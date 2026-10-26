@@ -72,6 +72,17 @@ pub struct AvailabilityBlockUpdateInput {
     pub keep_reason_note: bool,
     pub is_critical: Option<bool>,
     pub confirm_overlap: Option<bool>,
+    /// The version the screen read; a block changed since (here or received by sync) is refused.
+    pub expected_row_version: i64,
+}
+
+/// Refusal of an update, end or deletion of a block changed since the screen read it.
+fn block_changed_elsewhere() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cette absence a été modifiée par un autre utilisateur. \
+         Veuillez recharger et réessayer."
+            .to_string(),
+    ])
 }
 
 async fn assert_no_overlapping_blocks(
@@ -117,7 +128,8 @@ const BLOCK_SELECT_SQL: &str = "SELECT
                 b.is_critical,
                 b.created_by_id,
                 COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS created_by_label,
-                b.created_at
+                b.created_at,
+                b.row_version
              FROM personnel_availability_blocks b
              LEFT JOIN user_accounts ua ON ua.id = b.created_by_id";
 
@@ -133,6 +145,7 @@ fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
         created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
         created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
         created_at: row.try_get("", "created_at").unwrap_or_default(),
+        row_version: row.try_get("", "row_version").unwrap_or_default(),
         reason_masked: false,
         type_masked: false,
         critical_for_planning: false,
@@ -393,6 +406,9 @@ pub async fn update_availability_block(
         ]));
     }
     let existing = fetch_block_by_id(db, input.id).await?;
+    if existing.row_version != input.expected_row_version {
+        return Err(block_changed_elsewhere());
+    }
     let hidden =
         access.detail_for(existing.personnel_id) == crate::personnel::absence_access::AbsenceDetail::AvailabilityOnly;
     // Any type in the payload is refused, even the stored one: accepting a right guess would let
@@ -438,23 +454,30 @@ pub async fn update_availability_block(
         input.reason_note.clone()
     };
 
-    // The change and its audit event commit together.
+    // The change and its audit event commit together; the version is checked again in the write,
+    // so a change made between the read above and here is refused too.
     let txn = db.begin().await?;
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE personnel_availability_blocks
-         SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?
-         WHERE id = ?",
-        [
-            block_type.into(),
-            input.start_at.clone().into(),
-            input.end_at.clone().into(),
-            reason_note.into(),
-            (if is_critical { 1 } else { 0 }).into(),
-            input.id.into(),
-        ],
-    ))
-    .await?;
+    let updated = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_availability_blocks
+             SET block_type = ?, start_at = ?, end_at = ?, reason_note = ?, is_critical = ?,
+                 row_version = row_version + 1
+             WHERE id = ? AND row_version = ?",
+            [
+                block_type.into(),
+                input.start_at.clone().into(),
+                input.end_at.clone().into(),
+                reason_note.into(),
+                (if is_critical { 1 } else { 0 }).into(),
+                input.id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if updated.rows_affected() == 0 {
+        return Err(block_changed_elsewhere());
+    }
     if is_critical != existing.is_critical {
         // The block and the person are named by their sync ids, the same on every PC: the audit
         // travels (`sync::row_spec`, audit_events), and a block can be deleted later while its
@@ -495,20 +518,34 @@ pub async fn update_availability_block(
     fetch_block_by_id(db, input.id).await
 }
 
-pub async fn delete_availability_block(db: &DatabaseConnection, id: i64) -> AppResult<()> {
+/// Deletes a block at the version the screen read: a block deleted elsewhere is not found, one
+/// changed since is refused.
+pub async fn delete_availability_block(db: &DatabaseConnection, id: i64, expected_row_version: i64) -> AppResult<()> {
     let existing = fetch_block_by_id(db, id).await?;
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "DELETE FROM personnel_availability_blocks WHERE id = ?",
-        [existing.id.into()],
-    ))
-    .await?;
+    let deleted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM personnel_availability_blocks WHERE id = ? AND row_version = ?",
+            [existing.id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    if deleted.rows_affected() == 0 {
+        return Err(block_changed_elsewhere());
+    }
     Ok(())
 }
 
-/// Truncate an active block so `end_at = now` (soft end). Rejects if now is outside [start, end).
-pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResult<PersonnelAvailabilityBlock> {
+/// Truncate an active block so `end_at = now` (soft end). Rejects if now is outside [start, end),
+/// and a block changed since the screen read it (`expected_row_version`).
+pub async fn end_availability_block(
+    db: &DatabaseConnection,
+    id: i64,
+    expected_row_version: i64,
+) -> AppResult<PersonnelAvailabilityBlock> {
     let existing = fetch_block_by_id(db, id).await?;
+    if existing.row_version != expected_row_version {
+        return Err(block_changed_elsewhere());
+    }
     let now = Utc::now();
     let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -542,12 +579,17 @@ pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResu
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE personnel_availability_blocks SET end_at = ? WHERE id = ?",
-        [now_str.into(), id.into()],
-    ))
-    .await?;
+    let ended = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_availability_blocks SET end_at = ?, row_version = row_version + 1
+             WHERE id = ? AND row_version = ?",
+            [now_str.into(), id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    if ended.rows_affected() == 0 {
+        return Err(block_changed_elsewhere());
+    }
 
     fetch_block_by_id(db, id).await
 }
