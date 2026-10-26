@@ -407,7 +407,8 @@ pub(crate) async fn claim_wo_version(
     Ok(expected_row_version + 1)
 }
 
-/// Current `row_version` of a work order (callers that chain version-checked writes).
+/// Current `row_version` of a work order (tests that chain version-checked writes).
+#[cfg(test)]
 pub(crate) async fn wo_row_version(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<i64> {
     Ok(load_wo_status(conn, wo_id).await?.2)
 }
