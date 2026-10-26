@@ -5,8 +5,9 @@
  * from the payload — never the uuid), the two versions, and the choices. Every choice, "retry
  * later" and "escalate" (diagnostics only) included, opens a dialog that says what it does and
  * asks why (at least `CONFLICT_REASON_MIN` characters): the reason is stored on the conflict and
- * written to the audit trail with the choice. A failed inbox load is an error with retry, never
- * "nothing to review".
+ * written to the audit trail with the choice. In diagnostics, a conflict that holds an outgoing
+ * change of this device can also be sent again (`SyncReplayButton`, sync.replay). A failed inbox
+ * load is an error with retry, never "nothing to review".
  */
 import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,6 +25,7 @@ import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { SyncReplayButton } from "./SyncReplayButton";
 import {
   CONFLICT_REASON_MIN,
   KNOWN_APPLY_REASONS,
@@ -49,7 +51,7 @@ const KNOWN_ACTIONS = new Set<string>([
 ]);
 
 export interface SyncConflictListProps {
-  /** Also offer "retry later" and "escalate" (Settings → sync diagnostics). */
+  /** Also offer "retry later", "escalate" and "send again" (Settings → sync diagnostics). */
   showTriageActions?: boolean;
   /** Load the inbox when the list mounts (default true). */
   loadOnMount?: boolean;
@@ -63,7 +65,10 @@ export function SyncConflictList({
   const reasonId = useId();
   const { formatDateTime } = useFormatters();
   // Choosing a version is `resolve_sync_conflict` (sync.resolve): without it the list is read-only.
-  const canResolve = usePermissions().can(P.SYNC_RESOLVE);
+  const permissions = usePermissions();
+  const canResolve = permissions.can(P.SYNC_RESOLVE);
+  // Sending a refused change again is `replay_sync_failures` (sync.replay).
+  const canReplay = permissions.can(P.SYNC_REPLAY);
   const conflictInbox = useSyncOrchestratorStore((s) => s.conflictInbox);
   const refreshInbox = useSyncOrchestratorStore((s) => s.refreshInbox);
   const resolveConflictAction = useSyncOrchestratorStore((s) => s.resolveConflictAction);
@@ -159,6 +164,7 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
+          const record = id.code ?? id.name ?? entityOf(c);
           const actions = conflictActions(
             c.conflict_type,
             showTriageActions,
@@ -306,6 +312,19 @@ export function SyncConflictList({
                   {t("sync.resolveNeedsRight")}
                 </p>
               )}
+              {showTriageActions && canReplay && c.linked_outbox_id !== null ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <SyncReplayButton
+                    target={{
+                      kind: "conflict",
+                      conflictId: c.id,
+                      outboxId: c.linked_outbox_id,
+                    }}
+                    record={record}
+                    disabled={busyId === c.id}
+                  />
+                </div>
+              ) : null}
               {canResolve && KNOWN_ACTIONS.has(recommended) ? (
                 <p className="mt-1 text-xs text-text-muted">
                   {t("sync.panel.recommended", { action: actionLabel(recommended) })}

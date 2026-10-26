@@ -302,6 +302,38 @@ describe("SyncConflictList", () => {
   });
 });
 
+describe("send again on the conflict itself (AU-44)", () => {
+  it("is offered only in diagnostics, on a conflict holding an outgoing change, with sync.replay", async () => {
+    inbox = [{ ...conflict, linked_outbox_id: 501 }];
+    mockRefresh.mockResolvedValue(undefined);
+
+    const { unmount } = render(<SyncConflictList showTriageActions />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sync\.replay\.action/ })).toBeInTheDocument();
+    unmount();
+
+    // Sync centre (no triage actions): no replay.
+    const second = render(<SyncConflictList />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync\.replay\.action/ })).toBeNull();
+    second.unmount();
+
+    // Nothing of this device to send again: no replay.
+    inbox = [conflict];
+    const third = render(<SyncConflictList showTriageActions />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync\.replay\.action/ })).toBeNull();
+    third.unmount();
+
+    // Without sync.replay: no replay.
+    inbox = [{ ...conflict, linked_outbox_id: 501 }];
+    canResolve = false;
+    render(<SyncConflictList showTriageActions />);
+    expect(await screen.findByText("OT-2026-0144")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync\.replay\.action/ })).toBeNull();
+  });
+});
+
 describe("conflict reason minimum follows the server", () => {
   it("is MIN_REASON_CHARS, which resolve_sync_conflict checks", () => {
     const catalog = readFileSync("src-tauri/src/settings/catalog.rs", "utf8");

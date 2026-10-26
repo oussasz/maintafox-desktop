@@ -10546,6 +10546,13 @@ export type SyncWorkerState =
 export interface SyncWorkerError {
   /** Server error code (e.g. `rate_limited`), `offline`, `interrupted` or `local_error`. */
   code: string;
+  /**
+   * Stable reason the screens translate (`shell:sync.worker.errorKind.*`): `network_unreachable`,
+   * `connection_interrupted`, `server_unavailable`, `access_refused`, `request_refused`,
+   * `invalid_server_response`, `local_error`, `not_configured` or `other`.
+   */
+  kind: string;
+  /** Raw text ("HTTP 503: …"): technical details and support only, never the message shown. */
   message: string;
   http_status: number | null;
   at: string;

@@ -292,7 +292,18 @@
       },
       "resume": "Reprendre",
       "actionFailed": "L'action n'a pas abouti : {{message}}",
-      "notReported": "non communiqué"
+      "notReported": "non communiqué",
+      "errorKind": {
+        "network_unreachable": "Le serveur est injoignable (pas de connexion réseau ou serveur introuvable). Nouvel essai automatique.",
+        "connection_interrupted": "La connexion au serveur a été interrompue avant sa réponse (délai dépassé ou coupure). Nouvel essai automatique.",
+        "server_unavailable": "Le serveur est momentanément indisponible ou surchargé. Nouvel essai automatique.",
+        "access_refused": "Le serveur a refusé l'accès de cet appareil. La licence est en cours de vérification.",
+        "request_refused": "Le serveur a refusé la demande de synchronisation. Si l'erreur persiste, transmettez le diagnostic au support.",
+        "invalid_server_response": "La réponse du serveur est illisible. Nouvel essai automatique ; si l'erreur persiste, transmettez le diagnostic au support.",
+        "local_error": "Une erreur s'est produite sur cet appareil pendant la synchronisation. Si elle persiste, transmettez le diagnostic au support.",
+        "not_configured": "La synchronisation n'est pas configurée sur cet appareil.",
+        "other": "La synchronisation a échoué. Si l'erreur persiste, transmettez le diagnostic au support."
+      }
     },
     "indicator": {
       "idle": "À jour",
@@ -310,7 +321,6 @@
     "panel": {
       "title": "Diagnostic de synchronisation",
       "description": "État du service de synchronisation de cet appareil, actions de reprise et conflits à examiner.",
-      "replay": "Rejouer les éléments en échec",
       "export": "Exporter le diagnostic",
       "support": "Transmettre au support",
       "conflictsTitle": "Conflits à examiner",
@@ -338,6 +348,21 @@
     "technicalDetails": "Détails techniques",
     "noRemoteVersion": "Le serveur n'a envoyé aucune version de cet enregistrement",
     "resolveNeedsRight": "Vous pouvez consulter ce conflit. Choisir une version demande le droit de résoudre les conflits de synchronisation.",
+    "replay": {
+      "action": "Renvoyer au serveur",
+      "confirmTitle": "Renvoyer cette modification ?",
+      "confirmConflict": "La modification de cet appareil liée au conflit sur « {{record}} » est remise dans la file d'envoi et le conflit passe à « à réexaminer ». Elle sera envoyée à la prochaine synchronisation.",
+      "confirmOutbox": "La modification de « {{record}} » qui n'a pas pu être envoyée est remise dans la file d'envoi. Elle sera envoyée à la prochaine synchronisation.",
+      "reason": "Renvoi demandé par un opérateur depuis le diagnostic de synchronisation",
+      "done": "Modification remise dans la file d'envoi : elle part avec la prochaine synchronisation.",
+      "conflictOnly": "Le conflit est remis à réexaminer ; aucune modification de cet appareil n'était à renvoyer.",
+      "nothing": "Rien à renvoyer : cet élément n'est plus en échec.",
+      "failed": "Le renvoi n'a pas abouti : {{message}}",
+      "deadLetterTitle": "Modifications non envoyées après plusieurs tentatives ({{count}})",
+      "deadLetterLoading": "Chargement des modifications non envoyées…",
+      "deadLetterLoadError": "Impossible de charger les modifications non envoyées",
+      "attempts": "Tentatives d'envoi : {{count}}"
+    },
     "recommendedShort": "recommandé",
     "status": {
       "escalated": "Escaladé"

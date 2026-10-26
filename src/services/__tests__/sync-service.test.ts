@@ -110,8 +110,9 @@ describe("sync worker status", () => {
         state: "retrying",
         consecutive_failures: 2,
         last_error: {
-          code: "server_unavailable",
-          message: "503",
+          code: "http_error",
+          kind: "server_unavailable",
+          message: "HTTP 503: unavailable",
           http_status: 503,
           at: "2026-10-11T08:01:00Z",
         },
@@ -120,6 +121,7 @@ describe("sync worker status", () => {
     const status = await getSyncWorkerStatus();
     expect(status.state).toBe("retrying");
     expect(status.last_error?.http_status).toBe(503);
+    expect(status.last_error?.kind).toBe("server_unavailable");
   });
 
   it("rejects an unknown worker state instead of rendering it", async () => {

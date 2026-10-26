@@ -292,7 +292,18 @@
       },
       "resume": "Resume",
       "actionFailed": "The action failed: {{message}}",
-      "notReported": "not reported"
+      "notReported": "not reported",
+      "errorKind": {
+        "network_unreachable": "The server cannot be reached (no network connection or server not found). Retrying automatically.",
+        "connection_interrupted": "The connection to the server was interrupted before it answered (timeout or cut). Retrying automatically.",
+        "server_unavailable": "The server is temporarily unavailable or overloaded. Retrying automatically.",
+        "access_refused": "The server refused this device's access. The licence is being checked.",
+        "request_refused": "The server refused the synchronisation request. If the error persists, send the diagnostics to support.",
+        "invalid_server_response": "The server's answer could not be read. Retrying automatically; if the error persists, send the diagnostics to support.",
+        "local_error": "An error occurred on this device during synchronisation. If it persists, send the diagnostics to support.",
+        "not_configured": "Synchronisation is not configured on this device.",
+        "other": "Synchronisation failed. If the error persists, send the diagnostics to support."
+      }
     },
     "indicator": {
       "idle": "Up to date",
@@ -310,7 +321,6 @@
     "panel": {
       "title": "Sync diagnostics",
       "description": "Status of the sync service on this device, recovery actions and conflicts to review.",
-      "replay": "Replay failed items",
       "export": "Export diagnostics",
       "support": "Support handoff",
       "conflictsTitle": "Conflicts to review",
@@ -338,6 +348,21 @@
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
     "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
+    "replay": {
+      "action": "Send to the server again",
+      "confirmTitle": "Send this change again?",
+      "confirmConflict": "This device's change linked to the conflict on \"{{record}}\" goes back into the send queue and the conflict is set to \"to review again\". It will be sent with the next synchronisation.",
+      "confirmOutbox": "The change to \"{{record}}\" that could not be sent goes back into the send queue. It will be sent with the next synchronisation.",
+      "reason": "Resend requested by an operator from the synchronisation diagnostics",
+      "done": "Change put back into the send queue: it goes with the next synchronisation.",
+      "conflictOnly": "The conflict is set to be reviewed again; no change of this device was waiting to be sent.",
+      "nothing": "Nothing to send: this item is no longer failed.",
+      "failed": "The resend failed: {{message}}",
+      "deadLetterTitle": "Changes not sent after several attempts ({{count}})",
+      "deadLetterLoading": "Loading the changes not sent…",
+      "deadLetterLoadError": "The changes not sent could not be loaded",
+      "attempts": "Send attempts: {{count}}"
+    },
     "recommendedShort": "recommended",
     "status": {
       "escalated": "Escalated"
