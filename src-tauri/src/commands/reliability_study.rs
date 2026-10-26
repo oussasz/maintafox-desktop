@@ -135,8 +135,9 @@ pub async fn approve_reliability_study_decision(
 }
 
 /// Rejects a proposed decision (`ram.manage`, as its designated approver when one is named), or
-/// withdraws it when the user proposed it: the proposer needs only the right they proposed with
-/// (`ram.analyze`), whoever was designated (owner decision D10: a withdrawal approves nothing).
+/// withdraws it when the user proposed it: the proposer needs the right they proposed with
+/// (`ram.analyze`) or `ram.manage`, whoever was designated (owner decision D10: a withdrawal
+/// approves nothing).
 #[tauri::command]
 pub async fn reject_reliability_study_decision(
     input: DecideDecisionInput,
@@ -144,7 +145,17 @@ pub async fn reject_reliability_study_decision(
 ) -> AppResult<StudyDecision> {
     let user = require_session!(state);
     let actor = i64::from(user.user_id);
-    if decisions::is_proposer(&state.db, input.decision_id, actor).await? {
+    let is_proposer = decisions::is_proposer(&state.db, input.decision_id, actor).await?;
+    let holds_analyze = is_proposer
+        && crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            RAM_ANALYZE,
+            &PermissionScope::Global,
+        )
+        .await?;
+    if decisions::reject_right(is_proposer, holds_analyze) == RAM_ANALYZE {
         require_permission!(state, &user, RAM_ANALYZE, PermissionScope::Global);
     } else {
         require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);

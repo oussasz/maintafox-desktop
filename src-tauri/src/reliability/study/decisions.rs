@@ -719,6 +719,16 @@ pub async fn approve_decision(
     get_decision(db, input.decision_id).await
 }
 
+/// The right checked to reject a decision: anyone else needs `ram.manage`; its proposer withdraws
+/// with `ram.analyze` (the right they proposed with) or, without it, with `ram.manage` (D10).
+pub fn reject_right(is_proposer: bool, holds_analyze: bool) -> &'static str {
+    if is_proposer && holds_analyze {
+        crate::rbac::permissions::RAM_ANALYZE
+    } else {
+        crate::rbac::permissions::RAM_MANAGE
+    }
+}
+
 /// Whether `actor_id` proposed the decision: their rejection is a withdrawal (owner decision D10).
 pub async fn is_proposer(db: &DatabaseConnection, decision_id: i64, actor_id: i64) -> AppResult<bool> {
     Ok(decision_parties(db, decision_id).await?.proposer == Some(actor_id))

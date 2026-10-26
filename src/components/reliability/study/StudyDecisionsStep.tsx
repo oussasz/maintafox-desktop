@@ -93,13 +93,13 @@ export function StudyDecisionsStep({
     !d.site_allows_self_approval && d.proposed_by_id != null && d.proposed_by_id === me;
   /**
    * The proposer may withdraw their own proposal until it is decided, whoever was designated to
-   * approve it (owner decision D10): with the right they proposed with.
+   * approve it (owner decision D10): with the right they proposed with, or the approve right.
    */
   const canWithdraw = (d: StudyDecision) =>
     d.status === "proposed" &&
     d.proposed_by_id != null &&
     d.proposed_by_id === me &&
-    can(P.RAM_ANALYZE) &&
+    (can(P.RAM_ANALYZE) || can(P.RAM_MANAGE)) &&
     study.status === "active";
   /** Reject (as the approver) or withdraw (as the proposer). */
   const canReject = (d: StudyDecision) =>

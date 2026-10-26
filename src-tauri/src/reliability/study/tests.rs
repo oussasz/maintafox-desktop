@@ -2797,3 +2797,15 @@ async fn the_proposer_withdraws_their_own_proposal_until_it_is_decided() {
     assert_eq!(audits("reliability.decision.rejected", d3.id).await, 1);
     assert_eq!(audits("reliability.decision.withdrawn", d3.id).await, 0);
 }
+
+#[test]
+fn the_proposer_withdraws_with_either_reliability_right() {
+    use crate::rbac::permissions::{RAM_ANALYZE, RAM_MANAGE};
+    use crate::reliability::study::decisions::reject_right;
+    // The proposer: the right they proposed with, or (without it) the approve right.
+    assert_eq!(reject_right(true, true), RAM_ANALYZE);
+    assert_eq!(reject_right(true, false), RAM_MANAGE);
+    // Anyone else rejects with the approve right only.
+    assert_eq!(reject_right(false, true), RAM_MANAGE);
+    assert_eq!(reject_right(false, false), RAM_MANAGE);
+}
