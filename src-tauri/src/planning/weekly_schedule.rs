@@ -1228,6 +1228,9 @@ pub struct FrozenWeek {
     /// When the week froze here (its `frozen_at`), or, for a week due to freeze but not frozen
     /// yet, when it was due (`freeze_due_at`); `None` when not recorded.
     pub frozen_at: Option<String>,
+    /// The frozen or published schedule here (its id and baseline); `None` for a week only due to
+    /// freeze.
+    pub schedule: Option<(i64, i64)>,
 }
 
 /// The week of the crew's planning site that `[start, end)` touches and that is frozen: frozen or
@@ -1260,6 +1263,7 @@ pub async fn frozen_week_for_slot(
         return Ok(Some(FrozenWeek {
             week_start: schedule.week_start,
             frozen_at: schedule.frozen_at,
+            schedule: Some((schedule.id, schedule.baseline_no)),
         }));
     }
     let (Some(slot_start), Some(slot_end)) = (
@@ -1290,6 +1294,7 @@ pub async fn frozen_week_for_slot(
             return Ok(Some(FrozenWeek {
                 week_start: week.week_start.to_string(),
                 frozen_at: Some(rfc3339(due)),
+                schedule: None,
             }));
         }
     }

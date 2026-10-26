@@ -231,12 +231,11 @@ async fn materialize_inbox_run(
     // PM plan versions refused before two versions could share a number are applied again first,
     // so the rows waiting for them follow in this run (`pm::version_clash`).
     total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
-    // Commitments refused for entering a frozen week without their break-in are applied with it
-    // once it has arrived, their conflict closed (`planning::sync_check`).
-    // Weeks refused as reopened without their decision are judged again once it arrived, before
-    // the commitments that wait for them (`planning::sync_check`, review S4).
-    total.applied += crate::planning::sync_check::retry_unfreeze_conflicts(db).await?;
-    total.applied += crate::planning::sync_check::retry_frozen_week_conflicts(db).await?;
+    // Every planning four-eyes conflict is judged again (weeks, then break-ins, then the
+    // commitments they let in) and closes, audited, once this PC's rules let it in; break-ins
+    // received after their job's plan was kept are refused with that decision
+    // (`planning::sync_check`, reviews S4, R3-S4, R3-S5).
+    total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
     let started = std::time::Instant::now();
@@ -293,8 +292,7 @@ async fn materialize_inbox_run(
     }
     // A week reopened, or a break-in applied, by this run: the planning conflicts it settles close
     // in this run, not at the next synchronisation (`planning::sync_check`, review R2-S2).
-    total.applied += crate::planning::sync_check::retry_unfreeze_conflicts(db).await?;
-    total.applied += crate::planning::sync_check::retry_frozen_week_conflicts(db).await?;
+    total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
     total.deferred = db
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,

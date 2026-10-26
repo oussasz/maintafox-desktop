@@ -1577,9 +1577,28 @@ async fn a_version_back_on_the_frozen_plan_is_let_in() {
     // In the frozen week and its baseline at S0, moved here to S1 by a signed break-in.
     let r = received_setup_at("FE21", "2026-05-05T08:00", "2026-05-05T09:00").await;
     let s0 = r.commitment.committed_start.clone();
+    let s1 = local("2026-05-06T08:00");
     r.move_here("2026-05-06T08:00", "2026-05-06T09:00").await;
     let back = r.moved("2026-05-05T08:00", "2026-05-05T09:00").await;
-    // Back to its baseline slot and crew: putting work back on the frozen plan is not entering.
+    // A valid signed break-in here led it to S1: going back to the baseline is a move like any
+    // other, never undone silently (review R3-S1).
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert_eq!(r.slot_here().await, s1);
+
+    // Moved here with no break-in (a version of before the freeze, CMMS Advisor Q2): back to its
+    // baseline slot and crew is putting work back on the frozen plan, not entering the week.
+    let r = received_setup_at("FE21P", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    exec_sql(
+        &r.db,
+        &format!(
+            "UPDATE schedule_commitments SET committed_start = '{s1}', committed_end = '{}' WHERE id = {}",
+            local("2026-05-06T09:00"),
+            r.commitment.id
+        ),
+    )
+    .await;
+    let back = r.moved("2026-05-05T08:00", "2026-05-05T09:00").await;
     let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
     assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
     assert_eq!(r.slot_here().await, s0);
@@ -1831,7 +1850,8 @@ async fn keeping_the_plan_after_a_refused_break_in_converges_on_both_pcs() {
     let s0 = commitment_state(&a, &job_sid).await;
     assert_eq!(commitment_state(&b, &job_sid).await, s0, "the same plan on both PCs");
 
-    // On B the approver holds no right at the site (withdrawn here, not sent).
+    // On B the approver holds no right at the site: the raw test grant is held back for review there
+    // (no granting administrator); removed again here in case it was applied (nothing sent).
     exec_sql(
         &b,
         "DELETE FROM user_scope_assignments WHERE user_id = \
@@ -2075,4 +2095,456 @@ async fn a_frozen_week_conflict_carries_the_change_time_and_the_freeze_time_for_
             .all(|c| c.planning_times.is_none()),
         "only on frozen-week cards"
     );
+}
+
+// ── Round 4 (review round 3) ───────────────────────────────────────────────────────────────
+
+/// A break-in written here directly (made on this PC: no inbox row), from one slot to another of
+/// the crew `team`; the same slot twice is an assignee-only break-in.
+async fn raw_break_in(
+    db: &DatabaseConnection,
+    commitment: i64,
+    sid: &str,
+    from: (&str, &str),
+    to: (&str, &str),
+    team: i64,
+) {
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO schedule_break_ins (entity_sync_id, schedule_commitment_id, break_in_reason, kind, \
+                old_slot_start, old_slot_end, new_slot_start, new_slot_end, old_team_id, new_team_id, created_by_id, \
+                notification_dedupe_key) \
+             VALUES ('{sid}', {commitment}, 'other', 'move', '{}', '{}', '{}', '{}', {team}, {team}, 1, '{sid}')",
+            local(from.0),
+            local(from.1),
+            local(to.0),
+            local(to.1)
+        ),
+    )
+    .await;
+}
+
+async fn refused_at(db: &DatabaseConnection, sid: &str) -> Option<String> {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT sync_refused_at FROM schedule_break_ins WHERE entity_sync_id = '{sid}'"),
+    ))
+    .await
+    .expect("q")
+    .expect("break-in held here")
+    .try_get::<Option<String>>("", "sync_refused_at")
+    .expect("refused_at")
+}
+
+#[tokio::test]
+async fn a_week_frozen_here_never_takes_another_pcs_baseline_items_as_leave_to_enter() {
+    // The week is frozen by this PC (its freeze event staged here, never received).
+    let r = received_setup("FE26").await;
+    let other = wo_commitment(&r.db, r.team, "FE26 other PC", "2026-05-14T08:00", "2026-05-14T09:00").await;
+    let sid = sync_id(&r.db, "schedule_commitments", other.id).await;
+    let mut p = payload(&r.db, "schedule_commitments", &sid).await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM schedule_change_log WHERE commitment_id = {}", other.id),
+    )
+    .await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM schedule_commitments WHERE id = {}", other.id),
+    )
+    .await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM sync_capture_journal WHERE entity_sync_id = '{sid}'"),
+    )
+    .await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM sync_outbox WHERE entity_sync_id = '{sid}'"),
+    )
+    .await;
+    p.insert("committed_start".into(), local("2026-05-06T10:00").into());
+    p.insert("committed_end".into(), local("2026-05-06T11:00").into());
+    // The other PC froze the same week at the same baseline with this job in it (concurrent freeze).
+    let (week_sid, _) = week_payload(&r).await;
+    let mut item = Payload::new();
+    item.insert("weekly_schedule_sync_id".into(), week_sid.into());
+    item.insert("baseline_no".into(), 1.into());
+    item.insert("schedule_commitment_sync_id".into(), sid.clone().into());
+    item.insert("team_sync_id".into(), sync_id(&r.db, "teams", r.team).await.into());
+    item.insert("personnel_sync_id".into(), Value::Null);
+    item.insert("committed_start".into(), local("2026-05-06T10:00").into());
+    item.insert("committed_end".into(), local("2026-05-06T11:00").into());
+    item.insert("planned_labor_hours".into(), Value::Null);
+    item.insert("row_version".into(), 1.into());
+    inbox(&r.db, "weekly_schedule_baseline_items", "fe26-item", &item).await;
+    let outcome = receive(&r.db, "schedule_commitments", &sid, p).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PLANNING_WEEK_FROZEN"),
+        "always reviewed (CMMS Advisor Q2): {outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn keep_refuses_only_received_break_ins_of_the_refused_move() {
+    let r = received_setup("FE27").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    // Made here: an assignee-only break-in (moves nothing).
+    raw_break_in(
+        &r.db,
+        r.commitment.id,
+        "fe27-here",
+        ("2026-05-12T08:00", "2026-05-12T09:00"),
+        ("2026-05-12T08:00", "2026-05-12T09:00"),
+        r.team,
+    )
+    .await;
+    // Received: a break-in of another move (S0 → S2), and of the refused one (S0 → S1) signed by its
+    // own requester (refused here).
+    let other_move = r.break_in("2026-05-07T08:00", "2026-05-07T09:00", |_| {});
+    inbox(&r.db, "schedule_break_ins", "fe27-other", &other_move).await;
+    let creator = r.break_in_template.get("created_by_sync_id").cloned().expect("creator");
+    let refused_move = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |p| {
+        p.insert("approved_by_user_sync_id".into(), creator);
+    });
+    inbox(&r.db, "schedule_break_ins", "fe27-this", &refused_move).await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &moved).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("pass");
+    resolve(&r.db, r.approver, &r.commitment_sid, "accept_local")
+        .await
+        .expect("kept");
+    assert!(
+        refused_at(&r.db, "fe27-this").await.is_some(),
+        "the refused move's break-in"
+    );
+    assert!(refused_at(&r.db, "fe27-here").await.is_none(), "never one made here");
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = 'fe27-other' AND sync_refused_at IS NOT NULL"
+        )
+        .await,
+        0,
+        "never one of another move"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.break_in.refused_with_kept_plan'"
+        )
+        .await,
+        1,
+        "each refused break-in audited"
+    );
+}
+
+#[tokio::test]
+async fn undoing_a_refused_break_in_steps_over_an_assignee_only_one_after_it() {
+    let r = received_setup_at("FE28", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let away = r.move_here("2026-05-06T08:00", "2026-05-06T09:00").await;
+    // Then an assignee-only break-in here, still valid; the job is not in the baseline.
+    raw_break_in(
+        &r.db,
+        r.commitment.id,
+        "fe28-assignee",
+        ("2026-05-06T08:00", "2026-05-06T09:00"),
+        ("2026-05-06T08:00", "2026-05-06T09:00"),
+        r.team,
+    )
+    .await;
+    exec_sql(
+        &r.db,
+        &format!(
+            "DELETE FROM weekly_schedule_baseline_items WHERE schedule_commitment_id = {}",
+            r.commitment.id
+        ),
+    )
+    .await;
+    let away_sid = sync_id(&r.db, "schedule_break_ins", away.id).await;
+    let mut marked = payload(&r.db, "schedule_break_ins", &away_sid).await;
+    marked.insert("sync_refused_at".into(), "2026-05-06T12:00:00Z".into());
+    marked.insert(
+        "sync_refused_reason".into(),
+        "refusé (sync) : semaine gelée — test".into(),
+    );
+    inbox(&r.db, "schedule_break_ins", &away_sid, &marked).await;
+    let back = r.moved("2026-05-05T08:00", "2026-05-05T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
+    assert!(conflict_code(&outcome).is_none(), "converges: {outcome:?}");
+    assert_eq!(r.slot_here().await, r.commitment.committed_start);
+}
+
+#[tokio::test]
+async fn a_break_in_conflict_closes_once_its_approvers_right_is_granted_here_and_its_job_enters() {
+    let r = received_setup("FE29").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    exec_sql(
+        &r.db,
+        &format!("DELETE FROM user_scope_assignments WHERE user_id = {}", r.approver),
+    )
+    .await;
+    let bi = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |_| {});
+    inbox(&r.db, "schedule_break_ins", "fe29-bi", &bi).await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &moved).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("first pass");
+    let open = |code: &str| {
+        format!(
+            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = '{code}' \
+               AND status IN ('new', 'triaged', 'escalated')"
+        )
+    };
+    assert_eq!(scalar(&r.db, &open("PLANNING_BREAK_IN_APPROVER_UNAUTHORISED")).await, 1);
+    assert_eq!(scalar(&r.db, &open("PLANNING_WEEK_FROZEN")).await, 1);
+
+    // The administrator grants plan.confirm at the site here: the next pass settles both.
+    exec_sql(
+        &r.db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+                valid_from, created_at, updated_at)
+             VALUES ('fe29-usa', {}, 778, 'org_node', '{}', '2026-01-01T00:00:00Z',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            r.approver, r.site
+        ),
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("second pass");
+    assert_eq!(scalar(&r.db, &open("PLANNING_BREAK_IN_APPROVER_UNAUTHORISED")).await, 0);
+    assert_eq!(scalar(&r.db, &open("PLANNING_WEEK_FROZEN")).await, 0);
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.break_in_conflict.closed_by_rights'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(r.slot_here().await, local("2026-05-06T08:00"), "its job enters");
+}
+
+#[tokio::test]
+async fn a_break_in_arriving_after_its_jobs_plan_was_kept_is_refused_with_that_decision() {
+    let r = received_setup("FE30").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &moved).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("first pass");
+    resolve(&r.db, r.approver, &r.commitment_sid, "accept_local")
+        .await
+        .expect("kept");
+    // Kept some time ago; its break-in comes with a later synchronisation.
+    exec_sql(
+        &r.db,
+        &format!(
+            "UPDATE sync_conflicts SET resolved_at = '2026-01-01T00:00:00Z' WHERE entity_sync_id = '{}'",
+            r.commitment_sid
+        ),
+    )
+    .await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let bi = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |_| {});
+    inbox(&r.db, "schedule_break_ins", "fe30-bi", &bi).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("second pass");
+    assert_eq!(r.slot_here().await, r.commitment.committed_start, "the plan stays kept");
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id = 'fe30-bi' \
+               AND sync_refused_reason LIKE 'refusé (sync) : semaine gelée — %'"
+        )
+        .await,
+        1,
+        "refused with the planner's decision"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.break_in.refused_with_kept_plan' \
+                   AND actor_id = {}",
+                r.approver
+            )
+        )
+        .await,
+        1,
+        "audited, by the planner who kept the plan"
+    );
+    assert!(
+        scalar(
+            &r.db,
+            "SELECT (SELECT COUNT(*) FROM sync_capture_journal WHERE entity_sync_id = 'fe30-bi') \
+                  + (SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = 'fe30-bi')"
+        )
+        .await
+            >= 1,
+        "sent to the other PCs"
+    );
+}
+
+#[tokio::test]
+async fn too_many_break_ins_to_search_are_a_conflict_never_a_partial_search() {
+    let r = received_setup("FE31").await;
+    // 40 received break-ins going back and forth between S0 and S1; the job arrives at S2.
+    for i in 0..40 {
+        let (from, to) = if i % 2 == 0 {
+            (
+                ("2026-05-12T08:00", "2026-05-12T09:00"),
+                ("2026-05-06T08:00", "2026-05-06T09:00"),
+            )
+        } else {
+            (
+                ("2026-05-06T08:00", "2026-05-06T09:00"),
+                ("2026-05-12T08:00", "2026-05-12T09:00"),
+            )
+        };
+        let bi = r.break_in(to.0, to.1, |p| {
+            p.insert("old_slot_start".into(), local(from.0).into());
+            p.insert("old_slot_end".into(), local(from.1).into());
+            p.insert("notification_dedupe_key".into(), format!("fe31-{i}").into());
+        });
+        inbox(&r.db, "schedule_break_ins", &format!("fe31-bi-{i}"), &bi).await;
+    }
+    let moved = r.moved("2026-05-07T08:00", "2026-05-07T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert!(conflict_message(&outcome).contains("too many break-ins"), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn a_move_inside_the_week_made_before_the_freeze_reached_its_pc_converges_on_the_baseline() {
+    use crate::sync::test_support::{started_device_db, TestServer};
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut server = TestServer::new();
+    // The job sits at S0 inside the week about to freeze, on both PCs.
+    let (_, team_a) = weekly_site(&a, "RT3").await;
+    let job = wo_commitment(&a, team_a, "RT3 job", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let job_sid = sync_id(&a, "schedule_commitments", job.id).await;
+    for (device, db) in [("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    let s0 = commitment_state(&b, &job_sid).await;
+    // B freezes the week (baseline: the job at S0) and sends it.
+    let site_b = scalar(&b, "SELECT id FROM org_nodes WHERE entity_sync_id = 'wk-node-RT3'").await;
+    super::weekly_schedule::freeze_weekly_schedule(&b, 1, week_ref(site_b, "2026-05-04", None))
+        .await
+        .expect("frozen on B");
+    server.exchange("B", &b).await;
+    // A, before the freeze reached it, moved the job to S1 inside the week (open on A).
+    let rv = scalar(
+        &a,
+        &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", job.id),
+    )
+    .await;
+    scheduling::reschedule_schedule_commitment(
+        &a,
+        1,
+        super::domain::RescheduleCommitmentInput {
+            commitment_id: job.id,
+            expected_row_version: rv,
+            committed_start: local("2026-05-06T08:00"),
+            committed_end: local("2026-05-06T09:00"),
+            assigned_team_id: team_a,
+            assigned_personnel_id: None,
+            allow_double_booking_override: None,
+            override_reason: None,
+            budget_threshold: None,
+            acknowledged_assignee_issues: Vec::new(),
+        },
+    )
+    .await
+    .expect("moved on A while the week is open there");
+    server.exchange("A", &a).await;
+    // Both changed the job: A keeps its own version (the generic choice, no planning right).
+    let open_on_a = a
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT id, row_version FROM sync_conflicts WHERE entity_sync_id = '{job_sid}' \
+                   AND status IN ('new', 'triaged', 'escalated')"
+            ),
+        ))
+        .await
+        .expect("conflicts");
+    for c in open_on_a {
+        crate::sync::queries::resolve_sync_conflict(
+            &a,
+            1,
+            crate::sync::domain::ResolveSyncConflictInput {
+                conflict_id: c.try_get("", "id").expect("id"),
+                expected_row_version: c.try_get("", "row_version").expect("rv"),
+                action: "accept_local".to_string(),
+                resolution_note: Some("Moved here before the freeze arrived".to_string()),
+            },
+        )
+        .await
+        .expect("A keeps its version");
+    }
+    server.exchange("A", &a).await;
+    server.exchange("B", &b).await;
+    // B: the job enters its frozen week with no break-in: reviewed, and B keeps its plan.
+    assert_eq!(commitment_state(&b, &job_sid).await, s0);
+    let (conflict_id, conflict_rv) = open_conflict_of(&b, &job_sid).await;
+    let planner_b = keeper(&b, site_b, None).await;
+    crate::sync::queries::resolve_sync_conflict(
+        &b,
+        planner_b,
+        crate::sync::domain::ResolveSyncConflictInput {
+            conflict_id,
+            expected_row_version: conflict_rv,
+            action: "accept_local".to_string(),
+            resolution_note: Some("Week frozen here before this change".to_string()),
+        },
+    )
+    .await
+    .expect("kept on B");
+    for (device, db) in [("B", &b), ("A", &a), ("B", &b)] {
+        let report = server.exchange(device, db).await;
+        assert_exchange_clean(device, &report, db).await;
+    }
+    // A lets B's version in as the job back on the frozen baseline (no break-in moved it there).
+    assert_eq!(open_planning_conflicts(&a).await, 0, "no new conflict on A");
+    assert_eq!(open_planning_conflicts(&b).await, 0);
+    assert_eq!(commitment_state(&a, &job_sid).await, s0, "A is back on the baseline");
+    assert_eq!(commitment_state(&b, &job_sid).await, s0);
+}
+
+#[tokio::test]
+async fn a_refused_copy_of_a_received_break_in_wins_over_an_older_one() {
+    let r = received_setup("FE32").await;
+    let bi = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |_| {});
+    inbox(&r.db, "schedule_break_ins", "fe32-bi", &bi).await;
+    let mut refused = bi.clone();
+    refused.insert(
+        "row_version".into(),
+        (bi.get("row_version").and_then(Value::as_i64).unwrap_or(1) + 1).into(),
+    );
+    refused.insert("sync_refused_at".into(), "2026-05-06T12:00:00Z".into());
+    refused.insert(
+        "sync_refused_reason".into(),
+        "refusé (sync) : approbateur sans droit sur le site — test".into(),
+    );
+    inbox(&r.db, "schedule_break_ins", "fe32-bi", &refused).await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
 }
