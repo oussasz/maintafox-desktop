@@ -1190,7 +1190,8 @@ async fn second_reversal_here(
 /// adjustment `adjustment_sync_id` (`None`: none did). A reversal is paired with the adjustment it
 /// undoes by its count line, which names both (posted, reversed): a line held here, a line version
 /// applied here (its reversal was checked to undo that adjustment, [`reversal_check`]), or a line
-/// version this PC staged for the server (its own reversal of its own posting).
+/// version this PC staged for the server (its own reversal of its own posting). Only the reversals
+/// of that adjustment's own count (session, article and location) are looked at.
 async fn adjustment_reversed_here(
     conn: &impl ConnectionTrait,
     adjustment_sync_id: &str,
@@ -1199,11 +1200,14 @@ async fn adjustment_reversed_here(
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT r.entity_sync_id AS other FROM inventory_transactions r
-             WHERE r.movement_type = 'COUNT_REVERSAL' AND r.source_type = 'COUNT_SESSION' AND r.entity_sync_id <> ?
+            "SELECT r.entity_sync_id AS other FROM inventory_transactions x
+             JOIN inventory_transactions r
+               ON r.source_type = 'COUNT_SESSION' AND r.source_id = x.source_id
+              AND r.article_id = x.article_id AND r.location_id = x.location_id
+             WHERE x.entity_sync_id = ? AND x.source_type = 'COUNT_SESSION'
+               AND r.movement_type = 'COUNT_REVERSAL' AND r.entity_sync_id <> ?
                AND (EXISTS (SELECT 1 FROM inventory_count_lines cl
-                             JOIN inventory_transactions x ON x.id = cl.posted_transaction_id
-                             WHERE cl.reversed_transaction_id = r.id AND x.entity_sync_id = ?)
+                             WHERE cl.reversed_transaction_id = r.id AND cl.posted_transaction_id = x.id)
                     OR EXISTS (SELECT 1 FROM sync_inbox i
                                 WHERE i.entity_type = 'inventory_count_lines' AND i.apply_status = 'applied'
                                   AND json_extract(i.payload_json, '$.posted_transaction_sync_id') = ?
@@ -1214,8 +1218,8 @@ async fn adjustment_reversed_here(
                                   AND json_extract(o.payload_json, '$.reversed_transaction_sync_id') = r.entity_sync_id))
              ORDER BY r.id LIMIT 1",
             [
-                reversal_sync_id.into(),
                 adjustment_sync_id.into(),
+                reversal_sync_id.into(),
                 adjustment_sync_id.into(),
                 adjustment_sync_id.into(),
             ],

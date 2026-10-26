@@ -76,12 +76,14 @@ pub const AUDIT_POSTED_TWICE: &str = "inventory.count.posted_twice";
 
 /// SQL condition on an outbox entry (alias `o`): it is a count reversal (`COUNT_REVERSAL` of a
 /// count session) whose count's adjustment, posted on this PC, is not settled with the server yet.
-/// That adjustment's push is unsent, in flight or in conflict; or it was superseded by the same
-/// count posted first on another PC ([`COUNT_ALREADY_POSTED`]) and the server's version is not
-/// applied here yet. The reversal waits in the outbox (`sync::queries::get_sync_push_payload`):
-/// when the posting kept has another quantity, the reversal is made the exact undo of that one
-/// before it is sent ([`adopt_first_posted`]), so every PC goes back to the same stock (review of
-/// ab58cd53, §4). A rejected adjustment, or one acknowledged, holds nothing.
+/// That adjustment's push is unsent, in flight, in conflict, or dead-lettered (its delivery failed
+/// too often: the server may have received it and answered that the same count was posted first
+/// elsewhere, piece F review SF-2); or it was superseded by the same count posted first on another
+/// PC ([`COUNT_ALREADY_POSTED`]) and the server's version is not applied here yet. The reversal
+/// waits in the outbox (`sync::queries::get_sync_push_payload`): when the posting kept has another
+/// quantity, the reversal is made the exact undo of that one before it is sent
+/// ([`adopt_first_posted`]), so every PC goes back to the same stock (review of ab58cd53, §4). An
+/// adjustment the server rejected, or acknowledged, holds nothing.
 pub(crate) const REVERSAL_AWAITING_ITS_POSTING_SQL: &str = "EXISTS (
     SELECT 1 FROM inventory_transactions r
     JOIN inventory_transactions x
@@ -91,7 +93,7 @@ pub(crate) const REVERSAL_AWAITING_ITS_POSTING_SQL: &str = "EXISTS (
       AND r.movement_type = 'COUNT_REVERSAL' AND r.source_type = 'COUNT_SESSION'
       AND (EXISTS (SELECT 1 FROM sync_outbox xo
                     WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
-                      AND xo.status IN ('pending', 'in_flight', 'conflict'))
+                      AND xo.status IN ('pending', 'in_flight', 'conflict', 'dead_letter'))
            OR (EXISTS (SELECT 1 FROM sync_outbox xo
                         WHERE xo.entity_type = 'inventory_transactions' AND xo.entity_sync_id = x.entity_sync_id
                           AND xo.status = 'superseded' AND xo.rejection_code = 'COUNT_ALREADY_POSTED')
@@ -649,7 +651,8 @@ pub(crate) async fn adopt_first_posted(
 /// carries the new quantity, so every PC receives the reversal of the posting it holds and goes
 /// back to the same stock; with the adoption the stock here does not move at all (posted, then
 /// reversed). Only a reversal never sent (no version of it synchronised, no outbox entry of it
-/// beyond `pending`) that undoes exactly this PC's posting. Returns what the audit keeps of it.
+/// beyond `pending`, nor one ever attempted: a delivery that failed may have reached the server,
+/// piece F review SF-1) that undoes exactly this PC's posting. Returns what the audit keeps of it.
 async fn undo_kept_posting(
     conn: &impl ConnectionTrait,
     local: &Map<String, Value>,
@@ -686,7 +689,8 @@ async fn undo_kept_posting(
     let sent = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS sent FROM sync_outbox WHERE entity_type = ? AND entity_sync_id = ? AND status <> 'pending'
+            "SELECT 1 AS sent FROM sync_outbox WHERE entity_type = ? AND entity_sync_id = ?
+               AND (status <> 'pending' OR attempt_count > 0 OR last_attempt_at IS NOT NULL)
              LIMIT 1",
             [MOVEMENTS.into(), reversal_sync_id.clone().into()],
         ))
