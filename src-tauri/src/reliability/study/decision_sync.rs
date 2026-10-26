@@ -719,11 +719,12 @@ pub const SEAL_RESEND_KEY: &str = "reliability.decisions.seal_resend_pending";
 /// each decision listed by migration 264 is sent once more, sealed, by this PC only when the version
 /// the server holds is still the one this PC sent (`sync_entity_state.source = 'outbox_ack'`: any
 /// newer version received since moves it to `inbound_apply`), or when the server never received it
-/// (no known server version: it was created here and its unsealed send was dropped by the
-/// migration). Another PC's newer version (a decision applied elsewhere since this PC approved it)
-/// is never overwritten: that PC re-sends, or the decision is already sealed everywhere (review
-/// R2-S8). A version still in flight at the upgrade is acknowledged by then, so it is re-sent too.
-/// The list is cleared once judged. Returns how many were staged (drained into the outbox here).
+/// (no known server version), and no newer version of it waits in the inbox here. Another PC's newer
+/// version (a decision applied elsewhere since this PC approved it) is never overwritten: that PC
+/// re-sends, or the decision is already sealed everywhere (review R2-S8, R3-N1). A decision with a
+/// change not sent yet at the upgrade is not listed: the migration journaled its sealed row on top
+/// of that change (review R3-B1). The list is cleared once judged. Returns how many were staged
+/// (drained into the outbox here).
 pub(crate) async fn resend_sealed_after_complete_pull(conn: &impl ConnectionTrait) -> AppResult<i64> {
     let held: Option<String> = conn
         .query_one(Statement::from_sql_and_values(
@@ -739,15 +740,29 @@ pub(crate) async fn resend_sealed_after_complete_pull(conn: &impl ConnectionTrai
         return Ok(0);
     };
     let mut staged = 0;
-    for sync_id in serde_json::from_str::<Vec<String>>(&held).unwrap_or_default() {
+    let listed = match serde_json::from_str::<Vec<String>>(&held) {
+        Ok(listed) => listed,
+        Err(err) => {
+            // Never silent (review R3-N2): the decisions it named are not re-sent; their receivers
+            // keep their visible wait.
+            tracing::error!(target: "maintafox::sync", error = %err, list = %held, "unreadable list of decisions to re-send sealed: discarded");
+            Vec::new()
+        }
+    };
+    for sync_id in listed {
+        // A newer version of it received here and not settled yet (pending, waiting or refused): the
+        // version the server holds is not this PC's to re-send (review R3-N1).
         let row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT (SELECT s.source FROM sync_entity_state s \
                           WHERE s.entity_type = ? AND s.entity_sync_id = d.entity_sync_id) AS source, \
                         d.approval_seal IS NOT NULL AS sealed \
-                   FROM reliability_study_decisions d WHERE d.entity_sync_id = ?",
-                [ENTITY.into(), sync_id.as_str().into()],
+                   FROM reliability_study_decisions d WHERE d.entity_sync_id = ? \
+                    AND NOT EXISTS (SELECT 1 FROM sync_inbox i WHERE i.entity_type = ? \
+                                     AND i.entity_sync_id = d.entity_sync_id \
+                                     AND i.apply_status IN ('pending', 'deferred', 'conflict'))",
+                [ENTITY.into(), sync_id.as_str().into(), ENTITY.into()],
             ))
             .await?;
         let Some(row) = row else {
