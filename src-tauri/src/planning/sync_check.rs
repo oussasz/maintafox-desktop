@@ -1410,7 +1410,7 @@ async fn week_still_refused(conn: &impl ConnectionTrait, sid: &str, received: &P
 
 /// The open conflicts of `entity_type` with one of `codes`, linked to their refused inbox row:
 /// inbox id, conflict id, sync id and received payload.
-async fn open_planning_conflicts(
+pub(crate) async fn open_planning_conflicts(
     db: &DatabaseConnection,
     entity_type: &str,
     codes: &[&str],
@@ -1627,7 +1627,7 @@ pub(crate) async fn refuse_break_ins_after_kept_plan(db: &DatabaseConnection) ->
 /// conflict is closed (`resolved_remote`, `action`, `note`) and `true` is returned. Waiting: left
 /// as it was, tried again at the next synchronisation. Refused again: the conflict stays open with
 /// the new reason.
-async fn reapply_conflicted(
+pub(crate) async fn reapply_conflicted(
     db: &DatabaseConnection,
     inbox_id: i64,
     conflict_id: i64,

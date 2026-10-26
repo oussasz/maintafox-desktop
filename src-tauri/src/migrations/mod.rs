@@ -241,6 +241,7 @@ mod m20261023_000259_inventory_count_four_eyes;
 mod m20261025_000260_break_in_signature;
 mod m20261025_000261_user_credential_authors;
 mod m20261025_000262_delegation_policy_author;
+pub(crate) mod m20261026_000264_reliability_decision_seal;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -490,6 +491,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261025_000261_user_credential_authors::Migration),
             Box::new(m20261025_000262_delegation_policy_author::Migration),
             Box::new(m20261025_000260_break_in_signature::Migration),
+            Box::new(m20261026_000264_reliability_decision_seal::Migration),
         ]
     }
 }

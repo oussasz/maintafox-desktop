@@ -1,0 +1,843 @@
+//! A reliability study decision received by synchronisation, approved or applied, is checked
+//! again on arrival (audit finding AU-76b, CMMS Advisor answers 2026-10-26), after the four-eyes
+//! check of `decisions::inbound_self_approval_check`:
+//! - its status never goes backwards here (applied → approved, approved → proposed, decided →
+//!   rejected or the reverse), and a refusal mark held here is never cleared
+//!   ([`DECISION_STATUS_REGRESSION`]);
+//! - its content never changes: a decision held here must arrive with the same content (what was
+//!   proposed, by whom, the designated approver, and once decided who decided it, when and with
+//!   which note); a decision new here is checked against its approval seal
+//!   ([`DECISION_CONTENT_CHANGED`]); approved without a seal by an app version that seals, it is
+//!   refused ([`DECISION_APPROVAL_UNSEALED`]); sent by an app version older than the seal (no seal
+//!   key at all), it waits, shown in the sync centre as waiting for the sending PC's update
+//!   ([`crate::sync::materialize::DEFER_SENDER_OUTDATED`]);
+//! - the person who approved it is the designated approver when one was named
+//!   ([`DECISION_NOT_DESIGNATED_APPROVER`]);
+//! - the person who approved it holds `ram.manage` plant-wide here, now; it waits while that
+//!   person or rights giving it are still arriving, and is a conflict otherwise
+//!   ([`DECISION_APPROVER_UNAUTHORISED`]); an approval already accepted here is not judged again
+//!   when the decision moves on to applied;
+//! - the person who applied it holds the rights of applying here, now (`ram.manage`, plus `pm.edit`
+//!   for a PM interval or `ot.create` for a work order), with the same waiting
+//!   ([`DECISION_APPLIER_UNAUTHORISED`]).
+//!
+//! The seal (`approval_seal`, migration 264) proves that the content did not change after the
+//! approval; it does not prove who approved: any PC can compute it (docs/KNOWN_LIMITS.md).
+//!
+//! These conflicts are resolved only by "keep this PC's decision" or "escalate"
+//! ([`keep_this_pc_decision`], `sync::queries`): the decision is then marked refused
+//! (`sync_refused_at` / `sync_refused_reason`), sent with the mark, and on every PC it can no longer
+//! be applied, nor its PM version published. Nothing is deleted. A rights conflict closes by
+//! itself, audited, when the rights arrive ([`retry_decision_conflicts`]).
+
+use std::collections::BTreeMap;
+
+use chrono::Utc;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+
+use crate::errors::{AppError, AppResult};
+use crate::reliability::study::domain::{
+    DECISION_PM_INTERVAL, STATUS_APPLIED, STATUS_APPROVED, STATUS_PROPOSED, STATUS_REJECTED,
+};
+use crate::sync::materialize::ApplyOutcome;
+
+type Payload = Map<String, Value>;
+
+const ENTITY: &str = "reliability_study_decisions";
+
+/// The received decision went backwards here, or would clear a refusal mark held here.
+pub const DECISION_STATUS_REGRESSION: &str = "DECISION_STATUS_REGRESSION";
+/// Its content differs from the decision held here, or from its approval seal.
+pub const DECISION_CONTENT_CHANGED: &str = "DECISION_CONTENT_CHANGED";
+/// Approved or applied with an empty seal by an app version that seals.
+pub const DECISION_APPROVAL_UNSEALED: &str = "DECISION_APPROVAL_UNSEALED";
+/// Approved by someone else than the designated approver.
+pub const DECISION_NOT_DESIGNATED_APPROVER: &str = "DECISION_NOT_DESIGNATED_APPROVER";
+/// Approved by someone who does not hold `ram.manage` plant-wide here.
+pub const DECISION_APPROVER_UNAUTHORISED: &str = "DECISION_APPROVER_UNAUTHORISED";
+/// Applied by someone who does not hold the rights of applying it here.
+pub const DECISION_APPLIER_UNAUTHORISED: &str = "DECISION_APPLIER_UNAUTHORISED";
+
+/// The conflicts of a received decision (`sync::queries` accepts only "keep this PC's decision" and
+/// "escalate" on them).
+pub const RELIABILITY_DECISION_CONFLICTS: &[&str] = &[
+    DECISION_STATUS_REGRESSION,
+    DECISION_CONTENT_CHANGED,
+    DECISION_APPROVAL_UNSEALED,
+    DECISION_NOT_DESIGNATED_APPROVER,
+    DECISION_APPROVER_UNAUTHORISED,
+    DECISION_APPLIER_UNAUTHORISED,
+];
+
+/// The rights conflicts judged again at each synchronisation ([`retry_decision_conflicts`]).
+const RIGHTS_CONFLICTS: &[&str] = &[DECISION_APPROVER_UNAUTHORISED, DECISION_APPLIER_UNAUTHORISED];
+
+/// Audit action of a rights conflict closed by the rights that arrived.
+pub const CONFLICT_CLOSED_EVENT: &str = "reliability.decision_conflict.closed_by_rights";
+/// Audit action of a decision marked refused here ("keep this PC's decision").
+pub const REFUSED_EVENT: &str = "reliability.decision.refused_at_sync";
+
+// ── Approval seal ──────────────────────────────────────────────────────────────────────────────
+
+/// Version prefix of the seal.
+pub const SEAL_PREFIX: &str = "v1:";
+
+/// What was proposed, fixed when the decision is proposed (payload keys: references as sync ids).
+const PROPOSAL_KEYS: &[&str] = &[
+    "study_sync_id",
+    "title",
+    "action_kind",
+    "equipment_sync_id",
+    "pm_plan_sync_id",
+    "proposed_interval_hours",
+    "proposed_trigger_definition_json",
+    "wo_type_code",
+    "justification",
+    "evidence_json",
+    "baseline_mtbf_hours",
+    "baseline_failures",
+    "baseline_exposure_hours",
+    "fmeca_item_sync_id",
+    "rcm_decision_sync_id",
+    "proposed_by_sync_id",
+    "proposed_at",
+    "approver_sync_id",
+];
+
+/// What the decision adds, fixed when it is decided.
+const DECISION_KEYS: &[&str] = &["decided_by_sync_id", "decided_at", "decision_note"];
+
+/// What applying adds, fixed when it is applied.
+const APPLY_KEYS: &[&str] = &["applied_by_sync_id", "applied_at"];
+
+/// Text columns holding JSON: compared and sealed as their parsed value, so that a re-encoding
+/// (key order, the meter reference rewritten by sync) never changes the seal.
+const JSON_TEXT_KEYS: &[&str] = &["proposed_trigger_definition_json", "evidence_json"];
+
+/// A number in one form whatever its storage (integer, real, `1.0` or `1`).
+fn canonical_number(n: &serde_json::Number) -> Value {
+    match n.as_f64() {
+        Some(f) if f.is_finite() && f.fract() == 0.0 && f.abs() < 9.0e15 =>
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            Value::from(f as i64)
+        }
+        Some(f) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
+        None => Value::Number(n.clone()),
+    }
+}
+
+/// A value in its canonical form: numbers in one form, object keys sorted, nulls dropped from
+/// objects.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Number(n) => canonical_number(n),
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        Value::Object(map) => {
+            let sorted: BTreeMap<String, Value> = map
+                .iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (k.clone(), canonical(v)))
+                .collect();
+            Value::Object(sorted.into_iter().collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// The canonical value of a content key of a payload (`None`: empty).
+fn content_value(payload: &Payload, key: &str) -> Option<Value> {
+    let v = payload.get(key)?;
+    if v.is_null() {
+        return None;
+    }
+    if JSON_TEXT_KEYS.contains(&key) {
+        if let Some(text) = v.as_str() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                return Some(canonical(&parsed));
+            }
+        }
+    }
+    Some(canonical(v))
+}
+
+/// The approval seal of a decision in its synchronised form: `v1:` + SHA-256 (hex) of the
+/// canonical JSON of its proposal and decision content. The one function used at approval,
+/// at the backfill of migration 264 and on arrival.
+pub fn approval_seal(payload: &Payload) -> String {
+    let content: BTreeMap<&str, Value> = PROPOSAL_KEYS
+        .iter()
+        .chain(DECISION_KEYS)
+        .filter_map(|k| content_value(payload, k).map(|v| (*k, v)))
+        .collect();
+    let text = serde_json::to_string(&content).unwrap_or_default();
+    format!("{SEAL_PREFIX}{}", hex::encode(Sha256::digest(text.as_bytes())))
+}
+
+fn sync_err(e: impl std::fmt::Display) -> AppError {
+    AppError::SyncError(format!("reliability decision sync check: {e}"))
+}
+
+/// The content of a decision held here, in its synchronised form (references as sync ids, the
+/// meter of its trigger as the meter's sync id), read without the sync layout so that migration
+/// 264 can use it. `None`: no such decision.
+pub(crate) async fn local_seal_content(conn: &impl ConnectionTrait, decision_id: i64) -> AppResult<Option<Payload>> {
+    let Some(r) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.title, d.action_kind, CAST(d.proposed_interval_hours AS REAL) AS proposed_interval_hours, \
+                    d.proposed_trigger_definition_json, d.wo_type_code, d.justification, d.evidence_json, \
+                    CAST(d.baseline_mtbf_hours AS REAL) AS baseline_mtbf_hours, \
+                    CAST(d.baseline_failures AS REAL) AS baseline_failures, \
+                    CAST(d.baseline_exposure_hours AS REAL) AS baseline_exposure_hours, \
+                    d.proposed_at, d.decided_at, d.decision_note, \
+                    s.entity_sync_id AS study_sync_id, e.entity_sync_id AS equipment_sync_id, \
+                    p.entity_sync_id AS pm_plan_sync_id, fi.entity_sync_id AS fmeca_item_sync_id, \
+                    rd.entity_sync_id AS rcm_decision_sync_id, pb.entity_sync_id AS proposed_by_sync_id, \
+                    ap.entity_sync_id AS approver_sync_id, db.entity_sync_id AS decided_by_sync_id \
+               FROM reliability_study_decisions d \
+               LEFT JOIN reliability_studies s ON s.id = d.study_id \
+               LEFT JOIN equipment e ON e.id = d.equipment_id \
+               LEFT JOIN pm_plans p ON p.id = d.pm_plan_id \
+               LEFT JOIN fmeca_items fi ON fi.id = d.fmeca_item_id \
+               LEFT JOIN rcm_decisions rd ON rd.id = d.rcm_decision_id \
+               LEFT JOIN user_accounts pb ON pb.id = d.proposed_by_id \
+               LEFT JOIN user_accounts ap ON ap.id = d.approver_id \
+               LEFT JOIN user_accounts db ON db.id = d.decided_by_id \
+              WHERE d.id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let mut content = Payload::new();
+    for key in [
+        "title",
+        "action_kind",
+        "wo_type_code",
+        "justification",
+        "evidence_json",
+        "proposed_at",
+        "decided_at",
+        "decision_note",
+        "study_sync_id",
+        "equipment_sync_id",
+        "pm_plan_sync_id",
+        "fmeca_item_sync_id",
+        "rcm_decision_sync_id",
+        "proposed_by_sync_id",
+        "approver_sync_id",
+        "decided_by_sync_id",
+    ] {
+        let v: Option<String> = r.try_get("", key).map_err(sync_err)?;
+        content.insert(key.into(), v.map_or(Value::Null, Value::String));
+    }
+    for key in [
+        "proposed_interval_hours",
+        "baseline_mtbf_hours",
+        "baseline_failures",
+        "baseline_exposure_hours",
+    ] {
+        let v: Option<f64> = r.try_get("", key).map_err(sync_err)?;
+        content.insert(
+            key.into(),
+            v.and_then(serde_json::Number::from_f64)
+                .map_or(Value::Null, Value::Number),
+        );
+    }
+    // The meter of the trigger travels as its sync id (`sync::row_spec`, json_ref
+    // `$.asset_meter_id`): the seal is computed on that form.
+    let trigger: Option<String> = r.try_get("", "proposed_trigger_definition_json").map_err(sync_err)?;
+    let trigger = match trigger {
+        Some(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(mut t)) => {
+                if let Some(meter) = t.get("asset_meter_id").and_then(Value::as_i64) {
+                    let sync = conn
+                        .query_one(Statement::from_sql_and_values(
+                            DbBackend::Sqlite,
+                            "SELECT entity_sync_id FROM equipment_meters WHERE id = ?",
+                            [meter.into()],
+                        ))
+                        .await?
+                        .and_then(|m| m.try_get::<Option<String>>("", "entity_sync_id").ok().flatten());
+                    t.insert("asset_meter_id".into(), sync.map_or(Value::Null, Value::String));
+                }
+                Value::String(Value::Object(t).to_string())
+            }
+            _ => Value::String(text),
+        },
+        None => Value::Null,
+    };
+    content.insert("proposed_trigger_definition_json".into(), trigger);
+    Ok(Some(content))
+}
+
+/// The seal of a decision held here, from its own content ([`approval_seal`]).
+pub(crate) async fn local_approval_seal(conn: &impl ConnectionTrait, decision_id: i64) -> AppResult<Option<String>> {
+    Ok(local_seal_content(conn, decision_id)
+        .await?
+        .map(|content| approval_seal(&content)))
+}
+
+// ── Arrival check ──────────────────────────────────────────────────────────────────────────────
+
+fn text<'a>(p: &'a Payload, key: &str) -> Option<&'a str> {
+    crate::permit::sync_check::field(p, key)
+}
+
+fn decided(status: &str) -> bool {
+    status == STATUS_APPROVED || status == STATUS_APPLIED
+}
+
+fn conflict(code: &str, message: String) -> AppResult<Option<ApplyOutcome>> {
+    Ok(Some(ApplyOutcome::Conflict {
+        code: code.into(),
+        message,
+    }))
+}
+
+/// Whether the status `to` received over `from` held here goes backwards.
+fn goes_back(from: &str, to: &str) -> bool {
+    let rank = |s: &str| match s {
+        STATUS_PROPOSED => Some(0),
+        STATUS_APPROVED | STATUS_REJECTED => Some(1),
+        STATUS_APPLIED => Some(2),
+        _ => None,
+    };
+    let crossed = (decided(from) && to == STATUS_REJECTED) || (from == STATUS_REJECTED && to != STATUS_REJECTED);
+    crossed || matches!((rank(from), rank(to)), (Some(a), Some(b)) if b < a)
+}
+
+/// The content keys whose received value differs from the one held here (keys the payload leaves
+/// out keep the held value and are not compared). The decision keys count once the held decision
+/// is decided, the apply keys once it is applied.
+fn changed_keys(held: &Payload, received: &Payload) -> Vec<&'static str> {
+    let held_status = text(held, "status").unwrap_or_default();
+    let received_status = text(received, "status").unwrap_or(held_status);
+    let decided_or_rejected = |s: &str| decided(s) || s == STATUS_REJECTED;
+    let mut keys: Vec<&'static str> = PROPOSAL_KEYS.to_vec();
+    // Compared once both sides record the decision (a version from before it is judged by its
+    // status: going back is refused on its own).
+    if decided_or_rejected(held_status) && decided_or_rejected(received_status) {
+        keys.extend_from_slice(DECISION_KEYS);
+    }
+    if held_status == STATUS_APPLIED && received_status == STATUS_APPLIED {
+        keys.extend_from_slice(APPLY_KEYS);
+    }
+    keys.into_iter()
+        .filter(|k| received.contains_key(*k) && content_value(received, k) != content_value(held, k))
+        .collect()
+}
+
+/// Whether a received decision carries a refusal mark.
+fn marked(p: &Payload) -> bool {
+    text(p, "sync_refused_at").is_some()
+}
+
+/// The local id of a user named by sync id (`None`: not here).
+async fn user_here(conn: &impl ConnectionTrait, user_sync: &str) -> AppResult<Option<i64>> {
+    crate::permit::sync_check::local_id(conn, "user_accounts", user_sync).await
+}
+
+/// Whether `user_sync` holds every right of `rights` here, now: `Ok(true)`; else a wait while the
+/// person or rights giving them are still arriving, or `Ok(false)`.
+async fn holds_rights(
+    conn: &impl ConnectionTrait,
+    user_sync: &str,
+    rights: &[&str],
+    who: &str,
+) -> AppResult<Result<bool, ApplyOutcome>> {
+    let Some(user) = user_here(conn, user_sync).await? else {
+        return Ok(Err(ApplyOutcome::Deferred {
+            code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+            message: format!("{who} {user_sync} is not applied yet"),
+            waits_for: None,
+        }));
+    };
+    for right in rights {
+        if crate::settings::site::holds_tenant_right(conn, user, right).await? {
+            continue;
+        }
+        if crate::permit::sync_check::rights_may_still_arrive(conn, user_sync, right).await? {
+            return Ok(Err(ApplyOutcome::Deferred {
+                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                message: format!("the rights of {who} {user_sync} are still arriving"),
+                waits_for: None,
+            }));
+        }
+        return Ok(Ok(false));
+    }
+    Ok(Ok(true))
+}
+
+/// See the module documentation. Runs before `decisions::inbound_self_approval_check` for the
+/// refusal marks, after it for the rest (`sync::apply_hooks::before_upsert_checked`).
+pub(crate) async fn inbound_refusal_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<RefusalVerdict> {
+    let held = crate::permit::sync_check::local_wire(conn, ENTITY, entity_sync_id).await?;
+    let title = text(received, "title").unwrap_or_default().to_string();
+    match (held.as_ref(), marked(received)) {
+        // Refused on another PC and new here: kept as history, never applied or published, so not
+        // judged.
+        (None, true) => Ok(RefusalVerdict::Accept),
+        // Refused there, held here: the marks are taken when the content is the one held here (the
+        // status and links held here are kept, `keep_held_progress`).
+        (Some(held), true) => {
+            let changed = changed_keys(held, received);
+            if changed.is_empty() {
+                Ok(RefusalVerdict::Accept)
+            } else {
+                Ok(RefusalVerdict::Outcome(ApplyOutcome::Conflict {
+                    code: DECISION_CONTENT_CHANGED.into(),
+                    message: format!(
+                        "decision '{title}' refused on another PC arrives with a content that differs from the one \
+                         held here ({})",
+                        changed.join(", ")
+                    ),
+                }))
+            }
+        }
+        // A refusal mark held here is never cleared by synchronisation.
+        (Some(held), false) if marked(held) => Ok(RefusalVerdict::Outcome(ApplyOutcome::Conflict {
+            code: DECISION_STATUS_REGRESSION.into(),
+            message: format!(
+                "decision '{title}' was refused here at synchronisation; the received version would clear that \
+                 refusal"
+            ),
+        })),
+        _ => Ok(RefusalVerdict::Judge),
+    }
+}
+
+/// What [`inbound_refusal_check`] decided.
+#[derive(Debug)]
+pub(crate) enum RefusalVerdict {
+    /// A refused decision (history, or marks on the decision held here): applied without judging.
+    Accept,
+    /// Refused or waiting.
+    Outcome(ApplyOutcome),
+    /// Not refused anywhere: judged by the four-eyes and approval checks.
+    Judge,
+}
+
+/// See the module documentation (after the four-eyes check).
+pub(crate) async fn inbound_approval_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<ApplyOutcome>> {
+    let held = crate::permit::sync_check::local_wire(conn, ENTITY, entity_sync_id).await?;
+    let row = crate::permit::sync_check::overlay(held.as_ref(), received);
+    let title = text(&row, "title").unwrap_or_default().to_string();
+    let status = text(&row, "status").unwrap_or_default().to_string();
+    if let Some(held) = held.as_ref() {
+        let from = text(held, "status").unwrap_or_default();
+        if goes_back(from, &status) {
+            return conflict(
+                DECISION_STATUS_REGRESSION,
+                format!("decision '{title}' is {from} here; the received version moves it back to {status}"),
+            );
+        }
+        let changed = changed_keys(held, received);
+        if !changed.is_empty() {
+            return conflict(
+                DECISION_CONTENT_CHANGED,
+                format!(
+                    "decision '{title}' arrives with a content that differs from the one held here ({}); a decision \
+                     never changes after it is proposed",
+                    changed.join(", ")
+                ),
+            );
+        }
+    }
+    if !decided(&status) {
+        return Ok(None);
+    }
+    match received.get("approval_seal") {
+        // Sent by an app version older than the seal.
+        None => {
+            if held.is_none() {
+                return Ok(Some(ApplyOutcome::Deferred {
+                    code: crate::sync::materialize::DEFER_SENDER_OUTDATED.into(),
+                    message: format!(
+                        "decision '{title}' was approved on a PC whose app version does not seal approvals: waiting \
+                         for that PC to be updated"
+                    ),
+                    waits_for: None,
+                }));
+            }
+        }
+        Some(Value::String(seal)) if !seal.trim().is_empty() => {
+            if *seal != approval_seal(&row) {
+                return conflict(
+                    DECISION_CONTENT_CHANGED,
+                    format!("decision '{title}' does not match its approval seal: its content changed after approval"),
+                );
+            }
+        }
+        Some(_) => {
+            return conflict(
+                DECISION_APPROVAL_UNSEALED,
+                format!("decision '{title}' is {status} without an approval seal"),
+            );
+        }
+    }
+    let decider = text(&row, "decided_by_sync_id").unwrap_or_default().to_string();
+    if let Some(designated) = text(&row, "approver_sync_id") {
+        if designated != decider {
+            return conflict(
+                DECISION_NOT_DESIGNATED_APPROVER,
+                format!("decision '{title}' was approved by someone else than the approver designated for it"),
+            );
+        }
+    }
+    let held_status = held.as_ref().and_then(|h| text(h, "status")).unwrap_or_default();
+    // An approval accepted here already (its content and decider are the ones held, checked
+    // above) is not judged again when the decision moves on.
+    if !decided(held_status) {
+        match holds_rights(conn, &decider, &[crate::rbac::permissions::RAM_MANAGE], "approver").await? {
+            Err(waiting) => return Ok(Some(waiting)),
+            Ok(false) => {
+                return conflict(
+                    DECISION_APPROVER_UNAUTHORISED,
+                    format!(
+                        "decision '{title}' was approved by someone who does not hold the right to approve reliability \
+                         decisions (ram.manage, plant-wide) here"
+                    ),
+                )
+            }
+            Ok(true) => {}
+        }
+    }
+    if status == STATUS_APPLIED && held_status != STATUS_APPLIED {
+        let Some(applier) = text(&row, "applied_by_sync_id").map(str::to_string) else {
+            return conflict(
+                DECISION_APPLIER_UNAUTHORISED,
+                format!("decision '{title}' is applied but names nobody who applied it"),
+            );
+        };
+        let second = if text(&row, "action_kind") == Some(DECISION_PM_INTERVAL) {
+            crate::rbac::permissions::PM_EDIT
+        } else {
+            crate::rbac::permissions::OT_CREATE
+        };
+        match holds_rights(
+            conn,
+            &applier,
+            &[crate::rbac::permissions::RAM_MANAGE, second],
+            "applier",
+        )
+        .await?
+        {
+            Err(waiting) => return Ok(Some(waiting)),
+            Ok(false) => {
+                return conflict(
+                    DECISION_APPLIER_UNAUTHORISED,
+                    format!(
+                        "decision '{title}' was applied by someone who does not hold the rights to apply it here \
+                         (ram.manage and {second}, plant-wide)"
+                    ),
+                )
+            }
+            Ok(true) => {}
+        }
+    }
+    Ok(None)
+}
+
+/// A refused decision received over the decision held here: the status, apply data and links held
+/// here are kept (only the marks are taken), and a refusal held here keeps its marks. Run before
+/// the write (`sync::apply_hooks::before_write`).
+pub(crate) async fn keep_held_progress(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+) -> AppResult<()> {
+    let Some(held) = crate::permit::sync_check::local_wire(conn, ENTITY, entity_sync_id).await? else {
+        return Ok(());
+    };
+    if !marked(payload) && !marked(&held) {
+        return Ok(());
+    }
+    let mut keys = vec![
+        "status",
+        "applied_by_sync_id",
+        "applied_at",
+        "linked_work_order_sync_id",
+        "linked_pm_plan_version_sync_id",
+        "linked_pm_plan_sync_id",
+        "approval_seal",
+    ];
+    if marked(&held) {
+        keys.extend(["sync_refused_at", "sync_refused_reason"]);
+    }
+    for key in keys {
+        match held.get(key) {
+            Some(v) => {
+                payload.insert(key.into(), v.clone());
+            }
+            None => {
+                payload.remove(key);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether the decision held here (`sync_id`) carries no refusal mark (`None`: not held here).
+pub(crate) async fn held_unrefused(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<Option<bool>> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT sync_refused_at IS NULL AS open FROM reliability_study_decisions WHERE entity_sync_id = ?",
+            [sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<bool>("", "open"))
+        .transpose()
+        .map_err(sync_err)?)
+}
+
+/// After a received row was written over a decision held here without a mark: when it is now
+/// refused and a work order was created from it here, the work order is kept and its planner and
+/// the decision's proposer are told (CMMS Advisor Q6).
+pub(crate) async fn after_refusal_received(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<()> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM reliability_study_decisions \
+              WHERE entity_sync_id = ? AND sync_refused_at IS NOT NULL AND linked_work_order_id IS NOT NULL",
+            [sync_id.into()],
+        ))
+        .await?;
+    if let Some(r) = row {
+        let id: i64 = r.try_get("", "id").map_err(sync_err)?;
+        crate::settings::received_notice::announce_refused_decision_work_order(conn, id).await;
+    }
+    Ok(())
+}
+
+// ── Self-closing rights conflicts ──────────────────────────────────────────────────────────────
+
+/// Decisions refused for rights (`DECISION_APPROVER_UNAUTHORISED` / `DECISION_APPLIER_UNAUTHORISED`)
+/// that this PC's rules let in now (the approver's or applier's account or right arrived or was
+/// granted here): each is applied again through every check; applied, its conflict is closed
+/// (`resolved_remote`, `judged_valid`) and audited ([`CONFLICT_CLOSED_EVENT`]). Returns how many
+/// applied. Wired next to the planning retries (`sync::materialize`).
+pub(crate) async fn retry_decision_conflicts(db: &DatabaseConnection) -> AppResult<i64> {
+    let mut applied = 0;
+    for (inbox_id, conflict_id, sid, _received) in
+        crate::planning::sync_check::open_planning_conflicts(db, ENTITY, RIGHTS_CONFLICTS).await?
+    {
+        let closed = crate::planning::sync_check::reapply_conflicted(
+            db,
+            inbox_id,
+            conflict_id,
+            "judged_valid",
+            "The decision is judged valid here now (the right of the person who approved or applied it has arrived \
+             or been granted): it is applied.",
+        )
+        .await?;
+        if closed {
+            applied += 1;
+            // Target: the decision's sync id, the same on every PC (`sync::row_spec`, audit targets).
+            crate::audit::emit(
+                db,
+                crate::audit::AuditEvent {
+                    event_type: CONFLICT_CLOSED_EVENT,
+                    actor_id: None,
+                    entity_type: Some("reliability_study_decisions"),
+                    entity_id: Some(&sid),
+                    summary: "Reliability decision conflict closed: the rights of its approver or applier arrived",
+                    detail_json: Some(
+                        serde_json::json!({ "sync_conflict_id": conflict_id, "decision_sync_id": sid }).to_string(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
+    }
+    Ok(applied)
+}
+
+// ── "Keep this PC's decision" ──────────────────────────────────────────────────────────────────
+
+fn keep_refused(message: &str) -> AppError {
+    AppError::ValidationFailed(vec![message.to_string()])
+}
+
+/// The person-facing words of a refusal: "refusé (sync) : <what> — <reason>".
+fn refusal_text(conflict_type: &str, reason: &str) -> String {
+    let what = match conflict_type {
+        DECISION_STATUS_REGRESSION => "statut revenu en arrière",
+        DECISION_CONTENT_CHANGED => "contenu modifié après approbation",
+        DECISION_APPROVAL_UNSEALED => "approbation sans sceau",
+        DECISION_NOT_DESIGNATED_APPROVER => "approuvée par une autre personne que l'approbateur désigné",
+        DECISION_APPROVER_UNAUTHORISED => "approbateur sans le droit d'approuver",
+        DECISION_APPLIER_UNAUTHORISED => "appliquée par une personne sans les droits",
+        _ => "règle de décision",
+    };
+    format!("refusé (sync) : {what} — {reason}")
+}
+
+/// "Keep this PC's decision" on a [`RELIABILITY_DECISION_CONFLICTS`] conflict, before the generic
+/// keep (`sync::conflicts::keep_local_version`, which then sends this PC's version):
+/// - the person holds `ram.manage` plant-wide (the right that approves decisions);
+/// - the received version is still refused by this PC's rules (a wait counts as refused); one let in
+///   now closes by itself at the next synchronisation;
+/// - a decision held here is marked refused (`sync_refused_at`, the reason), a decision new here is
+///   stored in its received form marked refused, without links: that version is what is sent, so
+///   every PC ends with the same refused decision, which none applies or publishes (never a delete);
+/// - a work order created here from the decision is kept, its planner and the decision's proposer
+///   told (CMMS Advisor Q6); the refusal is audited ([`REFUSED_EVENT`]).
+pub(crate) async fn keep_this_pc_decision(
+    conn: &impl ConnectionTrait,
+    conflict: &crate::sync::domain::SyncConflictRecord,
+    user_id: i64,
+    reason: &str,
+) -> AppResult<()> {
+    if !crate::settings::site::holds_tenant_right(conn, user_id, crate::rbac::permissions::RAM_MANAGE).await? {
+        return Err(keep_refused(
+            "GATE_SYNC_KEEP_DECISION_NOT_ALLOWED: Keeping this PC's decision needs the right to approve reliability \
+             decisions (ram.manage, plant-wide).",
+        ));
+    }
+    let received: Payload = conflict
+        .inbound_payload_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str::<Value>(j).ok())
+        .and_then(|v| match v {
+            Value::Object(m) => Some(m),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let sid = conflict.entity_sync_id.as_str();
+    if inbound_decision_check(conn, sid, &received).await?.is_none() {
+        return Err(keep_refused(
+            "GATE_SYNC_KEEP_DECISION_NOT_REFUSED: This PC's rules accept the received decision now (the right of the \
+             person who approved or applied it has arrived or been granted): there is no decision to keep; the \
+             conflict closes by itself at the next synchronisation.",
+        ));
+    }
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let refusal = refusal_text(&conflict.conflict_type, reason);
+    let held_id = crate::permit::sync_check::local_id(conn, ENTITY, sid).await?;
+    if let Some(id) = held_id {
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reliability_study_decisions SET sync_refused_at = ?, sync_refused_reason = ?, \
+                    row_version = row_version + 1, updated_at = ? \
+              WHERE id = ? AND sync_refused_at IS NULL",
+            [
+                now.clone().into(),
+                refusal.clone().into(),
+                now.clone().into(),
+                id.into(),
+            ],
+        ))
+        .await?;
+    } else {
+        let mut refused = received.clone();
+        refused.insert("sync_refused_at".into(), now.clone().into());
+        refused.insert("sync_refused_reason".into(), refusal.clone().into());
+        for key in [
+            "linked_work_order_sync_id",
+            "linked_pm_plan_version_sync_id",
+            "linked_pm_plan_sync_id",
+        ] {
+            refused.insert(key.into(), Value::Null);
+        }
+        match crate::sync::materialize::apply_inbound_payload(
+            conn,
+            ENTITY,
+            sid,
+            "upsert",
+            conflict.inbound_row_version.unwrap_or(1),
+            &Value::Object(refused).to_string(),
+        )
+        .await?
+        {
+            ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
+            ApplyOutcome::Deferred { message, .. } | ApplyOutcome::Conflict { message, .. } => {
+                return Err(keep_refused(&format!(
+                    "GATE_SYNC_KEEP_DECISION_NOT_YET: The refused decision cannot be recorded here yet: {message}"
+                )));
+            }
+        }
+    }
+    let user_sync: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            [user_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "entity_sync_id").ok().flatten());
+    crate::audit::writer::write_audit_event_in(
+        conn,
+        crate::audit::writer::AuditEventInput {
+            action_code: REFUSED_EVENT.to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(sid.to_string()),
+            actor_id: Some(user_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "Reliability decision refused at synchronisation (this PC's decision kept)",
+                "decision_sync_id": sid,
+                "conflict_type": conflict.conflict_type,
+                "refused_by_sync_id": user_sync,
+                "reason": reason,
+            })),
+        },
+    )
+    .await?;
+    if held_id.is_some() {
+        after_refusal_received(conn, sid).await?;
+    }
+    Ok(())
+}
+
+/// Every arrival check of a received decision, in order: refusal marks, four-eyes
+/// (`decisions::inbound_self_approval_check`), then the approval checks ([`inbound_approval_check`]).
+pub(crate) async fn inbound_decision_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &Payload,
+) -> AppResult<Option<ApplyOutcome>> {
+    use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
+    match inbound_refusal_check(conn, entity_sync_id, payload).await? {
+        RefusalVerdict::Accept => return Ok(None),
+        RefusalVerdict::Outcome(outcome) => return Ok(Some(outcome)),
+        RefusalVerdict::Judge => {}
+    }
+    if let Some(verdict) = inbound_self_approval_check(conn, entity_sync_id, payload).await? {
+        return Ok(Some(match verdict {
+            InboundDecisionVerdict::Defer(message) => ApplyOutcome::Deferred {
+                code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
+                message,
+                waits_for: None,
+            },
+            InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
+                code: "DECISION_SELF_APPROVAL".into(),
+                message,
+            },
+            // A rule re-checked on the received row (the screens list it as a refused value).
+            InboundDecisionVerdict::LinkedWhileUnapproved(message) => ApplyOutcome::Conflict {
+                code: "INVALID_VALUE".into(),
+                message,
+            },
+        }));
+    }
+    inbound_approval_check(conn, entity_sync_id, payload).await
+}

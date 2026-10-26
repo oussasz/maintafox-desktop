@@ -33,6 +33,10 @@ pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
 pub(crate) const DEFER_NO_MATERIALIZER: &str = "NO_MATERIALIZER";
 /// Deferral code for a row without a field this version requires (sent by an older app version).
 pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
+/// Deferral code for a row the sending PC's app version could not complete (a reliability decision
+/// approved without an approval seal, AU-76b): shown in the sync centre as waiting for the update of
+/// the sending PC (CMMS Advisor Q2: nothing waits unseen).
+pub(crate) const DEFER_SENDER_OUTDATED: &str = "SENDER_OUTDATED";
 /// Deferral code for an entity type this version of the app does not know.
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
 /// Code kept on an inbox row marked applied without being written: a version of a history row
@@ -236,6 +240,9 @@ async fn materialize_inbox_run(
     // received after their job's plan was kept are refused with that decision
     // (`planning::sync_check`, reviews S4, R3-S4, R3-S5).
     total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
+    // Reliability decisions refused for the rights of their approver or applier close, audited,
+    // once those rights are here (`reliability::study::decision_sync`, AU-76b).
+    total.applied += crate::reliability::study::decision_sync::retry_decision_conflicts(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
     let started = std::time::Instant::now();
@@ -293,6 +300,7 @@ async fn materialize_inbox_run(
     // A week reopened, or a break-in applied, by this run: the planning conflicts it settles close
     // in this run, not at the next synchronisation (`planning::sync_check`, review R2-S2).
     total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
+    total.applied += crate::reliability::study::decision_sync::retry_decision_conflicts(db).await?;
     total.deferred = db
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,

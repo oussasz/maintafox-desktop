@@ -230,6 +230,8 @@ fn map_decision(r: &QueryResult, effect: DecisionEffect) -> AppResult<StudyDecis
         linked_work_order_id: get(r, "linked_work_order_id")?,
         linked_work_order_code: get(r, "linked_wo_code")?,
         effect,
+        sync_refused_at: get(r, "sync_refused_at")?,
+        sync_refused_reason: get(r, "sync_refused_reason")?,
         row_version: get(r, "row_version")?,
     })
 }
@@ -715,8 +717,112 @@ pub async fn approve_decision(
             return Err(self_approval_refusal(db, rule, actor_id).await?);
         }
     }
-    set_status(db, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
+    refuse_if_refused_at_sync(db, input.decision_id).await?;
+    // The approval, its seal and its audit event: one transaction (AU-76b, CMMS Advisor Q7).
+    let txn = db.begin().await?;
+    set_status(&txn, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
+    let seal = crate::reliability::study::decision_sync::local_approval_seal(&txn, input.decision_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: input.decision_id.to_string(),
+        })?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reliability_study_decisions SET approval_seal = ? WHERE id = ?",
+        [seal.clone().into(), input.decision_id.into()],
+    ))
+    .await?;
+    let mut details = audit_refs(&txn, input.decision_id).await?;
+    details.insert("summary".into(), "Reliability decision approved".into());
+    details.insert("title".into(), parties.title.clone().into());
+    details.insert("approval_seal".into(), seal.into());
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: APPROVED_EVENT.to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(audit_target(&parties, input.decision_id)),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::Value::Object(details)),
+        },
+    )
+    .await?;
+    txn.commit().await?;
     get_decision(db, input.decision_id).await
+}
+
+/// Audit action of an approval; its details carry the approval seal (CMMS Advisor Q7).
+pub const APPROVED_EVENT: &str = "reliability.decision.approved";
+
+/// The target of a decision's audit event: its sync id, the same on every PC.
+fn audit_target(parties: &DecisionParties, decision_id: i64) -> String {
+    parties
+        .sync_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| decision_id.to_string())
+}
+
+/// The decision, its study, its proposer and its designated approver named by sync id in an audit
+/// event's details: the event travels, and local ids mean nothing on another PC (review of #179).
+async fn audit_refs<C: ConnectionTrait>(
+    db: &C,
+    decision_id: i64,
+) -> AppResult<serde_json::Map<String, serde_json::Value>> {
+    let r = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.entity_sync_id AS decision_sync_id, s.entity_sync_id AS study_sync_id, \
+                    pb.entity_sync_id AS proposed_by_sync_id, ap.entity_sync_id AS designated_approver_sync_id \
+               FROM reliability_study_decisions d \
+               LEFT JOIN reliability_studies s ON s.id = d.study_id \
+               LEFT JOIN user_accounts pb ON pb.id = d.proposed_by_id \
+               LEFT JOIN user_accounts ap ON ap.id = d.approver_id \
+              WHERE d.id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: decision_id.to_string(),
+        })?;
+    let mut out = serde_json::Map::new();
+    for key in [
+        "decision_sync_id",
+        "study_sync_id",
+        "proposed_by_sync_id",
+        "designated_approver_sync_id",
+    ] {
+        let v: Option<String> = get(&r, key)?;
+        out.insert(key.into(), v.map_or(serde_json::Value::Null, serde_json::Value::String));
+    }
+    Ok(out)
+}
+
+/// A decision refused at synchronisation (here, or on another PC and received with its mark) is
+/// never approved or applied, on any PC (AU-76b, CMMS Advisor Q5).
+async fn refuse_if_refused_at_sync<C: ConnectionTrait>(db: &C, decision_id: i64) -> AppResult<()> {
+    let refused = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS r FROM reliability_study_decisions WHERE id = ? AND sync_refused_at IS NOT NULL",
+            [decision_id.into()],
+        ))
+        .await?
+        .is_some();
+    if refused {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_SYNC_REFUSED: This decision was refused at synchronisation (its approval is not valid on a PC): it can no longer be approved or applied. Propose and approve a new decision."
+                .into(),
+        ]));
+    }
+    Ok(())
 }
 
 /// The right checked to reject a decision: anyone else needs `ram.manage`; its proposer withdraws
@@ -767,6 +873,19 @@ pub async fn reject_decision(
             ])
         });
     }
+    // Sync ids, not local ids: the event travels (review of #179).
+    let mut details = audit_refs(&txn, input.decision_id).await?;
+    details.insert(
+        "summary".into(),
+        if withdrawal {
+            "Reliability decision withdrawn by its proposer"
+        } else {
+            "Reliability decision rejected"
+        }
+        .into(),
+    );
+    details.insert("title".into(), parties.title.clone().into());
+    details.insert("reason".into(), note.clone().into());
     crate::audit::writer::write_audit_event_in(
         &txn,
         crate::audit::writer::AuditEventInput {
@@ -777,32 +896,14 @@ pub async fn reject_decision(
             }
             .to_string(),
             target_type: Some("reliability_study_decisions".to_string()),
-            target_id: Some(
-                parties
-                    .sync_id
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| input.decision_id.to_string()),
-            ),
+            target_id: Some(audit_target(&parties, input.decision_id)),
             actor_id: Some(actor_id),
             auth_context: "session".to_string(),
             result: "success".to_string(),
             before_hash: None,
             after_hash: None,
             retention_class: "standard".to_string(),
-            details_json: Some(serde_json::json!({
-                "summary": if withdrawal {
-                    "Reliability decision withdrawn by its proposer"
-                } else {
-                    "Reliability decision rejected"
-                },
-                "decision_id": input.decision_id,
-                "title": parties.title,
-                "study_id": parties.study_id,
-                "proposed_by_id": parties.proposer,
-                "designated_approver_id": parties.approver,
-                "reason": note,
-            })),
+            details_json: Some(serde_json::Value::Object(details)),
         },
     )
     .await?;
@@ -823,13 +924,14 @@ pub async fn apply_decision(
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
     let txn = db.begin().await?;
+    refuse_if_refused_at_sync(&txn, input.decision_id).await?;
     let ts = Utc::now().to_rfc3339();
     let claimed = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reliability_study_decisions SET status = ?, applied_by_id = ?, applied_at = ?,
                 row_version = row_version + 1, updated_at = ?
-             WHERE id = ? AND status = ? AND row_version = ?",
+             WHERE id = ? AND status = ? AND row_version = ? AND sync_refused_at IS NULL",
             [
                 STATUS_APPLIED.into(),
                 actor_id.into(),
