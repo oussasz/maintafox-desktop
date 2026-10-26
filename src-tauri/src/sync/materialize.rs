@@ -766,6 +766,21 @@ async fn evaluate_and_apply_row(conn: &impl ConnectionTrait, item: &InboxRow) ->
         &item.payload_json,
     )
     .await?;
+    // A decision re-sent sealed by an upgraded PC while this PC has an unsent change of it: settled,
+    // that change staged again on top; the received version is not written over it
+    // (`reliability::study::decision_sync`, review R3-S9).
+    if let Some(outcome) = crate::reliability::study::decision_sync::settle_seal_resend_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+        &item.payload_hash,
+        &item.payload_json,
+    )
+    .await?
+    {
+        return Ok(outcome);
+    }
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
         return Ok(outcome);
     }

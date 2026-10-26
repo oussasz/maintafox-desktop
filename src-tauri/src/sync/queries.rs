@@ -1494,6 +1494,11 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         if crate::permit::ended_hold::settle_crossed_hold_server_conflict(&tx, conflict).await? {
             continue;
         }
+        // A decision re-sent sealed by an upgraded PC, crossing this PC's unsent change of it: this
+        // change is staged again on top, no item for a person (`reliability::study::decision_sync`).
+        if crate::reliability::study::decision_sync::settle_seal_resend_server_conflict(&tx, conflict).await? {
+            continue;
+        }
         if let Some(outbox_id) = linked_outbox_id {
             let base_label = conflict
                 .local_base_row_version

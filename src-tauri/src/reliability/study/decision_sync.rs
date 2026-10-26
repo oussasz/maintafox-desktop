@@ -761,7 +761,10 @@ pub(crate) async fn resend_sealed_after_complete_pull(conn: &impl ConnectionTrai
                    FROM reliability_study_decisions d WHERE d.entity_sync_id = ? \
                     AND NOT EXISTS (SELECT 1 FROM sync_inbox i WHERE i.entity_type = ? \
                                      AND i.entity_sync_id = d.entity_sync_id \
-                                     AND i.apply_status IN ('pending', 'deferred', 'conflict'))",
+                                     AND i.apply_status IN ('pending', 'deferred', 'conflict') \
+                                     AND i.row_version > COALESCE((SELECT s2.synced_row_version \
+                                           FROM sync_entity_state s2 WHERE s2.entity_type = i.entity_type \
+                                            AND s2.entity_sync_id = i.entity_sync_id), 0))",
                 [ENTITY.into(), sync_id.as_str().into(), ENTITY.into()],
             ))
             .await?;
@@ -813,6 +816,216 @@ pub(crate) async fn after_version_written(conn: &impl ConnectionTrait, version_i
         crate::settings::received_notice::announce_refused_decision(conn, decision, None, Some(version_id)).await;
     }
     Ok(())
+}
+
+// ── A seal-only re-send crossing this PC's unsent change (review R3-S9) ──────────────────────
+
+/// Audit action of a crossing settled without a person.
+pub const SEAL_RESEND_SETTLED_EVENT: &str = "reliability.decision.seal_resend_settled";
+
+/// Keys migration 264 added to a decision's payload: a re-send by an upgraded PC carries them, the
+/// version it re-sends did not.
+const MIGRATION_264_KEYS: [&str; 3] = ["approval_seal", "sync_refused_at", "sync_refused_reason"];
+
+/// The version this PC based its unsent change on (the server version it knows), as it was
+/// received or sent: its payload is kept in the inbox (received) or the outbox (sent from here).
+async fn base_payload(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<Option<Payload>> {
+    let Some(state) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT synced_row_version AS v, synced_payload_hash AS h FROM sync_entity_state \
+              WHERE entity_type = ? AND entity_sync_id = ?",
+            [ENTITY.into(), sync_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let version: i64 = state.try_get("", "v").map_err(sync_err)?;
+    let hash: String = state.try_get("", "h").map_err(sync_err)?;
+    let text = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT payload_json FROM ( \
+                SELECT payload_json, 0 AS o, id FROM sync_inbox \
+                 WHERE entity_type = ? AND entity_sync_id = ? AND row_version = ? AND payload_hash = ? \
+                UNION ALL \
+                SELECT payload_json, 1 AS o, id FROM sync_outbox \
+                 WHERE entity_type = ? AND entity_sync_id = ? AND row_version = ? AND payload_hash = ?) \
+             ORDER BY o, id DESC LIMIT 1",
+            [
+                ENTITY.into(),
+                sync_id.into(),
+                version.into(),
+                hash.clone().into(),
+                ENTITY.into(),
+                sync_id.into(),
+                version.into(),
+                hash.into(),
+            ],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "payload_json"))
+        .transpose()
+        .map_err(sync_err)?;
+    Ok(text.and_then(|t| serde_json::from_str::<Payload>(&t).ok()))
+}
+
+/// Whether `other` (a version the server holds, or one received) is only a seal-only re-send of the
+/// version this PC based its unsent change on: every value the same as that base version (numbers
+/// compared as the seal compares them), apart from the keys migration 264 added (the seal, and the
+/// refusal marks when empty), and a seal equal to the one this PC computes for the decision. No
+/// person changed anything in it: an upgraded PC sent its known version again, sealed.
+pub(crate) async fn is_seal_only_resend(
+    conn: &impl ConnectionTrait,
+    sync_id: &str,
+    other: &Payload,
+) -> AppResult<bool> {
+    let Some(id) = crate::permit::sync_check::local_id(conn, ENTITY, sync_id).await? else {
+        return Ok(false);
+    };
+    let Some(seal) = other.get("approval_seal").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    if marked(other) || local_approval_seal(conn, id).await?.as_deref() != Some(seal) {
+        return Ok(false);
+    }
+    let Some(base) = base_payload(conn, sync_id).await? else {
+        return Ok(false);
+    };
+    if base.contains_key("approval_seal") {
+        // The base already carried a seal: not a re-send of a version from before the upgrade.
+        return Ok(false);
+    }
+    let keys: std::collections::BTreeSet<String> = base.keys().chain(other.keys()).cloned().collect();
+    let same = keys
+        .iter()
+        .filter(|k| !MIGRATION_264_KEYS.contains(&k.as_str()))
+        .all(|k| base.get(k).map(canonical) == other.get(k).map(canonical));
+    Ok(same)
+}
+
+/// Settles a seal-only re-send crossing this PC's unsent change: the server holds `version`
+/// (`hash`) now, sealed, of the content this PC's change was based on. This PC's unsent items are
+/// superseded and its current row (its change, sealed) is staged again on top of that version, so
+/// it reaches the server as the next version; nothing is lost and no person is asked. Audited.
+async fn settle_seal_resend(
+    conn: &impl ConnectionTrait,
+    sync_id: &str,
+    version: i64,
+    hash: &str,
+    path: &str,
+) -> AppResult<()> {
+    crate::sync::queries::overwrite_synced_state(conn, ENTITY, sync_id, version, hash, "seal_resend_settled").await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_outbox SET status = 'superseded', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+          WHERE entity_type = ? AND entity_sync_id = ? \
+            AND status IN ('pending', 'in_flight', 'conflict', 'rejected', 'dead_letter')",
+        [ENTITY.into(), sync_id.into()],
+    ))
+    .await?;
+    crate::sync::capture::restage_current_state(conn, ENTITY, sync_id, &[]).await?;
+    crate::audit::writer::write_audit_event_in(
+        conn,
+        crate::audit::writer::AuditEventInput {
+            action_code: SEAL_RESEND_SETTLED_EVENT.to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(sync_id.to_string()),
+            actor_id: None,
+            auth_context: "system".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "This PC's unsent change of the decision was crossed by the same decision re-sent sealed by an upgraded PC: staged again on top of it, nobody asked",
+                "decision_sync_id": sync_id,
+                "server_row_version": version,
+                "path": path,
+            })),
+        },
+    )
+    .await?;
+    tracing::info!(
+        target: "maintafox::sync",
+        decision = sync_id,
+        version,
+        path,
+        "seal-only re-send crossing this PC's change settled"
+    );
+    Ok(())
+}
+
+/// A server conflict on this PC's push of a decision (`sync::queries`, beside the stock count and
+/// crossed-hold settlements): when the server's version is a seal-only re-send of the version this
+/// change was based on ([`is_seal_only_resend`]), it is settled with no person. `true` when settled.
+pub(crate) async fn settle_seal_resend_server_conflict(
+    conn: &impl ConnectionTrait,
+    conflict: &crate::sync::domain::SyncServerConflictInput,
+) -> AppResult<bool> {
+    if conflict.entity_type != ENTITY || conflict.server_deleted {
+        return Ok(false);
+    }
+    let Some(json) = conflict.server_payload_json.as_deref() else {
+        return Ok(false);
+    };
+    let Ok(server) = serde_json::from_str::<Payload>(json) else {
+        return Ok(false);
+    };
+    if !is_seal_only_resend(conn, &conflict.entity_sync_id, &server).await? {
+        return Ok(false);
+    }
+    let hash = conflict
+        .server_payload_hash
+        .clone()
+        .unwrap_or_else(|| crate::sync::queries::hash_payload(json));
+    settle_seal_resend(
+        conn,
+        &conflict.entity_sync_id,
+        conflict.server_row_version,
+        &hash,
+        "push",
+    )
+    .await?;
+    Ok(true)
+}
+
+/// A received decision while this PC has an unsent change of it (`sync::materialize`, before the
+/// concurrency check): a seal-only re-send of the version that change was based on is settled with
+/// no person and not written over this PC's row (its content is the same, sealed alike). `Some`:
+/// settled.
+pub(crate) async fn settle_seal_resend_inbound(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    row_version: i64,
+    payload_hash: &str,
+    payload_json: &str,
+) -> AppResult<Option<ApplyOutcome>> {
+    if entity_type != ENTITY {
+        return Ok(None);
+    }
+    let unsent = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS u FROM sync_outbox WHERE entity_type = ? AND entity_sync_id = ? \
+               AND status IN ('pending', 'in_flight', 'conflict') LIMIT 1",
+            [ENTITY.into(), entity_sync_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !unsent {
+        return Ok(None);
+    }
+    let Ok(received) = serde_json::from_str::<Payload>(payload_json) else {
+        return Ok(None);
+    };
+    if !is_seal_only_resend(conn, entity_sync_id, &received).await? {
+        return Ok(None);
+    }
+    settle_seal_resend(conn, entity_sync_id, row_version, payload_hash, "pull").await?;
+    Ok(Some(ApplyOutcome::Unchanged))
 }
 
 // ── Self-closing rights conflicts ──────────────────────────────────────────────────────────────
