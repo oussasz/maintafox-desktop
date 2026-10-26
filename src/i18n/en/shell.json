@@ -82,6 +82,11 @@
     "usernameClash": "The same username “{{username}}” was created on two PCs. Rename one of the two accounts (Users) on the PC that created it, then synchronise. If you renamed this PC’s account, then take the received account.",
     "countHeldRecord": "Count {{session}} — counted and approved by {{counter}}, posted on {{postedAt}}",
     "countSettledAtOrigin": "To settle on the PC where the count was made (where it is applied): a second approval by another person, or the count's cancellation (reversal). This conflict closes by itself when either arrives here.",
+    "planningTimes": {
+      "changedAt": "Changed on the other PC (its clock)",
+      "frozenAt": "Week frozen here",
+      "notRecorded": "not recorded"
+    },
     "renumberLocal": "Renumber the record on this device",
     "conflictKind": {
       "CONCURRENT_EDIT": "Changed on this device and on another device",
@@ -100,7 +105,7 @@
       "INVALID_VALUE": "A received change holds a value this version does not accept",
       "SETTING_LOCKED": "A setting that can no longer change here (postings depend on it)",
       "WEEK_LIFECYCLE_BACKWARDS": "A planning week would go back in its lifecycle",
-      "PLANNING_WEEK_FROZEN": "Work enters a week frozen here without a valid signed break-in (change time on the other PC and freeze time here in the details). Keep this PC's plan; a legitimate change is redone here with a fresh signed break-in. The conflict closes by itself if its signed break-in arrives",
+      "PLANNING_WEEK_FROZEN": "Work enters a week frozen here without a valid signed break-in (change time on the other PC and freeze time here below). Keep this PC's plan; a legitimate change is redone here with a fresh signed break-in. The conflict closes by itself if its signed break-in arrives",
       "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "An urgent break-in, or one forcing a blocking check, received without an approver. Keep this PC's plan; a legitimate change is redone here with a fresh signed break-in",
       "PLANNING_BREAK_IN_SELF_APPROVAL": "A break-in approved by the person who asked for it (four-eyes). Keep this PC's plan; a legitimate change is redone here with a fresh signed break-in",
       "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED": "A break-in approved by someone without plan.confirm at the crew's site here. Keep this PC's plan; a legitimate change is redone here with a fresh signed break-in",

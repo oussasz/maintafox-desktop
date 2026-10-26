@@ -82,6 +82,11 @@
     "usernameClash": "Le même identifiant « {{username}} » a été créé sur deux PC. Renommez l'un des deux comptes (Utilisateurs) sur le PC qui l'a créé, puis synchronisez. Si vous avez renommé le compte de ce PC, prenez ensuite le compte reçu.",
     "countHeldRecord": "Comptage {{session}} — compté et approuvé par {{counter}}, passé en stock le {{postedAt}}",
     "countSettledAtOrigin": "À régler sur le poste d'origine du comptage (celui où il est appliqué) : seconde approbation par une autre personne, ou annulation (contre-passation) du comptage. Ce conflit se ferme de lui-même quand l'une ou l'autre arrive ici.",
+    "planningTimes": {
+      "changedAt": "Modifié sur l'autre poste (son horloge)",
+      "frozenAt": "Semaine gelée ici",
+      "notRecorded": "non enregistré"
+    },
     "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
     "conflictKind": {
       "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
@@ -100,7 +105,7 @@
       "INVALID_VALUE": "Une modification reçue contient une valeur refusée par cette version",
       "SETTING_LOCKED": "Un paramètre qui ne peut plus changer ici (des écritures en dépendent)",
       "WEEK_LIFECYCLE_BACKWARDS": "Une semaine de planification reviendrait en arrière dans son cycle",
-      "PLANNING_WEEK_FROZEN": "Un travail entre dans une semaine gelée ici sans break-in signé valide (heure de modification sur l'autre poste et heure de gel ici dans le détail). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé. Le conflit se ferme seul si son break-in signé arrive",
+      "PLANNING_WEEK_FROZEN": "Un travail entre dans une semaine gelée ici sans break-in signé valide (heure de modification sur l'autre poste et heure de gel ici ci-dessous). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé. Le conflit se ferme seul si son break-in signé arrive",
       "PLANNING_BREAK_IN_APPROVAL_REQUIRED": "Un break-in urgent, ou qui force un contrôle bloquant, reçu sans approbateur. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
       "PLANNING_BREAK_IN_SELF_APPROVAL": "Un break-in approuvé par la personne qui l'a demandé (quatre yeux). Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",
       "PLANNING_BREAK_IN_APPROVER_UNAUTHORISED": "Un break-in approuvé par quelqu'un sans plan.confirm sur le site de l'équipe ici. Gardez le planning de ce poste ; une modification légitime se refait ici avec un nouveau break-in signé",

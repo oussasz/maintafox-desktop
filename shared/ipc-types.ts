@@ -10619,8 +10619,21 @@ export interface SyncConflictRecord {
   reason: SyncConflictReason | null;
   /** A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): what it is. */
   count_hold?: SyncConflictCountHold | null;
+  /** Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the two times the card shows. */
+  planning_times?: SyncConflictPlanningTimes | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The two times a `PLANNING_WEEK_FROZEN` conflict card shows (CMMS Advisor decision 4,
+ * `planning::sync_check::planning_conflict_times`); neither is used to let the work in.
+ */
+export interface SyncConflictPlanningTimes {
+  /** When the other PC changed the commitment, by that PC's clock (as received). */
+  changed_at: string | null;
+  /** When the week froze here (or was due to freeze); `null`: not recorded. */
+  frozen_at: string | null;
 }
 
 /**
