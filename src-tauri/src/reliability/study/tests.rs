@@ -2474,6 +2474,19 @@ async fn site_rule_times_are_instants_and_never_in_the_future() {
 
 // ── Audit findings AU-69, AU-76 and owner decision D10 ─────────────────────────────────────────
 
+/// A user besides the admin and the reviewer, for "someone else" cases.
+async fn third_user(f: &Fixture) -> i64 {
+    exec(
+        &f.db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) \
+         VALUES ('rs-user-other', 'other', 'Other', 'local', 1, 0, 0, \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    )
+    .await;
+    scalar(&f.db, "SELECT id FROM user_accounts WHERE username = 'other'").await
+}
+
 /// A one-off work-order decision on P-101 proposed by the admin.
 async fn wo_decision(
     f: &Fixture,
@@ -2701,4 +2714,86 @@ async fn applying_a_decision_twice_creates_one_work_order() {
         1
     );
     assert_eq!(decision_wos(&f).await, 1);
+}
+
+#[tokio::test]
+async fn the_proposer_withdraws_their_own_proposal_until_it_is_decided() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let other = third_user(&f).await;
+    grant_ram_manage(&f, other).await;
+    let audits = |action: &'static str, id: i64| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM audit_events WHERE action_code = '{action}' \
+                     AND target_type = 'reliability_study_decisions' \
+                     AND target_id = (SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {id}) \
+                     AND json_extract(details_json, '$.reason') IS NOT NULL"
+                ),
+            )
+            .await
+        }
+    };
+
+    // The reviewer is designated: someone else who may approve decisions cannot reject it, nor
+    // withdraw it on the proposer's behalf.
+    let d = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&d, Some("Pas d'accord")), other).await),
+        "DECISION_NOT_DESIGNATED_APPROVER"
+    );
+    // The proposer withdraws it, whoever was designated (a reason is required).
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&d, None), f.admin).await),
+        "DECISION_REJECT_REASON_REQUIRED"
+    );
+    assert!(crate::reliability::study::decisions::is_proposer(&f.db, d.id, f.admin)
+        .await
+        .expect("proposer"));
+    let withdrawn = reject_decision(&f.db, decide(&d, Some("Proposition retirée")), f.admin)
+        .await
+        .expect("the proposer withdraws");
+    assert_eq!(withdrawn.status, "rejected");
+    assert_eq!(withdrawn.decided_by_id, Some(f.admin));
+    assert!(!withdrawn.self_approved, "a withdrawal approves nothing");
+    assert_eq!(audits("reliability.decision.withdrawn", d.id).await, 1);
+    // Once decided, it can no longer be withdrawn or rejected, and nothing more is audited.
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&withdrawn, Some("Encore")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    assert_eq!(audits("reliability.decision.withdrawn", d.id).await, 1);
+
+    // Approved by the designated approver: the proposer can no longer withdraw it; applied, neither.
+    let d2 = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    let approved = approve_decision(&f.db, decide(&d2, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&approved, Some("Trop tard")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&applied, Some("Trop tard")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    assert_eq!(decision_status(&f, d2.id).await, "applied");
+    assert_eq!(audits("reliability.decision.withdrawn", d2.id).await, 0);
+
+    // The designated approver rejects: audited as a rejection, not a withdrawal.
+    let d3 = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    let rejected = reject_decision(&f.db, decide(&d3, Some("Non justifié")), f.reviewer)
+        .await
+        .expect("designated approver rejects");
+    assert_eq!(rejected.decided_by_id, Some(f.reviewer));
+    assert_eq!(audits("reliability.decision.rejected", d3.id).await, 1);
+    assert_eq!(audits("reliability.decision.withdrawn", d3.id).await, 0);
 }

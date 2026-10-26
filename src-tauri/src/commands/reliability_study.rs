@@ -134,14 +134,22 @@ pub async fn approve_reliability_study_decision(
     decisions::approve_decision(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Rejects a proposed decision (`ram.manage`, as its designated approver when one is named), or
+/// withdraws it when the user proposed it: the proposer needs only the right they proposed with
+/// (`ram.analyze`), whoever was designated (owner decision D10: a withdrawal approves nothing).
 #[tauri::command]
 pub async fn reject_reliability_study_decision(
     input: DecideDecisionInput,
     state: State<'_, AppState>,
 ) -> AppResult<StudyDecision> {
     let user = require_session!(state);
-    require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);
-    decisions::reject_decision(&state.db, input, i64::from(user.user_id)).await
+    let actor = i64::from(user.user_id);
+    if decisions::is_proposer(&state.db, input.decision_id, actor).await? {
+        require_permission!(state, &user, RAM_ANALYZE, PermissionScope::Global);
+    } else {
+        require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);
+    }
+    decisions::reject_decision(&state.db, input, actor).await
 }
 
 /// Create the PM plan draft version or the work order of an approved decision.

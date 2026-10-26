@@ -637,17 +637,13 @@ async fn set_status(
     Ok(())
 }
 
-/// Refuses anyone but the designated approver (when one is set); returns who proposed the decision
-/// and where it applies.
-async fn designated_approver_check(
-    db: &DatabaseConnection,
-    decision_id: i64,
-    actor_id: i64,
-) -> AppResult<DecisionParties> {
+/// Who proposed a decision, who is designated to decide it, and where it applies.
+async fn decision_parties<C: ConnectionTrait>(db: &C, decision_id: i64) -> AppResult<DecisionParties> {
     let r = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT approver_id, proposed_by_id, study_id, equipment_id, site_node_id, site_recorded \
+            "SELECT entity_sync_id, title, status, approver_id, proposed_by_id, study_id, equipment_id, \
+                    site_node_id, site_recorded \
              FROM reliability_study_decisions WHERE id = ?",
             [decision_id.into()],
         ))
@@ -656,11 +652,11 @@ async fn designated_approver_check(
             entity: "reliability_study_decision".into(),
             id: decision_id.to_string(),
         })?;
-    let approver: Option<i64> = get(&r, "approver_id")?;
-    if approver.is_some_and(|a| a != actor_id) {
-        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
-    }
     Ok(DecisionParties {
+        sync_id: get(&r, "entity_sync_id")?,
+        title: get(&r, "title")?,
+        status: get(&r, "status")?,
+        approver: get(&r, "approver_id")?,
         proposer: get(&r, "proposed_by_id")?,
         study_id: get(&r, "study_id")?,
         equipment_id: get(&r, "equipment_id")?,
@@ -669,8 +665,27 @@ async fn designated_approver_check(
     })
 }
 
+/// Refuses anyone but the designated approver (when one is set); returns who proposed the decision
+/// and where it applies.
+async fn designated_approver_check(
+    db: &DatabaseConnection,
+    decision_id: i64,
+    actor_id: i64,
+) -> AppResult<DecisionParties> {
+    let parties = decision_parties(db, decision_id).await?;
+    if parties.approver.is_some_and(|a| a != actor_id) {
+        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
+    }
+    Ok(parties)
+}
+
 /// Who proposed a decision, and where it applies (for the site's four-eyes rule).
 struct DecisionParties {
+    sync_id: Option<String>,
+    title: String,
+    status: String,
+    /// The person designated to decide it, when one was named.
+    approver: Option<i64>,
     proposer: Option<i64>,
     study_id: i64,
     equipment_id: Option<i64>,
@@ -704,16 +719,84 @@ pub async fn approve_decision(
     get_decision(db, input.decision_id).await
 }
 
+/// Whether `actor_id` proposed the decision: their rejection is a withdrawal (owner decision D10).
+pub async fn is_proposer(db: &DatabaseConnection, decision_id: i64, actor_id: i64) -> AppResult<bool> {
+    Ok(decision_parties(db, decision_id).await?.proposer == Some(actor_id))
+}
+
+/// Rejects a proposed decision, or withdraws it when the actor proposed it.
+///
+/// Owner decision D10: the proposer may withdraw their own proposal at any time before it is
+/// decided, even when another person was designated to approve it (a withdrawal approves nothing).
+/// Anyone else rejects only as the designated approver, when one is named. Once approved, rejected
+/// or applied, the decision can no longer be withdrawn or rejected. Both are audited with the
+/// reason, in the same transaction.
 pub async fn reject_decision(
     db: &DatabaseConnection,
     input: DecideDecisionInput,
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
-    if input.note.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+    let note = input.note.as_deref().map(str::trim).unwrap_or_default().to_string();
+    if note.is_empty() {
         return Err(invalid("DECISION_REJECT_REASON_REQUIRED"));
     }
-    designated_approver_check(db, input.decision_id, actor_id).await?;
-    set_status(db, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await?;
+    let parties = decision_parties(db, input.decision_id).await?;
+    let withdrawal = parties.proposer == Some(actor_id);
+    if !withdrawal && parties.approver.is_some_and(|a| a != actor_id) {
+        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
+    }
+    let txn = db.begin().await?;
+    if let Err(e) = set_status(&txn, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await {
+        let status = decision_parties(&txn, input.decision_id).await?.status;
+        return Err(if status == STATUS_PROPOSED {
+            e
+        } else {
+            AppError::ValidationFailed(vec![
+                "GATE_REL_DECISION_ALREADY_DECIDED: The decision has already been approved, rejected or applied: it can no longer be withdrawn or rejected."
+                    .into(),
+            ])
+        });
+    }
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: if withdrawal {
+                "reliability.decision.withdrawn"
+            } else {
+                "reliability.decision.rejected"
+            }
+            .to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(
+                parties
+                    .sync_id
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| input.decision_id.to_string()),
+            ),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": if withdrawal {
+                    "Reliability decision withdrawn by its proposer"
+                } else {
+                    "Reliability decision rejected"
+                },
+                "decision_id": input.decision_id,
+                "title": parties.title,
+                "study_id": parties.study_id,
+                "proposed_by_id": parties.proposer,
+                "designated_approver_id": parties.approver,
+                "reason": note,
+            })),
+        },
+    )
+    .await?;
+    txn.commit().await?;
     get_decision(db, input.decision_id).await
 }
 
