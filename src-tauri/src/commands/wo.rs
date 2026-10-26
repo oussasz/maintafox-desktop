@@ -1398,7 +1398,7 @@ pub async fn list_downtime_segments(
 pub async fn save_failure_detail(
     input: closeout::SaveFailureCodingInput,
     state: State<'_, AppState>,
-) -> AppResult<closeout::WoFailureDetail> {
+) -> AppResult<closeout::FailureDetailSaved> {
     let user = require_session!(state);
     require_on_wo(
         &state,
@@ -1606,11 +1606,11 @@ pub async fn reopen_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let wo_id = input.wo_id;
-    closeout::update_wo_rca(&state.db, input).await?;
+    let row_version = closeout::update_wo_rca(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
@@ -1624,7 +1624,7 @@ pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, A
         },
     )
     .await;
-    Ok(())
+    Ok(row_version)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1722,10 +1722,22 @@ pub async fn get_cost_summary(wo_id: i64, state: State<'_, AppState>) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn update_service_cost(
+    wo_id: i64,
+    service_cost: f64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<i64> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
-    costs::update_service_cost(&state.db, wo_id, service_cost, i64::from(user.user_id)).await?;
+    let row_version = costs::update_service_cost(
+        &state.db,
+        wo_id,
+        service_cost,
+        expected_row_version,
+        i64::from(user.user_id),
+    )
+    .await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
@@ -1739,7 +1751,7 @@ pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_,
         },
     )
     .await;
-    Ok(())
+    Ok(row_version)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

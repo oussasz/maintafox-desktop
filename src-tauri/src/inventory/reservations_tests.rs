@@ -426,6 +426,9 @@ async fn closing_a_work_order_releases_both_kinds_of_reservation_with_an_audit_e
         &db,
         SaveFailureDetailInput {
             wo_id,
+            expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_id)
+                .await
+                .expect("wo row_version"),
             symptom_id: Some(symptom_id),
             failure_mode_id: None,
             failure_cause_id: None,
@@ -438,10 +441,13 @@ async fn closing_a_work_order_releases_both_kinds_of_reservation_with_an_audit_e
     )
     .await
     .expect("failure detail");
-    closeout::update_wo_rca(
+    let rv = closeout::update_wo_rca(
         &db,
         UpdateWoRcaInput {
             wo_id,
+            expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_id)
+                .await
+                .expect("wo row_version"),
             root_cause_summary: Some("Root cause".into()),
             corrective_action_summary: Some("Corrective action".into()),
         },

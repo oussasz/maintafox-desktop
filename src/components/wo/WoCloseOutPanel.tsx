@@ -54,13 +54,14 @@ import {
   type WoAnalyticsSnapshot,
   closeWo,
   getWoAnalyticsSnapshot,
+  isRecordChangedElsewhere,
   reopenWo,
   saveFailureDetail,
   saveVerification,
   updateServiceCost,
   updateWoRca,
 } from "@/services/wo-closeout-service";
-import { evaluateWoCompletionGates } from "@/services/wo-service";
+import { evaluateWoCompletionGates, getWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
@@ -146,6 +147,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [rootCauseSummary, setRootCauseSummary] = useState("");
   const [serviceCost, setServiceCost] = useState("");
 
+  // Version of the work order the S1-S3 form was loaded at: sent with each save so a change
+  // made meanwhile (another person, another PC) is refused instead of silently overwritten.
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+  // Bumped to reload the form from the database (after a version conflict).
+  const [formReload, setFormReload] = useState(0);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailSuccess, setDetailSuccess] = useState(false);
@@ -203,10 +209,20 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   );
 
   // ── Pre-populate from existing failure data (GA-049) ────────────────
+  // The work order is read first: its version is the one the form was loaded at, so anything
+  // saved after that read (the snapshot included) makes the next save refuse and reload.
   useEffect(() => {
     let cancelled = false;
-    void getWoAnalyticsSnapshot(wo.id)
-      .then((snap) => {
+    setLoadedVersion(null);
+    void getWo(wo.id)
+      .then(async ({ wo: fresh }) => {
+        if (cancelled) return;
+        setRootCauseSummary(fresh.root_cause_summary ?? "");
+        setCorrectiveAction(fresh.corrective_action_summary ?? "");
+        const cost = fresh.service_cost ?? fresh.service_cost_input;
+        setServiceCost(cost != null && cost > 0 ? String(cost) : "");
+        setLoadedVersion(fresh.row_version);
+        const snap = await getWoAnalyticsSnapshot(wo.id);
         if (cancelled) return;
         setLinks({
           pm_plan_code: snap.pm_plan_code,
@@ -215,21 +231,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           permits: snap.permits,
         });
         const fd = snap.failure_details[0];
-        if (fd) {
-          setSymptomId(fd.symptom_id);
-          setFailureModeId(fd.failure_mode_id);
-          setFailureCauseId(fd.failure_cause_id);
-          setFailureEffectId(fd.failure_effect_id);
-          setFailureMechanismId(fd.failure_mechanism_id ?? null);
-          setDetectionMethodId(fd.detection_method_id ?? null);
-          setCauseNotDetermined(fd.cause_not_determined);
-          if (fd.is_temporary_repair) setRepairType("temporary");
-          else if (fd.is_permanent_repair) setRepairType("permanent");
-          if (fd.notes) setNarrative(fd.notes);
-        }
-        if (snap.root_cause_summary) setRootCauseSummary(snap.root_cause_summary);
-        if (snap.corrective_action_summary) setCorrectiveAction(snap.corrective_action_summary);
-        if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
+        setSymptomId(fd?.symptom_id ?? null);
+        setFailureModeId(fd?.failure_mode_id ?? null);
+        setFailureCauseId(fd?.failure_cause_id ?? null);
+        setFailureEffectId(fd?.failure_effect_id ?? null);
+        setFailureMechanismId(fd?.failure_mechanism_id ?? null);
+        setDetectionMethodId(fd?.detection_method_id ?? null);
+        setCauseNotDetermined(fd?.cause_not_determined ?? false);
+        setRepairType(
+          fd?.is_temporary_repair ? "temporary" : fd?.is_permanent_repair ? "permanent" : "na",
+        );
+        setNarrative(fd?.notes ?? "");
       })
       .catch((err: unknown) => {
         if (!cancelled) setDetailError(describeAppError(err).title);
@@ -237,7 +249,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     return () => {
       cancelled = true;
     };
-  }, [wo.id]);
+  }, [wo.id, formReload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -265,16 +277,30 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     setCurrentWo(wo);
   }, [wo]);
 
+  // A write of this panel (verification, reopen) made at the version the form was loaded at
+  // moves the form's version along; one made at another version leaves it, so the next save of
+  // the form is still refused and reloads.
+  const followOwnWrite = useCallback((sentVersion: number, newVersion: number) => {
+    setLoadedVersion((v) => (v === sentVersion ? newVersion : v));
+  }, []);
+
   // ── Save S1-S3 details ─────────────────────────────────────────────────
 
   const handleSaveDetails = useCallback(async () => {
     if (!canEdit) return;
+    if (loadedVersion == null) {
+      // The form has not been loaded from the database: nothing is saved over unseen data.
+      setFormReload((n) => n + 1);
+      return;
+    }
     setSavingDetails(true);
     setDetailError(null);
     setDetailSuccess(false);
     try {
-      await saveFailureDetail({
+      // Each save is checked against the version the previous one left (chained).
+      const saved = await saveFailureDetail({
         wo_id: currentWo.id,
+        expected_row_version: loadedVersion,
         symptom_id: symptomId,
         failure_mode_id: causeNotDetermined ? null : failureModeId,
         failure_cause_id: causeNotDetermined ? null : failureCauseId,
@@ -286,15 +312,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         cause_not_determined: causeNotDetermined,
         notes: narrative.trim() || null,
       });
-      await updateWoRca({
+      let version = await updateWoRca({
         wo_id: currentWo.id,
         root_cause_summary: rootCauseSummary.trim() || null,
         corrective_action_summary: correctiveAction.trim() || null,
+        expected_row_version: saved.wo_row_version,
       });
       const costNum = Number.parseFloat(serviceCost);
       if (!isNaN(costNum) && costNum >= 0) {
-        await updateServiceCost(currentWo.id, costNum);
+        version = await updateServiceCost(currentWo.id, costNum, version);
       }
+      setLoadedVersion(version);
       setDetailSuccess(true);
       await refreshActiveWo();
       try {
@@ -304,11 +332,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       }
     } catch (err) {
       setDetailError(describeAppError(err).title);
+      if (isRecordChangedElsewhere(err)) {
+        // Changed meanwhile: show the conflict, then reload the form and the work order.
+        setFormReload((n) => n + 1);
+        await refreshActiveWo();
+      }
     } finally {
       setSavingDetails(false);
     }
   }, [
     canEdit,
+    loadedVersion,
     currentWo,
     symptomId,
     causeNotDetermined,
@@ -343,6 +377,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     })
       .then(async ([, updatedWo]) => {
         setCurrentWo(updatedWo);
+        followOwnWrite(currentWo.row_version, updatedWo.row_version);
         setVerificationResult("");
         setReturnToServiceConfirmed(false);
         setVerificationNotes("");
@@ -358,6 +393,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     returnToServiceConfirmed,
     verificationNotes,
     refreshActiveWo,
+    followOwnWrite,
   ]);
 
   // ── Close WO ───────────────────────────────────────────────────────────
@@ -431,6 +467,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     )
       .then(async (updated) => {
         setCurrentWo(updated);
+        followOwnWrite(currentWo.row_version, updated.row_version);
         setReopenReason("");
         setReopenRemaining("");
         await refreshActiveWo();
@@ -447,6 +484,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     currentWo.id,
     currentWo.row_version,
     refreshActiveWo,
+    followOwnWrite,
     withStepUp,
     t,
   ]);

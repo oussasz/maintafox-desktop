@@ -51,7 +51,11 @@ vi.mock("@/services/wo-closeout-service", async (importOriginal) => {
   const actual = await importOriginal<typeof CloseoutService>();
   return { ...actual, ...closeout };
 });
-vi.mock("@/services/wo-service", () => ({ evaluateWoCompletionGates: vi.fn(async () => []) }));
+const woService = vi.hoisted(() => ({ getWo: vi.fn() }));
+vi.mock("@/services/wo-service", () => ({
+  evaluateWoCompletionGates: vi.fn(async () => []),
+  getWo: woService.getWo,
+}));
 vi.mock("@/services/settings-service", () => ({ getSetting: vi.fn(async () => null) }));
 vi.mock("@/components/reference/ReferenceCombobox", () => ({ ReferenceCombobox: () => null }));
 vi.mock("@/components/common/LinkedEntityBadge", () => ({ LinkedEntityBadge: () => null }));
@@ -86,6 +90,7 @@ describe("WoCloseOutPanel close confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     closeout.getWoAnalyticsSnapshot.mockResolvedValue(null);
+    woService.getWo.mockResolvedValue({ wo: WO, transitions: [] });
   });
 
   it("closes only after the user confirms a summary naming the work order, without a password", async () => {
@@ -124,5 +129,56 @@ describe("WoCloseOutPanel close confirmation", () => {
 
     expect(await screen.findByText("Failure coding is incomplete")).toBeInTheDocument();
     expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  it("saves the close-out coding at the version it loaded, chaining each save's new version (AU-18)", async () => {
+    closeout.saveFailureDetail.mockResolvedValue({ id: 1, work_order_id: 42, wo_row_version: 8 });
+    closeout.updateWoRca.mockResolvedValue(9);
+    render(<WoCloseOutPanel wo={WO} canEdit onClosed={vi.fn()} />);
+    await waitFor(() => expect(woService.getWo).toHaveBeenCalledWith(42));
+
+    fireEvent.click(screen.getByRole("button", { name: enOt.closeout.saveDetails }));
+    await waitFor(() => expect(closeout.updateWoRca).toHaveBeenCalledTimes(1));
+    expect(closeout.saveFailureDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ wo_id: 42, expected_row_version: 7 }),
+    );
+    expect(closeout.updateWoRca).toHaveBeenCalledWith(
+      expect.objectContaining({ wo_id: 42, expected_row_version: 8 }),
+    );
+
+    // The next save starts from the version the last one left.
+    fireEvent.click(screen.getByRole("button", { name: enOt.closeout.saveDetails }));
+    await waitFor(() => expect(closeout.saveFailureDetail).toHaveBeenCalledTimes(2));
+    expect(closeout.saveFailureDetail).toHaveBeenLastCalledWith(
+      expect.objectContaining({ expected_row_version: 9 }),
+    );
+  });
+
+  it("refuses a save over a change made meanwhile and reloads the form (AU-18)", async () => {
+    closeout.saveFailureDetail.mockRejectedValue({
+      code: "VALIDATION_FAILED",
+      message:
+        "Validation failed: GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a ete modifie par un autre utilisateur.",
+    });
+    render(<WoCloseOutPanel wo={WO} canEdit onClosed={vi.fn()} />);
+    await waitFor(() => expect(woService.getWo).toHaveBeenCalledTimes(1));
+
+    woService.getWo.mockResolvedValue({ wo: { ...WO, row_version: 8 }, transitions: [] });
+    fireEvent.click(screen.getByRole("button", { name: enOt.closeout.saveDetails }));
+
+    // The form is read again from the database, nothing else is saved over the change.
+    await waitFor(() => expect(woService.getWo).toHaveBeenCalledTimes(2));
+    expect(closeout.updateWoRca).not.toHaveBeenCalled();
+    expect(closeout.updateServiceCost).not.toHaveBeenCalled();
+
+    // The reloaded version is the one the next save is checked against.
+    closeout.saveFailureDetail.mockResolvedValue({ id: 1, work_order_id: 42, wo_row_version: 9 });
+    closeout.updateWoRca.mockResolvedValue(10);
+    fireEvent.click(screen.getByRole("button", { name: enOt.closeout.saveDetails }));
+    await waitFor(() =>
+      expect(closeout.saveFailureDetail).toHaveBeenLastCalledWith(
+        expect.objectContaining({ expected_row_version: 8 }),
+      ),
+    );
   });
 });

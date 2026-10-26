@@ -252,13 +252,15 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Update the manual service cost input on a WO.
-/// WO must not be in closed or cancelled state.
+/// WO must not be in closed or cancelled state, and still at `expected_row_version` (the version
+/// the screen loaded); bumps it and returns the new version.
 pub async fn update_service_cost(
     db: &DatabaseConnection,
     wo_id: i64,
     service_cost: f64,
+    expected_row_version: i64,
     _actor_id: i64,
-) -> AppResult<()> {
+) -> AppResult<i64> {
     // Guard: load status
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -292,13 +294,16 @@ pub async fn update_service_cost(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_orders SET service_cost_input = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-         WHERE id = ?",
-        [service_cost.into(), wo_id.into()],
-    ))
-    .await?;
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET service_cost_input = ?, row_version = row_version + 1, \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+             WHERE id = ? AND row_version = ?",
+            [service_cost.into(), wo_id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    crate::wo::closeout::check_concurrency(result.rows_affected())?;
 
-    Ok(())
+    Ok(expected_row_version + 1)
 }

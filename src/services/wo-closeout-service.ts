@@ -8,6 +8,7 @@
 import { appErrorLines } from "@/lib/app-error";
 import { invoke } from "@/lib/ipc-invoke";
 import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -28,6 +29,8 @@ export interface SaveFailureDetailInput {
   failure_mechanism_id?: number | null;
   /** ISO 14224 B.4 detection method (WORK.DETECTION_METHODS). */
   detection_method_id?: number | null;
+  /** Version of the work order the screen loaded; refused when changed since (bumped on save). */
+  expected_row_version: number;
 }
 
 export interface WoFailureDetail {
@@ -100,6 +103,8 @@ export interface UpdateWoRcaInput {
   wo_id: number;
   root_cause_summary?: string | null;
   corrective_action_summary?: string | null;
+  /** Version of the work order the screen loaded; refused when changed since (bumped on save). */
+  expected_row_version: number;
 }
 
 // -- Costs --
@@ -246,8 +251,13 @@ function maybeWrapBlockingError(error: unknown): never {
 
 // -- Failure detail --
 
-export async function saveFailureDetail(input: SaveFailureDetailInput): Promise<WoFailureDetail> {
-  return invoke<WoFailureDetail>("save_failure_detail", { input });
+/** A saved failure detail with the work order's new version (for the next chained save). */
+export type WoFailureDetailSaved = WoFailureDetail & { wo_row_version: number };
+
+export async function saveFailureDetail(
+  input: SaveFailureDetailInput,
+): Promise<WoFailureDetailSaved> {
+  return invoke<WoFailureDetailSaved>("save_failure_detail", { input });
 }
 
 // -- Verification --
@@ -277,8 +287,9 @@ export async function reopenWo(input: WoReopenInput): Promise<WorkOrder> {
   return invoke<WorkOrder>("reopen_wo", { input });
 }
 
-export async function updateWoRca(input: UpdateWoRcaInput): Promise<void> {
-  await invoke<void>("update_wo_rca", { input });
+/** Saves the root cause / corrective action; returns the work order's new version. */
+export async function updateWoRca(input: UpdateWoRcaInput): Promise<number> {
+  return invoke<number>("update_wo_rca", { input });
 }
 
 // -- Attachments --
@@ -304,8 +315,22 @@ export async function deleteWoAttachment(attachmentId: number): Promise<void> {
 
 // -- Costs --
 
-export async function updateServiceCost(woId: number, serviceCost: number): Promise<void> {
-  await invoke<void>("update_service_cost", { woId, serviceCost });
+/** Saves the service cost at the version the screen loaded; returns the new version. */
+export async function updateServiceCost(
+  woId: number,
+  serviceCost: number,
+  expectedRowVersion: number,
+): Promise<number> {
+  return invoke<number>("update_service_cost", { woId, serviceCost, expectedRowVersion });
+}
+
+/** True when the backend refused a save because the record changed since it was loaded. */
+export function isRecordChangedElsewhere(error: unknown): boolean {
+  const code = "GATE_RECORD_CHANGED_ELSEWHERE";
+  return (
+    toErrorMessage(error).includes(code) ||
+    extractIpcValidationDetails(error).some((d) => d.code === code || d.message.includes(code))
+  );
 }
 
 // -- Analytics --
