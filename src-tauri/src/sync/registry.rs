@@ -559,6 +559,13 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "stock_negative_reviews",
         category: LocalOnlyCategory::DerivedProjection,
     },
+    // Open work orders and requests on retired equipment (`wo::retired_equipment_review`, AU-73b):
+    // open exactly while the record is open and its equipment retired, so every PC with the same
+    // rows shows the same items, keyed by the record's sync id.
+    LocalOnlyTable {
+        table: "retired_equipment_reviews",
+        category: LocalOnlyCategory::DerivedProjection,
+    },
     // Computed on each device from synchronised personnel and certification data
     // (`qualification::readiness`, `qualification::expiry_alerts`).
     LocalOnlyTable {

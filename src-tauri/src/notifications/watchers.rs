@@ -12,6 +12,7 @@
 //! | `inspection_round_missed` | an inspection round was missed                         | round (window end)                 |
 //! | `stock_critical`          | available stock at or below the reorder point          | article + movement that crossed it |
 //! | `stock_to_reconcile`      | a location below zero, or counted twice (two PCs)      | article + location (+ counts)      |
+//! | `retired_equipment_work`  | an open work order or request on retired equipment     | work order / request               |
 //! | `ptw_expiring`            | an open permit expires within the rule's lead time     | permit + expiry (expiry − lead)    |
 //! | `ptw_critical`            | an open permit is past its expiry                      | permit + expiry                    |
 //! | `sync_conflict`           | a synchronisation conflict waits for review            | conflict (creation)                |
@@ -46,6 +47,7 @@ pub const WATCHERS: &[&str] = &[
     "inspection_round_missed",
     "stock_critical",
     "stock_to_reconcile",
+    "retired_equipment_work",
     "ptw_expiring",
     "ptw_critical",
     "sync_conflict",
@@ -573,6 +575,11 @@ pub async fn candidates(
                     body: format!("{entity} · {kind}"),
                 });
             }
+        }
+        // Work on retired equipment, crossed in sync (`wo::retired_equipment_review`, AU-73b): one
+        // notice per open work order or request, its sync id the occurrence (the same on every PC).
+        "retired_equipment_work" => {
+            out.extend(crate::wo::retired_equipment_review::notice_candidates(conn, &severity, fr).await?);
         }
         other => {
             return Err(AppError::Internal(anyhow::anyhow!(
