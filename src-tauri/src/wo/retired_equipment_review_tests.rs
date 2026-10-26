@@ -10,6 +10,7 @@ use super::closeout_tests::tests::{admin_id, create_second_user, seed_test_equip
 use super::retired_equipment_review::{
     self as review, RetiredEquipmentReview, ReviewKey, CLOSURE_DI_CONVERTED, CLOSURE_DI_REJECTED,
     CLOSURE_RECOMMISSIONED, CLOSURE_WO_CANCELLED, CLOSURE_WO_CLOSED, NOTIFICATION_CATEGORY,
+    REQUEST_NOTIFICATION_CATEGORY,
 };
 use crate::auth::scope::AccessScope;
 use crate::sync::materialize::ApplyOutcome;
@@ -48,11 +49,18 @@ async fn pc() -> DatabaseConnection {
     db
 }
 
+/// When the equipment was retired, the same on every PC in these tests (a synchronised fact).
+const RETIRED_AT: &str = "2026-10-20T00:00:00Z";
+
 async fn retire_here(db: &DatabaseConnection) {
+    retire_here_at(db, RETIRED_AT).await;
+}
+
+async fn retire_here_at(db: &DatabaseConnection, at: &str) {
     exec(
         db,
         "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', decommissioned_at = ? WHERE id = 1",
-        vec![now().into()],
+        vec![at.into()],
     )
     .await;
 }
@@ -204,9 +212,15 @@ async fn item(db: &DatabaseConnection, key: &ReviewKey) -> Vec<RetiredEquipmentR
 async fn watch(db: &DatabaseConnection) -> crate::notifications::watchers::WatchReport {
     let tx = db.begin().await.expect("tx");
     crate::sync::capture::begin_suppression(&tx).await.expect("suppress");
-    let report = crate::notifications::watchers::run_watcher(&tx, NOTIFICATION_CATEGORY, chrono::Utc::now(), true)
-        .await
-        .expect("watcher");
+    let mut report = crate::notifications::watchers::WatchReport::default();
+    for watcher in [NOTIFICATION_CATEGORY, REQUEST_NOTIFICATION_CATEGORY] {
+        let r = crate::notifications::watchers::run_watcher(&tx, watcher, chrono::Utc::now(), true)
+            .await
+            .expect("watcher");
+        report.raised += r.raised;
+        report.already_true += r.already_true;
+        report.resolved += r.resolved;
+    }
     crate::sync::capture::end_suppression(&tx).await.expect("unsuppress");
     tx.commit().await.expect("commit");
     report
@@ -217,14 +231,14 @@ async fn events(db: &DatabaseConnection) -> (i64, i64) {
     (
         scalar(
             db,
-            "SELECT COUNT(*) FROM notification_events WHERE category_code = ?",
-            vec![NOTIFICATION_CATEGORY.into()],
+            "SELECT COUNT(*) FROM notification_events WHERE category_code IN (?, ?)",
+            vec![NOTIFICATION_CATEGORY.into(), REQUEST_NOTIFICATION_CATEGORY.into()],
         )
         .await,
         scalar(
             db,
-            "SELECT COUNT(*) FROM notification_events WHERE category_code = ? AND resolved_at IS NULL",
-            vec![NOTIFICATION_CATEGORY.into()],
+            "SELECT COUNT(*) FROM notification_events WHERE category_code IN (?, ?) AND resolved_at IS NULL",
+            vec![NOTIFICATION_CATEGORY.into(), REQUEST_NOTIFICATION_CATEGORY.into()],
         )
         .await,
     )
@@ -234,8 +248,12 @@ async fn notified(db: &DatabaseConnection, user: i64) -> i64 {
     scalar(
         db,
         "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-         WHERE e.category_code = ? AND n.recipient_user_id = ?",
-        vec![NOTIFICATION_CATEGORY.into(), user.into()],
+         WHERE e.category_code IN (?, ?) AND n.recipient_user_id = ?",
+        vec![
+            NOTIFICATION_CATEGORY.into(),
+            REQUEST_NOTIFICATION_CATEGORY.into(),
+            user.into(),
+        ],
     )
     .await
 }
@@ -686,4 +704,277 @@ async fn on_this_pc_no_work_order_or_request_is_created_on_retired_equipment() {
         .expect_err("retired");
     assert!(format!("{di:?}").contains("GATE_DI_EQUIPMENT_RETIRED"), "{di:?}");
     assert!(list(&db, true).await.is_empty());
+}
+
+// ── B1: a request notice is seen only with the request view right ───────────────────────────────
+
+/// A role holding `permissions`, granted plant-wide to `user`.
+async fn grant(db: &DatabaseConnection, user: i64, permissions: &[&str]) {
+    let role = format!("au73b-role-{user}");
+    exec(
+        db,
+        "INSERT INTO roles (entity_sync_id, name, description, is_system, role_type, status, created_at, updated_at) \
+         VALUES (?, ?, '', 0, 'custom', 'active', 'now', 'now')",
+        vec![role.clone().into(), role.clone().into()],
+    )
+    .await;
+    let role_id = scalar(db, "SELECT id FROM roles WHERE name = ?", vec![role.into()]).await;
+    for p in permissions {
+        exec(
+            db,
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at) SELECT ?, id, 'now' FROM permissions WHERE name = ?",
+            vec![role_id.into(), (*p).into()],
+        )
+        .await;
+    }
+    exec(
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+         VALUES (?, ?, ?, 'tenant', 'now', 'now')",
+        vec![format!("au73b-usa-{user}").into(), user.into(), role_id.into()],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_site_responsible_without_the_request_view_right_sees_the_work_order_notice_only() {
+    let source = pc().await;
+    let target = pc().await;
+    let owner = maintenance_owner(&target).await;
+    grant(&target, owner, &[crate::rbac::permissions::OT_VIEW]).await;
+    retire_here(&target).await;
+    watch(&target).await;
+    let (_, wo_sid) = work_order_on(&source).await;
+    let (_, di_sid) = request_on(&source).await;
+    apply(
+        &target,
+        "work_orders",
+        &wo_sid,
+        &wire(&source, "work_orders", &wo_sid).await,
+    )
+    .await;
+    apply(
+        &target,
+        "intervention_requests",
+        &di_sid,
+        &wire(&source, "intervention_requests", &di_sid).await,
+    )
+    .await;
+    assert_eq!(watch(&target).await.raised, 2);
+    let modules = text(
+        &target,
+        "SELECT group_concat(code || ':' || module_code, ',') FROM (SELECT code, module_code FROM notification_categories \
+         WHERE code IN (?, ?) ORDER BY code)",
+        vec![NOTIFICATION_CATEGORY.into(), REQUEST_NOTIFICATION_CATEGORY.into()],
+    )
+    .await;
+    assert_eq!(
+        modules.as_deref(),
+        Some("retired_equipment_request:di,retired_equipment_work:ot")
+    );
+
+    let vis = crate::notifications::inbox::visible_to(&target, owner as i32)
+        .await
+        .expect("visibility");
+    let seen: Vec<String> = crate::notifications::inbox::list(
+        &target,
+        owner,
+        &vis,
+        &crate::notifications::inbox::InboxFilter::default(),
+    )
+    .await
+    .expect("inbox")
+    .into_iter()
+    .map(|n| n.category_code)
+    .collect();
+    assert_eq!(
+        seen,
+        vec![NOTIFICATION_CATEGORY.to_string()],
+        "no request notice without di.view"
+    );
+}
+
+// ── S4: work-order scope on another node ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_reader_holding_the_work_order_right_on_another_node_sees_no_item() {
+    let (_, target, sid) = target_with_received_work_order().await;
+    let elsewhere = AccessScope::Subtrees([987_654_i64].into_iter().collect());
+    let listed = review::list_reviews(&target, &elsewhere, &AccessScope::Everywhere, true)
+        .await
+        .expect("list");
+    assert!(listed.items.is_empty(), "outside the reader's sites");
+    assert_eq!(
+        item(&target, &ReviewKey::work_order(&sid)).await.len(),
+        1,
+        "seen plant-wide"
+    );
+}
+
+// ── S1 / S4: a return to service received by sync closes the same way on two PCs ────────────────
+
+#[tokio::test]
+async fn a_return_to_service_received_late_closes_identically_on_two_pcs() {
+    let source = pc().await;
+    let (_, sid) = work_order_on(&source).await;
+    let wo_row = wire(&source, "work_orders", &sid).await;
+    // The PC that returns the equipment to service (retired there with the same retirement).
+    let other = pc().await;
+    retire_here(&other).await;
+    let row_version = scalar(&other, "SELECT row_version FROM equipment WHERE id = 1", vec![]).await;
+    let event = crate::assets::lifecycle::record_lifecycle_event(
+        &other,
+        crate::assets::lifecycle::RecordLifecycleEventPayload {
+            asset_id: 1,
+            event_type: "RECOMMISSIONED".into(),
+            event_at: Some("2026-10-25T08:30:00Z".into()),
+            from_org_node_id: None,
+            to_org_node_id: None,
+            from_status_code: None,
+            to_status_code: Some("ACTIVE_IN_SERVICE".into()),
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: Some("Overhauled".into()),
+            approved_by_id: None,
+            expected_row_version: Some(row_version),
+        },
+        admin_id(&other).await as i32,
+    )
+    .await
+    .expect("recommission");
+    let event_sid = text(
+        &other,
+        "SELECT entity_sync_id FROM equipment_lifecycle_events WHERE id = ?",
+        vec![event.id.into()],
+    )
+    .await
+    .expect("event sync id");
+    let equipment_row = wire(&other, "equipment", "test-eq-co-001").await;
+    let event_row = wire(&other, "equipment_lifecycle_events", &event_sid).await;
+
+    // PC A: the equipment row first, its event later. PC B: the event first.
+    let a = pc().await;
+    retire_here(&a).await;
+    apply(&a, "work_orders", &sid, &wo_row).await;
+    assert!(matches!(
+        apply(&a, "equipment", "test-eq-co-001", &equipment_row).await,
+        ApplyOutcome::Applied
+    ));
+    apply(&a, "equipment_lifecycle_events", &event_sid, &event_row).await;
+    let b = pc().await;
+    retire_here(&b).await;
+    apply(&b, "work_orders", &sid, &wo_row).await;
+    apply(&b, "equipment_lifecycle_events", &event_sid, &event_row).await;
+    apply(&b, "equipment", "test-eq-co-001", &equipment_row).await;
+
+    let key = ReviewKey::work_order(&sid);
+    let closed_on = |db: DatabaseConnection| {
+        let key = key.clone();
+        async move {
+            let items = item(&db, &key).await;
+            assert_eq!(items.len(), 1);
+            let i = &items[0];
+            (
+                i.status.clone(),
+                i.closure_kind.clone(),
+                i.closed_at.clone(),
+                i.closed_by.clone(),
+                i.closure_note.clone(),
+                i.opened_at.clone(),
+            )
+        }
+    };
+    let on_a = closed_on(a).await;
+    assert_eq!(on_a.0, "closed");
+    assert_eq!(on_a.1.as_deref(), Some(CLOSURE_RECOMMISSIONED));
+    assert_eq!(on_a.2.as_deref(), Some("2026-10-25T08:30:00Z"), "the event's own time");
+    assert_eq!(on_a.4.as_deref(), Some("Overhauled"));
+    assert_eq!(on_a, closed_on(b).await, "the same closure on both PCs");
+}
+
+// ── S4: returned to service, then retired again ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn retired_again_after_a_return_to_service_opens_a_new_item_and_raises_the_notice_again() {
+    let (_, target, sid) = target_with_received_work_order().await;
+    let key = ReviewKey::work_order(&sid);
+    watch(&target).await; // its notice exists
+    assert_eq!(events(&target).await, (1, 1));
+    let row_version = scalar(&target, "SELECT row_version FROM equipment WHERE id = 1", vec![]).await;
+    crate::assets::lifecycle::record_lifecycle_event(
+        &target,
+        crate::assets::lifecycle::RecordLifecycleEventPayload {
+            asset_id: 1,
+            event_type: "RECOMMISSIONED".into(),
+            event_at: Some("2026-10-24T00:00:00Z".into()),
+            from_org_node_id: None,
+            to_org_node_id: None,
+            from_status_code: None,
+            to_status_code: Some("ACTIVE_IN_SERVICE".into()),
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: Some("First return".into()),
+            approved_by_id: None,
+            expected_row_version: Some(row_version),
+        },
+        admin_id(&target).await as i32,
+    )
+    .await
+    .expect("recommission");
+    assert_eq!(item(&target, &key).await[0].status, "closed");
+    let resolved = watch(&target).await;
+    assert_eq!(resolved.resolved, 1, "{resolved:?}");
+
+    // Retired again (by sync, after the watch restarted): a new item, the same notice reopened.
+    retire_here_at(&target, &now()).await;
+    let items = item(&target, &key).await;
+    let open: Vec<_> = items.iter().filter(|i| i.status == "open").collect();
+    let closed: Vec<_> = items.iter().filter(|i| i.status == "closed").collect();
+    assert_eq!((open.len(), closed.len()), (1, 1), "a new item, the old one kept");
+    assert_eq!(
+        closed[0].closure_note.as_deref(),
+        Some("First return"),
+        "still its own return"
+    );
+    let again = watch(&target).await;
+    assert_eq!(again.raised + again.already_true, 1, "{again:?}");
+    assert_eq!(events(&target).await, (1, 1), "the same notice, open again");
+}
+
+// ── S4: a closure received by sync closes the item in the apply itself ──────────────────────────
+
+#[tokio::test]
+async fn a_cancellation_received_by_sync_closes_the_item_in_the_apply() {
+    let (source, target, sid) = target_with_received_work_order().await;
+    let wo_id = local_id(&source, "work_orders", &sid).await;
+    let wo = crate::wo::queries::get_work_order(&source, wo_id)
+        .await
+        .expect("get")
+        .expect("wo");
+    crate::wo::queries::cancel_work_order(
+        &source,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo.row_version,
+            actor_id: admin_id(&source).await,
+            cancel_reason: "Not needed".into(),
+        },
+    )
+    .await
+    .expect("cancel on the other PC");
+    let outcome = apply(&target, "work_orders", &sid, &wire(&source, "work_orders", &sid).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    // Read the projection directly: no list (which would reconcile everything) in between.
+    let state = text(
+        &target,
+        "SELECT status || '|' || closure_kind FROM retired_equipment_reviews WHERE record_sync_id = ?",
+        vec![sid.into()],
+    )
+    .await;
+    assert_eq!(state.as_deref(), Some("closed|wo_cancelled"));
+    assert!(review::pending_keys(&target).await.expect("pending").is_empty());
 }
