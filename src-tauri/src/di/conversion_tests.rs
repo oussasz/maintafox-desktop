@@ -912,4 +912,89 @@ mod tests {
             .unwrap();
         assert_eq!(in_shared_list, Some(di_symptom));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AU-73 – no request, and no conversion, on retired equipment
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Retires equipment 1 (Déclassé), the status tagged `retired` in the published list.
+    async fn retire_equipment(db: &sea_orm::DatabaseConnection) {
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(db)
+            .await
+            .expect("status tags");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = 1".to_string(),
+        ))
+        .await
+        .expect("retire equipment");
+    }
+
+    fn refused_with(err: crate::errors::AppError, code: &str) -> bool {
+        matches!(err, crate::errors::AppError::ValidationFailed(lines) if lines.iter().any(|l| l.starts_with(code)))
+    }
+
+    #[tokio::test]
+    async fn au73_a_request_on_retired_equipment_is_refused() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        retire_equipment(&db).await;
+        let before = count_dis(&db).await;
+
+        let err = create_intervention_request(&db, make_create_input(&db, user_id).await)
+            .await
+            .expect_err("retired equipment");
+        assert!(refused_with(err, "GATE_DI_EQUIPMENT_RETIRED:asset=EQ-TEST-001:"));
+        assert_eq!(count_dis(&db).await, before, "nothing written");
+    }
+
+    #[tokio::test]
+    async fn au73_an_approved_request_is_not_converted_once_its_equipment_is_retired() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let (di_id, version) = advance_to_approved(&db, user_id).await;
+        retire_equipment(&db).await;
+
+        let err = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id,
+                actor_id: user_id,
+                expected_row_version: version,
+                conversion_notes: None,
+            },
+        )
+        .await
+        .expect_err("retired equipment");
+        assert!(refused_with(err, "GATE_WO_EQUIPMENT_RETIRED:asset=EQ-TEST-001:"));
+        assert_eq!(
+            get_di_status(&db, di_id).await,
+            "approved",
+            "the request stays approved"
+        );
+        let wos = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM work_orders WHERE source_di_id = ?",
+                [di_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "c")
+            .expect("c");
+        assert_eq!(wos, 0, "no work order");
+    }
+
+    async fn count_dis(db: &sea_orm::DatabaseConnection) -> i64 {
+        db.query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM intervention_requests".to_string(),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "c")
+        .expect("c")
+    }
 }

@@ -637,6 +637,14 @@ pub async fn create_intervention_request_in(
     // Decision O7: every new request names its org node (its anchor for site-scoped roles).
     super::access::require_org_node(input.org_node_id)?;
     crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
+    // AU-73: no new request on retired equipment (Déclassé / Rebuté), from the form or from an
+    // inspection anomaly. A request received by sync is applied by the sync materializer.
+    if let Some(asset) = crate::assets::identity::retired_equipment_code(db, input.equipment_id).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_DI_EQUIPMENT_RETIRED:asset={asset}: L'équipement {asset} est déclassé ou mis au rebut : \
+             aucune demande d'intervention ne peut y être créée."
+        )]));
+    }
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

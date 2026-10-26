@@ -155,6 +155,8 @@ pub async fn convert_di_to_work_order(
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
     }
+    // AU-73: the equipment may have been retired since the request was approved.
+    crate::wo::queries::refuse_retired_equipment(&txn, di.equipment_id).await?;
 
     // ── 3. Create WO in work_orders table ───────────────────────────────
     let now = now_utc_z();

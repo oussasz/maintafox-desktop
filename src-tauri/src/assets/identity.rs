@@ -1065,6 +1065,33 @@ pub const RETIRE_THROUGH_DECOMMISSION: &str = "ASSET_RETIRE_THROUGH_DECOMMISSION
 /// (`RECOMMISSIONED`, which records who and why and clears the end-of-life date).
 pub const RECOMMISSION_REQUIRED: &str = "ASSET_RECOMMISSION_REQUIRED";
 
+/// The code of a live equipment whose lifecycle status is retired (Déclassé / Rebuté), if it is:
+/// no new work order or request is raised on such an equipment (AU-73). `None` for an equipment
+/// in service, and for an unknown or deleted one (the caller has its own refusal for those).
+pub(crate) async fn retired_equipment_code<C: ConnectionTrait>(db: &C, equipment_id: i64) -> AppResult<Option<String>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT e.asset_id_code, e.lifecycle_status FROM equipment e \
+             WHERE e.id = ? AND e.deleted_at IS NULL",
+            [equipment_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let status: Option<String> = row
+        .try_get("", "lifecycle_status")
+        .map_err(|e| decode_err("lifecycle_status", e))?;
+    match status {
+        Some(status) if is_retired_status_code(db, &status).await? => Ok(Some(
+            row.try_get("", "asset_id_code")
+                .map_err(|e| decode_err("asset_id_code", e))?,
+        )),
+        _ => Ok(None),
+    }
+}
+
 /// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
 pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
     Ok(db
