@@ -148,6 +148,8 @@ const SyncConflictRecordSchema = z.object({
     .nullable()
     .optional()
     .default(null),
+  /** A refused count movement or audit link (COUNT_APPROVAL_RECORD_INVALID): whether it is held here. */
+  history_row_held: z.boolean().nullable().optional().default(null),
   created_at: z.string(),
   updated_at: z.string(),
 });

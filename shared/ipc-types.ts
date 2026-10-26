@@ -10625,6 +10625,7 @@ export interface SyncConflictRecord {
   count_hold?: SyncConflictCountHold | null;
   /** Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the two times the card shows. */
   planning_times?: SyncConflictPlanningTimes | null;
+  history_row_held?: boolean | null;
   created_at: string;
   updated_at: string;
 }

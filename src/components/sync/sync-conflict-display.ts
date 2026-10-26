@@ -340,14 +340,48 @@ export const PLANNING_CONFLICT_KINDS = new Set([
 export const SETTLED_AT_ORIGIN_CONFLICT_KINDS = new Set(["COUNT_SELF_APPROVAL"]);
 
 /**
+ * Append-only history records of a stock count (its stock movement and the movement's audit link:
+ * `ConflictPolicy::AppendOnly` in `src-tauri/src/sync/registry.rs`). A
+ * `COUNT_APPROVAL_RECORD_INVALID` refusal of one of them: when the refused row is not held here
+ * the server accepts only "dismiss" and "escalate" (`refused_history_row_absent` in
+ * `src-tauri/src/sync/queries.rs`; "retry later" is refused too). When the movement IS held here
+ * (a forged later version of a movement applied here), "keep mine" is the repair: it sends the
+ * movement held here again. "Take theirs" is then never offered: the received version is judged
+ * again and always refused (`GATE_SYNC_SERVER_VERSION_NOT_APPLIED`). The list says which
+ * (`SyncConflictRecord.history_row_held`, filled by `history_row_held` in the same file); when it
+ * is not known, only the two choices the server always accepts are offered. The same refusal on a
+ * count line keeps the usual choices: "take theirs" judges the received version again and
+ * releases the held movement once it is the line's own (`inventory::count_four_eyes`).
+ */
+export const COUNT_HISTORY_ENTITY_TYPES = new Set([
+  "inventory_transactions",
+  "inventory_mutation_audit_links",
+]);
+
+/**
  * The choices offered on a conflict, in order. `withTriage`: also "retry later" and "escalate"
- * (Settings → sync diagnostics); a review-only conflict always offers "escalate".
+ * (Settings → sync diagnostics); a review-only conflict always offers "escalate". `entityType`
+ * and `historyRowHeld`: the conflict's record type and whether its refused history row is held here
+ * (`SyncConflictRecord.entity_type`, `.history_row_held`).
  */
 export function conflictActions(
   conflictType: string,
   withTriage: boolean,
+  entityType: string,
+  historyRowHeld: boolean | null | undefined,
 ): ResolveSyncConflictInput["action"][] {
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  if (
+    conflictType === "COUNT_APPROVAL_RECORD_INVALID" &&
+    COUNT_HISTORY_ENTITY_TYPES.has(entityType)
+  ) {
+    if (historyRowHeld !== true) return ["escalate", "dismiss"];
+    return [
+      "accept_local",
+      ...(withTriage ? (["retry_later", "escalate"] as const) : (["escalate"] as const)),
+      "dismiss",
+    ];
+  }
   if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
     return withTriage ? ["retry_later", "escalate"] : ["escalate"];

@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { conflictActions } from "@/components/sync/sync-conflict-display";
 import { mockInvoke } from "@/test/mocks/tauri";
 
 import {
@@ -231,6 +232,37 @@ describe("sync summary", () => {
     mockInvoke.mockResolvedValueOnce([conflictRecord()]);
     const other = await listSyncConflicts();
     expect(other[0]?.count_hold).toBeNull();
+  });
+
+  it("keeps whether a refused count movement is held here, and the choices follow it", async () => {
+    const movement = {
+      entity_type: "inventory_transactions",
+      entity_sync_id: "mov-1",
+      conflict_type: "COUNT_APPROVAL_RECORD_INVALID",
+    };
+    const choices = async (
+      overrides: Record<string, unknown>,
+    ): Promise<{ held: boolean | null | undefined; actions: string[] | null }> => {
+      mockInvoke.mockResolvedValueOnce([conflictRecord({ ...movement, ...overrides })]);
+      const [c] = await listSyncConflicts();
+      return {
+        held: c?.history_row_held,
+        actions: c
+          ? conflictActions(c.conflict_type, false, c.entity_type, c.history_row_held)
+          : null,
+      };
+    };
+    // Held here: "keep mine" sends the movement again (the repair); "take theirs" is never offered.
+    expect(await choices({ history_row_held: true })).toEqual({
+      held: true,
+      actions: ["accept_local", "escalate", "dismiss"],
+    });
+    // Not held here, or not said: only the two choices the server always accepts.
+    expect(await choices({ history_row_held: false })).toEqual({
+      held: false,
+      actions: ["escalate", "dismiss"],
+    });
+    expect(await choices({})).toEqual({ held: null, actions: ["escalate", "dismiss"] });
   });
 
   it("lists outbox items with the given filter", async () => {
