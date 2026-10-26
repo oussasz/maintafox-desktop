@@ -9385,6 +9385,12 @@ export interface ScheduleBreakIn {
   approver_signed_at: string | null;
   /** Blocking checks the break-in forced: crew_capacity, locked_window, readiness, shutdown_window. */
   forced_checks: string[];
+  /** The crew the work leaves (null: new work, or before 0.9.2) and the crew it goes to. */
+  old_team_id: number | null;
+  new_team_id: number | null;
+  /** Refused by a planner on a PC that received it ("refusé (sync)"): history, never valid. */
+  sync_refused_at: string | null;
+  sync_refused_reason: string | null;
 }
 
 /** A person who may sign a break-in of a crew (plan.confirm at the crew's site). */

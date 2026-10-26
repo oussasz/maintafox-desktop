@@ -310,9 +310,17 @@ export const KNOWN_WAIT_REASONS = new Set([
 export const REVIEW_ONLY_CONFLICT_KINDS = new Set([
   "PERMIT_ENDED_BEFORE_START",
   "PERMIT_ENDED_DURING_WORK",
-  // Planning four-eyes (CMMS Advisor Q2-Q4): never taken as received from the sync centre. Work
-  // entering a frozen week is let in by its signed break-in (the conflict then closes by itself) or
-  // re-planned here as a break-in; a week reopens here only through its four-eyes unfreeze.
+]);
+
+/**
+ * Planning four-eyes refusals (CMMS Advisor decision 2026-10-25): only "keep this PC's plan"
+ * (plan.confirm at the crew's site, with the reason; a refused row new here is kept in its refused
+ * form and sent, never deleted) and "escalate". Nothing is taken as received or dismissed: a
+ * legitimate change is redone here with a fresh signed break-in (`PLANNING_ACTIONS` in
+ * `src-tauri/src/sync/queries.rs`). A frozen-week or reopened-week refusal closes by itself when
+ * its signed break-in or its unfreeze decision arrives.
+ */
+export const PLANNING_CONFLICT_KINDS = new Set([
   "PLANNING_WEEK_FROZEN",
   "PLANNING_BREAK_IN_APPROVAL_REQUIRED",
   "PLANNING_BREAK_IN_SELF_APPROVAL",
@@ -340,6 +348,7 @@ export function conflictActions(
   withTriage: boolean,
 ): ResolveSyncConflictInput["action"][] {
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
     return withTriage ? ["retry_later", "escalate"] : ["escalate"];
   }

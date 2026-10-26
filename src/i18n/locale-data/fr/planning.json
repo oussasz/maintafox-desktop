@@ -235,7 +235,8 @@
     "approverPasswordPlaceholder": "Saisi par l'approbateur",
     "signatureHint": "L'approbateur signe en saisissant son mot de passe sur ce poste. Un break-in urgent, ou qui force un contrôle bloquant (charge de l'équipe, fenêtre verrouillée, arrêt, préparation), doit être signé.",
     "noApprovers": "Personne d'autre ne détient plan.confirm sur le site de cette équipe : un break-in urgent ne peut pas être signé. Un travail d'urgence passe par un OT non planifié.",
-    "inserted": "Ajouté en semaine gelée :"
+    "inserted": "Ajouté en semaine gelée :",
+    "syncRefused": "refusé (sync)"
   },
   "freeze": {
     "title": "Geler la période de planning",
