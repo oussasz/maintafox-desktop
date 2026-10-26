@@ -1520,3 +1520,253 @@ async fn an_unsent_local_change_is_kept_and_sent_sealed_after_the_upgrade() {
     .await;
     assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 0);
 }
+
+// ── Review round 3 (R3-S9, R3-N6) ─────────────────────────────────────────────────────────────
+
+/// The unsent sends of a decision: (row version, base, status, payload).
+async fn sends_of(f: &Fixture, sid: &str) -> Vec<(i64, Option<i64>, String, Payload)> {
+    f.db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT row_version, base_row_version, status, payload_json FROM sync_outbox WHERE entity_sync_id = '{sid}' ORDER BY id"
+        ),
+    ))
+    .await
+    .expect("q")
+    .iter()
+    .map(|r| {
+        (
+            r.try_get("", "row_version").expect("rv"),
+            r.try_get("", "base_row_version").expect("base"),
+            r.try_get("", "status").expect("status"),
+            serde_json::from_str(&r.try_get::<String>("", "payload_json").expect("payload")).expect("json"),
+        )
+    })
+    .collect()
+}
+
+/// PC A as in review R3-S9: PC B approved the decision (v2, received here), A applied it offline
+/// (v3, unsent, base v2; its work order created) and was upgraded (its sealed row journaled on top,
+/// v4). Returns the decision's id, its sync id, and B's seal-only re-send of v2.
+async fn pc_a_with_unsent_apply(f: &Fixture, study_id: i64) -> (i64, String, Payload) {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+    let (a, sid) = approved(f, study_id).await;
+    let mut v2 = wire_of(f, ENTITY, &sid).await;
+    for key in ["approval_seal", "sync_refused_at", "sync_refused_reason"] {
+        v2.remove(key);
+    }
+    let v2_text = serde_json::to_string(&v2).expect("json");
+    let current = crate::reliability::study::decisions::get_decision(&f.db, a.id)
+        .await
+        .expect("get");
+    apply_decision(&f.db, decide(&current, None), f.admin)
+        .await
+        .expect("apply offline");
+    exec(&f.db, &format!("UPDATE {ENTITY} SET approval_seal = NULL")).await;
+    exec(&f.db, "DELETE FROM sync_capture_journal").await;
+    exec(
+        &f.db,
+        &format!("DELETE FROM sync_outbox WHERE entity_sync_id = '{sid}'"),
+    )
+    .await;
+    // v2 as received from B (kept in the inbox), the server version known here.
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, row_version, payload_json, payload_hash, apply_status) VALUES ('b-v2', 'c1', '{ENTITY}', '{sid}', 'upsert', 2, '{}', 'h-v2', 'applied')",
+            v2_text.replace('\'', "''")
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT OR REPLACE INTO sync_entity_state (entity_type, entity_sync_id, synced_row_version, synced_payload_hash, source) VALUES ('{ENTITY}', '{sid}', 2, 'h-v2', 'inbound_apply')"
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version, payload_json, payload_hash, status) VALUES ('k-v3', '{ENTITY}', '{sid}', 'upsert', 3, 2, '{{\"status\":\"applied\"}}', 'h-v3', 'pending')"
+        ),
+    )
+    .await;
+    crate::migrations::m20261026_000264_reliability_decision_seal::Migration
+        .up(&SchemaManager::new(&f.db))
+        .await
+        .expect("migration 264");
+    crate::sync::capture::drain_capture_journal(&f.db)
+        .await
+        .expect("drain at start-up");
+    // B's re-send of v2 after its upgrade: the same content, sealed, with the new empty columns.
+    let mut resend = v2.clone();
+    resend.insert(
+        "approval_seal".into(),
+        local_approval_seal(&f.db, a.id)
+            .await
+            .expect("seal")
+            .expect("row")
+            .into(),
+    );
+    resend.insert("sync_refused_at".into(), Value::Null);
+    resend.insert("sync_refused_reason".into(), Value::Null);
+    (a.id, sid, through_text(&resend))
+}
+
+/// R3-S9, push path: B re-sent first; A's push gets a server conflict. It is settled with no
+/// person: A's change is staged again on top of B's version, sealed, applied; another PC accepts it
+/// and no PC can apply it a second time. A version that differs in anything else is not settled.
+#[tokio::test]
+async fn a_seal_only_resend_crossing_an_unsent_apply_settles_on_push() {
+    use crate::reliability::study::decision_sync::settle_seal_resend_server_conflict;
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (id, sid, resend) = pc_a_with_unsent_apply(&f, study_id).await;
+    let conflict = |payload: &Payload| crate::sync::domain::SyncServerConflictInput {
+        idempotency_key: "k-v3".into(),
+        entity_type: ENTITY.into(),
+        entity_sync_id: sid.clone(),
+        local_row_version: 3,
+        local_base_row_version: Some(2),
+        server_row_version: 3,
+        server_operation: "upsert".into(),
+        server_payload_json: Some(serde_json::to_string(payload).expect("json")),
+        server_payload_hash: Some("h-b-v3".into()),
+        server_owner_user_sync_id: None,
+        server_deleted: false,
+    };
+    // Anything else changed: not a seal-only re-send, a person decides.
+    let mut changed = resend.clone();
+    changed.insert("decision_note".into(), "autre".into());
+    assert!(!settle_seal_resend_server_conflict(&f.db, &conflict(&changed))
+        .await
+        .expect("judge"));
+    // The seal-only re-send: settled.
+    assert!(settle_seal_resend_server_conflict(&f.db, &conflict(&resend))
+        .await
+        .expect("settle"));
+    let sends = sends_of(&f, &sid).await;
+    let open: Vec<_> = sends.iter().filter(|s| s.2 == "pending").collect();
+    assert_eq!(open.len(), 1, "{sends:?}");
+    assert_eq!((open[0].0, open[0].1), (4, Some(3)), "staged on top of B's version");
+    assert_eq!(open[0].3.get("status").and_then(Value::as_str), Some("applied"));
+    assert!(open[0]
+        .3
+        .get("approval_seal")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.starts_with("v1:")));
+    assert_eq!(sends.iter().filter(|s| s.2 == "superseded").count(), 2, "v3 and v4");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{sid}'")
+        )
+        .await,
+        0,
+        "nobody asked"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM audit_events WHERE action_code = 'reliability.decision.seal_resend_settled' AND target_id = '{sid}'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(decision_status(&f, id).await, "applied");
+    // B (and any PC) accepts A's version applied: no second apply anywhere.
+    let (n, p) = as_new(&open[0].3, "pc-b");
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    let there = scalar(&f.db, &format!("SELECT id FROM {ENTITY} WHERE entity_sync_id = '{n}'")).await;
+    let there = crate::reliability::study::decisions::get_decision(&f.db, there)
+        .await
+        .expect("get");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&there, None), f.admin).await),
+        "DECISION_NOT_APPROVED"
+    );
+}
+
+/// R3-S9, pull path: A pulls B's re-send before pushing: settled with no person, A's row stays
+/// applied, its change staged on top of B's version.
+#[tokio::test]
+async fn a_seal_only_resend_crossing_an_unsent_apply_settles_on_pull() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (id, sid, resend) = pc_a_with_unsent_apply(&f, study_id).await;
+    inbox(&f, &sid, &resend, 3).await;
+    materialize(&f).await;
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{sid}'")
+        )
+        .await,
+        0,
+        "no CONCURRENT_EDIT"
+    );
+    assert_eq!(decision_status(&f, id).await, "applied", "not written over");
+    let open: Vec<_> = sends_of(&f, &sid)
+        .await
+        .into_iter()
+        .filter(|s| s.2 == "pending")
+        .collect();
+    assert_eq!(open.len(), 1);
+    assert_eq!((open[0].0, open[0].1), (4, Some(3)));
+    assert_eq!(open[0].3.get("status").and_then(Value::as_str), Some("applied"));
+}
+
+/// R3-N6: a change sent but not acknowledged at the upgrade (in flight) is kept, and the sealed row
+/// is staged on top of it.
+#[tokio::test]
+async fn an_in_flight_change_is_kept_and_followed_by_its_sealed_version() {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (_, sid) = approved(&f, study_id).await;
+    exec(&f.db, &format!("UPDATE {ENTITY} SET approval_seal = NULL")).await;
+    exec(&f.db, "DELETE FROM sync_capture_journal").await;
+    exec(&f.db, "DELETE FROM sync_outbox").await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version, payload_json, payload_hash, status) VALUES ('k-flight', '{ENTITY}', '{sid}', 'upsert', 5, 4, '{{}}', 'h-5', 'in_flight')"
+        ),
+    )
+    .await;
+    crate::migrations::m20261026_000264_reliability_decision_seal::Migration
+        .up(&SchemaManager::new(&f.db))
+        .await
+        .expect("migration 264");
+    crate::sync::capture::drain_capture_journal(&f.db).await.expect("drain");
+    let sends = sends_of(&f, &sid).await;
+    assert_eq!(sends.len(), 2, "{sends:?}");
+    assert_eq!(sends[0].2, "in_flight", "kept");
+    assert_eq!(
+        (sends[1].0, sends[1].1),
+        (6, Some(5)),
+        "on top of the in-flight version"
+    );
+    assert!(sends[1]
+        .3
+        .get("approval_seal")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.starts_with("v1:")));
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM system_config WHERE key = '{SEAL_RESEND_KEY}' AND value LIKE '%{sid}%'")
+        )
+        .await,
+        0,
+        "not listed for the post-pull re-send"
+    );
+}
