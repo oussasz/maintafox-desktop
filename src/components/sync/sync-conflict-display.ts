@@ -340,14 +340,38 @@ export const PLANNING_CONFLICT_KINDS = new Set([
 export const SETTLED_AT_ORIGIN_CONFLICT_KINDS = new Set(["COUNT_SELF_APPROVAL"]);
 
 /**
+ * Append-only history records of a stock count (its stock movement and the movement's audit link:
+ * `ConflictPolicy::AppendOnly` in `src-tauri/src/sync/registry.rs`). A
+ * `COUNT_APPROVAL_RECORD_INVALID` refusal of one of them is settled with its count line, never on
+ * the movement itself: when the refused row is not held here the server accepts only "dismiss" and
+ * "escalate" (`refused_history_row_absent` in `src-tauri/src/sync/queries.rs`; "retry later" is
+ * refused too). The screen cannot tell whether the row is held here, so it offers those two only,
+ * which the server always accepts. The same refusal on a count line keeps the usual choices:
+ * "take theirs" judges the received version again and releases the held movement once it is the
+ * line's own (`inventory::count_four_eyes`).
+ */
+export const COUNT_HISTORY_ENTITY_TYPES = new Set([
+  "inventory_transactions",
+  "inventory_mutation_audit_links",
+]);
+
+/**
  * The choices offered on a conflict, in order. `withTriage`: also "retry later" and "escalate"
- * (Settings → sync diagnostics); a review-only conflict always offers "escalate".
+ * (Settings → sync diagnostics); a review-only conflict always offers "escalate". `entityType`: the
+ * record type of the conflict (`SyncConflictRecord.entity_type`).
  */
 export function conflictActions(
   conflictType: string,
   withTriage: boolean,
+  entityType: string,
 ): ResolveSyncConflictInput["action"][] {
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
+  if (
+    conflictType === "COUNT_APPROVAL_RECORD_INVALID" &&
+    COUNT_HISTORY_ENTITY_TYPES.has(entityType)
+  ) {
+    return ["escalate", "dismiss"];
+  }
   if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {
     return withTriage ? ["retry_later", "escalate"] : ["escalate"];

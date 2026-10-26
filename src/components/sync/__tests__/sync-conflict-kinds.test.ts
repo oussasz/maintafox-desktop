@@ -8,6 +8,7 @@ import en from "@/i18n/en/shell.json";
 import fr from "@/i18n/fr/shell.json";
 
 import {
+  COUNT_HISTORY_ENTITY_TYPES,
   KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_WAIT_REASONS,
@@ -96,7 +97,7 @@ describe("sync conflict kinds", () => {
       expect(KNOWN_CONFLICT_KINDS.has(kind)).toBe(true);
       expect(REVIEW_ONLY_CONFLICT_KINDS.has(kind)).toBe(false);
       for (const triage of [false, true]) {
-        expect(conflictActions(kind, triage)).toEqual(["accept_local", "escalate"]);
+        expect(conflictActions(kind, triage, "work_orders")).toEqual(["accept_local", "escalate"]);
       }
     }
   });
@@ -105,24 +106,70 @@ describe("sync conflict kinds", () => {
     for (const kind of ["PERMIT_ENDED_BEFORE_START", "PERMIT_ENDED_DURING_WORK"]) {
       expect(REVIEW_ONLY_CONFLICT_KINDS.has(kind)).toBe(true);
       for (const triage of [false, true]) {
-        expect(conflictActions(kind, triage)).toEqual(["escalate", "dismiss"]);
+        expect(conflictActions(kind, triage, "work_orders")).toEqual(["escalate", "dismiss"]);
       }
     }
     // A count held for a second approval is settled where it is applied: no keep / take / dismiss.
     expect(SETTLED_AT_ORIGIN_CONFLICT_KINDS.has("COUNT_SELF_APPROVAL")).toBe(true);
-    expect(conflictActions("COUNT_SELF_APPROVAL", false)).toEqual(["escalate"]);
-    expect(conflictActions("COUNT_SELF_APPROVAL", true)).toEqual(["retry_later", "escalate"]);
-    expect(conflictActions("CONCURRENT_EDIT", false)).toEqual([
+    expect(conflictActions("COUNT_SELF_APPROVAL", false, "work_orders")).toEqual(["escalate"]);
+    expect(conflictActions("COUNT_SELF_APPROVAL", true, "work_orders")).toEqual([
+      "retry_later",
+      "escalate",
+    ]);
+    expect(conflictActions("CONCURRENT_EDIT", false, "work_orders")).toEqual([
       "accept_local",
       "accept_remote",
       "dismiss",
     ]);
-    expect(conflictActions("CODE_CLASH", true)).toEqual([
+    expect(conflictActions("CODE_CLASH", true, "work_orders")).toEqual([
       "renumber_local",
       "retry_later",
       "escalate",
       "dismiss",
     ]);
-    expect(conflictActions("USERNAME_CLASH", false)).toEqual(["accept_remote", "dismiss"]);
+    expect(conflictActions("USERNAME_CLASH", false, "work_orders")).toEqual([
+      "accept_remote",
+      "dismiss",
+    ]);
+  });
+
+  it("offer only escalate and dismiss on a refused count movement or its audit link (piece F)", () => {
+    // The server accepts only these two when the refused history row is not held here, and the
+    // screen cannot tell (`refused_history_row_absent` in src-tauri/src/sync/queries.rs).
+    expect([...COUNT_HISTORY_ENTITY_TYPES].sort()).toEqual([
+      "inventory_mutation_audit_links",
+      "inventory_transactions",
+    ]);
+    for (const entity of COUNT_HISTORY_ENTITY_TYPES) {
+      for (const triage of [false, true]) {
+        expect(conflictActions("COUNT_APPROVAL_RECORD_INVALID", triage, entity)).toEqual([
+          "escalate",
+          "dismiss",
+        ]);
+      }
+    }
+    // On the count line itself "take theirs" is the release path: the usual choices stay.
+    expect(
+      conflictActions("COUNT_APPROVAL_RECORD_INVALID", false, "inventory_count_lines"),
+    ).toEqual(["accept_local", "accept_remote", "dismiss"]);
+    expect(conflictActions("COUNT_APPROVAL_RECORD_INVALID", true, "inventory_count_lines")).toEqual(
+      ["accept_local", "accept_remote", "retry_later", "escalate", "dismiss"],
+    );
+    // Other kinds on the same history records are unchanged.
+    for (const entity of COUNT_HISTORY_ENTITY_TYPES) {
+      expect(conflictActions("CONCURRENT_EDIT", true, entity)).toEqual([
+        "accept_local",
+        "accept_remote",
+        "retry_later",
+        "escalate",
+        "dismiss",
+      ]);
+      expect(conflictActions("COUNT_SELF_APPROVAL", false, entity)).toEqual(["escalate"]);
+      expect(conflictActions("COUNT_APPROVAL_RECORD_CHANGED", false, entity)).toEqual([
+        "accept_local",
+        "accept_remote",
+        "dismiss",
+      ]);
+    }
   });
 });
