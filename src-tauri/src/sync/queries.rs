@@ -143,17 +143,26 @@ fn settled_at_origin_conflict(conflict_type: &str) -> bool {
 /// send again) and "take theirs" judges it again (refused): only "dismiss" and "escalate" are
 /// accepted ([`resolve_sync_conflict`]).
 async fn refused_history_row_absent(conn: &impl ConnectionTrait, conflict: &SyncConflictRecord) -> AppResult<bool> {
+    Ok(history_row_held(conn, conflict).await? == Some(false))
+}
+
+/// For a `COUNT_APPROVAL_RECORD_INVALID` conflict on an append-only history row (a count's stock
+/// movement or its audit link): whether that row is held here. `Some(false)`: only "dismiss" and
+/// "escalate" are accepted ([`refused_history_row_absent`]); `Some(true)`: "keep mine" sends the
+/// row held here again, the repair of a forged later version of a movement applied here. `None`
+/// for any other conflict.
+async fn history_row_held(conn: &impl ConnectionTrait, conflict: &SyncConflictRecord) -> AppResult<Option<bool>> {
     if conflict.conflict_type != crate::inventory::count_four_eyes::SYNC_APPROVAL_RECORD_INVALID
         || registry::entity(&conflict.entity_type)
             .is_none_or(|def| def.conflict_policy != registry::ConflictPolicy::AppendOnly)
     {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(
+    Ok(Some(
         crate::permit::sync_check::local_wire(conn, &conflict.entity_type, &conflict.entity_sync_id)
             .await?
-            .is_none(),
-    )
+            .is_some(),
+    ))
 }
 
 fn map_resolution_to_status(action: &str) -> Option<&'static str> {
@@ -415,6 +424,7 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
         reason,
         count_hold: None,
         planning_times: None,
+        history_row_held: None,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1918,6 +1928,9 @@ async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRe
         conflict.inbound_payload_json.as_deref(),
     )
     .await?;
+    // A refused count movement or audit link: whether the row is held here, so the screen offers
+    // "keep mine" only where the server accepts it (`history_row_held`).
+    conflict.history_row_held = history_row_held(db, &conflict).await?;
     Ok(conflict)
 }
 
