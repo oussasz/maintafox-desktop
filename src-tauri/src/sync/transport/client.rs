@@ -200,16 +200,23 @@ impl ControlPlaneClient {
             .map_err(|e| TransportError::Contract(format!("{path} answer does not follow the sync contract: {e}")))
     }
 
-    /// `POST {path}` with the bearer token, answering the status and body as received, for a caller
-    /// that reads the server's answer, error bodies included, by its own contract (the licence
-    /// policy refresh, `commands::product_license::refresh_product_activation_policy_in`). A request
-    /// that produced no answer is an error (`Offline`, `Interrupted`); so is an answer longer than
+    /// `POST {path}`, with the bearer token when one is given, answering the status and body as
+    /// received, for a caller that reads the server's answer, error bodies included, by its own
+    /// contract (the licence activation calls of `commands::product_license`: policy refresh,
+    /// preview and claim without a token, tenant initialisation). A request that produced no
+    /// answer is an error (`Offline`, `Interrupted`); so is an answer longer than
     /// [`RAW_ANSWER_MAX_BYTES`], cut off there and never read whole (`Contract`).
-    pub async fn post_json_raw(&self, path: &str, token: &str, body: String) -> Result<(u16, String), TransportError> {
-        let mut response = self
-            .http
-            .post(format!("{}{path}", self.base_url))
-            .bearer_auth(token)
+    pub async fn post_json_raw(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: String,
+    ) -> Result<(u16, String), TransportError> {
+        let mut request = self.http.post(format!("{}{path}", self.base_url));
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let mut response = request
             .header(CONTENT_TYPE, "application/json")
             .body(body)
             .send()
