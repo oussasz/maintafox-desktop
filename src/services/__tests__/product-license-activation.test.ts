@@ -1,21 +1,18 @@
 /**
- * Activation against the control plane: the desktop accepts the field spellings older and newer
- * servers send, turns HTTP errors into coded errors, and maps every code to user-facing copy
- * (never raw backend text as the main message).
+ * Activation against the control plane, sent from Rust: the desktop accepts the field spellings
+ * older and newer servers send, turns error answers into coded errors, and maps every code to
+ * user-facing copy (never raw backend text as the main message). No call carries a token.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  type ProductActivationClaim,
-  assertClaimSerializableForDesktop,
   claimProductActivation,
   getActivationLicenseMetadata,
-  getActivationTenantStatus,
   getProductLicenseDiagnostics,
   markActivationTenantInitialized,
   previewProductActivation,
+  reclaimProductActivation,
   refreshProductActivationPolicy,
-  toDesktopActivationClaimRecord,
   toUserFacingActivationError,
 } from "@/services/product-license-service";
 
@@ -28,25 +25,13 @@ vi.mock("@/lib/ipc-invoke", async (importOriginal) => ({
 const INPUT = { license_key: "MFX-TEST", machine_fingerprint: "fp-1" };
 const BASE = { tenant_id: "t-1", license_id: "l-1", machine_fingerprint: "fp-1" };
 
-function respond(status: number, body: unknown): Response {
-  const text = typeof body === "string" ? body : JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: () => Promise.resolve(text),
-    json: () => Promise.resolve(typeof body === "string" ? JSON.parse(body) : body),
-  } as unknown as Response;
+/** Rust's answer to an activation call that got `answer` from the server. */
+function answered(answer: unknown): { kind: "answered"; answer: unknown } {
+  return { kind: "answered", answer };
 }
 
-const fetchMock = vi.fn();
-
 beforeEach(() => {
-  fetchMock.mockReset();
-  vi.stubGlobal("fetch", fetchMock);
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
+  ipc.invoke.mockReset();
 });
 
 describe("activation payload from different server versions", () => {
@@ -62,7 +47,7 @@ describe("activation payload from different server versions", () => {
     ["unparsable nested text", { license: { slot_limit: "many" } }, undefined],
     ["nothing", {}, undefined],
   ])("reads the device limit from %s", async (_label, extra, expected) => {
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, ...extra }));
+    ipc.invoke.mockResolvedValue(answered({ ...BASE, ...extra }));
     const preview = await previewProductActivation(INPUT);
     expect(preview.device_limit).toBe(expected);
   });
@@ -76,7 +61,7 @@ describe("activation payload from different server versions", () => {
     ["claim.tier", { claim: { tier: "nested" } }, "nested", undefined, undefined],
     ["entitlement.tier", { entitlement: { tier: "ent" } }, "ent", undefined, undefined],
   ])("reads tier, plan and edition from %s", async (_label, extra, tier, plan, edition) => {
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, ...extra }));
+    ipc.invoke.mockResolvedValue(answered({ ...BASE, ...extra }));
     const preview = await previewProductActivation(INPUT);
     expect([preview.license_tier, preview.license_plan, preview.edition]).toEqual([
       tier,
@@ -94,13 +79,13 @@ describe("activation payload from different server versions", () => {
     ["tenant.name", { tenant: { name: "Acme" } }],
     ["company.display_name", { company: { display_name: "Acme" } }],
   ])("reads the company name from %s", async (_label, extra) => {
-    fetchMock.mockResolvedValue(respond(200, { ...BASE, ...extra }));
+    ipc.invoke.mockResolvedValue(answered({ ...BASE, ...extra }));
     expect((await previewProductActivation(INPUT)).tenant_display_name).toBe("Acme");
   });
 
   it("reads slug, counts, demo and initialisation flags from their alternative fields", async () => {
-    fetchMock.mockResolvedValue(
-      respond(200, {
+    ipc.invoke.mockResolvedValue(
+      answered({
         ...BASE,
         tenant: { slug: "acme", is_initialized: true },
         limits: { activated: 2 },
@@ -116,8 +101,8 @@ describe("activation payload from different server versions", () => {
       license_status: "active",
     });
 
-    fetchMock.mockResolvedValue(
-      respond(200, {
+    ipc.invoke.mockResolvedValue(
+      answered({
         ...BASE,
         slug: "acme-2",
         active_device_count: 1,
@@ -133,19 +118,57 @@ describe("activation payload from different server versions", () => {
     });
   });
 
-  it("claims with the activation token and the same normalisation", async () => {
-    fetchMock.mockResolvedValue(
-      respond(200, { ...BASE, activation_token: "tok", slot_limit: 2, plan: "p" }),
+  it("asks Rust for the preview with the key, fingerprint, label and version", async () => {
+    ipc.invoke.mockResolvedValue(answered(BASE));
+    await previewProductActivation(INPUT);
+    // The gate shows the failure inline: no global toast as well.
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "preview_product_activation",
+      {
+        licenseKey: "MFX-TEST",
+        machineFingerprint: "fp-1",
+        machineLabel: null,
+        appVersion: null,
+      },
+      { notifyOnError: false },
     );
-    const claim = await claimProductActivation(INPUT);
-    expect(claim).toMatchObject({ activation_token: "tok", device_limit: 2, license_tier: "p" });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/v1/activation/claim");
+  });
+
+  it("claims through Rust with the same normalisation; the answer carries no token", async () => {
+    ipc.invoke.mockResolvedValue(answered({ ...BASE, slot_limit: 2, plan: "p" }));
+    const claim = await claimProductActivation({
+      ...INPUT,
+      machine_label: "Bench",
+      app_version: "1.2.3",
+    });
+    expect(claim).toMatchObject({ device_limit: 2, license_tier: "p" });
+    expect(claim).not.toHaveProperty("activation_token");
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "claim_product_activation",
+      {
+        licenseKey: "MFX-TEST",
+        machineFingerprint: "fp-1",
+        machineLabel: "Bench",
+        appVersion: "1.2.3",
+      },
+      { notifyOnError: false },
+    );
+  });
+
+  it("refuses an answer that names no organisation", async () => {
+    ipc.invoke.mockResolvedValue(answered({ license_id: "l-1", machine_fingerprint: "fp-1" }));
+    await expect(previewProductActivation(INPUT)).rejects.toThrow(/tenant_id/);
+  });
+
+  it("throws when Rust sent nothing for a preview or claim", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "not_activated" });
+    await expect(claimProductActivation(INPUT)).rejects.toThrow("Activation: nothing was sent.");
   });
 });
 
-describe("activation HTTP errors", () => {
-  async function failure(status: number, body: unknown): Promise<Error & Record<string, unknown>> {
-    fetchMock.mockResolvedValue(respond(status, body));
+describe("activation error answers (read from the body in Rust)", () => {
+  async function failure(result: unknown): Promise<Error & Record<string, unknown>> {
+    ipc.invoke.mockResolvedValue(result);
     try {
       await previewProductActivation(INPUT);
     } catch (err) {
@@ -154,43 +177,45 @@ describe("activation HTTP errors", () => {
     throw new Error("expected a failure");
   }
 
-  it("a 409 without a body means the device limit is reached", async () => {
-    const err = await failure(409, "");
+  it("a 409 without a code means the device limit is reached", async () => {
+    const err = await failure({
+      kind: "http_error",
+      status: 409,
+      code: null,
+      message: null,
+      details: null,
+    });
     expect(err["code"]).toBe("slot_limit_reached");
     expect(err.message).toMatch(/device slot/i);
     expect(err["technicalDetails"]).toBe("License validation HTTP 409");
   });
 
-  it.each([
-    [
-      "top-level code and message",
-      { code: "license_expired", message: "Expired" },
+  it("carries the server's code, message, status and body", async () => {
+    const err = await failure({
+      kind: "http_error",
+      status: 400,
+      code: "license_expired",
+      message: "Expired",
+      details: '{"code":"license_expired"}',
+    });
+    expect([err["code"], err.message, err["status"], err["technicalDetails"]]).toEqual([
       "license_expired",
       "Expired",
-    ],
-    [
-      "error string and detail",
-      { error: "license_revoked", detail: "Revoked" },
-      "license_revoked",
-      "Revoked",
-    ],
-    ["error_description", { error: "x", error_description: "Desc" }, "x", "Desc"],
-    [
-      "nested error object",
-      { error: { code: "tenant_inactive", message: "Off" } },
-      "tenant_inactive",
-      "Off",
-    ],
-  ])("reads %s", async (_label, body, code, message) => {
-    const err = await failure(400, body);
-    expect([err["code"], err.message, err["status"]]).toEqual([code, message, 400]);
+      400,
+      '{"code":"license_expired"}',
+    ]);
   });
 
-  it("keeps a non-JSON body as the message and falls back to the status otherwise", async () => {
-    expect((await failure(502, "Bad gateway")).message).toBe("Bad gateway");
-    const empty = await failure(503, "   ");
+  it("falls back to the status without a message", async () => {
+    const empty = await failure({ kind: "http_error", status: 503 });
     expect(empty.message).toBe("License validation failed (503)");
     expect(empty["code"]).toBeUndefined();
+  });
+
+  it("throws a plain error when no usable answer came", async () => {
+    const err = await failure({ kind: "network_error", message: "Cannot reach the control API" });
+    expect(err.message).toBe("Cannot reach the control API");
+    expect(err["status"]).toBeUndefined();
   });
 });
 
@@ -254,40 +279,68 @@ describe("user-facing activation errors", () => {
   });
 });
 
-describe("tenant status and initialisation", () => {
-  it("refuses an empty activation token before calling the server", async () => {
-    await expect(getActivationTenantStatus("  ")).rejects.toThrow(/token is required/);
-    await expect(markActivationTenantInitialized("")).rejects.toThrow(/token is required/);
-    expect(fetchMock).not.toHaveBeenCalled();
+describe("tenant initialisation (sent from Rust with the token held there)", () => {
+  it("asks Rust without any token and returns the tenant status", async () => {
+    ipc.invoke.mockResolvedValue(answered({ tenant_id: "t-1", is_initialized: true }));
+    expect(await markActivationTenantInitialized()).toMatchObject({ is_initialized: true });
+    expect(ipc.invoke).toHaveBeenCalledWith("mark_activation_tenant_initialized", undefined, {
+      notifyOnError: false,
+    });
   });
 
-  it("reads the tenant status with the bearer token, and reports server errors with their code", async () => {
-    fetchMock.mockResolvedValue(respond(200, { tenant_id: "t-1", is_initialized: false }));
-    expect(await getActivationTenantStatus(" tok ")).toMatchObject({ is_initialized: false });
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok");
-
-    fetchMock.mockResolvedValue(respond(401, { code: "invalid_token", message: "Bad token" }));
-    await expect(getActivationTenantStatus("tok")).rejects.toMatchObject({
-      code: "invalid_token",
-      status: 401,
+  it("fails as tenant_init_failed when this PC holds no activation", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "not_activated" });
+    await expect(markActivationTenantInitialized()).rejects.toMatchObject({
+      code: "tenant_init_failed",
     });
   });
 
   it("tells an unavailable initialisation (404) from a failed one", async () => {
-    fetchMock.mockResolvedValue(respond(200, { tenant_id: "t-1", is_initialized: true }));
-    expect(await markActivationTenantInitialized("tok")).toMatchObject({ is_initialized: true });
-
-    fetchMock.mockResolvedValue(respond(404, ""));
-    await expect(markActivationTenantInitialized("tok")).rejects.toMatchObject({
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 404, details: null });
+    await expect(markActivationTenantInitialized()).rejects.toMatchObject({
       code: "tenant_init_unavailable",
       message: "Tenant initialization failed (404)",
+      technicalDetails: "POST /api/v1/activation/tenant-status/initialize → 404",
     });
-    fetchMock.mockResolvedValue(respond(500, "database down"));
-    await expect(markActivationTenantInitialized("tok")).rejects.toMatchObject({
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 500, details: "database down" });
+    await expect(markActivationTenantInitialized()).rejects.toMatchObject({
       code: "tenant_init_failed",
+      status: 500,
       message: "database down",
       technicalDetails: "database down",
+    });
+    ipc.invoke.mockResolvedValue({ kind: "network_error", message: "offline" });
+    await expect(markActivationTenantInitialized()).rejects.toThrow("offline");
+  });
+});
+
+describe("re-claim with the key stored in Rust", () => {
+  const STATE = {
+    complete: true,
+    status: "active",
+    pending_online_validation: false,
+    retry_attempt: 0,
+  };
+
+  it("asks Rust with the label and version only, and returns the recorded state", async () => {
+    ipc.invoke.mockResolvedValue(answered(STATE));
+    expect(
+      await reclaimProductActivation({ machine_label: "Bench", app_version: "0.9.2" }),
+    ).toEqual({ kind: "reclaimed", state: STATE });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "reclaim_product_activation",
+      { machineLabel: "Bench", appVersion: "0.9.2" },
+      { notifyOnError: false },
+    );
+  });
+
+  it("says when no key is stored here, and throws error answers as the refresh does", async () => {
+    ipc.invoke.mockResolvedValue({ kind: "not_activated" });
+    expect(await reclaimProductActivation({})).toEqual({ kind: "not_activated" });
+    ipc.invoke.mockResolvedValue({ kind: "http_error", status: 403, code: "license_revoked" });
+    await expect(reclaimProductActivation({})).rejects.toMatchObject({
+      code: "license_revoked",
+      status: 403,
     });
   });
 });
@@ -299,10 +352,6 @@ describe("policy refresh (sent from Rust with the stored activation token)", () 
     pending_online_validation: false,
     retry_attempt: 0,
   };
-
-  beforeEach(() => {
-    ipc.invoke.mockReset();
-  });
 
   it("asks Rust with the app version only, never with a token, and returns the recorded state", async () => {
     ipc.invoke.mockResolvedValue({ kind: "refreshed", state: STATE });
@@ -317,7 +366,6 @@ describe("policy refresh (sent from Rust with the stored activation token)", () 
     expect(ipc.invoke).toHaveBeenLastCalledWith("refresh_product_activation_policy", {
       appVersion: null,
     });
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("says when this PC holds no activation token", async () => {
@@ -374,30 +422,7 @@ describe("policy refresh (sent from Rust with the stored activation token)", () 
   });
 });
 
-describe("claim stored on the device", () => {
-  const claim = (overrides: Partial<ProductActivationClaim> = {}): ProductActivationClaim => ({
-    ...BASE,
-    activation_token: "tok",
-    ...overrides,
-  });
-
-  it("uses the edition, else the tier, else the plan, and nulls what the server omitted", () => {
-    expect(toDesktopActivationClaimRecord(claim({ license_plan: "plan" }))).toMatchObject({
-      license_tier: "plan",
-      license_plan: "plan",
-      expires_at: null,
-      device_limit: null,
-    });
-    expect(toDesktopActivationClaimRecord(claim())["license_tier"]).toBeNull();
-  });
-
-  it("refuses a claim without its required identifiers", () => {
-    expect(() => assertClaimSerializableForDesktop(claim({ activation_token: " " }))).toThrow(
-      /missing required field: activation_token/,
-    );
-    expect(() => assertClaimSerializableForDesktop(claim())).not.toThrow();
-  });
-
+describe("activation stored on the device", () => {
   it("returns nothing, not an empty object, when the device holds no activation", async () => {
     ipc.invoke.mockResolvedValue(null);
     expect(await getActivationLicenseMetadata()).toBeNull();
