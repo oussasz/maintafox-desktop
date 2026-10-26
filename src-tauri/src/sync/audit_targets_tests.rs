@@ -36,6 +36,14 @@ const RUNTIME_TYPES: &[(&str, &str)] = &[
     ("planning_window", "org::site_assignment (NoSiteKind::audit_target)"),
     ("work_order", "qualification::gate (override context)"),
     ("permit_role", "qualification::gate (override context)"),
+    (
+        "schedule_commitment",
+        "planning::sync_check::audit_closed (frozen-week conflict)",
+    ),
+    (
+        "weekly_schedule",
+        "planning::sync_check::audit_closed (reopened-week conflict)",
+    ),
 ];
 
 /// Files that build an audit event with a target type set at run time, and where the types they
@@ -53,6 +61,10 @@ const DYNAMIC_SITES: &[(&str, &str)] = &[
     ("inventory/count_sync.rs", "write_posted_twice_audit: RUNTIME_TYPES"),
     ("org/site_assignment.rs", "NoSiteKind::audit_target: RUNTIME_TYPES"),
     ("qualification/gate.rs", "override context: RUNTIME_TYPES"),
+    (
+        "planning/sync_check.rs",
+        "audit_closed (planning conflict closed by itself): RUNTIME_TYPES",
+    ),
 ];
 
 /// Types kept on their device by an action-code term of the row filter (not by their type). Only

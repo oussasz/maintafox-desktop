@@ -595,6 +595,9 @@ impl Received {
     fn break_in(&self, start: &str, end: &str, edit: impl FnOnce(&mut Payload)) -> Payload {
         let mut p = self.break_in_template.clone();
         p.insert("schedule_commitment_sync_id".into(), self.commitment_sid.clone().into());
+        // The move it describes: from the commitment's slot here (review S1).
+        p.insert("old_slot_start".into(), self.commitment.committed_start.clone().into());
+        p.insert("old_slot_end".into(), self.commitment.committed_end.clone().into());
         p.insert("new_slot_start".into(), local(start).into());
         p.insert("new_slot_end".into(), local(end).into());
         p.insert("notification_dedupe_key".into(), format!("recv-{start}").into());
@@ -676,7 +679,8 @@ async fn a_self_approved_break_in_refuses_its_commitment_too() {
     let before = r.slot_here().await;
     let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
     let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
-    assert_eq!(conflict_code(&outcome), Some("SYNC_GROUP_REFUSED"), "{outcome:?}");
+    // Its break-in is judged before it is let in: the commitment is refused with the reason.
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
     match &outcome {
         ApplyOutcome::Conflict { message, .. } => {
             assert!(message.contains("PLANNING_BREAK_IN_SELF_APPROVAL"), "{message}")
@@ -712,7 +716,7 @@ async fn a_self_approved_break_in_refuses_its_commitment_too() {
     assert_eq!(
         scalar(
             &r.db,
-            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'SYNC_GROUP_REFUSED'                AND entity_type = 'schedule_commitments'"
+            "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'PLANNING_WEEK_FROZEN'                AND entity_type = 'schedule_commitments'"
         )
         .await,
         1

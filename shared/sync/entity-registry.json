@@ -1887,6 +1887,7 @@
       "parents": [
         "personnel",
         "schedule_commitments",
+        "teams",
         "user_accounts"
       ],
       "sync_status": "synced"
