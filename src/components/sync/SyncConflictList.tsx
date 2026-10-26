@@ -159,7 +159,12 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
-          const actions = conflictActions(c.conflict_type, showTriageActions, c.entity_type);
+          const actions = conflictActions(
+            c.conflict_type,
+            showTriageActions,
+            c.entity_type,
+            c.history_row_held,
+          );
           return (
             <li
               key={c.id}
