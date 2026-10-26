@@ -236,7 +236,9 @@ const TASK_COLS: &str = "id, work_order_id, task_description, sequence_order, \
 // A) add_task
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult<WoTask> {
+/// Inside a caller's transaction (PM content of a generated work order) its own transaction is
+/// a savepoint of the caller's.
+pub async fn add_task<C: ConnectionTrait + TransactionTrait>(db: &C, input: AddTaskInput) -> AppResult<WoTask> {
     let txn = db.begin().await?;
     let status_code = load_wo_status_code(&txn, input.wo_id).await?;
 

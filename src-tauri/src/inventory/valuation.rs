@@ -24,7 +24,7 @@ pub struct ReplenishmentProjection {
 }
 
 pub async fn evaluate_unit_cost(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     article_id: i64,
     warehouse_id: i64,
     location_id: i64,

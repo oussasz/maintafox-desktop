@@ -2387,7 +2387,11 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
     })
 }
 
-pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput) -> AppResult<StockReservation> {
+/// Inside a caller's transaction its own transaction is a savepoint of the caller's.
+pub async fn reserve_stock<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    input: InventoryReserveInput,
+) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
     let reservation_id = reserve_stock_in(&tx, &input).await?;
     tx.commit().await?;
@@ -2478,9 +2482,18 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
 /// posts through the same path as the issue desk (`inventory::issue::issue_stock`): lots picked
 /// FEFO for tracked articles, cost at the weighted average, closed periods refused.
 pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssueInput) -> AppResult<StockReservation> {
-    let reservation = load_reservation_by_id(db, input.reservation_id).await?;
-    crate::inventory::issue::issue_stock_with_source(
-        db,
+    let tx = db.begin().await?;
+    issue_reserved_stock_in(&tx, &input).await?;
+    tx.commit().await?;
+    load_reservation_by_id(db, input.reservation_id).await
+}
+
+/// [`issue_reserved_stock`] inside the caller's transaction (the WO part line records the used
+/// quantity in the same transaction, so a failure or a retry never issues twice).
+pub(crate) async fn issue_reserved_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryIssueInput) -> AppResult<()> {
+    let reservation = load_reservation_by_id(tx, input.reservation_id).await?;
+    crate::inventory::issue::issue_stock_with_source_in(
+        tx,
         crate::inventory::domain::IssueStockRequest {
             article_id: reservation.article_id,
             location_id: reservation.location_id,
@@ -2500,7 +2513,7 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         },
     )
     .await?;
-    load_reservation_by_id(db, reservation.id).await
+    Ok(())
 }
 
 /// One ISSUE movement of `quantity` against a reservation, inside the caller's transaction.
@@ -2666,15 +2679,26 @@ pub async fn return_reserved_stock_as(
     input: InventoryReturnInput,
     actor_id: Option<i64>,
 ) -> AppResult<StockReservation> {
+    let tx = db.begin().await?;
+    let reservation_id = return_reserved_stock_in(&tx, &input, actor_id).await?;
+    tx.commit().await?;
+    load_reservation_by_id(db, reservation_id).await
+}
+
+/// [`return_reserved_stock_as`] inside the caller's transaction; returns the reservation id.
+pub(crate) async fn return_reserved_stock_in<C: ConnectionTrait>(
+    tx: &C,
+    input: &InventoryReturnInput,
+    actor_id: Option<i64>,
+) -> AppResult<i64> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
         ]));
     }
-    let tx = db.begin().await?;
-    let reservation = load_reservation_by_id(&tx, input.reservation_id).await?;
+    let reservation = load_reservation_by_id(tx, input.reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
-    ensure_active_mutation_context(&tx, reservation.article_id, reservation.location_id).await?;
+    ensure_active_mutation_context(tx, reservation.article_id, reservation.location_id).await?;
     // Issued quantity: the row's, or the ledger's when it holds more. When two PCs released the
     // same reservation the row converges on the version sent first, which may not count an issue
     // made here; that issue's movement is still in the ledger (`inventory::reservations`).
@@ -2698,21 +2722,21 @@ pub async fn return_reserved_stock_as(
     // D13: nothing stays reserved for a released reservation or for a work order that is closed
     // or cancelled. Parts returned against it go back to free stock (on hand rises, reserved does
     // not) and the reservation is released; otherwise they are reserved again for the job.
-    let ended = crate::inventory::reservations::ended_work_order_of_reservation(&tx, reservation.id).await?;
+    let ended = crate::inventory::reservations::ended_work_order_of_reservation(tx, reservation.id).await?;
     let reservation = match ended {
         // Still open on an ended work order (ended before D13, or a reservation this PC made
         // while another closed the work order): its unissued remainder is released first, with
         // the reservation's one release movement, then the return goes to free stock.
         Some((wo_id, end)) if matches!(reservation.status.as_str(), "active" | "partial") => {
-            crate::inventory::reservations::release_before_return_after_end(&tx, reservation.id, wo_id, end, actor_id)
+            crate::inventory::reservations::release_before_return_after_end(tx, reservation.id, wo_id, end, actor_id)
                 .await?;
-            load_reservation_by_id(&tx, reservation.id).await?
+            load_reservation_by_id(tx, reservation.id).await?
         }
         _ => reservation,
     };
     let to_free_stock = reservation.status == "released" || ended.is_some();
 
-    let (on_hand, reserved) = get_balance_snapshot(&tx, reservation.article_id, reservation.location_id).await?;
+    let (on_hand, reserved) = get_balance_snapshot(tx, reservation.article_id, reservation.location_id).await?;
     // Never above the quantity reserved (the reservation's invariant).
     let next_issued = (issued - input.quantity).clamp(0.0, reservation.quantity_reserved);
     let next_status = if to_free_stock {
@@ -2724,7 +2748,7 @@ pub async fn return_reserved_stock_as(
     };
 
     upsert_balance(
-        &tx,
+        tx,
         reservation.article_id,
         reservation.warehouse_id,
         reservation.location_id,
@@ -2753,15 +2777,15 @@ pub async fn return_reserved_stock_as(
     .await?;
     // Tracked articles go back into the lots they were issued from (latest issue first); others
     // return as one movement.
-    let tracking = crate::inventory::lots::article_tracking(&tx, reservation.article_id).await?;
+    let tracking = crate::inventory::lots::article_tracking(tx, reservation.article_id).await?;
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
-        return_lot_allocation(&tx, reservation.id, input.quantity).await?
+        return_lot_allocation(tx, reservation.id, input.quantity).await?
     } else {
         vec![(None, input.quantity)]
     };
     for (lot_id, quantity) in allocation {
         let return_id = insert_inventory_transaction(
-            &tx,
+            tx,
             reservation.article_id,
             reservation.warehouse_id,
             reservation.location_id,
@@ -2777,12 +2801,12 @@ pub async fn return_reserved_stock_as(
         )
         .await?;
         if let Some(lot) = lot_id {
-            crate::inventory::lots::set_movement_lot(&tx, return_id, lot).await?;
+            crate::inventory::lots::set_movement_lot(tx, return_id, lot).await?;
         }
-        set_movement_actor(&tx, return_id, actor_id).await?;
+        set_movement_actor(tx, return_id, actor_id).await?;
         // Returned parts come back at the average they left at (the average is unchanged).
         crate::inventory::valuation::stamp_at_average(
-            &tx,
+            tx,
             reservation.article_id,
             reservation.location_id,
             quantity,
@@ -2796,7 +2820,7 @@ pub async fn return_reserved_stock_as(
         // so every PC ends with the parts in free stock. It is this return's own release (random
         // sync id), not the one-time release of the reservation.
         let release_id = insert_inventory_transaction(
-            &tx,
+            tx,
             reservation.article_id,
             reservation.warehouse_id,
             reservation.location_id,
@@ -2811,11 +2835,10 @@ pub async fn return_reserved_stock_as(
             None,
         )
         .await?;
-        set_movement_actor(&tx, release_id, actor_id).await?;
+        set_movement_actor(tx, release_id, actor_id).await?;
     }
-    crate::inventory::reservations::recompute_reserved_in(&tx, reservation.article_id, reservation.location_id).await?;
-    tx.commit().await?;
-    load_reservation_by_id(db, reservation.id).await
+    crate::inventory::reservations::recompute_reserved_in(tx, reservation.article_id, reservation.location_id).await?;
+    Ok(reservation.id)
 }
 
 /// Lots to return `quantity` into: net issued quantity per lot on this reservation, most recent

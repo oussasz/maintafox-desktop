@@ -127,7 +127,7 @@ pub(crate) mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    pub(crate) async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    pub(crate) async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -137,6 +137,9 @@ pub(crate) mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -154,12 +157,15 @@ pub(crate) mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
@@ -321,7 +327,7 @@ pub(crate) mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(db, wo_id).await;
+        let rv = seed_rams_for_complete(db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             db,
@@ -378,7 +384,7 @@ pub(crate) mod tests {
             .await
             .expect("confirm_no_parts for mech complete");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         // Complete mechanically: in_progress → completed
         let wo = execution::complete_wo_mechanically(
@@ -466,7 +472,7 @@ pub(crate) mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -580,11 +586,19 @@ pub(crate) mod tests {
             .await
             .expect("record actual usage");
 
-        costs::update_service_cost(&db, wo_id, 50.0, actor)
-            .await
-            .expect("update_service_cost");
+        costs::update_service_cost(
+            &db,
+            wo_id,
+            50.0,
+            crate::wo::closeout::wo_row_version(&db, wo_id)
+                .await
+                .expect("wo row_version"),
+            actor,
+        )
+        .await
+        .expect("update_service_cost");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -701,7 +715,7 @@ pub(crate) mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -1171,5 +1185,151 @@ pub(crate) mod tests {
         .await
         .expect("stored session");
         (state, session_id.0)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AU-18 — close-out coding, root cause and service cost are version-checked
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn assert_changed_elsewhere(err: AppError) {
+        match err {
+            AppError::ValidationFailed(lines) => assert!(
+                lines.iter().any(|l| l.starts_with("GATE_RECORD_CHANGED_ELSEWHERE")),
+                "expected the stale-version refusal, got {lines:?}"
+            ),
+            other => panic!("expected the stale-version refusal, got {other:?}"),
+        }
+    }
+
+    fn failure_input(wo_id: i64, expected_row_version: i64, notes: &str) -> SaveFailureDetailInput {
+        SaveFailureDetailInput {
+            wo_id,
+            expected_row_version,
+            symptom_id: None,
+            failure_mode_id: None,
+            failure_cause_id: None,
+            failure_effect_id: None,
+            is_temporary_repair: false,
+            is_permanent_repair: true,
+            cause_not_determined: true,
+            notes: Some(notes.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn au18_failure_detail_saved_on_a_stale_version_is_refused_and_writes_nothing() {
+        let db = setup().await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        // First person saves at the version both screens loaded.
+        let saved = closeout::save_failure_detail(&db, failure_input(wo_id, rv, "first"))
+            .await
+            .expect("first save");
+        assert_eq!(saved.wo_row_version, rv + 1);
+        assert_eq!(closeout::wo_row_version(&db, wo_id).await.expect("rv"), rv + 1);
+
+        // Second person still holds the old version: refused, the first coding is kept.
+        let err = closeout::save_failure_detail(&db, failure_input(wo_id, rv, "second"))
+            .await
+            .expect_err("stale save must be refused");
+        assert_changed_elsewhere(err);
+        let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].notes.as_deref(), Some("first"));
+        assert_eq!(closeout::wo_row_version(&db, wo_id).await.expect("rv"), rv + 1);
+
+        // The coding path (mechanism / detection) is refused the same way, in one transaction.
+        let err = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: failure_input(wo_id, rv, "third"),
+                failure_mechanism_id: None,
+                detection_method_id: None,
+            },
+        )
+        .await
+        .expect_err("stale coding must be refused");
+        assert_changed_elsewhere(err);
+        let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+        assert_eq!(details[0].notes.as_deref(), Some("first"));
+
+        // Reloaded version: accepted and bumped again.
+        let saved = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: failure_input(wo_id, rv + 1, "after reload"),
+                failure_mechanism_id: None,
+                detection_method_id: None,
+            },
+        )
+        .await
+        .expect("save after reload");
+        assert_eq!(saved.wo_row_version, rv + 2);
+        assert_eq!(saved.detail.notes.as_deref(), Some("after reload"));
+    }
+
+    #[tokio::test]
+    async fn au18_root_cause_saved_on_a_stale_version_is_refused() {
+        let db = setup().await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        let new_rv = closeout::update_wo_rca(
+            &db,
+            UpdateWoRcaInput {
+                wo_id,
+                expected_row_version: rv,
+                root_cause_summary: Some("first cause".into()),
+                corrective_action_summary: Some("first action".into()),
+            },
+        )
+        .await
+        .expect("first rca");
+        assert_eq!(new_rv, rv + 1);
+
+        let err = closeout::update_wo_rca(
+            &db,
+            UpdateWoRcaInput {
+                wo_id,
+                expected_row_version: rv,
+                root_cause_summary: Some("second cause".into()),
+                corrective_action_summary: None,
+            },
+        )
+        .await
+        .expect_err("stale rca must be refused");
+        assert_changed_elsewhere(err);
+
+        let wo = queries::get_work_order(&db, wo_id).await.expect("get").expect("wo");
+        assert_eq!(wo.root_cause_summary.as_deref(), Some("first cause"));
+        assert_eq!(wo.row_version, rv + 1);
+    }
+
+    #[tokio::test]
+    async fn au18_service_cost_saved_on_a_stale_version_is_refused() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        let new_rv = costs::update_service_cost(&db, wo_id, 120.0, rv, actor)
+            .await
+            .expect("first cost");
+        assert_eq!(new_rv, rv + 1);
+
+        let err = costs::update_service_cost(&db, wo_id, 999.0, rv, actor)
+            .await
+            .expect_err("stale cost must be refused");
+        assert_changed_elsewhere(err);
+
+        let cost = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT service_cost_input, row_version FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        assert_eq!(cost.try_get::<f64>("", "service_cost_input").expect("cost"), 120.0);
+        assert_eq!(cost.try_get::<i64>("", "row_version").expect("rv"), rv + 1);
     }
 }

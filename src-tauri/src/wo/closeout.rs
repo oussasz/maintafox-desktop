@@ -99,6 +99,18 @@ pub struct SaveFailureDetailInput {
     pub is_permanent_repair: bool,
     pub cause_not_determined: bool,
     pub notes: Option<String>,
+    /// Version of the work order the screen loaded: the save is refused when someone changed the
+    /// work order since (another person, or another PC through sync), and it bumps the version.
+    pub expected_row_version: i64,
+}
+
+/// A saved failure detail with the work order's new version, so the close-out screen can chain
+/// its next version-checked save (root cause, service cost) without reloading.
+#[derive(Debug, Clone, Serialize)]
+pub struct FailureDetailSaved {
+    #[serde(flatten)]
+    pub detail: WoFailureDetail,
+    pub wo_row_version: i64,
 }
 
 /// Input for recording a technical verification.
@@ -190,6 +202,8 @@ pub struct UpdateWoRcaInput {
     pub wo_id: i64,
     pub root_cause_summary: Option<String>,
     pub corrective_action_summary: Option<String>,
+    /// Version of the work order the screen loaded (refused when changed since; bumped).
+    pub expected_row_version: i64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -361,7 +375,7 @@ fn map_verification(row: &sea_orm::QueryResult) -> AppResult<WoVerification> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Verify `rows_affected == 1`. Returns a concurrency conflict error on mismatch.
-fn check_concurrency(rows_affected: u64) -> AppResult<()> {
+pub(crate) fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a ete modifie par un autre utilisateur. \
@@ -370,6 +384,33 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
         ]));
     }
     Ok(())
+}
+
+/// Claims the work order at the version the screen loaded: bumps `row_version` (and
+/// `updated_at`) only when it is still `expected_row_version`, else the usual
+/// `GATE_RECORD_CHANGED_ELSEWHERE` refusal. Returns the new version. Run inside the transaction
+/// of the write it guards so a refused claim leaves nothing behind.
+pub(crate) async fn claim_wo_version(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    expected_row_version: i64,
+) -> AppResult<i64> {
+    let result = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET row_version = row_version + 1, updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [now_utc_z().into(), wo_id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+    Ok(expected_row_version + 1)
+}
+
+/// Current `row_version` of a work order (tests that chain version-checked writes).
+#[cfg(test)]
+pub(crate) async fn wo_row_version(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<i64> {
+    Ok(load_wo_status(conn, wo_id).await?.2)
 }
 
 /// Load current WO status from the DB and parse it.
@@ -677,8 +718,34 @@ async fn has_consumed_critical_suggested_part(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Upsert a failure detail record for a WO (one row per WO).
-/// WO must not be in closed or cancelled state.
-pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDetailInput) -> AppResult<WoFailureDetail> {
+/// WO must not be in closed or cancelled state, and still at the version the screen loaded.
+pub async fn save_failure_detail(
+    db: &DatabaseConnection,
+    input: SaveFailureDetailInput,
+) -> AppResult<FailureDetailSaved> {
+    let wo_id = input.wo_id;
+    let txn = db.begin().await?;
+    let wo_row_version = upsert_failure_detail(&txn, input).await?;
+    let detail = load_failure_detail(&txn, wo_id).await?;
+    txn.commit().await?;
+    Ok(FailureDetailSaved { detail, wo_row_version })
+}
+
+async fn load_failure_detail(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<WoFailureDetail> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after upsert")))?;
+    map_failure_detail(&row)
+}
+
+/// Guards, claims the WO version and upserts the row; returns the WO's new version. The caller
+/// owns the transaction.
+async fn upsert_failure_detail(db: &impl ConnectionTrait, input: SaveFailureDetailInput) -> AppResult<i64> {
     // ── Validate: cannot be both temporary AND permanent ──────────────────
     if input.is_temporary_repair && input.is_permanent_repair {
         return Err(AppError::ValidationFailed(vec![
@@ -696,6 +763,8 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
             status_i18n_key(&status_code)
         )]));
     }
+    // ── Guard: nobody changed the WO since the screen loaded it ───────────
+    let wo_row_version = claim_wo_version(db, input.wo_id, input.expected_row_version).await?;
 
     let temp = if input.is_temporary_repair { 1i64 } else { 0 };
     let perm = if input.is_permanent_repair { 1i64 } else { 0 };
@@ -786,17 +855,7 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
         .await?;
     }
 
-    // ── Re-fetch ──────────────────────────────────────────────────────────
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
-            [input.wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after upsert")))?;
-
-    map_failure_detail(&row)
+    Ok(wo_row_version)
 }
 
 /// True when `id` is an active value of the reference domain `domain_code`.
@@ -815,7 +874,11 @@ async fn is_value_of_domain(db: &impl ConnectionTrait, id: i64, domain_code: &st
 }
 
 /// Save failure coding including the ISO 14224 mechanism and detection method.
-pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodingInput) -> AppResult<WoFailureDetail> {
+/// One transaction with the version claim: a refused save writes nothing.
+pub async fn save_failure_coding(
+    db: &DatabaseConnection,
+    input: SaveFailureCodingInput,
+) -> AppResult<FailureDetailSaved> {
     use crate::wo::closeout_reference_catalog::{DOMAIN_DETECTION_METHODS, DOMAIN_FAILURE_MECHANISMS};
     let mut errors = Vec::new();
     if let Some(id) = input.failure_mechanism_id {
@@ -836,8 +899,9 @@ pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodi
     }
 
     let wo_id = input.base.wo_id;
-    save_failure_detail(db, input.base).await?;
-    db.execute(Statement::from_sql_and_values(
+    let txn = db.begin().await?;
+    let wo_row_version = upsert_failure_detail(&txn, input.base).await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
          WHERE work_order_id = ?",
@@ -848,15 +912,9 @@ pub async fn save_failure_coding(db: &DatabaseConnection, input: SaveFailureCodi
         ],
     ))
     .await?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
-            [wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after coding")))?;
-    map_failure_detail(&row)
+    let detail = load_failure_detail(&txn, wo_id).await?;
+    txn.commit().await?;
+    Ok(FailureDetailSaved { detail, wo_row_version })
 }
 
 /// A verifier who is the WO's primary responsible.
@@ -1967,8 +2025,9 @@ pub async fn get_verifications(db: &impl ConnectionTrait, wo_id: i64) -> AppResu
 ///
 /// These are free-text fields required before closure for corrective/emergency
 /// WO types. May be called multiple times; only non-null arguments overwrite
-/// existing values.
-pub async fn update_wo_rca(db: &DatabaseConnection, input: UpdateWoRcaInput) -> AppResult<()> {
+/// existing values. Refused when the WO is no longer at `expected_row_version`; bumps it and
+/// returns the new version.
+pub async fn update_wo_rca(db: &DatabaseConnection, input: UpdateWoRcaInput) -> AppResult<i64> {
     // Guard: WO must not be in closed or cancelled state.
     let (status_code, _status, _rv) = load_wo_status(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
@@ -1980,27 +2039,31 @@ pub async fn update_wo_rca(db: &DatabaseConnection, input: UpdateWoRcaInput) -> 
 
     let now = now_utc_z();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_orders SET \
-            root_cause_summary        = COALESCE(?, root_cause_summary), \
-            corrective_action_summary = COALESCE(?, corrective_action_summary), \
-            updated_at                = ? \
-         WHERE id = ?",
-        [
-            input
-                .root_cause_summary
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            input
-                .corrective_action_summary
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            now.into(),
-            input.wo_id.into(),
-        ],
-    ))
-    .await?;
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET \
+                root_cause_summary        = COALESCE(?, root_cause_summary), \
+                corrective_action_summary = COALESCE(?, corrective_action_summary), \
+                row_version               = row_version + 1, \
+                updated_at                = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                input
+                    .root_cause_summary
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                input
+                    .corrective_action_summary
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                now.into(),
+                input.wo_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
 
-    Ok(())
+    Ok(input.expected_row_version + 1)
 }

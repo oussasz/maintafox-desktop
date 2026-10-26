@@ -393,7 +393,40 @@ pub async fn move_asset_org_node(
     _actor_id: i32,
 ) -> AppResult<identity::Asset> {
     let txn = db.begin().await?;
+    move_asset_org_node_in(&txn, asset_id, new_org_node_id, expected_row_version).await?;
 
+    // ── Re-fetch full asset with resolved codes ──────────────────────────
+    let sql = format!(
+        "SELECT {} {} WHERE e.id = ?",
+        identity::ASSET_SELECT,
+        identity::ASSET_FROM,
+    );
+    let asset_row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("equipment {asset_id} not found after org-node move")))?;
+    let asset = identity::map_asset(&asset_row)?;
+
+    txn.commit().await?;
+
+    tracing::info!(asset_id, new_org_node_id, "asset org node moved");
+    Ok(asset)
+}
+
+/// The checks and the write of a move, in the caller's transaction: the asset is at the version
+/// the person saw, it is not retired, and the target node is active. Shared by the move action
+/// and by a `MOVED` lifecycle event (`assets::lifecycle`), so neither can move an asset the other
+/// would refuse (AU-77).
+pub(crate) async fn move_asset_org_node_in(
+    txn: &impl ConnectionTrait,
+    asset_id: i64,
+    new_org_node_id: i64,
+    expected_row_version: i64,
+) -> AppResult<()> {
     // ── Fetch current row and verify row_version ─────────────────────────
     let current = txn
         .query_one(Statement::from_sql_and_values(
@@ -421,7 +454,8 @@ pub async fn move_asset_org_node(
     let status: String = current
         .try_get("", "lifecycle_status")
         .map_err(|e| decode_err("lifecycle_status", e))?;
-    if status == "DECOMMISSIONED" || status == "SCRAPPED" {
+    // Retired as the reference data says (tag `retired` of EQUIPMENT.STATUS), as for new work.
+    if identity::is_retired_status_code(txn, &status).await? {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_ASSET_HIER_MOVE_STATUS:status={status}: L'équipement {asset_id} a le statut '{status}' et ne peut pas \
              être déplacé. Contactez un administrateur pour forcer le \
@@ -430,7 +464,7 @@ pub async fn move_asset_org_node(
     }
 
     // ── Validate new org node ────────────────────────────────────────────
-    identity::assert_org_node_active(&txn, new_org_node_id).await?;
+    identity::assert_org_node_active(txn, new_org_node_id).await?;
 
     // ── Update org node and increment row_version ────────────────────────
     let now = Utc::now().to_rfc3339();
@@ -442,25 +476,5 @@ pub async fn move_asset_org_node(
         [new_org_node_id.into(), now.into(), asset_id.into()],
     ))
     .await?;
-
-    // ── Re-fetch full asset with resolved codes ──────────────────────────
-    let sql = format!(
-        "SELECT {} {} WHERE e.id = ?",
-        identity::ASSET_SELECT,
-        identity::ASSET_FROM,
-    );
-    let asset_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [asset_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("equipment {asset_id} not found after org-node move")))?;
-    let asset = identity::map_asset(&asset_row)?;
-
-    txn.commit().await?;
-
-    tracing::info!(asset_id, new_org_node_id, "asset org node moved");
-    Ok(asset)
+    Ok(())
 }

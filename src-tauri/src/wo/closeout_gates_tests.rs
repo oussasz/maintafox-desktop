@@ -437,7 +437,7 @@ async fn verifier_without_responsible_must_not_have_recorded_labour() {
     crate::wo::parts::confirm_no_parts_used(&db, wo_id, actor)
         .await
         .expect("no parts");
-    seed_rams_for_complete(&db, wo_id).await;
+    let rv = seed_rams_for_complete(&db, wo_id).await;
     let wo = execution::complete_wo_mechanically(
         &db,
         WoMechCompleteInput {

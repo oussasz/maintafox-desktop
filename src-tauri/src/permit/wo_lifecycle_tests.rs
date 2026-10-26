@@ -935,6 +935,9 @@ async fn complete(db: &DatabaseConnection, wo_id: i64) -> Result<(), AppError> {
         db,
         crate::wo::closeout::SaveFailureDetailInput {
             wo_id,
+            expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                .await
+                .expect("wo row_version"),
             symptom_id: Some(symptom),
             failure_mode_id: None,
             failure_cause_id: None,
@@ -951,6 +954,9 @@ async fn complete(db: &DatabaseConnection, wo_id: i64) -> Result<(), AppError> {
         db,
         crate::wo::closeout::UpdateWoRcaInput {
             wo_id,
+            expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                .await
+                .expect("wo row_version"),
             root_cause_summary: Some("Usure".into()),
             corrective_action_summary: Some("Remplacement".into()),
         },

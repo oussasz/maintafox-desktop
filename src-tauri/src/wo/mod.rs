@@ -49,6 +49,8 @@ mod migration_tests;
 #[cfg(test)]
 mod part_lines_tests;
 #[cfg(test)]
+mod retired_equipment_tests;
+#[cfg(test)]
 mod shift_tests;
 #[cfg(test)]
 mod tests;
