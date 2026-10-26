@@ -76,6 +76,10 @@ export const MESSAGE_KEYS = [
   "wo_permit_rule_type_changed",
   // An inspection anomaly cancelled after it was routed (its follow-up's responsible).
   "insp_anomaly_origin_cancelled",
+  // A reliability decision refused at synchronisation: its work order kept, or its published PM
+  // version still in force (the planners and the decision's proposer).
+  "rel_decision_refused_wo_kept",
+  "rel_decision_refused_pm_kept",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

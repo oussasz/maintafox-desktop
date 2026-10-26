@@ -1167,7 +1167,9 @@
       "approveTitle": "Approuver cette décision ?",
       "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT).",
       "selfApproved": "Auto-approuvée",
-      "selfApprovedHint": "Approuvée par la personne qui l'a proposée."
+      "selfApprovedHint": "Approuvée par la personne qui l'a proposée.",
+      "syncRefused": "Refusée à la synchronisation",
+      "syncRefusedHint": "L'approbation de cette décision n'est pas valable sur un poste : elle ne peut plus être approuvée ni appliquée. Proposez une nouvelle décision."
     },
     "backToModule": "Parc et études",
     "fmeca": {

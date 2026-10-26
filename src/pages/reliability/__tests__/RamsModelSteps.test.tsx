@@ -1032,6 +1032,43 @@ describe("StudyDecisionsStep", () => {
       deniedRights = [];
     }
   });
+
+  it("shows a decision refused at synchronisation with its reason and offers neither Approve nor Apply (AU-76b)", async () => {
+    const reason = "refusé (sync) : contenu modifié après approbation — vérifié avec le site";
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({
+            id: 1,
+            title: "Refused approved",
+            status: "approved",
+            sync_refused_at: "2026-10-26T10:00:00Z",
+            sync_refused_reason: reason,
+          }),
+          decision({
+            id: 2,
+            title: "Refused proposed",
+            sync_refused_at: "2026-10-26T10:00:00Z",
+            sync_refused_reason: reason,
+          }),
+          decision({ id: 3, title: "Fine approved", status: "approved" }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+    const approved = within(
+      (await screen.findByText("Refused approved")).closest("tr") as HTMLElement,
+    );
+    expect(approved.getByText("Refused at synchronisation")).toBeInTheDocument();
+    expect(approved.getByText(reason)).toBeInTheDocument();
+    expect(approved.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+    const proposed = within(screen.getByText("Refused proposed").closest("tr") as HTMLElement);
+    expect(proposed.getByText("Refused at synchronisation")).toBeInTheDocument();
+    expect(proposed.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    const fine = within(screen.getByText("Fine approved").closest("tr") as HTMLElement);
+    expect(fine.queryByText("Refused at synchronisation")).not.toBeInTheDocument();
+    expect(fine.getByRole("button", { name: "Apply" })).toBeInTheDocument();
+  });
 });
 
 describe("RatingScalesDialog", () => {

@@ -1,4 +1,4 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
@@ -9,19 +9,19 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
-  PmGenerationStatus,
-  PmGovernanceKpiInput,
-  PmGovernanceKpiReport,
-  PmPlanningReadinessInput,
-  PmPlanningReadinessProjection,
   PmExecution,
   PmExecutionFilter,
   PmFinding,
+  PmGenerationStatus,
+  PmGovernanceKpiInput,
+  PmGovernanceKpiReport,
   PmOccurrence,
   PmOccurrenceFilter,
   PmPlan,
   PmPlanFilter,
   PmPlanVersion,
+  PmPlanningReadinessInput,
+  PmPlanningReadinessProjection,
   PmRecurringFinding,
   PmRecurringFindingsInput,
   PublishPmPlanVersionInput,
@@ -44,6 +44,8 @@ export type PmPlanRow = PmPlan &
   PmAssetRef & {
     /** Name of the family / location / criticality group of a fanned-out plan. */
     asset_scope_label?: string | null | undefined;
+    /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
+    source_decision_to_review?: boolean | undefined;
   };
 
 /** `on_time` | `early` | `late` against the occurrence's tolerance window. */
@@ -149,6 +151,8 @@ const PmPlanSchema = z.object({
   asset_code: z.string().nullable().optional(),
   asset_name: z.string().nullable().optional(),
   asset_scope_label: z.string().nullable().optional(),
+  /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
+  source_decision_to_review: z.boolean().optional(),
 });
 
 const PmPlanVersionSchema = z.object({

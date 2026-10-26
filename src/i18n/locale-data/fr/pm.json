@@ -486,5 +486,9 @@
     "rolloverUnavailable": "Aucune valeur maximale n'est définie sur ce compteur.",
     "replacement": "Un remplacement du compteur",
     "replacementHint": "Un nouveau compteur a été posé ; saisissez le relevé du nouveau compteur."
+  },
+  "sourceDecision": {
+    "toReview": "Issue d'une décision refusée / en attente — à revoir",
+    "toReviewHint": "La version en vigueur provient d'une décision de fiabilité refusée à la synchronisation ou pas encore acceptée sur ce poste. Revoyez-la ; publier une autre version retire ce signal."
   }
 }

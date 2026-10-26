@@ -192,7 +192,7 @@
     "permit_ended_under_work": "Permit ended on another PC during or before the work",
     "wo_permit_rule_missing": "Work order received started without its plant permit rule",
     "insp_anomaly_origin_cancelled": "Originating inspection anomaly cancelled",
-    "rel_decision_refused_wo_kept": "Reliability decision refused at synchronisation, work order kept",
+    "rel_decision_refused_wo_kept": "Reliability decision refused at synchronisation, work order or plan version kept",
     "stock_to_reconcile": "Stock to reconcile after sync",
     "stock_count_recount": "Count to do again",
     "stock_count_second_approval": "Stock count held for a second approval"
@@ -312,6 +312,14 @@
     "insp_anomaly_origin_cancelled": {
       "title": "Originating anomaly cancelled: {{code}}",
       "body": "The inspection anomaly {{code}} was raised from was cancelled: its condition is no longer detected ({{anomaly}}). {{code}} is not changed: check whether it is still needed. A required permit review stays in place."
+    },
+    "rel_decision_refused_wo_kept": {
+      "title": "Reliability decision refused: {{code}} kept",
+      "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Work order {{code}} created from it is kept: check whether it is still needed."
+    },
+    "rel_decision_refused_pm_kept": {
+      "title": "Reliability decision refused: plan {{plan}} v{{version}} published, to review",
+      "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Version {{version}} of plan {{plan}}, published from it, stays in force: review it and publish another version if it does not fit."
     },
     "wo_permit_rule_type_changed": {
       "title": "Work order {{code}}: required permit changed from {{previous_permit_type}} to {{permit_type}}",
@@ -464,7 +472,7 @@
       "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site.",
       "wo_permit_rule_missing": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators.",
       "insp_anomaly_origin_cancelled": "Always the responsible of the work order raised from the anomaly (or from its request); when there is none, the work order’s planner and the request’s reviewer (else the responsibles of its node).",
-      "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision and the person who proposed it; when neither is active here, the holders of the right to approve reliability decisions (ram.manage)."
+      "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision (else its responsible), or the holders of the PM planning right (pm.edit) for a published plan version, and the person who proposed the decision; when nobody is active here, the holders of the right to approve reliability decisions (ram.manage)."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

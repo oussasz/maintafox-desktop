@@ -192,7 +192,7 @@
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
     "wo_permit_rule_missing": "OT reçu démarré sans sa règle de permis de l'usine",
     "insp_anomaly_origin_cancelled": "Anomalie d'inspection d'origine annulée",
-    "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT conservé",
+    "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT ou version de plan conservé",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
     "stock_count_recount": "Comptage à refaire",
     "stock_count_second_approval": "Comptage retenu pour une seconde approbation"
@@ -312,6 +312,14 @@
     "insp_anomaly_origin_cancelled": {
       "title": "Anomalie d'origine annulée : {{code}}",
       "body": "L'anomalie d'inspection à l'origine de {{code}} a été annulée : son défaut n'est plus détecté ({{anomaly}}). {{code}} n'est pas modifié : vérifiez s'il reste nécessaire. Une revue permis requise reste en place."
+    },
+    "rel_decision_refused_wo_kept": {
+      "title": "Décision de fiabilité refusée : {{code}} conservé",
+      "body": "La décision « {{decision}} » a été refusée à la synchronisation (son approbation n'est pas valable sur un poste). L'OT {{code}} créé à partir d'elle est conservé : vérifiez s'il reste nécessaire."
+    },
+    "rel_decision_refused_pm_kept": {
+      "title": "Décision de fiabilité refusée : plan {{plan}} v{{version}} publié, à revoir",
+      "body": "La décision « {{decision}} » a été refusée à la synchronisation (son approbation n'est pas valable sur un poste). La version {{version}} du plan {{plan}}, publiée à partir d'elle, reste en vigueur : revoyez-la et publiez une autre version si elle ne convient pas."
     },
     "wo_permit_rule_type_changed": {
       "title": "OT {{code}} : permis exigé changé de {{previous_permit_type}} à {{permit_type}}",
@@ -464,7 +472,7 @@
       "permit_ended_under_work": "Toujours le responsable de l’OT lié au permis et les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "wo_permit_rule_missing": "Toujours les personnes qui détiennent le droit d’émission des permis sur le site de l’OT (et sur toute l’usine) ; si personne ne le détient, les administrateurs des paramètres.",
       "insp_anomaly_origin_cancelled": "Toujours le responsable de l’OT issu de l’anomalie (ou de l’OT issu de sa demande) ; s’il n’y en a pas, le planificateur de l’OT et le valideur de la demande (à défaut, les responsables de son nœud).",
-      "rel_decision_refused_wo_kept": "Toujours le planificateur de l’OT créé à partir de la décision et la personne qui l’a proposée ; si aucun n’est actif ici, les personnes qui détiennent le droit d’approuver les décisions de fiabilité (ram.manage)."
+      "rel_decision_refused_wo_kept": "Toujours le planificateur de l’OT créé à partir de la décision (à défaut son responsable), ou les personnes qui détiennent le droit de planification préventive (pm.edit) pour une version de plan publiée, et la personne qui a proposé la décision ; si personne n’est actif ici, les personnes qui détiennent le droit d’approuver les décisions de fiabilité (ram.manage)."
     },
     "minutes": "min",
     "minutesAfterAlert": "min après l'alerte",
