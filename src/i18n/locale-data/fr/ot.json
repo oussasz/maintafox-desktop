@@ -1147,5 +1147,30 @@
     "technically_verified": "Vérifié techniquement",
     "closed": "Clôturé",
     "cancelled": "Annulé"
+  },
+  "retiredEquipment": {
+    "title": "Équipement déclassé — à revoir",
+    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est déclassé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
+    "noneOpen": "Plus rien à revoir : l'historique garde qui a clos chaque cas, quand et comment.",
+    "kind": {
+      "work_order": "OT",
+      "intervention_request": "DI"
+    },
+    "equipment": "Équipement {{code}} {{name}}",
+    "open": "Ouvrir",
+    "history": "Historique ({{count}})",
+    "closure": {
+      "wo_closed": "Clos par la clôture de l'OT {{code}}",
+      "wo_cancelled": "Clos par l'annulation de l'OT {{code}}",
+      "di_rejected": "Clos par le rejet de la demande {{code}}",
+      "di_closed": "Clos par la clôture de la demande {{code}}",
+      "di_converted": "Clos par la conversion de la demande {{code}} en OT {{wo}} (l'OT a son propre cas)",
+      "recommissioned": "Clos par la remise en service de l'équipement {{equipment}}",
+      "other": "Clos : {{code}} n'est plus ouvert sur un équipement déclassé"
+    },
+    "closedBy": "{{who}}, le {{when}}",
+    "closedAt": "Le {{when}}",
+    "note": "Motif : {{note}}",
+    "loadFailed": "Impossible de charger les OT et demandes sur équipement déclassé."
   }
 }
