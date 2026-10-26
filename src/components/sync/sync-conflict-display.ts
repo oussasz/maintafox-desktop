@@ -346,7 +346,8 @@ export const SETTLED_AT_ORIGIN_CONFLICT_KINDS = new Set(["COUNT_SELF_APPROVAL"])
  * the server accepts only "dismiss" and "escalate" (`refused_history_row_absent` in
  * `src-tauri/src/sync/queries.rs`; "retry later" is refused too). When the movement IS held here
  * (a forged later version of a movement applied here), "keep mine" is the repair: it sends the
- * movement held here again, so the usual choices stay. The list says which
+ * movement held here again. "Take theirs" is then never offered: the received version is judged
+ * again and always refused (`GATE_SYNC_SERVER_VERSION_NOT_APPLIED`). The list says which
  * (`SyncConflictRecord.history_row_held`, filled by `history_row_held` in the same file); when it
  * is not known, only the two choices the server always accepts are offered. The same refusal on a
  * count line keeps the usual choices: "take theirs" judges the received version again and
@@ -372,10 +373,14 @@ export function conflictActions(
   if (REVIEW_ONLY_CONFLICT_KINDS.has(conflictType)) return ["escalate", "dismiss"];
   if (
     conflictType === "COUNT_APPROVAL_RECORD_INVALID" &&
-    COUNT_HISTORY_ENTITY_TYPES.has(entityType) &&
-    historyRowHeld !== true
+    COUNT_HISTORY_ENTITY_TYPES.has(entityType)
   ) {
-    return ["escalate", "dismiss"];
+    if (historyRowHeld !== true) return ["escalate", "dismiss"];
+    return [
+      "accept_local",
+      ...(withTriage ? (["retry_later", "escalate"] as const) : (["escalate"] as const)),
+      "dismiss",
+    ];
   }
   if (PLANNING_CONFLICT_KINDS.has(conflictType)) return ["accept_local", "escalate"];
   if (SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(conflictType)) {

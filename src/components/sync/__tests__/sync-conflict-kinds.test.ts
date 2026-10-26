@@ -154,15 +154,15 @@ describe("sync conflict kinds", () => {
           ]);
         }
       }
-      // Held here (a forged later version of a movement applied here): "keep mine" is the repair.
+      // Held here (a forged later version of a movement applied here): "keep mine" is the repair;
+      // "take theirs" is always judged again and refused, so it is never offered.
       expect(conflictActions("COUNT_APPROVAL_RECORD_INVALID", false, entity, true)).toEqual([
         "accept_local",
-        "accept_remote",
+        "escalate",
         "dismiss",
       ]);
       expect(conflictActions("COUNT_APPROVAL_RECORD_INVALID", true, entity, true)).toEqual([
         "accept_local",
-        "accept_remote",
         "retry_later",
         "escalate",
         "dismiss",
