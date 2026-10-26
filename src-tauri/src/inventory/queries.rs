@@ -2387,7 +2387,11 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
     })
 }
 
-pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput) -> AppResult<StockReservation> {
+/// Inside a caller's transaction its own transaction is a savepoint of the caller's.
+pub async fn reserve_stock<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    input: InventoryReserveInput,
+) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
     let reservation_id = reserve_stock_in(&tx, &input).await?;
     tx.commit().await?;

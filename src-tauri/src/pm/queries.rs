@@ -1599,14 +1599,14 @@ pub async fn transition_pm_occurrence(
     ))
     .await?;
 
-    tx.commit().await?;
-
-    // WO child functions own their transactions (no shared transaction across modules): the
-    // checklist, tools and parts are added right after, on the draft OT already linked to the
-    // occurrence.
+    // The checklist, tools and parts are added in the same transaction (the WO child functions'
+    // own transactions are savepoints of it): a part that cannot be reserved leaves no work order
+    // and the occurrence unchanged, never a half-filled linked draft.
     if let Some((wo_id, content)) = created_wo {
-        crate::pm::wo_content::apply_pm_content_to_work_order(db, wo_id, &content).await?;
+        crate::pm::wo_content::apply_pm_content_to_work_order(&tx, wo_id, &content).await?;
     }
+
+    tx.commit().await?;
 
     let updated = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
     if updated.status == "missed" {

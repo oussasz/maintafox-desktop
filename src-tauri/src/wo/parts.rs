@@ -207,8 +207,8 @@ const PART_FROM: &str = "\
 /// Reserve then issue `quantity` of an execution-added stock article for its WO and
 /// record the reservation on the part line, in one transaction: a failed issue leaves neither
 /// the reservation nor the movement.
-async fn reserve_and_issue_execution_part(
-    db: &DatabaseConnection,
+async fn reserve_and_issue_execution_part<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
     part: &WoPart,
     article_id: i64,
     location_id: i64,
@@ -340,7 +340,9 @@ async fn load_wo_source_context(db: &impl ConnectionTrait, wo_id: i64) -> AppRes
 // A) add_planned_part
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> AppResult<WoPart> {
+/// Inside a caller's transaction (PM content of a generated work order) the reservation's own
+/// transaction is a savepoint of the caller's.
+pub async fn add_planned_part<C: ConnectionTrait + TransactionTrait>(db: &C, input: AddPartInput) -> AppResult<WoPart> {
     let status_code = load_wo_status_code(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
         let status_key = status_i18n_key(&status_code);

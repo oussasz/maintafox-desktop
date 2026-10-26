@@ -1790,6 +1790,74 @@ async fn a_stale_occurrence_claim_leaves_no_orphan_work_order() {
     );
 }
 
+/// AU-20 (a), review S3: the PM content (tasks, tools, parts with their reservation) is added in
+/// the transaction that creates the OT and claims the occurrence. A part whose reservation is
+/// refused leaves no OT, no reservation and the occurrence unchanged; the transition can be made
+/// again once the stock can be reserved.
+#[tokio::test]
+async fn a_refused_part_reservation_leaves_no_work_order_and_the_occurrence_unchanged() {
+    let db = setup_db().await;
+    let occ = generated_occurrence(&db, "PM-WO-PART-REFUSED").await;
+    // Stock of the PM part, so the OT content reserves it.
+    db.execute_unprepared(
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at) \
+         SELECT a.id, l.warehouse_id, l.id, 10, 0, 10, strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+         FROM articles a, stock_locations l WHERE a.article_code = 'BRG-6204' AND l.code = 'MAIN-BIN'",
+    )
+    .await
+    .expect("stock of the PM part");
+    let wos_before = count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await;
+    let reservations = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move { count_for(&db, "SELECT COUNT(*) AS c FROM stock_reservations WHERE id > ?", 0).await }
+    };
+    let reservations_before = reservations(&db).await;
+    db.execute_unprepared(
+        "CREATE TEMP TRIGGER s3_reservation_refused BEFORE INSERT ON stock_reservations \
+         BEGIN SELECT RAISE(ABORT, 'forced reservation refusal'); END",
+    )
+    .await
+    .expect("trigger");
+    let transition = |expected_row_version: i64| TransitionPmOccurrenceInput {
+        occurrence_id: occ.id,
+        expected_row_version,
+        next_status: "ready_for_scheduling".to_string(),
+        reason_code: None,
+        note: None,
+        generate_work_order: Some(true),
+        work_order_type_id: None,
+        actor_id: Some(1),
+    };
+
+    queries::transition_pm_occurrence(&db, transition(occ.row_version))
+        .await
+        .expect_err("the part cannot be reserved");
+    db.execute_unprepared("DROP TRIGGER s3_reservation_refused")
+        .await
+        .expect("drop trigger");
+
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before,
+        "no half-filled OT"
+    );
+    assert_eq!(reservations(&db).await, reservations_before, "no reservation");
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "generated");
+    assert_eq!(after.row_version, occ.row_version);
+    assert!(after.linked_work_order_id.is_none());
+
+    // The same transition goes through once the reservation can be made, with all its content.
+    let ready = queries::transition_pm_occurrence(&db, transition(after.row_version))
+        .await
+        .expect("ready with OT");
+    let wo_id = ready.linked_work_order_id.expect("linked OT");
+    let parts = crate::wo::parts::list_wo_parts(&db, wo_id).await.expect("parts");
+    assert_eq!(parts.len(), 1);
+    assert!(parts[0].reservation_id.is_some(), "the part is reserved");
+    assert_eq!(crate::wo::tasks::list_tasks(&db, wo_id).await.expect("tasks").len(), 2);
+}
+
 async fn count_for(db: &DatabaseConnection, sql: &str, id: i64) -> i64 {
     db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [id.into()]))
         .await

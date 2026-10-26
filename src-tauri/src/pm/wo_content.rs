@@ -19,7 +19,7 @@
 //!   so planning checks the job against the shutdown windows as for any flagged OT) and a line in
 //!   the description for the technician.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde_json::Value;
 
 use crate::errors::{AppError, AppResult};
@@ -484,8 +484,10 @@ pub async fn build_pm_work_order_content(
 /// Adds the crew size, the "needs shutdown" flag, the tasks, tools and plannable parts to the
 /// freshly created (draft) OT, through the WO module's own functions so the OT execution log and
 /// reservations behave as for a planner entry.
-pub async fn apply_pm_content_to_work_order(
-    db: &DatabaseConnection,
+/// Runs inside the caller's transaction when given one (`pm::queries::transition_pm_occurrence`
+/// adds the content in the transaction that creates the work order and claims the occurrence).
+pub async fn apply_pm_content_to_work_order<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
     wo_id: i64,
     content: &PmWoContent,
 ) -> AppResult<()> {
