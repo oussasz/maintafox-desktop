@@ -651,6 +651,24 @@ async fn ensure_source_decision_applied(
         return Ok(());
     }
     let source_id: Option<i64> = version.try_get("", "source_id")?;
+    // A decision refused at synchronisation (here, or on another PC, received with its mark) never
+    // has its version published, on any PC (AU-76b, CMMS Advisor Q5).
+    if let Some(id) = source_id {
+        let refused = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS r FROM reliability_study_decisions WHERE id = ? AND sync_refused_at IS NOT NULL",
+                [id.into()],
+            ))
+            .await?
+            .is_some();
+        if refused {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_SOURCE_DECISION_REFUSED: This version comes from a reliability study decision refused at synchronisation; it cannot be published."
+                    .to_string(),
+            ]));
+        }
+    }
     let applied = match source_id {
         Some(id) => db
             .query_one(Statement::from_sql_and_values(
