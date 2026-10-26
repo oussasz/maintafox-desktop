@@ -723,11 +723,18 @@ pub(crate) async fn after_upsert(
         // A free-text hand-over role from a PC that has not upgraded joins the plant's list now,
         // flagged "à revoir" (`permit::handover_roles`), not only at the next start of this PC:
         // this log's two roles only.
-        // A decision held here refused on another PC: a work order created from it here is kept and
-        // its planner and the decision's proposer told (CMMS Advisor Q6).
-        "reliability_study_decisions" if !inserted && held.decision_unrefused == Some(true) => match row {
+        // A received decision: sealed here when accepted unsealed over the proposal held here; refused
+        // (new here, or newly here), the work order or PM version it gave is kept and told of
+        // (CMMS Advisor Q6, S4; `reliability::study::decision_sync::after_decision_written`).
+        "reliability_study_decisions" => match row {
             RowLocator::Identity(sync_id) => {
-                crate::reliability::study::decision_sync::after_refusal_received(conn, sync_id).await
+                crate::reliability::study::decision_sync::after_decision_written(
+                    conn,
+                    sync_id,
+                    inserted,
+                    held.decision_unrefused,
+                )
+                .await
             }
             RowLocator::Natural(_) => Ok(()),
         },

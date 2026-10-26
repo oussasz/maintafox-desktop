@@ -613,7 +613,8 @@ async fn set_status(
             DbBackend::Sqlite,
             "UPDATE reliability_study_decisions SET status = ?, decided_by_id = ?, decided_at = ?, decision_note = ?,
                 row_version = row_version + 1, updated_at = ?
-             WHERE id = ? AND status = ? AND row_version = ?",
+             WHERE id = ? AND status = ? AND row_version = ?
+               AND (? <> 'approved' OR sync_refused_at IS NULL)",
             [
                 to.into(),
                 actor_id.into(),
@@ -630,6 +631,8 @@ async fn set_status(
                 input.decision_id.into(),
                 from.into(),
                 input.expected_row_version.into(),
+                // Never approved once refused at synchronisation (AU-76b, review N1).
+                to.into(),
             ],
         ))
         .await?;
@@ -717,9 +720,10 @@ pub async fn approve_decision(
             return Err(self_approval_refusal(db, rule, actor_id).await?);
         }
     }
-    refuse_if_refused_at_sync(db, input.decision_id).await?;
-    // The approval, its seal and its audit event: one transaction (AU-76b, CMMS Advisor Q7).
+    // The approval, its seal and its audit event: one transaction (AU-76b, CMMS Advisor Q7); a
+    // decision refused at synchronisation is checked inside it, and the update is guarded too.
     let txn = db.begin().await?;
+    refuse_if_refused_at_sync(&txn, input.decision_id).await?;
     set_status(&txn, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
     let seal = crate::reliability::study::decision_sync::local_approval_seal(&txn, input.decision_id)
         .await?

@@ -116,16 +116,21 @@ const APPLY_KEYS: &[&str] = &["applied_by_sync_id", "applied_at"];
 /// (key order, the meter reference rewritten by sync) never changes the seal.
 const JSON_TEXT_KEYS: &[&str] = &["proposed_trigger_definition_json", "evidence_json"];
 
-/// A number in one form whatever its storage (integer, real, `1.0` or `1`).
+/// Significant digits a non-integral number is sealed and compared with.
+const SEALED_DIGITS: usize = 9;
+
+/// A number in one form whatever the PC that reads it. An integer stays an integer; a real number
+/// (a REAL column, or a JSON number written with a fraction or an exponent, as sync writes every
+/// real) is rounded to [`SEALED_DIGITS`] significant digits and kept as text. Sync carries reals as
+/// JSON text, and the JSON parser can land one unit in the last place away from the value the
+/// sending PC sealed (review B1), so the last digits never take part in the seal or the comparison.
 fn canonical_number(n: &serde_json::Number) -> Value {
+    if !n.is_f64() {
+        return Value::Number(n.clone());
+    }
     match n.as_f64() {
-        Some(f) if f.is_finite() && f.fract() == 0.0 && f.abs() < 9.0e15 =>
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            Value::from(f as i64)
-        }
-        Some(f) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
-        None => Value::Number(n.clone()),
+        Some(f) if f.is_finite() => Value::String(format!("{f:.prec$e}", prec = SEALED_DIGITS - 1)),
+        _ => Value::Null,
     }
 }
 
@@ -190,7 +195,7 @@ pub(crate) async fn local_seal_content(conn: &impl ConnectionTrait, decision_id:
             "SELECT d.title, d.action_kind, CAST(d.proposed_interval_hours AS REAL) AS proposed_interval_hours, \
                     d.proposed_trigger_definition_json, d.wo_type_code, d.justification, d.evidence_json, \
                     CAST(d.baseline_mtbf_hours AS REAL) AS baseline_mtbf_hours, \
-                    CAST(d.baseline_failures AS REAL) AS baseline_failures, \
+                    CAST(d.baseline_failures AS INTEGER) AS baseline_failures, \
                     CAST(d.baseline_exposure_hours AS REAL) AS baseline_exposure_hours, \
                     d.proposed_at, d.decided_at, d.decision_note, \
                     s.entity_sync_id AS study_sync_id, e.entity_sync_id AS equipment_sync_id, \
@@ -235,10 +240,12 @@ pub(crate) async fn local_seal_content(conn: &impl ConnectionTrait, decision_id:
         let v: Option<String> = r.try_get("", key).map_err(sync_err)?;
         content.insert(key.into(), v.map_or(Value::Null, Value::String));
     }
+    // An INTEGER column travels as a JSON integer, a REAL column as a JSON real.
+    let failures: Option<i64> = r.try_get("", "baseline_failures").map_err(sync_err)?;
+    content.insert("baseline_failures".into(), failures.map_or(Value::Null, Value::from));
     for key in [
         "proposed_interval_hours",
         "baseline_mtbf_hours",
-        "baseline_failures",
         "baseline_exposure_hours",
     ] {
         let v: Option<f64> = r.try_get("", key).map_err(sync_err)?;
@@ -332,10 +339,14 @@ fn changed_keys(held: &Payload, received: &Payload) -> Vec<&'static str> {
         .collect()
 }
 
-/// Whether a received decision carries a refusal mark.
+/// Whether a decision carries a refusal mark: any value but null, an empty text included, as the
+/// gates read the column (`sync_refused_at IS NOT NULL`).
 fn marked(p: &Payload) -> bool {
-    text(p, "sync_refused_at").is_some()
+    p.get("sync_refused_at").is_some_and(|v| !v.is_null())
 }
+
+/// The statuses a decision can have; anything else received is refused (review S1).
+const STATUSES: [&str; 4] = [STATUS_PROPOSED, STATUS_APPROVED, STATUS_REJECTED, STATUS_APPLIED];
 
 /// The local id of a user named by sync id (`None`: not here).
 async fn user_here(conn: &impl ConnectionTrait, user_sync: &str) -> AppResult<Option<i64>> {
@@ -604,21 +615,90 @@ pub(crate) async fn held_unrefused(conn: &impl ConnectionTrait, sync_id: &str) -
         .map_err(sync_err)?)
 }
 
-/// After a received row was written over a decision held here without a mark: when it is now
-/// refused and a work order was created from it here, the work order is kept and its planner and
-/// the decision's proposer are told (CMMS Advisor Q6).
+/// When the decision `sync_id` is refused here and a work order created from it is held here, or a
+/// PM version published from it is in force here: the work order is kept, the version keeps
+/// running, and the planners and the decision's proposer are told (CMMS Advisor Q6, S4 option A).
 pub(crate) async fn after_refusal_received(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<()> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM reliability_study_decisions \
-              WHERE entity_sync_id = ? AND sync_refused_at IS NOT NULL AND linked_work_order_id IS NOT NULL",
+            "SELECT d.id, d.linked_work_order_id, \
+                    (SELECT v.id FROM pm_plan_versions v \
+                      WHERE v.id = d.linked_pm_plan_version_id AND v.status = 'published') AS published \
+               FROM reliability_study_decisions d \
+              WHERE d.entity_sync_id = ? AND d.sync_refused_at IS NOT NULL",
             [sync_id.into()],
         ))
         .await?;
     if let Some(r) = row {
         let id: i64 = r.try_get("", "id").map_err(sync_err)?;
-        crate::settings::received_notice::announce_refused_decision_work_order(conn, id).await;
+        let work_order: Option<i64> = r.try_get("", "linked_work_order_id").map_err(sync_err)?;
+        let published: Option<i64> = r.try_get("", "published").map_err(sync_err)?;
+        if work_order.is_some() || published.is_some() {
+            crate::settings::received_notice::announce_refused_decision(conn, id, work_order, published).await;
+        }
+    }
+    Ok(())
+}
+
+/// After a received decision was written (`sync::apply_hooks::after_upsert`):
+/// - approved or applied, not refused, and without a seal here (an approval from a PC that does not
+///   seal yet, accepted over the proposal held here by comparison): sealed now from the content
+///   judged here, as the backfill of migration 264 does, so this PC never sends it unsealed
+///   (review S2); nothing is sent for it;
+/// - refused, new here or newly refused here: the work order or PM version it gave is told of
+///   ([`after_refusal_received`], review S3).
+pub(crate) async fn after_decision_written(
+    conn: &impl ConnectionTrait,
+    sync_id: &str,
+    inserted: bool,
+    was_unrefused: Option<bool>,
+) -> AppResult<()> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, status, approval_seal IS NULL AS unsealed, sync_refused_at IS NOT NULL AS refused \
+               FROM reliability_study_decisions WHERE entity_sync_id = ?",
+            [sync_id.into()],
+        ))
+        .await?;
+    let Some(r) = row else {
+        return Ok(());
+    };
+    let id: i64 = r.try_get("", "id").map_err(sync_err)?;
+    let status: String = r.try_get("", "status").map_err(sync_err)?;
+    let unsealed: bool = r.try_get("", "unsealed").map_err(sync_err)?;
+    let refused: bool = r.try_get("", "refused").map_err(sync_err)?;
+    if decided(&status) && unsealed && !refused {
+        if let Some(seal) = local_approval_seal(conn, id).await? {
+            conn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE reliability_study_decisions SET approval_seal = ? WHERE id = ? AND approval_seal IS NULL",
+                [seal.into(), id.into()],
+            ))
+            .await?;
+        }
+    }
+    // An unsealed version of this decision waiting here for its sender's update is superseded by the
+    // version just written (the updated sender re-sent it sealed, migration 264): it is closed as
+    // an older version, never retried into a stale-version conflict (review S7).
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_inbox SET apply_status = 'applied', rejection_code = ?, \
+                rejection_message = 'superseded by a later version of the decision applied here', \
+                waits_for_entity_type = NULL, waits_for_sync_id = NULL, \
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+          WHERE entity_type = ? AND entity_sync_id = ? AND apply_status = 'deferred' AND rejection_code = ?",
+        [
+            crate::sync::materialize::SKIPPED_OLDER_VERSION.into(),
+            ENTITY.into(),
+            sync_id.into(),
+            crate::sync::materialize::DEFER_SENDER_OUTDATED.into(),
+        ],
+    ))
+    .await?;
+    if refused && (inserted || was_unrefused == Some(true)) {
+        after_refusal_received(conn, sync_id).await?;
     }
     Ok(())
 }
@@ -744,6 +824,25 @@ pub(crate) async fn keep_this_pc_decision(
         ))
         .await?;
     } else {
+        // What it gave that is held here, named before its links are cleared: a work order, or a
+        // PM version published here (review S3).
+        let work_order = match text(&received, "linked_work_order_sync_id") {
+            Some(w) => crate::permit::sync_check::local_id(conn, "work_orders", w).await?,
+            None => None,
+        };
+        let published = match text(&received, "linked_pm_plan_version_sync_id") {
+            Some(v) => conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT id FROM pm_plan_versions WHERE entity_sync_id = ? AND status = 'published'",
+                    [v.into()],
+                ))
+                .await?
+                .map(|r| r.try_get::<i64>("", "id"))
+                .transpose()
+                .map_err(sync_err)?,
+            None => None,
+        };
         let mut refused = received.clone();
         refused.insert("sync_refused_at".into(), now.clone().into());
         refused.insert("sync_refused_reason".into(), refusal.clone().into());
@@ -769,6 +868,11 @@ pub(crate) async fn keep_this_pc_decision(
                 return Err(keep_refused(&format!(
                     "GATE_SYNC_KEEP_DECISION_NOT_YET: The refused decision cannot be recorded here yet: {message}"
                 )));
+            }
+        }
+        if work_order.is_some() || published.is_some() {
+            if let Some(id) = crate::permit::sync_check::local_id(conn, ENTITY, sid).await? {
+                crate::settings::received_notice::announce_refused_decision(conn, id, work_order, published).await;
             }
         }
     }
@@ -816,6 +920,20 @@ pub(crate) async fn inbound_decision_check(
     payload: &Payload,
 ) -> AppResult<Option<ApplyOutcome>> {
     use crate::reliability::study::decisions::{inbound_self_approval_check, InboundDecisionVerdict};
+    // Only the four statuses of a decision; anything else (another spelling, a blank, a number)
+    // would pass every check below and overwrite the status held here (review S1).
+    if let Some(status) = payload.get("status") {
+        if !status.as_str().is_some_and(|s| STATUSES.contains(&s)) {
+            let title = text(payload, "title").unwrap_or_default();
+            return Ok(Some(ApplyOutcome::Conflict {
+                code: DECISION_STATUS_REGRESSION.into(),
+                message: format!(
+                    "decision '{title}' arrives with the status {status}, which is not a status of a decision \
+                     (proposed, approved, rejected, applied)"
+                ),
+            }));
+        }
+    }
     match inbound_refusal_check(conn, entity_sync_id, payload).await? {
         RefusalVerdict::Accept => return Ok(None),
         RefusalVerdict::Outcome(outcome) => return Ok(Some(outcome)),
