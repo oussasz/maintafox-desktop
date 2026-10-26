@@ -291,6 +291,10 @@ async fn materialize_inbox_run(
             }
         }
     }
+    // A week reopened, or a break-in applied, by this run: the planning conflicts it settles close
+    // in this run, not at the next synchronisation (`planning::sync_check`, review R2-S2).
+    total.applied += crate::planning::sync_check::retry_unfreeze_conflicts(db).await?;
+    total.applied += crate::planning::sync_check::retry_frozen_week_conflicts(db).await?;
     total.deferred = db
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,

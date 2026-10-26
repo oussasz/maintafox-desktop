@@ -532,19 +532,18 @@ struct Received {
 }
 
 async fn received_setup(code: &str) -> Received {
+    received_setup_at(code, "2026-05-12T08:00", "2026-05-12T09:00").await
+}
+
+/// [`received_setup`] with the commitment at `[start, end)` (local times; inside the frozen week:
+/// frozen with it, in its baseline).
+async fn received_setup_at(code: &str, start: &str, end: &str) -> Received {
     let db = setup_db().await;
     // Rows get their sync identity as on a device (capture installed, seeded identities given).
     crate::sync::capture::install_capture_in(&db).await.expect("capture");
     let (site, team) = weekly_site(&db, code).await;
     let approver = site_approver(&db, 160, &format!("{code}-APP"), site).await;
-    let commitment = wo_commitment(
-        &db,
-        team,
-        &format!("{code} received"),
-        "2026-05-12T08:00",
-        "2026-05-12T09:00",
-    )
-    .await;
+    let commitment = wo_commitment(&db, team, &format!("{code} received"), start, end).await;
     let template_of = wo_commitment(
         &db,
         team,
@@ -1423,5 +1422,271 @@ async fn keeping_the_plan_marks_a_refused_new_break_in_and_its_origin_takes_the_
         .await,
         1,
         "the refusal marks are taken"
+    );
+}
+
+// ── Round 3: runs of break-ins, crews, the plan put back (review round 2) ─────────────────────
+
+impl Received {
+    /// The commitment moved here to `[start, end)` by a break-in signed by the site's approver.
+    async fn move_here(&self, start: &str, end: &str) -> super::domain::ScheduleBreakIn {
+        let mut c = self.commitment.clone();
+        c.row_version = scalar(
+            &self.db,
+            &format!("SELECT row_version FROM schedule_commitments WHERE id = {}", c.id),
+        )
+        .await;
+        scheduling::create_schedule_break_in(
+            &self.db,
+            1,
+            signed(
+                move_input(&c, "emergency", start, end),
+                self.approver,
+                APPROVER_PASSWORD,
+            ),
+        )
+        .await
+        .expect("signed break-in here")
+    }
+
+    async fn crew_here(&self) -> i64 {
+        scalar(
+            &self.db,
+            &format!(
+                "SELECT assigned_team_id FROM schedule_commitments WHERE id = {}",
+                self.commitment.id
+            ),
+        )
+        .await
+    }
+}
+
+/// The message of a conflict outcome.
+fn conflict_message(o: &ApplyOutcome) -> String {
+    match o {
+        ApplyOutcome::Conflict { message, .. } => message.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_job_moved_twice_between_syncs_enters_on_its_run_of_signed_break_ins() {
+    let r = received_setup("FE18").await;
+    let first = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |_| {});
+    let second = r.break_in("2026-05-07T08:00", "2026-05-07T09:00", |p| {
+        p.insert("old_slot_start".into(), local("2026-05-06T08:00").into());
+        p.insert("old_slot_end".into(), local("2026-05-06T09:00").into());
+    });
+    let moved = r.moved("2026-05-07T08:00", "2026-05-07T09:00").await;
+
+    // The second move alone does not start where the job is here: refused.
+    inbox(&r.db, "schedule_break_ins", "fe18-bi2", &second).await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved.clone()).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert_eq!(r.slot_here().await, r.commitment.committed_start);
+
+    // Both signed moves: the run leads from the slot here to the received one, each judged.
+    inbox(&r.db, "schedule_break_ins", "fe18-bi1", &first).await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(r.slot_here().await, local("2026-05-07T08:00"));
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM schedule_break_ins WHERE entity_sync_id IN ('fe18-bi1', 'fe18-bi2')"
+        )
+        .await,
+        2,
+        "both break-ins applied with it"
+    );
+}
+
+#[tokio::test]
+async fn a_crew_change_enters_only_on_a_break_in_naming_both_crews_judged_first() {
+    let r = received_setup("FE19").await;
+    let (site_y, crew_y) = weekly_site(&r.db, "FE19Y").await;
+    super::weekly_schedule::freeze_weekly_schedule(&r.db, 1, week_ref(site_y, "2026-05-04", None))
+        .await
+        .expect("frozen at Y too");
+    let crew_x_sid = sync_id(&r.db, "teams", r.team).await;
+    let crew_y_sid = sync_id(&r.db, "teams", crew_y).await;
+    let mut moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    moved.insert("assigned_team_sync_id".into(), crew_y_sid.clone().into());
+
+    // A signed break-in of the slot only, within crew X: it never covered the crew change.
+    let slot_only = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |_| {});
+    assert_eq!(
+        slot_only.get("new_team_sync_id").and_then(Value::as_str),
+        Some(crew_x_sid.as_str())
+    );
+    inbox(&r.db, "schedule_break_ins", "fe19-bi1", &slot_only).await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved.clone()).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert_eq!(r.crew_here().await, r.team, "nothing applied");
+
+    // Then crew X → Y on the same slot, signed by a holder at X only: judged before the job is let in.
+    let to_y = r.break_in("2026-05-06T08:00", "2026-05-06T09:00", |p| {
+        p.insert("old_slot_start".into(), local("2026-05-06T08:00").into());
+        p.insert("old_slot_end".into(), local("2026-05-06T09:00").into());
+        p.insert("old_team_sync_id".into(), crew_x_sid.clone().into());
+        p.insert("new_team_sync_id".into(), crew_y_sid.clone().into());
+        p.insert("notification_dedupe_key".into(), "fe19-to-y".into());
+    });
+    inbox(&r.db, "schedule_break_ins", "fe19-bi2", &to_y).await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved.clone()).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert!(
+        conflict_message(&outcome).contains("PLANNING_BREAK_IN_APPROVER_UNAUTHORISED"),
+        "{outcome:?}"
+    );
+    assert_eq!(r.crew_here().await, r.team, "nothing applied");
+
+    // The approver holds plan.confirm at Y as well: the job enters with both break-ins.
+    exec_sql(
+        &r.db,
+        &format!(
+            "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+                valid_from, created_at, updated_at)
+             VALUES ('fe19-usa-y', {}, 778, 'org_node', '{site_y}', '2026-01-01T00:00:00Z',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            r.approver
+        ),
+    )
+    .await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(r.crew_here().await, crew_y);
+}
+
+#[tokio::test]
+async fn a_break_in_moved_back_here_is_never_replayed() {
+    let r = received_setup("FE20").await;
+    // Here: into the frozen week (S1) and back out (S0), each by a signed break-in.
+    r.move_here("2026-05-06T08:00", "2026-05-06T09:00").await;
+    r.move_here("2026-05-12T08:00", "2026-05-12T09:00").await;
+    assert_eq!(r.slot_here().await, r.commitment.committed_start);
+    // A version at S1 again with no new break-in: the first one is history (A → B → A).
+    let again = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, again).await;
+    assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
+    assert_eq!(r.slot_here().await, r.commitment.committed_start);
+}
+
+#[tokio::test]
+async fn a_version_back_on_the_frozen_plan_is_let_in() {
+    // In the frozen week and its baseline at S0, moved here to S1 by a signed break-in.
+    let r = received_setup_at("FE21", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let s0 = r.commitment.committed_start.clone();
+    r.move_here("2026-05-06T08:00", "2026-05-06T09:00").await;
+    let back = r.moved("2026-05-05T08:00", "2026-05-05T09:00").await;
+    // Back to its baseline slot and crew: putting work back on the frozen plan is not entering.
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(r.slot_here().await, s0);
+
+    // Without the baseline: only the undoing of a break-in refused on a PC is let in.
+    let r = received_setup_at("FE21B", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let move_away = r.move_here("2026-05-06T08:00", "2026-05-06T09:00").await;
+    exec_sql(
+        &r.db,
+        &format!(
+            "DELETE FROM weekly_schedule_baseline_items WHERE schedule_commitment_id = {}",
+            r.commitment.id
+        ),
+    )
+    .await;
+    let back = r.moved("2026-05-05T08:00", "2026-05-05T09:00").await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back.clone()).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PLANNING_WEEK_FROZEN"),
+        "its break-in is valid here: {outcome:?}"
+    );
+    let bi_sid = sync_id(&r.db, "schedule_break_ins", move_away.id).await;
+    let mut marked = payload(&r.db, "schedule_break_ins", &bi_sid).await;
+    marked.insert("sync_refused_at".into(), "2026-05-06T12:00:00Z".into());
+    marked.insert(
+        "sync_refused_reason".into(),
+        "refusé (sync) : approbateur sans droit sur le site — test".into(),
+    );
+    // Its refusal marks travel with the kept version (in the inbox, applied after it).
+    inbox(&r.db, "schedule_break_ins", &bi_sid, &marked).await;
+    let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, back).await;
+    assert!(conflict_code(&outcome).is_none(), "{outcome:?}");
+    assert_eq!(r.slot_here().await, r.commitment.committed_start);
+}
+
+#[tokio::test]
+async fn frozen_week_conflicts_close_once_the_reopened_week_is_applied() {
+    let r = received_setup_at("FE22", "2026-05-05T08:00", "2026-05-05T09:00").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let (week_sid, mut reopened) = week_payload(&r).await;
+    reopened.insert("status".into(), "approved".into());
+    reopened.insert("frozen_at".into(), Value::Null);
+    inbox(&r.db, "weekly_schedules", &week_sid, &reopened).await;
+    // Its commitment, un-frozen by the reopening on the other PC.
+    let mut unfrozen = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
+    unfrozen.insert("frozen_at".into(), Value::Null);
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &unfrozen).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("first pass");
+    let open_frozen = format!(
+        "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'PLANNING_WEEK_FROZEN' \
+           AND entity_sync_id = '{}' AND status IN ('new', 'triaged', 'escalated')",
+        r.commitment_sid
+    );
+    assert_eq!(scalar(&r.db, &open_frozen).await, 1, "the week is still frozen here");
+
+    // The decision arrives: the week reopens, and its commitment follows in the same pass.
+    let requester = signing_approver(&r.db, 192, "FE22-REQ").await;
+    let requester_sid = sync_id(&r.db, "user_accounts", requester).await;
+    let approver_sid = sync_id(&r.db, "user_accounts", r.approver).await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    inbox(
+        &r.db,
+        "weekly_schedule_events",
+        "fe22-ev1",
+        &unfrozen_event(&week_sid, 1, &requester_sid, &approver_sid),
+    )
+    .await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("second pass");
+    assert_eq!(scalar(&r.db, &open_frozen).await, 0, "closed: the week is open here");
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{}' \
+                   AND status = 'resolved_remote' AND resolution_action = 'week_reopened'",
+                r.commitment_sid
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.week_frozen_conflict.closed_by_reopening'"
+        )
+        .await,
+        1,
+        "audited"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "SELECT COUNT(*) FROM schedule_commitments WHERE id = {} AND frozen_at IS NULL",
+                r.commitment.id
+            )
+        )
+        .await,
+        1,
+        "un-frozen as on the other PC"
     );
 }
