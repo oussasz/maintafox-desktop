@@ -637,6 +637,42 @@ pub async fn update_pm_plan_version(
     Ok(version)
 }
 
+/// A version created from a reliability study decision is published only once that decision is
+/// applied here and names this version: a version received by synchronisation (or made by an older
+/// version of the app) from a decision that is not approved never becomes the plan's current
+/// version (audit finding AU-69). A decision not received yet blocks it until it arrives.
+async fn ensure_source_decision_applied(
+    db: &impl ConnectionTrait,
+    version: &sea_orm::QueryResult,
+    version_id: i64,
+) -> AppResult<()> {
+    let source_type: Option<String> = version.try_get("", "source_type")?;
+    if source_type.as_deref() != Some(crate::reliability::rcm_loop::SOURCE_RELIABILITY_DECISION) {
+        return Ok(());
+    }
+    let source_id: Option<i64> = version.try_get("", "source_id")?;
+    let applied = match source_id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM reliability_study_decisions \
+                 WHERE id = ? AND status = 'applied' AND linked_pm_plan_version_id = ?",
+                [id.into(), version_id.into()],
+            ))
+            .await?
+            .is_some(),
+        None => false,
+    };
+    if applied {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(vec![
+            "GATE_PM_SOURCE_DECISION_NOT_APPLIED: This version comes from a reliability study decision that is not applied on this computer; it cannot be published."
+                .to_string(),
+        ]))
+    }
+}
+
 pub async fn publish_pm_plan_version(
     db: &DatabaseConnection,
     input: PublishPmPlanVersionInput,
@@ -666,6 +702,7 @@ pub async fn publish_pm_plan_version(
                 .to_string(),
         ]));
     }
+    ensure_source_decision_applied(db, &row, input.version_id).await?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='superseded',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE pm_plan_id=? AND status='published' AND id != ?", [plan_id.into(), input.version_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='published',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?", [input.version_id.into(),input.expected_row_version.into()])).await?;

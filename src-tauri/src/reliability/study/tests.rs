@@ -2809,3 +2809,153 @@ fn the_proposer_withdraws_with_either_reliability_right() {
     assert_eq!(reject_right(false, true), RAM_MANAGE);
     assert_eq!(reject_right(false, false), RAM_MANAGE);
 }
+
+/// A PM-interval decision on a plan of P-101 with one version, proposed by the admin.
+async fn pm_decision(f: &Fixture, study_id: i64, plan_id: i64) -> crate::reliability::study::domain::StudyDecision {
+    create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Remplacer le roulement toutes les 16 semaines".into(),
+            action_kind: "pm_interval".into(),
+            equipment_id: None,
+            pm_plan_id: Some(plan_id),
+            proposed_interval_hours: Some(16.0 * 168.0),
+            wo_type_code: None,
+            approver_id: None,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: Some(1_000.0),
+            failure_cost: Some(9_000.0),
+        },
+        f.admin,
+    )
+    .await
+    .expect("pm decision")
+}
+
+#[tokio::test]
+async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_applied() {
+    use crate::pm::domain::PublishPmPlanVersionInput;
+    use crate::pm::queries::{create_pm_plan, create_pm_plan_version, publish_pm_plan_version};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let plan = create_pm_plan(
+        &f.db,
+        CreatePmPlanInput {
+            code: "PM-ST-N5".into(),
+            title: "Roulement pompe".into(),
+            description: None,
+            asset_scope_type: "equipment".into(),
+            asset_scope_id: Some(f.p101),
+            strategy_type: "fixed".into(),
+            criticality_value_id: None,
+            assigned_team_id: None,
+            requires_shutdown: false,
+            requires_permit: false,
+            is_active: Some(true),
+        },
+    )
+    .await
+    .expect("plan");
+    let version_input = || CreatePmPlanVersionInput {
+        effective_from: "2025-01-01T00:00:00Z".into(),
+        effective_to: None,
+        trigger_definition_json: r#"{"interval_unit":"week","interval_value":36}"#.into(),
+        task_package_json: None,
+        required_parts_json: None,
+        required_skills_json: Some("[]".into()),
+        required_tools_json: None,
+        estimated_duration_hours: Some(3.0),
+        planned_crew_size: None,
+        estimated_labor_cost: None,
+        estimated_parts_cost: None,
+        estimated_service_cost: None,
+        change_reason: None,
+    };
+    create_pm_plan_version(&f.db, plan.id, version_input())
+        .await
+        .expect("version 1");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plans SET lifecycle_status = 'approved' WHERE id = {}",
+            plan.id
+        ),
+    )
+    .await;
+    let publish = |version_id: i64| {
+        let db = &f.db;
+        async move {
+            let rv = scalar(
+                db,
+                &format!("SELECT row_version FROM pm_plan_versions WHERE id = {version_id}"),
+            )
+            .await;
+            publish_pm_plan_version(
+                db,
+                PublishPmPlanVersionInput {
+                    version_id,
+                    expected_row_version: rv,
+                },
+            )
+            .await
+        }
+    };
+
+    // A draft naming a decision still proposed here (as received from another computer, or made
+    // by an older version through the generic path): never published.
+    let proposed = pm_decision(&f, study_id, plan.id).await;
+    let foreign = create_pm_plan_version(&f.db, plan.id, version_input())
+        .await
+        .expect("draft");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plan_versions SET source_type = 'reliability_study_decision', source_id = {} WHERE id = {}",
+            proposed.id, foreign.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+    // Its decision not received here yet (no local id): refused too.
+    exec(
+        &f.db,
+        &format!("UPDATE pm_plan_versions SET source_id = NULL WHERE id = {}", foreign.id),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+
+    // Approved and applied here: its own draft is published.
+    let approved = approve_decision(&f.db, decide(&proposed, None), f.reviewer)
+        .await
+        .expect("approve");
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    let own = applied.linked_pm_plan_version_id.expect("draft of the decision");
+    // Another draft naming the applied decision, but not the one it created: refused.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plan_versions SET source_id = {} WHERE id = {}",
+            proposed.id, foreign.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+    let published = publish(own).await.expect("publish the applied decision's draft");
+    assert_eq!(published.status, "published");
+}
