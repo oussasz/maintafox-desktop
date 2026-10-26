@@ -196,7 +196,8 @@
     "stock_to_reconcile": "Stock to reconcile after sync",
     "stock_count_recount": "Count to do again",
     "stock_count_second_approval": "Stock count held for a second approval",
-    "retired_equipment_work": "Work order or request on retired equipment"
+    "retired_equipment_work": "Work order on retired equipment",
+    "retired_equipment_request": "Request on retired equipment"
   },
   "messages": {
     "wo_assigned": {

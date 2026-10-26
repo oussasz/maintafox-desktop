@@ -196,7 +196,8 @@
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
     "stock_count_recount": "Comptage à refaire",
     "stock_count_second_approval": "Comptage retenu pour une seconde approbation",
-    "retired_equipment_work": "OT ou demande sur équipement déclassé"
+    "retired_equipment_work": "OT sur équipement déclassé",
+    "retired_equipment_request": "Demande sur équipement déclassé"
   },
   "messages": {
     "wo_assigned": {
