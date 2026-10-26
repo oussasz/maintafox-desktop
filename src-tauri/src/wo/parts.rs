@@ -24,7 +24,7 @@ use crate::inventory::domain::{InventoryIssueInput, InventoryReleaseReservationI
 use crate::inventory::queries as inventory_queries;
 use crate::wo::execution_log::{emit_execution_event, part_label_json};
 use crate::wo::workflow::state_machine::status_i18n_key;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -169,7 +169,7 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
 }
 
 /// Load the WO status code.
-async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<String> {
+async fn load_wo_status_code(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -205,7 +205,8 @@ const PART_FROM: &str = "\
     LEFT JOIN reference_values nur ON nur.id = wop.not_used_reason_id";
 
 /// Reserve then issue `quantity` of an execution-added stock article for its WO and
-/// record the reservation on the part line. A failed issue releases the reservation.
+/// record the reservation on the part line, in one transaction: a failed issue leaves neither
+/// the reservation nor the movement.
 async fn reserve_and_issue_execution_part(
     db: &DatabaseConnection,
     part: &WoPart,
@@ -213,10 +214,24 @@ async fn reserve_and_issue_execution_part(
     location_id: i64,
     quantity: f64,
 ) -> AppResult<WoPart> {
+    let tx = db.begin().await?;
+    let issued = reserve_and_issue_execution_part_in(&tx, part, article_id, location_id, quantity).await?;
+    tx.commit().await?;
+    Ok(issued)
+}
+
+/// [`reserve_and_issue_execution_part`] inside the caller's transaction.
+async fn reserve_and_issue_execution_part_in<C: ConnectionTrait>(
+    db: &C,
+    part: &WoPart,
+    article_id: i64,
+    location_id: i64,
+    quantity: f64,
+) -> AppResult<WoPart> {
     let (source_type, _source_di_id, wo_code) = load_wo_source_context(db, part.work_order_id).await?;
-    let reservation = inventory_queries::reserve_stock(
+    let reservation_id = inventory_queries::reserve_stock_in(
         db,
-        InventoryReserveInput {
+        &InventoryReserveInput {
             article_id,
             location_id,
             quantity,
@@ -227,11 +242,10 @@ async fn reserve_and_issue_execution_part(
         },
     )
     .await?;
-
-    if let Err(err) = inventory_queries::issue_reserved_stock(
+    inventory_queries::issue_reserved_stock_in(
         db,
-        InventoryIssueInput {
-            reservation_id: reservation.id,
+        &InventoryIssueInput {
+            reservation_id,
             quantity,
             source_type: Some(source_type),
             source_id: Some(part.work_order_id),
@@ -239,25 +253,14 @@ async fn reserve_and_issue_execution_part(
             notes: Some("WO execution part issue".to_string()),
         },
     )
-    .await
-    {
-        let _ = inventory_queries::release_stock_reservation(
-            db,
-            InventoryReleaseReservationInput {
-                reservation_id: reservation.id,
-                notes: Some("WO execution part issue failed".to_string()),
-            },
-        )
-        .await;
-        return Err(err);
-    }
+    .await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_order_parts \
          SET reservation_id = ?, quantity_reserved = ?, quantity_issued = ? \
          WHERE id = ?",
-        [reservation.id.into(), quantity.into(), quantity.into(), part.id.into()],
+        [reservation_id.into(), quantity.into(), quantity.into(), part.id.into()],
     ))
     .await?;
 
@@ -298,7 +301,7 @@ async fn reserve_and_issue_execution_part(
     map_part(&row)
 }
 
-async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResult<(String, Option<i64>, String)> {
+async fn load_wo_source_context(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<(String, Option<i64>, String)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -557,8 +560,39 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
 // B) record_actual_usage
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Records the used quantity of a part line. The stock issue (or return) of the difference and
+/// the line's used quantity are written in one transaction: a failure leaves neither, so a retry
+/// never issues the parts twice.
 pub async fn record_actual_usage(
     db: &DatabaseConnection,
+    wo_part_id: i64,
+    quantity_used: f64,
+    unit_cost: Option<f64>,
+) -> AppResult<WoPart> {
+    let tx = db.begin().await?;
+    let part = record_actual_usage_in(&tx, wo_part_id, quantity_used, unit_cost).await?;
+    tx.commit().await?;
+    let label = part
+        .article_label
+        .clone()
+        .or(part.article_ref.clone())
+        .unwrap_or_else(|| format!("#{}", part.id));
+    let _ = emit_execution_event(
+        db,
+        part.work_order_id,
+        "part_used",
+        "executionLog.partUsed",
+        part_label_json(&label),
+        Some("part"),
+        Some(part.id),
+        None,
+    )
+    .await;
+    Ok(part)
+}
+
+async fn record_actual_usage_in<C: ConnectionTrait>(
+    db: &C,
     wo_part_id: i64,
     quantity_used: f64,
     unit_cost: Option<f64>,
@@ -598,9 +632,9 @@ pub async fn record_actual_usage(
         if quantity_used > previous_used {
             let delta = quantity_used - previous_used;
             let (source_type, _source_di_id, wo_code) = load_wo_source_context(db, part.work_order_id).await?;
-            inventory_queries::issue_reserved_stock(
+            inventory_queries::issue_reserved_stock_in(
                 db,
-                InventoryIssueInput {
+                &InventoryIssueInput {
                     reservation_id,
                     quantity: delta,
                     source_type: Some(source_type),
@@ -611,13 +645,14 @@ pub async fn record_actual_usage(
             )
             .await?;
         } else if quantity_used < previous_used {
-            inventory_queries::return_reserved_stock(
+            inventory_queries::return_reserved_stock_in(
                 db,
-                crate::inventory::domain::InventoryReturnInput {
+                &crate::inventory::domain::InventoryReturnInput {
                     reservation_id,
                     quantity: previous_used - quantity_used,
                     notes: Some("WO part usage rollback".to_string()),
                 },
+                None,
             )
             .await?;
         }
@@ -627,9 +662,14 @@ pub async fn record_actual_usage(
         // on-hand, the stock movement and the WO parts cost agree.
         let previous_issued = part.quantity_issued.max(0.0);
         if quantity_used > previous_issued {
-            let issued =
-                reserve_and_issue_execution_part(db, &part, article_id, location_id, quantity_used - previous_issued)
-                    .await?;
+            let issued = reserve_and_issue_execution_part_in(
+                db,
+                &part,
+                article_id,
+                location_id,
+                quantity_used - previous_issued,
+            )
+            .await?;
             // `reserve_and_issue_execution_part` records the delta; keep the cumulative figure.
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -677,24 +717,7 @@ pub async fn record_actual_usage(
             entity: "WoPart".into(),
             id: wo_part_id.to_string(),
         })?;
-    let part = map_part(&updated)?;
-    let label = part
-        .article_label
-        .clone()
-        .or(part.article_ref.clone())
-        .unwrap_or_else(|| format!("#{}", part.id));
-    let _ = emit_execution_event(
-        db,
-        part.work_order_id,
-        "part_used",
-        "executionLog.partUsed",
-        part_label_json(&label),
-        Some("part"),
-        Some(part.id),
-        None,
-    )
-    .await;
-    Ok(part)
+    map_part(&updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

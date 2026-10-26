@@ -1480,10 +1480,9 @@ pub async fn transition_pm_occurrence(
         }
     }
 
-    let mut linked_work_order_id = current.linked_work_order_id;
-    if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
-        // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
-        // permit). See `pm::wo_content` for the mapping rules.
+    // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
+    // permit). See `pm::wo_content` for the mapping rules. Read before the transaction.
+    let wo_to_create = if input.generate_work_order == Some(true) && current.linked_work_order_id.is_none() {
         let content = crate::pm::wo_content::build_pm_work_order_content(
             db,
             current.pm_plan_id,
@@ -1491,11 +1490,32 @@ pub async fn transition_pm_occurrence(
             current.equipment_id,
         )
         .await?;
-
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
-        let wo = wo_queries::create_work_order(
-            db,
+        Some((content, wo_type_code))
+    } else {
+        None
+    };
+
+    let deferral_reason = if next_status == "deferred" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+    let missed_reason = if next_status == "missed" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+
+    // The OT is created and the occurrence claimed (version-checked) in one transaction: when the
+    // occurrence changed meanwhile, the refusal rolls the OT back too, never leaving an orphan.
+    let tx = db.begin().await?;
+    let mut linked_work_order_id = current.linked_work_order_id;
+    let mut created_wo: Option<(i64, crate::pm::wo_content::PmWoContent)> = None;
+    if let Some((content, wo_type_code)) = wo_to_create {
+        let wo = wo_queries::create_work_order_in(
+            &tx,
             WoCreateInput {
                 type_code: wo_type_code,
                 equipment_id: content.equipment_id,
@@ -1532,24 +1552,10 @@ pub async fn transition_pm_occurrence(
             },
         )
         .await?;
-        // WO functions own their transactions (no shared transaction across modules): the
-        // checklist, tools and parts are added right after creation, on the draft OT.
-        crate::pm::wo_content::apply_pm_content_to_work_order(db, wo.id, &content).await?;
         linked_work_order_id = Some(wo.id);
+        created_wo = Some((wo.id, content));
     }
 
-    let deferral_reason = if next_status == "deferred" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-    let missed_reason = if next_status == "missed" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-
-    let tx = db.begin().await?;
     let update = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1594,6 +1600,13 @@ pub async fn transition_pm_occurrence(
     .await?;
 
     tx.commit().await?;
+
+    // WO child functions own their transactions (no shared transaction across modules): the
+    // checklist, tools and parts are added right after, on the draft OT already linked to the
+    // occurrence.
+    if let Some((wo_id, content)) = created_wo {
+        crate::pm::wo_content::apply_pm_content_to_work_order(db, wo_id, &content).await?;
+    }
 
     let updated = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
     if updated.status == "missed" {

@@ -1595,7 +1595,8 @@ async fn seed_pm_equipment(db: &DatabaseConnection) {
 
 /// Active plan on equipment P-101 whose published version prescribes tasks, parts and tools;
 /// returns its first generated occurrence moved to `ready_for_scheduling` with its OT.
-async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
+/// A generated occurrence of a published plan whose version prescribes tasks, parts and tools.
+async fn generated_occurrence(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
     seed_pm_equipment(db).await;
     let plan = queries::create_pm_plan(
         db,
@@ -1693,7 +1694,11 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
     .expect("occurrence");
     assert_eq!(occ.asset_code.as_deref(), Some("P-101"));
     assert_eq!(occ.asset_name.as_deref(), Some("Pompe de reprise"));
+    occ
+}
 
+async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
+    let occ = generated_occurrence(db, code).await;
     queries::transition_pm_occurrence(
         db,
         TransitionPmOccurrenceInput {
@@ -1709,6 +1714,80 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
     )
     .await
     .expect("ready with OT")
+}
+
+/// AU-20 (a): the occurrence is claimed and its OT created in one transaction. When someone else
+/// changes the occurrence while the OT is being created (simulated by a trigger firing on the OT
+/// insert), the transition is refused and no orphan OT is left.
+#[tokio::test]
+async fn a_stale_occurrence_claim_leaves_no_orphan_work_order() {
+    let db = setup_db().await;
+    let occ = generated_occurrence(&db, "PM-WO-RACE").await;
+    let wos_before = count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await;
+    db.execute_unprepared(&format!(
+        "CREATE TEMP TRIGGER au20_concurrent_edit AFTER INSERT ON work_orders BEGIN            UPDATE pm_occurrences SET row_version = row_version + 1 WHERE id = {};          END",
+        occ.id
+    ))
+    .await
+    .expect("trigger");
+
+    let err = queries::transition_pm_occurrence(
+        &db,
+        TransitionPmOccurrenceInput {
+            occurrence_id: occ.id,
+            expected_row_version: occ.row_version,
+            next_status: "ready_for_scheduling".to_string(),
+            reason_code: None,
+            note: None,
+            generate_work_order: Some(true),
+            work_order_type_id: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect_err("the occurrence changed meanwhile");
+    assert!(
+        matches!(&err, AppError::ValidationFailed(l) if l.iter().any(|m| m.starts_with("GATE_RECORD_CHANGED_ELSEWHERE"))),
+        "{err:?}"
+    );
+    db.execute_unprepared("DROP TRIGGER au20_concurrent_edit")
+        .await
+        .expect("drop trigger");
+
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before,
+        "no orphan OT"
+    );
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "generated");
+    assert_eq!(
+        after.row_version, occ.row_version,
+        "the trigger's edit rolled back with the claim"
+    );
+    assert!(after.linked_work_order_id.is_none());
+
+    // Reloaded, the same transition goes through and links its OT.
+    let ready = queries::transition_pm_occurrence(
+        &db,
+        TransitionPmOccurrenceInput {
+            occurrence_id: occ.id,
+            expected_row_version: after.row_version,
+            next_status: "ready_for_scheduling".to_string(),
+            reason_code: None,
+            note: None,
+            generate_work_order: Some(true),
+            work_order_type_id: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("ready with OT");
+    assert!(ready.linked_work_order_id.is_some());
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before + 1
+    );
 }
 
 async fn count_for(db: &DatabaseConnection, sql: &str, id: i64) -> i64 {

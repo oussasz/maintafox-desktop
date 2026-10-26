@@ -56,13 +56,26 @@ pub async fn issue_stock_with_source(
     request: IssueStockRequest,
     source: IssueSourceOverride,
 ) -> AppResult<IssueOutcome> {
+    let tx = db.begin().await?;
+    let outcome = issue_stock_with_source_in(&tx, request, source).await?;
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+/// [`issue_stock_with_source`] inside the caller's transaction: a caller that records the issue
+/// elsewhere too (the WO part line, `wo::parts`) commits both together or neither.
+pub(crate) async fn issue_stock_with_source_in<C: ConnectionTrait>(
+    tx: &C,
+    request: IssueStockRequest,
+    source: IssueSourceOverride,
+) -> AppResult<IssueOutcome> {
     if !request.quantity.is_finite() || request.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
     let converted = crate::inventory::unit_conversions::to_stock_quantity(
-        db,
+        tx,
         request.article_id,
         request.entered_unit_value_id,
         request.quantity,
@@ -74,11 +87,10 @@ pub async fn issue_stock_with_source(
             "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
-    let tracking = lots::article_tracking(db, request.article_id).await?;
+    let tracking = lots::article_tracking(tx, request.article_id).await?;
     crate::inventory::unit_conversions::ensure_whole_stock_units(&tracking, &converted)?;
     lots::ensure_whole_units(&tracking, stock_quantity)?;
 
-    let tx = db.begin().await?;
     let (reservation_id, work_order_id, work_order_code_value) = match request.reservation_id {
         Some(reservation_id) => {
             let row = tx
@@ -120,7 +132,7 @@ pub async fn issue_stock_with_source(
                         .to_string(),
                 ]));
             };
-            let (code, status) = work_order_code(&tx, work_order_id).await?;
+            let (code, status) = work_order_code(tx, work_order_id).await?;
             if !PARTS_OPEN_WO_STATUSES.contains(&status.as_str()) {
                 return Err(AppError::ValidationFailed(vec![format!(
                     "GATE_INV_WO_NOT_OPEN:wo={code},status={}: Work order {code} is not open for parts (status: {status}).",
@@ -128,7 +140,7 @@ pub async fn issue_stock_with_source(
                 )]));
             }
             let reservation_id = queries::reserve_stock_in(
-                &tx,
+                tx,
                 &InventoryReserveInput {
                     article_id: request.article_id,
                     location_id: request.location_id,
@@ -147,10 +159,10 @@ pub async fn issue_stock_with_source(
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match request.lot_id {
             Some(lot) => {
-                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, stock_quantity).await?;
+                lots::ensure_lot_available(tx, lot, request.article_id, request.location_id, stock_quantity).await?;
                 vec![(Some(lot), stock_quantity)]
             }
-            None => lots::fefo_allocate(&tx, request.article_id, request.location_id, stock_quantity)
+            None => lots::fefo_allocate(tx, request.article_id, request.location_id, stock_quantity)
                 .await?
                 .into_iter()
                 .map(|(lot, qty)| (Some(lot), qty))
@@ -171,7 +183,7 @@ pub async fn issue_stock_with_source(
     let mut lines = Vec::new();
     for (lot_id, quantity) in allocation {
         let (transaction_id, unit_cost) = queries::issue_reserved_in(
-            &tx,
+            tx,
             reservation_id,
             quantity,
             lot_id,
@@ -187,7 +199,7 @@ pub async fn issue_stock_with_source(
             request.actor_id,
         )
         .await?;
-        crate::inventory::unit_conversions::stamp_entered_unit(&tx, transaction_id, &converted, quantity).await?;
+        crate::inventory::unit_conversions::stamp_entered_unit(tx, transaction_id, &converted, quantity).await?;
         let (lot_number, serial_number) = match lot_id {
             Some(lot) => {
                 let row = tx
@@ -220,7 +232,6 @@ pub async fn issue_stock_with_source(
             extended_cost: unit_cost.map(|c| c * quantity),
         });
     }
-    tx.commit().await?;
 
     let valued: Vec<f64> = lines.iter().filter_map(|l| l.extended_cost).collect();
     Ok(IssueOutcome {
