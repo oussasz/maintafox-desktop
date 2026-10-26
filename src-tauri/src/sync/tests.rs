@@ -539,22 +539,100 @@ async fn repair_preview_execute_flow_is_scoped_audited_and_non_destructive() {
     .expect_err("destructive reset path must be blocked");
     assert!(format!("{destructive_preview}").contains("Unsupported repair mode"));
 
+    // Requeuing refused changes and reopening conflicts in bulk skipped the rules of "retry later"
+    // (AU-44 follow-up): refused at preview, and a plan previewed before is not executed.
+    for mode in ["requeue_rejected_outbox", "retry_operator_conflicts"] {
+        let refused = queries::preview_sync_repair(
+            &db,
+            actor_id,
+            SyncRepairPreviewInput {
+                mode: mode.to_string(),
+                reason: "Recover rejected outbox records".to_string(),
+                outbox_ids: None,
+                conflict_ids: None,
+                server_batch_id: Some("srv-repair".to_string()),
+                checkpoint_token: None,
+            },
+        )
+        .await
+        .expect_err("bulk repair modes are refused");
+        assert!(
+            format!("{refused:?}").contains("GATE_SYNC_REPAIR_MODE_BLOCKED"),
+            "{mode}: {refused:?}"
+        );
+    }
+    db.execute(sea_orm::Statement::from_string(
+        sea_orm::DatabaseBackend::Sqlite,
+        "INSERT INTO sync_repair_actions (plan_id, mode, status, reason, created_by_id, scope_json, preview_json, created_at) VALUES ('repair-old', 'requeue_rejected_outbox', 'previewed', 'old', 7, '{\"mode\":\"requeue_rejected_outbox\",\"reason\":\"old\"}', '{}', strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    ))
+    .await
+    .expect("plan previewed before");
+    let old_plan = queries::execute_sync_repair(
+        &db,
+        actor_id,
+        ExecuteSyncRepairInput {
+            plan_id: "repair-old".to_string(),
+            confirm_phrase: "CONFIRM_SYNC_REPAIR".to_string(),
+        },
+    )
+    .await
+    .expect_err("a bulk plan previewed before is not executed");
+    assert!(
+        format!("{old_plan:?}").contains("GATE_SYNC_REPAIR_MODE_BLOCKED"),
+        "{old_plan:?}"
+    );
+    // Closed as blocked, with its audit event: it is never executed later.
+    let old_status: String = db
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT status FROM sync_repair_actions WHERE plan_id = 'repair-old'",
+        ))
+        .await
+        .expect("plan status")
+        .expect("row")
+        .try_get("", "status")
+        .expect("status");
+    assert_eq!(old_status, "blocked");
+    let blocked_audits: i64 = db
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM audit_events
+             WHERE action_code = 'sync.repair.execute' AND result = 'blocked' AND target_id = 'repair-old'",
+        ))
+        .await
+        .expect("audit query")
+        .expect("row")
+        .try_get("", "n")
+        .expect("n");
+    assert_eq!(blocked_audits, 1);
+    let still_rejected: i64 = db
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM sync_outbox WHERE status = 'rejected'",
+        ))
+        .await
+        .expect("count rejected")
+        .expect("row")
+        .try_get("", "n")
+        .expect("n");
+    assert_eq!(still_rejected, 1);
+
     let preview = queries::preview_sync_repair(
         &db,
         actor_id,
         SyncRepairPreviewInput {
-            mode: "requeue_rejected_outbox".to_string(),
-            reason: "Recover rejected outbox records".to_string(),
+            mode: "checkpoint_realign".to_string(),
+            reason: "Realign the checkpoint".to_string(),
             outbox_ids: None,
             conflict_ids: None,
-            server_batch_id: Some("srv-repair".to_string()),
-            checkpoint_token: None,
+            server_batch_id: None,
+            checkpoint_token: Some("ckpt-301".to_string()),
         },
     )
     .await
     .expect("preview repair");
     assert!(preview.requires_confirmation);
-    assert_eq!(preview.affected_outbox_count, 1);
+    assert_eq!(preview.affected_outbox_count, 0);
 
     let missing_confirm = queries::execute_sync_repair(
         &db,
@@ -579,7 +657,8 @@ async fn repair_preview_execute_flow_is_scoped_audited_and_non_destructive() {
     .await
     .expect("execute repair");
     assert_eq!(executed.status, "executed");
-    assert_eq!(executed.requeued_outbox_count, 1);
+    assert_eq!(executed.requeued_outbox_count, 0);
+    assert_eq!(executed.checkpoint_token_after.as_deref(), Some("ckpt-301"));
 
     let actions = queries::list_sync_repair_actions(&db, Some(20))
         .await
@@ -599,7 +678,8 @@ async fn repair_preview_execute_flow_is_scoped_audited_and_non_destructive() {
         .expect("audit row")
         .try_get("", "count")
         .expect("audit count");
-    assert_eq!(audit_count, 2);
+    // The preview and the execution of the realign, and the blocked bulk plan.
+    assert_eq!(audit_count, 3);
 }
 
 #[tokio::test]
@@ -991,7 +1071,9 @@ async fn replay_reopens_a_count_settled_at_its_origin_like_retry_later() {
     let result = queries::replay_sync_failures(&db, actor, single_item("r-settled", Some(conflict), Some(outbox)))
         .await
         .expect("retry later is accepted on a count settled at its origin");
+    assert_eq!(result.requeued_outbox_count, 1);
     assert_eq!(result.transitioned_conflict_count, 1);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "pending");
     assert_eq!(status_of(&db, "sync_conflicts", conflict).await, "triaged");
 }
 
@@ -1026,6 +1108,7 @@ async fn replay_by_conflict_checks_and_reopens_every_open_conflict_of_the_change
         format!("{err:?}").contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"),
         "{err:?}"
     );
+    assert_eq!(replay_runs(&db).await, 0);
     assert_eq!(status_of(&db, "sync_outbox", outbox).await, "dead_letter");
     assert_eq!(status_of(&db, "sync_conflicts", named).await, "new");
     assert_eq!(status_of(&db, "sync_conflicts", planning).await, "new");
@@ -1093,4 +1176,163 @@ async fn whole_batch_and_time_window_replays_are_refused() {
     assert_eq!(replay_runs(&db).await, 0);
     assert_eq!(status_of(&db, "sync_outbox", outbox).await, "dead_letter");
     assert_eq!(status_of(&db, "sync_conflicts", conflict).await, "new");
+}
+
+#[tokio::test]
+async fn a_change_named_alone_is_sent_again_only_when_given_up() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-refused-alone").await;
+    // A change the server refused, whose review-only conflict a person dismissed: named alone, it is
+    // not sent again (its conflict's rules would be bypassed).
+    let outbox = dead_letter_outbox(&db, "wo-replay-refused").await;
+    db.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "UPDATE sync_outbox SET status = 'rejected' WHERE id = ?",
+        [outbox.into()],
+    ))
+    .await
+    .expect("refused by the server");
+    let conflict = seed_conflict(
+        &db,
+        crate::permit::ended_under_work::codes::ENDED_BEFORE_START,
+        "work_orders",
+        "wo-replay-refused",
+        Some(outbox),
+    )
+    .await;
+    db.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        "UPDATE sync_conflicts SET status = 'dismissed' WHERE id = ?",
+        [conflict.into()],
+    ))
+    .await
+    .expect("dismissed by a person");
+
+    let err = queries::replay_sync_failures(&db, actor, single_item("r-refused", None, Some(outbox)))
+        .await
+        .expect_err("a refused change is not sent again on its own");
+    assert!(format!("{err:?}").contains("GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
+    assert_eq!(replay_runs(&db).await, 0);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "rejected");
+    assert_eq!(status_of(&db, "sync_conflicts", conflict).await, "dismissed");
+}
+
+#[tokio::test]
+async fn a_conflict_replayed_without_naming_its_change_sends_the_one_it_holds() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-held").await;
+    let outbox = dead_letter_outbox(&db, "wo-replay-held").await;
+    let conflict = seed_conflict(&db, "AUTHORITY_MISMATCH", "work_orders", "wo-replay-held", Some(outbox)).await;
+    let dead = seed_conflict(&db, "OUTBOX_DEAD_LETTER", "work_orders", "wo-replay-held", Some(outbox)).await;
+
+    let result = queries::replay_sync_failures(&db, actor, single_item("r-held", Some(conflict), None))
+        .await
+        .expect("replay");
+    assert_eq!(result.requeued_outbox_count, 1);
+    assert_eq!(result.transitioned_conflict_count, 2);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "pending");
+    assert_eq!(status_of(&db, "sync_conflicts", dead).await, "triaged");
+}
+
+async fn set_status(db: &DatabaseConnection, table: &str, id: i64, status: &str) {
+    db.execute(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Sqlite,
+        format!("UPDATE {table} SET status = ? WHERE id = ?"),
+        [status.into(), id.into()],
+    ))
+    .await
+    .expect("set status");
+}
+
+#[tokio::test]
+async fn a_dismissed_review_only_refusal_of_the_change_blocks_its_resend() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-closed-sibling").await;
+    // Conflict A was replayed (triaged); the server refused the change again as review only (B),
+    // and a person dismissed B. Re-sending the change would bypass B: refused from every entry.
+    let outbox = dead_letter_outbox(&db, "wo-replay-closed-sib").await;
+    set_status(&db, "sync_outbox", outbox, "rejected").await;
+    let generic = seed_conflict(
+        &db,
+        "AUTHORITY_MISMATCH",
+        "work_orders",
+        "wo-replay-closed-sib",
+        Some(outbox),
+    )
+    .await;
+    set_status(&db, "sync_conflicts", generic, "triaged").await;
+    let review = seed_conflict(
+        &db,
+        crate::permit::ended_under_work::codes::ENDED_DURING_WORK,
+        "work_orders",
+        "wo-replay-closed-sib",
+        Some(outbox),
+    )
+    .await;
+    set_status(&db, "sync_conflicts", review, "dismissed").await;
+
+    let err = queries::replay_sync_failures(&db, actor, single_item("r-cs-1", Some(generic), Some(outbox)))
+        .await
+        .expect_err("the dismissed review-only refusal blocks the resend");
+    assert!(format!("{err:?}").contains("GATE_SYNC_CONFLICT_REVIEW_ONLY"), "{err:?}");
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "rejected");
+
+    // Later given up after its delivery attempts: the dead-letter list's entry is refused too.
+    set_status(&db, "sync_outbox", outbox, "dead_letter").await;
+    let err = queries::replay_sync_failures(&db, actor, single_item("r-cs-2", None, Some(outbox)))
+        .await
+        .expect_err("refused from the change too");
+    assert!(format!("{err:?}").contains("GATE_SYNC_CONFLICT_REVIEW_ONLY"), "{err:?}");
+    assert_eq!(replay_runs(&db).await, 0);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "dead_letter");
+    assert_eq!(status_of(&db, "sync_conflicts", generic).await, "triaged");
+    assert_eq!(status_of(&db, "sync_conflicts", review).await, "dismissed");
+}
+
+#[tokio::test]
+async fn a_dismissed_dead_letter_conflict_does_not_block_a_resend() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-closed-dead").await;
+    let outbox = dead_letter_outbox(&db, "wo-replay-closed-dead").await;
+    let dead = seed_conflict(
+        &db,
+        "OUTBOX_DEAD_LETTER",
+        "work_orders",
+        "wo-replay-closed-dead",
+        Some(outbox),
+    )
+    .await;
+    set_status(&db, "sync_conflicts", dead, "dismissed").await;
+
+    let result = queries::replay_sync_failures(&db, actor, single_item("r-cd", None, Some(outbox)))
+        .await
+        .expect("a closed conflict that accepts retry later does not block");
+    assert_eq!(result.requeued_outbox_count, 1);
+    assert_eq!(result.transitioned_conflict_count, 0);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "pending");
+    assert_eq!(status_of(&db, "sync_conflicts", dead).await, "dismissed");
+}
+
+#[tokio::test]
+async fn a_checkpoint_realign_plan_names_no_scope() {
+    let db = setup_db().await;
+    let actor_id = operator(&db, "repair-scope").await;
+    let refused = queries::preview_sync_repair(
+        &db,
+        actor_id,
+        SyncRepairPreviewInput {
+            mode: "checkpoint_realign".to_string(),
+            reason: "Realign".to_string(),
+            outbox_ids: Some(vec![1]),
+            conflict_ids: None,
+            server_batch_id: None,
+            checkpoint_token: Some("ckpt-9".to_string()),
+        },
+    )
+    .await
+    .expect_err("a scope that does not apply is refused");
+    assert!(
+        format!("{refused:?}").contains("GATE_SYNC_REPAIR_MODE_BLOCKED"),
+        "{refused:?}"
+    );
 }
