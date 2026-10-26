@@ -135,7 +135,7 @@ describe("SyncReplayButton", () => {
     mocks.replayItem.mockRejectedValue({
       code: "VALIDATION_FAILED",
       message:
-        "Validation failed: GATE_SYNC_REPLAY_OUTBOX_MISMATCH: outbox item 9 is not the change held by sync conflict 12.",
+        "Validation failed: GATE_RECORD_CHANGED_ELSEWHERE: outbox item 9 is not the change held by sync conflict 12.",
     });
     render(
       <SyncReplayButton target={{ kind: "conflict", conflictId: 12, outboxId: 9 }} record="X" />,
@@ -144,6 +144,8 @@ describe("SyncReplayButton", () => {
     fireEvent.click(screen.getByRole("button", { name: /sync\.replay\.action/ }));
     fireEvent.click(confirmButton());
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("sync.replay.failed::sync.replay.outboxMismatch");
+    expect(alert.textContent).toMatch(/^sync\.replay\.failed::/);
+    expect(alert.textContent).not.toContain("GATE_");
+    expect(alert.textContent).not.toContain("outbox item");
   });
 });

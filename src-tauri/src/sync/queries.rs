@@ -178,15 +178,6 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
     }
 }
 
-fn parse_rfc3339(value: &str, field: &str) -> AppResult<()> {
-    chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
-        AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
-        )])
-    })?;
-    Ok(())
-}
-
 fn supported_repair_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -2184,9 +2175,6 @@ pub async fn resolve_sync_conflict(
     with_count_hold(db, to_sync_conflict(&row)?).await
 }
 
-/// Replay code: the outgoing change named is not the one the named conflict holds.
-pub const REPLAY_OUTBOX_MISMATCH: &str = "GATE_SYNC_REPLAY_OUTBOX_MISMATCH";
-
 pub async fn replay_sync_failures(
     db: &DatabaseConnection,
     user_id: i64,
@@ -2196,33 +2184,13 @@ pub async fn replay_sync_failures(
     validate_non_empty("replay_key", &input.replay_key, &mut validation_errors);
     validate_non_empty("mode", &input.mode, &mut validation_errors);
     validate_non_empty("reason", &input.reason, &mut validation_errors);
-    match input.mode.as_str() {
-        "single_item" | "batch" | "window" | "checkpoint_rollback" => {}
-        _ => {
-            validation_errors.push("mode must be one of: single_item, batch, window, checkpoint_rollback.".to_string())
-        }
+    // No whole-batch or time-window replay: they reopened conflicts without the rules of "retry
+    // later" and re-sent changes a person had dismissed, and nothing in the app used them.
+    if !matches!(input.mode.as_str(), "single_item" | "checkpoint_rollback") {
+        validation_errors.push("mode must be one of: single_item, checkpoint_rollback.".to_string());
     }
     if input.mode == "single_item" && input.outbox_id.is_none() && input.conflict_id.is_none() {
         validation_errors.push("single_item replay requires outbox_id or conflict_id scope.".to_string());
-    }
-    if input.mode == "batch" {
-        validate_non_empty(
-            "server_batch_id",
-            input.server_batch_id.as_deref().unwrap_or_default(),
-            &mut validation_errors,
-        );
-    }
-    if input.mode == "window" {
-        if let Some(start) = &input.window_start {
-            parse_rfc3339(start, "window_start")?;
-        } else {
-            validation_errors.push("window_start is required for window mode.".to_string());
-        }
-        if let Some(end) = &input.window_end {
-            parse_rfc3339(end, "window_end")?;
-        } else {
-            validation_errors.push("window_end is required for window mode.".to_string());
-        }
     }
     if input.mode == "checkpoint_rollback" {
         validate_non_empty(
@@ -2268,7 +2236,7 @@ pub async fn replay_sync_failures(
         .ok_or_else(|| AppError::SyncError("Failed to count unresolved operator conflicts.".to_string()))?
         .try_get("", "count")
         .map_err(|e| decode_err("unresolved_operator_conflicts", e))?;
-    let guard_applied = input.mode == "checkpoint_rollback" || input.mode == "window";
+    let guard_applied = input.mode == "checkpoint_rollback";
     if guard_applied && unresolved_operator_conflicts > 0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_SYNC_REPLAY_BLOCKED: Replay blocked by checkpoint safety guard: unresolved operator-required conflicts exist.".to_string(),
@@ -2342,16 +2310,20 @@ pub async fn replay_sync_failures(
                 let conflict = to_sync_conflict(&row)?;
                 ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
                 if input.outbox_id.is_some_and(|o| conflict.linked_outbox_id != Some(o)) {
+                    // The screen sends the change the conflict held when it was listed: another one
+                    // means the conflict changed since.
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "{REPLAY_OUTBOX_MISMATCH}: outbox item {} is not the change held by sync conflict {}.",
+                        "GATE_RECORD_CHANGED_ELSEWHERE: outbox item {} is not the change held by sync conflict {}.",
                         input.outbox_id.unwrap_or_default(),
                         conflict.id
                     )]));
                 }
                 conflict_ids.push(conflict.id);
-            } else if let Some(outbox_id) = input.outbox_id {
-                // A change given up after its delivery attempts has its own conflict
-                // (`OUTBOX_DEAD_LETTER`): one replay sends the change and reopens that conflict.
+            }
+            if let Some(outbox_id) = input.outbox_id {
+                // Every open conflict over the change re-sent (a change given up after its delivery
+                // attempts has its own `OUTBOX_DEAD_LETTER` conflict, next to the one that refused
+                // it): each must accept "retry later", and all are reopened with the send.
                 let sql = format!(
                     "SELECT {CONFLICT_COLUMNS} FROM sync_conflicts
                      WHERE linked_outbox_id = ? AND status IN ('new', 'triaged', 'escalated')"
@@ -2366,7 +2338,9 @@ pub async fn replay_sync_failures(
                 {
                     let conflict = to_sync_conflict(&row)?;
                     ensure_conflict_action_allowed(&tx, &conflict, "retry_later").await?;
-                    conflict_ids.push(conflict.id);
+                    if !conflict_ids.contains(&conflict.id) {
+                        conflict_ids.push(conflict.id);
+                    }
                 }
             }
             if let Some(outbox_id) = input.outbox_id {
@@ -2405,86 +2379,6 @@ pub async fn replay_sync_failures(
                     .await?;
                 transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
             }
-        }
-        "batch" => {
-            let batch_id = input.server_batch_id.unwrap_or_default();
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_outbox
-                     SET status = 'pending',
-                         attempt_count = 0,
-                         dead_lettered_at = NULL,
-                         rejection_code = NULL,
-                         rejection_message = NULL,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE id IN (
-                        SELECT linked_outbox_id
-                        FROM sync_conflicts
-                        WHERE source_batch_id = ?
-                          AND linked_outbox_id IS NOT NULL
-                     )
-                       AND status IN ('rejected', 'dead_letter')",
-                    [batch_id.clone().into()],
-                ))
-                .await?;
-            requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_conflicts
-                     SET status = 'triaged',
-                         resolution_action = 'retry_later',
-                         resolution_note = 'Batch replay requested by operator.',
-                         resolved_by_id = ?,
-                         resolved_at = NULL,
-                         row_version = row_version + 1,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE source_batch_id = ?
-                       AND status IN ('new', 'escalated', 'triaged')",
-                    [user_id.into(), batch_id.into()],
-                ))
-                .await?;
-            transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-        }
-        "window" => {
-            let start = input.window_start.unwrap_or_default();
-            let end = input.window_end.unwrap_or_default();
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_outbox
-                     SET status = 'pending',
-                         attempt_count = 0,
-                         dead_lettered_at = NULL,
-                         rejection_code = NULL,
-                         rejection_message = NULL,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE status IN ('rejected', 'dead_letter')
-                       AND updated_at >= ?
-                       AND updated_at <= ?",
-                    [start.clone().into(), end.clone().into()],
-                ))
-                .await?;
-            requeued_outbox_count += i64::try_from(result.rows_affected()).unwrap_or(0);
-            let result = tx
-                .execute(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "UPDATE sync_conflicts
-                     SET status = 'triaged',
-                         resolution_action = 'retry_later',
-                         resolution_note = 'Window replay requested by operator.',
-                         resolved_by_id = ?,
-                         resolved_at = NULL,
-                         row_version = row_version + 1,
-                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE updated_at >= ?
-                       AND updated_at <= ?
-                       AND status IN ('new', 'escalated', 'triaged')",
-                    [user_id.into(), start.into(), end.into()],
-                ))
-                .await?;
-            transitioned_conflict_count += i64::try_from(result.rows_affected()).unwrap_or(0);
         }
         "checkpoint_rollback" => {
             let checkpoint_token = input.checkpoint_token.unwrap_or_default();

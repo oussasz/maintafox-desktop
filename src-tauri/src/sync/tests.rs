@@ -888,7 +888,7 @@ async fn replay_refuses_a_change_that_is_not_the_conflicts_own() {
     let err = queries::replay_sync_failures(&db, actor, single_item("r-mm", Some(conflict), Some(other)))
         .await
         .expect_err("another conflict's change is refused");
-    assert!(format!("{err:?}").contains(queries::REPLAY_OUTBOX_MISMATCH), "{err:?}");
+    assert!(format!("{err:?}").contains("GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
     // Nothing happened: no run, the change still given up, the conflict still new.
     assert_eq!(replay_runs(&db).await, 0);
     assert_eq!(status_of(&db, "sync_outbox", other).await, "dead_letter");
@@ -972,4 +972,125 @@ async fn replay_follows_the_conflict_kinds_that_refuse_retry_later() {
         assert!(format!("{err:?}").contains(gate), "{kind}: {err:?}");
     }
     assert_eq!(replay_runs(&db).await, 0);
+}
+
+#[tokio::test]
+async fn replay_reopens_a_count_settled_at_its_origin_like_retry_later() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-settled").await;
+    let outbox = dead_letter_outbox(&db, "replay-settled").await;
+    let conflict = seed_conflict(
+        &db,
+        crate::inventory::count_four_eyes::SYNC_SELF_APPROVAL,
+        "inventory_count_lines",
+        "replay-settled",
+        Some(outbox),
+    )
+    .await;
+
+    let result = queries::replay_sync_failures(&db, actor, single_item("r-settled", Some(conflict), Some(outbox)))
+        .await
+        .expect("retry later is accepted on a count settled at its origin");
+    assert_eq!(result.transitioned_conflict_count, 1);
+    assert_eq!(status_of(&db, "sync_conflicts", conflict).await, "triaged");
+}
+
+#[tokio::test]
+async fn replay_by_conflict_checks_and_reopens_every_open_conflict_of_the_change() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-siblings").await;
+
+    // The named conflict accepts retry later, but the same change also holds an open planning
+    // four-eyes refusal: re-sending it is refused, nothing changes.
+    let outbox = dead_letter_outbox(&db, "wo-replay-sib-1").await;
+    let named = seed_conflict(
+        &db,
+        "AUTHORITY_MISMATCH",
+        "work_orders",
+        "wo-replay-sib-1",
+        Some(outbox),
+    )
+    .await;
+    let planning = seed_conflict(
+        &db,
+        crate::planning::sync_check::PLANNING_CONFLICTS[0],
+        "work_orders",
+        "wo-replay-sib-1",
+        Some(outbox),
+    )
+    .await;
+    let err = queries::replay_sync_failures(&db, actor, single_item("r-sib-1", Some(named), Some(outbox)))
+        .await
+        .expect_err("the planning refusal on the same change refuses the replay");
+    assert!(
+        format!("{err:?}").contains("GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY"),
+        "{err:?}"
+    );
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "dead_letter");
+    assert_eq!(status_of(&db, "sync_conflicts", named).await, "new");
+    assert_eq!(status_of(&db, "sync_conflicts", planning).await, "new");
+
+    // Both conflicts of a change accept retry later: one replay reopens both with the send.
+    let outbox = dead_letter_outbox(&db, "wo-replay-sib-2").await;
+    let named = seed_conflict(
+        &db,
+        "AUTHORITY_MISMATCH",
+        "work_orders",
+        "wo-replay-sib-2",
+        Some(outbox),
+    )
+    .await;
+    let dead = seed_conflict(
+        &db,
+        "OUTBOX_DEAD_LETTER",
+        "work_orders",
+        "wo-replay-sib-2",
+        Some(outbox),
+    )
+    .await;
+    let result = queries::replay_sync_failures(&db, actor, single_item("r-sib-2", Some(named), Some(outbox)))
+        .await
+        .expect("replay");
+    assert_eq!(result.requeued_outbox_count, 1);
+    assert_eq!(result.transitioned_conflict_count, 2);
+    assert_eq!(status_of(&db, "sync_conflicts", named).await, "triaged");
+    assert_eq!(status_of(&db, "sync_conflicts", dead).await, "triaged");
+}
+
+#[tokio::test]
+async fn whole_batch_and_time_window_replays_are_refused() {
+    let db = setup_db().await;
+    let actor = operator(&db, "replay-scopes").await;
+    let outbox = dead_letter_outbox(&db, "wo-replay-scope").await;
+    let conflict = seed_conflict(
+        &db,
+        "AUTHORITY_MISMATCH",
+        "work_orders",
+        "wo-replay-scope",
+        Some(outbox),
+    )
+    .await;
+
+    for (mode, batch, start, end) in [
+        ("batch", Some("srv-batch-1"), None, None),
+        (
+            "window",
+            None,
+            Some("2000-01-01T00:00:00Z"),
+            Some("2100-01-01T00:00:00Z"),
+        ),
+    ] {
+        let mut input = single_item(&format!("r-scope-{mode}"), None, None);
+        input.mode = mode.to_string();
+        input.server_batch_id = batch.map(str::to_string);
+        input.window_start = start.map(str::to_string);
+        input.window_end = end.map(str::to_string);
+        let err = queries::replay_sync_failures(&db, actor, input)
+            .await
+            .expect_err("only one named item is replayed");
+        assert!(format!("{err:?}").contains("mode must be one of"), "{mode}: {err:?}");
+    }
+    assert_eq!(replay_runs(&db).await, 0);
+    assert_eq!(status_of(&db, "sync_outbox", outbox).await, "dead_letter");
+    assert_eq!(status_of(&db, "sync_conflicts", conflict).await, "new");
 }

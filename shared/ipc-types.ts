@@ -10729,7 +10729,7 @@ export interface ResolveSyncConflictInput {
 
 export interface ReplaySyncFailuresInput {
   replay_key: string;
-  mode: "single_item" | "batch" | "window" | "checkpoint_rollback";
+  mode: "single_item" | "checkpoint_rollback";
   reason: string;
   conflict_id?: number | null;
   outbox_id?: number | null;
