@@ -227,7 +227,7 @@ mod tests {
                 reason_code: None,
                 notes: Some("Transfert vers site 2".to_string()),
                 approved_by_id: None,
-                expected_row_version: None,
+                expected_row_version: Some(asset.row_version),
             },
             1,
         )
@@ -282,7 +282,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
-                expected_row_version: None,
+                expected_row_version: Some(asset.row_version),
             },
             1,
         )
@@ -323,7 +323,7 @@ mod tests {
                 reason_code: None,
                 notes: None,
                 approved_by_id: None,
-                expected_row_version: None,
+                expected_row_version: Some(asset.row_version),
             },
             1,
         )
@@ -380,6 +380,103 @@ mod tests {
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
+    }
+
+    fn move_payload(asset_id: i64, to: i64, expected_row_version: Option<i64>) -> RecordLifecycleEventPayload {
+        RecordLifecycleEventPayload {
+            asset_id,
+            event_type: "MOVED".to_string(),
+            event_at: None,
+            from_org_node_id: None,
+            to_org_node_id: Some(to),
+            from_status_code: None,
+            to_status_code: None,
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: None,
+            approved_by_id: None,
+            expected_row_version,
+        }
+    }
+
+    async fn moved_events(db: &sea_orm::DatabaseConnection, asset_id: i64) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM equipment_lifecycle_events WHERE equipment_id = ? AND event_type = 'MOVED'",
+            [asset_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "c")
+        .expect("c")
+    }
+
+    fn refused_with(err: AppError, code: &str) -> bool {
+        matches!(err, AppError::ValidationFailed(lines) if lines.iter().any(|l| l.starts_with(code)))
+    }
+
+    /// AU-77: a MOVED event goes through the move action's checks (version the person saw, asset
+    /// not retired, target node active); a refused move records no event and moves nothing.
+    #[tokio::test]
+    async fn au77_a_move_event_goes_through_the_move_checks() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "MV-AU77", node_id).await;
+
+        // No version: refused, with the code pointing at the missing version.
+        let err = lifecycle::record_lifecycle_event(&db, move_payload(asset.id, node_id_2, None), 1)
+            .await
+            .expect_err("version required");
+        assert!(refused_with(err, "GATE_ASSET_LIFECYCLE_MOVED_VERSION"));
+
+        // A version that is no longer the asset's: refused.
+        let err =
+            lifecycle::record_lifecycle_event(&db, move_payload(asset.id, node_id_2, Some(asset.row_version - 1)), 1)
+                .await
+                .expect_err("stale version");
+        assert!(refused_with(err, "GATE_RECORD_CHANGED_ELSEWHERE"));
+
+        // An inactive target node: refused like the move action.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_nodes SET status = 'inactive' WHERE id = ?",
+            [node_id_2.into()],
+        ))
+        .await
+        .expect("deactivate node");
+        lifecycle::record_lifecycle_event(&db, move_payload(asset.id, node_id_2, Some(asset.row_version)), 1)
+            .await
+            .expect_err("inactive target node");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_nodes SET status = 'active' WHERE id = ?",
+            [node_id_2.into()],
+        ))
+        .await
+        .expect("reactivate node");
+
+        // A retired asset: refused like the move action.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = ?",
+            [asset.id.into()],
+        ))
+        .await
+        .expect("retire asset");
+        let err = lifecycle::record_lifecycle_event(&db, move_payload(asset.id, node_id_2, Some(asset.row_version)), 1)
+            .await
+            .expect_err("retired asset");
+        assert!(refused_with(err, "GATE_ASSET_HIER_MOVE_STATUS"));
+
+        let unchanged = identity::get_asset_by_id(&db, asset.id).await.expect("asset");
+        assert_eq!(unchanged.org_node_id, Some(node_id), "nothing moved");
+        assert_eq!(unchanged.row_version, asset.row_version);
+        assert_eq!(moved_events(&db, asset.id).await, 0, "no event recorded");
     }
 
     // ── V2 — Replacement traceability ─────────────────────────────────────

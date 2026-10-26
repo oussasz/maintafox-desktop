@@ -329,6 +329,8 @@ pub async fn list_asset_lifecycle_events(
 ///     `equipment_status_ref_id`
 ///   - `RECOMMISSIONED` → sets `equipment.lifecycle_status` to
 ///     `payload.to_status_code` (required) and clears `decommissioned_at`
+///   - `MOVED` → moves the asset through `hierarchy::move_asset_org_node_in` (version required,
+///     retired asset refused, target node validated)
 pub async fn record_lifecycle_event(
     db: &DatabaseConnection,
     payload: RecordLifecycleEventPayload,
@@ -464,16 +466,17 @@ pub(crate) async fn record_lifecycle_event_in(
             }
         }
         "MOVED" => {
-            // Update installed_at_node_id to reflect the move.
+            // A move recorded as an event goes through the move action's own checks (version the
+            // person saw, asset not retired, target node active) and write: never around them.
+            let expected = payload.expected_row_version.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_ASSET_LIFECYCLE_MOVED_VERSION: Un evenement de type 'MOVED' requiert la version \
+                     de l'equipement vue a l'ecran ('expected_row_version')."
+                        .into(),
+                ])
+            })?;
             if let Some(to_node_id) = payload.to_org_node_id {
-                txn.execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "UPDATE equipment SET installed_at_node_id = ?, \
-                     updated_at = ?, row_version = row_version + 1 \
-                     WHERE id = ?",
-                    [to_node_id.into(), now.clone().into(), payload.asset_id.into()],
-                ))
-                .await?;
+                crate::assets::hierarchy::move_asset_org_node_in(txn, payload.asset_id, to_node_id, expected).await?;
             }
         }
         _ => {}
