@@ -333,6 +333,8 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("reliability_study_decisions", "action_kind", "'one_off_wo'"),
     ("reliability_study_decisions", "wo_type_code", "'corrective'"),
     ("reliability_study_decisions", "justification", "''"),
+    // Only the four statuses of a decision are received (review S1).
+    ("reliability_study_decisions", "status", "'proposed'"),
     // A received audit chain stub must be well formed (`audit::chain::inbound_stub_check`): a
     // position after 1 with its link, a stub-era hash and its content digest.
     (
