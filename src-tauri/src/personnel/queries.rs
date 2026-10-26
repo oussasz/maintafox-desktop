@@ -2384,7 +2384,8 @@ pub async fn list_personnel_availability_blocks(
                 b.is_critical,
                 b.created_by_id,
                 COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS created_by_label,
-                b.created_at
+                b.created_at,
+                b.row_version
              FROM personnel_availability_blocks b
              LEFT JOIN user_accounts ua ON ua.id = b.created_by_id
              WHERE b.personnel_id = ?
@@ -2407,6 +2408,7 @@ pub async fn list_personnel_availability_blocks(
             created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
             created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
+            row_version: row.try_get("", "row_version").unwrap_or_default(),
             reason_masked: false,
             type_masked: false,
             critical_for_planning: false,

@@ -241,9 +241,9 @@ const COMMANDS: Array<{
   },
   {
     name: "endAvailabilityBlock",
-    call: () => svc.endAvailabilityBlock(8),
+    call: () => svc.endAvailabilityBlock(8, 3),
     command: "end_availability_block",
-    args: { id: 8 },
+    args: { id: 8, expectedRowVersion: 3 },
   },
   {
     name: "listPersonnelTeamAssignments",
@@ -367,8 +367,11 @@ describe("personnel-service commands", () => {
 
   it("deletes an availability block without a payload to read", async () => {
     mockInvoke.mockResolvedValue(undefined);
-    await expect(svc.deleteAvailabilityBlock(8)).resolves.toBeUndefined();
-    expect(mockInvoke).toHaveBeenCalledWith("delete_availability_block", { id: 8 });
+    await expect(svc.deleteAvailabilityBlock(8, 3)).resolves.toBeUndefined();
+    expect(mockInvoke).toHaveBeenCalledWith("delete_availability_block", {
+      id: 8,
+      expectedRowVersion: 3,
+    });
   });
 });
 
@@ -436,6 +439,7 @@ describe("personnel-service results", () => {
       created_by_id: null,
       created_by_label: null,
       created_at: "2026-05-01T08:00:00Z",
+      row_version: 1,
       // Always sent by the backend (personnel::absence_access). reason_masked is left out here to
       // check the schema still reads it as false.
       type_masked: false,

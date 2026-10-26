@@ -90,6 +90,9 @@ pub struct PersonnelAvailabilityBlock {
     pub created_by_id: Option<i64>,
     pub created_by_label: Option<String>,
     pub created_at: String,
+    /// Version of the row: sent back on update, end and delete, which refuse a stale one
+    /// (`GATE_RECORD_CHANGED_ELSEWHERE`).
+    pub row_version: i64,
     /// True when `reason_note` was withheld (caller lacks `per.sensitiveview`, not own record).
     #[serde(default)]
     pub reason_masked: bool,

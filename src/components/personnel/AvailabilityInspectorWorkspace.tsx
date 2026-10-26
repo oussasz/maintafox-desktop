@@ -240,7 +240,7 @@ export function AvailabilityInspectorWorkspace({
     setEnding(true);
     setEndError(null);
     try {
-      await endAvailabilityBlock(selectedBlock.id);
+      await endAvailabilityBlock(selectedBlock.id, selectedBlock.row_version);
       onSelectBlock(null);
       onBlocksChanged();
     } catch (err) {
