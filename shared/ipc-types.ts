@@ -10852,7 +10852,8 @@ export interface EntitlementDiagnostics {
 }
 
 export interface SyncRepairPreviewInput {
-  mode: "requeue_rejected_outbox" | "retry_operator_conflicts" | "checkpoint_realign";
+  /** Only the checkpoint is realigned; bulk requeue / conflict retry are refused (AU-44). */
+  mode: "checkpoint_realign";
   reason: string;
   outbox_ids?: number[] | null;
   conflict_ids?: number[] | null;
