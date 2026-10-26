@@ -2001,3 +2001,78 @@ async fn a_change_made_before_the_freeze_reached_its_pc_converges_once_kept() {
     assert_eq!(commitment_state(&a, &job_sid).await, s0, "A is back on B's kept plan");
     assert_eq!(commitment_state(&b, &job_sid).await, s0);
 }
+
+#[tokio::test]
+async fn a_received_week_without_its_status_start_or_baseline_is_refused() {
+    let r = received_setup("FE24").await;
+    let (week_sid, week) = week_payload(&r).await;
+    for missing in ["baseline_no", "week_start", "status"] {
+        // Reopened, with one field left out: never applied as a partial row over the frozen one.
+        let mut partial = week.clone();
+        partial.insert("status".into(), "draft".into());
+        partial.remove(missing);
+        let outcome = receive(&r.db, "weekly_schedules", &week_sid, partial.clone()).await;
+        assert_eq!(conflict_code(&outcome), Some("INVALID_VALUE"), "{missing}: {outcome:?}");
+        partial.insert(missing.into(), Value::Null);
+        let outcome = receive(&r.db, "weekly_schedules", &week_sid, partial).await;
+        assert_eq!(
+            conflict_code(&outcome),
+            Some("INVALID_VALUE"),
+            "{missing} null: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        scalar_text(
+            &r.db,
+            &format!("SELECT status FROM weekly_schedules WHERE entity_id = {}", r.site)
+        )
+        .await,
+        "frozen"
+    );
+}
+
+#[tokio::test]
+async fn a_frozen_week_conflict_carries_the_change_time_and_the_freeze_time_for_its_card() {
+    let r = received_setup("FE25").await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    let moved = r.moved("2026-05-06T08:00", "2026-05-06T09:00").await;
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &moved).await;
+    crate::sync::materialize::materialize_inbox(&r.db, 200, true)
+        .await
+        .expect("pass");
+    let frozen_at = scalar_text(
+        &r.db,
+        &format!("SELECT frozen_at FROM weekly_schedules WHERE entity_id = {}", r.site),
+    )
+    .await;
+    let listed = crate::sync::queries::list_sync_conflicts(
+        &r.db,
+        crate::sync::domain::SyncConflictFilter {
+            statuses: None,
+            conflict_type: None,
+            requires_operator_review: None,
+            limit: None,
+        },
+    )
+    .await
+    .expect("list");
+    let card = listed
+        .iter()
+        .find(|c| c.conflict_type == "PLANNING_WEEK_FROZEN")
+        .expect("frozen-week conflict");
+    assert_eq!(
+        card.planning_times,
+        Some(super::sync_check::PlanningConflictTimes {
+            changed_at: Some("2026-05-02T09:00:00Z".into()),
+            frozen_at: Some(frozen_at),
+        })
+    );
+    assert!(
+        listed
+            .iter()
+            .filter(|c| c.conflict_type != "PLANNING_WEEK_FROZEN")
+            .all(|c| c.planning_times.is_none()),
+        "only on frozen-week cards"
+    );
+}

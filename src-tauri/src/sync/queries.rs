@@ -414,6 +414,7 @@ pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConf
         detail_message,
         reason,
         count_hold: None,
+        planning_times: None,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1904,6 +1905,16 @@ async fn with_count_hold(db: &impl ConnectionTrait, mut conflict: SyncConflictRe
         conflict.count_hold =
             crate::inventory::count_four_eyes::count_hold_context(db, conflict.inbound_payload_json.as_deref()).await?;
     }
+    // Work entering a week frozen here: the change time there next to the freeze time here
+    // (CMMS Advisor decision 4, `planning::sync_check::planning_conflict_times`).
+    conflict.planning_times = crate::planning::sync_check::planning_conflict_times(
+        db,
+        &conflict.conflict_type,
+        &conflict.entity_type,
+        &conflict.entity_sync_id,
+        conflict.inbound_payload_json.as_deref(),
+    )
+    .await?;
     Ok(conflict)
 }
 
@@ -1993,7 +2004,9 @@ pub async fn resolve_sync_conflict(
 
     if planning_conflict(&conflict.conflict_type) && !PLANNING_ACTIONS.contains(&input.action.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan              (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone here              with a fresh signed break-in.",
+            "GATE_SYNC_CONFLICT_PLAN_KEEP_ONLY: conflict {} is a planning four-eyes refusal: keep this PC's plan \
+             (plan.confirm at the crew's site, with the reason) or escalate it; a legitimate change is redone \
+             here with a fresh signed break-in.",
             conflict.id
         )]));
     }

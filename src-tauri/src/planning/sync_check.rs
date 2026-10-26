@@ -819,11 +819,27 @@ pub(crate) async fn refusal_marks_only(
         return Ok(false);
     }
     // Every other value the received row carries is the one held here.
-    Ok(received.iter().all(|(k, v)| {
-        REFUSAL_COLUMNS.contains(&k.as_str())
-            || matches!(k.as_str(), "row_version" | "updated_at")
-            || local.get(k).is_none_or(|held| held == v)
-    }))
+    let differing: Vec<&str> = received
+        .iter()
+        .filter(|(k, v)| {
+            !REFUSAL_COLUMNS.contains(&k.as_str())
+                && !matches!(k.as_str(), "row_version" | "updated_at")
+                && local.get(k.as_str()).is_some_and(|held| held != *v)
+        })
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if !differing.is_empty() {
+        // Marks arriving with another difference (a value normalised differently by the refusing
+        // PC) are not taken: logged, never silent (review N-d).
+        tracing::warn!(
+            target: "maintafox::sync",
+            break_in = entity_sync_id,
+            fields = ?differing,
+            "refusal marks of a break-in held here not applied: other values differ"
+        );
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// The four-eyes rules of a break-in (received, or held here and relied on again): an urgent one
@@ -962,11 +978,17 @@ pub(crate) async fn inbound_unfreeze_check(
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
-    let (Some(status), Some(week_start)) = (field(received, "status"), field(received, "week_start")) else {
-        return Ok(None);
-    };
-    let Some(baseline_no) = int(received, "baseline_no") else {
-        return Ok(None);
+    // A week without its status, start or baseline cannot be judged: refused, never applied as a
+    // partial row that keeps the values held here (review N-b).
+    let (Some(status), Some(week_start), Some(baseline_no)) = (
+        field(received, "status"),
+        field(received, "week_start"),
+        int(received, "baseline_no"),
+    ) else {
+        return conflict(
+            INVALID_VALUE,
+            format!("week {entity_sync_id} received without its status, week start or baseline number"),
+        );
     };
     let site_sync = field(received, &key("entity_id"));
     let Some(local) = conn
@@ -1783,4 +1805,54 @@ async fn refuse_break_ins_of(
         }
     }
     Ok(())
+}
+
+// ── The times a frozen-week conflict card shows (CMMS Advisor decision 4, review N-l) ─────────
+
+/// The two times a `PLANNING_WEEK_FROZEN` conflict card shows next to each other: when the other PC
+/// changed the commitment (that PC's clock, as received) and when the week froze here (or was due
+/// to). Shown only; neither ever lets the work in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlanningConflictTimes {
+    pub changed_at: Option<String>,
+    pub frozen_at: Option<String>,
+}
+
+/// The [`PlanningConflictTimes`] of a `PLANNING_WEEK_FROZEN` conflict on a commitment, read from its
+/// received version and the week as it stands here; `None` for any other conflict.
+pub(crate) async fn planning_conflict_times(
+    conn: &impl ConnectionTrait,
+    conflict_type: &str,
+    entity_type: &str,
+    entity_sync_id: &str,
+    inbound_payload_json: Option<&str>,
+) -> AppResult<Option<PlanningConflictTimes>> {
+    if conflict_type != WEEK_FROZEN || entity_type != "schedule_commitments" {
+        return Ok(None);
+    }
+    let Some(Ok(Value::Object(received))) = inbound_payload_json.map(serde_json::from_str::<Value>) else {
+        return Ok(None);
+    };
+    let changed_at = field(&received, "updated_at")
+        .or_else(|| field(&received, "created_at"))
+        .map(str::to_string);
+    let frozen_at = match commitment_context(conn, entity_sync_id, &received).await? {
+        Ok(ctx) => {
+            let week = match ctx.team {
+                Some(team) => {
+                    super::weekly_schedule::frozen_week_for_slot(conn, team, &ctx.to.start, &ctx.to.end, Utc::now())
+                        .await?
+                }
+                None => None,
+            };
+            week.and_then(|w| w.frozen_at).or_else(|| {
+                ctx.local
+                    .as_ref()
+                    .and_then(|l| field(l, "frozen_at"))
+                    .map(str::to_string)
+            })
+        }
+        Err(_) => None,
+    };
+    Ok(Some(PlanningConflictTimes { changed_at, frozen_at }))
 }
