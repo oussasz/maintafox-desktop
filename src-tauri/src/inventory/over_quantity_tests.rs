@@ -1058,6 +1058,9 @@ async fn reversing_the_closing_count_reopens_the_over_receipt() {
     )
     .await
     .expect("reversal");
+    // The reversal is sent once its posting is acknowledged (`inventory::count_sync`): a second
+    // exchange of B.
+    sync(&mut server, "B", b).await;
     sync(&mut server, "B", b).await;
     sync(&mut server, "A", a).await;
     for (pc, db, (art, loc, _, _)) in [("A", a, ids[0]), ("B", b, ids[1])] {
