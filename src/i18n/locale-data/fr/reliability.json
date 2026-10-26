@@ -1136,7 +1136,8 @@
         "proposed": "En attente d'approbation",
         "approved": "Approuvée",
         "applied": "Appliquée",
-        "rejected": "Refusée"
+        "rejected": "Refusée",
+        "withdrawn": "Retirée"
       },
       "nothingYet": "Rien pour l'instant",
       "effect": {
@@ -1148,6 +1149,7 @@
       "effectDetail": "MTBF avant {{before}} h, depuis la décision {{after}} h ({{failures}} défaillance(s))",
       "approve": "Approuver",
       "reject": "Refuser",
+      "withdraw": "Retirer",
       "ownProposal": "Vous l'avez proposée : une autre personne approuve.",
       "awaitingApprover": "En attente de {{name}}",
       "apply": "Appliquer",
@@ -1159,6 +1161,9 @@
       "rejectTitle": "Refuser la décision",
       "rejectReason": "Motif du refus (obligatoire)",
       "rejectAction": "Refuser la décision",
+      "withdrawTitle": "Retirer votre proposition",
+      "withdrawReason": "Motif du retrait (obligatoire)",
+      "withdrawAction": "Retirer la proposition",
       "approveTitle": "Approuver cette décision ?",
       "approveBody": "« {{title}} » devient approuvée et peut ensuite être appliquée (révision de PM ou OT).",
       "selfApproved": "Auto-approuvée",

@@ -1136,7 +1136,8 @@
         "proposed": "Awaiting approval",
         "approved": "Approved",
         "applied": "Applied",
-        "rejected": "Rejected"
+        "rejected": "Rejected",
+        "withdrawn": "Withdrawn"
       },
       "nothingYet": "Nothing yet",
       "effect": {
@@ -1148,6 +1149,7 @@
       "effectDetail": "MTBF before {{before}} h, since the decision {{after}} h ({{failures}} failure(s))",
       "approve": "Approve",
       "reject": "Reject",
+      "withdraw": "Withdraw",
       "ownProposal": "You proposed it: another person approves.",
       "awaitingApprover": "Awaiting {{name}}",
       "apply": "Apply",
@@ -1159,6 +1161,9 @@
       "rejectTitle": "Reject the decision",
       "rejectReason": "Reason for rejection (required)",
       "rejectAction": "Reject the decision",
+      "withdrawTitle": "Withdraw your proposal",
+      "withdrawReason": "Reason for withdrawal (required)",
+      "withdrawAction": "Withdraw the proposal",
       "approveTitle": "Approve this decision?",
       "approveBody": "\"{{title}}\" becomes approved and can then be applied (PM revision or work order).",
       "selfApproved": "Self-approved",
