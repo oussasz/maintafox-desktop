@@ -931,7 +931,9 @@ describe("StudyDecisionsStep", () => {
     const mine = await rowOf("Mine");
     expect(mine.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(mine.getByText("You proposed it: another person approves.")).toBeInTheDocument();
-    expect(mine.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    // The proposer's own rejection is a withdrawal (owner decision D10).
+    expect(mine.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
+    expect(mine.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
 
     const forLead = await rowOf("For J. Lead");
     expect(forLead.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
@@ -946,6 +948,48 @@ describe("StudyDecisionsStep", () => {
     expect(old.getByTitle("Approved by the person who proposed it.")).toHaveTextContent(
       "Self-approved",
     );
+  });
+
+  it("lets the proposer withdraw their proposal whoever was designated, and shows it withdrawn", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({
+            id: 1,
+            title: "Mine, for J. Lead",
+            proposed_by_id: 3,
+            approver_id: 8,
+            approver_name: "J. Lead",
+          }),
+          decision({
+            id: 2,
+            title: "Withdrawn one",
+            status: "rejected",
+            proposed_by_id: 9,
+            decided_by_id: 9,
+          }),
+          decision({
+            id: 3,
+            title: "Rejected one",
+            status: "rejected",
+            proposed_by_id: 9,
+            decided_by_id: 8,
+          }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+    const rowOf = async (title: string) => {
+      const row = (await screen.findByText(title)).closest("tr");
+      if (!row) throw new Error(`row ${title} missing`);
+      return within(row);
+    };
+    const mine = await rowOf("Mine, for J. Lead");
+    expect(mine.getByText("Awaiting J. Lead")).toBeInTheDocument();
+    expect(mine.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(mine.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
+    expect((await rowOf("Withdrawn one")).getByText("Withdrawn")).toBeInTheDocument();
+    expect((await rowOf("Rejected one")).getByText("Rejected")).toBeInTheDocument();
   });
 
   it("lets the proposer approve when the decision's site opted out of four-eyes", async () => {

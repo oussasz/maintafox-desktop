@@ -151,7 +151,7 @@ async fn ensure_lookup_value_in_domain(
     Ok(())
 }
 
-async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&str>) -> AppResult<()> {
+async fn validate_required_skills_json(db: &impl ConnectionTrait, input: Option<&str>) -> AppResult<()> {
     let Some(raw) = input else {
         return Ok(());
     };
@@ -197,7 +197,7 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
 /// (`meter_type`, legacy `meter_source`) resolved per asset at generation time; with an absolute
 /// `threshold_value` (chosen meter only) or a recurring `interval_value`.
 async fn validate_meter_spec(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     spec: &serde_json::Map<String, Value>,
     allow_absolute: bool,
 ) -> AppResult<()> {
@@ -269,7 +269,7 @@ async fn validate_meter_spec(
 }
 
 async fn validate_trigger_definition(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     strategy_type: &str,
     trigger_definition_json: &str,
 ) -> AppResult<()> {
@@ -397,7 +397,7 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
     rows.iter().map(decode_pm_plan_row).collect()
 }
 
-pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmPlan> {
+pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<PmPlan> {
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite,
         "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
                 p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
@@ -536,6 +536,20 @@ pub async fn create_pm_plan_version(
     pm_plan_id: i64,
     input: CreatePmPlanVersionInput,
 ) -> AppResult<PmPlanVersion> {
+    let tx = db.begin().await?;
+    let version = create_pm_plan_version_in(&tx, pm_plan_id, input).await?;
+    tx.commit().await?;
+    Ok(version)
+}
+
+/// [`create_pm_plan_version`] inside the caller's transaction (an applied reliability decision
+/// creates its draft version and becomes `applied` together, `reliability::study::decisions`).
+pub async fn create_pm_plan_version_in(
+    tx: &impl ConnectionTrait,
+    pm_plan_id: i64,
+    input: CreatePmPlanVersionInput,
+) -> AppResult<PmPlanVersion> {
+    let db = tx;
     let plan = get_pm_plan(db, pm_plan_id).await?;
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
@@ -552,7 +566,6 @@ pub async fn create_pm_plan_version(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("next version not found")))?;
     let next_no: i64 = version_no_row.try_get("", "next_no")?;
     let version_entity_sync_id = crate::sync::identity::new_entity_sync_id();
-    let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
          VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -568,9 +581,7 @@ pub async fn create_pm_plan_version(
     let id: i64 = row.try_get("", "id")?;
     let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,(SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = pm_plan_versions.id) AS version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version missing")))?;
-    let version = decode_pm_plan_version_row(&row)?;
-    tx.commit().await?;
-    Ok(version)
+    decode_pm_plan_version_row(&row)
 }
 
 pub async fn update_pm_plan_version(
@@ -626,6 +637,42 @@ pub async fn update_pm_plan_version(
     Ok(version)
 }
 
+/// A version created from a reliability study decision is published only once that decision is
+/// applied here and names this version: a version received by synchronisation (or made by an older
+/// version of the app) from a decision that is not approved never becomes the plan's current
+/// version (audit finding AU-69). A decision not received yet blocks it until it arrives.
+async fn ensure_source_decision_applied(
+    db: &impl ConnectionTrait,
+    version: &sea_orm::QueryResult,
+    version_id: i64,
+) -> AppResult<()> {
+    let source_type: Option<String> = version.try_get("", "source_type")?;
+    if source_type.as_deref() != Some(crate::reliability::rcm_loop::SOURCE_RELIABILITY_DECISION) {
+        return Ok(());
+    }
+    let source_id: Option<i64> = version.try_get("", "source_id")?;
+    let applied = match source_id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM reliability_study_decisions \
+                 WHERE id = ? AND status = 'applied' AND linked_pm_plan_version_id = ?",
+                [id.into(), version_id.into()],
+            ))
+            .await?
+            .is_some(),
+        None => false,
+    };
+    if applied {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(vec![
+            "GATE_PM_SOURCE_DECISION_NOT_APPLIED: This version comes from a reliability study decision that is not applied on this computer; it cannot be published."
+                .to_string(),
+        ]))
+    }
+}
+
 pub async fn publish_pm_plan_version(
     db: &DatabaseConnection,
     input: PublishPmPlanVersionInput,
@@ -655,6 +702,7 @@ pub async fn publish_pm_plan_version(
                 .to_string(),
         ]));
     }
+    ensure_source_decision_applied(db, &row, input.version_id).await?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='superseded',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE pm_plan_id=? AND status='published' AND id != ?", [plan_id.into(), input.version_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='published',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?", [input.version_id.into(),input.expected_row_version.into()])).await?;

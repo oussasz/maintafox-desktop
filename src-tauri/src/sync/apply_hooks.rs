@@ -25,8 +25,10 @@
 //!   not a tenant setting, or that would change or delete a setting of this device, is refused as a
 //!   `SETTING_DEVICE_SCOPE` conflict (`inbound_device_setting_check`);
 //! - `reliability_study_decisions`: an approval by the decision's own proposer is refused as a
-//!   conflict unless the decision's site opted out of four-eyes; a study, equipment or site not
-//!   applied yet makes it wait (`reliability::study::decisions::inbound_self_approval_check`);
+//!   conflict unless the decision's site opted out of four-eyes; a decision still proposed or
+//!   rejected that names a work order or PM version created from it is refused (`INVALID_VALUE`,
+//!   audit finding AU-69); a study, equipment or site not applied yet makes it wait
+//!   (`reliability::study::decisions::inbound_self_approval_check`);
 //! - `site_settings` / `site_setting_events`: a per-site rule relaxing a site is applied only with
 //!   its audited change (step-up, reason, settings right), waiting for that event while it is in
 //!   the inbox, a conflict otherwise; unknown rules and unreadable values are conflicts; a rule
@@ -222,6 +224,11 @@ pub(crate) async fn before_upsert_checked(
                 },
                 InboundDecisionVerdict::Conflict(message) => ApplyOutcome::Conflict {
                     code: "DECISION_SELF_APPROVAL".into(),
+                    message,
+                },
+                // A rule re-checked on the received row (the screens list it as a refused value).
+                InboundDecisionVerdict::LinkedWhileUnapproved(message) => ApplyOutcome::Conflict {
+                    code: "INVALID_VALUE".into(),
                     message,
                 },
             }));

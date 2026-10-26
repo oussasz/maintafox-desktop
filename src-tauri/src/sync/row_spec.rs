@@ -1008,6 +1008,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
+                        // A reliability study decision withdrawn or refused (`reliability::study::decisions`):
+                        // the target is already the decision's sync id, the same on every PC, sent as it is.
+                        ("reliability_study_decisions", NOT_A_ROW),
                         // A break-in signed by a second planner, and a frozen-week conflict closed
                         // by its break-in (`planning::break_in_approval`, `planning::sync_check`).
                         ("schedule_commitment", "schedule_commitments"),

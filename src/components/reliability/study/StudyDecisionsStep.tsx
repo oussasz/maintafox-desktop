@@ -91,6 +91,26 @@ export function StudyDecisionsStep({
   /** Four-eyes: the proposer does not approve their own decision, unless its site opted out. */
   const ownProposal = (d: StudyDecision) =>
     !d.site_allows_self_approval && d.proposed_by_id != null && d.proposed_by_id === me;
+  /**
+   * The proposer may withdraw their own proposal until it is decided, whoever was designated to
+   * approve it (owner decision D10): with the right they proposed with, or the approve right.
+   */
+  const canWithdraw = (d: StudyDecision) =>
+    d.status === "proposed" &&
+    d.proposed_by_id != null &&
+    d.proposed_by_id === me &&
+    (can(P.RAM_ANALYZE) || can(P.RAM_MANAGE)) &&
+    study.status === "active";
+  /** Reject (as the approver) or withdraw (as the proposer). */
+  const canReject = (d: StudyDecision) =>
+    d.status === "proposed" && ((canManage && !designatedElsewhere(d)) || canWithdraw(d));
+  /** The proposer's own rejection is a withdrawal: "Retirer", shown "Retirée" once done. */
+  const isMine = (d: StudyDecision | null) =>
+    d != null && d.proposed_by_id != null && d.proposed_by_id === me;
+  const statusKey = (d: StudyDecision) =>
+    d.status === "rejected" && d.proposed_by_id != null && d.decided_by_id === d.proposed_by_id
+      ? "withdrawn"
+      : d.status;
 
   /** Runs inside the confirmation: a refusal (not the designated approver…) keeps it open. */
   const approve = async (d: StudyDecision) => {
@@ -215,7 +235,7 @@ export function StudyDecisionsStep({
                       <StatusChip
                         dot
                         tone={toneOf(RELIABILITY_DECISION_STATUS_TONE, d.status)}
-                        label={t(`rams.decisions.status.${d.status}`)}
+                        label={t(`rams.decisions.status.${statusKey(d)}`)}
                       />
                       {d.self_approved ? (
                         <StatusChip
@@ -254,47 +274,47 @@ export function StudyDecisionsStep({
                     </td>
                     <td className="px-3 py-2">{effect(d)}</td>
                     <td className="px-3 py-2">
-                      {canManage ? (
+                      {canManage || canWithdraw(d) ? (
                         <div className="flex justify-end gap-1.5">
-                          {d.status === "proposed" && designatedElsewhere(d) ? (
-                            <span className="text-xs text-text-muted">
+                          {canManage && d.status === "proposed" && designatedElsewhere(d) ? (
+                            <span className="self-center text-xs text-text-muted">
                               {t("rams.decisions.awaitingApprover", {
                                 name: d.approver_name ?? "—",
                               })}
                             </span>
                           ) : null}
-                          {d.status === "proposed" && !designatedElsewhere(d) ? (
-                            <>
-                              {ownProposal(d) ? (
-                                <span className="self-center text-xs text-text-muted">
-                                  {t("rams.decisions.ownProposal")}
-                                </span>
-                              ) : (
-                                <Button
-                                  variant="outline"
-                                  className="h-10"
-                                  disabled={busy}
-                                  onClick={() => setApproveTarget(d)}
-                                >
-                                  <Check className="h-4 w-4" aria-hidden />
-                                  {t("rams.decisions.approve")}
-                                </Button>
-                              )}
+                          {canManage && d.status === "proposed" && !designatedElsewhere(d) ? (
+                            ownProposal(d) ? (
+                              <span className="self-center text-xs text-text-muted">
+                                {t("rams.decisions.ownProposal")}
+                              </span>
+                            ) : (
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 className="h-10"
                                 disabled={busy}
-                                onClick={() => {
-                                  setNote("");
-                                  setRejectTarget(d);
-                                }}
+                                onClick={() => setApproveTarget(d)}
                               >
-                                <X className="h-4 w-4" aria-hidden />
-                                {t("rams.decisions.reject")}
+                                <Check className="h-4 w-4" aria-hidden />
+                                {t("rams.decisions.approve")}
                               </Button>
-                            </>
+                            )
                           ) : null}
-                          {d.status === "approved" && canApply(d) ? (
+                          {canReject(d) ? (
+                            <Button
+                              variant="ghost"
+                              className="h-10"
+                              disabled={busy}
+                              onClick={() => {
+                                setNote("");
+                                setRejectTarget(d);
+                              }}
+                            >
+                              <X className="h-4 w-4" aria-hidden />
+                              {t(isMine(d) ? "rams.decisions.withdraw" : "rams.decisions.reject")}
+                            </Button>
+                          ) : null}
+                          {canManage && d.status === "approved" && canApply(d) ? (
                             <Button
                               className="h-10"
                               disabled={busy}
@@ -304,7 +324,7 @@ export function StudyDecisionsStep({
                               {t("rams.decisions.apply")}
                             </Button>
                           ) : null}
-                          {d.status === "approved" && !canApply(d) ? (
+                          {canManage && d.status === "approved" && !canApply(d) ? (
                             <span className="text-xs text-text-muted" role="note">
                               {t(
                                 d.action_kind === "pm_interval"
@@ -359,11 +379,21 @@ export function StudyDecisionsStep({
       <Dialog open={rejectTarget != null} onOpenChange={(o) => !o && setRejectTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("rams.decisions.rejectTitle")}</DialogTitle>
+            <DialogTitle>
+              {t(
+                isMine(rejectTarget)
+                  ? "rams.decisions.withdrawTitle"
+                  : "rams.decisions.rejectTitle",
+              )}
+            </DialogTitle>
             <DialogDescription>{rejectTarget?.title}</DialogDescription>
           </DialogHeader>
           <label className="grid gap-1 text-sm font-medium text-text-secondary">
-            {t("rams.decisions.rejectReason")}
+            {t(
+              isMine(rejectTarget)
+                ? "rams.decisions.withdrawReason"
+                : "rams.decisions.rejectReason",
+            )}
             <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
           <DialogFooter className="gap-2">
@@ -392,7 +422,11 @@ export function StudyDecisionsStep({
                 }
               }}
             >
-              {t("rams.decisions.rejectAction")}
+              {t(
+                isMine(rejectTarget)
+                  ? "rams.decisions.withdrawAction"
+                  : "rams.decisions.rejectAction",
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
