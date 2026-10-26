@@ -48,6 +48,7 @@ import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { WoRetiredEquipmentReviewPanel } from "@/components/wo/WoRetiredEquipmentReviewPanel";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoHiddenNotice, WoNoSiteBadge } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
@@ -740,6 +741,10 @@ export function WorkOrdersPage() {
           {/* Requests awaiting conversion (ot.edit permission) */}
           <PermissionGate permission={P.OT_EDIT}>
             <WoDiManagementPanel />
+          </PermissionGate>
+          {/* Work orders and requests open on retired equipment, crossed in sync (AU-73b) */}
+          <PermissionGate permission={P.OT_VIEW}>
+            <WoRetiredEquipmentReviewPanel />
           </PermissionGate>
         </>
       }
