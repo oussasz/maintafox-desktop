@@ -47,7 +47,7 @@ fn map_tool(row: &sea_orm::QueryResult) -> AppResult<WoTool> {
     })
 }
 
-async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<String> {
+async fn load_wo_status_code(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -78,7 +78,7 @@ pub async fn list_tools(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<Wo
     rows.iter().map(map_tool).collect()
 }
 
-pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult<WoTool> {
+pub async fn add_tool(db: &impl ConnectionTrait, input: AddToolInput) -> AppResult<WoTool> {
     let status = load_wo_status_code(db, input.wo_id).await?;
     if matches!(status.as_str(), "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![

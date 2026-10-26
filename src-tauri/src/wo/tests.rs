@@ -186,7 +186,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -196,6 +196,9 @@ mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -213,12 +216,15 @@ mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
@@ -639,14 +645,14 @@ mod tests {
             .await
             .expect("record_actual_usage");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: Some("mechanical done".into()),
@@ -718,14 +724,14 @@ mod tests {
             .await
             .expect("confirm_no_parts_used");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -802,14 +808,14 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -909,18 +915,26 @@ mod tests {
             .await
             .expect("record usage");
 
-        costs::update_service_cost(&db, wo.id, 30.0, actor)
-            .await
-            .expect("update service cost");
+        costs::update_service_cost(
+            &db,
+            wo.id,
+            30.0,
+            crate::wo::closeout::wo_row_version(&db, wo.id)
+                .await
+                .expect("wo row_version"),
+            actor,
+        )
+        .await
+        .expect("update service cost");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -1372,14 +1386,14 @@ mod tests {
             .await
             .expect("close_labor");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: Some("2026-04-10T10:00:00Z".into()),
                 actual_duration_hours: Some(2.0),
                 conclusion: Some("mechanical complete".into()),

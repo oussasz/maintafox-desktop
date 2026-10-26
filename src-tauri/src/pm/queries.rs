@@ -1559,10 +1559,9 @@ pub async fn transition_pm_occurrence(
         }
     }
 
-    let mut linked_work_order_id = current.linked_work_order_id;
-    if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
-        // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
-        // permit). See `pm::wo_content` for the mapping rules.
+    // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
+    // permit). See `pm::wo_content` for the mapping rules. Read before the transaction.
+    let wo_to_create = if input.generate_work_order == Some(true) && current.linked_work_order_id.is_none() {
         let content = crate::pm::wo_content::build_pm_work_order_content(
             db,
             current.pm_plan_id,
@@ -1570,11 +1569,32 @@ pub async fn transition_pm_occurrence(
             current.equipment_id,
         )
         .await?;
-
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
-        let wo = wo_queries::create_work_order(
-            db,
+        Some((content, wo_type_code))
+    } else {
+        None
+    };
+
+    let deferral_reason = if next_status == "deferred" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+    let missed_reason = if next_status == "missed" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+
+    // The OT is created and the occurrence claimed (version-checked) in one transaction: when the
+    // occurrence changed meanwhile, the refusal rolls the OT back too, never leaving an orphan.
+    let tx = db.begin().await?;
+    let mut linked_work_order_id = current.linked_work_order_id;
+    let mut created_wo: Option<(i64, crate::pm::wo_content::PmWoContent)> = None;
+    if let Some((content, wo_type_code)) = wo_to_create {
+        let wo = wo_queries::create_work_order_in(
+            &tx,
             WoCreateInput {
                 type_code: wo_type_code,
                 equipment_id: content.equipment_id,
@@ -1611,24 +1631,10 @@ pub async fn transition_pm_occurrence(
             },
         )
         .await?;
-        // WO functions own their transactions (no shared transaction across modules): the
-        // checklist, tools and parts are added right after creation, on the draft OT.
-        crate::pm::wo_content::apply_pm_content_to_work_order(db, wo.id, &content).await?;
         linked_work_order_id = Some(wo.id);
+        created_wo = Some((wo.id, content));
     }
 
-    let deferral_reason = if next_status == "deferred" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-    let missed_reason = if next_status == "missed" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-
-    let tx = db.begin().await?;
     let update = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1671,6 +1677,13 @@ pub async fn transition_pm_occurrence(
         ],
     ))
     .await?;
+
+    // The checklist, tools and parts are added in the same transaction (the WO child functions'
+    // own transactions are savepoints of it): a part that cannot be reserved leaves no work order
+    // and the occurrence unchanged, never a half-filled linked draft.
+    if let Some((wo_id, content)) = created_wo {
+        crate::pm::wo_content::apply_pm_content_to_work_order(&tx, wo_id, &content).await?;
+    }
 
     tx.commit().await?;
 
@@ -2023,6 +2036,47 @@ fn follow_up_title(occurrence: &PmOccurrence, finding: &PmExecutionFindingInput)
         first_line.to_string()
     };
     crate::pm::wo_content::compose_title(&base, occurrence.asset_code.as_deref())
+}
+
+/// The refusals the follow-up of a finding would meet once the execution is written: a plan
+/// without an equipment scope, and a retired equipment (Déclassé / Rebuté).
+async fn refuse_follow_ups_that_cannot_be_created(
+    db: &DatabaseConnection,
+    occurrence_id: i64,
+    findings: &[PmExecutionFindingInput],
+) -> AppResult<()> {
+    let wants_di = findings.iter().any(|f| f.create_follow_up_di == Some(true));
+    let wants_wo = findings.iter().any(|f| f.create_follow_up_work_order == Some(true));
+    if !wants_di && !wants_wo {
+        return Ok(());
+    }
+    let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
+    let plan_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
+            [occurrence.pm_plan_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_plan".to_string(),
+            id: occurrence.pm_plan_id.to_string(),
+        })?;
+    let asset_scope_type: String = plan_row.try_get("", "asset_scope_type")?;
+    let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
+    let Some(equipment_id) = asset_scope_id.filter(|_| asset_scope_type == "equipment") else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: A PM finding follow-up requires a PM plan scoped to one equipment."
+                .to_string(),
+        ]));
+    };
+    if wants_di {
+        crate::di::queries::refuse_retired_equipment(db, equipment_id).await?;
+    }
+    if wants_wo {
+        crate::wo::queries::refuse_retired_equipment(db, equipment_id).await?;
+    }
+    Ok(())
 }
 
 async fn create_follow_up_di_from_finding(
@@ -2410,6 +2464,10 @@ pub async fn execute_pm_occurrence(
         "cancelled" => "cancelled".to_string(),
         _ => unreachable!(),
     };
+
+    // The follow-ups the findings ask for are checked before anything is written: an execution
+    // is never recorded with its follow-up refused halfway (AU-73, review S4).
+    refuse_follow_ups_that_cannot_be_created(db, input.occurrence_id, &findings_input).await?;
 
     let occurrence = transition_pm_occurrence(
         db,

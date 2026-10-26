@@ -1595,7 +1595,8 @@ async fn seed_pm_equipment(db: &DatabaseConnection) {
 
 /// Active plan on equipment P-101 whose published version prescribes tasks, parts and tools;
 /// returns its first generated occurrence moved to `ready_for_scheduling` with its OT.
-async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
+/// A generated occurrence of a published plan whose version prescribes tasks, parts and tools.
+async fn generated_occurrence(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
     seed_pm_equipment(db).await;
     let plan = queries::create_pm_plan(
         db,
@@ -1693,7 +1694,11 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
     .expect("occurrence");
     assert_eq!(occ.asset_code.as_deref(), Some("P-101"));
     assert_eq!(occ.asset_name.as_deref(), Some("Pompe de reprise"));
+    occ
+}
 
+async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> crate::pm::domain::PmOccurrence {
+    let occ = generated_occurrence(db, code).await;
     queries::transition_pm_occurrence(
         db,
         TransitionPmOccurrenceInput {
@@ -1709,6 +1714,225 @@ async fn occurrence_with_generated_wo(db: &DatabaseConnection, code: &str) -> cr
     )
     .await
     .expect("ready with OT")
+}
+
+/// AU-20 (a): the occurrence is claimed and its OT created in one transaction. When someone else
+/// changes the occurrence while the OT is being created (simulated by a trigger firing on the OT
+/// insert), the transition is refused and no orphan OT is left.
+#[tokio::test]
+async fn a_stale_occurrence_claim_leaves_no_orphan_work_order() {
+    let db = setup_db().await;
+    let occ = generated_occurrence(&db, "PM-WO-RACE").await;
+    let wos_before = count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await;
+    db.execute_unprepared(&format!(
+        "CREATE TEMP TRIGGER au20_concurrent_edit AFTER INSERT ON work_orders BEGIN            UPDATE pm_occurrences SET row_version = row_version + 1 WHERE id = {};          END",
+        occ.id
+    ))
+    .await
+    .expect("trigger");
+
+    let err = queries::transition_pm_occurrence(
+        &db,
+        TransitionPmOccurrenceInput {
+            occurrence_id: occ.id,
+            expected_row_version: occ.row_version,
+            next_status: "ready_for_scheduling".to_string(),
+            reason_code: None,
+            note: None,
+            generate_work_order: Some(true),
+            work_order_type_id: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect_err("the occurrence changed meanwhile");
+    assert!(
+        matches!(&err, AppError::ValidationFailed(l) if l.iter().any(|m| m.starts_with("GATE_RECORD_CHANGED_ELSEWHERE"))),
+        "{err:?}"
+    );
+    db.execute_unprepared("DROP TRIGGER au20_concurrent_edit")
+        .await
+        .expect("drop trigger");
+
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before,
+        "no orphan OT"
+    );
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "generated");
+    assert_eq!(
+        after.row_version, occ.row_version,
+        "the trigger's edit rolled back with the claim"
+    );
+    assert!(after.linked_work_order_id.is_none());
+
+    // Reloaded, the same transition goes through and links its OT.
+    let ready = queries::transition_pm_occurrence(
+        &db,
+        TransitionPmOccurrenceInput {
+            occurrence_id: occ.id,
+            expected_row_version: after.row_version,
+            next_status: "ready_for_scheduling".to_string(),
+            reason_code: None,
+            note: None,
+            generate_work_order: Some(true),
+            work_order_type_id: None,
+            actor_id: Some(1),
+        },
+    )
+    .await
+    .expect("ready with OT");
+    assert!(ready.linked_work_order_id.is_some());
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before + 1
+    );
+}
+
+/// AU-20 (a), review S3: the PM content (tasks, tools, parts with their reservation) is added in
+/// the transaction that creates the OT and claims the occurrence. A part whose reservation is
+/// refused leaves no OT, no reservation and the occurrence unchanged; the transition can be made
+/// again once the stock can be reserved.
+#[tokio::test]
+async fn a_refused_part_reservation_leaves_no_work_order_and_the_occurrence_unchanged() {
+    let db = setup_db().await;
+    let occ = generated_occurrence(&db, "PM-WO-PART-REFUSED").await;
+    // Stock of the PM part, so the OT content reserves it.
+    db.execute_unprepared(
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty, updated_at) \
+         SELECT a.id, l.warehouse_id, l.id, 10, 0, 10, strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+         FROM articles a, stock_locations l WHERE a.article_code = 'BRG-6204' AND l.code = 'MAIN-BIN'",
+    )
+    .await
+    .expect("stock of the PM part");
+    let wos_before = count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await;
+    let reservations = |db: &DatabaseConnection| {
+        let db = db.clone();
+        async move { count_for(&db, "SELECT COUNT(*) AS c FROM stock_reservations WHERE id > ?", 0).await }
+    };
+    let reservations_before = reservations(&db).await;
+    db.execute_unprepared(
+        "CREATE TEMP TRIGGER s3_reservation_refused BEFORE INSERT ON stock_reservations \
+         BEGIN SELECT RAISE(ABORT, 'forced reservation refusal'); END",
+    )
+    .await
+    .expect("trigger");
+    let transition = |expected_row_version: i64| TransitionPmOccurrenceInput {
+        occurrence_id: occ.id,
+        expected_row_version,
+        next_status: "ready_for_scheduling".to_string(),
+        reason_code: None,
+        note: None,
+        generate_work_order: Some(true),
+        work_order_type_id: None,
+        actor_id: Some(1),
+    };
+
+    queries::transition_pm_occurrence(&db, transition(occ.row_version))
+        .await
+        .expect_err("the part cannot be reserved");
+    db.execute_unprepared("DROP TRIGGER s3_reservation_refused")
+        .await
+        .expect("drop trigger");
+
+    assert_eq!(
+        count_for(&db, "SELECT COUNT(*) AS c FROM work_orders WHERE id > ?", 0).await,
+        wos_before,
+        "no half-filled OT"
+    );
+    assert_eq!(reservations(&db).await, reservations_before, "no reservation");
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "generated");
+    assert_eq!(after.row_version, occ.row_version);
+    assert!(after.linked_work_order_id.is_none());
+
+    // The same transition goes through once the reservation can be made, with all its content.
+    let ready = queries::transition_pm_occurrence(&db, transition(after.row_version))
+        .await
+        .expect("ready with OT");
+    let wo_id = ready.linked_work_order_id.expect("linked OT");
+    let parts = crate::wo::parts::list_wo_parts(&db, wo_id).await.expect("parts");
+    assert_eq!(parts.len(), 1);
+    assert!(parts[0].reservation_id.is_some(), "the part is reserved");
+    assert_eq!(crate::wo::tasks::list_tasks(&db, wo_id).await.expect("tasks").len(), 2);
+}
+
+/// AU-73, review S4: a PM execution whose finding asks for a follow-up on equipment retired since
+/// is refused before anything is written (no completed occurrence without its follow-up).
+#[tokio::test]
+async fn an_execution_with_a_follow_up_on_retired_equipment_writes_nothing() {
+    let db = setup_db().await;
+    let mut occ = generated_occurrence(&db, "PM-EXEC-RETIRED").await;
+    for next in ["ready_for_scheduling", "scheduled", "in_progress"] {
+        occ = queries::transition_pm_occurrence(
+            &db,
+            TransitionPmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_row_version: occ.row_version,
+                next_status: next.to_string(),
+                reason_code: None,
+                note: None,
+                generate_work_order: Some(false),
+                work_order_type_id: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect(next);
+    }
+    crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+        .await
+        .expect("status tags");
+    db.execute_unprepared("UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = 1")
+        .await
+        .expect("retire equipment");
+
+    for (di, wo, code) in [
+        (true, false, "GATE_DI_EQUIPMENT_RETIRED"),
+        (false, true, "GATE_WO_EQUIPMENT_RETIRED"),
+    ] {
+        let err = queries::execute_pm_occurrence(
+            &db,
+            crate::pm::domain::ExecutePmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_occurrence_row_version: occ.row_version,
+                execution_result: "completed_with_findings".to_string(),
+                note: None,
+                actor_id: Some(1),
+                work_order_id: None,
+                defer_reason_code: None,
+                miss_reason_code: None,
+                findings: Some(vec![crate::pm::domain::PmExecutionFindingInput {
+                    finding_type: "LEAK".to_string(),
+                    severity: None,
+                    description: "Fuite au presse-étoupe".to_string(),
+                    create_follow_up_di: Some(di),
+                    create_follow_up_work_order: Some(wo),
+                    follow_up_work_order_type_id: None,
+                }]),
+            },
+        )
+        .await
+        .expect_err("retired equipment");
+        assert!(
+            matches!(&err, AppError::ValidationFailed(l) if l.iter().any(|m| m.starts_with(code))),
+            "{code}: {err:?}"
+        );
+        let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+        assert_eq!(after.status, "in_progress", "{code}: occurrence unchanged");
+        assert_eq!(after.row_version, occ.row_version);
+        assert_eq!(
+            count_for(
+                &db,
+                "SELECT COUNT(*) AS c FROM pm_executions WHERE pm_occurrence_id = ?",
+                occ.id
+            )
+            .await,
+            0,
+            "{code}: no execution recorded"
+        );
+    }
 }
 
 async fn count_for(db: &DatabaseConnection, sql: &str, id: i64) -> i64 {

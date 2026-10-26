@@ -128,6 +128,9 @@ pub struct WoListPage {
 pub struct WoGetResponse {
     pub wo: WorkOrder,
     pub transitions: Vec<WoTransitionRow>,
+    /// The work order's failure coding (one row per WO), read after the work order: the close-out
+    /// screen loads it with the version above, whatever the status (AU-18).
+    pub failure_detail: Option<crate::wo::closeout::WoFailureDetail>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -521,6 +524,18 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     Ok(wo)
 }
 
+/// Refuses a new work order on a retired equipment (Déclassé / Rebuté, AU-73). Shared by every
+/// creation path, including the request → work order conversion (`di::conversion`).
+pub(crate) async fn refuse_retired_equipment(conn: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
+    if let Some(code) = crate::assets::identity::retired_equipment_code(conn, equipment_id).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_EQUIPMENT_RETIRED:asset={code}: L'équipement {code} est déclassé ou mis au rebut : \
+             aucun ordre de travail ne peut y être créé."
+        )]));
+    }
+    Ok(())
+}
+
 /// [`create_work_order`] in the caller's transaction: what the work order is raised from is linked
 /// to it in the same transaction (`inspection::routing`), never left half done.
 ///
@@ -586,6 +601,10 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
                 "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={eid}: Équipement introuvable ou supprimé (equipment_id={eid})."
             )]));
         }
+        // AU-73: no new work order on retired equipment (Déclassé / Rebuté), whatever raises it
+        // (direct creation, PM, inspection, reliability action). A work order received by sync
+        // is applied by the sync materializer, not here.
+        refuse_retired_equipment(txn, eid).await?;
     }
     if equipment_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
