@@ -128,6 +128,9 @@ pub struct WoListPage {
 pub struct WoGetResponse {
     pub wo: WorkOrder,
     pub transitions: Vec<WoTransitionRow>,
+    /// The work order's failure coding (one row per WO), read after the work order: the close-out
+    /// screen loads it with the version above, whatever the status (AU-18).
+    pub failure_detail: Option<crate::wo::closeout::WoFailureDetail>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

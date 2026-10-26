@@ -158,8 +158,15 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
         crate::permit::requirement_rules::matching_permit_types(&state.db, wo.equipment_id, wo.type_id).await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
+    // Read after the work order: a coding saved in between moved the version, so the next
+    // version-checked save is refused instead of overwriting it.
+    let failure_detail = closeout::get_failure_details(&state.db, id).await?.into_iter().next();
 
-    Ok(queries::WoGetResponse { wo, transitions })
+    Ok(queries::WoGetResponse {
+        wo,
+        transitions,
+        failure_detail,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

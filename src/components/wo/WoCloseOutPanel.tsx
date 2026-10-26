@@ -18,7 +18,7 @@ import {
   ShieldCheck,
   WrenchIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -54,6 +54,7 @@ import {
   type WoAnalyticsSnapshot,
   closeWo,
   getWoAnalyticsSnapshot,
+  getWoForCloseOut,
   isRecordChangedElsewhere,
   reopenWo,
   saveFailureDetail,
@@ -61,11 +62,20 @@ import {
   updateServiceCost,
   updateWoRca,
 } from "@/services/wo-closeout-service";
-import { evaluateWoCompletionGates, getWo } from "@/services/wo-service";
+import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import {
+  type CloseOutForm,
+  type RepairType,
+  type StoredCloseOut,
+  formFromStored,
+  sameStored,
+  storedOf,
+  toSave,
+} from "./closeout-form";
 import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -77,8 +87,6 @@ interface WoCloseOutPanelProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-type RepairType = "temporary" | "permanent" | "na";
 
 /** Option B: verification and closure available from completed */
 const VERIFIABLE_STATUSES = new Set(["completed"]);
@@ -150,8 +158,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   // Version of the work order the S1-S3 form was loaded at: sent with each save so a change
   // made meanwhile (another person, another PC) is refused instead of silently overwritten.
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
-  // Bumped to reload the form from the database (after a version conflict).
-  const [formReload, setFormReload] = useState(0);
+  // The close-out as stored when the form was loaded (moved along by this form's own saves): a
+  // refused save compares it with the database to tell a close-out change made elsewhere from
+  // another change of the work order (a header transition, an execution entry).
+  const loadedCloseOut = useRef<StoredCloseOut | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailSuccess, setDetailSuccess] = useState(false);
@@ -208,21 +218,41 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     [people.options, info?.user_id, info?.display_name, info?.username],
   );
 
-  // ── Pre-populate from existing failure data (GA-049) ────────────────
-  // The work order is read first: its version is the one the form was loaded at, so anything
-  // saved after that read (the snapshot included) makes the next save refuse and reload.
+  const applyForm = useCallback((form: CloseOutForm) => {
+    setSymptomId(form.symptomId);
+    setFailureModeId(form.failureModeId);
+    setFailureCauseId(form.failureCauseId);
+    setFailureEffectId(form.failureEffectId);
+    setFailureMechanismId(form.failureMechanismId);
+    setDetectionMethodId(form.detectionMethodId);
+    setCauseNotDetermined(form.causeNotDetermined);
+    setRepairType(form.repairType);
+    setNarrative(form.narrative);
+    setRootCauseSummary(form.rootCauseSummary);
+    setCorrectiveAction(form.correctiveAction);
+    setServiceCost(form.serviceCost);
+  }, []);
+
+  // ── Pre-populate from the stored close-out (GA-049) ─────────────────
+  // The work order and its failure coding are read together, whatever the status: the form is
+  // loaded at that version, and anything saved after the read makes the next save refuse.
   useEffect(() => {
     let cancelled = false;
     setLoadedVersion(null);
-    void getWo(wo.id)
-      .then(async ({ wo: fresh }) => {
+    void getWoForCloseOut(wo.id)
+      .then(({ wo: fresh, failure_detail }) => {
         if (cancelled) return;
-        setRootCauseSummary(fresh.root_cause_summary ?? "");
-        setCorrectiveAction(fresh.corrective_action_summary ?? "");
-        const cost = fresh.service_cost ?? fresh.service_cost_input;
-        setServiceCost(cost != null && cost > 0 ? String(cost) : "");
+        applyForm(formFromStored(fresh, failure_detail));
+        loadedCloseOut.current = storedOf(fresh, failure_detail);
         setLoadedVersion(fresh.row_version);
-        const snap = await getWoAnalyticsSnapshot(wo.id);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setDetailError(describeAppError(err).title);
+      });
+    // Links (PM plan, permits) come from the analytics snapshot, which exists only once the work
+    // order is verified or closed: before that there are simply no links to show.
+    void getWoAnalyticsSnapshot(wo.id)
+      .then((snap) => {
         if (cancelled) return;
         setLinks({
           pm_plan_code: snap.pm_plan_code,
@@ -230,26 +260,14 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           pm_due_at: snap.pm_due_at,
           permits: snap.permits,
         });
-        const fd = snap.failure_details[0];
-        setSymptomId(fd?.symptom_id ?? null);
-        setFailureModeId(fd?.failure_mode_id ?? null);
-        setFailureCauseId(fd?.failure_cause_id ?? null);
-        setFailureEffectId(fd?.failure_effect_id ?? null);
-        setFailureMechanismId(fd?.failure_mechanism_id ?? null);
-        setDetectionMethodId(fd?.detection_method_id ?? null);
-        setCauseNotDetermined(fd?.cause_not_determined ?? false);
-        setRepairType(
-          fd?.is_temporary_repair ? "temporary" : fd?.is_permanent_repair ? "permanent" : "na",
-        );
-        setNarrative(fd?.notes ?? "");
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setDetailError(describeAppError(err).title);
+      .catch(() => {
+        /* no links before verification */
       });
     return () => {
       cancelled = true;
     };
-  }, [wo.id, formReload]);
+  }, [wo.id, applyForm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,42 +305,73 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   // ── Save S1-S3 details ─────────────────────────────────────────────────
 
   const handleSaveDetails = useCallback(async () => {
-    if (!canEdit) return;
-    if (loadedVersion == null) {
-      // The form has not been loaded from the database: nothing is saved over unseen data.
-      setFormReload((n) => n + 1);
-      return;
-    }
+    const base = loadedCloseOut.current;
+    if (!canEdit || loadedVersion == null || base == null) return;
     setSavingDetails(true);
     setDetailError(null);
     setDetailSuccess(false);
-    try {
-      // Each save is checked against the version the previous one left (chained).
+    const mine = toSave({
+      symptomId,
+      failureModeId,
+      failureCauseId,
+      failureEffectId,
+      failureMechanismId,
+      detectionMethodId,
+      causeNotDetermined,
+      repairType,
+      narrative,
+      rootCauseSummary,
+      correctiveAction,
+      serviceCost,
+    });
+    // The version and the stored close-out move with each step that succeeds (three calls): a
+    // later step that fails never makes the next save look changed by someone else.
+    let version = loadedVersion;
+    let stored = base;
+    const persist = async () => {
       const saved = await saveFailureDetail({
         wo_id: currentWo.id,
-        expected_row_version: loadedVersion,
-        symptom_id: symptomId,
-        failure_mode_id: causeNotDetermined ? null : failureModeId,
-        failure_cause_id: causeNotDetermined ? null : failureCauseId,
-        failure_effect_id: causeNotDetermined ? null : failureEffectId,
-        failure_mechanism_id: causeNotDetermined ? null : failureMechanismId,
-        detection_method_id: detectionMethodId,
-        is_temporary_repair: repairType === "temporary",
-        is_permanent_repair: repairType === "permanent",
-        cause_not_determined: causeNotDetermined,
-        notes: narrative.trim() || null,
+        expected_row_version: version,
+        ...mine.coding,
       });
-      let version = await updateWoRca({
+      version = saved.wo_row_version;
+      stored = { ...stored, coding: mine.coding };
+      version = await updateWoRca({
         wo_id: currentWo.id,
-        root_cause_summary: rootCauseSummary.trim() || null,
-        corrective_action_summary: correctiveAction.trim() || null,
-        expected_row_version: saved.wo_row_version,
+        root_cause_summary: mine.rootCause,
+        corrective_action_summary: mine.correctiveAction,
+        expected_row_version: version,
       });
-      const costNum = Number.parseFloat(serviceCost);
-      if (!isNaN(costNum) && costNum >= 0) {
-        version = await updateServiceCost(currentWo.id, costNum, version);
+      // An empty field keeps the stored text (the backend keeps it).
+      stored = {
+        ...stored,
+        rootCause: mine.rootCause ?? stored.rootCause,
+        correctiveAction: mine.correctiveAction ?? stored.correctiveAction,
+      };
+      if (mine.serviceCost != null) {
+        version = await updateServiceCost(currentWo.id, mine.serviceCost, version);
+        stored = { ...stored, serviceCost: mine.serviceCost };
       }
-      setLoadedVersion(version);
+    };
+    try {
+      try {
+        await persist();
+      } catch (err) {
+        if (!isRecordChangedElsewhere(err)) throw err;
+        const fresh = await getWoForCloseOut(currentWo.id);
+        const theirs = storedOf(fresh.wo, fresh.failure_detail);
+        version = fresh.wo.row_version;
+        if (!sameStored(theirs, stored)) {
+          // A close-out field was changed elsewhere: its values replace the screen, with the
+          // conflict message; nothing typed here is saved over them.
+          stored = theirs;
+          applyForm(formFromStored(fresh.wo, fresh.failure_detail));
+          throw err;
+        }
+        // Only other fields of the work order moved (a header action, an execution entry):
+        // the close-out typed here is saved on the new version.
+        await persist();
+      }
       setDetailSuccess(true);
       await refreshActiveWo();
       try {
@@ -332,12 +381,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       }
     } catch (err) {
       setDetailError(describeAppError(err).title);
-      if (isRecordChangedElsewhere(err)) {
-        // Changed meanwhile: show the conflict, then reload the form and the work order.
-        setFormReload((n) => n + 1);
-        await refreshActiveWo();
-      }
+      if (isRecordChangedElsewhere(err)) await refreshActiveWo();
     } finally {
+      loadedCloseOut.current = stored;
+      setLoadedVersion(version);
       setSavingDetails(false);
     }
   }, [
@@ -357,6 +404,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     correctiveAction,
     serviceCost,
     refreshActiveWo,
+    applyForm,
   ]);
 
   // ── Submit verification ────────────────────────────────────────────────
@@ -792,7 +840,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           <div className="space-y-2">
             {detailError && <ErrorBanner message={detailError} />}
             {detailSuccess && <SuccessBanner message={t("closeout.detailsSaved")} />}
-            <Button onClick={() => void handleSaveDetails()} disabled={savingDetails}>
+            <Button
+              onClick={() => void handleSaveDetails()}
+              disabled={savingDetails || loadedVersion == null}
+            >
               {savingDetails ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (

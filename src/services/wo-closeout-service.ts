@@ -5,6 +5,8 @@
  * Phase 2 â€“ Sub-phase 05 â€“ File 03 â€“ Sprint S3.
  */
 
+import { z } from "zod";
+
 import { appErrorLines } from "@/lib/app-error";
 import { invoke } from "@/lib/ipc-invoke";
 import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
@@ -250,6 +252,51 @@ function maybeWrapBlockingError(error: unknown): never {
 // â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // -- Failure detail --
+
+const WoFailureDetailSchema = z.object({
+  id: z.number(),
+  work_order_id: z.number(),
+  symptom_id: z.number().nullable(),
+  failure_mode_id: z.number().nullable(),
+  failure_cause_id: z.number().nullable(),
+  failure_effect_id: z.number().nullable(),
+  is_temporary_repair: z.boolean(),
+  is_permanent_repair: z.boolean(),
+  cause_not_determined: z.boolean(),
+  notes: z.string().nullable(),
+  failure_mode_label: z.string().nullable().optional(),
+  failure_cause_label: z.string().nullable().optional(),
+  failure_effect_label: z.string().nullable().optional(),
+  failure_mechanism_id: z.number().nullable().optional(),
+  failure_mechanism_label: z.string().nullable().optional(),
+  detection_method_id: z.number().nullable().optional(),
+  detection_method_label: z.string().nullable().optional(),
+});
+
+const WoForCloseOutSchema = z.object({
+  // Lazy: read when a response is parsed, not when this module loads.
+  wo: z.lazy(() => WorkOrderSchema),
+  failure_detail: WoFailureDetailSchema.nullable(),
+});
+
+/** The work order with its stored failure coding, read together for the close-out form. */
+export interface WoForCloseOut {
+  wo: WorkOrder;
+  failure_detail: WoFailureDetail | null;
+}
+
+/**
+ * The work order and its failure coding (`get_wo`), whatever its status: the close-out form is
+ * loaded from it, at the version it carries (AU-18).
+ */
+export async function getWoForCloseOut(woId: number): Promise<WoForCloseOut> {
+  const raw = await invoke<unknown>("get_wo", { id: woId });
+  const parsed = WoForCloseOutSchema.parse(raw);
+  return {
+    wo: parsed.wo as WorkOrder,
+    failure_detail: parsed.failure_detail as WoFailureDetail | null,
+  };
+}
 
 /** A saved failure detail with the work order's new version (for the next chained save). */
 export type WoFailureDetailSaved = WoFailureDetail & { wo_row_version: number };
