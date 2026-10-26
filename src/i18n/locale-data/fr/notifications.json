@@ -192,7 +192,7 @@
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
     "wo_permit_rule_missing": "OT reçu démarré sans sa règle de permis de l'usine",
     "insp_anomaly_origin_cancelled": "Anomalie d'inspection d'origine annulée",
-    "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT ou version de plan conservé",
+    "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT ou version de plan conservés",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
     "stock_count_recount": "Comptage à refaire",
     "stock_count_second_approval": "Comptage retenu pour une seconde approbation"
