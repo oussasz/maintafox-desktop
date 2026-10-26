@@ -1185,18 +1185,26 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
         0,
         "nothing sent before the first complete pull"
     );
-    assert_eq!(journaled(unsent.clone()).await, 0);
+    // A change not sent yet is kept, the sealed row journaled on top of it (review R3-B1).
+    assert_eq!(
+        journaled(unsent.clone()).await,
+        1,
+        "journaled on top of its unsent change"
+    );
     assert_eq!(
         scalar(
             &f.db,
-            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{unsent}'")
+            &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id = '{unsent}' AND status = 'pending'")
         )
         .await,
-        0,
-        "its unsealed pending version is dropped"
+        1,
+        "its unsent change is kept"
     );
-    // After the first complete pull: the last writer and the never-sent decision are sent sealed.
-    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 2);
+    crate::sync::capture::drain_capture_journal(&f.db)
+        .await
+        .expect("drain at start-up");
+    // After the first complete pull: the last writer re-sends it sealed.
+    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 1);
     let sent_sealed = |sid: String| {
         let db = &f.db;
         async move {
@@ -1214,7 +1222,7 @@ async fn the_backfill_resends_from_the_last_writer_and_the_wait_closes() {
     assert_eq!(
         sent_sealed(unsent.clone()).await,
         1,
-        "a never-sent decision is sent sealed"
+        "the unsent change is followed by its sealed version"
     );
     assert_eq!(
         scalar(
@@ -1404,4 +1412,111 @@ async fn a_version_published_after_the_refusal_arrived_is_told_of() {
     let o = apply_wire(&f, "pm_plan_versions", &version_sid, "upsert", &published).await;
     assert_eq!(conflict_code(&o), None, "{o:?}");
     assert_eq!(told().await, 1, "the proposer is told, the version named");
+}
+
+// ── Fix check of round 2 (R3-B1, R3-N1) ───────────────────────────────────────────────────────
+
+/// R3-B1: a decision received from another PC (inbound_apply), then applied here and not sent yet
+/// at the upgrade: its change is kept and followed by its sealed version, which another PC accepts
+/// applied, so no PC can apply it a second time. R3-N1: a listed decision with a newer received
+/// version not settled here is not re-sent.
+#[tokio::test]
+async fn an_unsent_local_change_is_kept_and_sent_sealed_after_the_upgrade() {
+    use sea_orm_migration::{MigrationTrait, SchemaManager};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (a, sid) = approved(&f, study_id).await;
+    let current = crate::reliability::study::decisions::get_decision(&f.db, a.id)
+        .await
+        .expect("get");
+    apply_decision(&f.db, decide(&current, None), f.admin)
+        .await
+        .expect("apply here");
+    let (_, other) = approved(&f, study_id).await;
+    // As before the upgrade: the decision was received (v2), applied here, that change not sent.
+    exec(&f.db, &format!("UPDATE {ENTITY} SET approval_seal = NULL")).await;
+    exec(&f.db, "DELETE FROM sync_capture_journal").await;
+    exec(&f.db, "DELETE FROM sync_outbox").await;
+    for (s, source) in [(&sid, "inbound_apply"), (&other, "outbox_ack")] {
+        exec(
+            &f.db,
+            &format!(
+                "INSERT OR REPLACE INTO sync_entity_state (entity_type, entity_sync_id, synced_row_version, synced_payload_hash, source) VALUES ('{ENTITY}', '{s}', 2, 'h-v2', '{source}')"
+            ),
+        )
+        .await;
+    }
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_outbox (idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version, payload_json, payload_hash, status) VALUES ('k-applied', '{ENTITY}', '{sid}', 'upsert', 3, 2, '{{\"status\":\"applied\"}}', 'h-v3', 'pending')"
+        ),
+    )
+    .await;
+    crate::migrations::m20261026_000264_reliability_decision_seal::Migration
+        .up(&SchemaManager::new(&f.db))
+        .await
+        .expect("migration 264");
+    crate::sync::capture::drain_capture_journal(&f.db)
+        .await
+        .expect("drain at start-up");
+    let sends: Vec<(i64, Option<i64>, String)> = f
+        .db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT row_version, base_row_version, payload_json FROM sync_outbox WHERE entity_sync_id = '{sid}' ORDER BY row_version"
+            ),
+        ))
+        .await
+        .expect("q")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get("", "row_version").expect("rv"),
+                r.try_get("", "base_row_version").expect("base"),
+                r.try_get("", "payload_json").expect("payload"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sends.len(),
+        2,
+        "the local change is kept, its sealed version follows: {sends:?}"
+    );
+    assert_eq!((sends[1].0, sends[1].1), (4, Some(3)), "stacked on the unsent change");
+    let sealed: Payload = serde_json::from_str(&sends[1].2).expect("payload");
+    assert_eq!(sealed.get("status").and_then(Value::as_str), Some("applied"));
+    assert!(sealed
+        .get("approval_seal")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.starts_with("v1:")));
+    // Another PC (new there) accepts it applied: it can never apply it a second time.
+    let (n, p) = as_new(&sealed, "other-pc");
+    let o = apply_wire(&f, ENTITY, &n, "upsert", &through_text(&p)).await;
+    assert!(matches!(o, ApplyOutcome::Applied), "{o:?}");
+    let there = scalar(&f.db, &format!("SELECT id FROM {ENTITY} WHERE entity_sync_id = '{n}'")).await;
+    let there = crate::reliability::study::decisions::get_decision(&f.db, there)
+        .await
+        .expect("get");
+    assert_eq!(there.status, "applied");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&there, None), f.admin).await),
+        "DECISION_NOT_APPROVED"
+    );
+
+    // R3-N1: the other listed decision has a newer version waiting in the inbox: not re-sent.
+    let mut newer = wire_of(&f, ENTITY, &other).await;
+    newer.insert("decision_note".into(), "autre".into());
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, row_version, payload_json, payload_hash, apply_status) VALUES ('b-newer', 'c1', '{ENTITY}', '{other}', 'upsert', 3, '{}', 'h-newer', 'deferred')",
+            serde_json::to_string(&newer).expect("json").replace('\'', "''")
+        ),
+    )
+    .await;
+    assert_eq!(resend_sealed_after_complete_pull(&f.db).await.expect("resend"), 0);
 }
