@@ -31,6 +31,7 @@ import {
   overridableCodes,
   isAssigneeOverridableError,
   msToLocalIsoDate,
+  overrideRetryInput,
   parseLaborCostRange,
   parseMs,
   previewLaborCost,
@@ -617,9 +618,7 @@ export function CommitDialog({
       if (isAssigneeOverridableError(codes)) {
         // The approver's password is never kept for a later submit: a break-in into a frozen
         // week is signed again after the override (the server then asks for it).
-        setPendingOverrideInput(
-          input.frozen_week_break_in ? { ...input, frozen_week_break_in: null } : input,
-        );
+        setPendingOverrideInput(overrideRetryInput(input));
         setPendingOverrideCodes(overridableCodes(codes));
       }
     }
