@@ -589,6 +589,7 @@
     "GATE_SYNC_KEEP_DECISION_NOT_ALLOWED": "Keeping this PC's decision needs the right to approve reliability decisions (ram.manage) plant-wide.",
     "GATE_SYNC_KEEP_DECISION_NOT_REFUSED": "This PC now accepts the received decision (the right of the person who approved or applied it has arrived or been granted): there is no decision to keep. The conflict closes by itself at the next synchronisation.",
     "GATE_SYNC_KEEP_DECISION_NOT_YET": "The refused decision cannot be recorded here yet: something it names has not arrived. Try again after the next synchronisation.",
+    "GATE_SYNC_KEEP_DECISION_UNKNOWN_STATUS": "This conflict is over a decision received with a status that is not a status of a decision: it can never be recorded here. Escalate the conflict.",
     "GATE_PLAN_BREAKIN_LOCKED_WINDOW": "Break-in refused: the slot overlaps a locked window. Give an override reason to proceed.",
     "GATE_PLAN_COMMITMENT_FROZEN": "Reschedule refused: this commitment is frozen.",
     "GATE_PLAN_WO_STATUS_NOT_SYNCABLE": "Sync refused: work order no. {{wo}} is not in the planned or ready status.",
