@@ -2527,12 +2527,115 @@ async fn decision_wos(f: &Fixture) -> i64 {
     .await
 }
 
+async fn decision_sync_id(f: &Fixture, id: i64) -> String {
+    text(
+        f,
+        &format!("SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {id}"),
+    )
+    .await
+}
+
 async fn decision_status(f: &Fixture, id: i64) -> String {
     text(
         f,
         &format!("SELECT status FROM reliability_study_decisions WHERE id = {id}"),
     )
     .await
+}
+
+#[tokio::test]
+async fn a_reliability_decision_is_carried_out_only_by_applying_it_once_approved() {
+    use crate::reliability::rcm_loop::{
+        create_pm_revision_from_source, create_wo_from_source, PmRevisionFromSourceInput, WoFromSourceInput,
+        SOURCE_RELIABILITY_DECISION,
+    };
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let d = wo_decision(&f, study_id, None).await;
+    assert_eq!(d.status, "proposed");
+
+    // The generic "action from a RAMS source" path refuses a study decision, proposed or approved:
+    // no work order, no PM version, no link.
+    let wo_from = || WoFromSourceInput {
+        source_type: SOURCE_RELIABILITY_DECISION.into(),
+        source_id: d.id,
+        type_code: "corrective".into(),
+        title: None,
+    };
+    let pm_from = || PmRevisionFromSourceInput {
+        source_type: SOURCE_RELIABILITY_DECISION.into(),
+        source_id: d.id,
+        pm_plan_id: 1,
+        trigger_definition_json: None,
+        change_note: "bypass".into(),
+    };
+    assert_eq!(
+        refusal_code(create_wo_from_source(&f.db, wo_from(), f.admin).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(
+        refusal_code(create_pm_revision_from_source(&f.db, pm_from()).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    let approved = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(create_wo_from_source(&f.db, wo_from(), f.admin).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(
+        refusal_code(create_pm_revision_from_source(&f.db, pm_from()).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(decision_wos(&f).await, 0);
+    let held = crate::reliability::study::decisions::get_decision(&f.db, d.id)
+        .await
+        .expect("get");
+    assert_eq!(held.status, "approved");
+    assert!(held.linked_work_order_id.is_none() && held.linked_pm_plan_version_id.is_none());
+
+    // The governed path carries it out.
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    assert_eq!(applied.status, "applied");
+    assert!(applied.linked_work_order_id.is_some());
+    assert_eq!(decision_wos(&f).await, 1);
+
+    // By synchronisation: the same decision received while proposed or rejected, naming the work
+    // order created from it, is refused (never applied here).
+    let sync_id = decision_sync_id(&f, d.id).await;
+    let wire = wire_of(&f, "reliability_study_decisions", &sync_id).await;
+    assert!(
+        wire.get("linked_work_order_sync_id")
+            .is_some_and(serde_json::Value::is_string),
+        "the link travels by sync id: {wire:?}"
+    );
+    for status in ["proposed", "rejected"] {
+        let mut unapproved = wire.clone();
+        unapproved.insert("status".into(), status.into());
+        unapproved.insert("decided_by_sync_id".into(), serde_json::Value::Null);
+        let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &unapproved).await;
+        assert_eq!(conflict_code(&outcome), Some("INVALID_VALUE"), "{status}: {outcome:?}");
+        assert!(
+            matches!(&outcome, crate::sync::materialize::ApplyOutcome::Conflict { message, .. } if message.contains("only an approved decision")),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(
+        decision_status(&f, d.id).await,
+        "applied",
+        "the refused rows changed nothing here"
+    );
+    // A proposed decision received without any link is applied as before.
+    let fresh = wo_decision(&f, study_id, None).await;
+    let fresh_sync = decision_sync_id(&f, fresh.id).await;
+    let fresh_wire = wire_of(&f, "reliability_study_decisions", &fresh_sync).await;
+    let outcome = apply_wire(&f, "reliability_study_decisions", &fresh_sync, "upsert", &fresh_wire).await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
 }
 
 #[tokio::test]

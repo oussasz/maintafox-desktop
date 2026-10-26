@@ -826,7 +826,17 @@ pub(crate) enum InboundDecisionVerdict {
     Defer(String),
     /// Refused: a sync conflict for a person to decide.
     Conflict(String),
+    /// Refused: the decision is not approved (proposed or rejected) yet names a work order or a PM
+    /// version created from it — only an approved decision is carried out (audit finding AU-69).
+    LinkedWhileUnapproved(String),
 }
+
+/// Columns of a decision that point to what was created from it.
+const DECISION_LINK_KEYS: [&str; 3] = [
+    "linked_work_order_sync_id",
+    "linked_pm_plan_version_sync_id",
+    "linked_pm_plan_sync_id",
+];
 
 /// Local id of a row referenced by its sync id in a payload (`Err(())`: named but not here).
 async fn payload_ref<C: ConnectionTrait>(
@@ -947,6 +957,20 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         .get("title")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    // A work order or PM version is created only from an approved decision (applying it). A received
+    // decision still proposed, or rejected, that names one was carried out without approval (a
+    // crafted call on an older version): refused, never applied here.
+    if status == STATUS_PROPOSED || status == STATUS_REJECTED {
+        let linked = DECISION_LINK_KEYS
+            .iter()
+            .any(|k| payload.get(*k).is_some_and(|v| !v.is_null()));
+        if linked {
+            return Ok(Some(InboundDecisionVerdict::LinkedWhileUnapproved(format!(
+                "decision '{title}' is {status} but names a work order or preventive plan version created \
+                 from it; only an approved decision is carried out"
+            ))));
+        }
+    }
     let decided = status == STATUS_APPROVED || status == STATUS_APPLIED;
     if decided && decider.is_none() {
         return Ok(Some(InboundDecisionVerdict::Conflict(format!(

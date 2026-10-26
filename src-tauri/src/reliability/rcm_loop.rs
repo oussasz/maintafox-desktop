@@ -433,9 +433,12 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
              JOIN rcm_studies s ON s.id = d.study_id WHERE d.id = ?",
             "functional_failure",
         ),
-        // The decision acts on one equipment of its study (set when the decision is recorded).
+        // The decision acts on one equipment of its study (set when the decision is recorded). It is
+        // read only once `apply_decision` has claimed it (`applied`, in the same transaction): a
+        // decision that is not approved never drives a PM revision or a work order.
         SOURCE_RELIABILITY_DECISION => (
-            "SELECT d.equipment_id, d.title AS label, NULL AS tactic, 0 AS review_required FROM reliability_study_decisions d WHERE d.id = ? AND d.equipment_id IS NOT NULL",
+            "SELECT d.equipment_id, d.title AS label, NULL AS tactic, 0 AS review_required FROM reliability_study_decisions d \
+             WHERE d.id = ? AND d.equipment_id IS NOT NULL AND d.status = 'applied'",
             "title",
         ),
         other => {
@@ -472,6 +475,19 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
     })
 }
 
+/// A reliability study decision is carried out only through `study::decisions::apply_decision`
+/// (approved, by its designated approver, under the site's four-eyes rule). The generic "action
+/// from a RAMS source" commands refuse it (audit finding AU-69).
+fn refuse_governed_source(source_type: &str) -> AppResult<()> {
+    if source_type == SOURCE_RELIABILITY_DECISION {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_APPLY_ONLY: A reliability study decision is carried out only by applying it from the decision log, once approved."
+                .into(),
+        ]));
+    }
+    Ok(())
+}
+
 /// Creates a draft PM plan version from the plan's latest version (new trigger when given),
 /// records its source, and links the source to it. The version stays a draft: publishing it
 /// goes through the normal PM review. The version and its links are written together.
@@ -479,6 +495,7 @@ pub async fn create_pm_revision_from_source(
     db: &DatabaseConnection,
     input: PmRevisionFromSourceInput,
 ) -> AppResult<SourceAction> {
+    refuse_governed_source(&input.source_type)?;
     let txn = db.begin().await?;
     let action = create_pm_revision_from_source_in(&txn, input).await?;
     txn.commit().await?;
@@ -609,6 +626,7 @@ pub async fn create_wo_from_source(
     input: WoFromSourceInput,
     actor_id: i64,
 ) -> AppResult<SourceAction> {
+    refuse_governed_source(&input.source_type)?;
     let txn = db.begin().await?;
     let action = create_wo_from_source_in(&txn, input, actor_id).await?;
     txn.commit().await?;
