@@ -8419,6 +8419,55 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
     );
 }
 
+/// Check 7, C7-N2 (and C6-N3 b, isolation to another isolation type): two PCs whose lists give no
+/// isolation rule for a work order (only a hot-work rule matches) hold two different isolation
+/// rules, received from two other PCs; each then receives the other's. Both end on the same rule
+/// (the smallest code), never on the hot-work rule, whichever they held.
+#[tokio::test]
+async fn two_isolation_rules_held_on_two_pcs_converge() {
+    let a = ("A_LOTO", "loto");
+    let b = ("B_ELEC", "electrical_lv");
+    for (held, received) in [(a, b), (b, a)] {
+        let db = setup().await;
+        // A second permit type requiring an energy isolation here.
+        exec(
+            &db,
+            "UPDATE permit_types SET requires_energy_isolation = 1 WHERE code = 'electrical_lv'",
+        )
+        .await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "H_RULE",
+            json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        )
+        .await;
+        let row = new_row_naming(&db, "EQ-C7N2", "wo-c7n2", held.0, held.1, false).await;
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &row).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(rule_state(&db, "wo-c7n2").await, ruled(held.0, held.1), "{held:?}");
+        let other = wo_row(
+            &row,
+            &[
+                ("permit_rule_code", json!(received.0)),
+                ("permit_rule_permit_type", json!(received.1)),
+            ],
+        );
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &other).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}, received {received:?}: the same rule on both PCs"
+        );
+        crate::permit::requirement_rules::catch_up(&db).await;
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}: kept by the catch-up"
+        );
+    }
+}
+
 /// Check 6, C6-N5: a work order received started naming a rule with no permit type, while the list
 /// here gives another rule: the finding notice's received permit type is "?", as in its title,
 /// never empty.

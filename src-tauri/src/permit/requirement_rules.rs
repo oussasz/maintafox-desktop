@@ -1248,7 +1248,12 @@ pub async fn converge_received_rule(
 /// type that requires an energy isolation here is never replaced by one that does not, and a
 /// received one that requires it here outranks a kept one that does not. Isolation is judged by the
 /// permit types known here: a made-up or unknown type never counts, so a row can only add an
-/// isolation requirement, never remove one. Every PC holding the same list and data keeps the same.
+/// isolation requirement, never remove one. Every PC holding the same list and data keeps the same:
+/// when this PC's first match does not require an isolation (or there is none) and the held and the
+/// received rules both do, the smallest (rule code, permit type) of the two is kept — never the one
+/// that happens to be held — so two PCs holding two different isolation rules, each receiving the
+/// other's, both end on the same one, and never on a rule without isolation (check 7, C7-N2). This
+/// PC's first match, when it requires an isolation, is kept as before.
 pub async fn choose_rule(
     conn: &impl ConnectionTrait,
     first: Option<(String, Option<String>)>,
@@ -1261,13 +1266,24 @@ pub async fn choose_rule(
             None => Ok(false),
         }
     }
-    let mut kept = first.or_else(|| held.clone()).unwrap_or_else(|| received.clone());
-    for candidate in [held, Some(received)].into_iter().flatten() {
-        if !isolation(conn, &kept).await? && isolation(conn, &candidate).await? {
-            kept = candidate;
+    if let Some(first) = &first {
+        if isolation(conn, first).await? {
+            return Ok(first.clone());
         }
     }
-    Ok(kept)
+    // The held and received rules that require an isolation here: the smallest one wins.
+    let mut isolating: Vec<(String, Option<String>)> = Vec::new();
+    for candidate in held.iter().chain(std::iter::once(&received)) {
+        if isolation(conn, candidate).await? {
+            isolating.push(candidate.clone());
+        }
+    }
+    if let Some(kept) = isolating.into_iter().min() {
+        return Ok(kept);
+    }
+    // None requires an isolation: this PC's first match, else the held rule, else the received one
+    // (a received rule that does not require an isolation never replaces a held one: R3-B1).
+    Ok(first.or(held).unwrap_or(received))
 }
 
 /// The rule this PC's list (ranked and guarded, [`choose_rule`]) gives a work order whose rule came
