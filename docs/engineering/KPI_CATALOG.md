@@ -53,6 +53,9 @@ Trend sense:
 Default target:
 Prior-horizon comparison only when persisted; never invent numeric SLA targets in UI
 
+Stable band:
+Change below which the trend reads "stable" (points for a % KPI, % of the previous value otherwise); the value lives in the KPI registry (`stableBelow`) and is copied here — never hard-coded in a screen
+
 Displayed:
 - …
 
@@ -1329,6 +1332,9 @@ Required fields:
 - eligible failure count
 - `reliability_kpi_snapshots.mtbf`, `period_start`, `period_end`, `equipment_id`
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Deep RAMS KPI snapshots; Executive Dashboards fleet health strip (horizon average + vs-prior Δ + sparkline from snapshot dates); Top 5 bad-actor ranking by event_count with MTBF / availability / closed-WO cost
 
@@ -1359,6 +1365,9 @@ Inputs:
 Required fields:
 - Active repair hours per event
 - `reliability_kpi_snapshots.mttr`
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Deep RAMS KPI snapshots; planned Executive Dashboards (M1)
@@ -1395,6 +1404,9 @@ Required fields:
 - `t_exp_hours`, downtime hours, active repair hours
 - `reliability_kpi_snapshots.availability_operational`, `availability_inherent`, `exposure_hours`, `downtime_hours_total`
 
+Stable band:
+±0.1 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Deep RAMS KPI snapshots; planned Executive Dashboards (M1)
 
@@ -1425,6 +1437,9 @@ Inputs:
 
 Required fields:
 - `pm_occurrences.due_at`, `status`, completion / closed timestamps
+
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Executive Dashboards PM pipeline stacked bar (overdue / due today / next 7d counts); not a completion % until on-time fields are queryable
@@ -1549,6 +1564,9 @@ up-bad
 Default target:
 Count 7 days ago (same status filter)
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Vue d'ensemble Overview strip (`VisualMetricCard`)
 
@@ -1591,6 +1609,9 @@ up-bad
 
 Default target:
 Count with same filter at prior horizon (7d)
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Vue d'ensemble Overview strip
@@ -1635,6 +1656,9 @@ up-bad
 Default target:
 Same query with prior-window proxy (7d)
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Vue d'ensemble Overview strip
 
@@ -1673,10 +1697,13 @@ Default roles:
 General
 
 Trend sense:
-up-bad
+neutral (D15: only overdue is red)
 
 Default target:
 Prior-day bucket proxy
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Vue d'ensemble Overview strip
@@ -1721,6 +1748,9 @@ up-bad
 Default target:
 Prior horizon sum (7d)
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Vue d'ensemble Overview strip (when enabled in Personnaliser)
 
@@ -1763,6 +1793,9 @@ up-bad
 
 Default target:
 Prior count (7d)
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Vue d'ensemble Overview strip (when enabled)
@@ -1807,6 +1840,9 @@ up-good
 Default target:
 Prior horizon average
 
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Vue d'ensemble Overview strip; drill `/analytics/rams/data-quality`
 
@@ -1850,6 +1886,9 @@ up-bad
 Default target:
 Prior count
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Displayed:
 - Vue d'ensemble Overview strip
 
@@ -1892,6 +1931,9 @@ up-bad
 
 Default target:
 Prior count
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
 Displayed:
 - Vue d'ensemble Overview strip
@@ -2142,3 +2184,172 @@ Displayed:
 Status:
 Partial
 
+---
+
+# KPI-052
+
+Nom:
+Schedule Compliance (SMRP)
+
+Module:
+RAMS & Analytics (SMRP)
+
+Description:
+Share of scheduled maintenance hours completed as scheduled in the period (SMRP 5.4.1). Analytics hub SMRP section.
+
+Formula:
+Computed in Rust (`analytics::smrp`); see that module.
+
+Semantic key:
+`SCHEDULE_COMPLIANCE` (SMRP registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`plan.view` (opens /planning)
+
+Trend sense:
+up-good
+
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written)
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented
+
+---
+
+# KPI-053
+
+Nom:
+Planned Work Share (SMRP work mix)
+
+Module:
+RAMS & Analytics (SMRP)
+
+Description:
+Share of completed work (hours, or count when hours are missing) that was planned. Analytics hub SMRP section.
+
+Formula:
+Computed in Rust (`analytics::smrp`); see that module.
+
+Semantic key:
+`WORK_MIX_PLANNED` (SMRP registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`ot.view`
+
+Trend sense:
+up-good
+
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written)
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented
+
+---
+
+# KPI-054
+
+Nom:
+Reactive Work Share (SMRP work mix)
+
+Module:
+RAMS & Analytics (SMRP)
+
+Description:
+Share of completed work that was reactive (corrective, not emergency). Analytics hub SMRP section.
+
+Formula:
+Computed in Rust (`analytics::smrp`); see that module.
+
+Semantic key:
+`WORK_MIX_REACTIVE` (SMRP registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`ot.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written)
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented
+
+---
+
+# KPI-055
+
+Nom:
+Emergency Work Share (SMRP work mix)
+
+Module:
+RAMS & Analytics (SMRP)
+
+Description:
+Share of completed work that was emergency. Analytics hub SMRP section.
+
+Formula:
+Computed in Rust (`analytics::smrp`); see that module.
+
+Semantic key:
+`WORK_MIX_EMERGENCY` (SMRP registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`ot.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written)
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented
+
+---
+
+# KPI-056
+
+Nom:
+Maintenance Cost to Replacement Asset Value (SMRP)
+
+Module:
+RAMS & Analytics (SMRP)
+
+Description:
+Annualised maintenance cost divided by the replacement value of the assets that have one (SMRP 3.5.1). A small ratio (a few percent a year): it moves by hundredths of a point. Analytics hub SMRP section.
+
+Formula:
+Computed in Rust (`analytics::smrp`); see that module.
+
+Semantic key:
+`COST_TO_RAV` (SMRP registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`eq.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.05 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written)
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented

@@ -254,6 +254,9 @@ export function AnalyticsDashboardsPage() {
   const openRamsDashboard = () => navigate(`${ANALYTICS_RAMS_BASE_PATH}/dashboard`);
   const openRamsEvidence = () =>
     navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`);
+  // The reliability tiles open /reliability, which needs ram.view (the widget itself shows with
+  // rep.view): without it the tile is a figure, not a link.
+  const ramOpen = (open: () => void) => (can(P.RAM_VIEW) ? { onOpen: open } : {});
   const reliabilityAvailable = data?.avg_mtbf_hours.available === true;
 
   const renderWidget = (id: string) => {
@@ -318,7 +321,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: periodTrend(data?.pm_due_today, "up-bad"),
+              trend: periodTrend(data?.pm_due_today, "neutral"),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -326,7 +329,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: periodTrend(data?.pm_due_next_7d, "up-bad"),
+              trend: periodTrend(data?.pm_due_next_7d, "neutral"),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
@@ -338,14 +341,16 @@ export function AnalyticsDashboardsPage() {
               <CardTitle className="text-base font-medium">
                 {t("hub.dashboards.widgets.reliability")}
               </CardTitle>
-              <Button
-                type="button"
-                variant="link"
-                className="h-10 px-2 text-xs"
-                onClick={openRamsEvidence}
-              >
-                {td("widgets.reliability.openEvidence")}
-              </Button>
+              {can(P.RAM_VIEW) ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-10 px-2 text-xs"
+                  onClick={openRamsEvidence}
+                >
+                  {td("widgets.reliability.openEvidence")}
+                </Button>
+              ) : null}
             </CardHeader>
             <CardContent>
               <p className="mb-3 text-xs text-text-muted">
@@ -358,7 +363,7 @@ export function AnalyticsDashboardsPage() {
                   value: hours(data?.avg_mtbf_hours.value),
                   available: data?.avg_mtbf_hours.available ?? false,
                   trend: periodTrend(data?.avg_mtbf_hours, "up-good"),
-                  onOpen: openRamsDashboard,
+                  ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
                   title: t("hub.dashboards.kpi.mttr"),
@@ -366,7 +371,7 @@ export function AnalyticsDashboardsPage() {
                   value: hours(data?.avg_mttr_hours.value),
                   available: data?.avg_mttr_hours.available ?? false,
                   trend: periodTrend(data?.avg_mttr_hours, "up-bad"),
-                  onOpen: openRamsDashboard,
+                  ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
                   title: t("hub.dashboards.kpi.availability"),
@@ -378,7 +383,7 @@ export function AnalyticsDashboardsPage() {
                     "up-good",
                     stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY),
                   ),
-                  onOpen: openRamsDashboard,
+                  ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
                   title: t("hub.dashboards.kpi.dataQuality"),
@@ -390,7 +395,7 @@ export function AnalyticsDashboardsPage() {
                     "up-good",
                     stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.DATA_QUALITY),
                   ),
-                  onOpen: openRamsEvidence,
+                  ...ramOpen(openRamsEvidence),
                 })}
                 {renderKpi({
                   title: t("hub.dashboards.kpi.snapshots"),
@@ -403,7 +408,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: count(data?.reliability_total_events),
                   available: reliabilityAvailable || Boolean(data?.reliability_total_events),
-                  onOpen: () => navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation`),
+                  ...ramOpen(() => navigate(`${ANALYTICS_RAMS_BASE_PATH}/foundation`)),
                 })}
               </div>
             </CardContent>

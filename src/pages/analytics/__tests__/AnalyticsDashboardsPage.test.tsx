@@ -188,4 +188,41 @@ describe("AnalyticsDashboardsPage", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("hub.dashboards.loadError")).toBeInTheDocument();
   });
+
+  it("opens /reliability from the reliability tiles only with the reliability view right", async () => {
+    const mtbf = "hub.dashboards.kpi.mtbf";
+    // rep.view only: the widget shows, no tile or evidence button leads to /reliability.
+    rights.can = (p) => p !== P.RAM_VIEW;
+    const first = renderPage();
+    expect(await screen.findByText(mtbf)).toBeInTheDocument();
+    expect(screen.getByText(mtbf).closest("button")).toBeNull();
+    expect(screen.getByText("hub.dashboards.kpi.failureEvents").closest("button")).toBeNull();
+    expect(screen.queryByText("widgets.reliability.openEvidence")).not.toBeInTheDocument();
+    first.unmount();
+    // ram.view held: the same tile is a link.
+    rights.can = () => true;
+    renderPage();
+    expect(await screen.findByText(mtbf)).toBeInTheDocument();
+    expect(screen.getByText(mtbf).closest("button")).not.toBeNull();
+    expect(screen.getByText("widgets.reliability.openEvidence")).toBeInTheDocument();
+  });
+
+  it("does not colour a rising PM-due-today or PM-due-in-7-days count; only overdue is red", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({
+      ...DATA,
+      pm_overdue: kpi("pm_overdue", 6, 2),
+      pm_due_today: kpi("pm_due_today", 6, 2),
+      pm_due_next_7d: kpi("pm_due_next_7d", 9, 5),
+    });
+    renderPage();
+    // The trend badge is red ("bg-status-danger") only for a rising "bad" sense.
+    const isRed = async (key: string) =>
+      (await screen.findByText(key))
+        .closest("button")
+        ?.querySelector("span[class*='bg-status-danger']") != null;
+    expect(await screen.findByText("hub.dashboards.kpi.pmDueToday")).toBeInTheDocument();
+    expect(await isRed("hub.dashboards.kpi.pmDueToday")).toBe(false);
+    expect(await isRed("hub.dashboards.kpi.pmDueNext7d")).toBe(false);
+    expect(await isRed("hub.dashboards.kpi.pmOverdue")).toBe(true);
+  });
 });

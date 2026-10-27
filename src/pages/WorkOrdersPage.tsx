@@ -131,6 +131,7 @@ export function WorkOrdersPage() {
 
   const [searchInput, setSearchInput] = useState("");
   const [dashboardTick, setDashboardTick] = useState(0);
+  const [integrityTick, setIntegrityTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -709,8 +710,10 @@ export function WorkOrdersPage() {
           ) : null}
           <RefreshButton
             onRefresh={() => {
-              // The dashboard reads its own figures: reload those, not the hidden list.
+              // The dashboard and the integrity view read their own data: reload that, not the
+              // hidden list.
               if (activeView === "dashboard") setDashboardTick((n) => n + 1);
+              else if (activeView === "integrity") setIntegrityTick((n) => n + 1);
               else void loadWos();
             }}
             loading={loading}
@@ -771,7 +774,7 @@ export function WorkOrdersPage() {
           />
         </div>
       ) : null}
-      {activeView === "integrity" && <WoIntegrityWorkbench />}
+      {activeView === "integrity" && <WoIntegrityWorkbench reloadSignal={integrityTick} />}
       {activeView === "list" && !showListError && (
         <div className="p-4">
           <DataTable

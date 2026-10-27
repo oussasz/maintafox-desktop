@@ -6,8 +6,17 @@
  * accepted, the app language's separator shown back, no exponent, no spinner step.
  * The parent keeps a `number | null`; what the user is typing stays in the field until the
  * field is left, so a half-typed "2," is never rewritten under the cursor.
+ *
+ * The point is always the decimal mark ("1.250" is 1,25, never one thousand two hundred fifty);
+ * a space is the only thousands separator accepted.
+ *
+ * While the text typed is not a number (or is out of range) the field is invalid: red border,
+ * `aria-invalid`, `onValidityChange(true)` for the parent, and Enter does nothing (no implicit
+ * form submit, the field's own `onKeyDown` is not called) so the parent's previous value is never
+ * submitted behind text the user can still see.
  */
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import { Input, type InputProps } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -28,6 +37,8 @@ export interface DecimalFieldProps extends Omit<
   allowNegative?: boolean;
   min?: number;
   max?: number;
+  /** Called with true while the text typed is not an acceptable number, false once it is. */
+  onValidityChange?: (invalid: boolean) => void;
 }
 
 export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps>(
@@ -43,11 +54,14 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
       className,
       onBlur,
       onFocus,
+      onKeyDown,
+      onValidityChange,
       "aria-invalid": ariaInvalid,
       ...props
     },
     ref,
   ) => {
+    const { t } = useTranslation("common");
     const { formatDecimalInput, parseDecimal } = useFormatters();
     const show = React.useCallback(
       (v: number | null) => formatDecimalInput(v, { decimals, fixed }),
@@ -70,6 +84,15 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
         setInvalid(false);
       }
     }, [value, show]);
+
+    const validityRef = React.useRef(onValidityChange);
+    validityRef.current = onValidityChange;
+    const reported = React.useRef(false);
+    React.useEffect(() => {
+      if (reported.current === invalid) return;
+      reported.current = invalid;
+      validityRef.current?.(invalid);
+    }, [invalid]);
 
     const outOfRange = (n: number) => (min != null && n < min) || (max != null && n > max);
 
@@ -95,6 +118,25 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
       setInvalid(outOfRange(parsed.value));
       last.current = parsed.value;
       onValueChange(parsed.value);
+    };
+
+    // Enter with text that is not an acceptable number must not submit the previous value.
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        const parsed = parseDecimal(draft, { allowNegative });
+        const blocked =
+          invalid ||
+          parsed.kind === "invalid" ||
+          (allowNegative && draft.trim() === "-") ||
+          (parsed.kind === "number" && outOfRange(parsed.value));
+        if (blocked) {
+          e.preventDefault();
+          e.stopPropagation();
+          setInvalid(true);
+          return;
+        }
+      }
+      onKeyDown?.(e);
     };
 
     const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
@@ -133,6 +175,8 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
 
     return (
       <Input
+        // Unobtrusive hint on hover / for screen readers; a caller's own title wins.
+        title={t("decimalField.dotHint")}
         {...props}
         ref={ref}
         inputMode="decimal"
@@ -141,6 +185,7 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
         onChange={handleChange}
         onFocus={handleFocus}
         onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
         aria-invalid={ariaInvalid ?? (invalid || undefined)}
         className={cn("tabular-nums", invalid && "border-status-danger", className)}
       />

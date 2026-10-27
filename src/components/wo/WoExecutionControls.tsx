@@ -22,6 +22,7 @@ import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -105,6 +106,12 @@ import { P } from "@shared/rbac/permissions.generated";
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
 import { woActionFailureText } from "./wo-action-error";
+
+/** Typed usage (kept as text in state) for the field; the planned quantity until the user types. */
+function usageValue(typed: string | undefined, planned: number): number | null {
+  if (typed === undefined) return planned;
+  return typed.trim() === "" ? null : Number(typed);
+}
 
 export interface WoExecutionControlsHandle {
   openHoldForm: () => void;
@@ -1167,13 +1174,15 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={partUsage[part.id] ?? String(part.quantity_planned)}
-                            onChange={(e) =>
-                              setPartUsage((prev) => ({ ...prev, [part.id]: e.target.value }))
+                          <DecimalField
+                            decimals={3}
+                            min={0}
+                            value={usageValue(partUsage[part.id], part.quantity_planned)}
+                            onValueChange={(v) =>
+                              setPartUsage((prev) => ({
+                                ...prev,
+                                [part.id]: v == null ? "" : String(v),
+                              }))
                             }
                             disabled={controlsDisabled}
                             placeholder={t("execution.usedQty")}

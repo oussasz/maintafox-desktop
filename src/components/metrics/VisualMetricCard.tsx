@@ -15,6 +15,8 @@ export interface VisualMetricCardProps {
   unavailableLabel?: string | undefined;
   context?: string | undefined;
   trendLabel?: string | undefined;
+  /** Hover / accessible description of the trend badge (e.g. the "stable" band). */
+  trendTitle?: string | undefined;
   trendSense?: VisualMetricTrendSense | undefined;
   /** Typed right-column micro-viz. */
   vizKind?: OverviewKpiVizKind | undefined;
@@ -41,6 +43,7 @@ export function VisualMetricCard(props: VisualMetricCardProps) {
     unavailableLabel = "—",
     context,
     trendLabel,
+    trendTitle,
     trendSense = "neutral",
     vizKind,
     series,
@@ -83,7 +86,12 @@ export function VisualMetricCard(props: VisualMetricCardProps) {
             {available && unit ? <span className={mfVisualMetric.unit}> {unit}</span> : null}
           </p>
           {available && trendLabel ? (
-            <span className={cn(mfVisualMetric.badge, badgeTone ?? accentTone)}>{trendLabel}</span>
+            <span
+              className={cn(mfVisualMetric.badge, badgeTone ?? accentTone)}
+              {...(trendTitle ? { title: trendTitle } : {})}
+            >
+              {trendLabel}
+            </span>
           ) : null}
         </div>
       </div>
