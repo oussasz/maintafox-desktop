@@ -2590,3 +2590,146 @@ async fn a_refused_copy_of_a_received_break_in_wins_over_an_older_one() {
     let outcome = receive(&r.db, "schedule_commitments", &r.commitment_sid, moved).await;
     assert_eq!(conflict_code(&outcome), Some("PLANNING_WEEK_FROZEN"), "{outcome:?}");
 }
+
+/// A commitment of the frozen week closed here (lifecycle close), everything made here sent, and
+/// the other PC's version of it still committed (an edit made there before it closed the job too).
+async fn closed_here_with_received_edit(code: &str) -> (Received, Payload) {
+    let r = received_setup_at(code, "2026-05-05T08:00", "2026-05-05T09:00").await;
+    let mut edited = payload(&r.db, "schedule_commitments", &r.commitment_sid).await;
+    edited.insert("updated_at".into(), "2026-05-02T09:00:00Z".into());
+    edited.insert("row_version".into(), 1.into());
+    exec_sql(
+        &r.db,
+        &format!(
+            "UPDATE schedule_commitments SET status = 'closed', status_changed_at = '2026-05-05T09:00:00Z' \
+              WHERE id = {}",
+            r.commitment.id
+        ),
+    )
+    .await;
+    exec_sql(&r.db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&r.db, "DELETE FROM sync_outbox").await;
+    (r, edited)
+}
+
+async fn materialize_all(db: &DatabaseConnection) {
+    crate::sync::materialize::materialize_inbox(db, 200, true)
+        .await
+        .expect("materialize");
+    crate::sync::row_codec::clear_ref_cache();
+}
+
+const OPEN_FROZEN: &str = "SELECT COUNT(*) FROM sync_conflicts WHERE conflict_type = 'PLANNING_WEEK_FROZEN' \
+                           AND status IN ('new', 'triaged', 'escalated')";
+const SUPERSEDED_AUDITS: &str =
+    "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.week_frozen_conflict.closed_by_newer_version'";
+
+/// Review N5-b: a job closed here in a frozen week, received committed from the other PC, is a
+/// conflict; when that PC's closed version is received and applied, the refused version is
+/// superseded, its conflict closed (noted) and audited, and the job stays closed. A newer version
+/// not applied closes nothing.
+#[tokio::test]
+async fn a_frozen_week_conflict_of_a_job_closed_here_closes_when_its_closed_version_arrives() {
+    let (r, edited) = closed_here_with_received_edit("FE40").await;
+    let status_here = format!("SELECT status FROM schedule_commitments WHERE id = {}", r.commitment.id);
+
+    // The other PC's committed version (v11): refused, the job stays closed.
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &edited).await;
+    materialize_all(&r.db).await;
+    assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 1, "a conflict for review");
+    assert_eq!(scalar_text(&r.db, &status_here).await, "closed");
+
+    // Its closed version (v13) not applied (refused for another reason): nothing closed.
+    let mut closed = edited.clone();
+    closed.insert("status".into(), "closed".into());
+    closed.insert("status_changed_at".into(), "2026-05-05T10:00:00Z".into());
+    closed.insert("row_version".into(), 3.into());
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &closed).await;
+    exec_sql(
+        &r.db,
+        "UPDATE sync_inbox SET apply_status = 'conflict' \
+          WHERE entity_type = 'schedule_commitments' AND row_version = 13",
+    )
+    .await;
+    materialize_all(&r.db).await;
+    assert_eq!(
+        scalar(&r.db, OPEN_FROZEN).await,
+        1,
+        "only an applied version supersedes"
+    );
+
+    // The closed version applied (v12): the refused one is superseded, its conflict closed.
+    closed.insert("row_version".into(), 2.into());
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &closed).await;
+    materialize_all(&r.db).await;
+    assert_eq!(
+        scalar_text(
+            &r.db,
+            "SELECT apply_status FROM sync_inbox WHERE entity_type = 'schedule_commitments' AND row_version = 12"
+        )
+        .await,
+        "applied"
+    );
+    assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 0, "superseded by the closed version");
+    assert_eq!(
+        scalar_text(
+            &r.db,
+            "SELECT status || ':' || resolution_action FROM sync_conflicts \
+              WHERE conflict_type = 'PLANNING_WEEK_FROZEN'"
+        )
+        .await,
+        "resolved_remote:newer_version_applied"
+    );
+    assert!(scalar_text(
+        &r.db,
+        "SELECT resolution_note FROM sync_conflicts WHERE conflict_type = 'PLANNING_WEEK_FROZEN'"
+    )
+    .await
+    .contains("version 12, closed"));
+    assert_eq!(
+        scalar_text(
+            &r.db,
+            "SELECT apply_status FROM sync_inbox WHERE entity_type = 'schedule_commitments' AND row_version = 11"
+        )
+        .await,
+        "superseded",
+        "kept, not deleted"
+    );
+    assert_eq!(
+        scalar(
+            &r.db,
+            &format!(
+                "{SUPERSEDED_AUDITS} AND json_extract(details_json, '$.detail.entity_sync_id') = '{}'",
+                r.commitment_sid
+            )
+        )
+        .await,
+        1,
+        "audited"
+    );
+    assert_eq!(scalar_text(&r.db, &status_here).await, "closed", "the job stays closed");
+}
+
+/// Review N5-b, fail closed: a newer version applied that keeps the job committed does not
+/// supersede the refused version; it is still judged, and stays for review.
+#[tokio::test]
+async fn a_frozen_week_conflict_stays_open_after_a_newer_committed_version() {
+    let (r, edited) = closed_here_with_received_edit("FE41").await;
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &edited).await;
+    materialize_all(&r.db).await;
+    assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 1);
+    let mut newer = edited.clone();
+    newer.insert("row_version".into(), 2.into());
+    inbox(&r.db, "schedule_commitments", &r.commitment_sid, &newer).await;
+    exec_sql(
+        &r.db,
+        "UPDATE sync_inbox SET apply_status = 'applied' \
+          WHERE entity_type = 'schedule_commitments' AND row_version = 12",
+    )
+    .await;
+    crate::planning::sync_check::retry_frozen_week_conflicts(&r.db)
+        .await
+        .expect("retry");
+    assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 1, "still for review");
+    assert_eq!(scalar(&r.db, SUPERSEDED_AUDITS).await, 0);
+}
