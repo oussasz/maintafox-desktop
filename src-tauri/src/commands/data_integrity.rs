@@ -4,8 +4,9 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::data_integrity::{
-    apply_data_integrity_repair, list_open_findings, run_data_integrity_detectors, waive_data_integrity_finding,
-    ApplyDataIntegrityRepairInput, DataIntegrityFindingRow, WaiveDataIntegrityFindingInput,
+    apply_data_integrity_repair, list_open_findings, list_waiver_approvers, run_data_integrity_detectors,
+    waive_data_integrity_finding, ApplyDataIntegrityRepairInput, DataIntegrityFindingRow,
+    WaiveDataIntegrityFindingInput, WaiverApproverOption,
 };
 use crate::errors::AppResult;
 use crate::state::AppState;
@@ -30,6 +31,26 @@ pub async fn list_data_integrity_findings(
         PermissionScope::Global
     );
     list_open_findings(&state.db, limit.unwrap_or(100)).await
+}
+
+/// The people who may be named as second person on a waiver (the same check as the waiver itself),
+/// without the caller. Same rights as the findings list.
+#[tauri::command]
+pub async fn list_integrity_waiver_approvers(state: State<'_, AppState>) -> AppResult<Vec<WaiverApproverOption>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
+    list_waiver_approvers(&state.db, i64::from(user.user_id)).await
 }
 
 #[tauri::command]

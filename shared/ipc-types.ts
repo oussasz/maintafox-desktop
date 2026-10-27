@@ -10957,6 +10957,12 @@ export interface DataIntegrityFindingRow {
   waiver_approver_id: number | null;
 }
 
+/** A person who may approve a waiver: holds `integrity.repair` plant-wide (permanent role) or is an administrator (AU-116). */
+export interface IntegrityWaiverApproverOption {
+  user_id: number;
+  display_name: string;
+}
+
 export interface WaiveDataIntegrityFindingInput {
   finding_id: number;
   expected_row_version: number;

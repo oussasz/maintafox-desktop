@@ -40,6 +40,7 @@ import {
   resetProductLicenseActivation,
 } from "@/services/product-license-service";
 import { ACCOUNT_LOCKED, sessionErrorText } from "@/store/session-store";
+import { AUTH_UPDATE_IN_PROGRESS } from "@/utils/errors";
 
 export function LoginPage() {
   const { t } = useTranslation("auth");
@@ -347,6 +348,9 @@ export function LoginPage() {
           <AuthAlert tone="warning" title={t("login.passwordNotReceived.title")}>
             <p>{t("login.passwordNotReceived.message")}</p>
           </AuthAlert>
+        ) : session.error && session.errorCode === AUTH_UPDATE_IN_PROGRESS ? (
+          // An update is installing (pre-update backup until the restart): no sign-in now.
+          <AuthAlert tone="info">{t("login.updateInProgress")}</AuthAlert>
         ) : session.error && tenantScopeDenied ? (
           <AuthAlert tone="warning" title={t("login.tenantScopeDenied.title")}>
             <p>{session.error}</p>
