@@ -669,7 +669,10 @@ mod tests {
 
     // ── D19 — a move is recorded ("Déplacé") ──────────────────────────────
 
-    async fn moved_events(db: &sea_orm::DatabaseConnection, asset_id: i64) -> Vec<(Option<i64>, Option<i64>, Option<i64>)> {
+    async fn moved_events(
+        db: &sea_orm::DatabaseConnection,
+        asset_id: i64,
+    ) -> Vec<(Option<i64>, Option<i64>, Option<i64>)> {
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT from_node_id, to_node_id, performed_by_id FROM equipment_lifecycle_events \
@@ -693,12 +696,20 @@ mod tests {
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT actor_id, details_json FROM audit_events WHERE action_code = ? AND target_id = ? ORDER BY id",
-            [crate::assets::lifecycle::ASSET_MOVED_EVENT.into(), asset_id.to_string().into()],
+            [
+                crate::assets::lifecycle::ASSET_MOVED_EVENT.into(),
+                asset_id.to_string().into(),
+            ],
         ))
         .await
         .expect("audits")
         .iter()
-        .map(|r| (r.try_get("", "actor_id").expect("actor"), r.try_get("", "details_json").expect("details")))
+        .map(|r| {
+            (
+                r.try_get("", "actor_id").expect("actor"),
+                r.try_get("", "details_json").expect("details"),
+            )
+        })
         .collect()
     }
 
@@ -714,11 +725,18 @@ mod tests {
             .await
             .expect("move");
 
-        assert_eq!(moved_events(&db, asset.id).await, vec![(Some(node_id), Some(node_id_2), Some(1))]);
+        assert_eq!(
+            moved_events(&db, asset.id).await,
+            vec![(Some(node_id), Some(node_id_2), Some(1))]
+        );
         let audits = move_audits(&db, asset.id).await;
         assert_eq!(audits.len(), 1);
         assert_eq!(audits[0].0, Some(1));
-        assert!(audits[0].1.contains(&format!("\"to_org_node_id\":{node_id_2}")), "{}", audits[0].1);
+        assert!(
+            audits[0].1.contains(&format!("\"to_org_node_id\":{node_id_2}")),
+            "{}",
+            audits[0].1
+        );
     }
 
     #[tokio::test]
@@ -745,8 +763,15 @@ mod tests {
 
         assert_eq!(saved.asset_name, "Pompe déplacée");
         assert_eq!(saved.org_node_id, Some(node_id_2));
-        assert_eq!(saved.row_version, asset.row_version + 2, "one version for the edit, one for the move");
-        assert_eq!(moved_events(&db, asset.id).await, vec![(Some(node_id), Some(node_id_2), Some(1))]);
+        assert_eq!(
+            saved.row_version,
+            asset.row_version + 2,
+            "one version for the edit, one for the move"
+        );
+        assert_eq!(
+            moved_events(&db, asset.id).await,
+            vec![(Some(node_id), Some(node_id_2), Some(1))]
+        );
         assert_eq!(move_audits(&db, asset.id).await.len(), 1);
     }
 
@@ -798,10 +823,98 @@ mod tests {
         .expect_err("unknown location refused");
 
         let stored = identity::get_asset_by_id(&db, asset.id).await.expect("asset");
-        assert_eq!(stored.asset_name, asset.asset_name, "the edit is rolled back with the refused move");
+        assert_eq!(
+            stored.asset_name, asset.asset_name,
+            "the edit is rolled back with the refused move"
+        );
         assert_eq!(stored.row_version, asset.row_version);
         assert_eq!(stored.org_node_id, Some(node_id));
         assert!(moved_events(&db, asset.id).await.is_empty());
         assert!(move_audits(&db, asset.id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn d19_org_screen_assignment_is_a_recorded_move() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-E", node_id).await;
+
+        crate::org::equipment_assignment::assign_equipment_to_node(
+            &db,
+            crate::org::AssignEquipmentPayload {
+                equipment_id: i32::try_from(asset.id).expect("id"),
+                node_id: node_id_2,
+            },
+            1,
+        )
+        .await
+        .expect("assign");
+
+        assert_eq!(
+            moved_events(&db, asset.id).await,
+            vec![(Some(node_id), Some(node_id_2), Some(1))]
+        );
+        assert_eq!(move_audits(&db, asset.id).await.len(), 1);
+        let stored = identity::get_asset_by_id(&db, asset.id).await.expect("asset");
+        assert_eq!(stored.row_version, asset.row_version + 1);
+    }
+
+    #[tokio::test]
+    async fn d19_first_placement_is_audited_without_a_move_event() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-F", node_id).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = ?",
+            [asset.id.into()],
+        ))
+        .await
+        .expect("no location");
+
+        let placed = hierarchy::move_asset_org_node(&db, asset.id, node_id, asset.row_version, 1)
+            .await
+            .expect("place");
+
+        assert_eq!(placed.org_node_id, Some(node_id));
+        assert!(
+            moved_events(&db, asset.id).await.is_empty(),
+            "a placement has no origin"
+        );
+        let audits = move_audits(&db, asset.id).await;
+        assert_eq!(audits.len(), 1);
+        assert!(audits[0].1.contains("\"from_org_node_id\":null"), "{}", audits[0].1);
+    }
+
+    #[tokio::test]
+    async fn d19_explicit_moved_event_is_audited() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-G", node_id).await;
+
+        crate::assets::lifecycle::record_lifecycle_event(
+            &db,
+            crate::assets::lifecycle::RecordLifecycleEventPayload {
+                asset_id: asset.id,
+                event_type: "MOVED".into(),
+                to_org_node_id: Some(node_id_2),
+                expected_row_version: Some(asset.row_version),
+                ..Default::default()
+            },
+            1,
+        )
+        .await
+        .expect("event");
+
+        assert_eq!(
+            moved_events(&db, asset.id).await,
+            vec![(Some(node_id), Some(node_id_2), Some(1))]
+        );
+        assert_eq!(move_audits(&db, asset.id).await.len(), 1, "one audit entry, not two");
     }
 }
