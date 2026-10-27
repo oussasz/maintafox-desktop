@@ -62,12 +62,17 @@ pub const SITE_ANCHORED_MODULES: &[&str] = &["di", "ot"];
 
 /// The org node of a notification event's record as it is now: a work order's site
 /// (`work_orders.entity_id`) or a request's (`intervention_requests.org_node_id`), read when the
-/// inbox is read, so a notice follows its record when the record gets a site or changes site; the
-/// node stored with the event for any other record (or one no longer on this PC).
+/// inbox is read, so a notice follows its record when the record gets a site or changes site (a
+/// site cleared since reads as none: never COALESCE with the stored node); the node stored with
+/// the event for any other record, or for a WO/DI no longer on this PC. The record is the event's
+/// source (`e.source_module`), whatever the category's module: a category of another module whose
+/// events come from a work order follows that work order's site too.
 const EVENT_ANCHOR_SQL: &str = "(CASE \
-     WHEN e.source_module IN ('wo', 'work_orders') THEN \
+     WHEN e.source_module IN ('wo', 'work_orders') AND EXISTS \
+       (SELECT 1 FROM work_orders wo WHERE wo.id = CAST(e.source_record_id AS INTEGER)) THEN \
        (SELECT wo.entity_id FROM work_orders wo WHERE wo.id = CAST(e.source_record_id AS INTEGER)) \
-     WHEN e.source_module IN ('di', 'intervention_requests') THEN \
+     WHEN e.source_module IN ('di', 'intervention_requests') AND EXISTS \
+       (SELECT 1 FROM intervention_requests ir WHERE ir.id = CAST(e.source_record_id AS INTEGER)) THEN \
        (SELECT ir.org_node_id FROM intervention_requests ir WHERE ir.id = CAST(e.source_record_id AS INTEGER)) \
      ELSE e.org_node_id END)";
 
