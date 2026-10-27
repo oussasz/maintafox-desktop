@@ -88,7 +88,7 @@ function findingDetails(
   return out;
 }
 
-export function WoIntegrityWorkbench() {
+export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: number }) {
   const { t } = useTranslation("ot");
   const { info } = useSession();
   const userId = info?.user_id ?? null;
@@ -122,9 +122,10 @@ export function WoIntegrityWorkbench() {
     }
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reloadSignal` is the page Refresh button.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadSignal]);
 
   const onRunDetectors = useCallback(async () => {
     setRunning(true);
