@@ -317,6 +317,16 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         approver_password: password.map(Into::into),
         dangerous_override_reason: Some("Guard missing".to_string()),
     };
+    // Without a break-in: the refusal reaches the screen in the shape the commit dialog reads to
+    // open its break-in step (code in `details`, with the week).
+    let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("frozen week");
+    let json = serde_json::to_value(&err).expect("serialize");
+    assert_eq!(json["code"], "VALIDATION_FAILED", "{json}");
+    assert_eq!(json["details"][0]["code"], "PLANNING_WEEK_FROZEN", "{json}");
+    let week = json["details"][0]["params"]["week_start"].as_str().unwrap_or_default();
+    assert!(week.starts_with("2026-05-0"), "{json}");
     input.frozen_week_break_in = Some(with(None, None));
     let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
         .await
@@ -376,6 +386,95 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         .await,
         1
     );
+}
+
+/// AU-114 — the signed break-in's audit event is written in the break-in's transaction: when the
+/// audit store refuses it, neither the move nor the urgent insert is recorded; once it accepts,
+/// each signed break-in has its event (action, target and both names unchanged).
+#[tokio::test]
+async fn a_signed_break_in_is_recorded_only_with_its_audit_event() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "FE9").await;
+    let approver = site_approver(&db, 190, "FE9-HERE", site).await;
+    let signed_events = |target: i64| {
+        format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.break_in.signed' \
+               AND target_type = 'schedule_commitment' AND target_id = '{target}' \
+               AND json_extract(details_json, '$.detail.requested_by_user_id') = 1 \
+               AND json_extract(details_json, '$.detail.approved_by_user_id') = {approver}"
+        )
+    };
+    let break_ins =
+        |target: i64| format!("SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {target}");
+    let refuse_audit = "CREATE TRIGGER au114_refuse BEFORE INSERT ON audit_events \
+                        WHEN NEW.action_code = 'planning.break_in.signed' \
+                        BEGIN SELECT RAISE(ABORT, 'audit store refused'); END";
+
+    // A signed move.
+    let c = open_commitment(&db, team, 8901, "2026-05-12T08:00", "2026-05-12T09:00").await;
+    let urgent = || {
+        signed(
+            move_input(&c, "emergency", "2026-05-12T10:00", "2026-05-12T11:00"),
+            approver,
+            APPROVER_PASSWORD,
+        )
+    };
+    exec_sql(&db, refuse_audit).await;
+    let err = scheduling::create_schedule_break_in(&db, 1, urgent())
+        .await
+        .expect_err("no audit event, no break-in");
+    assert!(code_of(&err).contains("audit store refused"), "{err:?}");
+    assert_eq!(scalar(&db, &break_ins(c.id)).await, 0, "the move is rolled back");
+    let start: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT committed_start FROM schedule_commitments WHERE id = {}", c.id),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "committed_start")
+        .expect("start");
+    assert_eq!(start, c.committed_start, "the slot is unchanged");
+    exec_sql(&db, "DROP TRIGGER au114_refuse").await;
+    scheduling::create_schedule_break_in(&db, 1, urgent())
+        .await
+        .expect("signed move");
+    assert_eq!(scalar(&db, &break_ins(c.id)).await, 1);
+    assert_eq!(scalar(&db, &signed_events(c.id)).await, 1);
+
+    // An urgent insert into a frozen week.
+    super::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    let candidate = insert_candidate(&db, "manual_test", 8902, "ready", 100.0).await;
+    let mut input = commit_input(candidate, team, "2026-05-05T08:00", "2026-05-05T09:00");
+    input.frozen_week_break_in = Some(CommitBreakIn {
+        reason: "safety".to_string(),
+        approved_by_user_id: Some(approver),
+        approver_password: Some(APPROVER_PASSWORD.into()),
+        dangerous_override_reason: None,
+    });
+    exec_sql(&db, refuse_audit).await;
+    let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("no audit event, no insert");
+    assert!(code_of(&err).contains("audit store refused"), "{err:?}");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM schedule_commitments WHERE schedule_candidate_id = {candidate}")
+        )
+        .await,
+        0,
+        "the commitment is rolled back with its break-in"
+    );
+    exec_sql(&db, "DROP TRIGGER au114_refuse").await;
+    let inserted = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("signed insert");
+    assert_eq!(scalar(&db, &break_ins(inserted.id)).await, 1);
+    assert_eq!(scalar(&db, &signed_events(inserted.id)).await, 1);
 }
 
 #[tokio::test]
@@ -2732,4 +2831,123 @@ async fn a_frozen_week_conflict_stays_open_after_a_newer_committed_version() {
         .expect("retry");
     assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 1, "still for review");
     assert_eq!(scalar(&r.db, SUPERSEDED_AUDITS).await, 0);
+}
+
+// ── A crew's site change received by sync (AU-129) ───────────────────────────────────────────
+
+/// A crew of site A (`code`A) with a committed job three weeks ahead, that week frozen at site B
+/// (`code`B), and the crew's site change to B waiting in the inbox, judged: an open conflict.
+async fn crew_site_conflict(code: &str) -> (DatabaseConnection, i64, i64, i64, i64, String) {
+    use super::tests::{crew_site_day, crew_site_freeze, crew_site_job};
+    let db = setup_db().await;
+    crate::sync::capture::install_capture_in(&db).await.expect("capture");
+    let (site_a, team) = weekly_site(&db, &format!("{code}A")).await;
+    let (site_b, _) = weekly_site(&db, &format!("{code}B")).await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8201, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    let sid = sync_id(&db, "teams", team).await;
+    let mut p = payload(&db, "teams", &sid).await;
+    p.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        format!("wk-node-{code}B").into(),
+    );
+    p.insert("updated_at".into(), "2026-10-27T09:00:00Z".into());
+    // This PC's own changes are sent already: only the received change is judged.
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&db, "DELETE FROM sync_outbox").await;
+    inbox(&db, "teams", &sid, &p).await;
+    crate::sync::materialize::materialize_inbox(&db, 200, true)
+        .await
+        .expect("materialize");
+    let open = format!(
+        "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'teams' AND entity_sync_id = '{sid}'            AND conflict_type = 'PLANNING_WEEK_FROZEN' AND status IN ('new', 'triaged', 'escalated')"
+    );
+    assert_eq!(scalar(&db, &open).await, 1, "an open conflict");
+    (db, site_a, site_b, team, job, sid)
+}
+
+async fn team_node(db: &DatabaseConnection, team: i64) -> i64 {
+    scalar(db, &format!("SELECT primary_node_id FROM teams WHERE id = {team}")).await
+}
+
+#[tokio::test]
+async fn a_crew_site_conflict_closes_by_itself_once_it_crosses_no_frozen_week() {
+    let (db, site_a, site_b, team, job, sid) = crew_site_conflict("CRA").await;
+    assert_eq!(team_node(&db, team).await, site_a, "the crew stays at its site here");
+    // Still refused: nothing closes.
+    assert_eq!(
+        super::sync_check::retry_crew_site_conflicts(&db).await.expect("retry"),
+        0
+    );
+
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    assert_eq!(
+        super::sync_check::retry_crew_site_conflicts(&db).await.expect("retry"),
+        1
+    );
+    assert_eq!(team_node(&db, team).await, site_b, "the crew is at its new site");
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!(
+                "SELECT status || '/' || resolution_action FROM sync_conflicts                   WHERE entity_type = 'teams' AND entity_sync_id = '{sid}'"
+            )
+        )
+        .await,
+        "resolved_remote/judged_valid"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND target_type = 'team'                    AND target_id = '{team}'",
+                super::sync_check::CREW_SITE_CLOSED_EVENT
+            )
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn keeping_this_pcs_crew_site_needs_plan_confirm_at_its_site_and_a_change_still_refused() {
+    let (db, site_a, site_b, team, job, sid) = crew_site_conflict("CRK").await;
+    let at_b = site_approver(&db, 171, "CRK-B", site_b).await;
+    let at_a = site_approver(&db, 172, "CRK-A", site_a).await;
+    // The crew's site here is A: a planner of B alone may not keep it.
+    let refused = resolve(&db, at_b, &sid, "accept_local")
+        .await
+        .expect_err("not at the crew's site");
+    assert!(
+        format!("{refused:?}").contains("GATE_SYNC_KEEP_PLAN_NOT_ALLOWED"),
+        "{refused:?}"
+    );
+
+    // Its job released here: the change is let in now, there is no plan to keep.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    let refused = resolve(&db, at_a, &sid, "accept_local")
+        .await
+        .expect_err("not refused any more");
+    assert!(
+        format!("{refused:?}").contains("GATE_SYNC_KEEP_PLAN_NOT_REFUSED"),
+        "{refused:?}"
+    );
+
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'committed' WHERE id = {job}"),
+    )
+    .await;
+    let kept = resolve(&db, at_a, &sid, "accept_local").await.expect("kept");
+    assert_eq!(kept.status, "resolved_local");
+    assert_eq!(team_node(&db, team).await, site_a, "the crew stays at its site");
 }

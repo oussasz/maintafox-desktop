@@ -869,6 +869,7 @@
     "GATE_DI_INTEGRITY_FINDING_NOT_OPEN": "Action refusée : cette anomalie n'est plus ouverte (déjà traitée ou dérogée).",
     "GATE_DI_INTEGRITY_APPROVER_REQUIRED": "Dérogation refusée : une anomalie de sévérité erreur exige un second approbateur.",
     "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED": "Dérogation refusée : l'approbateur doit être une autre personne que vous.",
+    "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED": "Dérogation refusée : l'approbateur choisi n'est pas un compte actif détenant le droit de réparer l'intégrité des données (integrity.repair).",
     "GATE_DI_INTEGRITY_NOT_ORPHANED": "Réparation refusée : le mode de défaillance n'est pas prouvé orphelin, il ne peut pas être effacé automatiquement.",
     "GATE_DI_INTEGRITY_NO_AUTO_REPAIR": "Réparation impossible automatiquement : ajustez les segments d'arrêt ou la fenêtre de l'ordre de travail à la main.",
     "GATE_DI_INTEGRITY_REPAIR_UNSUPPORTED": "Réparation refusée : ce type de réparation n'est pas prévu pour cette anomalie.",

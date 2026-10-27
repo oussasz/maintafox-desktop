@@ -21,6 +21,11 @@
 //!   (waiting only while rows that could give that right are in the inbox). The password itself
 //!   cannot be checked again here (docs/KNOWN_LIMITS.md). Break-ins recorded by older versions
 //!   (named only, self-approved) are conflicts for review.
+//! - `teams`: a crew's site change that would carry its committed jobs across a week frozen here
+//!   (out of a frozen week of the site it leaves, or into one of the site it joins) is a
+//!   `PLANNING_WEEK_FROZEN` conflict for review, the same rule as the local edit
+//!   (`planning::crew_site`, AU-129); it closes by itself once this PC's rules let it in (the jobs
+//!   ended, moved or released, or the week reopened here).
 //! - `weekly_schedules`: a week reopened (frozen or published back to approved or draft, same
 //!   baseline) comes with its `unfrozen` decision, here or in the inbox, decided by someone other
 //!   than the requester who holds plan.confirm at the site here, now.
@@ -903,6 +908,64 @@ async fn judge_commitment(
     }))
 }
 
+/// See the module documentation (`teams`). A crew new here has no job here; a node not here yet
+/// is left to the generic apply (it waits for it). A crew moved off a node deleted here to the node
+/// that replaced it when a new organisation structure was published
+/// (`org::validation::node_replaces_deleted_node`) is no crew move; while that publish has only
+/// partly arrived (`org::validation::node_copy_awaits_activation`) the row waits. Any other move,
+/// off a deactivated node too, is judged as on this PC.
+pub(crate) async fn inbound_crew_site_check(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<Option<InboundVerdict>> {
+    let Some(team) = local_id(conn, "teams", entity_sync_id).await? else {
+        return Ok(None);
+    };
+    let local = local_wire(conn, "teams", entity_sync_id).await?;
+    let merged = overlay(local.as_ref(), received);
+    let new_node = match field(&merged, &key("primary_node_id")) {
+        Some(node_sync) => match local_id(conn, "org_nodes", node_sync).await? {
+            Some(node) => Some(node),
+            None => return Ok(None),
+        },
+        None => None,
+    };
+    let held_node: Option<i64> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT primary_node_id FROM teams WHERE id = ?",
+            [team.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten());
+    if let (Some(held), Some(node)) = (held_node, new_node) {
+        if held != node {
+            if crate::org::validation::node_replaces_deleted_node(conn, held, node).await? {
+                return Ok(None);
+            }
+            if crate::org::validation::node_copy_awaits_activation(conn, Some(held), node).await? {
+                return Ok(Some(InboundVerdict::Defer(format!(
+                    "crew {entity_sync_id}: the organisation structure holding its new node is not activated here yet"
+                ))));
+            }
+        }
+    }
+    let Some(block) = super::crew_site::crew_site_change_block(conn, team, new_node, Utc::now()).await? else {
+        return Ok(None);
+    };
+    let sent_at = field(received, "updated_at").unwrap_or("not recorded");
+    Ok(Some(InboundVerdict::Conflict {
+        code: WEEK_FROZEN,
+        message: format!(
+            "crew {entity_sync_id} received with another site: {} committed job(s) of the crew would cross the \
+             frozen week(s) {} here; changed on its PC at {sent_at} (that PC's clock)",
+            block.jobs,
+            block.weeks.join(", ")
+        ),
+    }))
+}
+
 /// The waiting, valid break-ins of a received commitment that lead it to the received place,
 /// applied right after it in its transaction (each is judged again by its own check there).
 pub(crate) async fn commitment_group(
@@ -1618,13 +1681,53 @@ pub(crate) async fn retry_break_in_conflicts(db: &DatabaseConnection) -> AppResu
     Ok(applied)
 }
 
+/// Crews refused as `PLANNING_WEEK_FROZEN` (a site change, AU-129) that this PC's rules let in now
+/// (their jobs ended, moved or released, or the week reopened here): each is applied again through
+/// every check; applied: its conflict is closed (`resolved_remote`, `judged_valid`) and audited.
+/// Returns how many applied.
+pub(crate) async fn retry_crew_site_conflicts(db: &DatabaseConnection) -> AppResult<i64> {
+    let mut applied = 0;
+    for (inbox_id, conflict_id, sid, received) in open_planning_conflicts(db, "teams", &[WEEK_FROZEN]).await? {
+        if inbound_crew_site_check(db, &sid, &received).await?.is_some() {
+            continue;
+        }
+        let closed = reapply_conflicted(
+            db,
+            inbox_id,
+            conflict_id,
+            "judged_valid",
+            "The crew's site change crosses no week frozen here any more (its jobs ended, moved or were released, \
+             or the week reopened): it is applied.",
+        )
+        .await?;
+        if closed {
+            applied += 1;
+            audit_closed(
+                db,
+                CREW_SITE_CLOSED_EVENT,
+                "Crew site change conflict closed: it crosses no frozen week here any more",
+                "team",
+                "teams",
+                conflict_id,
+                &sid,
+            )
+            .await;
+        }
+    }
+    Ok(applied)
+}
+
+/// Audit action of a crew site change conflict closed by this PC's rules letting it in.
+pub(crate) const CREW_SITE_CLOSED_EVENT: &str = "planning.crew_site_conflict.closed";
+
 /// Every planning conflict judged again (review R3-S4): weeks, then break-ins, then the commitments
-/// they let in; then the break-ins received after their job's plan was kept are refused with that
+/// they let in, then crews whose site change crossed a frozen week; then the break-ins received after their job's plan was kept are refused with that
 /// decision ([`refuse_break_ins_after_kept_plan`], review R3-S5). Returns how many rows applied.
 pub(crate) async fn retry_planning_conflicts(db: &DatabaseConnection) -> AppResult<i64> {
     let mut applied = retry_unfreeze_conflicts(db).await?;
     applied += retry_break_in_conflicts(db).await?;
     applied += retry_frozen_week_conflicts(db).await?;
+    applied += retry_crew_site_conflicts(db).await?;
     refuse_break_ins_after_kept_plan(db).await?;
     Ok(applied)
 }
@@ -1814,10 +1917,12 @@ fn keep_refused(message: String) -> AppError {
 }
 
 /// The crews a planning conflict is decided at: the crew of the received row and of the row held
-/// here (a commitment), the crews a break-in names (else its commitment's crew here).
+/// here (a commitment), the crews a break-in names (else its commitment's crew here), the crew
+/// itself (its site change).
 async fn conflict_crews(
     conn: &impl ConnectionTrait,
     entity_type: &str,
+    sid: &str,
     received: &Payload,
     local: Option<&Payload>,
 ) -> AppResult<Vec<i64>> {
@@ -1860,6 +1965,8 @@ async fn conflict_crews(
                 }
             }
         }
+        // A crew's site change: the crew itself (its site here).
+        "teams" => push(&mut crews, local_id(conn, "teams", sid).await?),
         _ => {}
     }
     Ok(crews)
@@ -1917,7 +2024,7 @@ pub(crate) async fn keep_planning_plan(
             .transpose()?;
         break_in_approvers(conn, site).await?.contains(&user_id)
     } else {
-        let crews = conflict_crews(conn, entity_type, &received, local.as_ref()).await?;
+        let crews = conflict_crews(conn, entity_type, sid, &received, local.as_ref()).await?;
         match crews.as_slice() {
             [] => break_in_approvers(conn, None).await?.contains(&user_id),
             [team, rest @ ..] => {
@@ -1944,6 +2051,7 @@ pub(crate) async fn keep_planning_plan(
         "schedule_commitments" => inbound_commitment_check(conn, sid, &received).await?.is_some(),
         "schedule_break_ins" => local.is_some() || inbound_break_in_check(conn, sid, &received).await?.is_some(),
         "weekly_schedules" => week_still_refused(conn, sid, &received).await?,
+        "teams" => inbound_crew_site_check(conn, sid, &received).await?.is_some(),
         _ => true,
     };
     if !still_refused {

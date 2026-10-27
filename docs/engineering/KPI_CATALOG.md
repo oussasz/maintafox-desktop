@@ -1332,6 +1332,9 @@ Required fields:
 - eligible failure count
 - `reliability_kpi_snapshots.mtbf`, `period_start`, `period_end`, `equipment_id`
 
+Trend sense:
+up-good
+
 Stable band:
 ±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
@@ -1365,6 +1368,9 @@ Inputs:
 Required fields:
 - Active repair hours per event
 - `reliability_kpi_snapshots.mttr`
+
+Trend sense:
+up-bad
 
 Stable band:
 ±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
@@ -1404,6 +1410,9 @@ Required fields:
 - `t_exp_hours`, downtime hours, active repair hours
 - `reliability_kpi_snapshots.availability_operational`, `availability_inherent`, `exposure_hours`, `downtime_hours_total`
 
+Trend sense:
+up-good
+
 Stable band:
 ±0.1 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
 
@@ -1437,6 +1446,9 @@ Inputs:
 
 Required fields:
 - `pm_occurrences.due_at`, `status`, completion / closed timestamps
+
+Trend sense:
+up-good
 
 Stable band:
 ±0.5 pt (percentage points) — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
@@ -1490,6 +1502,9 @@ Default roles:
 Trend sense:
 up-bad
 
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
 Default target:
 Prior 30-day horizon total (not a numeric budget target)
 
@@ -1509,7 +1524,7 @@ Home Overview metric cards are driven by **semantic keys** persisted in `user_an
 | `OT_OVERDUE` | KPI-040 | `ot.view` | up-bad | Supervisor, General |
 | `MTTR` | KPI-034 | `rep.view` | up-bad | — |
 | `PM_COMPLIANCE` | KPI-036 | `pm.view` | up-good | Supervisor |
-| `PM_DUE_TODAY` | KPI-041 | `pm.view` | up-bad | General |
+| `PM_DUE_TODAY` | KPI-041 | `pm.view` | neutral | General |
 | `MAINT_BACKLOG` | KPI-042 | `ot.view` | up-bad | — |
 | `AVAILABILITY` | KPI-035 | `rep.view` | up-good | Reliability, Supervisor |
 | `MTBF` | KPI-033 | `rep.view` | up-good | Reliability |
@@ -2350,6 +2365,186 @@ Stable band:
 
 Displayed:
 - Analytics hub (`/analytics/dashboards`) SMRP section tile
+
+Status:
+Implemented
+
+---
+
+# KPI-057
+
+Nom:
+Open Work Orders (not yet closed)
+
+Module:
+Analytics hub
+
+Description:
+Work orders not yet closed: every status except closed and cancelled, so completed work orders waiting for close-out are counted. Not the in-progress count of KPI-039.
+
+Formula:
+COUNT work_orders WHERE status.code NOT IN ('closed', 'cancelled')
+(at an instant: created by then and not closed or cancelled by then)
+Computed in Rust by `analytics::as_of::wo_open_at`. The trend compares the same measure now and at the start of the horizon.
+
+Semantic key:
+`open_wos` (hub registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`ot.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) tile
+
+Status:
+Implemented
+
+---
+
+# KPI-058
+
+Nom:
+Registered Assets
+
+Module:
+Analytics hub
+
+Description:
+Number of registered assets that are not deleted; the hub tile is captioned "in service".
+
+Formula:
+COUNT equipment WHERE deleted_at IS NULL
+(at an instant: created by then and not deleted by then)
+Computed in Rust by `analytics::as_of::assets_at`. The trend compares the same measure now and at the start of the horizon.
+
+Semantic key:
+`total_assets` (hub registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`eq.view`
+
+Trend sense:
+up-good
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) tile
+
+Status:
+Implemented
+
+---
+
+# KPI-059
+
+Nom:
+Overdue Items (combined)
+
+Module:
+Analytics hub
+
+Description:
+Requests waiting more than 7 days, plus PM occurrences past their tolerance window, plus work orders past their planned end. Each part is counted only when the user holds its view permission.
+
+Formula:
+COUNT intervention_requests open for 7 days or more (`di.view`)
++ COUNT pm_occurrences pending and overdue (`pm.view`)
++ COUNT work_orders whose work is not done and planned_end is past (`ot.view`)
+Computed in Rust by `analytics::projection::build_executive_dashboard` (parts: `as_of::di_open_at` with a 7-day wait, `as_of::pm_overdue_at`, `as_of::wo_overdue_at`). The trend compares the same measure now and at the start of the horizon.
+
+Semantic key:
+`overdue_items` (hub registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`di.view`, `pm.view` or `ot.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) tile
+
+Status:
+Implemented
+
+---
+
+# KPI-060
+
+Nom:
+PM Overdue
+
+Module:
+Analytics hub
+
+Description:
+PM occurrences still pending and past the end of their tolerance window (the due date when they have none).
+
+Formula:
+COUNT pm_occurrences WHERE status NOT IN ('completed','cancelled','missed')
+AND due_at IS NOT NULL AND COALESCE(window_end_at, due_at) < now
+Computed in Rust by `analytics::as_of::pm_overdue_at`. The trend compares the same measure now and at the start of the horizon.
+
+Semantic key:
+`pm_overdue` (hub registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`pm.view`
+
+Trend sense:
+up-bad
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) tile
+
+Status:
+Implemented
+
+---
+
+# KPI-061
+
+Nom:
+PM Due in the Next 7 Days
+
+Module:
+Analytics hub
+
+Description:
+PM occurrences still pending whose due date falls between now and 7 days from now. A workload, not a fault: the change is shown but never coloured (D15).
+
+Formula:
+COUNT pm_occurrences pending WHERE due_at BETWEEN now AND now + 7 days
+Computed in Rust by `analytics::as_of::pm_due_at` (`PmDueWindow::NextDays(7)`). The trend compares the same measure now and at the start of the horizon.
+
+Semantic key:
+`pm_due_next_7d` (hub registry in `shared/overview-kpi-registry.ts`)
+
+Permission:
+`pm.view`
+
+Trend sense:
+neutral (D15: only overdue is red)
+
+Stable band:
+±0.5 % of the previous value — `stableBelow` in `shared/overview-kpi-registry.ts` (the only place it is written; a change smaller than this reads "stable")
+
+Displayed:
+- Analytics hub (`/analytics/dashboards`) tile
 
 Status:
 Implemented

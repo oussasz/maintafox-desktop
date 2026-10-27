@@ -40,6 +40,27 @@ describe("appErrorReason", () => {
     expect(reason.length).toBeGreaterThan(0);
   });
 
+  it("names the frozen week when a reassignment would move the job into it", async () => {
+    await i18n.loadNamespaces("training");
+    const err = {
+      code: "VALIDATION_FAILED",
+      message: "Validation failed: The week of 2026-05-04 is frozen",
+      details: [
+        {
+          code: "PLANNING_WEEK_FROZEN",
+          message: "The week of 2026-05-04 is frozen",
+          params: { week_start: "2026-05-04" },
+        },
+      ],
+    };
+    const reason = appErrorReason(err);
+    expect(reason).not.toBe(describeAppError(err).title);
+    expect(reason).not.toContain("PLANNING_WEEK_FROZEN");
+    expect(reason).toBe(
+      String(i18n.t("training:errors.PLANNING_WEEK_FROZEN", { week_start: "2026-05-04" })),
+    );
+  });
+
   it("translates a refusal sent as a bare rule code instead of showing the code", async () => {
     await i18n.loadNamespaces("reliability");
     const err = {

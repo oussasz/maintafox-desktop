@@ -146,6 +146,28 @@ pub struct RbacChangedPayload {
     pub action: String,
 }
 
+/// Drop every cached permission and emit `rbac-changed` (no user named: any user may be
+/// concerned), so the window reloads its permissions. Used for a role edited here, and for rights
+/// rows written by sync or by taking the server version of a conflict (AU-107).
+pub async fn invalidate_all_and_notify<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    cache: &tokio::sync::RwLock<PermissionCache>,
+    action: &str,
+) {
+    use tauri::Emitter;
+    // Waits for the lock: an invalidation is never skipped under contention.
+    cache.write().await.invalidate_all();
+    if let Err(e) = app.emit(
+        "rbac-changed",
+        RbacChangedPayload {
+            affected_user_id: None,
+            action: action.to_string(),
+        },
+    ) {
+        tracing::warn!("cannot tell the window that rights changed ({action}): {e}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

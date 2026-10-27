@@ -313,6 +313,139 @@ export function smrpTrendSense(key: SmrpKpiKey): OverviewKpiTrendSense {
   return SMRP_KPI_REGISTRY_BY_KEY.get(key)?.trendSense ?? "neutral";
 }
 
+/**
+ * The figures of the Analytics hub's operational, PM and reliability tiles. A tile that shows the
+ * same measure as an Overview entry (same catalog id, same Rust function) points at it with
+ * `overviewKey` and reads its trend sense and band there: they are never written twice (D14).
+ * The other tiles carry their own sense and band here.
+ */
+export const ANALYTICS_HUB_KPI_KEYS = {
+  OPEN_DIS: "open_dis",
+  OPEN_WOS: "open_wos",
+  TOTAL_ASSETS: "total_assets",
+  OVERDUE_ITEMS: "overdue_items",
+  PM_OVERDUE: "pm_overdue",
+  PM_DUE_TODAY: "pm_due_today",
+  PM_DUE_NEXT_7D: "pm_due_next_7d",
+  AVG_MTBF_HOURS: "avg_mtbf_hours",
+  AVG_MTTR_HOURS: "avg_mttr_hours",
+  AVG_AVAILABILITY: "avg_availability",
+  AVG_DATA_QUALITY: "avg_data_quality",
+  MAINTENANCE_COST: "maintenance_cost",
+} as const;
+
+export type AnalyticsHubKpiKey =
+  (typeof ANALYTICS_HUB_KPI_KEYS)[keyof typeof ANALYTICS_HUB_KPI_KEYS];
+
+/** A hub tile showing the same figure as an Overview entry: sense, band and catalog id come from it. */
+export interface AnalyticsHubSharedKpiEntry {
+  key: AnalyticsHubKpiKey;
+  overviewKey: OverviewKpiSemanticKey;
+}
+
+/** A hub tile with its own catalog entry. */
+export interface AnalyticsHubOwnKpiEntry {
+  key: AnalyticsHubKpiKey;
+  catalogId: string;
+  trendSense: OverviewKpiTrendSense;
+  /** Change below which the trend reads "stable" (percent, or points for a percentage KPI). */
+  stableBelow?: number;
+}
+
+export type AnalyticsHubKpiRegistryEntry = AnalyticsHubSharedKpiEntry | AnalyticsHubOwnKpiEntry;
+
+export const ANALYTICS_HUB_KPI_REGISTRY: AnalyticsHubKpiRegistryEntry[] = [
+  // Same `as_of::di_open_at` measure as the Overview card (KPI-038).
+  { key: ANALYTICS_HUB_KPI_KEYS.OPEN_DIS, overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.DI_OPEN },
+  // "Not yet closed" OTs (`as_of::wo_open_at`), not the in-progress OTs of KPI-039.
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.OPEN_WOS,
+    catalogId: "KPI-057",
+    trendSense: "up-bad",
+  },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.TOTAL_ASSETS,
+    catalogId: "KPI-058",
+    trendSense: "up-good",
+  },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.OVERDUE_ITEMS,
+    catalogId: "KPI-059",
+    trendSense: "up-bad",
+  },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.PM_OVERDUE,
+    catalogId: "KPI-060",
+    trendSense: "up-bad",
+  },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.PM_DUE_TODAY,
+    overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_DUE_TODAY,
+  },
+  {
+    // Workload, not a fault (D15): the change is shown, never coloured.
+    key: ANALYTICS_HUB_KPI_KEYS.PM_DUE_NEXT_7D,
+    catalogId: "KPI-061",
+    trendSense: "neutral",
+  },
+  { key: ANALYTICS_HUB_KPI_KEYS.AVG_MTBF_HOURS, overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.MTBF },
+  { key: ANALYTICS_HUB_KPI_KEYS.AVG_MTTR_HOURS, overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.MTTR },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.AVG_AVAILABILITY,
+    overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY,
+  },
+  {
+    key: ANALYTICS_HUB_KPI_KEYS.AVG_DATA_QUALITY,
+    overviewKey: OVERVIEW_KPI_SEMANTIC_KEYS.DATA_QUALITY,
+  },
+  {
+    // No Overview card shows it (the old `TOTAL_COST` strip entry was removed).
+    key: ANALYTICS_HUB_KPI_KEYS.MAINTENANCE_COST,
+    catalogId: ANALYTICS_HUB_KPI_CATALOG_IDS.MAINTENANCE_COST,
+    trendSense: "up-bad",
+  },
+];
+
+export const ANALYTICS_HUB_KPI_REGISTRY_BY_KEY = new Map(
+  ANALYTICS_HUB_KPI_REGISTRY.map((e) => [e.key, e]),
+);
+
+function hubEntry(key: AnalyticsHubKpiKey): AnalyticsHubKpiRegistryEntry | undefined {
+  return ANALYTICS_HUB_KPI_REGISTRY_BY_KEY.get(key);
+}
+
+/** The Overview entry a hub tile shares its figure with, when it does. */
+function sharedOverviewEntry(key: AnalyticsHubKpiKey): OverviewKpiRegistryEntry | undefined {
+  const entry = hubEntry(key);
+  return entry && "overviewKey" in entry
+    ? OVERVIEW_KPI_REGISTRY_BY_KEY.get(entry.overviewKey)
+    : undefined;
+}
+
+/** The catalog id of a hub tile. */
+export function hubCatalogId(key: AnalyticsHubKpiKey): string | undefined {
+  const entry = hubEntry(key);
+  if (!entry) return undefined;
+  return "overviewKey" in entry ? sharedOverviewEntry(key)?.catalogId : entry.catalogId;
+}
+
+/** The trend sense of a hub tile (registry only; the screen never carries a copy). */
+export function hubTrendSense(key: AnalyticsHubKpiKey): OverviewKpiTrendSense {
+  const entry = hubEntry(key);
+  if (!entry) return "neutral";
+  return "overviewKey" in entry
+    ? (sharedOverviewEntry(key)?.trendSense ?? "neutral")
+    : entry.trendSense;
+}
+
+/** The "stable" band of a hub tile (percent, or points for a percentage KPI). */
+export function hubStableBelow(key: AnalyticsHubKpiKey): number {
+  const entry = hubEntry(key);
+  if (!entry) return DEFAULT_KPI_STABLE_BELOW;
+  const band = "overviewKey" in entry ? sharedOverviewEntry(key)?.stableBelow : entry.stableBelow;
+  return band ?? DEFAULT_KPI_STABLE_BELOW;
+}
+
 export function isOverviewKpiSemanticKey(id: string): id is OverviewKpiSemanticKey {
   return Object.values(OVERVIEW_KPI_SEMANTIC_KEYS).includes(id as OverviewKpiSemanticKey);
 }

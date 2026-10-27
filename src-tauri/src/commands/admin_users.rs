@@ -321,14 +321,7 @@ async fn notify_rbac_user_change(app: &AppHandle, state: &AppState, user_id: i64
 
 /// Invalidate the entire permission cache and emit `rbac-changed`.
 async fn notify_rbac_global_change(app: &AppHandle, state: &AppState, action: &str) {
-    state.permission_cache.write().await.invalidate_all();
-    let _ = app.emit(
-        "rbac-changed",
-        RbacChangedPayload {
-            affected_user_id: None,
-            action: action.to_string(),
-        },
-    );
+    crate::rbac::cache::invalidate_all_and_notify(app, &state.permission_cache, action).await;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

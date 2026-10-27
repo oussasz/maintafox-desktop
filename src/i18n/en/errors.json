@@ -870,6 +870,7 @@
     "GATE_DI_INTEGRITY_FINDING_NOT_OPEN": "Action refused: this finding is no longer open (already handled or waived).",
     "GATE_DI_INTEGRITY_APPROVER_REQUIRED": "Waiver refused: a finding of error severity needs a second approver.",
     "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED": "Waiver refused: the approver must be someone other than you.",
+    "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED": "Waiver refused: the chosen approver is not an active account holding the data integrity repair right (integrity.repair).",
     "GATE_DI_INTEGRITY_NOT_ORPHANED": "Repair refused: the failure mode is not proven orphaned, so it cannot be cleared automatically.",
     "GATE_DI_INTEGRITY_NO_AUTO_REPAIR": "No automatic repair is possible: adjust the downtime segments or the work order window by hand.",
     "GATE_DI_INTEGRITY_REPAIR_UNSUPPORTED": "Repair refused: this kind of repair is not available for this finding.",

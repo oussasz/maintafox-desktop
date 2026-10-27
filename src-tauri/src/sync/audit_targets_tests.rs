@@ -44,6 +44,11 @@ const RUNTIME_TYPES: &[(&str, &str)] = &[
         "weekly_schedule",
         "planning::sync_check::audit_closed (reopened-week conflict)",
     ),
+    (
+        "schedule_break_in",
+        "planning::sync_check::audit_closed (break-in conflict)",
+    ),
+    ("team", "planning::sync_check::audit_closed (crew site change conflict)"),
 ];
 
 /// Files that build an audit event with a target type set at run time, and where the types they

@@ -591,6 +591,11 @@ async fn has_v2_checkpoint(db: &DatabaseConnection) -> AppResult<bool> {
     Ok(token.is_some_and(|t| t.starts_with("v2.")))
 }
 
+/// Run after a materialization that wrote a row the effective rights are read from
+/// (`MaterializeInboxResult::rights_changed`, AU-107): the app drops its cached permissions and
+/// tells the window, so a right withdrawn on another PC stops here at once.
+pub type RightsChangedHook = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 pub struct SyncWorker {
     db: DatabaseConnection,
     client: ControlPlaneClient,
@@ -598,6 +603,7 @@ pub struct SyncWorker {
     handle: SyncWorkerHandle,
     media_root: PathBuf,
     timing: SyncTiming,
+    on_rights_changed: Option<RightsChangedHook>,
 }
 
 impl SyncWorker {
@@ -615,7 +621,15 @@ impl SyncWorker {
             handle,
             media_root: config.media_root,
             timing: config.timing,
+            on_rights_changed: None,
         })
+    }
+
+    /// Called once per materialization that changed the effective rights ([`RightsChangedHook`]).
+    #[must_use]
+    pub fn on_rights_changed(mut self, hook: RightsChangedHook) -> Self {
+        self.on_rights_changed = Some(hook);
+        self
     }
 
     /// Run until cancelled. `commands` comes from `SyncWorkerHandle::take_receiver`.
@@ -862,7 +876,12 @@ impl SyncWorker {
     async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
         // Grants still waiting for an author or for rights that a complete pull did not bring wait
         // no longer (`sync::grant_check`).
-        crate::sync::grant_check::release_after_complete_pull(&self.db).await?;
+        // Accounts, grants and role permissions released here change the rights: refreshed as after
+        // a run, also when the release failed part-way (each of its runs commits pass by pass).
+        let released = crate::sync::grant_check::release_after_complete_pull(&self.db).await;
+        self.refresh_rights(released.as_ref().map_or(true, |changed| *changed))
+            .await;
+        released?;
         // Decisions sealed by the upgrade are sent once more by the PC whose version the server
         // holds, now that this PC knows it (migration 264, review R2-S8).
         crate::reliability::study::decision_sync::resend_sealed_after_complete_pull(&self.db).await?;
@@ -1009,10 +1028,24 @@ impl SyncWorker {
         }
     }
 
+    /// The cached permissions are dropped and the window reloads its own ([`RightsChangedHook`]).
+    async fn refresh_rights(&self, needed: bool) {
+        if needed {
+            if let Some(hook) = &self.on_rights_changed {
+                hook().await;
+            }
+        }
+    }
+
     /// Apply every received row: pending rows parents first, then (`retry_deferred`) the rows that
     /// waited for a parent, until nothing more can be applied.
     async fn materialize(&self, retry_deferred: bool) -> AppResult<()> {
-        let result = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await?;
+        let run = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await;
+        // Once per run, not per row, also when the run failed after a pass that wrote rights rows
+        // had committed.
+        self.refresh_rights(crate::sync::materialize::rights_refresh_needed(&run))
+            .await;
+        let result = run?;
         if result.processed > 0 {
             info!(
                 target: "maintafox::sync",
@@ -1472,6 +1505,128 @@ impl SyncWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A worker whose rights hook counts its calls (`SyncWorker::on_rights_changed`, AU-107).
+    fn counting_worker(db: &DatabaseConnection) -> (SyncWorker, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let worker = SyncWorker::new(
+            db.clone(),
+            SyncWorkerHandle::new(),
+            SyncWorkerConfig {
+                api_base_url: "http://127.0.0.1:9".to_string(),
+                media_root: std::env::temp_dir(),
+                timing: timing(),
+            },
+            Arc::new(LicenseSyncAccess),
+        )
+        .expect("worker")
+        .on_rights_changed(Arc::new(move || {
+            let counter = counter.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })
+        }));
+        (worker, calls)
+    }
+
+    async fn run_sql(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+        db.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    /// A role made on another PC, received as new: its row is written here when applied.
+    async fn receive_role(db: &DatabaseConnection, sync_id: &str) {
+        let at = chrono::Utc::now().to_rfc3339();
+        run_sql(
+            db,
+            "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+             VALUES (?, ?, 'custom', 'active', 0, ?, ?, 1)",
+            vec![sync_id.into(), sync_id.into(), at.clone().into(), at.into()],
+        )
+        .await;
+        let payload = crate::sync::test_support::current_payload(db, "roles", sync_id, &serde_json::Map::new())
+            .await
+            .expect("payload")
+            .expect("row");
+        // Removed again, with what this PC staged for it, so that it arrives as new.
+        run_sql(db, "DELETE FROM roles WHERE entity_sync_id = ?", vec![sync_id.into()]).await;
+        crate::sync::capture::drain_capture_journal(db).await.expect("drain");
+        run_sql(
+            db,
+            "DELETE FROM sync_outbox WHERE entity_sync_id = ?",
+            vec![sync_id.into()],
+        )
+        .await;
+        queries::apply_sync_batch(
+            db,
+            crate::sync::domain::ApplySyncBatchInput {
+                protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
+                server_batch_id: format!("b-{sync_id}"),
+                checkpoint_token: format!("v2.test.{sync_id}"),
+                acknowledged_items: vec![],
+                rejected_items: vec![],
+                inbound_items: vec![crate::sync::domain::SyncInboundItemInput {
+                    entity_type: "roles".into(),
+                    entity_sync_id: sync_id.into(),
+                    operation: "upsert".into(),
+                    row_version: 2,
+                    payload_json: serde_json::Value::Object(payload).to_string(),
+                    ..Default::default()
+                }],
+                conflict_items: vec![],
+                policy_metadata_json: None,
+            },
+        )
+        .await
+        .expect("ingest");
+    }
+
+    /// AU-107 (review of 461146ef): the rights hook runs once per run that wrote a rights row, never
+    /// for a run without one, and once for a run that failed (passes committed before the failure
+    /// may hold rights rows: the refresh does not depend on what the run reported).
+    #[tokio::test]
+    async fn the_rights_hook_runs_once_per_rights_run_and_on_a_failed_run() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let db = crate::sync::test_support::started_db().await;
+        let (worker, calls) = counting_worker(&db);
+
+        worker.materialize(true).await.expect("empty run");
+        assert_eq!(calls.load(SeqCst), 0, "nothing received");
+
+        receive_role(&db, "role-from-other-pc").await;
+        worker.materialize(true).await.expect("rights run");
+        assert_eq!(calls.load(SeqCst), 1, "one refresh for the run");
+        let held = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT 1 AS h FROM roles WHERE entity_sync_id = 'role-from-other-pc'".to_string(),
+            ))
+            .await
+            .expect("role");
+        assert!(held.is_some(), "the received role is written here");
+
+        // Every later step of a run fails (the inbox is gone): an error, refreshed anyway.
+        db.execute_unprepared("ALTER TABLE sync_inbox RENAME TO sync_inbox_gone")
+            .await
+            .expect("break the inbox");
+        assert!(worker.materialize(true).await.is_err());
+        assert_eq!(calls.load(SeqCst), 2, "refreshed once for the failed run");
+
+        // The release after a complete pull (grants and accounts waiting for their author), failed.
+        assert!(worker.after_complete_pull(None).await.is_err());
+        assert_eq!(calls.load(SeqCst), 3, "refreshed once for the failed release");
+    }
+
+    /// The release after a complete pull with nothing waiting changes no right: no refresh.
+    #[tokio::test]
+    async fn a_release_with_nothing_waiting_does_not_refresh() {
+        let db = crate::sync::test_support::started_db().await;
+        let (worker, calls) = counting_worker(&db);
+        worker.after_complete_pull(None).await.expect("release");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     fn timing() -> SyncTiming {
         SyncTiming::production()

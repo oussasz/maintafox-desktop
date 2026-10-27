@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
@@ -108,6 +108,7 @@ pub async fn list_sync_conflicts(
 #[tauri::command]
 pub async fn resolve_sync_conflict(
     input: ResolveSyncConflictInput,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<SyncConflictRecord> {
     let user = require_session!(state);
@@ -117,7 +118,13 @@ pub async fn resolve_sync_conflict(
         crate::rbac::permissions::SYNC_RESOLVE,
         PermissionScope::Global
     );
-    queries::resolve_sync_conflict(&state.db, i64::from(user.user_id), input).await
+    let action = input.action.clone();
+    let resolved = queries::resolve_sync_conflict(&state.db, i64::from(user.user_id), input).await?;
+    // The server version of a rights row is now applied here: rights refreshed at once (AU-107).
+    if crate::sync::materialize::resolution_changes_rights(&resolved.entity_type, &action) {
+        crate::rbac::cache::invalidate_all_and_notify(&app, &state.permission_cache, "sync_conflict_resolved").await;
+    }
+    Ok(resolved)
 }
 
 #[tauri::command]

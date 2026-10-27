@@ -30,7 +30,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
-import { appErrorText, describeAppError } from "@/lib/app-error";
+import { appErrorReason, appErrorText, describeAppError } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { useReadableLists } from "@/lib/list-access";
 import {
@@ -878,7 +878,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             await loadReadiness();
           }
         } catch (e) {
-          setError(describeAppError(e).title);
+          setError(appErrorReason(e));
         } finally {
           setEmergencyBusy(false);
         }

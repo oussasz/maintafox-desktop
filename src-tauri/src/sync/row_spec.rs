@@ -1027,6 +1027,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("schedule_commitment", "schedule_commitments"),
                         // A reopened-week conflict closed by its decision (`planning::sync_check`).
                         ("weekly_schedule", "weekly_schedules"),
+                        // A break-in conflict closed once judged valid, and a crew site change
+                        // conflict closed once it crosses no frozen week (`planning::sync_check`).
+                        ("schedule_break_in", "schedule_break_ins"),
+                        ("team", "teams"),
                         // A work-order type given its maintenance nature (`wo::types`): the target
                         // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
                         // so the audit is unchanged when the value is deleted later (a discarded

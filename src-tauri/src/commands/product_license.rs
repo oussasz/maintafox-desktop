@@ -902,7 +902,7 @@ async fn user_holds_settings_right_at_any_scope(db: &DatabaseConnection, user_id
     Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0) > 0)
 }
 
-async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> AppResult<u64> {
+async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
     // Keep only global bootstrap/settings tables; wipe operational/runtime data to avoid cross-tenant leakage.
     let keep_tables: HashSet<&str> = HashSet::from([
         "seaql_migrations",
@@ -918,12 +918,15 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "admin_recovery_codes_used",
     ]);
 
+    // The plant default language is kept across the reset (F11): the wipe below puts its Settings
+    // row back to the shipped value, so it is written back right after the reseed (AU-127).
+    let plant_language = crate::locale::read_plant_language(db).await?;
+
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_begin",
         "Starting runtime tenant data reset"
     );
-    let table_rows = state
-        .db
+    let table_rows = db
         .query_all(Statement::from_string(
             DatabaseBackend::Sqlite,
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'".to_string(),
@@ -947,16 +950,16 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
     // The safety rule notices are otherwise never deleted: the reseed below guards them again.
-    crate::settings::received_notice::drop_notice_guards(&state.db).await?;
-    crate::sync::capture::suspend_capture(&state.db).await?;
+    crate::settings::received_notice::drop_notice_guards(db).await?;
+    crate::sync::capture::suspend_capture(db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
-    state.db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
 
     let wipe_result: Result<u64, sea_orm::DbErr> = async {
-        let tx = state.db.begin().await?;
+        let tx = db.begin().await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
             let escaped = table.replace('"', "\"\"");
@@ -1002,7 +1005,7 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     }
     .await;
 
-    if let Err(e) = state.db.execute_unprepared("PRAGMA foreign_keys = ON").await {
+    if let Err(e) = db.execute_unprepared("PRAGMA foreign_keys = ON").await {
         tracing::error!(
             error = %e,
             "failed to re-enable SQLite foreign_keys after tenant runtime reset"
@@ -1011,17 +1014,23 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
 
     let reseeded: AppResult<u64> = async {
         let wiped_rows_total = wipe_result?;
-        crate::db::seeder::seed_system_data(&state.db).await?;
+        crate::db::seeder::seed_system_data(db).await?;
         // Without these rows every outbox staging (so every business write) and the sync worker fail.
-        crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
+        crate::sync::queries::ensure_sync_control_rows(db).await?;
         // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
         // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db).await?;
+        // Never fails the reset (the wipe is committed): the language is set again in Settings.
+        if let Some(code) = &plant_language {
+            if let Err(e) = crate::locale::write_plant_language(db, code).await {
+                tracing::warn!(error = %e, language = %code, "reset: the plant language could not be written back");
+            }
+        }
         Ok(wiped_rows_total)
     }
     .await;
     // Capture comes back whatever happened above, so later business writes are never missed.
-    let installed = crate::sync::capture::install_capture(&state.db).await;
+    let installed = crate::sync::capture::install_capture(db).await;
     let wiped_rows_total = reseeded?;
     installed?;
     tracing::warn!(
@@ -2813,7 +2822,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
     // Same lock as key entry and reconciliation, so a check in flight cannot write the
     // licence record back after it is forgotten here.
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
-    let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(&state.db).await?;
     let _ = settings::delete_setting(
         &state.db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
@@ -2857,7 +2866,7 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         event = "desktop_tenant_runtime_reset_command",
         "reset_local_tenant_runtime_data command invoked"
     );
-    let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(&state.db).await?;
     {
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
