@@ -385,11 +385,15 @@ pub async fn type_requires_isolation(db: &impl ConnectionTrait, code: &str) -> A
 
 /// The permit types of every published rule that matches this equipment and work type, distinct, in
 /// the list's order: shown on the work order when they differ ("plusieurs règles de permis"), display
-/// only (CMMS Advisor decision on AU-04 R5-S3). Empty when fewer than two types.
+/// only (CMMS Advisor decision on AU-04 R5-S3). `carried`: the permit type of the rule the work order
+/// carries; when the list here does not give it (a rule received from another PC that outranks this
+/// PC's, for example LOTO over hot work), it is shown first, with the types the list here gives (CMMS
+/// Advisor decision C7-N1: the other permit is added). Empty when fewer than two types.
 pub async fn matching_permit_types(
     db: &impl ConnectionTrait,
     equipment_id: Option<i64>,
     work_type_id: i64,
+    carried: Option<&str>,
 ) -> AppResult<Vec<String>> {
     let rules = PublishedRules::load(db).await?;
     if rules.is_empty() {
@@ -401,6 +405,9 @@ pub async fn matching_permit_types(
         if rule_matches(rule, class.as_deref(), work_type.as_deref()) && !types.contains(&rule.permit_type_code) {
             types.push(rule.permit_type_code.clone());
         }
+    }
+    if let Some(carried) = carried.filter(|c| !types.iter().any(|t| t == c)) {
+        types.insert(0, carried.to_string());
     }
     Ok(if types.len() > 1 { types } else { Vec::new() })
 }
@@ -1190,6 +1197,14 @@ pub async fn converge_received_rule(
             },
         )
         .await?;
+        // The received rule outranks the one this PC's list gives (an energy isolation over a
+        // permit without one, for example LOTO over hot work): the work order carries one rule, so
+        // the permit issuers of its site are told, as when a rule held here changes type, and the
+        // work order shows both types ("plusieurs règles de permis", [`matching_permit_types`]) so
+        // the other permit is added (CMMS Advisor decision C7-N1, option a).
+        if let Some(own) = first.as_ref().filter(|f| f.1 != kept.1) {
+            notify_rule_type_changed(conn, wo_id, (&own.0, own.1.as_deref()), (&kept.0, kept.1.as_deref())).await?;
+        }
         return Ok(Some(kept.0));
     }
     // Every write over the row (and every change of the rule held here, and every clearing
@@ -1262,28 +1277,35 @@ pub async fn converge_received_rule(
     // The permit type of a rule held here changed: the permit issuers of its site are told (CMMS
     // Advisor decision on AU-04 R5-S3, option A).
     if let Some(h) = held.filter(|h| h.permit_type != kept.1) {
-        let wo = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT code, entity_sync_id FROM work_orders WHERE id = ?",
-                [wo_id.into()],
-            ))
-            .await?;
-        if let Some(wo) = wo {
-            let code: String = wo.try_get("", "code")?;
-            let wo_sync: String = wo.try_get("", "entity_sync_id")?;
-            crate::settings::received_notice::notify_work_order_rule_type_changed(
-                conn,
-                wo_id,
-                &wo_sync,
-                &code,
-                (&h.code, h.permit_type.as_deref()),
-                (&kept.0, kept.1.as_deref()),
-            )
-            .await;
-        }
+        notify_rule_type_changed(conn, wo_id, (&h.code, h.permit_type.as_deref()), (&kept.0, kept.1.as_deref())).await?;
     }
     Ok(Some(kept.0))
+}
+
+/// The permit issuers of a work order's site told that its rule's permit type changed from `before`
+/// to `after` (`settings::received_notice::notify_work_order_rule_type_changed`).
+async fn notify_rule_type_changed(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    before: (&str, Option<&str>),
+    after: (&str, Option<&str>),
+) -> AppResult<()> {
+    let wo = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code, entity_sync_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?;
+    if let Some(wo) = wo {
+        let code: String = wo.try_get("", "code")?;
+        let wo_sync: String = wo.try_get("", "entity_sync_id")?;
+        crate::settings::received_notice::notify_work_order_rule_type_changed(
+            conn, wo_id, &wo_sync, &code, before, after,
+        )
+        .await;
+    }
+    Ok(())
 }
 
 /// The rule a work order keeps, from this PC's first match (`first`, ranked: `evaluate_with`), the

@@ -1794,7 +1794,7 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
     assert_eq!(wo.permit_rule_code.as_deref(), Some("B_PUMP_LOTO"));
     assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
     assert_eq!(
-        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id)
+        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
             .await
             .expect("types"),
         vec!["hot_work".to_string(), "loto".to_string()],
@@ -1806,7 +1806,7 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
         "UPDATE reference_values SET is_active = 0 WHERE code = 'A_PUMP_HOT'",
     )
     .await;
-    assert!(rules::matching_permit_types(&db, wo.equipment_id, wo.type_id)
+    assert!(rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
         .await
         .expect("types")
         .is_empty());

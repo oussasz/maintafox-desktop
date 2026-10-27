@@ -8609,19 +8609,56 @@ async fn a_received_isolation_type_is_kept_over_a_weaker_rule_here() {
             1,
             "{held_first}: recorded"
         );
-        if held_first {
-            assert_eq!(
-                text(
-                    &db,
-                    "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
-                     WHERE message_key = 'wo_permit_rule_type_changed'"
-                )
-                .await
-                .as_deref(),
-                Some("1"),
-                "the permit issuers are told of the type change"
-            );
-        }
+        // Held here or new here (CMMS Advisor decision C7-N1, option a): the permit issuers are told,
+        // once, and the work order shows both permit types so the hot-work permit is added.
+        let params: Value = serde_json::from_str(
+            &text(
+                &db,
+                "SELECT message_params_json FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed' AND category_code = 'wo_permit_rule_missing'",
+            )
+            .await
+            .expect("the permit issuers are told of the type change"),
+        )
+        .expect("json");
+        assert_eq!(
+            (&params["previous_permit_type"], &params["permit_type"]),
+            (&json!("hot_work"), &json!("loto")),
+            "{held_first}"
+        );
+        let wo = crate::wo::queries::get_work_order(&db, wo_id_of(&db, "wo-c6s1").await)
+            .await
+            .expect("q")
+            .expect("wo");
+        assert_eq!(
+            crate::permit::requirement_rules::matching_permit_types(
+                &db,
+                wo.equipment_id,
+                wo.type_id,
+                wo.permit_rule_permit_type.as_deref()
+            )
+            .await
+            .expect("types"),
+            vec!["loto".to_string(), "hot_work".to_string()],
+            "{held_first}: plusieurs règles de permis : loto, hot_work"
+        );
+        // Received again: told once.
+        let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            text(
+                &db,
+                "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed'"
+            )
+            .await
+            .as_deref(),
+            Some("1"),
+            "{held_first}: told once"
+        );
         crate::permit::requirement_rules::catch_up(&db).await;
         assert_eq!(
             rule_state(&db, "wo-c6s1").await,

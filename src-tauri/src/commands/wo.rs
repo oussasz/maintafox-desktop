@@ -185,9 +185,15 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
         Anchor::of(wo.entity_id),
     )
     .await?;
-    // Several plant rules naming different permit types match it: shown with its rule (display only).
-    wo.permit_rule_matching_types =
-        crate::permit::requirement_rules::matching_permit_types(&state.db, wo.equipment_id, wo.type_id).await?;
+    // Several plant rules naming different permit types match it, or the rule it carries (received
+    // from another PC) names a type the list here does not give: shown with its rule (display only).
+    wo.permit_rule_matching_types = crate::permit::requirement_rules::matching_permit_types(
+        &state.db,
+        wo.equipment_id,
+        wo.type_id,
+        wo.permit_rule_permit_type.as_deref(),
+    )
+    .await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
     // Read after the work order: a coding saved in between moved the version, so the next
