@@ -2,6 +2,7 @@
 
 pub mod break_in_approval;
 pub mod break_in_reasons;
+pub mod crew_site;
 pub mod domain;
 pub mod kpis;
 pub mod lifecycle;

@@ -331,7 +331,8 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         sets.push("team_type = ?".into());
         values.push(team_type.trim().to_string().into());
     }
-    if let Some(node_id) = input.primary_node_id {
+    let new_node = input.primary_node_id;
+    if let Some(node_id) = new_node {
         crate::org::model_scope::assert_org_node_active(db, node_id).await?;
         sets.push("primary_node_id = ?".into());
         values.push(node_id.into());
@@ -371,6 +372,15 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         sets.join(", ")
     );
     let txn = db.begin().await?;
+    // A site change never carries the crew's committed jobs across a frozen week (AU-129): judged
+    // in the transaction that writes it, on the crew as it stands there.
+    if let Some(node_id) = new_node {
+        if let Some(block) =
+            crate::planning::crew_site::crew_site_change_block(&txn, input.id, Some(node_id), Utc::now()).await?
+        {
+            return Err(block.refusal());
+        }
+    }
     txn.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await
         .map_err(|e| {

@@ -5796,3 +5796,411 @@ fn planning_pdf_prints_local_time_and_labels_in_the_report_language() {
         "PM occurrence"
     );
 }
+
+// ── A crew's site change and the frozen weeks of its jobs (AU-129) ───────────────────────────
+
+/// A day `days` from today at `hour` (local), as the planning inputs write it.
+pub(super) fn crew_site_day(days: i64, hour: &str) -> String {
+    let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
+    format!("{}T{hour}", day.format("%Y-%m-%d"))
+}
+
+/// Commits a job of `team` at `[start, end)` whatever the weeks of its site (committed while the
+/// crew has no site, then its node is put back).
+pub(super) async fn crew_site_job(db: &DatabaseConnection, team: i64, source_id: i64, start: &str, end: &str) -> i64 {
+    let node = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT primary_node_id FROM teams WHERE id = {team}"),
+        ))
+        .await
+        .expect("query")
+        .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten());
+    exec_sql(
+        db,
+        &format!("UPDATE teams SET primary_node_id = NULL WHERE id = {team}"),
+    )
+    .await;
+    let candidate = insert_candidate(db, "manual_test", source_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(db, 1, commit_input(candidate, team, start, end))
+        .await
+        .expect("committed");
+    let node = node.map_or_else(|| "NULL".to_string(), |n| n.to_string());
+    exec_sql(
+        db,
+        &format!("UPDATE teams SET primary_node_id = {node} WHERE id = {team}"),
+    )
+    .await;
+    commitment.id
+}
+
+/// Freezes (baseline 1) the week of `site` holding `day` (`YYYY-MM-DD...`).
+pub(super) async fn crew_site_freeze(db: &DatabaseConnection, site: i64, day: &str) {
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(db, site, &day[..10])
+        .await
+        .expect("week");
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status, frozen_at, baseline_no)
+             VALUES ('crew-site-week-{site}-{start}', {site}, '{start}', '{end}', 'frozen', '2026-01-01T00:00:00Z', 1)",
+            start = view.week.week_start,
+            end = view.week.week_end,
+        ),
+    )
+    .await;
+}
+
+pub(super) async fn crew_node(db: &DatabaseConnection, team: i64) -> Option<i64> {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT primary_node_id FROM teams WHERE id = {team}"),
+    ))
+    .await
+    .expect("query")
+    .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten())
+}
+
+pub(super) async fn move_crew(
+    db: &DatabaseConnection,
+    team: i64,
+    node: i64,
+) -> crate::errors::AppResult<crate::repository::team_repository::TeamSummary> {
+    crate::repository::team_repository::update_team(
+        db,
+        crate::repository::team_repository::TeamUpdateInput {
+            id: team,
+            code: None,
+            name: None,
+            team_type: None,
+            primary_node_id: Some(node),
+            description: None,
+            status: None,
+            icon_key: None,
+            accent_color: None,
+        },
+    )
+    .await
+}
+
+fn assert_week_frozen_refusal(err: &crate::errors::AppError) {
+    match err {
+        crate::errors::AppError::OrgValidationFailed(issues) => {
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| format!("{i:?}").contains("PLANNING_WEEK_FROZEN")
+                        && format!("{i:?}").contains("week_start")),
+                "{issues:?}"
+            );
+        }
+        other => panic!("expected PLANNING_WEEK_FROZEN, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_committed_job_into_a_frozen_week_of_its_new_site() {
+    let db = setup_db().await;
+    let (_site_a, team) = weekly_site(&db, "CSA").await;
+    let (site_b, _) = weekly_site(&db, "CSB").await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8101, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    let before = crew_node(&db, team).await;
+
+    let refused = move_crew(&db, team, site_b)
+        .await
+        .expect_err("frozen week of the new site");
+    assert_week_frozen_refusal(&refused);
+    assert_eq!(crew_node(&db, team).await, before, "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_committed_job_into_a_week_of_its_new_site_due_to_freeze() {
+    let db = setup_db().await;
+    let (_site_a, team) = weekly_site(&db, "CSC").await;
+    let (site_b, _) = weekly_site(&db, "CSD").await;
+    // A crew without a site: only the site it joins is judged. The clock is pinned: on Wednesday
+    // 5 June 2030 the week holding Thursday 6 June is the current one, its freeze due (never run).
+    exec_sql(
+        &db,
+        &format!("UPDATE teams SET primary_node_id = NULL WHERE id = {team}"),
+    )
+    .await;
+    crew_site_job(&db, team, 8111, "2030-06-06T08:00", "2030-06-06T09:00").await;
+
+    let block = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-06-05T12:00"))
+        .await
+        .expect("judged")
+        .expect("week due to freeze");
+    assert_eq!(block.jobs, 1);
+    let week = crate::planning::weekly::site_week(&db, site_b, day("2030-06-06"))
+        .await
+        .expect("week");
+    assert_eq!(block.weeks, vec![week.week_start.to_string()]);
+    assert_week_frozen_refusal(&block.refusal());
+    // Two weeks earlier that week is not due yet: the crew moves with its job.
+    let early = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-05-20T12:00"))
+        .await
+        .expect("judged");
+    assert!(early.is_none(), "{early:?}");
+}
+
+#[tokio::test]
+async fn a_frozen_job_names_the_start_of_its_week_when_no_frozen_week_is_found() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSL").await;
+    let (site_b, _) = weekly_site(&db, "CSM").await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8161, &start, &crew_site_day(21, "09:00")).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET frozen_at = '2026-01-01T00:00:00Z' WHERE id = {job}"),
+    )
+    .await;
+
+    let refused = move_crew(&db, team, site_b).await.expect_err("a frozen job");
+    assert_week_frozen_refusal(&refused);
+    let week = crate::planning::weekly::site_week(&db, site_a, day(&start[..10]))
+        .await
+        .expect("week");
+    let crate::errors::AppError::OrgValidationFailed(issues) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(
+        issues[0].params.get("week_start"),
+        Some(&week.week_start.to_string()),
+        "the start of the job's week at the site it leaves"
+    );
+    assert_eq!(issues[0].params.get("count").map(String::as_str), Some("1"));
+    assert_eq!(crew_node(&db, team).await, Some(site_a), "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_moved_by_sync_off_a_deactivated_node_into_a_frozen_week_is_a_conflict() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSN").await;
+    let (site_b, _) = weekly_site(&db, "CSO").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'crew-site-leaf-type', structure_model_id, 'CSLEAF', 'Atelier', 1, 0, 0, 0, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes WHERE id = {site_a}"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'crew-site-leaf', 'CS-LEAF', 'Atelier', t.id, {site_a}, '/{site_a}/', 1, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'crew-site-leaf-type'"
+        ),
+    )
+    .await;
+    let leaf = scalar(&db, "SELECT id FROM org_nodes WHERE entity_sync_id = 'crew-site-leaf'").await;
+    move_crew(&db, team, leaf).await.expect("same site");
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8171, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    // Another PC deactivated the leaf, then moved the crew: the leaf arrives first.
+    exec_sql(
+        &db,
+        &format!("UPDATE org_nodes SET status = 'inactive' WHERE id = {leaf}"),
+    )
+    .await;
+
+    let mut received = crate::permit::sync_check::local_wire(&db, "teams", "wk-team-CSN")
+        .await
+        .expect("wire")
+        .expect("crew");
+    received.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        serde_json::Value::from("wk-node-CSO"),
+    );
+    let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, "wk-team-CSN", &received)
+        .await
+        .expect("judged");
+    assert!(
+        matches!(
+            verdict,
+            Some(crate::settings::site::InboundVerdict::Conflict {
+                code: "PLANNING_WEEK_FROZEN",
+                ..
+            })
+        ),
+        "{verdict:?}"
+    );
+    assert_eq!(crew_node(&db, team).await, Some(leaf));
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_job_out_of_a_frozen_week_of_the_site_it_leaves() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSE").await;
+    let (site_b, _) = weekly_site(&db, "CSF").await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8121, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_a, &start).await;
+
+    let refused = move_crew(&db, team, site_b)
+        .await
+        .expect_err("frozen week of the old site");
+    assert_week_frozen_refusal(&refused);
+    assert_eq!(crew_node(&db, team).await, Some(site_a), "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_moves_with_its_jobs_in_open_weeks_and_ended_or_released_jobs_never_hold_it() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSG").await;
+    let (site_b, _) = weekly_site(&db, "CSH").await;
+    // No committed job: free to move.
+    move_crew(&db, team, site_b).await.expect("no job");
+    move_crew(&db, team, site_a).await.expect("no job");
+
+    // A job in weeks open at both sites moves with the crew.
+    let open = crew_site_job(
+        &db,
+        team,
+        8131,
+        &crew_site_day(21, "08:00"),
+        &crew_site_day(21, "09:00"),
+    )
+    .await;
+    let moved = move_crew(&db, team, site_b).await.expect("open weeks");
+    assert_eq!(moved.primary_node_id, Some(site_b));
+    assert_eq!(commitment_status(&db, open).await, "committed");
+    move_crew(&db, team, site_a).await.expect("open weeks");
+
+    // A released job in a frozen week of the new site, and a job that ended in one: not held.
+    let released = crew_site_job(
+        &db,
+        team,
+        8132,
+        &crew_site_day(28, "08:00"),
+        &crew_site_day(28, "09:00"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {released}"),
+    )
+    .await;
+    crew_site_freeze(&db, site_b, &crew_site_day(28, "08:00")).await;
+    let ended = crew_site_job(
+        &db,
+        team,
+        8133,
+        &crew_site_day(35, "08:00"),
+        &crew_site_day(35, "09:00"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET committed_start = '{}', committed_end = '{}' WHERE id = {ended}",
+            local(&crew_site_day(-8, "08:00")),
+            local(&crew_site_day(-8, "09:00")),
+        ),
+    )
+    .await;
+    crew_site_freeze(&db, site_b, &crew_site_day(-8, "08:00")).await;
+    assert_eq!(commitment_status(&db, ended).await, "committed");
+    move_crew(&db, team, site_b).await.expect("released and ended jobs");
+    assert_eq!(crew_node(&db, team).await, Some(site_b));
+}
+
+#[tokio::test]
+async fn a_crew_moved_to_another_node_of_its_site_is_never_refused() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSI").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'crew-site-workshop-type', structure_model_id, 'CSWORKSHOP', 'Atelier', 1, 0, 0, 0, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes WHERE id = {site_a}"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'crew-site-workshop', 'CS-WS', 'Atelier', t.id, {site_a}, '/{site_a}/', 1, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'crew-site-workshop-type'"
+        ),
+    )
+    .await;
+    let workshop = scalar(
+        &db,
+        "SELECT id FROM org_nodes WHERE entity_sync_id = 'crew-site-workshop'",
+    )
+    .await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8141, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_a, &start).await;
+
+    let moved = move_crew(&db, team, workshop).await.expect("same planning site");
+    assert_eq!(moved.primary_node_id, Some(workshop));
+}
+
+#[tokio::test]
+async fn a_crew_site_change_received_by_sync_into_a_frozen_week_is_a_conflict_for_review() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSJ").await;
+    let (site_b, _) = weekly_site(&db, "CSK").await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8151, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+
+    let sid = "wk-team-CSJ";
+    let mut received = crate::permit::sync_check::local_wire(&db, "teams", sid)
+        .await
+        .expect("wire")
+        .expect("crew");
+    received.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        serde_json::Value::from("wk-node-CSK"),
+    );
+    received.insert("updated_at".into(), serde_json::Value::from("2026-10-27T09:00:00Z"));
+    let rv = scalar(&db, &format!("SELECT row_version FROM teams WHERE id = {team}")).await;
+    let outcome = crate::sync::materialize::apply_inbound_payload(
+        &db,
+        "teams",
+        sid,
+        "upsert",
+        rv + 1,
+        &serde_json::Value::Object(received.clone()).to_string(),
+    )
+    .await
+    .expect("judged");
+    match outcome {
+        crate::sync::materialize::ApplyOutcome::Conflict { code, .. } => assert_eq!(code, "PLANNING_WEEK_FROZEN"),
+        other => panic!("expected a PLANNING_WEEK_FROZEN conflict, got {other:?}"),
+    }
+    assert_eq!(
+        crew_node(&db, team).await,
+        Some(site_a),
+        "the crew stays at its site here"
+    );
+
+    // Its job released here: the same change crosses no frozen week any more.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, sid, &received)
+        .await
+        .expect("judged");
+    assert!(verdict.is_none(), "{verdict:?}");
+}

@@ -49,7 +49,9 @@
 //!   (`planning::sync_check::inbound_unfreeze_check`);
 //! - `schedule_commitments` / `schedule_break_ins`: work entering a week frozen here comes with its
 //!   break-in (here, or waiting in the inbox and applied with it in one transaction), else it is a
-//!   `PLANNING_WEEK_FROZEN` conflict at once, closed when a valid break-in arrives later; a received
+//!   `PLANNING_WEEK_FROZEN` conflict at once, closed when a valid break-in arrives later (a crew's
+//!   site change carrying its committed jobs across a week frozen here is the same conflict,
+//!   `planning::sync_check::inbound_crew_site_check`, AU-129); a received
 //!   break-in that is urgent or forced a blocking check is signed by a second planner holding
 //!   plan.confirm at the crew's site here (`planning::sync_check`);
 //! - `work_permits` / `permit_isolations` / `work_orders`: the permit and LOTO rules (activation,
@@ -331,6 +333,8 @@ pub(crate) async fn before_upsert_checked(
         "schedule_break_ins" => {
             Some(crate::planning::sync_check::inbound_break_in_check(conn, entity_sync_id, payload).await?)
         }
+        // A crew's site change carrying its committed jobs across a week frozen here (AU-129).
+        "teams" => Some(crate::planning::sync_check::inbound_crew_site_check(conn, entity_sync_id, payload).await?),
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
         // An anomaly closed without a decision, reopened, its link changed or its "revue permis
         // requise" cleared (`inspection::sync_check`, audit finding AU-72).
