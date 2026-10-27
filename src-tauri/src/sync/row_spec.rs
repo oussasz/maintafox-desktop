@@ -961,6 +961,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The site before and after a site given to an old record (`org::site_assignment`).
             json_ref_hist("details_json", "$.site_before", "org_nodes"),
             json_ref_hist("details_json", "$.site_after", "org_nodes"),
+            // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
+            json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
+            json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
             // The work order of a qualification requirement before and after its change
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
@@ -1067,6 +1070,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("inventory_transactions", NOT_A_ROW),
                         ("inventory_mutation_audit_links", NOT_A_ROW),
                         ("inventory_count_sessions", NOT_A_ROW),
+                        // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
+                        // the equipment, sent as its sync id (equipment rows are never hard-deleted).
+                        ("equipment", "equipment"),
                     ],
                 ),
             ],
