@@ -62,6 +62,23 @@ impl CrewSiteBlock {
     }
 }
 
+/// The start of the planning week of `site` holding the first day of a job (`start`), as the
+/// schedules compute it ([`super::weekly::site_week`]); that first day when the site has no
+/// planning week (no site, no weekend), the raw `start` when it is unreadable.
+async fn frozen_job_week(db: &impl ConnectionTrait, site: Option<i64>, start: &str) -> AppResult<String> {
+    let Some(first) = crate::wo::shifts::planned_instant(start).map(|s| s.with_timezone(&Local).date_naive()) else {
+        return Ok(start.to_string());
+    };
+    if let Some(site) = site {
+        match super::weekly::site_week(db, site, first).await {
+            Ok(week) => return Ok(week.week_start.to_string()),
+            Err(AppError::OrgValidationFailed(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(first.to_string())
+}
+
 async fn node_site(db: &impl ConnectionTrait, node: Option<i64>) -> AppResult<Option<i64>> {
     match node {
         Some(node) => planning_site_of_node(db, node).await,
@@ -122,11 +139,8 @@ pub async fn crew_site_change_block(
                 .map(|w| w.week_start);
         }
         if week.is_none() && frozen_at.is_some() {
-            // Frozen with no frozen week found at the site it leaves: named by its first day.
-            week = Some(
-                crate::wo::shifts::planned_instant(&start)
-                    .map_or_else(|| start.clone(), |s| s.with_timezone(&Local).date_naive().to_string()),
-            );
+            // Frozen with no frozen week found at the site it leaves: named by the start of its week.
+            week = Some(frozen_job_week(db, old_site.or(new_site), &start).await?);
         }
         if week.is_none() {
             if let Some(site) = new_site {

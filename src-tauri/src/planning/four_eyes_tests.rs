@@ -2733,3 +2733,122 @@ async fn a_frozen_week_conflict_stays_open_after_a_newer_committed_version() {
     assert_eq!(scalar(&r.db, OPEN_FROZEN).await, 1, "still for review");
     assert_eq!(scalar(&r.db, SUPERSEDED_AUDITS).await, 0);
 }
+
+// ── A crew's site change received by sync (AU-129) ───────────────────────────────────────────
+
+/// A crew of site A (`code`A) with a committed job three weeks ahead, that week frozen at site B
+/// (`code`B), and the crew's site change to B waiting in the inbox, judged: an open conflict.
+async fn crew_site_conflict(code: &str) -> (DatabaseConnection, i64, i64, i64, i64, String) {
+    use super::tests::{crew_site_day, crew_site_freeze, crew_site_job};
+    let db = setup_db().await;
+    crate::sync::capture::install_capture_in(&db).await.expect("capture");
+    let (site_a, team) = weekly_site(&db, &format!("{code}A")).await;
+    let (site_b, _) = weekly_site(&db, &format!("{code}B")).await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8201, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    let sid = sync_id(&db, "teams", team).await;
+    let mut p = payload(&db, "teams", &sid).await;
+    p.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        format!("wk-node-{code}B").into(),
+    );
+    p.insert("updated_at".into(), "2026-10-27T09:00:00Z".into());
+    // This PC's own changes are sent already: only the received change is judged.
+    exec_sql(&db, "DELETE FROM sync_capture_journal").await;
+    exec_sql(&db, "DELETE FROM sync_outbox").await;
+    inbox(&db, "teams", &sid, &p).await;
+    crate::sync::materialize::materialize_inbox(&db, 200, true)
+        .await
+        .expect("materialize");
+    let open = format!(
+        "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'teams' AND entity_sync_id = '{sid}'            AND conflict_type = 'PLANNING_WEEK_FROZEN' AND status IN ('new', 'triaged', 'escalated')"
+    );
+    assert_eq!(scalar(&db, &open).await, 1, "an open conflict");
+    (db, site_a, site_b, team, job, sid)
+}
+
+async fn team_node(db: &DatabaseConnection, team: i64) -> i64 {
+    scalar(db, &format!("SELECT primary_node_id FROM teams WHERE id = {team}")).await
+}
+
+#[tokio::test]
+async fn a_crew_site_conflict_closes_by_itself_once_it_crosses_no_frozen_week() {
+    let (db, site_a, site_b, team, job, sid) = crew_site_conflict("CRA").await;
+    assert_eq!(team_node(&db, team).await, site_a, "the crew stays at its site here");
+    // Still refused: nothing closes.
+    assert_eq!(
+        super::sync_check::retry_crew_site_conflicts(&db).await.expect("retry"),
+        0
+    );
+
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    assert_eq!(
+        super::sync_check::retry_crew_site_conflicts(&db).await.expect("retry"),
+        1
+    );
+    assert_eq!(team_node(&db, team).await, site_b, "the crew is at its new site");
+    assert_eq!(
+        scalar_text(
+            &db,
+            &format!(
+                "SELECT status || '/' || resolution_action FROM sync_conflicts                   WHERE entity_type = 'teams' AND entity_sync_id = '{sid}'"
+            )
+        )
+        .await,
+        "resolved_remote/judged_valid"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND target_type = 'team'                    AND target_id = '{team}'",
+                super::sync_check::CREW_SITE_CLOSED_EVENT
+            )
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn keeping_this_pcs_crew_site_needs_plan_confirm_at_its_site_and_a_change_still_refused() {
+    let (db, site_a, site_b, team, job, sid) = crew_site_conflict("CRK").await;
+    let at_b = site_approver(&db, 171, "CRK-B", site_b).await;
+    let at_a = site_approver(&db, 172, "CRK-A", site_a).await;
+    // The crew's site here is A: a planner of B alone may not keep it.
+    let refused = resolve(&db, at_b, &sid, "accept_local")
+        .await
+        .expect_err("not at the crew's site");
+    assert!(
+        format!("{refused:?}").contains("GATE_SYNC_KEEP_PLAN_NOT_ALLOWED"),
+        "{refused:?}"
+    );
+
+    // Its job released here: the change is let in now, there is no plan to keep.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    let refused = resolve(&db, at_a, &sid, "accept_local")
+        .await
+        .expect_err("not refused any more");
+    assert!(
+        format!("{refused:?}").contains("GATE_SYNC_KEEP_PLAN_NOT_REFUSED"),
+        "{refused:?}"
+    );
+
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'committed' WHERE id = {job}"),
+    )
+    .await;
+    let kept = resolve(&db, at_a, &sid, "accept_local").await.expect("kept");
+    assert_eq!(kept.status, "resolved_local");
+    assert_eq!(team_node(&db, team).await, site_a, "the crew stays at its site");
+}

@@ -5800,14 +5800,14 @@ fn planning_pdf_prints_local_time_and_labels_in_the_report_language() {
 // ── A crew's site change and the frozen weeks of its jobs (AU-129) ───────────────────────────
 
 /// A day `days` from today at `hour` (local), as the planning inputs write it.
-fn crew_site_day(days: i64, hour: &str) -> String {
+pub(super) fn crew_site_day(days: i64, hour: &str) -> String {
     let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
     format!("{}T{hour}", day.format("%Y-%m-%d"))
 }
 
 /// Commits a job of `team` at `[start, end)` whatever the weeks of its site (committed while the
 /// crew has no site, then its node is put back).
-async fn crew_site_job(db: &DatabaseConnection, team: i64, source_id: i64, start: &str, end: &str) -> i64 {
+pub(super) async fn crew_site_job(db: &DatabaseConnection, team: i64, source_id: i64, start: &str, end: &str) -> i64 {
     let node = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -5835,7 +5835,7 @@ async fn crew_site_job(db: &DatabaseConnection, team: i64, source_id: i64, start
 }
 
 /// Freezes (baseline 1) the week of `site` holding `day` (`YYYY-MM-DD...`).
-async fn crew_site_freeze(db: &DatabaseConnection, site: i64, day: &str) {
+pub(super) async fn crew_site_freeze(db: &DatabaseConnection, site: i64, day: &str) {
     let view = crate::planning::weekly_schedule::get_weekly_schedule(db, site, &day[..10])
         .await
         .expect("week");
@@ -5851,7 +5851,7 @@ async fn crew_site_freeze(db: &DatabaseConnection, site: i64, day: &str) {
     .await;
 }
 
-async fn crew_node(db: &DatabaseConnection, team: i64) -> Option<i64> {
+pub(super) async fn crew_node(db: &DatabaseConnection, team: i64) -> Option<i64> {
     db.query_one(Statement::from_string(
         DbBackend::Sqlite,
         format!("SELECT primary_node_id FROM teams WHERE id = {team}"),
@@ -5861,7 +5861,7 @@ async fn crew_node(db: &DatabaseConnection, team: i64) -> Option<i64> {
     .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten())
 }
 
-async fn move_crew(
+pub(super) async fn move_crew(
     db: &DatabaseConnection,
     team: i64,
     node: i64,
@@ -5920,18 +5920,122 @@ async fn a_crew_never_takes_a_committed_job_into_a_week_of_its_new_site_due_to_f
     let db = setup_db().await;
     let (_site_a, team) = weekly_site(&db, "CSC").await;
     let (site_b, _) = weekly_site(&db, "CSD").await;
-    // A crew without a site: only the site it joins is judged. Tomorrow lies in a week whose freeze
-    // is due (the current one, or the next once this week's last working day is past).
+    // A crew without a site: only the site it joins is judged. The clock is pinned: on Wednesday
+    // 5 June 2030 the week holding Thursday 6 June is the current one, its freeze due (never run).
     exec_sql(
         &db,
         &format!("UPDATE teams SET primary_node_id = NULL WHERE id = {team}"),
     )
     .await;
-    crew_site_job(&db, team, 8111, &crew_site_day(1, "08:00"), &crew_site_day(1, "09:00")).await;
+    crew_site_job(&db, team, 8111, "2030-06-06T08:00", "2030-06-06T09:00").await;
 
-    let refused = move_crew(&db, team, site_b).await.expect_err("week due to freeze");
+    let block = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-06-05T12:00"))
+        .await
+        .expect("judged")
+        .expect("week due to freeze");
+    assert_eq!(block.jobs, 1);
+    let week = crate::planning::weekly::site_week(&db, site_b, day("2030-06-06"))
+        .await
+        .expect("week");
+    assert_eq!(block.weeks, vec![week.week_start.to_string()]);
+    assert_week_frozen_refusal(&block.refusal());
+    // Two weeks earlier that week is not due yet: the crew moves with its job.
+    let early = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-05-20T12:00"))
+        .await
+        .expect("judged");
+    assert!(early.is_none(), "{early:?}");
+}
+
+#[tokio::test]
+async fn a_frozen_job_names_the_start_of_its_week_when_no_frozen_week_is_found() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSL").await;
+    let (site_b, _) = weekly_site(&db, "CSM").await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8161, &start, &crew_site_day(21, "09:00")).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET frozen_at = '2026-01-01T00:00:00Z' WHERE id = {job}"),
+    )
+    .await;
+
+    let refused = move_crew(&db, team, site_b).await.expect_err("a frozen job");
     assert_week_frozen_refusal(&refused);
-    assert_eq!(crew_node(&db, team).await, None, "nothing written");
+    let week = crate::planning::weekly::site_week(&db, site_a, day(&start[..10]))
+        .await
+        .expect("week");
+    let crate::errors::AppError::OrgValidationFailed(issues) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(
+        issues[0].params.get("week_start"),
+        Some(&week.week_start.to_string()),
+        "the start of the job's week at the site it leaves"
+    );
+    assert_eq!(issues[0].params.get("count").map(String::as_str), Some("1"));
+    assert_eq!(crew_node(&db, team).await, Some(site_a), "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_moved_by_sync_off_a_deactivated_node_into_a_frozen_week_is_a_conflict() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSN").await;
+    let (site_b, _) = weekly_site(&db, "CSO").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'crew-site-leaf-type', structure_model_id, 'CSLEAF', 'Atelier', 1, 0, 0, 0, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes WHERE id = {site_a}"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'crew-site-leaf', 'CS-LEAF', 'Atelier', t.id, {site_a}, '/{site_a}/', 1, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'crew-site-leaf-type'"
+        ),
+    )
+    .await;
+    let leaf = scalar(&db, "SELECT id FROM org_nodes WHERE entity_sync_id = 'crew-site-leaf'").await;
+    move_crew(&db, team, leaf).await.expect("same site");
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8171, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    // Another PC deactivated the leaf, then moved the crew: the leaf arrives first.
+    exec_sql(
+        &db,
+        &format!("UPDATE org_nodes SET status = 'inactive' WHERE id = {leaf}"),
+    )
+    .await;
+
+    let mut received = crate::permit::sync_check::local_wire(&db, "teams", "wk-team-CSN")
+        .await
+        .expect("wire")
+        .expect("crew");
+    received.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        serde_json::Value::from("wk-node-CSO"),
+    );
+    let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, "wk-team-CSN", &received)
+        .await
+        .expect("judged");
+    assert!(
+        matches!(
+            verdict,
+            Some(crate::settings::site::InboundVerdict::Conflict {
+                code: "PLANNING_WEEK_FROZEN",
+                ..
+            })
+        ),
+        "{verdict:?}"
+    );
+    assert_eq!(crew_node(&db, team).await, Some(leaf));
 }
 
 #[tokio::test]

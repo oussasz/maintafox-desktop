@@ -2601,4 +2601,107 @@ mod tests {
             "the copy falls to the strict default"
         );
     }
+
+    /// A crew moved by a received organisation publish from its deleted node to the node replacing
+    /// it is no crew move (AU-129): its site change is not judged against the frozen weeks of its
+    /// jobs, which it would otherwise cross.
+    #[tokio::test]
+    async fn a_crew_received_on_the_node_replacing_its_deleted_node_is_no_crew_move() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, _, old_zone) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)                  VALUES ('crew-repl', 'CREW-REPL', 'Equipe', 'maintenance', {old_zone}, 'active',                          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+            ),
+        )
+        .await;
+        let team = scalar(&db, "SELECT id FROM teams WHERE entity_sync_id = 'crew-repl'").await;
+        // A committed job three weeks ahead.
+        let day = chrono::Local::now().date_naive() + chrono::Duration::days(21);
+        let at = |hour: u32| {
+            use chrono::TimeZone;
+            chrono::Local
+                .from_local_datetime(&day.and_hms_opt(hour, 0, 0).expect("time"))
+                .earliest()
+                .expect("instant")
+                .with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        };
+        exec(
+            &db,
+            "INSERT INTO schedule_candidates (source_type, source_id, readiness_status, readiness_score, permit_status,                 prerequisite_status, estimated_duration_hours, planned_crew_size)              VALUES ('manual_test', 9301, 'ready', 100.0, 'not_required', 'ready', 1.0, 1)",
+        )
+        .await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO schedule_commitments (entity_sync_id, schedule_candidate_id, source_type, source_id,                     schedule_period_start, schedule_period_end, committed_start, committed_end, assigned_team_id, status)                  SELECT 'crew-repl-job', id, 'manual_test', 9301, '{s}', '{e}', '{s}', '{e}', {team}, 'committed'                    FROM schedule_candidates WHERE source_id = 9301",
+                s = at(8),
+                e = at(9),
+            ),
+        )
+        .await;
+
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_zone = active_node_id_by_code(&db, "ZN1").await;
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        assert_eq!(
+            scalar(&db, &format!("SELECT primary_node_id FROM teams WHERE id = {team}")).await,
+            new_zone,
+            "the publish moved the crew here"
+        );
+        // A PC that received the publish's nodes but not the crew row yet: the crew on its old node.
+        exec(
+            &db,
+            &format!("UPDATE teams SET primary_node_id = {old_zone} WHERE id = {team}"),
+        )
+        .await;
+        let week = crate::planning::weekly::site_week(&db, new_plant, day)
+            .await
+            .expect("week");
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status, frozen_at, baseline_no)                  VALUES ('crew-repl-week', {new_plant}, '{}', '{}', 'frozen', '2026-01-01T00:00:00Z', 1)",
+                week.week_start, week.week_end
+            ),
+        )
+        .await;
+        // Judged as a crew move, it would cross that frozen week.
+        assert!(
+            crate::planning::crew_site::crew_site_change_block(&db, team, Some(new_zone), chrono::Utc::now())
+                .await
+                .expect("judged")
+                .is_some(),
+            "a move would be refused"
+        );
+
+        let mut received = crate::permit::sync_check::local_wire(&db, "teams", "crew-repl")
+            .await
+            .expect("wire")
+            .expect("crew");
+        let new_zone_sid: String = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT entity_sync_id FROM org_nodes WHERE id = {new_zone}"),
+            ))
+            .await
+            .expect("q")
+            .expect("row")
+            .try_get("", "entity_sync_id")
+            .expect("sid");
+        received.insert(
+            crate::sync::row_layout::ref_payload_key("primary_node_id"),
+            serde_json::Value::from(new_zone_sid),
+        );
+        let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, "crew-repl", &received)
+            .await
+            .expect("judged");
+        assert!(verdict.is_none(), "the replacement is no crew move: {verdict:?}");
+    }
 }

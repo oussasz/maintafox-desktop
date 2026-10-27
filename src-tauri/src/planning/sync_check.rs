@@ -909,8 +909,11 @@ async fn judge_commitment(
 }
 
 /// See the module documentation (`teams`). A crew new here has no job here; a node not here yet
-/// is left to the generic apply (it waits for it); a crew whose node here was removed follows the
-/// organisation's node replacement (`org::validation`), which is no crew move.
+/// is left to the generic apply (it waits for it). A crew moved off a node deleted here to the node
+/// that replaced it when a new organisation structure was published
+/// (`org::validation::node_replaces_deleted_node`) is no crew move; while that publish has only
+/// partly arrived (`org::validation::node_copy_awaits_activation`) the row waits. Any other move,
+/// off a deactivated node too, is judged as on this PC.
 pub(crate) async fn inbound_crew_site_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -928,16 +931,25 @@ pub(crate) async fn inbound_crew_site_check(
         },
         None => None,
     };
-    let node_removed = conn
+    let held_node: Option<i64> = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS removed FROM teams t JOIN org_nodes n ON n.id = t.primary_node_id               WHERE t.id = ? AND (n.deleted_at IS NOT NULL OR n.status <> 'active')",
+            "SELECT primary_node_id FROM teams WHERE id = ?",
             [team.into()],
         ))
         .await?
-        .is_some();
-    if node_removed {
-        return Ok(None);
+        .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten());
+    if let (Some(held), Some(node)) = (held_node, new_node) {
+        if held != node {
+            if crate::org::validation::node_replaces_deleted_node(conn, held, node).await? {
+                return Ok(None);
+            }
+            if crate::org::validation::node_copy_awaits_activation(conn, Some(held), node).await? {
+                return Ok(Some(InboundVerdict::Defer(format!(
+                    "crew {entity_sync_id}: the organisation structure holding its new node is not activated here yet"
+                ))));
+            }
+        }
     }
     let Some(block) = super::crew_site::crew_site_change_block(conn, team, new_node, Utc::now()).await? else {
         return Ok(None);
