@@ -887,7 +887,10 @@ pub(crate) async fn is_seal_only_resend(
     let Some(seal) = other.get("approval_seal").and_then(Value::as_str) else {
         return Ok(false);
     };
-    if marked(other) || local_approval_seal(conn, id).await?.as_deref() != Some(seal) {
+    // The refusal marks are left out of the comparison below only when empty: a refusal reason
+    // without its date is not empty either (review R4-N5).
+    let reason_set = other.get("sync_refused_reason").is_some_and(|v| !v.is_null());
+    if marked(other) || reason_set || local_approval_seal(conn, id).await?.as_deref() != Some(seal) {
         return Ok(false);
     }
     let Some(base) = base_payload(conn, sync_id).await? else {
@@ -917,6 +920,33 @@ async fn settle_seal_resend(
     path: &str,
 ) -> AppResult<()> {
     crate::sync::queries::overwrite_synced_state(conn, ENTITY, sync_id, version, hash, "seal_resend_settled").await?;
+    // A server conflict still open for one of this PC's items about to be superseded (the pull path
+    // can meet one): closed with the settlement, so no stale item waits for a person (review R4-N3).
+    // Its outbox item is superseded below and the change staged again, so nothing is lost; the
+    // closure is noted on the conflict and counted in the audit. Only items in `conflict`: a
+    // rejection stays for a person.
+    let closed_conflicts = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE sync_conflicts \
+                SET status = 'resolved_remote', resolution_action = 'seal_resend_settled', resolution_note = ?, \
+                    resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1, \
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+              WHERE status IN ('new', 'triaged', 'escalated') \
+                AND linked_outbox_id IN (SELECT id FROM sync_outbox \
+                     WHERE entity_type = ? AND entity_sync_id = ? AND status = 'conflict')",
+            [
+                format!(
+                    "The decision was re-sent sealed by an upgraded PC (server version {version}) with the content this \
+                     change was based on: this change is staged again on top of it, nobody asked."
+                )
+                .into(),
+                ENTITY.into(),
+                sync_id.into(),
+            ],
+        ))
+        .await?
+        .rows_affected();
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE sync_outbox SET status = 'superseded', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
@@ -943,6 +973,7 @@ async fn settle_seal_resend(
                 "decision_sync_id": sync_id,
                 "server_row_version": version,
                 "path": path,
+                "conflicts_closed": closed_conflicts,
             })),
         },
     )
@@ -1005,6 +1036,13 @@ pub(crate) async fn settle_seal_resend_inbound(
 ) -> AppResult<Option<ApplyOutcome>> {
     if entity_type != ENTITY {
         return Ok(None);
+    }
+    // Only a version newer than the one this PC knows the server holds: this runs before the
+    // concurrency check, so an older or equal version must never move the known version back
+    // (review R4-N2). It is left to that check (a person conflict, or unchanged).
+    match crate::sync::queries::synced_row_version(conn, ENTITY, entity_sync_id).await? {
+        Some((known, _)) if row_version > known => {}
+        _ => return Ok(None),
     }
     let unsent = conn
         .query_one(Statement::from_sql_and_values(
