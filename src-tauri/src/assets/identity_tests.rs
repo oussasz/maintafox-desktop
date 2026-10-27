@@ -374,6 +374,7 @@ mod tests {
             rams_utilization_factor: None,
             commissioned_at: None,
             decommissioned_at: decom.map(|d| d.map(str::to_string)),
+            org_node_id: None,
         };
         let refused = |r: Result<_, AppError>| matches!(r, Err(AppError::ValidationFailed(m)) if m[0] == identity::RETIRE_THROUGH_DECOMMISSION);
         for status in ["DECOMMISSIONED", "SCRAPPED"] {

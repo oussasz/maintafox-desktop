@@ -2290,6 +2290,8 @@ export interface UpdateAssetIdentityPayload {
   rams_utilization_factor?: number;
   commissioned_at?: string | null;
   decommissioned_at?: string | null;
+  /** New location, moved in the same save and recorded as a "Déplacé" event. */
+  org_node_id?: number;
 }
 
 export interface LinkAssetPayload {

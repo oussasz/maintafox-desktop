@@ -666,4 +666,142 @@ mod tests {
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
     }
+
+    // ── D19 — a move is recorded ("Déplacé") ──────────────────────────────
+
+    async fn moved_events(db: &sea_orm::DatabaseConnection, asset_id: i64) -> Vec<(Option<i64>, Option<i64>, Option<i64>)> {
+        db.query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT from_node_id, to_node_id, performed_by_id FROM equipment_lifecycle_events \
+             WHERE equipment_id = ? AND event_type = 'MOVED' ORDER BY id",
+            [asset_id.into()],
+        ))
+        .await
+        .expect("events")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get("", "from_node_id").expect("from"),
+                r.try_get("", "to_node_id").expect("to"),
+                r.try_get("", "performed_by_id").expect("by"),
+            )
+        })
+        .collect()
+    }
+
+    async fn move_audits(db: &sea_orm::DatabaseConnection, asset_id: i64) -> Vec<(Option<i64>, String)> {
+        db.query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT actor_id, details_json FROM audit_events WHERE action_code = ? AND target_id = ? ORDER BY id",
+            [crate::assets::lifecycle::ASSET_MOVED_EVENT.into(), asset_id.to_string().into()],
+        ))
+        .await
+        .expect("audits")
+        .iter()
+        .map(|r| (r.try_get("", "actor_id").expect("actor"), r.try_get("", "details_json").expect("details")))
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn d19_move_action_records_moved_event_and_audit() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-A", node_id).await;
+
+        hierarchy::move_asset_org_node(&db, asset.id, node_id_2, asset.row_version, 1)
+            .await
+            .expect("move");
+
+        assert_eq!(moved_events(&db, asset.id).await, vec![(Some(node_id), Some(node_id_2), Some(1))]);
+        let audits = move_audits(&db, asset.id).await;
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0].0, Some(1));
+        assert!(audits[0].1.contains(&format!("\"to_org_node_id\":{node_id_2}")), "{}", audits[0].1);
+    }
+
+    #[tokio::test]
+    async fn d19_edit_form_save_moves_in_the_same_transaction() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-B", node_id).await;
+
+        let saved = identity::update_asset_identity(
+            &db,
+            asset.id,
+            identity::UpdateAssetIdentityPayload {
+                asset_name: Some("Pompe déplacée".into()),
+                org_node_id: Some(node_id_2),
+                ..Default::default()
+            },
+            asset.row_version,
+            1,
+        )
+        .await
+        .expect("edit and move");
+
+        assert_eq!(saved.asset_name, "Pompe déplacée");
+        assert_eq!(saved.org_node_id, Some(node_id_2));
+        assert_eq!(saved.row_version, asset.row_version + 2, "one version for the edit, one for the move");
+        assert_eq!(moved_events(&db, asset.id).await, vec![(Some(node_id), Some(node_id_2), Some(1))]);
+        assert_eq!(move_audits(&db, asset.id).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn d19_same_location_records_no_move() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-C", node_id).await;
+
+        let saved = identity::update_asset_identity(
+            &db,
+            asset.id,
+            identity::UpdateAssetIdentityPayload {
+                asset_name: Some("Renommée".into()),
+                org_node_id: Some(node_id),
+                ..Default::default()
+            },
+            asset.row_version,
+            1,
+        )
+        .await
+        .expect("edit");
+
+        assert_eq!(saved.row_version, asset.row_version + 1);
+        assert!(moved_events(&db, asset.id).await.is_empty());
+        assert!(move_audits(&db, asset.id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn d19_refused_move_leaves_the_edit_unsaved() {
+        let db = setup().await;
+        let node_id = setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let asset = create_test_asset(&db, "D19-D", node_id).await;
+
+        identity::update_asset_identity(
+            &db,
+            asset.id,
+            identity::UpdateAssetIdentityPayload {
+                asset_name: Some("Ne doit pas rester".into()),
+                org_node_id: Some(999_999),
+                ..Default::default()
+            },
+            asset.row_version,
+            1,
+        )
+        .await
+        .expect_err("unknown location refused");
+
+        let stored = identity::get_asset_by_id(&db, asset.id).await.expect("asset");
+        assert_eq!(stored.asset_name, asset.asset_name, "the edit is rolled back with the refused move");
+        assert_eq!(stored.row_version, asset.row_version);
+        assert_eq!(stored.org_node_id, Some(node_id));
+        assert!(moved_events(&db, asset.id).await.is_empty());
+        assert!(move_audits(&db, asset.id).await.is_empty());
+    }
 }
