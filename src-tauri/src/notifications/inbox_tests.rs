@@ -1077,15 +1077,16 @@ async fn a_stock_occurrence_is_identified_by_the_movement_that_crossed_the_reord
     assert_eq!(seal.since, watchers::parse_time("2026-10-03T08:00:00Z"));
 }
 
-/// AU-112: a request notice without a node is plant-wide, like a work order without a site: a
-/// reviewer granted di.view on a site does not see it; once granted di.view plant-wide, they do.
+/// AU-112: a request notice is shown to a site reviewer when the request is on their site now; a
+/// grant on a deleted node shows nothing; a plant-wide grant shows every one.
 #[tokio::test]
-async fn a_request_without_a_site_is_not_shown_to_a_site_reviewer() {
+async fn a_request_notice_follows_the_request_site() {
     let db = db().await;
     org_node(&db, 911, None).await;
+    org_node(&db, 912, None).await;
     user(&db, 91, None).await;
     grant_on_node(&db, 91, crate::rbac::permissions::DI_VIEW, 911).await;
-    for id in [311_i64, 312] {
+    for (id, node) in [(311_i64, 911_i64), (312, 912)] {
         exec(
             &db,
             &format!(
@@ -1099,7 +1100,7 @@ async fn a_request_without_a_site_is_not_shown_to_a_site_reviewer() {
             vec![
                 id.into(),
                 format!("DI-{id}").into(),
-                911_i64.into(),
+                node.into(),
                 format!("nt-di-{id}").into(),
             ],
         )
@@ -1122,44 +1123,81 @@ async fn a_request_without_a_site_is_not_shown_to_a_site_reviewer() {
         .await
         .expect("emit");
     }
-    // A request row always has a node: the notice of 312 is made one without a node, as a
-    // notice raised with no site would be.
-    exec(
-        &db,
-        "UPDATE notification_events SET org_node_id = NULL WHERE source_record_id = '312'",
-        vec![],
-    )
-    .await;
-    assert_eq!(
-        scalar_i64(
-            &db,
-            "SELECT COUNT(*) FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
-             WHERE e.source_record_id = '312' AND n.recipient_user_id = 91",
-            vec![],
-        )
-        .await,
-        1,
-        "the site reviewer was notified: only the inbox hides it"
-    );
-    let records = |items: Vec<inbox::InboxItem>| {
+    let seen = |db: DatabaseConnection| async move {
+        let vis = inbox::visible_to(&db, 91).await.expect("visibility");
+        let items = inbox::list(&db, 91, &vis, &InboxFilter::default()).await.expect("list");
         let mut ids: Vec<String> = items.into_iter().filter_map(|i| i.source_record_id).collect();
         ids.sort();
         ids.dedup();
         ids
     };
-    let site_vis = inbox::visible_to(&db, 91).await.expect("visibility");
-    let site_items = inbox::list(&db, 91, &site_vis, &InboxFilter::default())
-        .await
-        .expect("list");
-    assert_eq!(records(site_items), vec!["311".to_string()], "the site's request only");
-    grant(&db, 91, &[crate::rbac::permissions::DI_VIEW]).await;
-    let plant_vis = inbox::visible_to(&db, 91).await.expect("visibility");
-    let plant_items = inbox::list(&db, 91, &plant_vis, &InboxFilter::default())
-        .await
-        .expect("list");
     assert_eq!(
-        records(plant_items),
-        vec!["311".to_string(), "312".to_string()],
-        "plant-wide: the request notice without a node too"
+        seen(db.clone()).await,
+        vec!["311".to_string()],
+        "the site's request only"
     );
+
+    // The notice follows its request: moved to the reviewer's site, it is shown (review S1).
+    exec(
+        &db,
+        "UPDATE intervention_requests SET org_node_id = 911 WHERE id = 312",
+        vec![],
+    )
+    .await;
+    assert_eq!(seen(db.clone()).await, vec!["311".to_string(), "312".to_string()]);
+
+    // A grant on a deleted node shows nothing, as in the lists (review N1).
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET deleted_at = {NOW} WHERE id = 911"),
+        vec![],
+    )
+    .await;
+    assert!(seen(db.clone()).await.is_empty(), "no grant left on a live node");
+
+    grant(&db, 91, &[crate::rbac::permissions::DI_VIEW]).await;
+    assert_eq!(
+        seen(db.clone()).await,
+        vec!["311".to_string(), "312".to_string()],
+        "plant-wide: every request notice"
+    );
+}
+
+/// AU-112 review S1: a work order without a site gets one; its notice is then shown to the
+/// site's users (and one moved to another site follows it).
+#[tokio::test]
+async fn a_work_order_notice_follows_its_site() {
+    let db = db().await;
+    org_node(&db, 921, None).await;
+    org_node(&db, 922, None).await;
+    user(&db, 93, None).await;
+    grant_on_node(&db, 93, crate::rbac::permissions::OT_VIEW, 921).await;
+    tick(&db).await;
+    watching_since_yesterday(&db).await;
+    for id in [41_i64, 42] {
+        work_order(&db, id, Some(93), None, None).await;
+    }
+    exec(
+        &db,
+        "UPDATE work_orders SET entity_id = CASE id WHEN 41 THEN NULL ELSE 922 END WHERE id IN (41, 42)",
+        vec![],
+    )
+    .await;
+    tick(&db).await;
+    let seen = |db: DatabaseConnection| async move {
+        let vis = inbox::visible_to(&db, 93).await.expect("visibility");
+        let items = inbox::list(&db, 93, &vis, &InboxFilter::default()).await.expect("list");
+        let mut ids: Vec<String> = items.into_iter().filter_map(|i| i.source_record_id).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+    assert!(seen(db.clone()).await.is_empty(), "no site, and another site");
+    exec(
+        &db,
+        "UPDATE work_orders SET entity_id = 921 WHERE id IN (41, 42)",
+        vec![],
+    )
+    .await;
+    assert_eq!(seen(db.clone()).await, vec!["41".to_string(), "42".to_string()]);
 }
