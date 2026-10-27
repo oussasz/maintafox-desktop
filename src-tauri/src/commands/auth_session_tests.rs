@@ -452,3 +452,166 @@ async fn wrong_current_passwords_at_password_change_lock_the_account() {
     assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
     assert!(state.session.read().await.current.is_none(), "the session ended");
 }
+
+// ── AU-109: no sign-in or unlock while an update is being installed ──────────────
+
+/// What a refused attempt must leave untouched: audit rows, stored sessions, the failure count.
+async fn written(db: &DatabaseConnection, user_id: i32) -> (i64, i64, i64) {
+    (
+        scalar_i64(db, "SELECT COUNT(*) AS v FROM audit_events", vec![]).await,
+        scalar_i64(db, "SELECT COUNT(*) AS v FROM app_sessions", vec![]).await,
+        failed_attempts(db, user_id).await,
+    )
+}
+
+fn login_request(username: &str, password: &str) -> LoginRequest {
+    LoginRequest {
+        username: username.into(),
+        password: password.into(),
+    }
+}
+
+fn is_update_refusal(err: &AppError) -> bool {
+    matches!(err, AppError::UpdateInProgress(m) if m.starts_with("AUTH_UPDATE_IN_PROGRESS"))
+}
+
+#[tokio::test]
+async fn sign_in_is_refused_while_an_update_installs_and_nothing_is_written() {
+    use std::sync::atomic::AtomicBool;
+    static BARRIER: AtomicBool = AtomicBool::new(true);
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "update_sign_in").await;
+    let before = written(&db, id).await;
+
+    for password in ["wrong-password", PASSWORD] {
+        let refused = login_impl(&state, login_request("update_sign_in", password), &BARRIER)
+            .await
+            .unwrap_err();
+        assert!(is_update_refusal(&refused), "{password}: {refused:?}");
+        assert_eq!(
+            serde_json::to_value(&refused).unwrap()["code"],
+            "AUTH_UPDATE_IN_PROGRESS"
+        );
+    }
+    assert!(state.session.read().await.current.is_none(), "no session opened");
+    assert_eq!(
+        written(&db, id).await,
+        before,
+        "no audit row, stored session or failed attempt"
+    );
+}
+
+#[tokio::test]
+async fn sign_in_is_checked_as_before_when_no_update_installs() {
+    use std::sync::atomic::AtomicBool;
+    static BARRIER: AtomicBool = AtomicBool::new(false);
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "no_update_sign_in").await;
+
+    let refused = login_impl(&state, login_request("no_update_sign_in", "wrong-password"), &BARRIER)
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::Auth(_)), "{refused:?}");
+    assert_eq!(
+        failed_attempts(&db, id).await,
+        1,
+        "the wrong password is counted as before"
+    );
+    if let Err(err) = login_impl(&state, login_request("no_update_sign_in", PASSWORD), &BARRIER).await {
+        assert!(!is_update_refusal(&err), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn unlock_is_refused_while_an_update_installs_and_nothing_is_written() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BARRIER: AtomicBool = AtomicBool::new(true);
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "update_unlock").await;
+    let session_id = sign_in(&state, id, "update_unlock").await;
+    set_user_pin(&db, id, "4321").await;
+    set_last_activity(&state, 45).await;
+    assert!(touch_session_impl(&state).await.is_err(), "locked by the idle deadline");
+    let before = written(&db, id).await;
+
+    for password in ["wrong-password", PASSWORD] {
+        let refused = unlock_session_under(
+            &state,
+            UnlockSessionRequest {
+                password: password.into(),
+            },
+            &BARRIER,
+        )
+        .await
+        .unwrap_err();
+        assert!(is_update_refusal(&refused), "password {password}: {refused:?}");
+    }
+    for pin_value in ["1111", "4321"] {
+        let refused = unlock_session_with_pin_under(&state, PinUnlockInput { pin: pin_value.into() }, &BARRIER)
+            .await
+            .unwrap_err();
+        assert!(is_update_refusal(&refused), "PIN {pin_value}: {refused:?}");
+    }
+    {
+        let guard = state.session.read().await;
+        let session = guard.current.as_ref().expect("the session is kept");
+        assert!(guard.session_info().is_locked, "still locked");
+        assert_eq!(session.pin_failed_attempts, 0, "no PIN attempt used up");
+    }
+    assert_eq!(
+        written(&db, id).await,
+        before,
+        "no audit row, stored session or failed attempt"
+    );
+    assert!(!session_revoked(&db, &session_id).await);
+
+    // The restart did not come (the install stopped): unlocking works again.
+    BARRIER.store(false, Ordering::SeqCst);
+    let info = unlock_session_under(
+        &state,
+        UnlockSessionRequest {
+            password: PASSWORD.into(),
+        },
+        &BARRIER,
+    )
+    .await
+    .expect("unlock once the barrier is down");
+    assert!(info.is_authenticated && !info.is_locked);
+}
+
+/// Signing out is never blocked by an update: it does not read the barrier, so it ends the session
+/// (one audit row) while sign-in and unlock are refused.
+#[tokio::test]
+async fn sign_out_still_works_while_an_update_installs() {
+    use std::sync::atomic::AtomicBool;
+    static BARRIER: AtomicBool = AtomicBool::new(true);
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let id = technician(&db, "update_sign_out").await;
+    sign_in(&state, id, "update_sign_out").await;
+    set_last_activity(&state, 45).await;
+    assert!(unlock_session_under(
+        &state,
+        UnlockSessionRequest {
+            password: PASSWORD.into(),
+        },
+        &BARRIER,
+    )
+    .await
+    .is_err_and(|e| is_update_refusal(&e)));
+    let audits = scalar_i64(&db, "SELECT COUNT(*) AS v FROM audit_events", vec![]).await;
+
+    logout_impl(&state).await.expect("sign-out");
+    assert!(state.session.read().await.current.is_none(), "the session ended");
+    assert_eq!(
+        scalar_i64(&db, "SELECT COUNT(*) AS v FROM audit_events", vec![]).await,
+        audits + 1,
+        "its one audit row"
+    );
+    assert!(login_impl(&state, login_request("update_sign_out", PASSWORD), &BARRIER)
+        .await
+        .is_err_and(|e| is_update_refusal(&e)));
+}

@@ -13,7 +13,7 @@ import {
 } from "@/lib/step-up-bridge";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
-import { toErrorMessage } from "@/utils/errors";
+import { AUTH_UPDATE_IN_PROGRESS, toErrorMessage } from "@/utils/errors";
 
 /** Commands invoked during bootstrap where a toast would be noisy or misleading. */
 const SILENT_IPC_COMMANDS = new Set([
@@ -226,6 +226,11 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
 
   if (code === PASSWORD_CHANGE_REQUIRED) {
     // AuthGuard shows the change-password screen instead.
+    return;
+  }
+
+  if (code === AUTH_UPDATE_IN_PROGRESS) {
+    // The sign-in or lock screen shows the translated reason instead.
     return;
   }
 

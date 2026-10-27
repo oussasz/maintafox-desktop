@@ -9,6 +9,7 @@ import {
   getSessionInfo,
 } from "@/services/auth-service";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
+import { AUTH_UPDATE_IN_PROGRESS } from "@/utils/errors";
 import type { LoginRequest, SessionInfo } from "@shared/ipc-types";
 
 /** Extract message and code from a Tauri IPC error object or standard Error. */
@@ -262,6 +263,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         error: message,
         errorCode: null,
       });
+      // An update is installing: the lock screen translates the refusal from its code.
+      if (code === AUTH_UPDATE_IN_PROGRESS) throw e;
       throw new Error(message);
     }
   },

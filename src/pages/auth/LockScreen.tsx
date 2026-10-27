@@ -7,13 +7,15 @@ import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth } from "@/design-system/tokens";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
-import { extractIpcErrorCode } from "@/utils/errors";
+import { AUTH_UPDATE_IN_PROGRESS, extractIpcErrorCode } from "@/utils/errors";
 
 /**
  * Text shown for a failed unlock: the translated error when the failure carries a code (or is an
- * Error), otherwise the screen's own fallback. Display only — the unlock flow is unchanged.
+ * Error), otherwise the screen's own fallback. Display only — the unlock flow is unchanged. An
+ * unlock refused while an update installs says so (AU-109).
  */
-function unlockErrorText(err: unknown, fallback: string): string {
+function unlockErrorText(err: unknown, fallback: string, updateInProgress: string): string {
+  if (extractIpcErrorCode(err) === AUTH_UPDATE_IN_PROGRESS) return updateInProgress;
   const described = describeAppError(err);
   return described.code || err instanceof Error ? described.title : fallback;
 }
@@ -95,16 +97,18 @@ export function LockScreen({
         const message = err instanceof Error ? err.message : t("session.pin.invalid");
 
         // A disabled PIN (server code PIN_DISABLED, plain IPC object or Error) goes straight to
-        // password unlock instead of using up the remaining PIN attempts.
-        if (extractIpcErrorCode(err) === "PIN_DISABLED") {
+        // password unlock instead of using up the remaining PIN attempts. A refusal while an
+        // update installs checked no PIN and uses up none.
+        const code = extractIpcErrorCode(err);
+        if (code === "PIN_DISABLED") {
           setPinFailures(MAX_PIN_FAILURES);
-        } else {
+        } else if (code !== AUTH_UPDATE_IN_PROGRESS) {
           setPinFailures((f) => f + 1);
         }
 
         setPinValue("");
         pinInputRef.current?.focus();
-        setError(unlockErrorText(err, message));
+        setError(unlockErrorText(err, message, t("login.updateInProgress")));
       } finally {
         setLoading(false);
       }
@@ -157,7 +161,9 @@ export function LockScreen({
     try {
       await onUnlock(password);
     } catch (err) {
-      setError(unlockErrorText(err, t("session.idleLocked.unlockAction")));
+      setError(
+        unlockErrorText(err, t("session.idleLocked.unlockAction"), t("login.updateInProgress")),
+      );
       setPassword("");
     } finally {
       setLoading(false);
