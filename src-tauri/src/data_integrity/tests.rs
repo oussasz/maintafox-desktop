@@ -39,6 +39,29 @@ async fn insert_user(db: &DatabaseConnection, username: &str) -> i64 {
     .await
 }
 
+/// `user` holds `integrity.repair` plant-wide, through a custom role assigned at tenant scope.
+async fn grant_integrity_repair(db: &DatabaseConnection, user: i64) {
+    let role = format!("di-repairers-{user}");
+    exec(
+        db,
+        "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version)          VALUES (?, ?, 'custom', 'active', 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'),          strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
+        vec![format!("{role}-sync").into(), role.clone().into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO role_permissions (role_id, permission_id, granted_at)          SELECT r.id, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM roles r, permissions p           WHERE r.name = ? AND p.name = ?",
+        vec![role.clone().into(), crate::rbac::permissions::INTEGRITY_REPAIR.into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,          created_at, updated_at, row_version)          SELECT ?, ?, id, 'tenant', NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'),          strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1 FROM roles WHERE name = ?",
+        vec![format!("{role}-assignment").into(), user.into(), role.into()],
+    )
+    .await;
+}
+
 async fn insert_wo(db: &DatabaseConnection, code: &str, actual: Option<(&str, &str)>) -> i64 {
     let (start, end) = match actual {
         Some((s, e)) => (Some(s.to_string()), Some(e.to_string())),
@@ -500,6 +523,7 @@ async fn waive_error_finding_requires_a_second_person() {
     let db = started_db().await;
     let actor = admin_id(&db).await;
     let approver = insert_user(&db, "di_supervisor").await;
+    grant_integrity_repair(&db, approver).await;
     let wo = insert_wo(&db, "WO-WAIVE-ERR", None).await;
     insert_segment(&db, wo, "2026-04-10T14:00:00Z", Some("2026-04-10T08:00:00Z")).await;
     run_data_integrity_detectors(&db).await.expect("run");
@@ -511,6 +535,34 @@ async fn waive_error_finding_requires_a_second_person() {
     let msg = validation_text(waive_data_integrity_finding(&db, waive(&f, 1, "known", Some(actor)), actor).await);
     assert!(msg.contains("second-person approval"), "{msg}");
     assert_eq!(audit_rows(&db, f.id).await, 0);
+
+    // AU-116: the second person must be able to waive it themselves.
+    let bystander = insert_user(&db, "di_bystander").await;
+    let msg = validation_text(waive_data_integrity_finding(&db, waive(&f, 1, "known", Some(bystander)), actor).await);
+    assert!(
+        msg.starts_with("GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED"),
+        "without the right: {msg}"
+    );
+    let departed = insert_user(&db, "di_departed").await;
+    grant_integrity_repair(&db, departed).await;
+    exec(
+        &db,
+        "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
+        vec![departed.into()],
+    )
+    .await;
+    let msg = validation_text(waive_data_integrity_finding(&db, waive(&f, 1, "known", Some(departed)), actor).await);
+    assert!(
+        msg.starts_with("GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED"),
+        "inactive: {msg}"
+    );
+    let msg = validation_text(waive_data_integrity_finding(&db, waive(&f, 1, "known", Some(999_999)), actor).await);
+    assert!(
+        msg.starts_with("GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED"),
+        "unknown id: {msg}"
+    );
+    assert_eq!(audit_rows(&db, f.id).await, 0);
+    assert_eq!(get_finding(&db, f.id).await.expect("get").expect("row").status, "open");
 
     let w = waive_data_integrity_finding(&db, waive(&f, 1, "Known clock skew", Some(approver)), actor)
         .await

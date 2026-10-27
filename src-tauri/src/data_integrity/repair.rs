@@ -152,6 +152,14 @@ pub async fn waive_data_integrity_finding(
                 "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED: second-person approval required for error findings".into(),
             ]));
         }
+        // The second person is someone who could waive it: an active account holding
+        // `integrity.repair` plant-wide now (or an administrator), not any account id (AU-116).
+        if !crate::settings::site::holds_tenant_right(&txn, appr, crate::rbac::permissions::INTEGRITY_REPAIR).await? {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED: the approver is not an active account holding integrity.repair"
+                    .into(),
+            ]));
+        }
         appr
     } else {
         input.approver_id.unwrap_or(actor_id)
