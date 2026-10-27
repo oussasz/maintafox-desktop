@@ -41,8 +41,22 @@ pub struct LoginResponse {
 /// Returns an opaque error on any failure — does not reveal whether the
 /// username exists, whether the password was wrong, or whether the account
 /// is locked. Details are logged at WARN level on the Rust side only.
+///
+/// Refused while an update is being installed (`AUTH_UPDATE_IN_PROGRESS`, AU-109).
 #[tauri::command]
 pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResult<LoginResponse> {
+    login_impl(state.inner(), payload, crate::updater::update_write_barrier()).await
+}
+
+/// [`login`], checking the update barrier `barrier` (the process-wide one in the app).
+pub(crate) async fn login_impl(
+    state: &AppState,
+    payload: LoginRequest,
+    barrier: &std::sync::atomic::AtomicBool,
+) -> AppResult<LoginResponse> {
+    // From the pre-update backup until the restart nobody signs in (AU-109): a session opened now
+    // would write after the backup. Checked first: no lockout count, audit row or session.
+    crate::updater::refuse_sign_in_while_installing_on(barrier)?;
     let username = payload.username.trim().to_string();
 
     if username.is_empty() || payload.password.is_empty() {
@@ -336,8 +350,15 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
 }
 
 /// Log the current user out and clear the active session.
+///
+/// Allowed while an update is being installed (AU-109): ending a session on a shared PC is never
+/// blocked. It then writes only its one audit row (one transaction).
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
+    logout_impl(state.inner()).await
+}
+
+pub(crate) async fn logout_impl(state: &AppState) -> AppResult<()> {
     // Capture actor before clearing the session
     let actor_id = state.session.read().await.current.as_ref().map(|s| s.user.user_id);
 
@@ -512,6 +533,18 @@ pub(crate) async fn unlock_session_impl(
     state: &AppState,
     payload: UnlockSessionRequest,
 ) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_under(state, payload, crate::updater::update_write_barrier()).await
+}
+
+/// [`unlock_session`], checking the update barrier `barrier` (the process-wide one in the app).
+pub(crate) async fn unlock_session_under(
+    state: &AppState,
+    payload: UnlockSessionRequest,
+    barrier: &std::sync::atomic::AtomicBool,
+) -> AppResult<session_manager::SessionInfo> {
+    // No unlock while an update is being installed (AU-109), before the password is checked: no
+    // failed-attempt count, audit row or reopened session.
+    crate::updater::refuse_sign_in_while_installing_on(barrier)?;
     // Read session to get the user — even locked sessions have a user
     let (user, session_db_id) = {
         let sm = state.session.read().await;
@@ -950,6 +983,19 @@ pub(crate) async fn unlock_session_with_pin_impl(
     state: &AppState,
     payload: PinUnlockInput,
 ) -> AppResult<session_manager::SessionInfo> {
+    unlock_session_with_pin_under(state, payload, crate::updater::update_write_barrier()).await
+}
+
+/// [`unlock_session_with_pin`], checking the update barrier `barrier` (the process-wide one in the
+/// app).
+pub(crate) async fn unlock_session_with_pin_under(
+    state: &AppState,
+    payload: PinUnlockInput,
+    barrier: &std::sync::atomic::AtomicBool,
+) -> AppResult<session_manager::SessionInfo> {
+    // No unlock while an update is being installed (AU-109), before the PIN is checked: no PIN
+    // attempt used up, no audit row, no reopened session.
+    crate::updater::refuse_sign_in_while_installing_on(barrier)?;
     let pin_value = payload.pin.trim().to_string();
     pin::validate_pin_format(&pin_value)?;
 

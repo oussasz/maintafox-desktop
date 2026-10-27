@@ -141,6 +141,26 @@ describe("LoginPage: first administrator", () => {
   });
 });
 
+describe("LoginPage: sign-in while an update installs (AU-109)", () => {
+  beforeEach(() => {
+    ipc.calls.length = 0;
+    ipc.bootstrap = { tenant_id: "tenant-plant", has_tenant_admin: true, plant_join: "sign_in" };
+  });
+
+  it("says an update is in progress instead of the server text", async () => {
+    session.error = "AUTH_UPDATE_IN_PROGRESS: Mise à jour en cours (serveur)";
+    session.errorCode = "AUTH_UPDATE_IN_PROGRESS";
+    try {
+      renderLogin();
+      expect(await screen.findByText("login.updateInProgress")).toBeInTheDocument();
+      expect(screen.queryByText(/AUTH_UPDATE_IN_PROGRESS/)).not.toBeInTheDocument();
+    } finally {
+      session.error = null;
+      session.errorCode = null;
+    }
+  });
+});
+
 describe("LoginPage: account received without its password", () => {
   beforeEach(() => {
     ipc.calls.length = 0;

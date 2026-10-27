@@ -150,6 +150,10 @@ mod errors_tests {
                 AppError::PasswordNotReceived("no password here".into()),
                 "PASSWORD_NOT_RECEIVED",
             ),
+            (
+                AppError::UpdateInProgress("installing".into()),
+                "AUTH_UPDATE_IN_PROGRESS",
+            ),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 

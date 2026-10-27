@@ -93,6 +93,12 @@ export function formatOrgIpcError(err: unknown): string {
   return toErrorMessage(err).replace(/^Validation failed:\s*/i, "");
 }
 
+/**
+ * Server code (`AppError::UpdateInProgress`): sign-in and unlock are refused while an update
+ * installs (pre-update backup until the restart). The sign-in and lock screens say so; no toast.
+ */
+export const AUTH_UPDATE_IN_PROGRESS = "AUTH_UPDATE_IN_PROGRESS";
+
 /** Tauri IPC error code when present on a plain reject object. */
 export function extractIpcErrorCode(err: unknown): string | null {
   if (typeof err === "object" && err !== null && "code" in err) {
