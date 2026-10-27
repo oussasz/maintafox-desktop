@@ -207,6 +207,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: message,
         errorCode: code,
+        lockedUntil: code === ACCOUNT_LOCKED ? lockoutUntil(e) : null,
         hasBootstrapped: true,
       });
     }
