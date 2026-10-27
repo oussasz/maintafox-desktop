@@ -6986,6 +6986,71 @@ async fn the_started_without_rule_finding_skips_a_snapshot_only_on_a_first_join(
     }
 }
 
+/// Review S1: a work order held here, started without the rule held here, received again by a
+/// snapshot is judged (not new here): exactly one finding, and a later snapshot adds none.
+#[tokio::test]
+async fn a_held_work_order_received_by_a_snapshot_gets_the_finding_once() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-S1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("status sync id");
+    let started = |title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!("OT-RM-S1")),
+                ("title", json!(title)),
+                ("status_sync_id", json!(on_hold)),
+                ("requires_permit", json!(0)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        )
+    };
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
+    let findings = || wo_events(&db, "wo-rule-s1", "permit_rule_missing_on_arrival");
+
+    // New here by the first join's snapshot: the plant's history, no finding; now held here.
+    inbox_wo(&db, "snapshot-all-s1-a", "wo-rule-s1", 5, &started("Replace breaker")).await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("0"), "new here: history");
+
+    // Held here, received again by a snapshot: judged, one finding.
+    inbox_wo(&db, "snapshot-all-s1-b", "wo-rule-s1", 6, &started("Replace breaker (2)")).await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "held here: judged");
+
+    // A later snapshot: still one.
+    inbox_wo(&db, "snapshot-all-s1-c", "wo-rule-s1", 7, &started("Replace breaker (3)")).await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "once");
+    assert_eq!(
+        wo_status_by_sync(&db, "wo-rule-s1").await.as_deref(),
+        Some("on_hold")
+    );
+}
+
 /// AU-04 B2: the rule list received here flags this PC's work orders not started yet that a rule
 /// of it matches, as the PC that published it did; started ones are left as they are.
 #[tokio::test]

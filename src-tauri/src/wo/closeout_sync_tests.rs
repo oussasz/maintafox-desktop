@@ -1254,6 +1254,48 @@ async fn a_snapshot_row_of_a_work_order_held_here_is_judged() {
     assert_eq!(wo_status(&db, wo_id).await, "in_progress", "nothing written");
 }
 
+/// Review N1: a version of the work order waiting from an exchange makes it held here (judged); one
+/// waiting from an earlier page of a snapshot does not (still the plant's history of the first join).
+#[tokio::test]
+async fn a_waiting_exchange_version_makes_a_snapshot_work_order_held_but_a_snapshot_page_does_not() {
+    let source = setup().await;
+    let (wo_id, rv) = create_wo_in_progress(&source).await;
+    advance_to_completed_verified(&source, wo_id, rv).await;
+    let sync = wo_sync(&source, wo_id).await;
+    let wo_row = wire(&source, "work_orders", &sync).await;
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    let judged = || async {
+        crate::sync::materialize::judged_as_row_of_batch(
+            "snapshot-all-join",
+            crate::wo::closeout_sync::closeout_entry(&target, &sync, &wo_row),
+        )
+        .await
+        .expect("entry")
+        .expect("status here")
+        .expect("new here: an entry")
+        .judged
+    };
+    assert!(!judged().await, "nothing held: first-join history");
+
+    for (batch, held) in [("snapshot-all-page-1", false), ("b-delta-waiting", true)] {
+        inbox(&target, batch, "work_orders", &sync, 4, &wo_row).await;
+        exec(
+            &target,
+            "UPDATE sync_inbox SET apply_status = 'deferred' WHERE server_batch_id = ?",
+            vec![batch.into()],
+        )
+        .await;
+        assert_eq!(judged().await, held, "{batch}");
+        exec(
+            &target,
+            "DELETE FROM sync_inbox WHERE server_batch_id = ?",
+            vec![batch.into()],
+        )
+        .await;
+    }
+}
+
 /// The work order `sync` was refused here (its group, `SYNC_GROUP_REFUSED`), not written, and its
 /// verification not applied: the child follows its work order's decision.
 async fn refused(target: &DatabaseConnection, sync: &str, why: &str) {
