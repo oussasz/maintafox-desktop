@@ -487,6 +487,15 @@ async fn translate_json_out(
             let Some(slot) = doc.pointer_mut(&pointer) else {
                 continue;
             };
+            // A history value that already is a sync id is sent as it is: a PC that received the
+            // row before its own version mapped this path stored the sender's sync id unchanged,
+            // and re-encoding it the same way keeps the sender's audit hash valid there after it
+            // upgrades. Only a UUID passes (sync ids are UUIDs); any other text is still refused.
+            if let Value::String(s) = slot {
+                if r.history && uuid::Uuid::parse_str(s.trim()).is_ok() {
+                    continue;
+                }
+            }
             let local_id = match slot {
                 Value::Null => continue,
                 Value::Number(n) => n.as_i64(),

@@ -17,6 +17,7 @@ pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
 pub mod queries;
+pub mod retired_equipment_review;
 pub mod shifts;
 pub mod stats;
 pub mod statuses;
@@ -48,6 +49,8 @@ mod gap06_regression_tests;
 mod migration_tests;
 #[cfg(test)]
 mod part_lines_tests;
+#[cfg(test)]
+mod retired_equipment_review_tests;
 #[cfg(test)]
 mod retired_equipment_tests;
 #[cfg(test)]

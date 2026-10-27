@@ -195,7 +195,9 @@
     "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT ou version de plan conservés",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
     "stock_count_recount": "Comptage à refaire",
-    "stock_count_second_approval": "Comptage retenu pour une seconde approbation"
+    "stock_count_second_approval": "Comptage retenu pour une seconde approbation",
+    "retired_equipment_work": "OT sur équipement déclassé",
+    "retired_equipment_request": "Demande sur équipement déclassé"
   },
   "messages": {
     "wo_assigned": {
@@ -408,6 +410,14 @@
     "account_reenable_refused": {
       "title": "Réactivation de compte reçue sans droit : non appliquée",
       "body": "{{account}} : compte réactivé le {{changed_at}} par {{author}}, qui n’avait pas (ou plus) le droit de gérer les utilisateurs ici. Le compte reste désactivé sur ce poste. Si c’était voulu, un administrateur le réactive de nouveau ; cela corrige aussi les autres postes."
+    },
+    "retired_equipment_wo": {
+      "title": "OT {{code}} sur équipement déclassé {{asset}}",
+      "body": "{{title}} : OT ouvert alors que l'équipement {{asset}} ({{asset_name}}) est déclassé ou mis au rebut (croisement à la synchronisation). Annulez l'OT avec un motif, ou remettez l'équipement en service."
+    },
+    "retired_equipment_di": {
+      "title": "Demande {{code}} sur équipement déclassé {{asset}}",
+      "body": "{{title}} : demande ouverte alors que l'équipement {{asset}} ({{asset_name}}) est déclassé ou mis au rebut (croisement à la synchronisation). Rejetez la demande avec un motif, ou remettez l'équipement en service."
     }
   },
   "audience": {

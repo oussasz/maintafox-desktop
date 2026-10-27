@@ -862,6 +862,7 @@ pub fn run() {
         commands::wo::list_work_order_statuses,
         commands::wo::update_work_order_status,
         commands::wo::list_wo,
+        commands::wo::list_retired_equipment_reviews,
         commands::wo::get_wo,
         commands::wo::create_wo,
         commands::wo::update_wo_draft,

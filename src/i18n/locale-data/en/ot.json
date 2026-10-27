@@ -1147,5 +1147,30 @@
     "technically_verified": "Technically verified",
     "closed": "Closed",
     "cancelled": "Cancelled"
+  },
+  "retiredEquipment": {
+    "title": "Retired equipment — to review",
+    "intro": "These work orders and requests are open while their equipment is retired (decommissioned or scrapped): the two crossed in synchronisation. Cancel the work order or reject the request with a reason, or return the equipment to service.",
+    "kind": {
+      "work_order": "WO",
+      "intervention_request": "Request"
+    },
+    "equipment": "Equipment {{code}} {{name}}",
+    "open": "Open",
+    "history": "History ({{count}})",
+    "historyLink": "Retired equipment: history ({{count}})",
+    "closure": {
+      "wo_closed": "Closed by the close of work order {{code}}",
+      "wo_cancelled": "Closed by the cancellation of work order {{code}}",
+      "di_rejected": "Closed by the rejection of request {{code}}",
+      "di_closed": "Closed by the closing of request {{code}}",
+      "di_converted": "Closed by the conversion of request {{code}} into work order {{wo}} (the work order has its own case)",
+      "recommissioned": "Closed by the return to service of equipment {{equipment}}",
+      "other": "Closed: {{code}} is no longer open on retired equipment"
+    },
+    "closedBy": "{{who}}, {{when}}",
+    "closedAt": "{{when}}",
+    "note": "Reason: {{note}}",
+    "loadFailed": "Could not load the work orders and requests on retired equipment."
   }
 }

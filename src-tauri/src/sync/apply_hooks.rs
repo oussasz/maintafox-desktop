@@ -136,6 +136,11 @@
 //!   organisation administration right plant-wide here), when and why, and the record still has no
 //!   site here; the trace is never rewritten; a work order or request given a site without that
 //!   trace is a conflict (`org::site_assignment::inbound_site_assignment_check`).
+//! - `work_orders` / `intervention_requests` / `equipment`: after the apply, an open work order or
+//!   request on equipment retired here (created on one PC, the retirement recorded on another,
+//!   whichever arrives second) is applied, never refused, and gets its one review item
+//!   "équipement déclassé", closed again by its terminal state or a return to service
+//!   (`wo::retired_equipment_review`, audit finding AU-73b).
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -806,7 +811,9 @@ pub(crate) async fn after_upsert(
                 }
                 _ => false,
             };
-            after_received_work_order(conn, id, sent_without_origin, held_rule, first_join_history).await
+            after_received_work_order(conn, id, sent_without_origin, held_rule, first_join_history).await?;
+            // Open on retired equipment here, or no longer: its review item (AU-73b).
+            crate::wo::retired_equipment_review::reconcile_work_order_in(conn, id).await
         }
         // A request received flagged "sécurité" protects its work orders not started yet, as the PC
         // that flagged it did (`permit_requirement::raise_work_orders_of_safety_request`).
@@ -816,7 +823,16 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "request not found after apply"))?;
             crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
                 .await?;
-            Ok(())
+            // Open on retired equipment here, or no longer: its review item (AU-73b).
+            crate::wo::retired_equipment_review::reconcile_request_in(conn, id).await
+        }
+        // A retirement or a return to service received: the review items of the equipment's open
+        // work orders and requests (AU-73b, `wo::retired_equipment_review`).
+        "equipment" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "equipment not found after apply"))?;
+            crate::wo::retired_equipment_review::reconcile_equipment_in(conn, id).await
         }
         "user_dismissals" => {
             let id = located_row_id(conn, layout, row)

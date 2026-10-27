@@ -2525,6 +2525,7 @@
     "reliability_kpi_snapshots": "derived_projection",
     "report_artifacts": "job_queue",
     "report_runs": "job_queue",
+    "retired_equipment_reviews": "derived_projection",
     "scheduling_conflicts": "derived_projection",
     "seaql_migrations": "sync_control",
     "secure_secret_refs": "secrets",
