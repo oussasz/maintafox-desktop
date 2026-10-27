@@ -981,6 +981,57 @@ mod tests {
         approx_eq(summary.total_cost, 400.0, 0.01);
     }
 
+    /// Review N6: costs and hours left empty (NULL) on a work order are read as 0.0 by the cost
+    /// summary, the cost-posting hook, the plan adherence and the close-out gate, never refused as an
+    /// integer 0 that does not read as a number.
+    #[tokio::test]
+    async fn empty_costs_and_hours_read_as_zero() {
+        let db = setup().await;
+        let wo = create_wo_draft(&db, "Empty costs and hours").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET labor_cost = NULL, parts_cost = NULL, service_cost = NULL, \
+                    service_cost_input = NULL, total_cost = NULL, active_labor_hours = NULL, \
+                    total_waiting_hours = NULL, downtime_hours = NULL WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .expect("empty");
+
+        let summary = costs::get_cost_summary(&db, wo.id).await.expect("cost summary");
+        approx_eq(summary.total_cost, 0.0, 0.001);
+        crate::wo::plan_adherence::get_plan_adherence(&db, wo.id)
+            .await
+            .expect("plan adherence");
+        let evidence = crate::wo::closeout::CloseEvidence {
+            closer_user_id: Some(admin_id(&db).await),
+            no_downtime_attestation: None,
+            no_downtime_attestation_reason: None,
+            fmeca_override_reason: None,
+            fmeca_override_signer_id: None,
+            fmeca_override_signer_password: crate::wo::closeout::SignerPassword::Given(None),
+        };
+        let refusals = crate::wo::closeout::close_preflight(&db, wo.id, &evidence, 1000)
+            .await
+            .expect("close-out gate")
+            .0;
+        assert!(
+            refusals.iter().any(|m| m.starts_with("GATE_CLOSEOUT_LABOR_REQUIRED")),
+            "{refusals:?}"
+        );
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'closed') \
+              WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .expect("closed");
+        let hook = costs::get_cost_posting_hook(&db, wo.id).await.expect("cost hook");
+        approx_eq(hook.total_cost, 0.0, 0.001);
+    }
+
     #[tokio::test]
     async fn test_wo_13_optimistic_lock_on_plan() {
         let db = setup().await;

@@ -70,14 +70,14 @@ pub async fn get_cost_summary(db: &impl ConnectionTrait, wo_id: i64) -> AppResul
             DbBackend::Sqlite,
             "SELECT \
                 wo.id AS wo_id, \
-                COALESCE(wo.labor_cost, 0) AS labor_cost, \
-                COALESCE(wo.parts_cost, 0) AS parts_cost, \
-                COALESCE(wo.service_cost, COALESCE(wo.service_cost_input, 0)) AS service_cost, \
-                COALESCE(wo.total_cost, 0) AS total_cost, \
+                COALESCE(wo.labor_cost, 0.0) AS labor_cost, \
+                COALESCE(wo.parts_cost, 0.0) AS parts_cost, \
+                COALESCE(wo.service_cost, COALESCE(wo.service_cost_input, 0.0)) AS service_cost, \
+                COALESCE(wo.total_cost, 0.0) AS total_cost, \
                 wo.expected_duration_hours, \
                 wo.actual_duration_hours, \
-                COALESCE(wo.active_labor_hours, 0) AS active_labor_hours, \
-                COALESCE(wo.total_waiting_hours, 0) AS total_waiting_hours \
+                COALESCE(wo.active_labor_hours, 0.0) AS active_labor_hours, \
+                COALESCE(wo.total_waiting_hours, 0.0) AS total_waiting_hours \
              FROM work_orders wo WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -174,10 +174,10 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
                 wo.equipment_id AS asset_id, \
                 wot.code AS type_code, \
                 ul.code AS urgency_code, wot.semantic_tag AS nature_code, \
-                COALESCE(wo.total_cost, 0) AS total_cost, \
-                COALESCE(wo.labor_cost, 0) AS labor_cost, \
-                COALESCE(wo.parts_cost, 0) AS parts_cost, \
-                COALESCE(wo.service_cost, 0) AS service_cost, \
+                COALESCE(wo.total_cost, 0.0) AS total_cost, \
+                COALESCE(wo.labor_cost, 0.0) AS labor_cost, \
+                COALESCE(wo.parts_cost, 0.0) AS parts_cost, \
+                COALESCE(wo.service_cost, 0.0) AS service_cost, \
                 wo.closed_at, \
                 wos.code AS status_code \
              FROM work_orders wo \
