@@ -2,6 +2,9 @@
   "toast": {
     "dismiss": "Dismiss the message"
   },
+  "decimalField": {
+    "dotHint": "A point is the decimal mark (1.250 = 1.25)."
+  },
   "partNecessity": {
     "legend": "Part required or optional",
     "legendFor": "{{part}}: required or optional",

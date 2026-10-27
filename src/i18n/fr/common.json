@@ -2,6 +2,9 @@
   "toast": {
     "dismiss": "Fermer le message"
   },
+  "decimalField": {
+    "dotHint": "Le point sert de séparateur décimal (1.250 = 1,25)."
+  },
   "partNecessity": {
     "legend": "Pièce obligatoire ou optionnelle",
     "legendFor": "{{part}} : obligatoire ou optionnelle",

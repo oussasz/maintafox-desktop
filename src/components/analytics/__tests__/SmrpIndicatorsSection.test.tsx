@@ -158,6 +158,10 @@ describe("SmrpIndicatorsSection", () => {
     );
     expect(screen.getByText("smrp.schedule.formula")).toBeInTheDocument();
     expect(screen.getByText("smrp.unitPercent")).toBeInTheDocument();
+    // The "stable" band, from the registry, is part of the definition.
+    expect(screen.getByTestId("smrp-schedule-stable-band")).toHaveTextContent(
+      /smrp\.stableBand\[points=0[.,]5\]/,
+    );
   });
 
   it("names the backlog's open-OT rule and opens the list on that rule", () => {

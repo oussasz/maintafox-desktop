@@ -58,6 +58,8 @@ const COMMON_TOP_KEYS = [
   "toast",
   // Date and time fields (src/components/ui/date-field.tsx, time-input.tsx, month-calendar.tsx).
   "dateField",
+  // Hint of the decimal entry field (src/components/ui/decimal-field.tsx).
+  "decimalField",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

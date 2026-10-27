@@ -16,6 +16,7 @@
  * submitted behind text the user can still see.
  */
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import { Input, type InputProps } from "@/components/ui/input";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -60,6 +61,7 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
     },
     ref,
   ) => {
+    const { t } = useTranslation("common");
     const { formatDecimalInput, parseDecimal } = useFormatters();
     const show = React.useCallback(
       (v: number | null) => formatDecimalInput(v, { decimals, fixed }),
@@ -173,6 +175,8 @@ export const DecimalField = React.forwardRef<HTMLInputElement, DecimalFieldProps
 
     return (
       <Input
+        // Unobtrusive hint on hover / for screen readers; a caller's own title wins.
+        title={t("decimalField.dotHint")}
         {...props}
         ref={ref}
         inputMode="decimal"

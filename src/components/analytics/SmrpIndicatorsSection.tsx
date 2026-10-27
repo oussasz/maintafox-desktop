@@ -64,6 +64,8 @@ interface TileProps {
   formula: string;
   unit: string;
   period: string;
+  /** The indicator's "stable" band, already worded (from the KPI registry). */
+  stableText?: string;
   onOpen?: () => void;
   openLabel?: string;
 }
@@ -79,6 +81,7 @@ function SmrpTile({
   formula,
   unit,
   period,
+  stableText,
   onOpen,
   openLabel,
 }: TileProps) {
@@ -117,6 +120,13 @@ function SmrpTile({
                 <dt className="font-medium text-text-secondary">{t("smrp.unit")}</dt>
                 <dd className="text-text-muted">{unit}</dd>
               </div>
+              {stableText ? (
+                <div>
+                  <dd className="text-text-muted" data-testid={`smrp-${id}-stable-band`}>
+                    {stableText}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </PopoverContent>
         </Popover>
@@ -179,6 +189,9 @@ export function SmrpIndicatorsSection({
   });
   const pct = (v: number | null | undefined) => (v == null ? "—" : formatPercent(v));
   const hours = (v: number) => t("smrp.hoursValue", { value: formatDecimal(v, 1) });
+  /** The "stable" band of a tile, worded from the registry value. */
+  const stableTextOf = (points: number) =>
+    t("smrp.stableBand", { points: formatDecimal(points, points < 0.1 ? 2 : 1) });
   const trendOf = (m: SmrpMetric, direction: SmrpDirection, stablePoints: number) => {
     const tr = pointsTrend(m.current.value_pct, m.previous.value_pct, direction, stablePoints);
     if (!tr) return null;
@@ -211,6 +224,7 @@ export function SmrpIndicatorsSection({
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
+        stableText={stableTextOf(smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE))}
         {...(can(P.PLAN_VIEW) ? { onOpen: () => navigate("/planning") } : {})}
       />,
     );
@@ -253,6 +267,7 @@ export function SmrpIndicatorsSection({
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
+          stableText={stableTextOf(smrpStableBelow(band))}
           {...(can(P.OT_VIEW)
             ? {
                 onOpen: () =>
@@ -292,6 +307,7 @@ export function SmrpIndicatorsSection({
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
+        stableText={stableTextOf(pmStableBelow)}
         {...(can(P.PM_VIEW) ? { onOpen: () => navigate("/pm") } : {})}
       />,
     );
@@ -410,6 +426,7 @@ export function SmrpIndicatorsSection({
         formula={t("smrp.rav.formula")}
         unit={t("smrp.unitPercentYear")}
         period={period}
+        stableText={stableTextOf(smrpStableBelow(SMRP_KPI_KEYS.COST_TO_RAV))}
         {...(can(P.EQ_VIEW) ? { onOpen: () => navigate("/equipment") } : {})}
         openLabel={c.value_pct == null ? t("smrp.rav.openAssets") : t("smrp.open")}
       />,
