@@ -59,7 +59,8 @@ async fn retire_here(db: &DatabaseConnection) {
 async fn retire_here_at(db: &DatabaseConnection, at: &str) {
     exec(
         db,
-        "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', decommissioned_at = ? WHERE id = 1",
+        "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', decommissioned_at = ?, \
+         row_version = row_version + 1 WHERE id = 1",
         vec![at.into()],
     )
     .await;
@@ -640,12 +641,15 @@ async fn two_pcs_derive_the_same_item_key_and_notice_identity() {
     apply(&b, "equipment", "test-eq-co-001", &equipment).await;
 
     let key = ReviewKey::work_order(&sid).key();
+    let mut opened = Vec::new();
     for db in [&a, &b] {
         let open = list(db, false).await;
         assert_eq!(open.len(), 1);
         assert_eq!(open[0].review_key, key);
+        opened.push(open[0].opened_at.clone());
         watch(db).await;
     }
+    assert_eq!(opened[0], opened[1], "the same opening on both PCs");
     let identity = |db: &DatabaseConnection| {
         let db = db.clone();
         async move {
@@ -977,4 +981,216 @@ async fn a_cancellation_received_by_sync_closes_the_item_in_the_apply() {
     .await;
     assert_eq!(state.as_deref(), Some("closed|wo_cancelled"));
     assert!(review::pending_keys(&target).await.expect("pending").is_empty());
+}
+
+// ── Round 2 ──────────────────────────────────────────────────────────────────────────────────────
+
+/// A return to service recorded on `db` (retired there) at `at`: the event's sync id.
+async fn recommission_on(db: &DatabaseConnection, at: &str, note: &str) -> String {
+    let row_version = scalar(db, "SELECT row_version FROM equipment WHERE id = 1", vec![]).await;
+    let event = crate::assets::lifecycle::record_lifecycle_event(
+        db,
+        crate::assets::lifecycle::RecordLifecycleEventPayload {
+            asset_id: 1,
+            event_type: "RECOMMISSIONED".into(),
+            event_at: Some(at.into()),
+            from_org_node_id: None,
+            to_org_node_id: None,
+            from_status_code: None,
+            to_status_code: Some("ACTIVE_IN_SERVICE".into()),
+            from_class_code: None,
+            to_class_code: None,
+            related_asset_id: None,
+            reason_code: None,
+            notes: Some(note.into()),
+            approved_by_id: None,
+            expected_row_version: Some(row_version),
+        },
+        admin_id(db).await as i32,
+    )
+    .await
+    .expect("recommission");
+    text(
+        db,
+        "SELECT entity_sync_id FROM equipment_lifecycle_events WHERE id = ?",
+        vec![event.id.into()],
+    )
+    .await
+    .expect("event sync id")
+}
+
+type Closure = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
+fn closure_of(i: &RetiredEquipmentReview) -> Closure {
+    (
+        i.status.clone(),
+        i.closure_kind.clone(),
+        i.closed_at.clone(),
+        i.closed_by.clone(),
+        i.closure_note.clone(),
+        i.opened_at.clone(),
+    )
+}
+
+/// R2-S1: a PC that never saw the equipment in service between two retirements (only the latest
+/// equipment row reached it) follows the new retirement: its item closes on the same return to
+/// service, with the same opening, as on a PC that saw every version.
+#[tokio::test]
+async fn an_open_item_follows_a_retirement_it_received_without_the_return_to_service_between() {
+    let source = pc().await;
+    let (_, sid) = work_order_on(&source).await;
+    let wo_row = wire(&source, "work_orders", &sid).await;
+    let (a, b) = (pc().await, pc().await);
+    for db in [&a, &b] {
+        retire_here(db).await;
+        apply(db, "work_orders", &sid, &wo_row).await;
+    }
+    // Another PC: returned to service, retired again, returned to service again.
+    let y = pc().await;
+    retire_here(&y).await;
+    let ev1 = recommission_on(&y, "2026-11-01T00:00:00Z", "First return").await;
+    let in_service = wire(&y, "equipment", "test-eq-co-001").await;
+    let ev1_row = wire(&y, "equipment_lifecycle_events", &ev1).await;
+    retire_here_at(&y, "2026-12-01T00:00:00Z").await;
+    let retired_again = wire(&y, "equipment", "test-eq-co-001").await;
+
+    // B saw every version; A only the latest equipment row (and the first event).
+    apply(&b, "equipment", "test-eq-co-001", &in_service).await;
+    apply(&b, "equipment_lifecycle_events", &ev1, &ev1_row).await;
+    assert!(matches!(
+        apply(&b, "equipment", "test-eq-co-001", &retired_again).await,
+        ApplyOutcome::Applied
+    ));
+    apply(&a, "equipment_lifecycle_events", &ev1, &ev1_row).await;
+    assert!(matches!(
+        apply(&a, "equipment", "test-eq-co-001", &retired_again).await,
+        ApplyOutcome::Applied
+    ));
+    let a_open = list(&a, false).await;
+    assert_eq!(a_open.len(), 1);
+    assert_eq!(a_open[0].opened_at, "2026-12-01T00:00:00Z", "the retirement in force");
+
+    let ev2 = recommission_on(&y, "2026-12-02T00:00:00Z", "Second return").await;
+    let back = wire(&y, "equipment", "test-eq-co-001").await;
+    let ev2_row = wire(&y, "equipment_lifecycle_events", &ev2).await;
+    for db in [&a, &b] {
+        apply(db, "equipment_lifecycle_events", &ev2, &ev2_row).await;
+        apply(db, "equipment", "test-eq-co-001", &back).await;
+    }
+
+    let key = ReviewKey::work_order(&sid);
+    let on_a = item(&a, &key).await;
+    assert_eq!(on_a.len(), 1, "A never saw the first return to service");
+    let on_b = item(&b, &key).await;
+    assert_eq!(on_b.len(), 2, "B closed one item and opened another");
+    let latest_b = on_b
+        .iter()
+        .find(|i| i.opened_at == "2026-12-01T00:00:00Z")
+        .expect("B's item of the second retirement");
+    assert_eq!(closure_of(&on_a[0]), closure_of(latest_b));
+    assert_eq!(on_a[0].closed_at.as_deref(), Some("2026-12-02T00:00:00Z"));
+    assert_eq!(on_a[0].closure_note.as_deref(), Some("Second return"));
+    let first_b = on_b
+        .iter()
+        .find(|i| i.opened_at != "2026-12-01T00:00:00Z")
+        .expect("B's first item");
+    assert_eq!(first_b.closure_note.as_deref(), Some("First return"));
+}
+
+/// R2-S2: the work order cancelled on one PC and the equipment returned to service on another,
+/// received in opposite orders: the same closure on both PCs, the earlier of the two.
+#[tokio::test]
+async fn a_cancellation_and_a_return_to_service_received_in_either_order_close_the_same_way() {
+    let source = pc().await;
+    let (wo_id, sid) = work_order_on(&source).await;
+    let wo_row = wire(&source, "work_orders", &sid).await;
+    let (a, b) = (pc().await, pc().await);
+    for db in [&a, &b] {
+        retire_here(db).await;
+        apply(db, "work_orders", &sid, &wo_row).await;
+    }
+    let y = pc().await;
+    retire_here(&y).await;
+    let ev = recommission_on(&y, "2026-10-25T00:00:00Z", "Back in service").await;
+    let back = wire(&y, "equipment", "test-eq-co-001").await;
+    let ev_row = wire(&y, "equipment_lifecycle_events", &ev).await;
+    let wo = crate::wo::queries::get_work_order(&source, wo_id)
+        .await
+        .expect("get")
+        .expect("wo");
+    crate::wo::queries::cancel_work_order(
+        &source,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo.row_version,
+            actor_id: admin_id(&source).await,
+            cancel_reason: "No longer needed".into(),
+        },
+    )
+    .await
+    .expect("cancel");
+    let cancelled = wire(&source, "work_orders", &sid).await;
+
+    apply(&a, "work_orders", &sid, &cancelled).await;
+    apply(&a, "equipment_lifecycle_events", &ev, &ev_row).await;
+    apply(&a, "equipment", "test-eq-co-001", &back).await;
+    apply(&b, "equipment_lifecycle_events", &ev, &ev_row).await;
+    apply(&b, "equipment", "test-eq-co-001", &back).await;
+    apply(&b, "work_orders", &sid, &cancelled).await;
+
+    let key = ReviewKey::work_order(&sid);
+    let (on_a, on_b) = (item(&a, &key).await, item(&b, &key).await);
+    assert_eq!((on_a.len(), on_b.len()), (1, 1));
+    assert_eq!(
+        closure_of(&on_a[0]),
+        closure_of(&on_b[0]),
+        "arrival order does not matter"
+    );
+    assert_eq!(
+        on_a[0].closure_kind.as_deref(),
+        Some(CLOSURE_RECOMMISSIONED),
+        "the earlier end"
+    );
+    assert_eq!(on_a[0].closed_at.as_deref(), Some("2026-10-25T00:00:00Z"));
+    assert_eq!(on_a[0].closure_note.as_deref(), Some("Back in service"));
+}
+
+/// R2-N9: a work order with an open item deleted by sync: the delete is applied (no foreign key
+/// from the projection) and the item closes.
+#[tokio::test]
+async fn a_work_order_deleted_by_sync_closes_its_item() {
+    let (_, target, sid) = target_with_received_work_order().await;
+    let layout = crate::sync::row_layout::layout(&target, "work_orders")
+        .await
+        .expect("layout");
+    let payload = crate::sync::row_codec::delete_payload(&layout, None);
+    let tx = target.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        &sid,
+        "delete",
+        &serde_json::to_string(&payload).expect("json"),
+    )
+    .await
+    .expect("apply delete");
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    tx.commit().await.expect("commit");
+    crate::sync::row_codec::clear_ref_cache();
+
+    let items = item(&target, &ReviewKey::work_order(&sid)).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].status, "closed");
+    assert_eq!(
+        items[0].closure_kind.as_deref(),
+        Some(super::retired_equipment_review::CLOSURE_OTHER)
+    );
+    assert_eq!(items[0].record_id, None, "the work order is gone");
 }

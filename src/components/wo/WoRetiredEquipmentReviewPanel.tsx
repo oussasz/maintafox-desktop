@@ -11,7 +11,7 @@
 
 import type { TFunction } from "i18next";
 import { AlertTriangle, ChevronDown, ChevronRight, Eye } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -70,13 +70,17 @@ export function WoRetiredEquipmentReviewPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // An open history stays open across reloads and is read again with them.
+  const historyShown = useRef(false);
+  historyShown.current = showHistory;
+
   const load = useCallback(async () => {
     try {
-      const list = await listRetiredEquipmentReviews(false);
+      const withHistory = historyShown.current;
+      const list = await listRetiredEquipmentReviews(withHistory);
       setOpen(list.items.filter((i) => i.status === "open"));
       setClosedCount(list.closed_count);
-      setHistory(null);
-      setShowHistory(false);
+      setHistory(withHistory ? list.items.filter((i) => i.status === "closed") : null);
       setFailed(false);
     } catch {
       setFailed(true);

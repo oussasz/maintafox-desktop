@@ -196,6 +196,34 @@ describe("WoRetiredEquipmentReviewPanel", () => {
     expect(screen.queryByText("OT-0041")).not.toBeInTheDocument();
   });
 
+  it("keeps an open history open when the work-order list reloads, and reads it again", async () => {
+    mocks.listRetiredEquipmentReviews.mockImplementation(async (includeClosed: boolean) => ({
+      items: [review(), ...(includeClosed ? CLOSED : [])],
+      closed_count: 2,
+    }));
+    const view = renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "History (2)" }));
+    expect(
+      await screen.findByText("Closed by the cancellation of work order OT-0041"),
+    ).toBeInTheDocument();
+
+    mocks.store.items = [{ id: 99 }];
+    view.rerender(
+      <MemoryRouter>
+        <WoRetiredEquipmentReviewPanel />
+      </MemoryRouter>,
+    );
+    await flush();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true);
+    expect(
+      screen.getByText("Closed by the cancellation of work order OT-0041"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History (2)" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
   it("shows nothing when there is nothing to review", async () => {
     mocks.listRetiredEquipmentReviews.mockResolvedValue({ items: [], closed_count: 0 });
     const { container } = renderPanel();

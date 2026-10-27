@@ -26,7 +26,11 @@
 //!
 //! Times, the same on every PC. An item's `opened_at` is when both became true: the later of the
 //! record's creation and the retirement it was opened under (`retired_at`: the equipment's
-//! `decommissioned_at`, else its latest retirement event). A closure keeps the record's own time
+//! `decommissioned_at`, else its latest retirement event), kept up to date while it is open (a
+//! return to service and a new retirement may reach this PC as one equipment row). How, when and
+//! by whom a closed item closed is resolved when the list is read: the earlier of the record's own
+//! end and the return to service ending that retirement (`list_select`), so the arrival order of
+//! the two never changes it. A closure keeps the record's own time
 //! (its close, cancel or conversion time; for a record gone or moved, its last change). A return to
 //! service is the FIRST `RECOMMISSIONED` event at or after `retired_at`, read when the list is read
 //! (time, who, note), so an event that arrives after the equipment row, or a later retire /
@@ -239,6 +243,29 @@ fn later(a: Option<String>, b: Option<String>) -> Option<String> {
     }
 }
 
+/// How a work order in a terminal status ended (the two codes of `wo::backlog::CLOSED_STATUS_SQL`).
+fn wo_end_kind(status: &str) -> &'static str {
+    if status == WoStatus::Cancelled.as_str() {
+        CLOSURE_WO_CANCELLED
+    } else {
+        CLOSURE_WO_CLOSED
+    }
+}
+
+/// How a request no longer open ended: converted, rejected, or closed otherwise.
+fn di_end_kind(status: &str, disposition: &str, converted: bool) -> &'static str {
+    if converted
+        || disposition == crate::di::disposition::DISPOSITION_CONVERTED_TO_WO
+        || status == "converted_to_work_order"
+    {
+        CLOSURE_DI_CONVERTED
+    } else if REJECTED_DISPOSITIONS.contains(&disposition) || status == "rejected" {
+        CLOSURE_DI_REJECTED
+    } else {
+        CLOSURE_DI_CLOSED
+    }
+}
+
 /// The state of one record here, as the item reads it.
 struct RecordState {
     record_id: i64,
@@ -300,30 +327,24 @@ async fn record_state(conn: &impl ConnectionTrait, key: &ReviewKey) -> AppResult
         None
     } else if key.kind == KIND_WORK_ORDER {
         // The two codes of `wo::backlog::CLOSED_STATUS_SQL`: cancelled, or closed.
-        if opt_s(&row, "status")?.as_deref() == Some(WoStatus::Cancelled.as_str()) {
-            Some((
-                CLOSURE_WO_CANCELLED,
-                opt_s(&row, "cancelled_at")?.or(updated_at.clone()),
-            ))
+        let kind = wo_end_kind(&opt_s(&row, "status")?.unwrap_or_default());
+        let at = if kind == CLOSURE_WO_CANCELLED {
+            opt_s(&row, "cancelled_at")?
         } else {
-            Some((CLOSURE_WO_CLOSED, opt_s(&row, "closed_at")?.or(updated_at.clone())))
-        }
+            opt_s(&row, "closed_at")?
+        };
+        Some((kind, at.or(updated_at.clone())))
     } else {
         let status = opt_s(&row, "status")?.unwrap_or_default();
         let disposition = opt_s(&row, "disposition_code")?.unwrap_or_default();
         let converted_at = opt_s(&row, "converted_at")?;
-        let closed_at = opt_s(&row, "closed_at")?;
-        let declined_at = opt_s(&row, "declined_at")?;
-        if converted_at.is_some()
-            || disposition == crate::di::disposition::DISPOSITION_CONVERTED_TO_WO
-            || status == "converted_to_work_order"
-        {
-            Some((CLOSURE_DI_CONVERTED, converted_at.or(closed_at).or(updated_at.clone())))
-        } else if REJECTED_DISPOSITIONS.contains(&disposition.as_str()) || status == "rejected" {
-            Some((CLOSURE_DI_REJECTED, closed_at.or(declined_at).or(updated_at.clone())))
-        } else {
-            Some((CLOSURE_DI_CLOSED, closed_at.or(updated_at.clone())))
-        }
+        let kind = di_end_kind(&status, &disposition, converted_at.is_some());
+        // The time of `END_AT_SQL`: conversion, close, decline, last change.
+        let at = converted_at
+            .or(opt_s(&row, "closed_at")?)
+            .or(opt_s(&row, "declined_at")?)
+            .or(updated_at.clone());
+        Some((kind, at))
     };
     Ok(Some(RecordState {
         record_id: row.try_get("", "id").map_err(|e| decode("id", e))?,
@@ -337,26 +358,29 @@ async fn record_state(conn: &impl ConnectionTrait, key: &ReviewKey) -> AppResult
     }))
 }
 
-/// SQL (one bind each: equipment id, then `retired_at` twice): the return to service an item
-/// opened under that retirement closes on — the first `RECOMMISSIONED` event at or after it (the
-/// latest when the retirement time is unknown), ties by sync id: the same event on every PC.
-const RECOMMISSION_EVENT_SQL: &str = "SELECT ev.id FROM equipment_lifecycle_events ev \
-     WHERE ev.equipment_id = ? AND ev.event_type = 'RECOMMISSIONED' \
-       AND (? IS NULL OR julianday(ev.occurred_at) >= julianday(?)) \
-     ORDER BY CASE WHEN ? IS NULL THEN -julianday(ev.occurred_at) ELSE julianday(ev.occurred_at) END, \
-              ev.entity_sync_id LIMIT 1";
+/// SQL predicate (alias `ev`; `{equipment}` and `{since}` are SQL written here, never user input):
+/// the `RECOMMISSIONED` events of the equipment that end a retirement that began at `since` — those
+/// that happened at or after it, or were recorded at or after it (a return to service entered with
+/// an earlier date still counts: it cannot end a retirement it was recorded before).
+fn recommission_after_sql(equipment: &str, since: &str) -> String {
+    format!(
+        "ev.equipment_id = {equipment} AND ev.event_type = 'RECOMMISSIONED' \
+         AND MAX(julianday(ev.occurred_at), COALESCE(julianday(ev.created_at), julianday(ev.occurred_at))) \
+             >= julianday({since})"
+    )
+}
 
-/// When the equipment was returned to service after the retirement `retired_at`.
-async fn recommissioned_at(
-    conn: &impl ConnectionTrait,
-    equipment_id: i64,
-    retired_at: Option<&str>,
-) -> AppResult<Option<String>> {
-    let retired_at: Value = retired_at.map(str::to_string).into();
+/// When the equipment was returned to service after `since` (the item's retirement, else its
+/// opening): the first such event, ties by sync id — the same event on every PC.
+async fn recommissioned_at(conn: &impl ConnectionTrait, equipment_id: i64, since: &str) -> AppResult<Option<String>> {
     Ok(conn
         .query_one(sqlite(
-            &format!("SELECT occurred_at FROM equipment_lifecycle_events WHERE id = ({RECOMMISSION_EVENT_SQL})"),
-            vec![equipment_id.into(), retired_at.clone(), retired_at.clone(), retired_at],
+            &format!(
+                "SELECT ev.occurred_at FROM equipment_lifecycle_events ev WHERE {} \
+                 ORDER BY julianday(ev.occurred_at), ev.entity_sync_id LIMIT 1",
+                recommission_after_sql("?", "?")
+            ),
+            vec![equipment_id.into(), since.into()],
         ))
         .await?
         .map(|r| opt_s(&r, "occurred_at"))
@@ -371,7 +395,7 @@ async fn closure(
     conn: &impl ConnectionTrait,
     state: Option<&RecordState>,
     item_equipment_id: i64,
-    item_retired_at: Option<&str>,
+    item_since: &str,
 ) -> AppResult<(&'static str, String)> {
     let Some(state) = state else {
         return Ok((CLOSURE_OTHER, now_iso()));
@@ -380,7 +404,7 @@ async fn closure(
         return Ok((*kind, at.clone().unwrap_or_else(now_iso)));
     }
     if state.in_service && state.equipment_id == Some(item_equipment_id) {
-        let at = recommissioned_at(conn, item_equipment_id, item_retired_at).await?;
+        let at = recommissioned_at(conn, item_equipment_id, item_since).await?;
         return Ok((CLOSURE_RECOMMISSIONED, at.unwrap_or_else(now_iso)));
     }
     Ok((CLOSURE_OTHER, state.updated_at.clone().unwrap_or_else(now_iso)))
@@ -396,7 +420,7 @@ pub async fn reconcile_in(conn: &impl ConnectionTrait, key: &ReviewKey) -> AppRe
         .is_some_and(|s| s.retired && s.terminal.is_none() && s.equipment_id.is_some());
     let item = conn
         .query_one(sqlite(
-            "SELECT id, equipment_id, retired_at FROM retired_equipment_reviews \
+            "SELECT id, equipment_id, retired_at, opened_at FROM retired_equipment_reviews \
              WHERE record_kind = ? AND record_sync_id = ? AND status = 'open'",
             vec![key.kind.into(), key.sync_id.clone().into()],
         ))
@@ -422,17 +446,22 @@ pub async fn reconcile_in(conn: &impl ConnectionTrait, key: &ReviewKey) -> AppRe
             .await?;
         }
         (true, Some(item), Some(state)) => {
-            // Still open: it follows the record's equipment (moved to another retired one).
+            // Still open: it follows the record's equipment (moved to another retired one) and the
+            // retirement in force (a return to service and a new retirement this PC never saw as
+            // such: only the latest equipment row arrived), with the opening that goes with it.
             let id: i64 = item.try_get("", "id").map_err(|e| decode("id", e))?;
+            let opened_at = later(state.created_at.clone(), state.retired_at.clone()).unwrap_or_else(now_iso);
             conn.execute(sqlite(
-                "UPDATE retired_equipment_reviews SET equipment_id = ?, record_id = ?, retired_at = ? \
-                 WHERE id = ? AND status = 'open' AND equipment_id IS NOT ?",
+                "UPDATE retired_equipment_reviews SET equipment_id = ?, record_id = ?, retired_at = ?, opened_at = ? \
+                 WHERE id = ? AND status = 'open' AND (equipment_id IS NOT ? OR retired_at IS NOT ?)",
                 vec![
                     state.equipment_id.into(),
                     state.record_id.into(),
                     state.retired_at.clone().into(),
+                    opened_at.into(),
                     id.into(),
                     state.equipment_id.into(),
+                    state.retired_at.clone().into(),
                 ],
             ))
             .await?;
@@ -442,8 +471,10 @@ pub async fn reconcile_in(conn: &impl ConnectionTrait, key: &ReviewKey) -> AppRe
             let equipment_id: i64 = item
                 .try_get("", "equipment_id")
                 .map_err(|e| decode("equipment_id", e))?;
-            let retired_at = opt_s(&item, "retired_at")?;
-            let (kind, at) = closure(conn, state.as_ref(), equipment_id, retired_at.as_deref()).await?;
+            let since = opt_s(&item, "retired_at")?
+                .or(opt_s(&item, "opened_at")?)
+                .unwrap_or_default();
+            let (kind, at) = closure(conn, state.as_ref(), equipment_id, &since).await?;
             conn.execute(sqlite(
                 "UPDATE retired_equipment_reviews SET status = 'closed', closed_at = ?, closure_kind = ? \
                  WHERE id = ? AND status = 'open'",
@@ -499,6 +530,27 @@ async fn keys_of(conn: &impl ConnectionTrait, sql: &str, values: Vec<Value>) -> 
 /// was applied here (a retirement or a return to service received by sync). Closed records have no
 /// open item and open none: they are not read.
 pub async fn reconcile_equipment_in(conn: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
+    let retired = conn
+        .query_one(sqlite(
+            &format!("SELECT 1 AS hit FROM equipment e WHERE e.id = ? AND {}", retired_sql()),
+            vec![equipment_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !retired {
+        // Nothing opens on equipment in service: only its open items can close.
+        let keys = keys_of(
+            conn,
+            "SELECT record_kind AS kind, record_sync_id AS sid FROM retired_equipment_reviews \
+             WHERE equipment_id = ? AND status = 'open'",
+            vec![equipment_id.into()],
+        )
+        .await?;
+        for key in keys {
+            reconcile_in(conn, &key).await?;
+        }
+        return Ok(());
+    }
     let keys = keys_of(
         conn,
         &format!(
@@ -556,55 +608,108 @@ pub async fn reconcile_all_in(conn: &impl ConnectionTrait) -> AppResult<()> {
     Ok(())
 }
 
-/// The list: each item with its record, equipment, and the transition or return to service that
-/// closed it (one statement, no query per row).
-const LIST_SELECT: &str = "SELECT r.id, r.record_kind, r.record_sync_id, r.equipment_id, r.status, r.opened_at, \
-        r.closure_kind, \
-        CASE WHEN r.closure_kind = 'recommissioned' AND rev.occurred_at IS NOT NULL THEN rev.occurred_at \
-             ELSE r.closed_at END AS closed_at, \
-        CASE r.closure_kind WHEN 'recommissioned' THEN rua.display_name \
-             WHEN 'wo_closed' THEN wua.display_name WHEN 'wo_cancelled' THEN wua.display_name \
-             WHEN 'other' THEN NULL ELSE dua.display_name END AS closed_by, \
-        CASE r.closure_kind WHEN 'recommissioned' THEN rev.notes \
-             WHEN 'wo_closed' THEN wl.notes WHEN 'wo_cancelled' THEN COALESCE(wl.notes, wo.cancel_reason) \
-             WHEN 'other' THEN NULL ELSE dl.notes END AS closure_note, \
-        CASE r.record_kind WHEN 'work_order' THEN wo.id ELSE ir.id END AS record_id, \
-        CASE r.record_kind WHEN 'work_order' THEN wo.code ELSE ir.code END AS record_code, \
-        CASE r.record_kind WHEN 'work_order' THEN wo.title ELSE ir.title END AS record_title, \
-        CASE r.record_kind WHEN 'work_order' THEN s.code ELSE ir.status END AS record_status, \
-        ir.disposition_code, ir.converted_to_wo_id, cwo.code AS converted_to_wo_code, \
-        e.asset_id_code AS equipment_code, e.name AS equipment_name, e.lifecycle_status AS equipment_status \
-     FROM retired_equipment_reviews r \
-     LEFT JOIN work_orders wo ON r.record_kind = 'work_order' AND wo.entity_sync_id = r.record_sync_id \
-     LEFT JOIN work_order_statuses s ON s.id = wo.status_id \
-     LEFT JOIN intervention_requests ir ON r.record_kind = 'intervention_request' AND ir.entity_sync_id = r.record_sync_id \
-     LEFT JOIN work_orders cwo ON cwo.id = ir.converted_to_wo_id \
-     LEFT JOIN equipment e ON e.id = r.equipment_id \
-     LEFT JOIN wo_state_transition_log wl ON r.closure_kind IN ('wo_closed', 'wo_cancelled') AND wl.id = ( \
-        SELECT l.id FROM wo_state_transition_log l WHERE l.wo_id = wo.id AND l.to_status = s.code \
-        ORDER BY l.acted_at DESC, l.id DESC LIMIT 1) \
-     LEFT JOIN user_accounts wua ON wua.id = wl.actor_id \
-     LEFT JOIN di_state_transition_log dl ON r.closure_kind IN ('di_rejected', 'di_closed', 'di_converted') AND dl.id = ( \
-        SELECT l.id FROM di_state_transition_log l WHERE l.di_id = ir.id AND l.to_status IN TERMINAL_DI \
-        ORDER BY l.acted_at DESC, l.id DESC LIMIT 1) \
-     LEFT JOIN user_accounts dua ON dua.id = dl.actor_id \
-     LEFT JOIN equipment_lifecycle_events rev ON r.closure_kind = 'recommissioned' AND rev.id = CASE \
-        WHEN r.retired_at IS NOT NULL THEN ( \
-          SELECT ev.id FROM equipment_lifecycle_events ev \
-          WHERE ev.equipment_id = r.equipment_id AND ev.event_type = 'RECOMMISSIONED' \
-            AND julianday(ev.occurred_at) >= julianday(r.retired_at) \
-          ORDER BY julianday(ev.occurred_at), ev.entity_sync_id LIMIT 1) \
-        ELSE ( \
-          SELECT ev.id FROM equipment_lifecycle_events ev \
-          WHERE ev.equipment_id = r.equipment_id AND ev.event_type = 'RECOMMISSIONED' \
-          ORDER BY julianday(ev.occurred_at) DESC, ev.entity_sync_id LIMIT 1) END \
-     LEFT JOIN user_accounts rua ON rua.id = rev.performed_by_id";
+/// The list: each item with its record, equipment, and the candidates of its closure, resolved
+/// when read so that every PC holding the same rows shows the same how / when / who whatever order
+/// they arrived in (one statement, no query per row):
+/// - the record's end, when it is terminal now (`END_AT_SQL`, its own time; who: the FIRST
+///   transition into that terminal status, ties by sync id);
+/// - the equipment's return to service ending the retirement the item was opened under (the first
+///   `RECOMMISSIONED` event after `retired_at`, else after `opened_at`, [`recommission_after_sql`]).
+///
+/// The earlier of the two closed it (a tie: the record's own end); the stored closure is only the
+/// fallback while neither is here. `resolved_at` orders the history.
+fn list_select() -> String {
+    let end_at = format!(
+        "(CASE WHEN r.record_kind = 'work_order' THEN (CASE WHEN s.code = '{cancelled}' \
+              THEN COALESCE(wo.cancelled_at, wo.updated_at) \
+              WHEN s.code IN {closed} THEN COALESCE(wo.closed_at, wo.updated_at) END) \
+          WHEN ir.id IS NOT NULL AND NOT {di_open} \
+              THEN COALESCE(ir.converted_at, ir.closed_at, ir.declined_at, ir.updated_at) END)",
+        cancelled = WoStatus::Cancelled.as_str(),
+        closed = crate::wo::backlog::CLOSED_STATUS_SQL,
+        di_open = crate::di::stats::OPEN_SQL,
+    );
+    let rec_first = format!(
+        "(rev.occurred_at IS NOT NULL AND ({end_at} IS NULL OR julianday(rev.occurred_at) < julianday({end_at})))"
+    );
+    format!(
+        "SELECT r.id, r.record_kind, r.record_sync_id, r.equipment_id, r.status, r.opened_at, \
+            r.closure_kind AS stored_kind, r.closed_at AS stored_closed_at, \
+            {end_at} AS end_at, CASE WHEN {rec_first} THEN 1 ELSE 0 END AS rec_first, \
+            CASE WHEN r.status = 'open' THEN NULL WHEN {rec_first} THEN rev.occurred_at \
+                 ELSE COALESCE({end_at}, r.closed_at) END AS resolved_at, \
+            rev.occurred_at AS rec_at, rua.display_name AS rec_by, rev.notes AS rec_note, \
+            wua.display_name AS wo_by, \
+            CASE WHEN s.code = '{cancelled}' THEN COALESCE(wl.notes, wo.cancel_reason) ELSE wl.notes END AS wo_note, \
+            dua.display_name AS di_by, dl.notes AS di_note, \
+            CASE r.record_kind WHEN 'work_order' THEN wo.id ELSE ir.id END AS record_id, \
+            CASE r.record_kind WHEN 'work_order' THEN wo.code ELSE ir.code END AS record_code, \
+            CASE r.record_kind WHEN 'work_order' THEN wo.title ELSE ir.title END AS record_title, \
+            CASE r.record_kind WHEN 'work_order' THEN s.code ELSE ir.status END AS record_status, \
+            ir.disposition_code, ir.converted_at, ir.converted_to_wo_id, cwo.code AS converted_to_wo_code, \
+            e.asset_id_code AS equipment_code, e.name AS equipment_name, e.lifecycle_status AS equipment_status \
+         FROM retired_equipment_reviews r \
+         LEFT JOIN work_orders wo ON r.record_kind = 'work_order' AND wo.entity_sync_id = r.record_sync_id \
+         LEFT JOIN work_order_statuses s ON s.id = wo.status_id \
+         LEFT JOIN intervention_requests ir ON r.record_kind = 'intervention_request' \
+              AND ir.entity_sync_id = r.record_sync_id \
+         LEFT JOIN work_orders cwo ON cwo.id = ir.converted_to_wo_id \
+         LEFT JOIN equipment e ON e.id = r.equipment_id \
+         LEFT JOIN wo_state_transition_log wl ON r.status = 'closed' AND wl.id = ( \
+            SELECT l.id FROM wo_state_transition_log l \
+            WHERE l.wo_id = wo.id AND s.code IN {closed} AND l.to_status = s.code \
+            ORDER BY l.acted_at, l.entity_sync_id LIMIT 1) \
+         LEFT JOIN user_accounts wua ON wua.id = wl.actor_id \
+         LEFT JOIN di_state_transition_log dl ON r.status = 'closed' AND dl.id = ( \
+            SELECT l.id FROM di_state_transition_log l WHERE l.di_id = ir.id AND l.to_status IN {di_terminal} \
+            ORDER BY l.acted_at, l.entity_sync_id LIMIT 1) \
+         LEFT JOIN user_accounts dua ON dua.id = dl.actor_id \
+         LEFT JOIN equipment_lifecycle_events rev ON r.status = 'closed' AND rev.id = ( \
+            SELECT ev.id FROM equipment_lifecycle_events ev WHERE {rec_after} \
+            ORDER BY julianday(ev.occurred_at), ev.entity_sync_id LIMIT 1) \
+         LEFT JOIN user_accounts rua ON rua.id = rev.performed_by_id",
+        cancelled = WoStatus::Cancelled.as_str(),
+        closed = crate::wo::backlog::CLOSED_STATUS_SQL,
+        di_terminal = crate::di::stats::TERMINAL_STATUSES_SQL,
+        rec_after = recommission_after_sql("r.equipment_id", "COALESCE(r.retired_at, r.opened_at)"),
+    )
+}
 
 fn map_item(r: &QueryResult) -> AppResult<RetiredEquipmentReview> {
     let kind = opt_s(r, "record_kind")?.unwrap_or_default();
     let key = ReviewKey::of(&kind, opt_s(r, "record_sync_id")?.unwrap_or_default());
     let is_request = kind == KIND_REQUEST;
     let only_request = |v: Option<String>| if is_request { v } else { None };
+    let closed = opt_s(r, "status")?.as_deref() == Some("closed");
+    // The closure as resolved now (see `list_select`); the stored one while neither is here.
+    let (closure_kind, closed_by, closure_note) = if !closed {
+        (None, None, None)
+    } else if opt_i(r, "rec_first")? == Some(1) {
+        (
+            Some(CLOSURE_RECOMMISSIONED.to_string()),
+            opt_s(r, "rec_by")?,
+            opt_s(r, "rec_note")?,
+        )
+    } else if opt_s(r, "end_at")?.is_some() {
+        let status = opt_s(r, "record_status")?.unwrap_or_default();
+        if is_request {
+            let disposition = opt_s(r, "disposition_code")?.unwrap_or_default();
+            let converted = opt_s(r, "converted_at")?.is_some();
+            (
+                Some(di_end_kind(&status, &disposition, converted).to_string()),
+                opt_s(r, "di_by")?,
+                opt_s(r, "di_note")?,
+            )
+        } else {
+            (
+                Some(wo_end_kind(&status).to_string()),
+                opt_s(r, "wo_by")?,
+                opt_s(r, "wo_note")?,
+            )
+        }
+    } else {
+        (opt_s(r, "stored_kind")?, None, None)
+    };
     Ok(RetiredEquipmentReview {
         id: r.try_get("", "id").map_err(|e| decode("id", e))?,
         review_key: key.key(),
@@ -619,10 +724,10 @@ fn map_item(r: &QueryResult) -> AppResult<RetiredEquipmentReview> {
         equipment_status: opt_s(r, "equipment_status")?,
         status: opt_s(r, "status")?.unwrap_or_default(),
         opened_at: opt_s(r, "opened_at")?.unwrap_or_default(),
-        closed_at: opt_s(r, "closed_at")?,
-        closure_kind: opt_s(r, "closure_kind")?,
-        closed_by: opt_s(r, "closed_by")?,
-        closure_note: opt_s(r, "closure_note")?,
+        closed_at: if closed { opt_s(r, "resolved_at")? } else { None },
+        closure_kind,
+        closed_by,
+        closure_note,
         converted_to_wo_id: if is_request {
             opt_i(r, "converted_to_wo_id")?
         } else {
@@ -657,7 +762,7 @@ pub async fn list_reviews(
     );
     let mut binds = wo_binds;
     binds.extend(di_binds);
-    let list_select = LIST_SELECT.replace("TERMINAL_DI", crate::di::stats::TERMINAL_STATUSES_SQL);
+    let list_select = list_select();
 
     let open = db
         .query_all(sqlite(
@@ -689,7 +794,7 @@ pub async fn list_reviews(
             .query_all(sqlite(
                 &format!(
                     "{list_select} WHERE {visible} AND r.status = 'closed' \
-                     ORDER BY r.closed_at DESC, r.id DESC LIMIT ?"
+                     ORDER BY julianday(resolved_at) DESC, r.id DESC LIMIT ?"
                 ),
                 values,
             ))
