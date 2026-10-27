@@ -965,6 +965,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
             json_ref_hist("details_json", "$.after.work_order_id", "work_orders"),
+            // The person given a qualification override (`qualification::gate`): its personnel
+            // record or its login (the override itself is named by its sync id, sent as it is).
+            json_ref_hist(
+                "details_json",
+                "$.qualification_override.personnel_id",
+                "personnel",
+            ),
+            json_ref_hist("details_json", "$.qualification_override.user_id", USER),
         ],
         // Audits kept on the device on purpose (never staged, so never a stage error): the
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself

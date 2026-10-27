@@ -351,3 +351,137 @@ async fn a_permit_role_override_audit_travels_and_names_the_same_permit_on_the_o
         "B holds the event itself, not a stub"
     );
 }
+
+/// The ids in the details of a qualification override audit (`qualification::gate::write_override`,
+/// under `$.qualification_override`) name the same rows on every PC: the override by its sync id
+/// (sent as it is), the personnel record (permit-role override of a person) and the login
+/// (work-order override of an account without a personnel record) by B's own local ids.
+#[tokio::test]
+async fn qualification_override_audit_details_name_the_same_override_and_person_on_the_other_pc() {
+    use crate::audit::chain::verify_audit_chain;
+    use crate::audit::writer::{write_audit_event, AuditEventInput};
+    use crate::sync::test_support::{scalar_i64, scalar_opt_text, started_device_db, RowFactory, TestServer};
+
+    let mut server = TestServer::new();
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut factory_a = RowFactory::for_device(1);
+    let mut factory_b = RowFactory::for_device(2);
+    // B already has rows of its own, so A's rows get other local ids there.
+    for entity in ["personnel", "user_accounts", "work_permits", "work_orders"] {
+        for _ in 0..3 {
+            factory_b.create(&b, entity).await.expect("row on B");
+        }
+    }
+    let person = factory_a.create(&a, "personnel").await.expect("person on A");
+    let account = factory_a.create(&a, "user_accounts").await.expect("account on A");
+    let permit = factory_a.create(&a, "work_permits").await.expect("permit on A");
+    let work_order = factory_a.create(&a, "work_orders").await.expect("work order on A");
+    let overridden = factory_a
+        .create(&a, "qualification_overrides")
+        .await
+        .expect("override on A");
+    let event = |target_type: &str, target_id: i64, personnel_id: Option<i64>, user_id: Option<i64>| AuditEventInput {
+        action_code: "qualification.override".to_string(),
+        target_type: Some(target_type.to_string()),
+        target_id: Some(target_id.to_string()),
+        actor_id: None,
+        auth_context: "step_up".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(serde_json::json!({
+            "qualification_override": {
+                "sync_id": overridden.entity_sync_id,
+                "personnel_id": personnel_id,
+                "user_id": user_id,
+            },
+            "person": "Karim B.",
+            "reason": "Chargé de consignation absent",
+        })),
+    };
+    for input in [
+        event("permit_role", permit.rowid, Some(person.rowid), None),
+        event("work_order", work_order.rowid, None, Some(account.rowid)),
+    ] {
+        let id = write_audit_event(&a, input).await.expect("write on A");
+        assert_eq!(
+            scalar_i64(
+                &a,
+                "SELECT COUNT(*) FROM audit_events WHERE id = ? AND chain_hash NOT LIKE 'L%'",
+                vec![id.into()],
+            )
+            .await,
+            1,
+            "sealed in its sync form on A"
+        );
+    }
+    assert!(verify_audit_chain(&a).await.expect("verify on A").intact);
+
+    server.exchange("A", &a).await;
+    let report = server.exchange("B", &b).await;
+    assert_eq!(report.materialized.conflicts, 0, "{report:?}");
+
+    let id_on_b = |table: &str, sync_id: String| {
+        let b = &b;
+        let sql = format!("SELECT id FROM {table} WHERE entity_sync_id = ?");
+        async move { scalar_i64(b, &sql, vec![sync_id.into()]).await }
+    };
+    let person_on_b = id_on_b("personnel", person.entity_sync_id.clone()).await;
+    let account_on_b = id_on_b("user_accounts", account.entity_sync_id.clone()).await;
+    assert_ne!(
+        person_on_b, person.rowid,
+        "the test needs different local ids on the two PCs"
+    );
+    assert_ne!(
+        account_on_b, account.rowid,
+        "the test needs different local ids on the two PCs"
+    );
+    let override_on_b = scalar_i64(
+        &b,
+        "SELECT COUNT(*) FROM qualification_overrides WHERE entity_sync_id = ?",
+        vec![overridden.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_eq!(override_on_b, 1, "the override row is on B under the same sync id");
+
+    let detail = |target_type: &'static str, path: &'static str| {
+        let b = &b;
+        async move {
+            scalar_opt_text(
+                b,
+                &format!(
+                    "SELECT CAST(json_extract(details_json, '{path}') AS TEXT) FROM audit_events \
+                     WHERE action_code = 'qualification.override' AND target_type = '{target_type}'"
+                ),
+                vec![],
+            )
+            .await
+        }
+    };
+    for target_type in ["permit_role", "work_order"] {
+        assert_eq!(
+            detail(target_type, "$.qualification_override.sync_id").await,
+            Some(overridden.entity_sync_id.clone()),
+            "{target_type}: the override is named by its sync id on B"
+        );
+    }
+    assert_eq!(
+        detail("permit_role", "$.qualification_override.personnel_id").await,
+        Some(person_on_b.to_string()),
+        "the person is B's id of the same personnel record"
+    );
+    assert_eq!(detail("permit_role", "$.qualification_override.user_id").await, None);
+    assert_eq!(
+        detail("work_order", "$.qualification_override.user_id").await,
+        Some(account_on_b.to_string()),
+        "the account is B's id of the same login"
+    );
+    assert_eq!(
+        detail("work_order", "$.qualification_override.personnel_id").await,
+        None
+    );
+    let verified = verify_audit_chain(&b).await.expect("verify on B");
+    assert!(verified.intact, "{verified:?}");
+}
