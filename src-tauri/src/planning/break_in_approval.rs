@@ -304,10 +304,11 @@ pub(crate) async fn record_signer_outcome(
 /// detail.
 pub(crate) const BREAK_IN_SIGNED_EVENT: &str = "planning.break_in.signed";
 
-/// Writes [`BREAK_IN_SIGNED_EVENT`] once the break-in is committed (never refuses it).
+/// Writes [`BREAK_IN_SIGNED_EVENT`] in the break-in's transaction: a failed write refuses the
+/// break-in (nothing is recorded without its audit event).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn audit_signed_break_in(
-    db: &sea_orm::DatabaseConnection,
+    conn: &impl sea_orm::ConnectionTrait,
     actor_id: i64,
     commitment_id: i64,
     break_in_id: i64,
@@ -315,13 +316,13 @@ pub(crate) async fn audit_signed_break_in(
     reason_code: &str,
     approval: &SignedApproval,
     forced: &[ForcedCheck],
-) {
+) -> AppResult<()> {
     let Some(approver) = approval.approver else {
-        return;
+        return Ok(());
     };
     let commitment_ref = commitment_id.to_string();
-    crate::audit::emit(
-        db,
+    crate::audit::emit_in(
+        conn,
         crate::audit::AuditEvent {
             event_type: BREAK_IN_SIGNED_EVENT,
             actor_id: i32::try_from(actor_id).ok(),
@@ -344,5 +345,6 @@ pub(crate) async fn audit_signed_break_in(
             ..Default::default()
         },
     )
-    .await;
+    .await?;
+    Ok(())
 }
