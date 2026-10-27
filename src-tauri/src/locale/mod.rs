@@ -85,7 +85,7 @@ pub async fn write_locale_config(db: &impl ConnectionTrait, key: &str, value: &s
 }
 
 /// Read tenant primary language from `app_settings` (JSON string value).
-async fn read_app_settings_primary_language(db: &DatabaseConnection) -> AppResult<Option<String>> {
+async fn read_app_settings_primary_language(db: &impl ConnectionTrait) -> AppResult<Option<String>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -129,14 +129,37 @@ pub fn pick_active_locale(user: Option<&str>, tenant: Option<&str>, os: Option<&
         .to_string()
 }
 
+/// The plant default language: `locale.default_language`, else the Settings SSOT
+/// (`app_settings.locale.primary_language`, tenant scope); `None` when neither is set.
+pub async fn read_plant_language(db: &impl ConnectionTrait) -> AppResult<Option<String>> {
+    match read_locale_config(db, "locale.default_language").await? {
+        Some(code) => Ok(Some(code)),
+        // Fall back to Settings SSOT when system_config tenant default was never seeded.
+        None => read_app_settings_primary_language(db).await,
+    }
+}
+
+/// Write the plant default language to both places it is read from (`locale.default_language`
+/// and the Settings SSOT row), as the Settings screen does; the SSOT row must exist (seeded).
+pub async fn write_plant_language(db: &impl ConnectionTrait, code: &str) -> AppResult<()> {
+    write_locale_config(db, "locale.default_language", code).await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"UPDATE app_settings SET setting_value_json = ?, last_modified_at = ?
+           WHERE setting_key = 'locale.primary_language' AND setting_scope = 'tenant'",
+        [
+            serde_json::Value::from(code).to_string().into(),
+            chrono::Utc::now().to_rfc3339().into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Resolve the full locale preference according to the precedence chain.
 pub async fn resolve_locale_preference(db: &DatabaseConnection) -> AppResult<LocalePreference> {
     let user_locale = read_locale_config(db, "locale.user_language").await?;
-    let mut tenant_locale = read_locale_config(db, "locale.default_language").await?;
-    if tenant_locale.is_none() {
-        // Fall back to Settings SSOT when system_config tenant default was never seeded.
-        tenant_locale = read_app_settings_primary_language(db).await?;
-    }
+    let tenant_locale = read_plant_language(db).await?;
     let os_locale = detect_os_locale();
 
     let active_locale = pick_active_locale(user_locale.as_deref(), tenant_locale.as_deref(), os_locale.as_deref());

@@ -2817,3 +2817,48 @@ async fn a_signed_out_reset_on_an_administered_plant_names_the_two_routes() {
         .await
         .expect("no administrator: first start");
 }
+
+/// AU-127 (F11): the plant default language set in Settings is kept by an activation reset, in
+/// both places it is read from (the Settings row the reset puts back to the shipped "fr", and the
+/// runtime default), so the screen and the language in use agree after the reset.
+#[tokio::test]
+async fn the_plant_language_is_kept_across_a_reset() {
+    let db = crate::sync::test_support::started_db().await;
+    // As the Settings screen sets it: the Settings row, then the runtime default.
+    crate::settings::set_setting(
+        &db,
+        "locale.primary_language",
+        "tenant",
+        r#""en""#,
+        None,
+        "plant language",
+    )
+    .await
+    .expect("setting");
+    crate::locale::write_locale_config(&db, "locale.default_language", "en")
+        .await
+        .expect("default");
+
+    super::reset_local_tenant_runtime_data_impl(&db).await.expect("reset");
+
+    let row = crate::settings::get_setting(&db, "locale.primary_language", "tenant")
+        .await
+        .expect("read")
+        .expect("seeded again");
+    assert_eq!(row.setting_value_json, r#""en""#, "the Settings row is written back");
+    assert_eq!(
+        crate::locale::read_locale_config(&db, "locale.default_language")
+            .await
+            .expect("read")
+            .as_deref(),
+        Some("en")
+    );
+    assert_eq!(
+        crate::locale::resolve_locale_preference(&db)
+            .await
+            .expect("resolve")
+            .tenant_locale
+            .as_deref(),
+        Some("en")
+    );
+}
