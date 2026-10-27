@@ -890,3 +890,176 @@ async fn waive_warning_checks_a_named_approver() {
         .expect("waive");
     assert_eq!(w.waiver_approver_id, Some(actor), "the person waiving approves it");
 }
+
+// ── Waiver approver list (AU-116) ───────────────────────────────────────────────────────────
+
+/// One account per case of the rule: who the list must offer and who it must leave out.
+struct ApproverFixture {
+    actor: i64,
+    holder: i64,
+    excluded: Vec<(&'static str, i64)>,
+}
+
+async fn approver_fixture(db: &DatabaseConnection) -> ApproverFixture {
+    let actor = insert_user(db, "ap_actor").await;
+    grant_integrity_repair(db, actor).await;
+    let holder = insert_user(db, "ap_holder").await;
+    grant_integrity_repair(db, holder).await;
+
+    let inactive = insert_user(db, "ap_inactive").await;
+    grant_integrity_repair(db, inactive).await;
+    exec(
+        db,
+        "UPDATE user_accounts SET is_active = 0 WHERE id = ?",
+        vec![inactive.into()],
+    )
+    .await;
+
+    let deleted = insert_user(db, "ap_deleted").await;
+    grant_integrity_repair(db, deleted).await;
+    exec(
+        db,
+        "UPDATE user_accounts SET deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        vec![deleted.into()],
+    )
+    .await;
+
+    let emergency = insert_user(db, "ap_emergency").await;
+    grant_integrity_repair(db, emergency).await;
+    exec(
+        db,
+        "UPDATE user_scope_assignments SET is_emergency = 1, emergency_expires_at = '2099-01-01T00:00:00Z' \
+         WHERE user_id = ?",
+        vec![emergency.into()],
+    )
+    .await;
+
+    let node_scope = insert_user(db, "ap_node_scope").await;
+    grant_integrity_repair(db, node_scope).await;
+    exec(
+        db,
+        "UPDATE user_scope_assignments SET scope_type = 'org_node', scope_reference = '1' WHERE user_id = ?",
+        vec![node_scope.into()],
+    )
+    .await;
+
+    let expired = insert_user(db, "ap_expired").await;
+    grant_integrity_repair(db, expired).await;
+    exec(
+        db,
+        "UPDATE user_scope_assignments SET valid_to = '2020-01-01T00:00:00Z' WHERE user_id = ?",
+        vec![expired.into()],
+    )
+    .await;
+
+    // A tenant role in force that does not carry integrity.repair.
+    let other_role = insert_user(db, "ap_other_role").await;
+    let role = format!("ap-viewers-{other_role}");
+    exec(
+        db,
+        "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+         VALUES (?, ?, 'custom', 'active', 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
+        vec![format!("{role}-sync").into(), role.clone().into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+         created_at, updated_at, row_version) \
+         SELECT ?, ?, id, 'tenant', NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1 FROM roles WHERE name = ?",
+        vec![format!("{role}-assignment").into(), other_role.into(), role.into()],
+    )
+    .await;
+
+    ApproverFixture {
+        actor,
+        holder,
+        excluded: vec![
+            ("actor", actor),
+            ("inactive", inactive),
+            ("deleted", deleted),
+            ("emergency grant", emergency),
+            ("node-scope grant", node_scope),
+            ("expired grant", expired),
+            ("role without the right", other_role),
+        ],
+    }
+}
+
+#[tokio::test]
+async fn waiver_approver_list_offers_admins_and_permanent_plant_wide_holders_only() {
+    let db = started_db().await;
+    let admin = admin_id(&db).await;
+    let fx = approver_fixture(&db).await;
+
+    let list = crate::data_integrity::list_waiver_approvers(&db, fx.actor)
+        .await
+        .expect("list");
+    let listed: Vec<i64> = list.iter().map(|o| o.user_id).collect();
+    assert!(listed.contains(&admin), "an administrator is offered: {listed:?}");
+    assert!(
+        listed.contains(&fx.holder),
+        "a permanent plant-wide holder is offered: {listed:?}"
+    );
+    for (case, id) in &fx.excluded {
+        assert!(!listed.contains(id), "{case} must not be offered: {listed:?}");
+    }
+    let holder = list.iter().find(|o| o.user_id == fx.holder).expect("holder listed");
+    assert_eq!(holder.display_name, "ap_holder");
+}
+
+/// The list and the waiver check are one rule: every account is offered exactly when a waiver
+/// of an error finding naming it is accepted (the actor aside, refused as second person).
+#[tokio::test]
+async fn waiver_approver_list_matches_the_waiver_check() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let db = started_db().await;
+    let fx = approver_fixture(&db).await;
+    let listed: Vec<i64> = crate::data_integrity::list_waiver_approvers(&db, fx.actor)
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|o| o.user_id)
+        .collect();
+    let accounts: Vec<i64> = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts ORDER BY id",
+        ))
+        .await
+        .expect("accounts")
+        .iter()
+        .map(|r| r.try_get::<i64>("", "id").expect("id"))
+        .collect();
+    let wo = insert_wo(&db, "WO-WAIVE-LIST", None).await;
+    let mut checked = 0;
+    for (n, account) in accounts.into_iter().filter(|a| *a != fx.actor).enumerate() {
+        // A new error finding for each account; an earlier refused one simply stays open.
+        insert_segment(
+            &db,
+            wo,
+            &format!("2026-05-{:02}T14:00:00Z", n + 1),
+            Some(&format!("2026-05-{:02}T08:00:00Z", n + 1)),
+        )
+        .await;
+        run_data_integrity_detectors(&db).await.expect("run");
+        let f = open_findings(&db)
+            .await
+            .into_iter()
+            .find(|f| f.finding_code == "WO_DOWNTIME_NEGATIVE_DURATION")
+            .expect("an open error finding");
+        assert_eq!(f.severity, "error");
+        let accepted = waive_data_integrity_finding(&db, waive(&f, f.row_version, "known", Some(account)), fx.actor)
+            .await
+            .is_ok();
+        assert_eq!(
+            accepted,
+            listed.contains(&account),
+            "account {account}: offered and accepted must agree"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 8, "every fixture account was checked ({checked})");
+}

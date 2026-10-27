@@ -6,6 +6,7 @@ import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplyDataIntegrityRepairInput,
   DataIntegrityFindingRow,
+  IntegrityWaiverApproverOption,
   WaiveDataIntegrityFindingInput,
 } from "@shared/ipc-types";
 
@@ -13,6 +14,11 @@ export async function listDataIntegrityFindings(
   limit?: number,
 ): Promise<DataIntegrityFindingRow[]> {
   return invoke<DataIntegrityFindingRow[]>("list_data_integrity_findings", { limit });
+}
+
+/** People the waiver of an error finding may name as second person (the current user excluded). */
+export async function listIntegrityWaiverApprovers(): Promise<IntegrityWaiverApproverOption[]> {
+  return invoke<IntegrityWaiverApproverOption[]>("list_integrity_waiver_approvers");
 }
 
 export async function runDataIntegrityDetectors(): Promise<number> {

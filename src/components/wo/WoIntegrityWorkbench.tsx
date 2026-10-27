@@ -17,18 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  mergeWoPersonOptions,
-  useWoPeopleOptions,
-  type WoPersonOption,
-} from "@/components/wo/use-wo-people";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { listAnalyticsContractVersions } from "@/services/analytics-contract-service";
 import {
   applyDataIntegrityRepair,
   listDataIntegrityFindings,
+  listIntegrityWaiverApprovers,
   runDataIntegrityDetectors,
   waiveDataIntegrityFinding,
 } from "@/services/data-integrity-service";
@@ -88,16 +83,42 @@ function findingDetails(
   return out;
 }
 
+/** A person the waiver may name as second person (`user_accounts.id` as a Select value). */
+interface ApproverOption {
+  value: string;
+  label: string;
+}
+
 export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: number }) {
   const { t } = useTranslation("ot");
-  const { info } = useSession();
-  const userId = info?.user_id ?? null;
-  // Read once for every finding row. The second person must be someone else: not the current user.
-  const people = useWoPeopleOptions();
-  const approvers = useMemo(
-    () => mergeWoPersonOptions(people.options, []).filter((o) => o.value !== String(userId)),
-    [people.options, userId],
-  );
+  // Read for every finding row from the backend's own waiver rule (AU-116): only people the waiver
+  // check accepts, the current user already left out.
+  const [approvers, setApprovers] = useState<ApproverOption[]>([]);
+  const [approversLoading, setApproversLoading] = useState(true);
+  const [approversFailed, setApproversFailed] = useState(false);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reloadSignal` is the page Refresh button.
+  useEffect(() => {
+    let cancelled = false;
+    setApproversLoading(true);
+    listIntegrityWaiverApprovers()
+      .then((list) => {
+        if (cancelled) return;
+        setApprovers(list.map((p) => ({ value: String(p.user_id), label: p.display_name })));
+        setApproversFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setApprovers([]);
+        setApproversFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setApproversLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadSignal]);
 
   const [rows, setRows] = useState<DataIntegrityFindingRow[]>([]);
   const [contracts, setContracts] = useState<AnalyticsContractVersionRow[]>([]);
@@ -186,8 +207,8 @@ export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: numb
               key={r.id}
               row={r}
               approvers={approvers}
-              approversFailed={people.failed}
-              approversLoading={people.loading}
+              approversFailed={approversFailed}
+              approversLoading={approversLoading}
               onRefresh={() => void load()}
             />
           ))}
@@ -205,7 +226,7 @@ function FindingRow({
   onRefresh,
 }: {
   row: DataIntegrityFindingRow;
-  approvers: WoPersonOption[];
+  approvers: ApproverOption[];
   approversFailed: boolean;
   approversLoading: boolean;
   onRefresh: () => void;
