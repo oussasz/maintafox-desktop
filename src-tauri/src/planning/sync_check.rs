@@ -958,7 +958,8 @@ pub(crate) async fn inbound_crew_site_check(
     Ok(Some(InboundVerdict::Conflict {
         code: WEEK_FROZEN,
         message: format!(
-            "crew {entity_sync_id} received with another site: {} committed job(s) of the crew would cross the              frozen week(s) {} here; changed on its PC at {sent_at} (that PC's clock)",
+            "crew {entity_sync_id} received with another site: {} committed job(s) of the crew would cross the \
+             frozen week(s) {} here; changed on its PC at {sent_at} (that PC's clock)",
             block.jobs,
             block.weeks.join(", ")
         ),
@@ -1695,7 +1696,8 @@ pub(crate) async fn retry_crew_site_conflicts(db: &DatabaseConnection) -> AppRes
             inbox_id,
             conflict_id,
             "judged_valid",
-            "The crew's site change crosses no week frozen here any more (its jobs ended, moved or were released,              or the week reopened): it is applied.",
+            "The crew's site change crosses no week frozen here any more (its jobs ended, moved or were released, \
+             or the week reopened): it is applied.",
         )
         .await?;
         if closed {
