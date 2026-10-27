@@ -188,4 +188,22 @@ describe("AnalyticsDashboardsPage", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("hub.dashboards.loadError")).toBeInTheDocument();
   });
+
+  it("opens /reliability from the reliability tiles only with the reliability view right", async () => {
+    const mtbf = "hub.dashboards.kpi.mtbf";
+    // rep.view only: the widget shows, no tile or evidence button leads to /reliability.
+    rights.can = (p) => p !== P.RAM_VIEW;
+    const first = renderPage();
+    expect(await screen.findByText(mtbf)).toBeInTheDocument();
+    expect(screen.getByText(mtbf).closest("button")).toBeNull();
+    expect(screen.getByText("hub.dashboards.kpi.failureEvents").closest("button")).toBeNull();
+    expect(screen.queryByText("widgets.reliability.openEvidence")).not.toBeInTheDocument();
+    first.unmount();
+    // ram.view held: the same tile is a link.
+    rights.can = () => true;
+    renderPage();
+    expect(await screen.findByText(mtbf)).toBeInTheDocument();
+    expect(screen.getByText(mtbf).closest("button")).not.toBeNull();
+    expect(screen.getByText("widgets.reliability.openEvidence")).toBeInTheDocument();
+  });
 });
