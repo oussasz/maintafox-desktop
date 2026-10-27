@@ -1697,7 +1697,7 @@ Default roles:
 General
 
 Trend sense:
-up-bad
+neutral (D15: only overdue is red)
 
 Default target:
 Prior-day bucket proxy

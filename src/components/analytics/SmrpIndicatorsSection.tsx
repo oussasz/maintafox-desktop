@@ -23,6 +23,7 @@ import {
   OVERVIEW_KPI_SEMANTIC_KEYS,
   SMRP_KPI_KEYS,
   smrpStableBelow,
+  smrpTrendSense,
 } from "@shared/overview-kpi-registry";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
@@ -220,7 +221,11 @@ export function SmrpIndicatorsSection({
           done: hours(m.current.numerator),
           total: hours(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good", smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE))}
+        trend={trendOf(
+          m,
+          smrpTrendSense(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE),
+          smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE),
+        )}
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
@@ -243,10 +248,10 @@ export function SmrpIndicatorsSection({
             part: formatNumber(m.current.numerator),
             total: formatNumber(m.current.denominator),
           });
-    for (const [key, m, direction, band] of [
-      ["planned", mix.planned, "up-good", SMRP_KPI_KEYS.WORK_MIX_PLANNED],
-      ["reactive", mix.reactive, "up-bad", SMRP_KPI_KEYS.WORK_MIX_REACTIVE],
-      ["emergency", mix.emergency, "up-bad", SMRP_KPI_KEYS.WORK_MIX_EMERGENCY],
+    for (const [key, m, band] of [
+      ["planned", mix.planned, SMRP_KPI_KEYS.WORK_MIX_PLANNED],
+      ["reactive", mix.reactive, SMRP_KPI_KEYS.WORK_MIX_REACTIVE],
+      ["emergency", mix.emergency, SMRP_KPI_KEYS.WORK_MIX_EMERGENCY],
     ] as const) {
       tiles.push(
         <SmrpTile
@@ -263,7 +268,7 @@ export function SmrpIndicatorsSection({
               {basis}
             </>
           }
-          trend={trendOf(m, direction, smrpStableBelow(band))}
+          trend={trendOf(m, smrpTrendSense(band), smrpStableBelow(band))}
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
@@ -288,9 +293,9 @@ export function SmrpIndicatorsSection({
   if (smrp.pm_compliance) {
     const m = smrp.pm_compliance;
     // Same figure as the Overview PM compliance: the band is that entry's.
-    const pmStableBelow =
-      OVERVIEW_KPI_REGISTRY_BY_KEY.get(OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE)?.stableBelow ??
-      DEFAULT_KPI_STABLE_BELOW;
+    const pmEntry = OVERVIEW_KPI_REGISTRY_BY_KEY.get(OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE);
+    const pmStableBelow = pmEntry?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
+    const pmTrendSense = pmEntry?.trendSense ?? "neutral";
     tiles.push(
       <SmrpTile
         key="pm"
@@ -303,7 +308,7 @@ export function SmrpIndicatorsSection({
           done: formatNumber(m.current.numerator),
           total: formatNumber(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good", pmStableBelow)}
+        trend={trendOf(m, pmTrendSense, pmStableBelow)}
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
@@ -387,7 +392,7 @@ export function SmrpIndicatorsSection({
     const tr = pointsTrend(
       c.value_pct,
       c.previous_value_pct,
-      "up-bad",
+      smrpTrendSense(SMRP_KPI_KEYS.COST_TO_RAV),
       smrpStableBelow(SMRP_KPI_KEYS.COST_TO_RAV),
     );
     tiles.push(

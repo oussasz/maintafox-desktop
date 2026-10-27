@@ -60,4 +60,22 @@ describe("OverviewMetricCards trend", () => {
     );
     expect(screen.getByText(/\+20\s%/)).toBeInTheDocument();
   });
+
+  it("words the KPI's own band on the trend badge, from the registry", () => {
+    renderCards(cell({}));
+    expect(screen.getByText("kpi.points:+8")).toHaveAttribute("title", "smrp.stableBand");
+  });
+
+  it("uses the registry's sense, not the one the backend sent (PM due today is neutral)", () => {
+    renderCards(
+      cell({
+        semantic_key: "PM_DUE_TODAY",
+        value_kind: "count",
+        value: 6,
+        previous_value: 2,
+        trend_sense: "up-bad",
+      }),
+    );
+    expect(screen.getByText(/%$/).className).not.toContain("status-danger");
+  });
 });

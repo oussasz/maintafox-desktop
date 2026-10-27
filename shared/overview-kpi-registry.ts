@@ -308,6 +308,11 @@ export function smrpStableBelow(key: SmrpKpiKey): number {
   return SMRP_KPI_REGISTRY_BY_KEY.get(key)?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
 }
 
+/** The trend sense of an SMRP indicator (registry only; screens never carry a copy). */
+export function smrpTrendSense(key: SmrpKpiKey): OverviewKpiTrendSense {
+  return SMRP_KPI_REGISTRY_BY_KEY.get(key)?.trendSense ?? "neutral";
+}
+
 export function isOverviewKpiSemanticKey(id: string): id is OverviewKpiSemanticKey {
   return Object.values(OVERVIEW_KPI_SEMANTIC_KEYS).includes(id as OverviewKpiSemanticKey);
 }
