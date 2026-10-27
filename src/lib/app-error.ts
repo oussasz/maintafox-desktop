@@ -16,6 +16,7 @@ import type { TFunction, TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
+import { ACCOUNT_LOCKED, accountLockedErrorText } from "@/lib/account-lockout";
 import { displayParams, formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
 import { permissionLabel } from "@/lib/permission-labels";
 import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
@@ -69,6 +70,17 @@ export function describeAppError(err: unknown): AppErrorDescription {
       description: null,
       code: "STEP_UP_CANCELLED",
       technical: null,
+    };
+  }
+
+  // The account lockout: one sentence with its end in local time (`account-lockout.ts`), the
+  // same on every screen; the server's English sentence only in "Détails techniques".
+  if (code === ACCOUNT_LOCKED) {
+    return {
+      title: accountLockedErrorText(err),
+      description: null,
+      code,
+      technical: rawMsg.trim() || null,
     };
   }
 

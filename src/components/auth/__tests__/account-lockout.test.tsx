@@ -2,15 +2,20 @@
  * AU-37: the unlock and step-up passwords are limited by the server's account lockout. The
  * step-up dialog has no attempt count of its own; an `ACCOUNT_LOCKED` refusal (the server ended
  * the session) sends the user to sign-in with the lockout message.
+ * AU-106: that message is in the app language with the local end time, and the session keeps the
+ * code and the end (not the server's English sentence), so it follows a language switch.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StepUpDialog } from "@/components/auth/StepUpDialog";
-import { useSessionStore } from "@/store/session-store";
+import { i18n, initI18n } from "@/i18n";
+import { sessionErrorText, useSessionStore } from "@/store/session-store";
 import type { SessionInfo } from "@shared/ipc-types";
 
 vi.mock("react-i18next", () => ({
+  // The app's i18n instance (lockout text) still initialises; the dialog's own keys stay raw.
+  initReactI18next: { type: "3rdParty", init: () => undefined },
   useTranslation: () => ({
     t: (key: string) => key,
     i18n: { language: "fr", resolvedLanguage: "fr" },
@@ -31,10 +36,17 @@ vi.mock("@/services/auth-service", () => ({
   forceChangePassword: vi.fn(),
 }));
 
+/** "Now" is 08:00 local and the lockout ends at 09:15 local the same day, in any time zone. */
+const NOW = new Date(2026, 9, 22, 8, 0);
+const UNTIL = new Date(2026, 9, 22, 9, 15).toISOString();
 const LOCKOUT = {
   code: "ACCOUNT_LOCKED",
-  message: "Account locked until 2026-10-22T09:15:00Z",
+  message: `Account locked until ${UNTIL}`,
+  details: [
+    { code: "ACCOUNT_LOCKED", message: `Account locked until ${UNTIL}`, params: { until: UNTIL } },
+  ],
 };
+const LOCKOUT_FR = "Compte verrouillé après trop de mots de passe erronés, jusqu'à 09:15.";
 const WRONG = { code: "AUTH_ERROR", message: "Mot de passe incorrect." };
 
 function openSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
@@ -63,6 +75,16 @@ function submit(password: string) {
 }
 
 describe("step-up dialog and the account lockout", () => {
+  beforeAll(async () => {
+    initI18n();
+    await i18n.changeLanguage("fr");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     svc.verifyStepUp.mockReset();
     svc.unlockSession.mockReset();
@@ -88,12 +110,15 @@ describe("step-up dialog and the account lockout", () => {
     render(<StepUpDialog open onVerified={vi.fn()} onCancel={onCancel} />);
     submit("wrong");
 
-    await screen.findByText(LOCKOUT.message);
+    await screen.findByText(LOCKOUT_FR);
+    expect(screen.queryByText(LOCKOUT.message)).toBeNull();
     expect(onCancel).toHaveBeenCalled();
     const state = useSessionStore.getState();
     expect(state.info?.is_authenticated).toBe(false);
     expect(state.errorCode).toBe("ACCOUNT_LOCKED");
-    expect(state.error).toBe(LOCKOUT.message);
+    expect(state.lockedUntil).toBe(UNTIL);
+    expect(state.error).toBeNull();
+    expect(sessionErrorText(state)).toBe(LOCKOUT_FR);
   });
 
   it("the lock screen's unlock ends the session on a lockout, with the sign-in message", async () => {
@@ -102,12 +127,36 @@ describe("step-up dialog and the account lockout", () => {
       .applySessionInfo(openSession({ is_authenticated: false, is_locked: true }));
     svc.unlockSession.mockRejectedValue(LOCKOUT);
 
-    await expect(useSessionStore.getState().unlock("wrong")).rejects.toThrow(LOCKOUT.message);
+    await expect(useSessionStore.getState().unlock("wrong")).rejects.toThrow(LOCKOUT_FR);
     const state = useSessionStore.getState();
     expect(state.info?.is_locked).toBe(false);
     expect(state.info?.user_id).toBeNull();
     expect(state.errorCode).toBe("ACCOUNT_LOCKED");
-    expect(state.error).toBe(LOCKOUT.message);
+    expect(state.lockedUntil).toBe(UNTIL);
+    expect(sessionErrorText(state)).toBe(LOCKOUT_FR);
+  });
+
+  it("a sign-in refused by the lockout keeps the end and shows it in the app language", async () => {
+    useSessionStore.getState().applySessionInfo(openSession({ is_authenticated: false }));
+    const { login } = await import("@/services/auth-service");
+    vi.mocked(login).mockRejectedValueOnce(LOCKOUT);
+
+    await expect(
+      useSessionStore.getState().login({ username: "tech", password: "wrong" }),
+    ).rejects.toEqual(LOCKOUT);
+    const state = useSessionStore.getState();
+    expect(state.errorCode).toBe("ACCOUNT_LOCKED");
+    expect(state.lockedUntil).toBe(UNTIL);
+    expect(state.error).toBeNull();
+    expect(sessionErrorText(state)).toBe(LOCKOUT_FR);
+    await i18n.changeLanguage("en");
+    try {
+      expect(sessionErrorText(useSessionStore.getState())).toMatch(
+        /^Account locked after too many wrong passwords, until 09:15\sAM\.$/,
+      );
+    } finally {
+      await i18n.changeLanguage("fr");
+    }
   });
 
   it("a wrong unlock password keeps the lock screen", async () => {

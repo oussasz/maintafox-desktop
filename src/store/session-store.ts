@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { ACCOUNT_LOCKED, accountLockedText, lockoutUntil } from "@/lib/account-lockout";
 import { clearPermissionCache } from "@/lib/permission-cache";
 import {
   forceChangePassword as authForceChange,
@@ -23,8 +24,19 @@ function extractTauriError(e: unknown, fallback: string): { message: string; cod
   return { message: fallback, code: null };
 }
 
-/** Server code (`AppError::AccountLocked`): the account is locked out after wrong passwords. */
-export const ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
+export { ACCOUNT_LOCKED } from "@/lib/account-lockout";
+
+/**
+ * The session failure to show: the account lockout in the app language with its local end
+ * time (built at display time, so it follows a language switch), else the stored text.
+ */
+export function sessionErrorText(state: {
+  error: string | null;
+  errorCode: string | null;
+  lockedUntil: string | null;
+}): string | null {
+  return state.errorCode === ACCOUNT_LOCKED ? accountLockedText(state.lockedUntil) : state.error;
+}
 
 export const UNAUTHENTICATED_SESSION: SessionInfo = {
   is_authenticated: false,
@@ -70,8 +82,14 @@ function applyAuthenticatedSideEffects(info: SessionInfo): void {
 export interface SessionStoreState {
   info: SessionInfo | null;
   isLoading: boolean;
+  /**
+   * The failure's text. Null for an account lockout: its text is built at display time from
+   * `errorCode` and `lockedUntil` (`sessionErrorText`), so it follows the app language.
+   */
   error: string | null;
   errorCode: string | null;
+  /** End of the account lockout (UTC RFC 3339 from the server) when `errorCode` is ACCOUNT_LOCKED. */
+  lockedUntil: string | null;
   /** True after the first bootstrap refresh has settled (success or failure). */
   hasBootstrapped: boolean;
   /**
@@ -95,9 +113,9 @@ export interface SessionStoreActions {
   /**
    * Too many wrong passwords at unlock or step-up locked the account (`ACCOUNT_LOCKED`): the
    * server ended the session. Back to sign-in, which shows the same lockout message as a
-   * sign-in refusal.
+   * sign-in refusal. `lockedUntil` is the end the server sent (`lockoutUntil`), null when absent.
    */
-  applyAccountLockout: (message: string) => void;
+  applyAccountLockout: (lockedUntil: string | null) => void;
   /**
    * A command was refused as unauthenticated but the session is valid: raise the generation once
    * so the screens that failed load again. A second race before a new session changes nothing.
@@ -123,6 +141,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   isLoading: true,
   error: null,
   errorCode: null,
+  lockedUntil: null,
   hasBootstrapped: false,
   sessionGeneration: 0,
   raceGeneration: null,
@@ -133,18 +152,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       isLoading: false,
       error: null,
       errorCode: null,
+      lockedUntil: null,
       hasBootstrapped: true,
       sessionGeneration: generationAfter(s.info, info, s.sessionGeneration),
     }));
   },
 
-  applyAccountLockout: (message: string): void => {
+  applyAccountLockout: (lockedUntil: string | null): void => {
     clearPermissionCache();
     set({
       info: UNAUTHENTICATED_SESSION,
       isLoading: false,
-      error: message,
+      error: null,
       errorCode: ACCOUNT_LOCKED,
+      lockedUntil,
       hasBootstrapped: true,
     });
   },
@@ -201,15 +222,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: null,
         errorCode: null,
+        lockedUntil: null,
         hasBootstrapped: true,
         sessionGeneration: s.sessionGeneration + 1,
       }));
     } catch (e) {
       const { message, code } = extractTauriError(e, "Identifiant ou mot de passe invalide.");
+      const locked = code === ACCOUNT_LOCKED;
       set({
         isLoading: false,
-        error: message,
+        // A lockout keeps its end, not the server's English sentence (`sessionErrorText`).
+        error: locked ? null : message,
         errorCode: code,
+        lockedUntil: locked ? lockoutUntil(e) : null,
       });
       throw e;
     }
@@ -225,6 +250,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: null,
         errorCode: null,
+        lockedUntil: null,
         hasBootstrapped: true,
       });
     } catch (e) {
@@ -233,6 +259,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: message,
         errorCode: null,
+        lockedUntil: null,
       });
     }
   },
@@ -247,6 +274,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: null,
         errorCode: null,
+        lockedUntil: null,
         hasBootstrapped: true,
         sessionGeneration: s.sessionGeneration + 1,
       }));
@@ -254,13 +282,15 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       const { message, code } = extractTauriError(e, "Échec du déverrouillage.");
       if (code === ACCOUNT_LOCKED) {
         // The server ended the session with the lockout: sign-in shows why.
-        get().applyAccountLockout(message);
-        throw new Error(message);
+        const until = lockoutUntil(e);
+        get().applyAccountLockout(until);
+        throw new Error(accountLockedText(until));
       }
       set({
         isLoading: false,
         error: message,
         errorCode: null,
+        lockedUntil: null,
       });
       throw new Error(message);
     }
@@ -276,6 +306,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: null,
         errorCode: null,
+        lockedUntil: null,
         hasBootstrapped: true,
         sessionGeneration: s.sessionGeneration + 1,
       }));
@@ -289,6 +320,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         isLoading: false,
         error: message,
         errorCode: null,
+        lockedUntil: null,
       });
       throw new Error(message);
     }
@@ -301,6 +333,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       isLoading: true,
       error: null,
       errorCode: null,
+      lockedUntil: null,
       hasBootstrapped: false,
       sessionGeneration: 0,
       raceGeneration: null,

@@ -12,10 +12,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { accountLockedText, lockoutUntil } from "@/lib/account-lockout";
 import { describeAppError } from "@/lib/app-error";
 import { verifyStepUp } from "@/services/rbac-service";
 import { ACCOUNT_LOCKED, useSessionStore } from "@/store/session-store";
-import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
+import { extractIpcErrorCode } from "@/utils/errors";
 
 interface StepUpDialogProps {
   open: boolean;
@@ -70,11 +71,11 @@ export function StepUpDialog({
         const code = extractIpcErrorCode(err);
         if (code === ACCOUNT_LOCKED) {
           // Too many wrong passwords: the account is locked and the server ended the session.
-          // The server's message (with the end of the lockout) shows here and on sign-in.
-          const message = toErrorMessage(err);
+          // The lockout and its end, in the user's words, show here and on sign-in.
+          const until = lockoutUntil(err);
           setLockedOut(true);
-          setError(message);
-          useSessionStore.getState().applyAccountLockout(message);
+          setError(accountLockedText(until));
+          useSessionStore.getState().applyAccountLockout(until);
           onCancel();
         } else if (code === "AUTH_ERROR") {
           setError(t("stepUp.error"));

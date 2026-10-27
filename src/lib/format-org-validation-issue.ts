@@ -9,6 +9,7 @@ import type { TFunction } from "i18next";
 
 import { i18n } from "@/i18n/config";
 import { ISSUE_NAMESPACES } from "@/i18n/namespaces";
+import { ACCOUNT_LOCKED, accountLockedText } from "@/lib/account-lockout";
 import { localizeDateTimeParams } from "@/utils/date-params";
 import type { OrgValidationIssue } from "@shared/ipc-types";
 
@@ -68,6 +69,7 @@ function untranslatedText(issue: OrgIssueLike): string {
 }
 
 export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org">): string {
+  if (issue.code === ACCOUNT_LOCKED) return accountLockedText(issue.params?.["until"]);
   const params = displayParams(issue.params);
   const translated = translateIssueKey(issue.code, params, (key, opts) => String(t(key, opts)));
   if (translated) return translated;
@@ -76,6 +78,8 @@ export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org"
 
 /** Same as formatOrgValidationIssue but uses the global i18n instance (stores/toasts). */
 export function formatOrgIssueWithI18n(issue: OrgIssueLike): string {
+  // The lockout's detail carries its end, shown in local time (never the server's sentence).
+  if (issue.code === ACCOUNT_LOCKED) return accountLockedText(issue.params?.["until"]);
   const params = displayParams(issue.params);
   const translated = translateIssueKey(
     issue.code,

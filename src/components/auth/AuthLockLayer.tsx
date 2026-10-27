@@ -11,6 +11,7 @@ import { mfAuth, mfInput } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
+import { sessionErrorText } from "@/store/session-store";
 
 /**
  * Full-screen lock surface for a lost session (sign in again). A refused permission never opens
@@ -144,9 +145,9 @@ function AuthLockSurface() {
           </div>
         </div>
 
-        {session.error ? (
+        {sessionErrorText(session) ? (
           <AuthAlert tone="danger" className="mb-4">
-            <p>{session.error}</p>
+            <p>{sessionErrorText(session)}</p>
           </AuthAlert>
         ) : null}
 

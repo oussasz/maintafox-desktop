@@ -226,6 +226,13 @@ impl Serialize for AppError {
                 msgs.iter().map(|m| validation_detail(m)).collect(),
             )),
             Self::OrgValidationFailed(issues) => Some(serde_json::to_value(issues).unwrap_or(serde_json::Value::Null)),
+            // The end of the lockout as data, so the screen says it in the user's language and
+            // local time; the message stays the technical text.
+            Self::AccountLocked { until } => Some(serde_json::json!([{
+                "code": "ACCOUNT_LOCKED",
+                "message": self.to_string(),
+                "params": { "until": until },
+            }])),
             _ => None,
         };
         state.serialize_field("details", &details)?;
