@@ -195,7 +195,9 @@
     "rel_decision_refused_wo_kept": "Reliability decision refused at synchronisation, work order or plan version kept",
     "stock_to_reconcile": "Stock to reconcile after sync",
     "stock_count_recount": "Count to do again",
-    "stock_count_second_approval": "Stock count held for a second approval"
+    "stock_count_second_approval": "Stock count held for a second approval",
+    "retired_equipment_work": "Work order on retired equipment",
+    "retired_equipment_request": "Request on retired equipment"
   },
   "messages": {
     "wo_assigned": {
@@ -408,6 +410,14 @@
     "grants_from_former_authors": {
       "title": "Rights received from someone who no longer holds the right",
       "body": "{{count}} grant(s) received from another PC were applied, but their author no longer has the right to grant them and this PC does not know since when: {{grants}}. Please check them."
+    },
+    "retired_equipment_wo": {
+      "title": "Work order {{code}} on retired equipment {{asset}}",
+      "body": "{{title}}: work order open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Cancel the work order with a reason, or return the equipment to service."
+    },
+    "retired_equipment_di": {
+      "title": "Request {{code}} on retired equipment {{asset}}",
+      "body": "{{title}}: request open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Reject the request with a reason, or return the equipment to service."
     }
   },
   "audience": {

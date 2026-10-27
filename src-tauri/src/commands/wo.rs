@@ -131,6 +131,38 @@ pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) 
     queries::list_work_orders_in_scope(&state.db, filter, &scope).await
 }
 
+/// Work orders and requests open on retired equipment, crossed in sync ("équipement déclassé — à
+/// revoir", AU-73b, `wo::retired_equipment_review`): requires ot.view; the work orders where the
+/// user holds ot.view, the requests where they hold di.view (none without it). Read only: they are
+/// settled by the existing actions (cancel, reject, return to service).
+#[tauri::command]
+pub async fn list_retired_equipment_reviews(
+    include_closed: bool,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::retired_equipment_review::RetiredEquipmentReviewList> {
+    let user = require_session!(state);
+    let wo_scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
+    let di_scope = if access::holds_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?
+    {
+        crate::di::access::require_anywhere(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+        )
+        .await?
+    } else {
+        AccessScope::Subtrees(Default::default())
+    };
+    crate::wo::retired_equipment_review::list_reviews(&state.db, &wo_scope, &di_scope, include_closed).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) get_wo — requires ot.view
 // ═══════════════════════════════════════════════════════════════════════════════

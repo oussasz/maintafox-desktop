@@ -885,8 +885,9 @@ mod tests {
         // permit flag a plant rule set at conversion (`clear_wo_permit_rule_flag`, ptw.issue). OT types
         // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
         // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
-        // and the required / optional switch (`set_planned_part_required`).
-        assert_eq!(wo_lines.len(), 75, "invoke_handler must contain exactly 75 WO commands");
+        // and the required / optional switch (`set_planned_part_required`). Migration 265: work on
+        // retired equipment received by sync, to review (`list_retired_equipment_reviews`).
+        assert_eq!(wo_lines.len(), 76, "invoke_handler must contain exactly 76 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
