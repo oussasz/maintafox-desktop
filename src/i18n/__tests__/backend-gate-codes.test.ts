@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import enErrors from "../en/errors.json";
 import frErrors from "../fr/errors.json";
+import { ISSUE_NAMESPACES } from "../namespaces";
 
 function rustFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -51,21 +52,6 @@ describe("backend GATE codes are translated", () => {
 // one of the places the screen looks (`src/lib/format-org-validation-issue.ts`): otherwise the user
 // reads the backend sentence, in one language only.
 
-const ISSUE_LOOKUP_NAMESPACES = [
-  "org",
-  "ot",
-  "equipment",
-  "di",
-  "reference",
-  "training",
-  "reliability",
-  "settings",
-  "inventory",
-  "inspections",
-  "pm",
-  "budget",
-] as const;
-
 /**
  * Codes still without a text in both languages. Each entry is listed with its owner; the list only
  * shrinks (a code that gets its texts must leave it).
@@ -83,8 +69,10 @@ const BASE_ISSUE_BUILDERS = [
 
 function backendSources(): string[] {
   return rustFiles(join(process.cwd(), "src-tauri", "src"))
-    .filter((f) => !/(?:^|[\/])(?:[^\/]*tests?\.rs|[^\/]*_tests[^\/]*|test_support\.rs)$/.test(f))
-    .filter((f) => !/[\/]migrations[\/]/.test(f))
+    .filter(
+      (f) => !/(?:^|[\\/])(?:[^\\/]*tests?\.rs|[^\\/]*_tests[^\\/]*|test_support\.rs)$/.test(f),
+    )
+    .filter((f) => !/[\\/]migrations[\\/]/.test(f))
     .map((f) => readFileSync(f, "utf8"));
 }
 
@@ -105,24 +93,38 @@ function issueBuilders(sources: string[]): string[] {
 
 function structuredIssueCodes(): string[] {
   const sources = backendSources();
-  const constants = new Map<string, string>();
+  const constDecl = /const\s+([A-Z][A-Z0-9_]*)\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]+)"/g;
+  // Every value each constant name has across the backend: a name used in a file resolves to that
+  // file's own constant, otherwise to every value it has elsewhere (a name defined in several files
+  // with different values is checked under each of them, never under none).
+  const everywhere = new Map<string, Set<string>>();
   for (const source of sources) {
-    for (const m of source.matchAll(
-      /const\s+([A-Z][A-Z0-9_]*)\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]+)"/g,
-    )) {
-      if (m[1] && m[2]) constants.set(m[1], m[2]);
+    for (const m of source.matchAll(constDecl)) {
+      if (m[1] && m[2]) everywhere.set(m[1], (everywhere.get(m[1]) ?? new Set()).add(m[2]));
     }
   }
-  const builders = issueBuilders(sources).map((b) => b.replace(/[:]/g, ":"));
   const call = new RegExp(
-    String.raw`(?<![\w.])(?:[a-z_]+::)*(?:${builders.join("|")})\(\s*(?:"([A-Z][A-Z0-9_]+)"|([A-Z][A-Z0-9_]*)\b)`,
+    String.raw`(?<![\w.])(?:[a-z_]+::)*(?:${issueBuilders(sources).join("|")})\(\s*(?:"([A-Z][A-Z0-9_]+)"|(?:[a-z_]+::)*([A-Z][A-Z0-9_]*)\b)`,
     "g",
   );
   const codes = new Set<string>();
   for (const source of sources) {
+    const local = new Map<string, string>();
+    for (const m of source.matchAll(constDecl)) {
+      if (m[1] && m[2]) local.set(m[1], m[2]);
+    }
     for (const m of source.matchAll(call)) {
-      const code = m[1] ?? (m[2] ? constants.get(m[2]) : undefined);
-      if (code && /^[A-Z][A-Z0-9_]+$/.test(code) && !code.startsWith("GATE_")) codes.add(code);
+      const named = m[2];
+      const values = m[1]
+        ? [m[1]]
+        : named
+          ? local.has(named)
+            ? [local.get(named) ?? ""]
+            : [...(everywhere.get(named) ?? [])]
+          : [];
+      for (const code of values) {
+        if (/^[A-Z][A-Z0-9_]+$/.test(code) && !code.startsWith("GATE_")) codes.add(code);
+      }
     }
   }
   return [...codes].sort();
@@ -154,10 +156,7 @@ function hasIssueText(locale: string, code: string): boolean {
       org,
       `${p}.${code}`,
     ]),
-    ...ISSUE_LOOKUP_NAMESPACES.map((ns): [Json, string] => [
-      loadNamespace(locale, ns),
-      `errors.${code}`,
-    ]),
+    ...ISSUE_NAMESPACES.map((ns): [Json, string] => [loadNamespace(locale, ns), `errors.${code}`]),
     [errors, `scope.${code}`],
     [errors, `gateError.${code}`],
   ];

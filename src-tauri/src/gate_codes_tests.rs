@@ -285,7 +285,16 @@ const LIST_ALLOWLIST: &[(&str, &str)] = &[
     ("entitlements/queries.rs", ""),
     // Sync protocol and repair inputs built by the app itself (ids, payload hash, mode, the fixed
     // confirmation phrase of the repair dialog); a user never types them.
-    ("sync/queries.rs", ""),
+    ("sync/queries.rs", "{field} is required."),
+    ("sync/queries.rs", "operation must be one of"),
+    ("sync/queries.rs", "payload_json must be"),
+    ("sync/queries.rs", "payload_hash does not match"),
+    ("sync/queries.rs", "conflict_id must be"),
+    ("sync/queries.rs", "expected_row_version must be"),
+    ("sync/queries.rs", "action must be one of"),
+    ("sync/queries.rs", "mode must be one of"),
+    ("sync/queries.rs", "single_item replay requires"),
+    ("sync/queries.rs", "confirm_phrase must be"),
     // Start-up upkeep report for the log, not a refusal.
     ("inventory/reservations.rs", ""),
     // User-reachable, single language: recoded by the Error Texts & Localisation Lead (AU-24, AU-38).
