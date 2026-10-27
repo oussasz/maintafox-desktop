@@ -476,17 +476,46 @@ pub async fn require_active_value(
     field: &str,
     id: Option<i64>,
 ) -> AppResult<i64> {
+    let (missing, inactive, unknown) = list_value_codes(domain);
     let Some(id) = id else {
-        return Err(AppError::ValidationFailed(vec![format!("{field} is required.")]));
+        let gate = missing;
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{gate}: {field} is required."
+        )]));
     };
     match value_in_domain(db, domain, id).await? {
         Some((_, _, true)) => Ok(id),
-        Some((_, _, false)) => Err(AppError::ValidationFailed(vec![format!(
-            "{field}: this value is no longer active in {domain}."
-        )])),
-        None => Err(AppError::ValidationFailed(vec![format!(
-            "{field}: not a value of {domain}."
-        )])),
+        Some((_, _, false)) => {
+            let gate = inactive;
+            Err(AppError::ValidationFailed(vec![format!(
+                "{gate}: {field}: this value is no longer active in {domain}."
+            )]))
+        }
+        None => {
+            let gate = unknown;
+            Err(AppError::ValidationFailed(vec![format!(
+                "{gate}: {field}: not a value of {domain}."
+            )]))
+        }
+    }
+}
+
+/// The gate codes of an isolation link refused by [`require_active_value`]: missing, no longer
+/// active, not a value of the list. The isolation method list has its own codes, the energy type
+/// list (the only other list checked here) the others.
+fn list_value_codes(domain: &str) -> (&'static str, &'static str, &'static str) {
+    if domain == ISOLATION_METHODS_DOMAIN {
+        (
+            "GATE_PERMIT_ISOLATION_METHOD_REQUIRED",
+            "GATE_PERMIT_ISOLATION_METHOD_INACTIVE",
+            "GATE_PERMIT_ISOLATION_METHOD_UNKNOWN",
+        )
+    } else {
+        (
+            "GATE_PERMIT_ENERGY_TYPE_REQUIRED",
+            "GATE_PERMIT_ENERGY_TYPE_INACTIVE",
+            "GATE_PERMIT_ENERGY_TYPE_UNKNOWN",
+        )
     }
 }
 

@@ -14,8 +14,6 @@ use std::path::{Path, PathBuf};
 /// Refusals that are deliberately not coded. `(file, literal prefix)`: a file entry ending with `/`
 /// covers the whole folder, an empty prefix covers every refusal of the file. One reason per group.
 const ALLOWLIST: &[(&str, &str)] = &[
-    // Queued: these modules get their texts from their own lead.
-    ("permit/", ""),
     // Licence / activation / entitlements: only stored-data, parse and lineage faults stay uncoded.
     ("license/queries.rs", "Failed to decode license field"),
     ("license/security.rs", "Failed to decode licensing security field"),
