@@ -7,6 +7,7 @@
 import { z, ZodError } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   DeclareOwnSkillInput,
   AvailabilityBlockCreateInput,
@@ -464,17 +465,19 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class PersonnelIpcError extends Error {
   readonly code: string;
-
-  constructor(code: string, message: string) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, details: unknown = null) {
     super(message);
     this.name = "PersonnelIpcError";
     this.code = code;
+    this.details = details;
   }
 }
 
 function mapInvokeError(err: unknown): never {
   if (isIpcError(err)) {
-    throw new PersonnelIpcError(err.code, err.message);
+    throw new PersonnelIpcError(err.code, err.message, ipcErrorDetails(err));
   }
   if (err instanceof Error) throw err;
   throw new Error(String(err));

@@ -1,6 +1,7 @@
 import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
@@ -400,11 +401,14 @@ export class PmIpcError extends Error {
    * user, so screens must not repeat it. False for a response the app could not read.
    */
   readonly reported: boolean;
-  constructor(code: string, message: string, reported = true) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, reported = true, details: unknown = null) {
     super(message);
     this.name = "PmIpcError";
     this.code = code;
     this.reported = reported;
+    this.details = details;
   }
 }
 
@@ -414,7 +418,7 @@ export function isReportedPmError(err: unknown): boolean {
 }
 
 function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new PmIpcError(err.code, err.message);
+  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, true, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }

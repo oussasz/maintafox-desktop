@@ -226,7 +226,8 @@ pub async fn build_overview_kpis(
         pm_today,
         pm_today_prev,
         perms.can_pm,
-        "up-bad",
+        // Workload, not a fault (CMMS Advisor D15): only overdue PM is shown red.
+        "neutral",
     ));
 
     let (backlog_now, backlog_prev) = if perms.can_ot {

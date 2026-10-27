@@ -58,6 +58,7 @@ export function OverviewMetricCards(props: {
   layout: OverviewKpiLayoutEntry[];
 }) {
   const { t } = useTranslation("dashboard");
+  const { t: tr } = useTranslation("reports");
   const navigate = useNavigate();
   const formatters = useFormatters();
   const { formatNumber } = formatters;
@@ -85,10 +86,11 @@ export function OverviewMetricCards(props: {
 
   const formatTrend = (
     cell: OverviewKpiCell,
-    reg: { stableBelow?: number },
+    reg: { stableBelow?: number; trendSense: VisualMetricTrendSense },
   ): { label: string; sense: VisualMetricTrendSense } | undefined => {
     if (cell.baseline_available === false) return undefined;
-    const direction = cell.trend_sense as "up-good" | "up-bad" | "neutral";
+    // The registry is the only place a sense is written (the cell's own copy may be stale).
+    const direction = reg.trendSense;
     const stableBelow = reg.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
     // A percentage is compared in points ("+8 pts"), never as "+10 %" of a percentage.
     if (cell.value_kind === "percent") {
@@ -112,6 +114,15 @@ export function OverviewMetricCards(props: {
       label: `${sign}${formatNumber(rounded)} %`,
       sense: senseForDelta(cell.value - cell.previous_value, direction),
     };
+  };
+
+  /** The KPI's "stable" band, worded from the registry value. */
+  const bandTitle = (cell: OverviewKpiCell, reg: { stableBelow?: number }) => {
+    const band = reg.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
+    const shown = formatters.formatDecimal(band, band < 0.1 ? 2 : 1);
+    return cell.value_kind === "percent"
+      ? tr("smrp.stableBand", { points: shown })
+      : tr("smrp.stableBandPercent", { percent: shown });
   };
 
   return (
@@ -148,7 +159,13 @@ export function OverviewMetricCards(props: {
               onClick={() => navigate(reg.drillPath)}
               {...(isOverviewKpiAccent(entry.accent) ? { accent: entry.accent } : {})}
               {...(unit ? { unit } : {})}
-              {...(trend ? { trendLabel: trend.label, trendSense: trend.sense } : {})}
+              {...(trend
+                ? {
+                    trendLabel: trend.label,
+                    trendSense: trend.sense,
+                    trendTitle: bandTitle(cell, reg),
+                  }
+                : {})}
               {...(reg.vizKind === "gauge" ? { gaugeValue: cell.value } : {})}
               {...(reg.vizKind === "alert"
                 ? {

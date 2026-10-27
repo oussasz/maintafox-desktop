@@ -241,6 +241,8 @@
     "formula": "Formule",
     "period": "Période",
     "unit": "Unité",
+    "stableBand": "Stable si la variation est inférieure à ±{{points}} pt",
+    "stableBandPercent": "Stable si la variation est inférieure à ±{{percent}} % de la valeur précédente",
     "open": "Ouvrir la liste",
     "periodValue": "{{days}} derniers jours ({{from}} – {{to}})",
     "hoursValue": "{{value}} h",

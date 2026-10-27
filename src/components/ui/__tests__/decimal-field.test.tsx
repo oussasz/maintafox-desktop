@@ -98,6 +98,63 @@ describe("DecimalField", () => {
   });
 });
 
+describe("DecimalField invalid text", () => {
+  beforeAll(() => {
+    initI18n();
+    useLocaleStore.setState({ activeLocale: "fr" });
+  });
+
+  it("tells the parent while the text is invalid and blocks Enter, so the previous value is never submitted", () => {
+    const submitted: Array<number | null> = [];
+    const validity: boolean[] = [];
+    function FormHarness() {
+      const [v, setV] = useState<number | null>(5);
+      return (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitted.push(v);
+          }}
+        >
+          <DecimalField
+            aria-label="qty"
+            value={v}
+            onValueChange={setV}
+            onValidityChange={(x) => validity.push(x)}
+          />
+        </form>
+      );
+    }
+    render(<FormHarness />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    // Valid: Enter submits.
+    fireEvent.keyDown(input, { key: "Enter" });
+    input.form?.requestSubmit();
+    expect(submitted).toEqual([5]);
+    // "-5" with negatives off is not a number: invalid, reported, Enter blocked.
+    fireEvent.change(input, { target: { value: "-5" } });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(validity.at(-1)).toBe(true);
+    const enter = fireEvent.keyDown(input, { key: "Enter" });
+    expect(enter).toBe(false); // default prevented: no implicit submit
+    // Fixed: valid again, reported, Enter goes through.
+    fireEvent.change(input, { target: { value: "4,5" } });
+    expect(validity.at(-1)).toBe(false);
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+  });
+
+  it("treats a number outside min/max as invalid for Enter", () => {
+    render(<DecimalField aria-label="qty" value={1} onValueChange={() => {}} min={0.5} />);
+    const input = screen.getByLabelText("qty") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "0,1" } });
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+  });
+
+  it("always reads the point as the decimal mark", () => {
+    expect(parseDecimalInput("1.250")).toEqual({ kind: "number", value: 1.25 });
+  });
+});
+
 describe("rounding and parent reconciliation", () => {
   it("rounds on the decimal digits, not the binary value", async () => {
     const { roundDecimal } = await import("@/utils/decimal");

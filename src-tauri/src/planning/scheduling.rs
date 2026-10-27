@@ -1989,9 +1989,21 @@ pub async fn create_schedule_break_in(
             "cost_impact_estimate": cost_delta,
             "team_id": next_team_id
         });
-        Ok::<_, AppError>((current, break_in_id, dedupe_key, payload, wo_sync, approval, forced))
+        // In the break-in's transaction: a signed break-in without its audit event is not recorded.
+        break_in_approval::audit_signed_break_in(
+            &tx,
+            actor_id,
+            current.id,
+            break_in_id,
+            "move",
+            &reason,
+            &approval,
+            &forced,
+        )
+        .await?;
+        Ok::<_, AppError>((current, break_in_id, dedupe_key, payload, wo_sync))
     };
-    let (current, break_in_id, dedupe_key, payload, wo_sync, approval, forced) = match in_tx.await {
+    let (current, break_in_id, dedupe_key, payload, wo_sync) = match in_tx.await {
         Ok(done) => done,
         Err(e) => {
             tx.rollback().await?;
@@ -2013,17 +2025,6 @@ pub async fn create_schedule_break_in(
     {
         tracing::error!(error = %e, commitment_id = current.id, "break-in: approver password outcome not recorded");
     }
-    break_in_approval::audit_signed_break_in(
-        db,
-        actor_id,
-        current.id,
-        break_in_id,
-        "move",
-        &reason,
-        &approval,
-        &forced,
-    )
-    .await;
     if let Some(outcome) = wo_sync {
         wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "break_in").await;
     }
@@ -2276,6 +2277,18 @@ pub async fn create_schedule_commitment(
                 ),
             )
             .await?;
+            // In the break-in's transaction: a signed break-in without its audit event is not recorded.
+            break_in_approval::audit_signed_break_in(
+                &tx,
+                actor_id,
+                id,
+                break_in_id,
+                "insert",
+                &reason.code,
+                approval,
+                &[],
+            )
+            .await?;
         }
         append_change_log(
             &tx,
@@ -2312,10 +2325,9 @@ pub async fn create_schedule_commitment(
             false,
         )
         .await?;
-        let approval = break_in.map(|(_, approval, _)| approval).unwrap_or_default();
-        Ok::<_, AppError>((id, wo_sync, inserted_break_in, approval))
+        Ok::<_, AppError>((id, wo_sync, inserted_break_in))
     };
-    let (id, wo_sync, inserted_break_in, approval) = match in_tx.await {
+    let (id, wo_sync, inserted_break_in) = match in_tx.await {
         Ok(done) => done,
         Err(e) => {
             tx.rollback().await?;
@@ -2332,8 +2344,6 @@ pub async fn create_schedule_commitment(
         wo_sync::record_wo_sync_audit(db, actor_id, outcome.wo_id, "create").await;
     }
     if let Some((break_in_id, dedupe_key, payload, dangerous, reason)) = inserted_break_in {
-        break_in_approval::audit_signed_break_in(db, actor_id, id, break_in_id, "insert", &reason, &approval, &[])
-            .await;
         let body = format!("Break-in added commitment #{id} to a frozen week (reason: {reason}).");
         announce_break_in(db, actor_id, id, break_in_id, dedupe_key, payload, dangerous, body).await?;
     }

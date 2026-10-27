@@ -317,6 +317,16 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         approver_password: password.map(Into::into),
         dangerous_override_reason: Some("Guard missing".to_string()),
     };
+    // Without a break-in: the refusal reaches the screen in the shape the commit dialog reads to
+    // open its break-in step (code in `details`, with the week).
+    let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("frozen week");
+    let json = serde_json::to_value(&err).expect("serialize");
+    assert_eq!(json["code"], "VALIDATION_FAILED", "{json}");
+    assert_eq!(json["details"][0]["code"], "PLANNING_WEEK_FROZEN", "{json}");
+    let week = json["details"][0]["params"]["week_start"].as_str().unwrap_or_default();
+    assert!(week.starts_with("2026-05-0"), "{json}");
     input.frozen_week_break_in = Some(with(None, None));
     let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
         .await
@@ -376,6 +386,95 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         .await,
         1
     );
+}
+
+/// AU-114 — the signed break-in's audit event is written in the break-in's transaction: when the
+/// audit store refuses it, neither the move nor the urgent insert is recorded; once it accepts,
+/// each signed break-in has its event (action, target and both names unchanged).
+#[tokio::test]
+async fn a_signed_break_in_is_recorded_only_with_its_audit_event() {
+    let db = setup_db().await;
+    let (site, team) = weekly_site(&db, "FE9").await;
+    let approver = site_approver(&db, 190, "FE9-HERE", site).await;
+    let signed_events = |target: i64| {
+        format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'planning.break_in.signed' \
+               AND target_type = 'schedule_commitment' AND target_id = '{target}' \
+               AND json_extract(details_json, '$.detail.requested_by_user_id') = 1 \
+               AND json_extract(details_json, '$.detail.approved_by_user_id') = {approver}"
+        )
+    };
+    let break_ins =
+        |target: i64| format!("SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {target}");
+    let refuse_audit = "CREATE TRIGGER au114_refuse BEFORE INSERT ON audit_events \
+                        WHEN NEW.action_code = 'planning.break_in.signed' \
+                        BEGIN SELECT RAISE(ABORT, 'audit store refused'); END";
+
+    // A signed move.
+    let c = open_commitment(&db, team, 8901, "2026-05-12T08:00", "2026-05-12T09:00").await;
+    let urgent = || {
+        signed(
+            move_input(&c, "emergency", "2026-05-12T10:00", "2026-05-12T11:00"),
+            approver,
+            APPROVER_PASSWORD,
+        )
+    };
+    exec_sql(&db, refuse_audit).await;
+    let err = scheduling::create_schedule_break_in(&db, 1, urgent())
+        .await
+        .expect_err("no audit event, no break-in");
+    assert!(code_of(&err).contains("audit store refused"), "{err:?}");
+    assert_eq!(scalar(&db, &break_ins(c.id)).await, 0, "the move is rolled back");
+    let start: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT committed_start FROM schedule_commitments WHERE id = {}", c.id),
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "committed_start")
+        .expect("start");
+    assert_eq!(start, c.committed_start, "the slot is unchanged");
+    exec_sql(&db, "DROP TRIGGER au114_refuse").await;
+    scheduling::create_schedule_break_in(&db, 1, urgent())
+        .await
+        .expect("signed move");
+    assert_eq!(scalar(&db, &break_ins(c.id)).await, 1);
+    assert_eq!(scalar(&db, &signed_events(c.id)).await, 1);
+
+    // An urgent insert into a frozen week.
+    super::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+    let candidate = insert_candidate(&db, "manual_test", 8902, "ready", 100.0).await;
+    let mut input = commit_input(candidate, team, "2026-05-05T08:00", "2026-05-05T09:00");
+    input.frozen_week_break_in = Some(CommitBreakIn {
+        reason: "safety".to_string(),
+        approved_by_user_id: Some(approver),
+        approver_password: Some(APPROVER_PASSWORD.into()),
+        dangerous_override_reason: None,
+    });
+    exec_sql(&db, refuse_audit).await;
+    let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("no audit event, no insert");
+    assert!(code_of(&err).contains("audit store refused"), "{err:?}");
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM schedule_commitments WHERE schedule_candidate_id = {candidate}")
+        )
+        .await,
+        0,
+        "the commitment is rolled back with its break-in"
+    );
+    exec_sql(&db, "DROP TRIGGER au114_refuse").await;
+    let inserted = scheduling::create_schedule_commitment(&db, 1, input)
+        .await
+        .expect("signed insert");
+    assert_eq!(scalar(&db, &break_ins(inserted.id)).await, 1);
+    assert_eq!(scalar(&db, &signed_events(inserted.id)).await, 1);
 }
 
 #[tokio::test]
