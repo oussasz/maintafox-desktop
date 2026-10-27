@@ -29,8 +29,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
         "Failed to validate previous envelope lineage",
     ),
     ("entitlements/queries.rs", "previous_envelope_id must reference"),
-    // Permit / lock requirement of a work order: queued with the permit module's lead.
-    ("wo/workflow/actions/permit_requirement.rs", ""),
     // Internal parse / serialisation failures: the text is the library error, not a rule.
     ("", "layout_json: "),
     ("", "overview_kpis_json: "),
