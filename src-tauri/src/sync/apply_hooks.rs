@@ -798,7 +798,15 @@ pub(crate) async fn after_upsert(
                 .await?
                 .ok_or_else(|| hook_err(layout.table(), "work order not found after apply"))?;
             let sent_without_origin = inserted && !payload.contains_key(crate::permit::sync_check::SAFETY_ORIGIN);
-            after_received_work_order(conn, id, sent_without_origin, held_rule).await
+            // New here by the snapshot of this PC's first join: the plant's history (fail safe: a row
+            // located otherwise is judged).
+            let first_join_history = match row {
+                RowLocator::Identity(sync_id) if inserted => {
+                    crate::sync::plant_join::first_join_snapshot_row(conn, "work_orders", sync_id).await?
+                }
+                _ => false,
+            };
+            after_received_work_order(conn, id, sent_without_origin, held_rule, first_join_history).await
         }
         // A request received flagged "sécurité" protects its work orders not started yet, as the PC
         // that flagged it did (`permit_requirement::raise_work_orders_of_safety_request`).
@@ -866,13 +874,16 @@ pub(crate) async fn after_upsert(
 ///   judged the same way, audit finding AU-04 S3);
 /// - already started with no plant rule while one here matches it, or received without the rule
 ///   held here (`held_rule` `Kept`, the rule kept): recorded once as a safety finding
-///   (`requirement_rules::finding_for_started_without_rule`), not for plant history received by a
-///   snapshot.
+///   (`requirement_rules::finding_for_started_without_rule`), not for plant history: a work order
+///   new here received by the snapshot of this PC's first join (`first_join_history`,
+///   `sync::plant_join::first_join_snapshot_row`). A snapshot received once this PC has joined, or
+///   on a PC with no activation, is judged.
 async fn after_received_work_order(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     sent_without_origin: bool,
     held_rule: Option<&crate::permit::sync_check::HeldRule>,
+    first_join_history: bool,
 ) -> AppResult<()> {
     use crate::permit::sync_check::HeldRule;
     let source_di: Option<i64> = conn
@@ -937,7 +948,7 @@ async fn after_received_work_order(
         crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
     )
     .await?;
-    if !crate::sync::materialize::applying_snapshot_row() {
+    if !first_join_history {
         let received_without_held_rule = match held_rule {
             Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
             _ => None,

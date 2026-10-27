@@ -175,23 +175,12 @@ fn sync_err(e: impl std::fmt::Display) -> AppError {
 }
 
 /// Whether the received work order (not held here: the caller checks it) is the plant's history of
-/// this PC's first join, applied without R3 / R4 and with its snapshot children unjudged: a
-/// snapshot row is being applied (`sync::materialize::applying_snapshot_row`), this PC is
-/// activated, it has not completed a full pull of the organisation it is activated for, and
-/// nothing of that work order is held here (`sync::plant_join::first_join_history`). A snapshot
-/// received again once the PC has joined (a re-bootstrap after the server refused its checkpoint)
-/// is judged as any received change. Fail safe: a PC with no activation judges.
+/// this PC's first join, applied without R3 / R4 and with its snapshot children unjudged
+/// (`sync::plant_join::first_join_snapshot_row`: a snapshot row, this PC activated, no complete
+/// pull of its organisation yet, nothing of that work order held here). Fail safe: a PC with no
+/// activation judges.
 async fn first_join_snapshot_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<bool> {
-    if !crate::sync::materialize::applying_snapshot_row() {
-        return Ok(false);
-    }
-    let activated = crate::commands::product_license::get_activation_claim_tenant_id(conn)
-        .await?
-        .is_some_and(|tenant| !tenant.trim().is_empty());
-    if !activated {
-        return Ok(false);
-    }
-    crate::sync::plant_join::first_join_history(conn, "work_orders", entity_sync_id).await
+    crate::sync::plant_join::first_join_snapshot_row(conn, "work_orders", entity_sync_id).await
 }
 
 /// R1: `Some` when the received work order (its local copy overlaid by the row) changes status

@@ -503,8 +503,9 @@ pub(crate) struct Group {
     parent_sync_id: String,
     previous_status: Option<String>,
     rows: Vec<GroupRow>,
-    /// The parent's received change is judged (`false`: a work order new here received by a
-    /// snapshot, the plant's history; its children are applied with it, not judged again).
+    /// The parent's received change is judged (`false`: a work order new here received by the
+    /// snapshot of this PC's first join, the plant's history; its children are applied with it, not
+    /// judged again).
     judged: bool,
     /// A received work-order status change (or a work order new here): its close-out children are
     /// in the group, and a completion or close is judged on the written state after it
@@ -2374,8 +2375,10 @@ pub(crate) async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &st
 /// The received work order, when its start is judged here (otherwise `None`), with its local copy
 /// overlaid: when it enters `in_progress` here; or when it arrives `completed` or `closed` while
 /// this PC never held it in execution (new here, or draft / planning / ready here), so the start
-/// made elsewhere on the way is judged too (AU-99 review N4) — except plant history received by a
-/// snapshot as a work order new here (`sync::materialize::applying_snapshot_row`).
+/// made elsewhere on the way is judged too (AU-99 review N4) — except plant history received as a
+/// work order new here by the snapshot of this PC's first join (`sync::plant_join::
+/// first_join_snapshot_row`: activated, no complete pull yet, nothing of it held here). A snapshot
+/// received once this PC has joined, or on a PC with no activation, is judged.
 async fn work_order_start(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2399,7 +2402,8 @@ async fn work_order_start(
             !matches!(
                 from.as_deref(),
                 Some("in_progress" | "on_hold" | "completed" | "closed")
-            ) && (local.is_some() || !crate::sync::materialize::applying_snapshot_row())
+            ) && (local.is_some()
+                || !crate::sync::plant_join::first_join_snapshot_row(conn, "work_orders", entity_sync_id).await?)
         }
         _ => false,
     };
