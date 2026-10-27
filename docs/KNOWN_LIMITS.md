@@ -252,6 +252,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | The weekly schedule is per site and the site list comes from the organisation tree: a planner without the organisation view right cannot use it (the screen says why). | UX | Step 6 (roles) |
 | Creating or moving an asset needs a location from the organisation tree, which needs the organisation view right: a user allowed to manage assets but not to view the organisation cannot create one (the screen says why). Decide in the roles step whether asset managers may read the location list. | UX | Step 6 (roles) |
 | No separation-of-duties pairs are defined in the permission registry, so none are warned. | Safety | After pilot |
+| Reinstalling the previous version from the recovery screen (after an update that could not update the database) asks for no sign-in and no right, by design: the database may not open, so no account can be checked (S2). It is bounded by the update journal kept on this PC, not by a person: only while the last update is recorded as failed on the database (`RollbackRequired`), only on the version that failed, only back to the exact version the PC came from (asked from the update server, which may refuse; no other version is ever taken), and only when that update's pre-update backup was verified and staged (otherwise the PC is kept as it is, for support). The installer's signature is checked as for any update, and one install runs at a time. While the journal is in that state, anyone at the PC can start it. | Safety | Accepted |
 
 ## Home dashboard
 
