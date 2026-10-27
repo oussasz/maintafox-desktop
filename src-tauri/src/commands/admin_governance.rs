@@ -1098,8 +1098,12 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
             }
         }
         // An imported role carries no permission the importing administrator lacks.
-        if let Err(e) = crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
-            errors.push(e.to_string());
+        match crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
+            Ok(()) => {}
+            Err(AppError::PermissionDenied(message)) => {
+                errors.push(format!("GATE_ADMIN_IMPORT_PERMISSION_NOT_HELD: {message}"));
+            }
+            Err(e) => return Err(e),
         }
 
         if !errors.is_empty() {

@@ -504,7 +504,8 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 /// One blocking issue of the validation engine as a refusal line: coded (`GATE_REF_ISSUE_*`, the
 /// value code as the `value` parameter) so the screen says it in the user's language; the
 /// backend sentence follows the code as its technical fallback. An issue without a code of its
-/// own, or a value code that does not fit the parameter alphabet, keeps its sentence.
+/// own, or a value code that does not fit the parameter alphabet, gets the generic
+/// `GATE_REF_ISSUE_BLOCKING` (the validation report names the value).
 fn blocking_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
     let code = match issue.check.as_str() {
         "duplicate_code" => "GATE_REF_ISSUE_DUPLICATE_CODE",
@@ -518,10 +519,11 @@ fn blocking_issue_line(issue: &super::validation::ReferenceValidationIssue) -> S
         "invalid_external_code_pattern" => "GATE_REF_ISSUE_EXTERNAL_PATTERN",
         "invalid_external_code" => "GATE_REF_ISSUE_EXTERNAL_CODE",
         "protected_deactivation_no_migration" => "GATE_REF_ISSUE_PROTECTED_NO_MIGRATION",
-        _ => return plain_issue_line(issue),
+        "invalid_unit" => "GATE_REF_ISSUE_INVALID_UNIT",
+        "invalid_nature_tag" => "GATE_REF_ISSUE_INVALID_NATURE_TAG",
+        _ => return unnamed_issue_line(issue),
     };
     match issue.value_code.as_deref() {
-        None if issue.check == "invalid_external_code_pattern" => format!("{code}: {}", issue.message),
         Some(value)
             if !value.is_empty()
                 && value
@@ -530,14 +532,14 @@ fn blocking_issue_line(issue: &super::validation::ReferenceValidationIssue) -> S
         {
             format!("{code}:value={value}: {}", issue.message)
         }
-        _ => plain_issue_line(issue),
+        _ => unnamed_issue_line(issue),
     }
 }
 
-fn plain_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
+fn unnamed_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
     match &issue.value_code {
-        Some(code) => format!("{code} : {}", issue.message),
-        None => issue.message.clone(),
+        Some(code) => format!("GATE_REF_ISSUE_BLOCKING: {code} : {}", issue.message),
+        None => format!("GATE_REF_ISSUE_BLOCKING: {}", issue.message),
     }
 }
 
@@ -778,18 +780,20 @@ mod tests {
             "GATE_REF_ISSUE_DUPLICATE_CODE:value=PUMP-1: message"
         );
         assert_eq!(
-            blocking_issue_line(&issue("invalid_external_code_pattern", None)),
-            "GATE_REF_ISSUE_EXTERNAL_PATTERN: message"
+            blocking_issue_line(&issue("invalid_unit", Some("KG"))),
+            "GATE_REF_ISSUE_INVALID_UNIT:value=KG: message"
         );
     }
 
     #[test]
-    fn an_issue_without_a_usable_code_keeps_its_sentence() {
+    fn an_issue_without_a_usable_code_gets_the_generic_code() {
         assert_eq!(
             blocking_issue_line(&issue("duplicate_code", Some("a b"))),
-            "a b : message"
+            "GATE_REF_ISSUE_BLOCKING: a b : message"
         );
-        assert_eq!(blocking_issue_line(&issue("invalid_unit", Some("KG"))), "KG : message");
-        assert_eq!(blocking_issue_line(&issue("missing_label", None)), "message");
+        assert_eq!(
+            blocking_issue_line(&issue("unknown_check", None)),
+            "GATE_REF_ISSUE_BLOCKING: message"
+        );
     }
 }
