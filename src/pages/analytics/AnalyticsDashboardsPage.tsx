@@ -42,7 +42,7 @@ import {
   mergeWithDefaultAnalyticsLayout,
   parseAnalyticsDashboardLayoutJson,
 } from "@shared/analytics-dashboard-layout";
-import type { OrgTreeRow } from "@shared/ipc-types";
+import type { AnalyticsKpiValue, OrgTreeRow } from "@shared/ipc-types";
 import {
   ANALYTICS_RAMS_BASE_PATH,
   DASHBOARD_KPI_DRILL_PATH,
@@ -50,10 +50,10 @@ import {
   RELIABILITY_RAM_EVIDENCE_HASH,
 } from "@shared/kpi-definitions";
 import {
-  DEFAULT_KPI_STABLE_BELOW,
-  OVERVIEW_KPI_REGISTRY_BY_KEY,
-  OVERVIEW_KPI_SEMANTIC_KEYS,
-  type OverviewKpiSemanticKey,
+  ANALYTICS_HUB_KPI_KEYS as HUB,
+  type AnalyticsHubKpiKey,
+  hubStableBelow,
+  hubTrendSense,
 } from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -206,10 +206,18 @@ export function AnalyticsDashboardsPage() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [orgRows]);
 
-  /** The "stable" threshold of a percentage KPI, set with its definition in the KPI registry. */
-  const stableOf = (key: OverviewKpiSemanticKey) => ({
-    stablePoints: OVERVIEW_KPI_REGISTRY_BY_KEY.get(key)?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW,
-  });
+  /**
+   * The trend of a hub tile: its sense and its "stable" band both come from the KPI registry
+   * (D14), never from this screen. `percentage` is for a figure that is itself a percentage.
+   */
+  const hubTrend = (
+    key: AnalyticsHubKpiKey,
+    kpi: AnalyticsKpiValue | null | undefined,
+    percentage = false,
+  ) =>
+    percentage
+      ? periodTrend(kpi, hubTrendSense(key), { stablePoints: hubStableBelow(key) })
+      : periodTrend(kpi, hubTrendSense(key), undefined, hubStableBelow(key));
 
   const trendLabel = (trend: KpiTrend) => {
     if (trend.points !== undefined) {
@@ -270,7 +278,7 @@ export function AnalyticsDashboardsPage() {
                 context: now,
                 value: count(data?.open_dis.value),
                 available: data?.open_dis.available ?? false,
-                trend: periodTrend(data?.open_dis, "up-bad"),
+                trend: hubTrend(HUB.OPEN_DIS, data?.open_dis),
                 onOpen: () => navigate(listLinks.requests({ scope: "open" })),
               })}
             {can(P.OT_VIEW) &&
@@ -279,7 +287,7 @@ export function AnalyticsDashboardsPage() {
                 context: openWosRule ? `${now} · ${openWosRule.label}` : now,
                 value: count(data?.open_wos.value),
                 available: data?.open_wos.available ?? false,
-                trend: periodTrend(data?.open_wos, "up-bad"),
+                trend: hubTrend(HUB.OPEN_WOS, data?.open_wos),
                 ...(openWosRule
                   ? { onOpen: () => navigate(listLinks.workOrders({ scope: openWosRule.scope })) }
                   : {}),
@@ -290,7 +298,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.inService"),
                 value: count(data?.total_assets.value),
                 available: data?.total_assets.available ?? false,
-                trend: periodTrend(data?.total_assets, "up-good"),
+                trend: hubTrend(HUB.TOTAL_ASSETS, data?.total_assets),
                 onOpen: () => navigate(DASHBOARD_KPI_DRILL_PATH[DASHBOARD_KPI_KEYS.TOTAL_ASSETS]),
               })}
             {canAny(P.DI_VIEW, P.PM_VIEW, P.OT_VIEW) &&
@@ -299,7 +307,7 @@ export function AnalyticsDashboardsPage() {
                 context: t("hub.dashboards.context.overdue"),
                 value: count(data?.overdue_items.value),
                 available: data?.overdue_items.available ?? false,
-                trend: periodTrend(data?.overdue_items, "up-bad"),
+                trend: hubTrend(HUB.OVERDUE_ITEMS, data?.overdue_items),
                 // Three lists stand behind this figure: the user picks which one to open.
                 onOpen: () => setOverdueChooserOpen(true),
               })}
@@ -313,7 +321,7 @@ export function AnalyticsDashboardsPage() {
               context: now,
               value: count(data?.pm_overdue.value),
               available: data?.pm_overdue.available ?? false,
-              trend: periodTrend(data?.pm_overdue, "up-bad"),
+              trend: hubTrend(HUB.PM_OVERDUE, data?.pm_overdue),
               onOpen: () => navigate(listLinks.pmDue("overdue")),
             })}
             {renderKpi({
@@ -321,7 +329,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: periodTrend(data?.pm_due_today, "neutral"),
+              trend: hubTrend(HUB.PM_DUE_TODAY, data?.pm_due_today),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -329,7 +337,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: periodTrend(data?.pm_due_next_7d, "neutral"),
+              trend: hubTrend(HUB.PM_DUE_NEXT_7D, data?.pm_due_next_7d),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>
@@ -362,7 +370,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: hours(data?.avg_mtbf_hours.value),
                   available: data?.avg_mtbf_hours.available ?? false,
-                  trend: periodTrend(data?.avg_mtbf_hours, "up-good"),
+                  trend: hubTrend(HUB.AVG_MTBF_HOURS, data?.avg_mtbf_hours),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
@@ -370,7 +378,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: hours(data?.avg_mttr_hours.value),
                   available: data?.avg_mttr_hours.available ?? false,
-                  trend: periodTrend(data?.avg_mttr_hours, "up-bad"),
+                  trend: hubTrend(HUB.AVG_MTTR_HOURS, data?.avg_mttr_hours),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
@@ -378,11 +386,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_availability.value),
                   available: data?.avg_availability.available ?? false,
-                  trend: periodTrend(
-                    data?.avg_availability,
-                    "up-good",
-                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY),
-                  ),
+                  trend: hubTrend(HUB.AVG_AVAILABILITY, data?.avg_availability, true),
                   ...ramOpen(openRamsDashboard),
                 })}
                 {renderKpi({
@@ -390,11 +394,7 @@ export function AnalyticsDashboardsPage() {
                   context: horizonText,
                   value: ratio(data?.avg_data_quality.value),
                   available: data?.avg_data_quality.available ?? false,
-                  trend: periodTrend(
-                    data?.avg_data_quality,
-                    "up-good",
-                    stableOf(OVERVIEW_KPI_SEMANTIC_KEYS.DATA_QUALITY),
-                  ),
+                  trend: hubTrend(HUB.AVG_DATA_QUALITY, data?.avg_data_quality, true),
                   ...ramOpen(openRamsEvidence),
                 })}
                 {renderKpi({
@@ -430,7 +430,7 @@ export function AnalyticsDashboardsPage() {
                 ? formatCurrency(data.maintenance_cost.value)
                 : "—",
               available: data?.maintenance_cost.available ?? false,
-              trend: periodTrend(data?.maintenance_cost, "up-bad"),
+              trend: hubTrend(HUB.MAINTENANCE_COST, data?.maintenance_cost),
               ...(can(P.FIN_VIEW) ? { onOpen: () => navigate("/budget") } : {}),
             })}
           </div>

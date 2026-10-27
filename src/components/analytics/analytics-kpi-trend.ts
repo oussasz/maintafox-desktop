@@ -39,6 +39,8 @@ export function periodTrend(
   kpi: AnalyticsKpiValue | null | undefined,
   direction: "up-good" | "up-bad" | "neutral",
   ratio?: RatioTrendOptions,
+  /** Relative change (percent) below which a figure that is not a percentage reads "stable". */
+  stablePercent: number = STABLE_PERCENT,
 ): KpiTrend | null {
   if (!kpi || !kpi.available) return null;
   if (kpi.quality_badge === INSUFFICIENT_BASELINE) return null;
@@ -54,7 +56,7 @@ export function periodTrend(
   }
   if (previous === 0) return value === 0 ? { percent: 0, sense: "neutral" } : null;
   const percent = ((value - previous) / Math.abs(previous)) * 100;
-  if (Math.abs(percent) < STABLE_PERCENT) return { percent: 0, sense: "neutral" };
+  if (Math.abs(percent) < stablePercent) return { percent: 0, sense: "neutral" };
   const up = percent > 0;
   const good = direction === "up-good" ? up : !up;
   if (direction === "neutral") return { percent, sense: "neutral" };
