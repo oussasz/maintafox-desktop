@@ -1344,20 +1344,52 @@ pub(crate) mod tests {
             let db = setup().await;
             let (wo_id, _) = create_wo_in_progress(&db).await;
             clear_rams_for_close_gate(&db, wo_id).await;
-            let (mode_id, _) = crate::wo::gap06_regression_tests::tests::ensure_failure_mode_and_cause_ids(&db).await;
-            // Row "fd-n-r2-2-a" is coded (failure mode), row "fd-n-r2-2-b" is not.
-            let a = ("fd-n-r2-2-a", Some(mode_id), "A");
-            let b = ("fd-n-r2-2-b", None::<i64>, "B");
+            let (mode_id, cause_id) =
+                crate::wo::gap06_regression_tests::tests::ensure_failure_mode_and_cause_ids(&db).await;
+            let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+                .await
+                .expect("lookup symptom")
+                .expect("seeded symptom");
+            // Row "fd-n-r2-2-a" is fully coded (symptom, mode, cause, mechanism: any reference
+            // value), row "fd-n-r2-2-b" only has a mechanism.
+            let a = (
+                "fd-n-r2-2-a",
+                Some(symptom_id),
+                Some(mode_id),
+                Some(cause_id),
+                Some(mode_id),
+                "A",
+            );
+            let b = ("fd-n-r2-2-b", None::<i64>, None::<i64>, None::<i64>, Some(mode_id), "B");
             let rows = if a_first { [a, b] } else { [b, a] };
-            for (sync_id, mode, notes) in rows {
+            for (sync_id, symptom, mode, cause, mechanism, notes) in rows {
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "INSERT INTO work_order_failure_details (work_order_id, failure_mode_id, notes, entity_sync_id) \
-                     VALUES (?, ?, ?, ?)",
-                    [wo_id.into(), mode.into(), notes.into(), sync_id.into()],
+                    "INSERT INTO work_order_failure_details (work_order_id, symptom_id, failure_mode_id, \
+                     failure_cause_id, failure_mechanism_id, notes, entity_sync_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        wo_id.into(),
+                        symptom.into(),
+                        mode.into(),
+                        cause.into(),
+                        mechanism.into(),
+                        notes.into(),
+                        sync_id.into(),
+                    ],
                 ))
                 .await
                 .expect("coding row");
+            }
+
+            // The completion gate (`wo::execution`) reads the coded row.
+            let gates = crate::wo::execution::evaluate_completion_gates(&db, wo_id)
+                .await
+                .expect("completion gates");
+            for code in ["FAILURE_MODE", "SYMPTOM"] {
+                assert!(
+                    gates.iter().any(|g| g.code == code && g.passed),
+                    "a_first: {a_first}: {code}: {gates:?}"
+                );
             }
 
             // The close-out form shows the chosen row first.
@@ -1403,6 +1435,22 @@ pub(crate) mod tests {
                 missing.iter().all(|r| r.work_order_id != wo_id),
                 "a_first: {a_first}: {missing:?}"
             );
+            // The failure event recorded at the close carries the coded row's failure mode.
+            let event =
+                crate::reliability::queries::ingest_failure_event_from_closed_wo(&db, wo_id, admin_id(&db).await)
+                    .await
+                    .expect("ingest")
+                    .expect("failure event");
+            assert_eq!(event.failure_mode_id, Some(mode_id), "a_first: {a_first}");
+            // A study query (data quality) reads the coded row's cause and mechanism: no gap.
+            let quality = crate::reliability::study::data_quality::data_quality(&db, 1200, admin_id(&db).await as i32)
+                .await
+                .expect("data quality");
+            assert!(
+                quality.coding_gaps.iter().all(|g| g.work_order_id != wo_id),
+                "a_first: {a_first}: {:?}",
+                quality.coding_gaps.iter().map(|g| &g.gap).collect::<Vec<_>>()
+            );
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE work_orders SET closed_at = NULL WHERE id = ?",
@@ -1413,28 +1461,32 @@ pub(crate) mod tests {
 
             // A save edits the chosen row, never the other one.
             let rv = closeout::wo_row_version(&db, wo_id).await.expect("rv");
-            closeout::save_failure_detail(
+            closeout::save_failure_coding(
                 &db,
-                SaveFailureDetailInput {
-                    wo_id,
-                    expected_row_version: rv,
-                    symptom_id: None,
-                    failure_mode_id: Some(mode_id),
-                    failure_cause_id: None,
-                    failure_effect_id: None,
-                    is_temporary_repair: false,
-                    is_permanent_repair: true,
-                    cause_not_determined: false,
-                    notes: Some("A edited".into()),
+                closeout::SaveFailureCodingInput {
+                    base: SaveFailureDetailInput {
+                        wo_id,
+                        expected_row_version: rv,
+                        symptom_id: None,
+                        failure_mode_id: Some(mode_id),
+                        failure_cause_id: None,
+                        failure_effect_id: None,
+                        is_temporary_repair: false,
+                        is_permanent_repair: true,
+                        cause_not_determined: false,
+                        notes: Some("A edited".into()),
+                    },
+                    failure_mechanism_id: None,
+                    detection_method_id: None,
                 },
             )
             .await
             .expect("save");
-            let by_sync: Vec<(String, Option<String>)> = db
+            let by_sync: Vec<(String, Option<String>, Option<i64>)> = db
                 .query_all(Statement::from_string(
                     DbBackend::Sqlite,
                     format!(
-                        "SELECT entity_sync_id, notes FROM work_order_failure_details \
+                        "SELECT entity_sync_id, notes, failure_mechanism_id FROM work_order_failure_details \
                          WHERE work_order_id = {wo_id} ORDER BY entity_sync_id"
                     ),
                 ))
@@ -1445,6 +1497,7 @@ pub(crate) mod tests {
                     (
                         r.try_get_by_index(0).expect("sync"),
                         r.try_get_by_index(1).expect("notes"),
+                        r.try_get_by_index(2).expect("mechanism"),
                     )
                 })
                 .collect();
@@ -1452,6 +1505,8 @@ pub(crate) mod tests {
         }
         assert_eq!(seen[0], seen[1], "the same row edited in both orders");
         assert_eq!(seen[0][0].1.as_deref(), Some("A edited"));
+        assert_eq!(seen[0][0].2, None, "the coding save wrote the chosen row");
         assert_eq!(seen[0][1].1.as_deref(), Some("B"));
+        assert!(seen[0][1].2.is_some(), "the other PC's row is not rewritten");
     }
 }

@@ -1952,7 +1952,7 @@ async fn an_execution_refused_for_any_reason_writes_nothing() {
     ) -> &mut crate::pm::domain::PmExecutionFindingInput {
         &mut input.findings.as_mut().expect("findings")[0]
     }
-    let cases: [Case; 8] = [
+    let cases: [Case; 12] = [
         (
             "blank description",
             "",
@@ -2009,6 +2009,39 @@ async fn an_execution_refused_for_any_reason_writes_nothing() {
             "",
             |i| i.work_order_id = Some(987_654),
             "GATE_PM_WO_UNKNOWN",
+        ),
+        (
+            "no system symptom",
+            "UPDATE reference_values SET is_active = 0 WHERE code = 'performance_drop'",
+            |i| {
+                finding_of(i).create_follow_up_di = Some(true);
+                finding_of(i).finding_type = "ZZ_NOT_A_SYMPTOM".into();
+            },
+            "GATE_DI_SYSTEM_SYMPTOM_MISSING",
+        ),
+        (
+            "unknown submitter (request)",
+            "",
+            |i| {
+                finding_of(i).create_follow_up_di = Some(true);
+                i.actor_id = Some(987_654);
+            },
+            "GATE_DI_REFERENCE_INVALID",
+        ),
+        (
+            "unknown creator (work order)",
+            "",
+            |i| {
+                finding_of(i).create_follow_up_work_order = Some(true);
+                i.actor_id = Some(987_654);
+            },
+            "GATE_WO_CREATOR_UNKNOWN",
+        ),
+        (
+            "work order on equipment with no node",
+            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = 1",
+            |i| finding_of(i).create_follow_up_work_order = Some(true),
+            "GATE_WO_EQUIPMENT_NO_NODE",
         ),
     ];
     for (label, setup_sql, change, code) in cases {
@@ -2553,6 +2586,63 @@ async fn a_pm_follow_up_work_order_of_a_preventive_type_is_refused() {
     assert!(
         matches!(err, AppError::ValidationFailed(ref m) if m.iter().any(|s| s.contains(queries::GATE_PM_FOLLOW_UP_NOT_CORRECTIVE))),
         "{err:?}"
+    );
+    // Refused before anything is written (#185 N-R2-1).
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "in_progress");
+    assert_eq!(after.row_version, occ.row_version);
+    assert_eq!(
+        count_for(
+            &db,
+            "SELECT COUNT(*) AS c FROM pm_executions WHERE pm_occurrence_id = ?",
+            occ.id
+        )
+        .await,
+        0
+    );
+}
+
+/// #185 N-R2-1: a work order other than the one linked to the occurrence is refused before
+/// anything is written.
+#[tokio::test]
+async fn an_execution_naming_another_work_order_writes_nothing() {
+    let db = setup_db().await;
+    let mut occ = occurrence_with_generated_wo(&db, "PM-EXEC-MISMATCH").await;
+    let linked = occ.linked_work_order_id.expect("linked work order");
+    for next in ["scheduled", "in_progress"] {
+        occ = queries::transition_pm_occurrence(
+            &db,
+            TransitionPmOccurrenceInput {
+                occurrence_id: occ.id,
+                expected_row_version: occ.row_version,
+                next_status: next.to_string(),
+                reason_code: None,
+                note: None,
+                generate_work_order: Some(false),
+                work_order_type_id: None,
+                actor_id: Some(1),
+            },
+        )
+        .await
+        .expect(next);
+    }
+    let mut input = execute_input(&occ, vec![finding("LEAK", false, false, None)]);
+    input.work_order_id = Some(linked + 1000);
+    let err = queries::execute_pm_occurrence(&db, input)
+        .await
+        .expect_err("another work order");
+    assert!(format!("{err:?}").contains("GATE_PM_WO_MISMATCH"), "{err:?}");
+    let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+    assert_eq!(after.status, "in_progress");
+    assert_eq!(after.row_version, occ.row_version);
+    assert_eq!(
+        count_for(
+            &db,
+            "SELECT COUNT(*) AS c FROM pm_executions WHERE pm_occurrence_id = ?",
+            occ.id
+        )
+        .await,
+        0
     );
 }
 

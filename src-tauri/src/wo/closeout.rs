@@ -217,10 +217,10 @@ const VALID_RECURRENCE_LEVELS: &[&str] = &["none", "low", "medium", "high"];
 /// The one failure-coding row of work order `wo` (an SQL expression) that every reader uses — the
 /// close-out form and gate, the execution gate, the failure event, the reliability and FMECA
 /// figures — so that they read the same row on every PC when two PCs each coded the same work
-/// order before they synced (#185 N-R2-2 interim, CMMS Advisor 2026-10-27: earliest created_at,
-/// then entity_sync_id). `work_order_failure_details` has no `created_at` column, so the order is
-/// by `entity_sync_id` (the same on every PC); `id` (local) only breaks a tie between rows not yet
-/// given a sync identity. Rows are neither merged nor deleted here.
+/// order before they synced (#185 N-R2-2). The rule is permanent (CMMS Advisor 2026-10-27): the
+/// row with the smallest `entity_sync_id`, the same on every PC (the table has no creation time);
+/// `id` (local) only breaks a tie between rows not yet given a sync identity. Rows are neither
+/// merged nor deleted here.
 pub(crate) fn failure_detail_of_wo_sql(wo: &str) -> String {
     format!(
         "(SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = {wo} \
@@ -921,10 +921,14 @@ pub async fn save_failure_coding(
     let wo_id = input.base.wo_id;
     let txn = db.begin().await?;
     let wo_row_version = upsert_failure_detail(&txn, input.base).await?;
+    // Only the row every reader uses (`failure_detail_of_wo_sql`): another PC's row is not rewritten.
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
-         WHERE work_order_id = ?",
+        format!(
+            "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
+             WHERE id = {}",
+            failure_detail_of_wo_sql("?")
+        ),
         [
             input.failure_mechanism_id.into(),
             input.detection_method_id.into(),

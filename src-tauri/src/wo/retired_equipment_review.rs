@@ -632,15 +632,18 @@ fn list_select() -> String {
     let rec_first = format!(
         "(rev.occurred_at IS NOT NULL AND ({end_at} IS NULL OR julianday(rev.occurred_at) < julianday({end_at})))"
     );
-    // #187 LC-N1: an item closed as `other` (its record moved to equipment in service, or gone…)
-    // keeps that closure when the candidate that would replace it came later: the record's end or
-    // a return to service after the item closed is not what closed it. A record now on another
-    // equipment than the item's is read as such whatever the clocks say.
+    // #187 LC-N1: a closed item whose record is now on another equipment than the item's was
+    // closed by that move, whatever closure this PC stored (a PC that received the move and the
+    // record's end in one row stored the end): every PC shows `other` from the same rows. An item
+    // stored as `other` (its record gone...) also keeps it when the candidate that would replace it
+    // came later: the record's end or a return to service after the item closed is not what closed
+    // it. Only the time shown can differ between PCs (the stored one).
     let other_first = format!(
-        "(r.closure_kind = '{other}' AND ( \
+        "(r.status = 'closed' AND ( \
              (CASE r.record_kind WHEN 'work_order' THEN wo.id IS NOT NULL AND wo.equipment_id IS NOT r.equipment_id \
                   ELSE ir.id IS NOT NULL AND ir.equipment_id IS NOT r.equipment_id END) \
-             OR julianday(CASE WHEN {rec_first} THEN rev.occurred_at ELSE {end_at} END) > julianday(r.closed_at)))",
+             OR (r.closure_kind = '{other}' \
+                 AND julianday(CASE WHEN {rec_first} THEN rev.occurred_at ELSE {end_at} END) > julianday(r.closed_at))))",
         other = CLOSURE_OTHER,
     );
     format!(

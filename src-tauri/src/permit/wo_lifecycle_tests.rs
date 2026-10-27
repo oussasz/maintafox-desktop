@@ -2088,7 +2088,13 @@ async fn work_resumed_under_another_permit_is_not_held_again_by_the_open_review(
 /// is raised as unclosed (and the repair still refuses while the lock is fitted).
 #[tokio::test]
 async fn a_fitted_lock_hides_open_downtime_only_while_the_work_is_not_ended() {
-    for (status, expected) in [("completed", 0), ("on_hold", 0), ("closed", 1), ("cancelled", 1)] {
+    for (status, expected) in [
+        ("in_progress", 0),
+        ("on_hold", 0),
+        ("completed", 0),
+        ("closed", 1),
+        ("cancelled", 1),
+    ] {
         let db = setup().await;
         let (wo_id, _locks) = running_loto_work(&db, &format!("EQ-N3-{status}"), &["MCC-N3-1"]).await;
         let segment = open_downtime(&db, wo_id).await;
@@ -2152,10 +2158,25 @@ async fn a_segment_started_after_the_last_removal_is_not_ended_by_it() {
         &format!("SELECT MAX(id) FROM work_order_downtime_segments WHERE work_order_id = {wo_id}"),
     )
     .await;
+    // And a segment whose start time cannot be read: left open the same way (fail safe).
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_order_downtime_segments (work_order_id, started_at, ended_at, downtime_type) \
+         VALUES (?, 'not a time', NULL, 'full')",
+        [wo_id.into()],
+    ))
+    .await
+    .expect("unreadable segment");
+    let unreadable = scalar_i64(
+        &db,
+        &format!("SELECT MAX(id) FROM work_order_downtime_segments WHERE work_order_id = {wo_id}"),
+    )
+    .await;
 
     assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 1);
     assert_eq!(segment_end(&db, before).await.as_deref(), Some(verified_at.as_str()));
     assert_eq!(segment_end(&db, after).await, None, "started after the verification");
+    assert_eq!(segment_end(&db, unreadable).await, None, "start time unreadable");
     // Again: nothing more is ended.
     assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 0);
     assert_eq!(segment_end(&db, after).await, None);
@@ -2179,11 +2200,11 @@ async fn a_segment_started_after_the_last_removal_is_not_ended_by_it() {
             &db,
             &format!(
                 "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_UNCLOSED' \
-                 AND record_id = {after} AND status = 'open'"
+                 AND record_id IN ({after}, {unreadable}) AND status = 'open'"
             )
         )
         .await,
-        1,
-        "left for a person"
+        2,
+        "both left for a person"
     );
 }

@@ -1254,3 +1254,85 @@ async fn an_item_closed_as_other_keeps_its_closure_when_the_record_ends_later() 
     assert_eq!(after[0].closed_by, None);
     assert_eq!(after[0].closure_note, None);
 }
+
+/// #187 LC-N1 (review S2): the work order moved to equipment in service then cancelled on another
+/// PC. PC A receives the move, then the cancellation; PC B receives both in one row (it stores the
+/// cancellation). Both show the item closed as `other`: the move closed it, not the cancellation.
+#[tokio::test]
+async fn a_move_and_a_cancellation_received_together_or_apart_show_the_same_closure() {
+    let source = pc().await;
+    let (a, b) = (pc().await, pc().await);
+    let (wo_id, sid) = work_order_on(&source).await;
+    let created = wire(&source, "work_orders", &sid).await;
+    for db in [&source, &a, &b] {
+        exec(
+            db,
+            "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             created_at, updated_at) VALUES (2, 'test-eq-lcn1-s2', 'EQ-LCN1-S2', 'Spare pump', 'active_in_service', 1, \
+             '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')",
+            vec![],
+        )
+        .await;
+    }
+    for db in [&a, &b] {
+        retire_here(db).await;
+        apply(db, "work_orders", &sid, &created).await;
+    }
+    exec(
+        &source,
+        "UPDATE work_orders SET equipment_id = 2, updated_at = '2026-10-21T00:00:00Z', \
+         row_version = row_version + 1 WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    let moved = wire(&source, "work_orders", &sid).await;
+    let wo = crate::wo::queries::get_work_order(&source, wo_id)
+        .await
+        .expect("get")
+        .expect("wo");
+    crate::wo::queries::cancel_work_order(
+        &source,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo.row_version,
+            actor_id: admin_id(&source).await,
+            cancel_reason: "Moved and dropped".into(),
+        },
+    )
+    .await
+    .expect("cancel on the other PC");
+    let cancelled = wire(&source, "work_orders", &sid).await;
+
+    assert!(matches!(
+        apply(&a, "work_orders", &sid, &moved).await,
+        ApplyOutcome::Applied
+    ));
+    assert!(matches!(
+        apply(&a, "work_orders", &sid, &cancelled).await,
+        ApplyOutcome::Applied
+    ));
+    assert!(matches!(
+        apply(&b, "work_orders", &sid, &cancelled).await,
+        ApplyOutcome::Applied
+    ));
+    let stored_b = text(
+        &b,
+        "SELECT closure_kind FROM retired_equipment_reviews WHERE record_sync_id = ?",
+        vec![sid.clone().into()],
+    )
+    .await;
+    assert_eq!(
+        stored_b.as_deref(),
+        Some(CLOSURE_WO_CANCELLED),
+        "B stored the cancellation"
+    );
+
+    let key = ReviewKey::work_order(&sid);
+    for (name, db) in [("A", &a), ("B", &b)] {
+        let items = item(db, &key).await;
+        assert_eq!(items.len(), 1, "{name}");
+        assert_eq!(items[0].status, "closed", "{name}");
+        assert_eq!(items[0].closure_kind.as_deref(), Some(review::CLOSURE_OTHER), "{name}");
+        assert_eq!(items[0].closed_by, None, "{name}");
+    }
+}

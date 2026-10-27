@@ -2038,10 +2038,13 @@ fn follow_up_title(occurrence: &PmOccurrence, finding: &PmExecutionFindingInput)
     crate::pm::wo_content::compose_title(&base, occurrence.asset_code.as_deref())
 }
 
-/// The refusals the follow-up of a finding would meet once the execution is written: no acting
-/// user, a plan without an equipment scope, a retired equipment (Déclassé / Rebuté), and for a
-/// follow-up request an equipment with no location or an inactive location, or no system symptom;
-/// for a follow-up work order a type that is unknown or not corrective (#185 N-R2-1).
+/// The refusals the follow-up of a finding would meet once the execution is written, with the same
+/// codes (#185 N-R2-1): no acting user, a plan without an equipment scope, a retired equipment
+/// (Déclassé / Rebuté); for a follow-up request an unknown submitter, an equipment with no location
+/// or an inactive one, the request catalog (origin `pm`, type `repair`, the system symptom); for a
+/// follow-up work order an unknown creator, equipment or org node, an equipment with no node
+/// (`wo::queries::refuse_creator_equipment_and_node`), an unreadable planned start, and a type that
+/// is unknown or not corrective.
 async fn refuse_follow_ups_that_cannot_be_created(
     db: &DatabaseConnection,
     occurrence_id: i64,
@@ -2053,12 +2056,12 @@ async fn refuse_follow_ups_that_cannot_be_created(
     if !wants_di && !wants_wo {
         return Ok(());
     }
-    if actor_id.is_none() {
+    let Some(actor_id) = actor_id else {
         return Err(AppError::ValidationFailed(vec![
             "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to create the follow-up of a PM finding."
                 .to_string(),
         ]));
-    }
+    };
     let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
     let plan_row = db
         .query_one(Statement::from_sql_and_values(
@@ -2101,12 +2104,30 @@ async fn refuse_follow_ups_that_cannot_be_created(
             ]));
         };
         crate::org::model_scope::assert_org_node_active(db, org_node_id).await?;
+        crate::di::reference_catalog::validate_di_origin_code(db, "pm").await?;
+        crate::di::reference_catalog::validate_di_request_type(db, "repair").await?;
         for finding in findings.iter().filter(|f| f.create_follow_up_di == Some(true)) {
-            crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
+            let symptom = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
+            crate::di::reference_catalog::require_di_symptom_id(db, Some(symptom)).await?;
+        }
+        let submitter = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE id = ?",
+                [actor_id.into()],
+            ))
+            .await?;
+        if submitter.is_none() {
+            return Err(crate::di::queries::reference_invalid());
         }
     }
     if wants_wo {
         crate::wo::queries::refuse_retired_equipment(db, equipment_id).await?;
+        crate::wo::queries::refuse_creator_equipment_and_node(db, actor_id, Some(equipment_id), None).await?;
+        crate::wo::time::stored_planned_time(
+            occurrence.due_at.as_deref(),
+            crate::wo::time::CODE_PLANNED_START_UNREADABLE,
+        )?;
         for finding in findings.iter().filter(|f| f.create_follow_up_work_order == Some(true)) {
             follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
         }

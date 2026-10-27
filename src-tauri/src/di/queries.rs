@@ -621,6 +621,14 @@ pub async fn create_intervention_request(
     Ok(di)
 }
 
+/// A new request names an equipment, org node or submitter that does not exist. Also checked for
+/// the submitter before a PM execution whose finding raises a request is written (#185 N-R2-1).
+pub(crate) fn reference_invalid() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_DI_REFERENCE_INVALID: Référence invalide (equipment_id, org_node_id, ou submitter_id).".into(),
+    ])
+}
+
 /// Refuses a new request on a retired equipment (Déclassé / Rebuté, AU-73). Shared by every
 /// creation path, including the follow-up of a PM finding checked before the execution is written.
 pub(crate) async fn refuse_retired_equipment(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
@@ -702,9 +710,7 @@ pub async fn create_intervention_request_in(
                 "GATE_DI_CODE_DUPLICATE: Un code DI en doublon a été généré. Veuillez réessayer.".into(),
             ])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec![
-                "GATE_DI_REFERENCE_INVALID: Référence invalide (equipment_id, org_node_id, ou submitter_id).".into(),
-            ])
+            reference_invalid()
         } else {
             AppError::Database(e)
         }
