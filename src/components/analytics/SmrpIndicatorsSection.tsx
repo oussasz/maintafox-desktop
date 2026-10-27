@@ -17,16 +17,14 @@ import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
+import {
+  DEFAULT_KPI_STABLE_BELOW,
+  OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
+  SMRP_KPI_KEYS,
+  smrpStableBelow,
+} from "@shared/overview-kpi-registry";
 import { P, type PermissionName } from "@shared/rbac/permissions.generated";
-
-/**
- * Change below this many percentage points reads "stable" — set per indicator, with its
- * definition: a small ratio such as cost-to-RAV (a few percent a year) moves by hundredths.
- */
-const STABLE_POINTS = {
-  default: 0.5,
-  costToRav: 0.05,
-} as const;
 
 export type SmrpDirection = "up-good" | "up-bad" | "neutral";
 
@@ -35,12 +33,16 @@ export interface PointsTrend {
   tone: Tone | null;
 }
 
-/** Change between two percentages, in points; `null` without both values. */
+/**
+ * Change between two percentages, in points; `null` without both values. A move below
+ * `stablePoints` reads "stable": the band belongs to the indicator's registry entry
+ * (`shared/overview-kpi-registry.ts`), never to this screen.
+ */
 export function pointsTrend(
   current: number | null | undefined,
   previous: number | null | undefined,
   direction: SmrpDirection,
-  stablePoints: number = STABLE_POINTS.default,
+  stablePoints: number,
 ): PointsTrend | null {
   if (current == null || previous == null) return null;
   const points = current - previous;
@@ -177,8 +179,8 @@ export function SmrpIndicatorsSection({
   });
   const pct = (v: number | null | undefined) => (v == null ? "—" : formatPercent(v));
   const hours = (v: number) => t("smrp.hoursValue", { value: formatDecimal(v, 1) });
-  const trendOf = (m: SmrpMetric, direction: SmrpDirection) => {
-    const tr = pointsTrend(m.current.value_pct, m.previous.value_pct, direction);
+  const trendOf = (m: SmrpMetric, direction: SmrpDirection, stablePoints: number) => {
+    const tr = pointsTrend(m.current.value_pct, m.previous.value_pct, direction, stablePoints);
     if (!tr) return null;
     if (tr.points === 0) return { label: t("smrp.trendStable"), tone: null };
     return {
@@ -205,7 +207,7 @@ export function SmrpIndicatorsSection({
           done: hours(m.current.numerator),
           total: hours(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good")}
+        trend={trendOf(m, "up-good", smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE))}
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
@@ -227,10 +229,10 @@ export function SmrpIndicatorsSection({
             part: formatNumber(m.current.numerator),
             total: formatNumber(m.current.denominator),
           });
-    for (const [key, m, direction] of [
-      ["planned", mix.planned, "up-good"],
-      ["reactive", mix.reactive, "up-bad"],
-      ["emergency", mix.emergency, "up-bad"],
+    for (const [key, m, direction, band] of [
+      ["planned", mix.planned, "up-good", SMRP_KPI_KEYS.WORK_MIX_PLANNED],
+      ["reactive", mix.reactive, "up-bad", SMRP_KPI_KEYS.WORK_MIX_REACTIVE],
+      ["emergency", mix.emergency, "up-bad", SMRP_KPI_KEYS.WORK_MIX_EMERGENCY],
     ] as const) {
       tiles.push(
         <SmrpTile
@@ -247,7 +249,7 @@ export function SmrpIndicatorsSection({
               {basis}
             </>
           }
-          trend={trendOf(m, direction)}
+          trend={trendOf(m, direction, smrpStableBelow(band))}
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
@@ -270,6 +272,10 @@ export function SmrpIndicatorsSection({
 
   if (smrp.pm_compliance) {
     const m = smrp.pm_compliance;
+    // Same figure as the Overview PM compliance: the band is that entry's.
+    const pmStableBelow =
+      OVERVIEW_KPI_REGISTRY_BY_KEY.get(OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE)?.stableBelow ??
+      DEFAULT_KPI_STABLE_BELOW;
     tiles.push(
       <SmrpTile
         key="pm"
@@ -282,7 +288,7 @@ export function SmrpIndicatorsSection({
           done: formatNumber(m.current.numerator),
           total: formatNumber(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good")}
+        trend={trendOf(m, "up-good", pmStableBelow)}
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
@@ -362,7 +368,12 @@ export function SmrpIndicatorsSection({
 
   if (smrp.cost_to_rav) {
     const c = smrp.cost_to_rav;
-    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad", STABLE_POINTS.costToRav);
+    const tr = pointsTrend(
+      c.value_pct,
+      c.previous_value_pct,
+      "up-bad",
+      smrpStableBelow(SMRP_KPI_KEYS.COST_TO_RAV),
+    );
     tiles.push(
       <SmrpTile
         key="rav"

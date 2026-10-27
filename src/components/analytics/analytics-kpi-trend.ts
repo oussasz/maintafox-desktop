@@ -5,6 +5,7 @@
 import type { VisualMetricTrendSense } from "@/components/metrics/VisualMetricCard";
 import type { AnalyticsKpiValue } from "@shared/ipc-types";
 import type { QualityBadgeCode } from "@shared/kpi-definitions";
+import { DEFAULT_KPI_STABLE_BELOW } from "@shared/overview-kpi-registry";
 
 export interface KpiTrend {
   /** Signed change in percent of the previous window, or 0 when stable. */
@@ -20,8 +21,8 @@ export interface KpiTrend {
  */
 const INSUFFICIENT_BASELINE: QualityBadgeCode = "insufficient_baseline";
 
-/** Below this relative change the figure is reported as stable (`DEFAULT_KPI_STABLE_BELOW`). */
-const STABLE_PERCENT = 0.5;
+/** Below this relative change the figure is reported as stable (the registry's default band). */
+const STABLE_PERCENT = DEFAULT_KPI_STABLE_BELOW;
 
 /** Options for a figure kept as a 0..1 ratio and shown as a percentage. */
 export interface RatioTrendOptions {

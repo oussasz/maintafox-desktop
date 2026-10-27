@@ -244,6 +244,70 @@ export const OVERVIEW_KPI_REGISTRY_BY_KEY = new Map(
   OVERVIEW_KPI_REGISTRY.map((e) => [e.semanticKey, e]),
 );
 
+/**
+ * SMRP indicators of the Analytics hub that move in percentage points. Each carries its own
+ * "stable" band here, next to the Overview entries: this registry is the only place a band is
+ * written (D14). PM compliance is the Overview `PM_COMPLIANCE` entry (same figure, same band).
+ */
+export const SMRP_KPI_KEYS = {
+  SCHEDULE_COMPLIANCE: "SCHEDULE_COMPLIANCE",
+  WORK_MIX_PLANNED: "WORK_MIX_PLANNED",
+  WORK_MIX_REACTIVE: "WORK_MIX_REACTIVE",
+  WORK_MIX_EMERGENCY: "WORK_MIX_EMERGENCY",
+  COST_TO_RAV: "COST_TO_RAV",
+} as const;
+
+export type SmrpKpiKey = (typeof SMRP_KPI_KEYS)[keyof typeof SMRP_KPI_KEYS];
+
+export interface SmrpKpiRegistryEntry {
+  key: SmrpKpiKey;
+  catalogId: string;
+  trendSense: OverviewKpiTrendSense;
+  /** Change, in percentage points, below which the trend reads "stable". */
+  stableBelow: number;
+}
+
+export const SMRP_KPI_REGISTRY: SmrpKpiRegistryEntry[] = [
+  {
+    key: SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE,
+    catalogId: "KPI-052",
+    trendSense: "up-good",
+    stableBelow: 0.5,
+  },
+  {
+    key: SMRP_KPI_KEYS.WORK_MIX_PLANNED,
+    catalogId: "KPI-053",
+    trendSense: "up-good",
+    stableBelow: 0.5,
+  },
+  {
+    key: SMRP_KPI_KEYS.WORK_MIX_REACTIVE,
+    catalogId: "KPI-054",
+    trendSense: "up-bad",
+    stableBelow: 0.5,
+  },
+  {
+    key: SMRP_KPI_KEYS.WORK_MIX_EMERGENCY,
+    catalogId: "KPI-055",
+    trendSense: "up-bad",
+    stableBelow: 0.5,
+  },
+  {
+    // A small ratio (a few percent a year): it moves by hundredths of a point.
+    key: SMRP_KPI_KEYS.COST_TO_RAV,
+    catalogId: "KPI-056",
+    trendSense: "up-bad",
+    stableBelow: 0.05,
+  },
+];
+
+export const SMRP_KPI_REGISTRY_BY_KEY = new Map(SMRP_KPI_REGISTRY.map((e) => [e.key, e]));
+
+/** The "stable" band of an SMRP indicator, in percentage points. */
+export function smrpStableBelow(key: SmrpKpiKey): number {
+  return SMRP_KPI_REGISTRY_BY_KEY.get(key)?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
+}
+
 export function isOverviewKpiSemanticKey(id: string): id is OverviewKpiSemanticKey {
   return Object.values(OVERVIEW_KPI_SEMANTIC_KEYS).includes(id as OverviewKpiSemanticKey);
 }
