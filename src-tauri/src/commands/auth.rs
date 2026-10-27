@@ -1069,14 +1069,22 @@ pub(crate) async fn force_change_password_impl(
     state: &AppState,
     payload: ForceChangePasswordRequest,
 ) -> AppResult<ForceChangePasswordResponse> {
+    // From the pre-update backup until the restart, nothing can be changed (updater SF1), as for
+    // every command behind `require_session!`.
+    crate::updater::refuse_while_installing()?;
+    // A session past its idle deadline is locked (and stays locked) as for any protected command:
+    // the password is changed only after the lock screen, never by whoever finds the PC (AU-109).
     let (user, session_db_id) = {
-        let sm = state.session.read().await;
-        match &sm.current {
-            Some(s) if !s.is_expired() => (s.user.clone(), s.session_db_id.clone()),
-            _ => {
-                return Err(AppError::Auth("Non authentifi\u{00e9}.".into()));
-            }
-        }
+        let mut sm = state.session.write().await;
+        let held = match sm.require_active_user() {
+            Ok(_) => sm.current.as_ref(),
+            Err(failure @ session_manager::RequireSessionFailure::IdleLocked) => return Err(failure.into_app_error()),
+            Err(session_manager::RequireSessionFailure::MissingOrExpired) => None,
+        };
+        let Some(s) = held else {
+            return Err(AppError::Auth("Non authentifi\u{00e9}.".into()));
+        };
+        (s.user.clone(), s.session_db_id.clone())
     };
     let stored = session_manager::enforce_session_alive(&state.db, &state.session, &user, Some(&session_db_id)).await?;
     if !stored.must_change_password {

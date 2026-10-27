@@ -628,7 +628,7 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
         config,
         std::sync::Arc::new(LicenseSyncAccess),
     ) {
-        Ok(worker) => worker,
+        Ok(worker) => worker.on_rights_changed(rights_changed_hook(app, state)),
         Err(message) => {
             error!("startup: sync worker not started: {message}");
             handle.publish_not_configured(&message);
@@ -644,6 +644,21 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
         .spawn(SYNC_TASK_ID, move |cancel| worker.run(commands, cancel))
         .await;
     info!("startup: sync worker started");
+}
+
+/// After a sync run that may have written a row the rights are read from (AU-107): every cached
+/// permission is dropped and the window reloads its own (`rbac::cache::invalidate_all_and_notify`).
+fn rights_changed_hook(
+    app: &AppHandle,
+    state: &crate::state::AppState,
+) -> crate::sync::transport::worker::RightsChangedHook {
+    let app = app.clone();
+    let cache = state.permission_cache.clone();
+    std::sync::Arc::new(move || {
+        let app = app.clone();
+        let cache = cache.clone();
+        Box::pin(async move { crate::rbac::cache::invalidate_all_and_notify(&app, &cache, "sync_applied").await })
+    })
 }
 
 fn emit_event(app: &AppHandle, event: StartupEvent) {

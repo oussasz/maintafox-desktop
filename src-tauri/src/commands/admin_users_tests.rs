@@ -1776,6 +1776,56 @@ async fn the_forced_change_follows_the_policy_and_leaves_one_live_session() {
     );
 }
 
+/// AU-109: an idle-locked session cannot change the password (whoever finds the PC unlocked
+/// first, as for every protected command); the password and the lock are left as they were.
+#[tokio::test]
+async fn the_forced_change_refuses_an_idle_locked_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let worker = insert_user(&db, "locked_worker").await;
+    admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    let session_id = open_session(&state, &db, worker, "locked_worker").await;
+    let password_hash = || async {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT password_hash FROM user_accounts WHERE id = ?",
+            [worker.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<Option<String>>("", "password_hash")
+        .expect("decode")
+    };
+    let hash_before = password_hash().await;
+    {
+        let mut sm = state.session.write().await;
+        let session = sm.current.as_mut().unwrap();
+        session.last_activity_at = chrono::Utc::now() - chrono::Duration::minutes(session.idle_timeout_minutes + 1);
+    }
+
+    let change = crate::commands::auth::ForceChangePasswordRequest {
+        new_password: "NewPassword12".into(),
+    };
+    let refused = crate::commands::auth::force_change_password_impl(&state, change).await;
+    assert!(matches!(refused, Err(AppError::SessionLocked(_))), "{refused:?}");
+    assert_eq!(password_hash().await, hash_before, "the password is unchanged");
+    let sm = state.session.read().await;
+    let session = sm.current.as_ref().expect("the session is kept, locked");
+    assert!(session.is_locked, "the lock holds until an unlock");
+    assert_eq!(session.session_db_id, session_id);
+}
+
 #[tokio::test]
 async fn ones_own_password_change_follows_the_policy_and_closes_other_sessions() {
     use crate::auth::session_manager::enforce_stored_session;

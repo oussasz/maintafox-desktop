@@ -367,7 +367,10 @@ pub(crate) async fn with_review_collection<T>(run: impl std::future::Future<Outp
 ///   not known here (applied, listed for review), while rights still waiting in the inbox keep their
 ///   grants waiting: a grant by B then waits for B's own role if that role can still apply;
 /// - then once more with those waits ended: each grant is decided ([`author_check`]).
-pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection) -> AppResult<()> {
+///
+/// Returns whether a row the rights are read from was written
+/// (`materialize::MaterializeInboxResult::rights_changed`), so the caller refreshes them (AU-107).
+pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection) -> AppResult<bool> {
     let waiting = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -381,18 +384,18 @@ pub(crate) async fn release_after_complete_pull(db: &sea_orm::DatabaseConnection
         .await?
         .is_some();
     if !waiting {
-        return Ok(());
+        return Ok(false);
     }
     // `materialize_inbox` sweeps the waiting rows until a sweep applies nothing: a fixpoint. Both
     // passes share one review notice.
     with_review_collection(async {
-        CAUGHT_UP
+        let first = CAUGHT_UP
             .scope(false, crate::sync::materialize::materialize_inbox(db, 200, true))
             .await?;
-        CAUGHT_UP
+        let last = CAUGHT_UP
             .scope(true, crate::sync::materialize::materialize_inbox(db, 200, true))
             .await?;
-        AppResult::Ok(())
+        AppResult::Ok(first.rights_changed || last.rights_changed)
     })
     .await
 }
