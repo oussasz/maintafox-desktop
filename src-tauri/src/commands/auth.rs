@@ -1069,6 +1069,9 @@ pub(crate) async fn force_change_password_impl(
     state: &AppState,
     payload: ForceChangePasswordRequest,
 ) -> AppResult<ForceChangePasswordResponse> {
+    // From the pre-update backup until the restart, nothing can be changed (updater SF1), as for
+    // every command behind `require_session!`.
+    crate::updater::refuse_while_installing()?;
     // A session past its idle deadline is locked (and stays locked) as for any protected command:
     // the password is changed only after the lock screen, never by whoever finds the PC (AU-109).
     let (user, session_db_id) = {
