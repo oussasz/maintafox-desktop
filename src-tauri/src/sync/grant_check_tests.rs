@@ -1443,3 +1443,62 @@ async fn the_refresh_drops_every_cached_permission() {
     cache.write().await.invalidate_all();
     assert!(!held(p.manager).await, "withdrawn at once after the refresh");
 }
+
+/// A run that failed part-way may have committed passes with rights rows (each pass commits on its
+/// own): the rights are refreshed then too (review of a7d07b69, point 1).
+#[test]
+fn a_failed_run_refreshes_the_rights_anyway() {
+    use crate::sync::materialize::{rights_refresh_needed, MaterializeInboxResult};
+    let run = |rights_changed| MaterializeInboxResult {
+        processed: 1,
+        applied: 1,
+        conflicts: 0,
+        skipped: 0,
+        deferred: 0,
+        errors: Vec::new(),
+        rights_changed,
+    };
+    assert!(rights_refresh_needed(&Ok(run(true))));
+    assert!(!rights_refresh_needed(&Ok(run(false))));
+    assert!(rights_refresh_needed(&Err(crate::errors::AppError::SyncError(
+        "a later step failed".into()
+    ))));
+}
+
+/// Taking the server version of a rights conflict writes the row outside any run: the rights are
+/// refreshed after it, and only for a rights row taken from the server (review of a7d07b69, point 2).
+#[test]
+fn taking_the_server_version_of_a_rights_row_refreshes_the_rights() {
+    use crate::sync::materialize::resolution_changes_rights;
+    assert!(resolution_changes_rights("user_scope_assignments", "accept_remote"));
+    assert!(resolution_changes_rights("role_permissions", "accept_remote"));
+    assert!(!resolution_changes_rights("user_scope_assignments", "accept_local"));
+    assert!(!resolution_changes_rights("user_scope_assignments", "dismiss"));
+    assert!(!resolution_changes_rights("work_orders", "accept_remote"));
+}
+
+/// The decision above, on a real conflict record: a grant refused for its author is a conflict on
+/// a rights entity, so taking its server version refreshes the rights.
+#[tokio::test]
+async fn a_rights_conflict_taken_from_the_server_is_a_rights_change() {
+    let p = plant().await;
+    let row = remote_assignment(&p.db, "grant-taken", p.worker, p.operator, Some(p.manager)).await;
+    demote_manager(&p).await;
+    let run = receive_through_inbox(&p.db, "user_scope_assignments", "grant-taken", row).await;
+    assert_eq!(run.conflicts, 1, "{run:?}");
+    let conflicts = crate::sync::queries::list_sync_conflicts(&p.db, Default::default())
+        .await
+        .expect("conflicts");
+    let conflict = conflicts
+        .iter()
+        .find(|c| c.entity_sync_id == "grant-taken")
+        .expect("the grant conflict");
+    assert_eq!(
+        (conflict.entity_type.as_str(), conflict.conflict_type.as_str()),
+        ("user_scope_assignments", GRANT_BY_UNAUTHORISED_ADMIN)
+    );
+    assert!(crate::sync::materialize::resolution_changes_rights(
+        &conflict.entity_type,
+        "accept_remote"
+    ));
+}

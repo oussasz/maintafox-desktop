@@ -646,9 +646,8 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
     info!("startup: sync worker started");
 }
 
-/// After a sync run wrote a row the rights are read from (AU-107): every cached permission is
-/// dropped (a role or an account may concern any user) and `rbac-changed` makes the window reload
-/// its permissions, as an administrator's change made on this PC does (`commands::admin_users`).
+/// After a sync run that may have written a row the rights are read from (AU-107): every cached
+/// permission is dropped and the window reloads its own (`rbac::cache::invalidate_all_and_notify`).
 fn rights_changed_hook(
     app: &AppHandle,
     state: &crate::state::AppState,
@@ -658,18 +657,7 @@ fn rights_changed_hook(
     std::sync::Arc::new(move || {
         let app = app.clone();
         let cache = cache.clone();
-        Box::pin(async move {
-            cache.write().await.invalidate_all();
-            if let Err(e) = app.emit(
-                "rbac-changed",
-                crate::rbac::cache::RbacChangedPayload {
-                    affected_user_id: None,
-                    action: "sync_applied".to_string(),
-                },
-            ) {
-                warn!("startup: cannot tell the window that rights changed by sync: {e}");
-            }
-        })
+        Box::pin(async move { crate::rbac::cache::invalidate_all_and_notify(&app, &cache, "sync_applied").await })
     })
 }
 

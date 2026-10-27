@@ -1026,7 +1026,15 @@ impl SyncWorker {
     /// Apply every received row: pending rows parents first, then (`retry_deferred`) the rows that
     /// waited for a parent, until nothing more can be applied.
     async fn materialize(&self, retry_deferred: bool) -> AppResult<()> {
-        let result = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await?;
+        let run = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await;
+        // Once per run, not per row: the cached permissions are dropped and the window reloads its
+        // own, also when the run failed after a pass that wrote rights rows had committed.
+        if crate::sync::materialize::rights_refresh_needed(&run) {
+            if let Some(hook) = &self.on_rights_changed {
+                hook().await;
+            }
+        }
+        let result = run?;
         if result.processed > 0 {
             info!(
                 target: "maintafox::sync",
@@ -1036,12 +1044,6 @@ impl SyncWorker {
                 deferred = result.deferred,
                 "inbox materialized"
             );
-        }
-        // Once per run, not per row: the cached permissions are dropped and the window reloads its own.
-        if result.rights_changed {
-            if let Some(hook) = &self.on_rights_changed {
-                hook().await;
-            }
         }
         // Reserved stock marks left by a write outside a pass (`inventory::reservations`), every cycle,
         // also when nothing was received; no write when there is no mark.

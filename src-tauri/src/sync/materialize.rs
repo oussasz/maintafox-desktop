@@ -43,6 +43,19 @@ pub const RIGHTS_ENTITY_TYPES: &[&str] = &[
     "org_nodes",
 ];
 
+/// Whether the rights must be refreshed after a materialization run: when it wrote a rights row,
+/// and whenever it failed part-way, since every pass commits on its own (the rows of a pass
+/// committed before the error are `applied` and never flag again). A refresh is cheap.
+pub fn rights_refresh_needed(run: &AppResult<MaterializeInboxResult>) -> bool {
+    run.as_ref().map_or(true, |r| r.rights_changed)
+}
+
+/// Whether resolving a sync conflict with `action` wrote a rights row: taking the server version
+/// (`accept_remote`) writes the received row here, outside any materialization run.
+pub fn resolution_changes_rights(entity_type: &str, action: &str) -> bool {
+    action == "accept_remote" && RIGHTS_ENTITY_TYPES.contains(&entity_type)
+}
+
 /// Deferral code for a row whose parent has not been applied yet.
 pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
 /// Deferral code for an entity type that is staged by other devices but not applied here yet.
