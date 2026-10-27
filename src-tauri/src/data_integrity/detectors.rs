@@ -170,13 +170,18 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
 
     // A segment left open while a lock is fitted under its work order's permits is not a defect:
     // the equipment is isolated, its downtime ends when the last removal is verified (owner
-    // decision D4; `permit::wo_gate::downtime_held_by_locks_sql`).
+    // decision D4; `permit::wo_gate::downtime_held_by_locks_sql`) — only while its work order is
+    // running, on hold or mechanically complete ("Terminé"). Under any other status (closed,
+    // cancelled, sent back to planning…) a fitted lock never ends the segment, so it is raised for a
+    // person; the repair still refuses while the lock is fitted, so the finding stays visible.
     let unclosed = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             format!(
                 "SELECT d.id, d.work_order_id FROM work_order_downtime_segments d \
-                 WHERE d.ended_at IS NULL AND NOT {}",
+                 WHERE d.ended_at IS NULL AND NOT ({} AND EXISTS (SELECT 1 FROM work_orders w \
+                 JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = d.work_order_id \
+                 AND s.code IN ('in_progress', 'on_hold', 'completed')))",
                 crate::permit::wo_gate::downtime_held_by_locks_sql("d.work_order_id")
             ),
         ))

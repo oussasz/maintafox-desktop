@@ -747,6 +747,11 @@ pub const AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL: &str = "wo.downtime_ended_by_loc
 /// back in service only now, never at "Terminé" while a lock is fitted. Audited, and shown in the
 /// execution log. Nothing to do otherwise (work still running or on hold, another lock still
 /// fitted, no open downtime). Returns the number of segments ended.
+///
+/// Only a segment that started at or before `verified_at` is ended. A segment opened after that
+/// verification (for example received from a PC whose clock runs ahead) is not held by a lock: it
+/// is left open and the integrity detector flags it unclosed for a person, so no negative duration
+/// is ever written. A start time that cannot be read is left open the same way.
 pub(crate) async fn end_downtime_after_lock_removal(
     txn: &impl ConnectionTrait,
     wo_id: i64,
@@ -761,8 +766,9 @@ pub(crate) async fn end_downtime_after_lock_removal(
     let open = txn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, downtime_type FROM work_order_downtime_segments WHERE work_order_id = ? AND ended_at IS NULL",
-            [wo_id.into()],
+            "SELECT id, downtime_type FROM work_order_downtime_segments WHERE work_order_id = ? AND ended_at IS NULL \
+             AND julianday(started_at) <= julianday(?)",
+            [wo_id.into(), verified_at.into()],
         ))
         .await?;
     if open.is_empty() {
@@ -771,8 +777,9 @@ pub(crate) async fn end_downtime_after_lock_removal(
     let ended = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE work_order_downtime_segments SET ended_at = ? WHERE work_order_id = ? AND ended_at IS NULL",
-            [verified_at.into(), wo_id.into()],
+            "UPDATE work_order_downtime_segments SET ended_at = ? WHERE work_order_id = ? AND ended_at IS NULL \
+             AND julianday(started_at) <= julianday(?)",
+            [verified_at.into(), wo_id.into(), verified_at.into()],
         ))
         .await?
         .rows_affected();

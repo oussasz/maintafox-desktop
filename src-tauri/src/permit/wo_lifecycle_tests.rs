@@ -2039,3 +2039,151 @@ async fn the_downtime_waits_for_the_last_lock_of_every_permit_of_the_work_order(
     assert_eq!(segment_end(&db, segment).await.as_deref(), Some(last.as_str()));
     assert!(!deisolation_pending(&db, wo_id).await);
 }
+
+// ── Follow-ups of #155 (check 3): N2, N3, N4 ─────────────────────────────────────────
+
+/// N2: work held here because its permit ended elsewhere, then resumed under a second live permit:
+/// the still-open "permit ended" review never holds it again (it was raised before that resume).
+#[tokio::test]
+async fn work_resumed_under_another_permit_is_not_held_again_by_the_open_review() {
+    let db = setup().await;
+    let (wo_id, p1) = running_work(&db, "EQ-N2-1").await;
+    let closed = with(
+        wire(&db, "work_permits", &p1.entity_sync_id).await,
+        &[("status", json!("closed")), ("closed_at", json!(ago(60)))],
+    );
+    receive(&db, "work_permits", &p1.entity_sync_id, &closed).await;
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    // The review was raised a few minutes before the resume (never in the same second).
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_conflicts SET created_at = ? WHERE entity_type = 'work_permits' AND entity_sync_id = ?",
+        [ago(5).into(), p1.entity_sync_id.clone().into()],
+    ))
+    .await
+    .expect("review raised before the resume");
+
+    let p2 = advance_to_issued(
+        &db,
+        create_from_wo(&db, "hot_work", wo_id).await.expect("second permit"),
+    )
+    .await;
+    set_status(&db, &p2, "active").await.expect("P2 active");
+    resume(&db, wo_id).await.expect("resumed under P2");
+
+    let report = crate::permit::ended_hold::sweep(&db).await;
+    assert_eq!(report.work_orders_held, 0);
+    assert_eq!(report.failures, 0);
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "not held again");
+    let open: Vec<_> = review_conflicts(&db, &p1.entity_sync_id)
+        .await
+        .into_iter()
+        .filter(|(_, status)| matches!(status.as_str(), "new" | "triaged" | "escalated"))
+        .collect();
+    assert_eq!(open.len(), 1, "the review stays open for a person");
+}
+
+/// N3: a lock still fitted keeps an open downtime from being an integrity defect only while its
+/// work order is running, on hold or "Terminé"; under a closed or cancelled work order the segment
+/// is raised as unclosed (and the repair still refuses while the lock is fitted).
+#[tokio::test]
+async fn a_fitted_lock_hides_open_downtime_only_while_the_work_is_not_ended() {
+    for (status, expected) in [("completed", 0), ("on_hold", 0), ("closed", 1), ("cancelled", 1)] {
+        let db = setup().await;
+        let (wo_id, _locks) = running_loto_work(&db, &format!("EQ-N3-{status}"), &["MCC-N3-1"]).await;
+        let segment = open_downtime(&db, wo_id).await;
+        db.execute_unprepared(&format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = '{status}') \
+             WHERE id = {wo_id}"
+        ))
+        .await
+        .expect("status forced");
+        crate::data_integrity::run_data_integrity_detectors(&db)
+            .await
+            .expect("detectors");
+        assert_eq!(
+            scalar_i64(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_UNCLOSED' \
+                     AND record_id = {segment} AND status = 'open'"
+                )
+            )
+            .await,
+            expected,
+            "work order {status}"
+        );
+    }
+}
+
+/// N4: the downtime ended by the last lock removal ends only the segments started at or before that
+/// verification; a segment started after it is left open for a person (flagged unclosed), never
+/// ended with a negative duration.
+#[tokio::test]
+async fn a_segment_started_after_the_last_removal_is_not_ended_by_it() {
+    let db = setup().await;
+    let (wo_id, locks) = running_loto_work(&db, "EQ-N4-1", &["MCC-N4-1"]).await;
+    let before = open_downtime(&db, wo_id).await;
+    complete(&db, wo_id).await.expect("completed");
+    let verified_at = verify_removal(&db, &locks[0]).await;
+    assert_eq!(segment_end(&db, before).await.as_deref(), Some(verified_at.as_str()));
+
+    // As received: the verification is here, the downtime not ended by it yet, and a segment from a
+    // PC whose clock runs ahead, started one hour after that verification.
+    let after_start = (chrono::DateTime::parse_from_rfc3339(&verified_at).expect("verified at")
+        + chrono::Duration::hours(1))
+    .format("%Y-%m-%dT%H:%M:%SZ")
+    .to_string();
+    db.execute_unprepared(&format!(
+        "UPDATE work_order_downtime_segments SET ended_at = NULL WHERE id = {before}"
+    ))
+    .await
+    .expect("as received");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_order_downtime_segments (work_order_id, started_at, ended_at, downtime_type) \
+         VALUES (?, ?, NULL, 'full')",
+        [wo_id.into(), after_start.into()],
+    ))
+    .await
+    .expect("later segment");
+    let after = scalar_i64(
+        &db,
+        &format!("SELECT MAX(id) FROM work_order_downtime_segments WHERE work_order_id = {wo_id}"),
+    )
+    .await;
+
+    assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 1);
+    assert_eq!(segment_end(&db, before).await.as_deref(), Some(verified_at.as_str()));
+    assert_eq!(segment_end(&db, after).await, None, "started after the verification");
+    // Again: nothing more is ended.
+    assert_eq!(crate::permit::ended_hold::sweep(&db).await.downtimes_ended, 0);
+    assert_eq!(segment_end(&db, after).await, None);
+
+    crate::data_integrity::run_data_integrity_detectors(&db)
+        .await
+        .expect("detectors");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_NEGATIVE_DURATION' \
+                 AND record_id IN ({before}, {after})"
+            )
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM data_integrity_findings WHERE finding_code = 'WO_DOWNTIME_UNCLOSED' \
+                 AND record_id = {after} AND status = 'open'"
+            )
+        )
+        .await,
+        1,
+        "left for a person"
+    );
+}
