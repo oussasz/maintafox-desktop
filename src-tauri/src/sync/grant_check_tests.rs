@@ -1502,3 +1502,24 @@ async fn a_rights_conflict_taken_from_the_server_is_a_rights_change() {
         "accept_remote"
     ));
 }
+
+/// A grant waiting for its author, released after a complete pull: the release reports a rights
+/// change, so the worker refreshes the rights (review of 461146ef). Nothing waiting: no change.
+#[tokio::test]
+async fn a_grant_released_after_a_complete_pull_is_a_rights_change() {
+    let p = plant().await;
+    assert!(!crate::sync::grant_check::release_after_complete_pull(&p.db)
+        .await
+        .expect("nothing waiting"));
+    let mut ghost = remote_assignment(&p.db, "released-grant", p.worker, p.operator, Some(p.manager)).await;
+    ghost.insert("assigned_by_sync_id".into(), "never-here-sync".into());
+    let run = receive_through_inbox(&p.db, "user_scope_assignments", "released-grant", ghost).await;
+    assert_eq!(run.deferred, 1, "{run:?}");
+    assert!(!run.rights_changed, "{run:?}");
+
+    let changed = crate::sync::grant_check::release_after_complete_pull(&p.db)
+        .await
+        .expect("release");
+    assert!(changed, "the released grant changes the rights");
+    assert!(assignment_held(&p.db, "released-grant").await, "applied for review");
+}
