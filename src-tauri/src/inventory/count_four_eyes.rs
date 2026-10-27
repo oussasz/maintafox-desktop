@@ -50,10 +50,12 @@
 //!
 //! First join (CMMS Advisor Q9): a line new here received with the snapshot of a PC's first join is
 //! the plant's history: applied as it is, with its movements, without a four-eyes judgement; its
-//! self-approval flag is kept and shown with the other self-approved lines. Only a first join: once
-//! this PC completed a full pull, or while a version of the line is held here (open conflict,
-//! waiting), a snapshot row is judged as any other ([`first_join_history`]); a movement is judged
-//! with its line in the line's own context (snapshot or exchange), not the movement's.
+//! self-approval flag is kept and shown with the other self-approved lines. Only a first join of a
+//! PC activated into the plant: once this PC completed a full pull, while a version of the line is
+//! held here (open conflict, waiting), or on a PC with no activation, a snapshot row is judged as
+//! any other (`sync::plant_join::first_join_snapshot_row`, the rule of the work orders too); a
+//! movement is judged with its line in the line's own context (snapshot or exchange), not the
+//! movement's.
 //!
 //! Auto-approbation on read (CMMS Advisor Q13, Q14): a line whose approver is its counter and whose
 //! variance is above the tolerance is shown and listed as an auto-approbation on every PC and in
@@ -371,8 +373,9 @@ fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerd
 /// - its quantities agree (variance = counted − system), or the record contradicts itself;
 /// - a line new here received with the snapshot of a first join is the plant's history (CMMS
 ///   Advisor Q9): applied as it is, no four-eyes judgement, its `self_approved` flag kept and shown
-///   with the other self-approved lines for a manager to review — only before this PC completed a
-///   full pull and while nothing of that line is held here ([`first_join_history`]);
+///   with the other self-approved lines for a manager to review — only on a PC activated into the
+///   plant, before it completed a full pull and while nothing of that line is held here
+///   (`sync::plant_join::first_join_snapshot_row`);
 /// - the count adjustment it names as posted, when it waits here, is its own, or the record
 ///   contradicts itself ([`forged_adjustment_named`]): a visible conflict, the adjustment held.
 pub(crate) async fn inbound_count_line_check(
@@ -442,12 +445,11 @@ async fn judge_count_line(
     let local = crate::permit::sync_check::local_wire(conn, LINES, entity_sync_id).await?;
     // CMMS Advisor Q9: the snapshot of a first join brings the plant's history, judged where it
     // was made (as `wo::closeout_sync` takes a work order new here from a snapshot) — only a first
-    // join ([`first_join_history`]): a snapshot asked for again later (the server refused the
-    // checkpoint, after a restore) brings back the lines held here too, judged as any other.
-    if local.is_none()
-        && crate::sync::materialize::applying_snapshot_row()
-        && first_join_history(conn, entity_sync_id).await?
-    {
+    // join, on a PC activated into the plant (`sync::plant_join::first_join_snapshot_row`, the rule
+    // of the work orders too): a snapshot asked for again later (the server refused the
+    // checkpoint, after a restore) brings back the lines held here too, judged as any other, and a
+    // PC with no activation judges (fail safe).
+    if local.is_none() && crate::sync::plant_join::first_join_snapshot_row(conn, LINES, entity_sync_id).await? {
         return Ok(None);
     }
     let line = crate::permit::sync_check::overlay(local.as_ref(), received);
@@ -668,17 +670,6 @@ pub(crate) async fn held_judgement(
     };
     let line = crate::permit::sync_check::overlay(Some(&local), received);
     Ok(already_judged(&local, &line).then(|| flag(&local, "is_critical")))
-}
-
-/// Whether a count line new here, received with a snapshot, is taken as the plant's history (CMMS
-/// Advisor Q9, review of 536cb792): only while this PC has not completed its first full pull
-/// (`sync::plant_join::complete_pull_done`) AND nothing of that line is held here — no open sync
-/// conflict and no version waiting or refused from an exchange. A snapshot asked for again (a
-/// re-bootstrap after the server refused the checkpoint) brings back a line held here in conflict,
-/// with its held adjustment: it is judged again, never applied unjudged. The rule is shared with
-/// `wo::closeout_sync` (`sync::plant_join::first_join_history`).
-async fn first_join_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<bool> {
-    crate::sync::plant_join::first_join_history(conn, LINES, entity_sync_id).await
 }
 
 /// After a received count line was written (`sync::apply_hooks::after_upsert`, capture
