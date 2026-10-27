@@ -44,7 +44,8 @@ pub async fn set_permit_requirement(
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
     if !permit_requirement_editable(&status) {
         return Err(AppError::ValidationFailed(vec![
-            "L'exigence de permis / consignation ne peut plus être modifiée une fois l'exécution commencée."
+            "GATE_WO_PERMIT_REQUIREMENT_LOCKED: L'exigence de permis / consignation ne peut plus être modifiée une \
+             fois l'exécution commencée."
                 .to_string(),
         ]));
     }
@@ -577,7 +578,8 @@ pub async fn clear_permit_rule_flag(
     }
     if !permit_requirement_editable(&status) {
         return Err(AppError::ValidationFailed(vec![
-            "L'exigence de permis / consignation ne peut plus être modifiée une fois l'exécution commencée."
+            "GATE_WO_PERMIT_REQUIREMENT_LOCKED: L'exigence de permis / consignation ne peut plus être modifiée une \
+             fois l'exécution commencée."
                 .to_string(),
         ]));
     }

@@ -160,7 +160,14 @@ pub async fn checked_rule_metadata(
             crate::errors::issue_params(&[("code", code.to_string()), ("detail", problem)]),
         ));
     }
-    let rule = parse_rule(metadata_json).map_err(|e| crate::errors::AppError::ValidationFailed(vec![e]))?;
+    // `rule_problem` already refused a rule that does not read; the same refusal stands here.
+    let rule = parse_rule(metadata_json).map_err(|problem| {
+        org_validation_failed(
+            CODE_RULE_INVALID,
+            format!("Permit rule '{code}': {problem}."),
+            crate::errors::issue_params(&[("code", code.to_string()), ("detail", problem)]),
+        )
+    })?;
     // Keep whatever else the plant wrote (labels, notes); write the three keys canonically.
     let mut obj = metadata_json
         .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())

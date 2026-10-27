@@ -164,7 +164,11 @@ fn now_ts() -> String {
 fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
     chrono::DateTime::parse_from_rfc3339(value.trim())
         .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERMIT_DATE_INVALID: {field} must be an RFC 3339 timestamp."
+            )])
+        })
 }
 
 /// Stable code: a permit type's code cannot change once the type exists (here and on a row
@@ -580,7 +584,7 @@ fn validate_wp_status(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Invalid work permit status '{s}'."
+            "GATE_PERMIT_STATUS_INVALID: Invalid work permit status '{s}'."
         )]))
     }
 }
@@ -863,7 +867,7 @@ async fn finalize_open_suspension(
     let Some(r) = row else {
         if require_row {
             return Err(AppError::ValidationFailed(vec![
-                "No open permit_suspensions row to reinstate.".into(),
+                "GATE_PERMIT_NO_OPEN_SUSPENSION: No open permit_suspensions row to reinstate.".into(),
             ]));
         }
         return Ok(());
@@ -882,7 +886,7 @@ async fn finalize_open_suspension(
         .await?;
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on permit_suspensions.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on permit_suspensions.".into(),
         ]));
     }
     Ok(())
@@ -1278,12 +1282,16 @@ async fn upsert_permit_type_in(
     let desc = input.description.unwrap_or_default();
 
     if input.code.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["code is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PERMIT_TYPE_CODE_REQUIRED: code is required.".into(),
+        ]));
     }
 
     if let Some(id) = input.id {
         if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PERMIT_TYPE_ID_INVALID: id must be positive.".into(),
+            ]));
         }
         let current = get_permit_type(db, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "PermitType".into(),
@@ -1356,7 +1364,7 @@ async fn upsert_permit_type_in(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on permit_types.".into()
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on permit_types.".into(),
             ]));
         }
         let updated = get_permit_type(db, id).await?.expect("row");
@@ -1546,14 +1554,16 @@ async fn require_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Wo
 /// A new permit with no equipment given and none on its linked work order (or no work order).
 pub(crate) fn asset_required_error() -> AppError {
     AppError::ValidationFailed(vec![
-        "An asset is required (the linked work order has no equipment).".into()
+        "GATE_PERMIT_ASSET_REQUIRED: An asset is required (the linked work order has no equipment).".into(),
     ])
 }
 
 /// A permit whose equipment and work order give it no usable site (see [`derived_permit_node`]).
 fn undetermined_site_error() -> AppError {
     AppError::ValidationFailed(vec![
-        "The permit's organisational entity could not be determined from the work order or asset.".into(),
+        "GATE_PERMIT_SITE_UNDETERMINED: The permit's organisational entity could not be determined from the work \
+         order or asset."
+            .into(),
     ])
 }
 
@@ -2008,7 +2018,7 @@ async fn update_work_permit_in(
     let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on work_permits.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on work_permits.".into(),
         ]));
     }
     if !WP_EDITABLE_STATUSES.contains(&current.status.as_str()) {
@@ -2021,7 +2031,7 @@ async fn update_work_permit_in(
     let target = permit_edit_target(db, &current, &input).await?;
     if checked.is_some_and(|c| *c != target) {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on work_permits.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on work_permits.".into(),
         ]));
     }
     let entity_id = if target.equipment_changes || target.site_changes {
@@ -2081,7 +2091,7 @@ async fn update_work_permit_in(
         .await?;
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on work_permits.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on work_permits.".into(),
         ]));
     }
     if back_to_draft {
@@ -2201,7 +2211,7 @@ async fn set_work_permit_status_in(
     let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on work_permits.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on work_permits.".into(),
         ]));
     }
 
@@ -2318,7 +2328,7 @@ async fn set_work_permit_status_in(
         .await?;
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on work_permits.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on work_permits.".into(),
         ]));
     }
     let updated = require_work_permit(db, input.id).await?;
@@ -2383,9 +2393,9 @@ async fn suspend_work_permit_in(
     actor_id: i64,
 ) -> AppResult<(WorkPermit, PermitSuspension)> {
     if input.reason.trim().is_empty() {
-        return Err(AppError::ValidationFailed(
-            vec!["Suspension reason is required.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PERMIT_SUSPEND_REASON_REQUIRED: Suspension reason is required.".into(),
+        ]));
     }
     let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "active" {
@@ -2397,7 +2407,7 @@ async fn suspend_work_permit_in(
     }
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on work_permits.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on work_permits.".into(),
         ]));
     }
 
@@ -2447,7 +2457,7 @@ async fn suspend_work_permit_in(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on work_permits.".into()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on work_permits.".into(),
         ]));
     }
 
@@ -2877,7 +2887,7 @@ async fn upsert_permit_isolation_in(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on permit_isolations.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on permit_isolations.".into(),
             ]));
         }
         let out = get_permit_isolation(db, id).await?;
@@ -2922,7 +2932,7 @@ async fn load_isolation_for_action(
     let iso = get_permit_isolation(db, input.isolation_id).await?;
     if iso.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on permit_isolations.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on permit_isolations.".into(),
         ]));
     }
     let permit = require_work_permit(db, iso.permit_id).await?;
@@ -2948,7 +2958,7 @@ async fn write_isolation_action(
         .await?;
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on permit_isolations.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on permit_isolations.".into(),
         ]));
     }
     let out = get_permit_isolation(db, iso.id).await?;
@@ -2997,7 +3007,7 @@ async fn cancel_permit_isolation_in(
     let iso = get_permit_isolation(db, input.isolation_id).await?;
     if iso.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on permit_isolations.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on permit_isolations.".into(),
         ]));
     }
     let permit = require_work_permit(db, iso.permit_id).await?;
@@ -3044,7 +3054,7 @@ async fn cancel_permit_isolation_in(
         .await?;
     if affected.rows_affected() != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on permit_isolations.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on permit_isolations.".into(),
         ]));
     }
     // Waiting for review: back to draft, it must be submitted again.
@@ -3059,7 +3069,7 @@ async fn cancel_permit_isolation_in(
             .await?;
         if affected.rows_affected() != 1 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on work_permits.".into()
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on work_permits.".into(),
             ]));
         }
         clear_review_record(db, permit.id).await?;
@@ -3280,9 +3290,9 @@ async fn verify_permit_isolation_in(
         ));
     };
     if iso.verified_at.is_some() {
-        return Err(AppError::ValidationFailed(
-            vec!["Isolation is already verified.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PERMIT_ISOLATION_ALREADY_VERIFIED: Isolation is already verified.".into(),
+        ]));
     }
     if applied_by == actor_id {
         return Err(refused(

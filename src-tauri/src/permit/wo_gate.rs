@@ -287,7 +287,8 @@ fn covers_the_work(permit_code: &str, expires_at: Option<&str>, end: &WorkEnd) -
     }
     let Some(expiry) = crate::settings::site::instant(expiry_raw) else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Permit {permit_code}: its expiry ({expiry_raw}) is not a readable time."
+            "GATE_PERMIT_EXPIRY_UNREADABLE:permit={permit_code}: Permit {permit_code}: its expiry ({expiry_raw}) is \
+             not a readable time."
         )]));
     };
     let mut params = HashMap::from([
