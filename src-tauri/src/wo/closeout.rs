@@ -214,6 +214,20 @@ const VALID_VERIFICATION_RESULTS: &[&str] = &["pass", "fail", "monitor"];
 
 const VALID_RECURRENCE_LEVELS: &[&str] = &["none", "low", "medium", "high"];
 
+/// The one failure-coding row of work order `wo` (an SQL expression) that every reader uses — the
+/// close-out form and gate, the execution gate, the failure event, the reliability and FMECA
+/// figures — so that they read the same row on every PC when two PCs each coded the same work
+/// order before they synced (#185 N-R2-2). The rule is permanent (CMMS Advisor 2026-10-27): the
+/// row with the smallest `entity_sync_id`, the same on every PC (the table has no creation time);
+/// `id` (local) only breaks a tie between rows not yet given a sync identity. Rows are neither
+/// merged nor deleted here.
+pub(crate) fn failure_detail_of_wo_sql(wo: &str) -> String {
+    format!(
+        "(SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = {wo} \
+         ORDER BY x.entity_sync_id, x.id LIMIT 1)"
+    )
+}
+
 const FAILURE_DETAIL_SELECT: &str = "\
     SELECT fd.id, fd.work_order_id, fd.symptom_id, fd.failure_mode_id, fd.failure_cause_id, \
            fd.failure_effect_id, fd.is_temporary_repair, fd.is_permanent_repair, \
@@ -735,7 +749,10 @@ async fn load_failure_detail(conn: &impl ConnectionTrait, wo_id: i64) -> AppResu
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!(
+                "{FAILURE_DETAIL_SELECT} WHERE fd.id = {}",
+                failure_detail_of_wo_sql("?")
+            ),
             [wo_id.into()],
         ))
         .await?
@@ -774,7 +791,10 @@ async fn upsert_failure_detail(db: &impl ConnectionTrait, input: SaveFailureDeta
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM work_order_failure_details WHERE work_order_id = ?",
+            format!(
+                "SELECT id FROM work_order_failure_details WHERE id = {}",
+                failure_detail_of_wo_sql("?")
+            ),
             [input.wo_id.into()],
         ))
         .await?;
@@ -901,10 +921,14 @@ pub async fn save_failure_coding(
     let wo_id = input.base.wo_id;
     let txn = db.begin().await?;
     let wo_row_version = upsert_failure_detail(&txn, input.base).await?;
+    // Only the row every reader uses (`failure_detail_of_wo_sql`): another PC's row is not rewritten.
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
-         WHERE work_order_id = ?",
+        format!(
+            "UPDATE work_order_failure_details SET failure_mechanism_id = ?, detection_method_id = ? \
+             WHERE id = {}",
+            failure_detail_of_wo_sql("?")
+        ),
         [
             input.failure_mechanism_id.into(),
             input.detection_method_id.into(),
@@ -1234,8 +1258,11 @@ pub(crate) async fn close_preflight(
         let fd_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT failure_mode_id, failure_cause_id, cause_not_determined, notes \
-                 FROM work_order_failure_details WHERE work_order_id = ?",
+                format!(
+                    "SELECT failure_mode_id, failure_cause_id, cause_not_determined, notes \
+                     FROM work_order_failure_details WHERE id = {}",
+                    failure_detail_of_wo_sql("?")
+                ),
                 [wo_id.into()],
             ))
             .await?;
@@ -1320,10 +1347,13 @@ pub(crate) async fn close_preflight(
         let row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT wo.equipment_id, fd.failure_mode_id
-                 FROM work_orders wo
-                 LEFT JOIN work_order_failure_details fd ON fd.work_order_id = wo.id
-                 WHERE wo.id = ?",
+                format!(
+                    "SELECT wo.equipment_id, fd.failure_mode_id
+                     FROM work_orders wo
+                     LEFT JOIN work_order_failure_details fd ON fd.id = {}
+                     WHERE wo.id = ?",
+                    failure_detail_of_wo_sql("wo.id")
+                ),
                 [wo_id.into()],
             ))
             .await?
@@ -1986,12 +2016,13 @@ async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> 
 // E) get_failure_details — list failure detail rows
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// List all failure detail records for a WO.
+/// List all failure detail records for a WO, the one every reader uses
+/// ([`failure_detail_of_wo_sql`]) first.
 pub async fn get_failure_details(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoFailureDetail>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ? ORDER BY fd.entity_sync_id, fd.id"),
             [wo_id.into()],
         ))
         .await?;
