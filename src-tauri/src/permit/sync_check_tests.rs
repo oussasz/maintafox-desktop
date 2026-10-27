@@ -8889,6 +8889,124 @@ async fn a_received_work_order_on_hold_resumes_only_under_the_isolation_rule_her
         .is_empty());
 }
 
+/// C7-N4, review N1: a work order received on hold without any rule, while the list here gives the
+/// LOTO rule (its arrival finding names no received rule), gets the LOTO rule when it is resumed,
+/// recorded; the gate then refuses the resume (no LOTO permit) and it stays on hold.
+#[tokio::test]
+async fn a_work_order_received_on_hold_without_a_rule_gets_the_isolation_rule_at_resume() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-C7N4-3", "wo-c7n4-3", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-3", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "permit_rule_code").await,
+        None,
+        "applied as received"
+    );
+    let wo_id = wo_id_of(&db, "wo-c7n4-3").await;
+    assert!(resume(&db, wo_id).await.is_err(), "no LOTO permit: refused");
+    assert_eq!(rule_state(&db, "wo-c7n4-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-3", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_rule_code"], &events[0]["permit_type_code"]),
+        (&Value::Null, &json!("loto"))
+    );
+}
+
+/// C7-N4, review N2: a work order created here (its rule derived here, no received mark) is never
+/// re-stamped at its resume, even when the list here now gives a rule with an isolation.
+#[tokio::test]
+async fn a_work_order_created_here_is_never_re_stamped_at_resume() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-C7N4-4").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET permit_rule_code = 'H_LOCAL', permit_rule_permit_type = 'hot_work', \
+             requires_permit = 1, actual_start = '2026-10-01T08:00:00Z', \
+             status_id = (SELECT id FROM work_order_statuses WHERE code = 'on_hold') WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("sync id");
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, &wo_sync).await, ruled("H_LOCAL", "hot_work"));
+    assert!(rule_events_with_cause(&db, &wo_sync, "resumed_received")
+        .await
+        .is_empty());
+}
+
+/// C7-N4, review N2: re-stamped at the resume while a valid LOTO permit (isolation applied and
+/// verified, active) is already linked: the same call re-stamps and resumes.
+#[tokio::test]
+async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-5", "wo-c7n4-5", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-5", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-5").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-C7N4 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    // Its hold, received with it (the open delay segment of the PC that held it).
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_delay_segments (entity_sync_id, work_order_id, started_at, ended_at, hold_kind, \
+             delay_reason_id) VALUES ('seg-sync-c7n4', {wo_id}, '2026-10-01T09:00:00Z', NULL, 'pause', \
+             (SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+              JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(d.code) = 'WORK.DELAY_REASONS' LIMIT 1))"
+        ),
+    )
+    .await;
+    let resumed = resume(&db, wo_id).await.expect("re-stamped and resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-5", "resumed_received").await.len(),
+        1
+    );
+}
+
 /// C6-S3: a draft whose rule was kept as received (nothing here matched) gets this PC's rule on
 /// its next draft edit once the list here matches it (cause draft_edit).
 #[tokio::test]
