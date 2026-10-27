@@ -1024,6 +1024,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A qualification requirement created or changed
                         // (`qualification::requirements`; requirements are never deleted).
                         ("qualification_requirement", "qualification_requirements"),
+                        // A person let into a permit role without the qualifications it requires
+                        // (`qualification::gate`, override in a permit role): the target is the
+                        // permit, sent as its sync id; the role is in the details (`$.role`).
+                        ("permit_role", "work_permits"),
                         // A block's critical flag changed (`personnel::availability`): the target
                         // is already the block's sync id, the same on every PC, sent as it is, so
                         // the audit is unchanged when the block is deleted later.

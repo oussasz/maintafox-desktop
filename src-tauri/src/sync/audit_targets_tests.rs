@@ -75,10 +75,7 @@ const KEPT_BY_ACTION: &[(&str, &str)] = &[("notification", "notification.safety_
 /// cannot encode, so their events stay on the PC that wrote them (stub only) and `seal` logs an
 /// error. Each must be mapped (if the target travels) or added to the row filter (if it is kept on
 /// purpose), then removed from this list. Routed by the Coordinator to the lead that owns each one.
-const KNOWN_GAPS: &[(&str, &str)] = &[(
-    "permit_role",
-    "qualification::gate — override in a permit role; routed by the Coordinator, pending",
-)];
+const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 fn source_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read src") {
@@ -259,4 +256,98 @@ fn every_written_audit_target_type_is_sent_or_kept_on_purpose() {
             "{kept}: its action {action} is in the row filter"
         );
     }
+}
+
+/// A qualification override in a permit role (`qualification::gate::write_override`: target type
+/// `permit_role`, target id the permit's local id, the role in the details) travels: it is sealed
+/// in its sync form on the PC that wrote it, the other PC reads the same permit under its own local
+/// id with the same role, and both PCs verify the chain.
+#[tokio::test]
+async fn a_permit_role_override_audit_travels_and_names_the_same_permit_on_the_other_pc() {
+    use crate::audit::chain::verify_audit_chain;
+    use crate::audit::writer::{write_audit_event, AuditEventInput};
+    use crate::sync::test_support::{scalar_i64, scalar_opt_text, started_device_db, RowFactory, TestServer};
+
+    let mut server = TestServer::new();
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut factory_a = RowFactory::for_device(1);
+    let mut factory_b = RowFactory::for_device(2);
+    // B already has permits of its own, so A's permit gets another local id there.
+    for _ in 0..3 {
+        factory_b.create(&b, "work_permits").await.expect("permit on B");
+    }
+    let permit = factory_a.create(&a, "work_permits").await.expect("permit on A");
+    let id = write_audit_event(
+        &a,
+        AuditEventInput {
+            action_code: "qualification.override".to_string(),
+            target_type: Some("permit_role".to_string()),
+            target_id: Some(permit.rowid.to_string()),
+            actor_id: None,
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "role": "isolation_apply",
+                "person": "Karim B.",
+                "gaps": [{ "code": "QUALIFICATION_MISSING", "qualification": "Habilitation B2V" }],
+                "reason": "Chargé de consignation absent",
+            })),
+        },
+    )
+    .await
+    .expect("write on A");
+    assert_eq!(
+        scalar_i64(
+            &a,
+            "SELECT COUNT(*) FROM audit_events WHERE id = ? AND chain_hash NOT LIKE 'L%'",
+            vec![id.into()],
+        )
+        .await,
+        1,
+        "sealed in its sync form on A (not kept on A as a local-form event)"
+    );
+    assert!(verify_audit_chain(&a).await.expect("verify on A").intact);
+
+    server.exchange("A", &a).await;
+    let report = server.exchange("B", &b).await;
+    assert_eq!(report.materialized.conflicts, 0, "{report:?}");
+
+    let permit_on_b = scalar_i64(
+        &b,
+        "SELECT id FROM work_permits WHERE entity_sync_id = ?",
+        vec![permit.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_ne!(
+        permit_on_b, permit.rowid,
+        "the test needs different local ids on the two PCs"
+    );
+    let on_b = |column: &str| {
+        format!(
+            "SELECT {column} FROM audit_events WHERE action_code = 'qualification.override' \
+             AND target_type = 'permit_role'"
+        )
+    };
+    assert_eq!(
+        scalar_opt_text(&b, &on_b("target_id"), vec![]).await,
+        Some(permit_on_b.to_string()),
+        "the audit target is B's id of the same permit"
+    );
+    assert_eq!(
+        scalar_opt_text(&b, &on_b("json_extract(details_json, '$.role')"), vec![]).await,
+        Some("isolation_apply".to_string()),
+        "the role travels in the details"
+    );
+    let verified = verify_audit_chain(&b).await.expect("verify on B");
+    assert!(verified.intact, "{verified:?}");
+    let from_a = verified.chains.iter().find(|c| !c.is_this_device).expect("A's chain");
+    assert_eq!(
+        (from_a.events, from_a.kept_positions),
+        (1, 0),
+        "B holds the event itself, not a stub"
+    );
 }
