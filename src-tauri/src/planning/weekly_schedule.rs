@@ -1259,6 +1259,19 @@ pub async fn frozen_week_for_slot(
     let Some(site) = planning_site_of_node(db, node).await? else {
         return Ok(None);
     };
+    frozen_week_at_site(db, site, start, end, now).await
+}
+
+/// [`frozen_week_for_slot`] at the planning site `site` named explicitly: the week of `site` that
+/// `[start, end)` touches and that is frozen or due to freeze (a crew's site change judges its jobs
+/// at the site it leaves and at the one it joins, AU-129).
+pub async fn frozen_week_at_site(
+    db: &impl ConnectionTrait,
+    site: i64,
+    start: &str,
+    end: &str,
+    now: DateTime<Utc>,
+) -> AppResult<Option<FrozenWeek>> {
     if let Some(schedule) = frozen_schedule_touching(db, site, start, end, None).await? {
         return Ok(Some(FrozenWeek {
             week_start: schedule.week_start,
