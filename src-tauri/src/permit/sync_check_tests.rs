@@ -7037,18 +7037,29 @@ async fn a_held_work_order_received_by_a_snapshot_gets_the_finding_once() {
     assert_eq!(findings().await.as_deref(), Some("0"), "new here: history");
 
     // Held here, received again by a snapshot: judged, one finding.
-    inbox_wo(&db, "snapshot-all-s1-b", "wo-rule-s1", 6, &started("Replace breaker (2)")).await;
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-b",
+        "wo-rule-s1",
+        6,
+        &started("Replace breaker (2)"),
+    )
+    .await;
     assert_eq!(inbox_pass(&db).await.1, 0);
     assert_eq!(findings().await.as_deref(), Some("1"), "held here: judged");
 
     // A later snapshot: still one.
-    inbox_wo(&db, "snapshot-all-s1-c", "wo-rule-s1", 7, &started("Replace breaker (3)")).await;
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-c",
+        "wo-rule-s1",
+        7,
+        &started("Replace breaker (3)"),
+    )
+    .await;
     assert_eq!(inbox_pass(&db).await.1, 0);
     assert_eq!(findings().await.as_deref(), Some("1"), "once");
-    assert_eq!(
-        wo_status_by_sync(&db, "wo-rule-s1").await.as_deref(),
-        Some("on_hold")
-    );
+    assert_eq!(wo_status_by_sync(&db, "wo-rule-s1").await.as_deref(), Some("on_hold"));
 }
 
 /// AU-04 B2: the rule list received here flags this PC's work orders not started yet that a rule
