@@ -297,7 +297,7 @@ function FindingRow({
               value={approverId || "__none"}
               onValueChange={(v) => setApproverId(v === "__none" ? "" : v)}
             >
-              <SelectTrigger className="h-7 w-48 text-xs">
+              <SelectTrigger className="h-10 w-48 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -319,7 +319,7 @@ function FindingRow({
         <div className="flex flex-col gap-0.5 flex-1 min-w-[160px]">
           <label className="text-[10px] text-text-muted">{t("integrity.waiverReason")}</label>
           <Input
-            className="h-7 text-xs"
+            className="h-10 text-xs"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder={t("integrity.waiverReasonPlaceholder")}
@@ -328,7 +328,7 @@ function FindingRow({
         <Button
           size="sm"
           variant="secondary"
-          className="h-7"
+          className="h-10"
           disabled={busy || (row.severity === "error" && !approverId)}
           onClick={() => void onWaive()}
         >
@@ -340,7 +340,7 @@ function FindingRow({
           <div className="flex flex-col gap-0.5">
             <label className="text-[10px] text-text-muted">{t(P.INTEGRITY_REPAIR)}</label>
             <Select value={repairKind} onValueChange={setRepairKind}>
-              <SelectTrigger className="h-7 w-[200px] text-xs">
+              <SelectTrigger className="h-10 w-[200px] text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -354,7 +354,7 @@ function FindingRow({
           </div>
           <Button
             size="sm"
-            className="h-7"
+            className="h-10"
             disabled={busy || !repairKind}
             onClick={() => void onApply()}
           >
