@@ -343,18 +343,7 @@ pub async fn evaluate_with(
     }
     outcome.reason_code = reasons::NO_RULE_MATCHED.into();
 
-    let class = match equipment_id {
-        Some(id) => equipment_class_code(db, id).await?,
-        None => None,
-    };
-    let work_type: Option<String> = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT code FROM reference_values WHERE id = ?",
-            [work_type_id.into()],
-        ))
-        .await?
-        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
 
     let mut chosen_isolation = false;
     for published in &rules.0 {
@@ -366,19 +355,12 @@ pub async fn evaluate_with(
         if published.unresolved {
             outcome.unresolved_rule_codes.push(code.clone());
         }
-        let class_ok = rule
-            .equipment_class_code
-            .as_ref()
-            .is_none_or(|c| class.as_deref() == Some(c.as_str()));
-        let type_ok = rule
-            .work_type_code
-            .as_ref()
-            .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
+        let matches = rule_matches(&rule, class.as_deref(), work_type.as_deref());
         // The rule recorded: the first matching rule whose permit type requires an energy isolation,
         // else the first matching rule (CMMS Advisor decision on AU-04 R5-S3, option A: an isolation
         // type always outranks one without; otherwise the list's order wins).
         let outranks = outcome.rule_code.is_none() || (published.isolation && !chosen_isolation);
-        if class_ok && type_ok && outranks {
+        if matches && outranks {
             outcome.requires_permit = true;
             outcome.reason_code = reasons::RULE_MATCHED.into();
             outcome.rule_code = Some(code);
@@ -403,16 +385,40 @@ pub async fn type_requires_isolation(db: &impl ConnectionTrait, code: &str) -> A
 
 /// The permit types of every published rule that matches this equipment and work type, distinct, in
 /// the list's order: shown on the work order when they differ ("plusieurs règles de permis"), display
-/// only (CMMS Advisor decision on AU-04 R5-S3). Empty when fewer than two types.
+/// only (CMMS Advisor decision on AU-04 R5-S3). `carried`: the permit type of the rule the work order
+/// carries; when the list here does not give it (a rule received from another PC that outranks this
+/// PC's, for example LOTO over hot work), it is shown first, with the types the list here gives (CMMS
+/// Advisor decision C7-N1: the other permit is added). Empty when fewer than two types.
 pub async fn matching_permit_types(
     db: &impl ConnectionTrait,
     equipment_id: Option<i64>,
     work_type_id: i64,
+    carried: Option<&str>,
 ) -> AppResult<Vec<String>> {
     let rules = PublishedRules::load(db).await?;
     if rules.is_empty() {
         return Ok(Vec::new());
     }
+    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
+    let mut types: Vec<String> = Vec::new();
+    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
+        if rule_matches(rule, class.as_deref(), work_type.as_deref()) && !types.contains(&rule.permit_type_code) {
+            types.push(rule.permit_type_code.clone());
+        }
+    }
+    if let Some(carried) = carried.filter(|c| !types.iter().any(|t| t == c)) {
+        types.insert(0, carried.to_string());
+    }
+    Ok(if types.len() > 1 { types } else { Vec::new() })
+}
+
+/// The equipment class code and the work type code a rule is matched against (check 6, C6-N4: one
+/// reading for [`evaluate_with`] and [`matching_permit_types`]).
+async fn class_and_work_type(
+    db: &impl ConnectionTrait,
+    equipment_id: Option<i64>,
+    work_type_id: i64,
+) -> AppResult<(Option<String>, Option<String>)> {
     let class = match equipment_id {
         Some(id) => equipment_class_code(db, id).await?,
         None => None,
@@ -425,21 +431,16 @@ pub async fn matching_permit_types(
         ))
         .await?
         .and_then(|r| r.try_get::<String>("", "code").ok());
-    let mut types: Vec<String> = Vec::new();
-    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
-        let class_ok = rule
-            .equipment_class_code
-            .as_ref()
-            .is_none_or(|c| class.as_deref() == Some(c.as_str()));
-        let type_ok = rule
-            .work_type_code
-            .as_ref()
-            .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
-        if class_ok && type_ok && !types.contains(&rule.permit_type_code) {
-            types.push(rule.permit_type_code.clone());
-        }
-    }
-    Ok(if types.len() > 1 { types } else { Vec::new() })
+    Ok((class, work_type))
+}
+
+/// Whether a rule matches this equipment class and work type: each one it names matches (a rule
+/// naming both matches only when both match). The single matching of [`evaluate_with`] and
+/// [`matching_permit_types`] (check 6, C6-N4).
+fn rule_matches(rule: &RuleSpec, class: Option<&str>, work_type: Option<&str>) -> bool {
+    let class_ok = rule.equipment_class_code.as_deref().is_none_or(|c| class == Some(c));
+    let type_ok = rule.work_type_code.as_deref().is_none_or(|t| work_type == Some(t));
+    class_ok && type_ok
 }
 
 /// Rules that did not read, or that name a code not held here, when they are evaluated for a work
@@ -532,6 +533,11 @@ pub mod stamp_causes {
     pub const RULE_RECEIVED_UNMATCHED: &str = "rule_received_unmatched";
     /// The work order returned to a status not started (reopened to planning).
     pub const REOPENED: &str = "reopened";
+    /// A work order received on hold, whose rule came from another PC (or that came without the
+    /// rule here), resumed here while this PC's list gives a rule with an energy isolation that the
+    /// rule it carries does not have ([`super::restamp_received_rule_on_resume`], CMMS Advisor
+    /// decision C7-N4).
+    pub const RESUMED: &str = "resumed_received";
 }
 
 /// The version of the published rule list (recorded with a rule written on an existing work order).
@@ -894,9 +900,7 @@ pub async fn finding_for_started_without_rule(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wo.code, wo.entity_sync_id, wo.equipment_id, wo.type_id, wo.requires_permit, wo.permit_rule_code, \
-                    wo.permit_rule_permit_type, wo.actual_start, st.code AS status, \
-                    (SELECT COUNT(*) FROM wo_action_events e WHERE e.wo_id = wo.id \
-                      AND e.action_code = 'permit_rule_missing_on_arrival') AS found \
+                    wo.permit_rule_permit_type, wo.actual_start, st.code AS status \
                FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -907,9 +911,8 @@ pub async fn finding_for_started_without_rule(
     let held: Option<String> = row.try_get("", "permit_rule_code")?;
     let status: String = row.try_get("", "status")?;
     let actual_start: Option<String> = row.try_get("", "actual_start")?;
-    let found: i64 = row.try_get("", "found")?;
     let started = !not_started.contains(&status.as_str()) && (status != "cancelled" || actual_start.is_some());
-    if !started || found > 0 {
+    if !started {
         return Ok(None);
     }
     let mut received_rule: Option<(String, Option<String>)> = None;
@@ -947,6 +950,22 @@ pub async fn finding_for_started_without_rule(
             (rule, permit_type, requires != 0, false)
         }
     };
+    // Recorded once per difference (round 5, R5-N4): the same rule and type here and the same
+    // received rule and type found before is not recorded again; another one (received later naming
+    // a weaker rule, after a first finding without a rule) is, so it marks the work order for the
+    // re-check of its received rule ([`RECEIVED_RULE_MARK_SQL`]).
+    if finding_recorded(
+        conn,
+        wo_id,
+        &rule,
+        &permit_type,
+        received_rule.as_ref().map(|r| r.0.as_str()),
+        received_rule.as_ref().and_then(|r| r.1.as_deref()),
+    )
+    .await?
+    {
+        return Ok(None);
+    }
     let code: String = row.try_get("", "code")?;
     let wo_sync: String = row.try_get("", "entity_sync_id")?;
     let payload = serde_json::json!({
@@ -1009,6 +1028,37 @@ pub async fn finding_for_started_without_rule(
     )
     .await?;
     Ok(Some(rule))
+}
+
+/// Whether a started-without-rule finding naming this rule and type here, and this received rule
+/// and type (none: received without a rule), was already recorded on the work order.
+async fn finding_recorded(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    rule: &str,
+    permit_type: &str,
+    received_rule: Option<&str>,
+    received_type: Option<&str>,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM wo_action_events e WHERE e.wo_id = ? \
+                AND e.action_code = 'permit_rule_missing_on_arrival' \
+                AND IFNULL(json_extract(e.payload_json, '$.rule_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.permit_type_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.received_rule_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.received_permit_type_code'), '') = ?",
+            [
+                wo_id.into(),
+                rule.into(),
+                permit_type.into(),
+                received_rule.unwrap_or("").into(),
+                received_type.unwrap_or("").into(),
+            ],
+        ))
+        .await?
+        .is_some())
 }
 
 /// The plant rule held here on a work order before a received row was written over it, with the
@@ -1149,6 +1199,14 @@ pub async fn converge_received_rule(
             },
         )
         .await?;
+        // The received rule outranks the one this PC's list gives (an energy isolation over a
+        // permit without one, for example LOTO over hot work): the work order carries one rule, so
+        // the permit issuers of its site are told, as when a rule held here changes type, and the
+        // work order shows both types ("plusieurs règles de permis", [`matching_permit_types`]) so
+        // the other permit is added (CMMS Advisor decision C7-N1, option a).
+        if let Some(own) = first.as_ref().filter(|f| f.1 != kept.1) {
+            notify_rule_type_changed(conn, wo_id, (&own.0, own.1.as_deref()), (&kept.0, kept.1.as_deref())).await?;
+        }
         return Ok(Some(kept.0));
     }
     // Every write over the row (and every change of the rule held here, and every clearing
@@ -1221,28 +1279,41 @@ pub async fn converge_received_rule(
     // The permit type of a rule held here changed: the permit issuers of its site are told (CMMS
     // Advisor decision on AU-04 R5-S3, option A).
     if let Some(h) = held.filter(|h| h.permit_type != kept.1) {
-        let wo = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT code, entity_sync_id FROM work_orders WHERE id = ?",
-                [wo_id.into()],
-            ))
-            .await?;
-        if let Some(wo) = wo {
-            let code: String = wo.try_get("", "code")?;
-            let wo_sync: String = wo.try_get("", "entity_sync_id")?;
-            crate::settings::received_notice::notify_work_order_rule_type_changed(
-                conn,
-                wo_id,
-                &wo_sync,
-                &code,
-                (&h.code, h.permit_type.as_deref()),
-                (&kept.0, kept.1.as_deref()),
-            )
-            .await;
-        }
+        notify_rule_type_changed(
+            conn,
+            wo_id,
+            (&h.code, h.permit_type.as_deref()),
+            (&kept.0, kept.1.as_deref()),
+        )
+        .await?;
     }
     Ok(Some(kept.0))
+}
+
+/// The permit issuers of a work order's site told that its rule's permit type changed from `before`
+/// to `after` (`settings::received_notice::notify_work_order_rule_type_changed`).
+async fn notify_rule_type_changed(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    before: (&str, Option<&str>),
+    after: (&str, Option<&str>),
+) -> AppResult<()> {
+    let wo = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code, entity_sync_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?;
+    if let Some(wo) = wo {
+        let code: String = wo.try_get("", "code")?;
+        let wo_sync: String = wo.try_get("", "entity_sync_id")?;
+        crate::settings::received_notice::notify_work_order_rule_type_changed(
+            conn, wo_id, &wo_sync, &code, before, after,
+        )
+        .await;
+    }
+    Ok(())
 }
 
 /// The rule a work order keeps, from this PC's first match (`first`, ranked: `evaluate_with`), the
@@ -1251,7 +1322,12 @@ pub async fn converge_received_rule(
 /// type that requires an energy isolation here is never replaced by one that does not, and a
 /// received one that requires it here outranks a kept one that does not. Isolation is judged by the
 /// permit types known here: a made-up or unknown type never counts, so a row can only add an
-/// isolation requirement, never remove one. Every PC holding the same list and data keeps the same.
+/// isolation requirement, never remove one. Every PC holding the same list and data keeps the same:
+/// when this PC's first match does not require an isolation (or there is none) and the held and the
+/// received rules both do, the smallest (rule code, permit type) of the two is kept — never the one
+/// that happens to be held — so two PCs holding two different isolation rules, each receiving the
+/// other's, both end on the same one, and never on a rule without isolation (check 7, C7-N2). This
+/// PC's first match, when it requires an isolation, is kept as before.
 pub async fn choose_rule(
     conn: &impl ConnectionTrait,
     first: Option<(String, Option<String>)>,
@@ -1264,13 +1340,24 @@ pub async fn choose_rule(
             None => Ok(false),
         }
     }
-    let mut kept = first.or_else(|| held.clone()).unwrap_or_else(|| received.clone());
-    for candidate in [held, Some(received)].into_iter().flatten() {
-        if !isolation(conn, &kept).await? && isolation(conn, &candidate).await? {
-            kept = candidate;
+    if let Some(first) = &first {
+        if isolation(conn, first).await? {
+            return Ok(first.clone());
         }
     }
-    Ok(kept)
+    // The held and received rules that require an isolation here: the smallest one wins.
+    let mut isolating: Vec<(String, Option<String>)> = Vec::new();
+    for candidate in held.iter().chain(std::iter::once(&received)) {
+        if isolation(conn, candidate).await? {
+            isolating.push(candidate.clone());
+        }
+    }
+    if let Some(kept) = isolating.into_iter().min() {
+        return Ok(kept);
+    }
+    // None requires an isolation: this PC's first match, else the held rule, else the received one
+    // (a received rule that does not require an isolation never replaces a held one: R3-B1).
+    Ok(first.or(held).unwrap_or(received))
 }
 
 /// The rule this PC's list (ranked and guarded, [`choose_rule`]) gives a work order whose rule came
@@ -1307,6 +1394,157 @@ pub async fn received_rule_differs_here(
         .map(|(c, t)| (c, Some(t)));
     let kept = choose_rule(conn, first, Some(current.clone()), current.clone()).await?;
     Ok((kept != current).then_some(kept))
+}
+
+/// A work order on hold whose plant rule came from another PC and was not derived here (a received
+/// mark, [`RECEIVED_RULE_MARK_SQL`]), or that was received started without the rule the list here
+/// gives (its arrival finding, no rule carried), is about to resume (CMMS Advisor decision C7-N4,
+/// option b): this PC's ranking ([`choose_rule`]) is applied, and the rule is re-stamped only when
+/// the rule it gives requires an energy isolation that the rule carried does not (never to a weaker
+/// or an equal one). The re-stamp (`requires_permit = 1`, the rule and its permit type, a clearing
+/// withdrawn) is checked against `expected_row_version` (a stale screen re-stamps nothing), recorded
+/// (`permit_rule_applied`, cause [`stamp_causes::RESUMED`]) in the work order's history and audit
+/// trail, written as a local change (sent to the other PCs) and told to the permit issuers of its
+/// site. The caller commits it before the permit gate of the resume: the gate then refuses the
+/// resume until a valid permit of that type exists, and the work order stays on hold, re-stamped
+/// (obtaining the permit unblocks it; no new transition). Returns whether it was re-stamped.
+pub async fn restamp_received_rule_on_resume(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    expected_row_version: i64,
+) -> AppResult<bool> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.equipment_id, wo.type_id, wo.permit_rule_code, wo.permit_rule_permit_type, \
+                        wo.permit_rule_cleared_by_id, wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, \
+                        wo.requires_permit \
+                   FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.id = ? AND st.code = 'on_hold' AND wo.row_version = ? \
+                    AND CASE WHEN wo.permit_rule_code IS NOT NULL THEN {RECEIVED_RULE_MARK_SQL} \
+                        ELSE EXISTS (SELECT 1 FROM wo_action_events f WHERE f.wo_id = wo.id \
+                               AND f.action_code = 'permit_rule_missing_on_arrival' \
+                               AND json_extract(f.payload_json, '$.received_rule_code') IS NULL \
+                               AND COALESCE(json_extract(f.payload_json, '$.rule_held_here'), 0) = 0) END"
+            ),
+            [wo_id.into(), expected_row_version.into()],
+        ))
+        .await?
+    else {
+        return Ok(false);
+    };
+    let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+    let type_id: i64 = row.try_get("", "type_id")?;
+    let current_code: Option<String> = row.try_get("", "permit_rule_code")?;
+    let current_type: Option<String> = row.try_get("", "permit_rule_permit_type")?;
+    let outcome = evaluate(conn, equipment, type_id, false).await?;
+    let Some(first) = outcome
+        .rule_code
+        .zip(outcome.permit_type_code)
+        .map(|(c, t)| (c, Some(t)))
+    else {
+        return Ok(false);
+    };
+    let kept = match &current_code {
+        Some(code) => {
+            let current = (code.clone(), current_type.clone());
+            choose_rule(conn, Some(first), Some(current.clone()), current).await?
+        }
+        None => first,
+    };
+    let isolation = |t: Option<String>| async move {
+        match t {
+            Some(t) => type_requires_isolation(conn, &t).await,
+            None => Ok(false),
+        }
+    };
+    // Only to a stronger rule: one requiring an energy isolation over one that does not.
+    if !isolation(kept.1.clone()).await? || isolation(current_type.clone()).await? {
+        return Ok(false);
+    }
+    let written = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET requires_permit = 1, permit_rule_code = ?, permit_rule_permit_type = ?, \
+                    permit_rule_cleared_by_id = NULL, permit_rule_cleared_at = NULL, \
+                    permit_rule_clear_reason = NULL, row_version = row_version + 1 \
+              WHERE id = ? AND row_version = ?",
+            [
+                kept.0.clone().into(),
+                kept.1.clone().into(),
+                wo_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if written.rows_affected() == 0 {
+        return Ok(false);
+    }
+    use crate::wo::workflow::actions::permit_requirement::user_sync_id;
+    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
+    let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
+    let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    let previous_requires: i64 = row.try_get("", "requires_permit")?;
+    let payload = serde_json::json!({
+        "requires_permit": true,
+        "origin": "rule",
+        "cause": stamp_causes::RESUMED,
+        "rule_code": kept.0,
+        "permit_type_code": kept.1,
+        "previous_rule_code": current_code,
+        "previous_permit_type_code": current_type,
+        "previous_requires_permit": previous_requires != 0,
+        "rule_set_version": published_rule_set_version(conn).await?,
+        "actor_sync_id": user_sync_id(conn, actor_id).await?,
+        "withdrawn_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
+        "withdrawn_cleared_at": cleared_at,
+        "withdrawn_clear_reason": reason,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_rule_applied",
+        actor_id,
+        Some("on_hold"),
+        Some("on_hold"),
+        Some(&payload),
+    )
+    .await?;
+    let mut summary = format!(
+        "Permis exigé à la reprise : la règle {} (permis {}) de l'usine, avec consignation, s'applique à cet OT reçu \
+         en attente (avant : {} permis {})",
+        kept.0,
+        kept.1.as_deref().unwrap_or("?"),
+        current_code.as_deref().unwrap_or("aucune règle"),
+        current_type.as_deref().unwrap_or("?"),
+    );
+    if cleared_at.is_some() {
+        summary.push_str(" ; levée de l'exigence retirée");
+    }
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_rule_applied".into(),
+            actor_id,
+            summary: Some(summary),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    notify_rule_type_changed(
+        conn,
+        wo_id,
+        (current_code.as_deref().unwrap_or("—"), current_type.as_deref()),
+        (&kept.0, kept.1.as_deref()),
+    )
+    .await?;
+    Ok(true)
 }
 
 /// SQL (on `wo`, a work order) of a rule that came from another PC and was not derived here: kept

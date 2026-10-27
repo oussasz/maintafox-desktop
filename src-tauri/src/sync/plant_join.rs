@@ -134,8 +134,8 @@ pub(crate) async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult
 /// version waiting or refused from an exchange. A snapshot asked for again later (a re-bootstrap
 /// after the server refused the checkpoint) is no first join: its rows are judged as any other.
 /// The caller checks that the row is new here and that a snapshot row is being applied
-/// (`sync::materialize::applying_snapshot_row`). Shared by `inventory::count_four_eyes` (count
-/// lines) and `wo::closeout_sync` (work orders).
+/// (`sync::materialize::applying_snapshot_row`) and that the PC is activated: the callers go
+/// through [`first_join_snapshot_row`].
 pub(crate) async fn first_join_history(
     conn: &impl ConnectionTrait,
     entity_type: &str,
@@ -176,7 +176,8 @@ pub(crate) async fn first_join_history(
 /// here). A snapshot received again once the PC has joined (a re-bootstrap after the server refused
 /// its checkpoint) is judged as any received change. Fail safe: a PC with no activation judges.
 /// Used by `wo::closeout_sync` (completion, close, verifier rules), `permit::sync_check` (the
-/// permit start gate) and `sync::apply_hooks` (the started-without-rule finding).
+/// permit start gate), `sync::apply_hooks` (the started-without-rule finding) and
+/// `inventory::count_four_eyes` (the four-eyes judgement of count lines).
 pub(crate) async fn first_join_snapshot_row(
     conn: &impl ConnectionTrait,
     entity_type: &str,

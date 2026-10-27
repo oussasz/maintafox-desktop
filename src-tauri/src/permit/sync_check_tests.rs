@@ -8348,11 +8348,34 @@ async fn a_recheck_never_replaces_a_held_isolation_type() {
     );
 }
 
+/// The notices of category `wo_permit_rule_missing` about the work order `wo` written to `user`.
+async fn rule_notices_to(db: &DatabaseConnection, user: i32, wo: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notifications n \
+               JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE e.category_code = 'wo_permit_rule_missing' AND n.recipient_user_id = {user} \
+                AND json_extract(e.payload_json, '$.entity_sync_id') = '{wo}'"
+        ),
+    )
+    .await
+}
+
 /// A held hot-work rule replaced by the LOTO rule the list here now gives: the type change is
-/// recorded and the permit issuers of the site are told.
+/// recorded and the permit issuers of the work order's site are told, not those of another site
+/// (check 6, C6-N3).
 #[tokio::test]
 async fn a_held_rule_type_change_notifies_the_permit_issuers() {
+    use crate::auth::scope_tests::{assign, node, role, user};
     let db = setup().await;
+    let issuers = role(&db, "opta2 issuer", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let here = user(&db, "opta2_here").await;
+    let elsewhere = user(&db, "opta2_elsewhere").await;
+    let site = node(&db, "OPTA2-SITE", None).await;
+    let other_site = node(&db, "OPTA2-OTHER", None).await;
+    assign(&db, here, issuers, "org_node", Some(site)).await;
+    assign(&db, elsewhere, issuers, "org_node", Some(other_site)).await;
     crate::permit::requirement_rules::add_published_rule(
         &db,
         "H_RULE",
@@ -8360,6 +8383,7 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
     )
     .await;
     let row = new_row_naming(&db, "EQ-OPTA-2", "wo-opta-2", "H_RULE", "hot_work", false).await;
+    let row = wo_row(&row, &[("entity_sync_id", json!("scope-OPTA2-SITE"))]);
     let outcome = apply(&db, "work_orders", "wo-opta-2", &row).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("H_RULE", "hot_work"));
@@ -8386,6 +8410,155 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
     assert_eq!(
         (&params["previous_permit_type"], &params["permit_type"]),
         (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(rule_notices_to(&db, here, "wo-opta-2").await.as_deref(), Some("1"));
+    assert_eq!(
+        rule_notices_to(&db, elsewhere, "wo-opta-2").await.as_deref(),
+        Some("0"),
+        "a permit issuer of another site is not told"
+    );
+}
+
+/// Check 7, C7-N2 (and C6-N3 b, isolation to another isolation type): two PCs whose lists give no
+/// isolation rule for a work order (only a hot-work rule matches) hold two different isolation
+/// rules, received from two other PCs; each then receives the other's. Both end on the same rule
+/// (the smallest code), never on the hot-work rule, whichever they held.
+#[tokio::test]
+async fn two_isolation_rules_held_on_two_pcs_converge() {
+    let a = ("A_LOTO", "loto");
+    let b = ("B_ELEC", "electrical_lv");
+    for (held, received) in [(a, b), (b, a)] {
+        let db = setup().await;
+        // A second permit type requiring an energy isolation here.
+        exec(
+            &db,
+            "UPDATE permit_types SET requires_energy_isolation = 1 WHERE code = 'electrical_lv'",
+        )
+        .await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "H_RULE",
+            json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        )
+        .await;
+        let row = new_row_naming(&db, "EQ-C7N2", "wo-c7n2", held.0, held.1, false).await;
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &row).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(rule_state(&db, "wo-c7n2").await, ruled(held.0, held.1), "{held:?}");
+        let other = wo_row(
+            &row,
+            &[
+                ("permit_rule_code", json!(received.0)),
+                ("permit_rule_permit_type", json!(received.1)),
+            ],
+        );
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &other).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}, received {received:?}: the same rule on both PCs"
+        );
+        crate::permit::requirement_rules::catch_up(&db).await;
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}: kept by the catch-up"
+        );
+    }
+}
+
+/// Round 5, R5-N4: a work order received started without a rule (a first finding), then received
+/// naming a weaker type of the rule here: a second finding naming the received rule and type, which
+/// marks it for the re-check of its received rule (a reopening to execution is refused); the same
+/// row received again records nothing more.
+#[tokio::test]
+async fn a_second_different_finding_is_recorded_and_marks_the_work_order() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N4", "wo-r5n4", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let unruled = wo_row(
+        &started,
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n4", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    async fn findings(db: &DatabaseConnection) -> Vec<Value> {
+        db.query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r5n4' AND e.action_code = 'permit_rule_missing_on_arrival' ORDER BY e.id"
+                .to_string(),
+        ))
+        .await
+        .expect("events")
+        .iter()
+        .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+        .collect()
+    }
+    assert_eq!(findings(&db).await.len(), 1, "first finding: no rule received");
+    for _ in 0..2 {
+        let outcome = apply(&db, "work_orders", "wo-r5n4", &started).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+    }
+    let found = findings(&db).await;
+    assert_eq!(found.len(), 2, "a second, different finding; not repeated: {found:?}");
+    assert_eq!(
+        (&found[1]["received_rule_code"], &found[1]["received_permit_type_code"]),
+        (&json!("CORRECTIVE_LOTO"), &json!("hot_work"))
+    );
+    let wo_id = wo_id_of(&db, "wo-r5n4").await;
+    assert_eq!(
+        crate::permit::requirement_rules::received_rule_differs_here(&db, wo_id)
+            .await
+            .expect("differs"),
+        Some(("CORRECTIVE_LOTO".to_string(), Some("loto".to_string()))),
+        "marked: re-checked before any restart"
+    );
+}
+
+/// Check 6, C6-N5: a work order received started naming a rule with no permit type, while the list
+/// here gives another rule: the finding notice's received permit type is "?", as in its title,
+/// never empty.
+#[tokio::test]
+async fn a_finding_on_a_received_rule_without_a_type_shows_a_question_mark() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-C6N5", "wo-c6n5", "SOME_RULE", "hot_work", true).await;
+    let started = wo_row(
+        &row,
+        &[
+            ("permit_rule_permit_type", Value::Null),
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c6n5", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let params: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-c6n5'",
+        )
+        .await
+        .expect("notice"),
+    )
+    .expect("json");
+    assert_eq!(
+        (&params["received_rule"], &params["received_permit_type"]),
+        (&json!("SOME_RULE"), &json!("?"))
     );
 }
 
@@ -8436,19 +8609,56 @@ async fn a_received_isolation_type_is_kept_over_a_weaker_rule_here() {
             1,
             "{held_first}: recorded"
         );
-        if held_first {
-            assert_eq!(
-                text(
-                    &db,
-                    "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
-                     WHERE message_key = 'wo_permit_rule_type_changed'"
-                )
-                .await
-                .as_deref(),
-                Some("1"),
-                "the permit issuers are told of the type change"
-            );
-        }
+        // Held here or new here (CMMS Advisor decision C7-N1, option a): the permit issuers are told,
+        // once, and the work order shows both permit types so the hot-work permit is added.
+        let params: Value = serde_json::from_str(
+            &text(
+                &db,
+                "SELECT message_params_json FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed' AND category_code = 'wo_permit_rule_missing'",
+            )
+            .await
+            .expect("the permit issuers are told of the type change"),
+        )
+        .expect("json");
+        assert_eq!(
+            (&params["previous_permit_type"], &params["permit_type"]),
+            (&json!("hot_work"), &json!("loto")),
+            "{held_first}"
+        );
+        let wo = crate::wo::queries::get_work_order(&db, wo_id_of(&db, "wo-c6s1").await)
+            .await
+            .expect("q")
+            .expect("wo");
+        assert_eq!(
+            crate::permit::requirement_rules::matching_permit_types(
+                &db,
+                wo.equipment_id,
+                wo.type_id,
+                wo.permit_rule_permit_type.as_deref()
+            )
+            .await
+            .expect("types"),
+            vec!["loto".to_string(), "hot_work".to_string()],
+            "{held_first}: plusieurs règles de permis : loto, hot_work"
+        );
+        // Received again: told once.
+        let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            text(
+                &db,
+                "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed'"
+            )
+            .await
+            .as_deref(),
+            Some("1"),
+            "{held_first}: told once"
+        );
         crate::permit::requirement_rules::catch_up(&db).await;
         assert_eq!(
             rule_state(&db, "wo-c6s1").await,
@@ -8553,6 +8763,295 @@ async fn a_received_weaker_type_is_never_reopened_to_execution_and_is_rechecked_
         .await
         .as_deref(),
         Some("1")
+    );
+}
+
+async fn resume(db: &DatabaseConnection, wo_id: i64) -> Result<crate::wo::domain::WorkOrder, crate::errors::AppError> {
+    let row_version: i64 = text(
+        db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    crate::wo::execution::resume_wo(
+        db,
+        crate::wo::execution::WoResumeInput {
+            wo_id,
+            actor_id: APPLIER,
+            expected_row_version: row_version,
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+}
+
+/// CMMS Advisor decision C7-N4 (option b): a work order received on hold whose rule came from
+/// another PC with a weaker type (hot work) than the LOTO rule the list here gives is re-stamped to
+/// LOTO when it is resumed, recorded (cause resumed_received) and told to the permit issuers; the
+/// permit gate then refuses the resume (a live hot-work permit is not a LOTO), and it stays on hold,
+/// re-stamped. A received LOTO rule over this PC's hot-work rule is never re-stamped weaker.
+#[tokio::test]
+async fn a_received_work_order_on_hold_resumes_only_under_the_isolation_rule_here() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-1", "wo-c7n4-1", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-1", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-c7n4-1").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    let wo_id = wo_id_of(&db, "wo-c7n4-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        format!("{refused:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {refused:?}"
+    );
+    assert_eq!(
+        rule_state(&db, "wo-c7n4-1").await,
+        ruled("CORRECTIVE_LOTO", "loto"),
+        "re-stamped, kept though the resume is refused"
+    );
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-1", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+             WHERE wo.entity_sync_id = 'wo-c7n4-1' AND c.action = 'permit_rule_applied' \
+               AND json_extract(c.details_json, '$.cause') = 'resumed_received'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "audited"
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the permit issuers are told"
+    );
+    // Tried again: nothing more to re-stamp, still refused.
+    assert!(resume(&db, wo_id).await.is_err());
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await.len(),
+        1
+    );
+
+    // Never weaker: a received LOTO rule over the hot-work rule this PC's list gives stays LOTO.
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let planning = new_row_naming(&db, "EQ-C7N4-2", "wo-c7n4-2", "L_RECEIVED", "loto", false).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-2", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-2").await;
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, "wo-c7n4-2").await, ruled("L_RECEIVED", "loto"));
+    assert!(rule_events_with_cause(&db, "wo-c7n4-2", "resumed_received")
+        .await
+        .is_empty());
+}
+
+/// C7-N4, review N1: a work order received on hold without any rule, while the list here gives the
+/// LOTO rule (its arrival finding names no received rule), gets the LOTO rule when it is resumed,
+/// recorded; the gate then refuses the resume (no LOTO permit) and it stays on hold.
+#[tokio::test]
+async fn a_work_order_received_on_hold_without_a_rule_gets_the_isolation_rule_at_resume() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-C7N4-3", "wo-c7n4-3", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-3", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "permit_rule_code").await,
+        None,
+        "applied as received"
+    );
+    let wo_id = wo_id_of(&db, "wo-c7n4-3").await;
+    assert!(resume(&db, wo_id).await.is_err(), "no LOTO permit: refused");
+    assert_eq!(rule_state(&db, "wo-c7n4-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-3", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_rule_code"], &events[0]["permit_type_code"]),
+        (&Value::Null, &json!("loto"))
+    );
+}
+
+/// C7-N4, review N2: a work order created here (its rule derived here, no received mark) is never
+/// re-stamped at its resume, even when the list here now gives a rule with an isolation.
+#[tokio::test]
+async fn a_work_order_created_here_is_never_re_stamped_at_resume() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-C7N4-4").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET permit_rule_code = 'H_LOCAL', permit_rule_permit_type = 'hot_work', \
+             requires_permit = 1, actual_start = '2026-10-01T08:00:00Z', \
+             status_id = (SELECT id FROM work_order_statuses WHERE code = 'on_hold') WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("sync id");
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, &wo_sync).await, ruled("H_LOCAL", "hot_work"));
+    assert!(rule_events_with_cause(&db, &wo_sync, "resumed_received")
+        .await
+        .is_empty());
+}
+
+/// C7-N4, review N2: re-stamped at the resume while a valid LOTO permit (isolation applied and
+/// verified, active) is already linked: the same call re-stamps and resumes.
+#[tokio::test]
+async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-5", "wo-c7n4-5", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-5", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-5").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-C7N4 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    // Its hold, received with it (the open delay segment of the PC that held it).
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_delay_segments (entity_sync_id, work_order_id, started_at, ended_at, hold_kind, \
+             delay_reason_id) VALUES ('seg-sync-c7n4', {wo_id}, '2026-10-01T09:00:00Z', NULL, 'pause', \
+             (SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+              JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(d.code) = 'WORK.DELAY_REASONS' LIMIT 1))"
+        ),
+    )
+    .await;
+    let resumed = resume(&db, wo_id).await.expect("re-stamped and resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-5", "resumed_received").await.len(),
+        1
+    );
+}
+
+/// A work order received on hold with no hold segment here (its segment not received) is resumed:
+/// the permit gate judges it as usual (refused without its permit, not an internal error), and with
+/// a valid permit it resumes with no waiting time.
+#[tokio::test]
+async fn a_work_order_received_on_hold_with_no_hold_segment_here_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-NOSEG", "wo-noseg", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-noseg", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-noseg").await;
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(COUNT(*) AS TEXT) FROM work_order_delay_segments WHERE work_order_id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "no hold segment here"
+    );
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        matches!(&refused, Err(e) if !matches!(e, crate::errors::AppError::Internal(_))),
+        "the permit gate refuses it: {refused:?}"
+    );
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-NOSEG breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let resumed = resume(&db, wo_id).await.expect("resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(total_waiting_hours AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0.0")
     );
 }
 

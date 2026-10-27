@@ -834,6 +834,24 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     let remaining = crate::permit::wo_gate::checked_remaining_hours(input.estimated_remaining_hours)?;
     // One clock read: the moment judged by the permit gate is the resume recorded below.
     let at = now_utc_second();
+    // A work order received on hold whose plant rule came from another PC never resumes under a
+    // rule weaker than this PC's list gives (CMMS Advisor decision C7-N4): re-stamped to the rule
+    // with an energy isolation first, in its own transaction, so it stays re-stamped when the gate
+    // below refuses the resume (it waits on hold until a valid permit of that type exists).
+    let restamped = {
+        let txn = db.begin().await?;
+        let restamped = crate::permit::requirement_rules::restamp_received_rule_on_resume(
+            &txn,
+            input.wo_id,
+            Some(input.actor_id),
+            input.expected_row_version,
+        )
+        .await?;
+        txn.commit().await?;
+        restamped
+    };
+    // The re-stamp moved the version the screen read; the resume below is checked against it.
+    let expected_row_version = input.expected_row_version + i64::from(restamped);
     let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
     crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;
@@ -855,12 +873,13 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     ))
     .await?;
 
-    // Recompute total_waiting_hours
+    // Recompute total_waiting_hours. No segment here (a work order received on hold whose hold
+    // segment was not received): 0.0, a REAL like the sum, never an INTEGER 0 read as a number.
     let waiting_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM(ROUND((JULIANDAY(COALESCE(ended_at, strftime('%Y-%m-%dT%H:%M:%SZ','now'))) \
-              - JULIANDAY(started_at)) * 24, 2)), 0) AS total_waiting \
+              - JULIANDAY(started_at)) * 24, 2)), 0.0) AS total_waiting \
              FROM work_order_delay_segments \
              WHERE work_order_id = ?",
             [input.wo_id.into()],
@@ -885,7 +904,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
                 total_waiting.into(),
                 now.clone().into(),
                 input.wo_id.into(),
-                input.expected_row_version.into(),
+                expected_row_version.into(),
             ],
         ))
         .await?;

@@ -4734,6 +4734,10 @@ async fn a_self_approved_count_received_in_a_first_join_snapshot_is_applied_as_h
     crate::sync::capture::begin_suppression(&c).await.expect("suppress");
     crate::inventory::tests::single_site_opting_out(&c, &mut RowFactory::for_device(9), false).await;
     crate::sync::capture::end_suppression(&c).await.expect("unsuppress");
+    // C is activated into the plant (a PC syncs only once activated).
+    crate::commands::product_license::record_activation_claim_for_tests(&c, "tenant-plant-a", "fp-c", "token-c")
+        .await
+        .expect("claim");
     // The snapshot of C's first join: every plant row on the server, in its order.
     snapshot_into(&server, &c, "snapshot-all-firstjoin").await;
     let kinds = conflict_kinds(&c).await;
@@ -4919,6 +4923,16 @@ async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
         "a line already here: judged"
     );
     let fresh = crate::sync::identity::new_entity_sync_id();
+    // Review of #190 (N3): a PC with no activation judges a snapshot row, as for the work orders
+    // (`sync::plant_join::first_join_snapshot_row`; fail safe).
+    assert_eq!(
+        line_judged_in(&db, snapshot, &fresh, &received).await,
+        held,
+        "new here, no activation: judged"
+    );
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("claim");
     assert_eq!(
         line_judged_in(&db, snapshot, &fresh, &received).await,
         "pass",
@@ -4929,9 +4943,6 @@ async fn a_snapshot_row_is_history_only_for_a_line_new_here_on_a_first_join() {
         held,
         "from an exchange: judged"
     );
-    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
-        .await
-        .expect("claim");
     crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
         .await
         .expect("complete pull");
@@ -5045,6 +5056,10 @@ async fn a_list_count_within_the_tolerance_approved_by_its_counter_is_no_auto_ap
 async fn a_received_line_cleared_of_its_critique_but_above_here_is_an_auto_approbation() {
     use crate::sync::materialize::{apply_inbound_payload, judged_as_row_of_batch, ApplyOutcome};
     let db = started_device_db().await;
+    // Activated into the plant, its first join not complete: a snapshot row is its history.
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-q14", "token-q14")
+        .await
+        .expect("claim");
     let mut factory = RowFactory::new();
     let (article, location) = stocked_pair(&db, &mut factory, 10.0).await;
     let counter = user_with(&db, "q14receivedcounter", &[crate::rbac::permissions::INV_MANAGE]).await;

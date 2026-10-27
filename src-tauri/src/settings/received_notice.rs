@@ -889,7 +889,8 @@ pub(crate) async fn notify_work_order_without_rule(
             "permit_type": permit_type,
             "requires_permit": requires_permit,
             "received_rule": received.map(|r| r.0),
-            "received_permit_type": received.and_then(|r| r.1),
+            // A received rule with no permit type is shown "?", as in the title (check 6, C6-N5).
+            "received_permit_type": received.map(|r| r.1.unwrap_or("?")),
         }),
     );
     send_logged_notice(
