@@ -591,6 +591,11 @@ async fn has_v2_checkpoint(db: &DatabaseConnection) -> AppResult<bool> {
     Ok(token.is_some_and(|t| t.starts_with("v2.")))
 }
 
+/// Run after a materialization that wrote a row the effective rights are read from
+/// (`MaterializeInboxResult::rights_changed`, AU-107): the app drops its cached permissions and
+/// tells the window, so a right withdrawn on another PC stops here at once.
+pub type RightsChangedHook = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 pub struct SyncWorker {
     db: DatabaseConnection,
     client: ControlPlaneClient,
@@ -598,6 +603,7 @@ pub struct SyncWorker {
     handle: SyncWorkerHandle,
     media_root: PathBuf,
     timing: SyncTiming,
+    on_rights_changed: Option<RightsChangedHook>,
 }
 
 impl SyncWorker {
@@ -615,7 +621,15 @@ impl SyncWorker {
             handle,
             media_root: config.media_root,
             timing: config.timing,
+            on_rights_changed: None,
         })
+    }
+
+    /// Called once per materialization that changed the effective rights ([`RightsChangedHook`]).
+    #[must_use]
+    pub fn on_rights_changed(mut self, hook: RightsChangedHook) -> Self {
+        self.on_rights_changed = Some(hook);
+        self
     }
 
     /// Run until cancelled. `commands` comes from `SyncWorkerHandle::take_receiver`.
@@ -1022,6 +1036,12 @@ impl SyncWorker {
                 deferred = result.deferred,
                 "inbox materialized"
             );
+        }
+        // Once per run, not per row: the cached permissions are dropped and the window reloads its own.
+        if result.rights_changed {
+            if let Some(hook) = &self.on_rights_changed {
+                hook().await;
+            }
         }
         // Reserved stock marks left by a write outside a pass (`inventory::reservations`), every cycle,
         // also when nothing was received; no write when there is no mark.

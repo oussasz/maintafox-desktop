@@ -1336,3 +1336,110 @@ async fn a_delegation_policy_is_checked_against_its_author() {
         "step-up removed by a non-holder: {outcome:?}"
     );
 }
+
+// ── AU-107: rights changed by sync are refreshed ────────────────────────────────────────────────
+
+/// Received through the inbox and one materialization run, as the sync worker does.
+async fn receive_through_inbox(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    sync_id: &str,
+    row: Payload,
+) -> crate::sync::materialize::MaterializeInboxResult {
+    // This PC's own changes are on the server already (acknowledged), as after an exchange: the
+    // received row is judged on its content, not as a concurrent edit.
+    crate::sync::capture::drain_capture_journal(db).await.expect("drain");
+    exec(
+        db,
+        "UPDATE sync_outbox SET status = 'acked' WHERE status IN ('pending', 'in_flight')",
+        vec![],
+    )
+    .await;
+    crate::sync::queries::apply_sync_batch(
+        db,
+        crate::sync::domain::ApplySyncBatchInput {
+            protocol_version: crate::sync::domain::SYNC_PROTOCOL_VERSION_V2.to_string(),
+            server_batch_id: format!("b-{sync_id}"),
+            checkpoint_token: format!("v2.test.{sync_id}"),
+            acknowledged_items: vec![],
+            rejected_items: vec![],
+            inbound_items: vec![crate::sync::domain::SyncInboundItemInput {
+                entity_type: entity_type.into(),
+                entity_sync_id: sync_id.into(),
+                operation: "upsert".into(),
+                row_version: 2,
+                payload_json: Value::Object(row).to_string(),
+                ..Default::default()
+            }],
+            conflict_items: vec![],
+            policy_metadata_json: None,
+        },
+    )
+    .await
+    .expect("ingest");
+    crate::sync::materialize::materialize_inbox(db, 200, true)
+        .await
+        .expect("materialize")
+}
+
+/// A role withdrawn on another PC: the run says the rights changed, so the worker drops the
+/// cached permissions and tells the window (`startup::rights_changed_hook`).
+#[tokio::test]
+async fn a_received_withdrawal_flags_the_run_as_changing_rights() {
+    let p = plant().await;
+    let mut withdrawal = payload(&p.db, "user_scope_assignments", &p.manager_assignment).await;
+    withdrawal.insert("deleted_at".into(), now().into());
+    let run = receive_through_inbox(&p.db, "user_scope_assignments", &p.manager_assignment, withdrawal).await;
+    assert_eq!(run.applied, 1, "{run:?}");
+    assert!(run.rights_changed, "{run:?}");
+}
+
+/// A grant refused (conflict) writes nothing: the rights are unchanged and nothing is refreshed.
+#[tokio::test]
+async fn a_refused_grant_does_not_flag_the_run() {
+    let p = plant().await;
+    let row = remote_assignment(&p.db, "grant-refused", p.worker, p.operator, Some(p.manager)).await;
+    demote_manager(&p).await;
+    let run = receive_through_inbox(&p.db, "user_scope_assignments", "grant-refused", row).await;
+    assert_eq!(run.conflicts, 1, "{run:?}");
+    assert!(!run.rights_changed, "{run:?}");
+    assert_eq!(
+        scalar(
+            &p.db,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = ? AND conflict_type = ?",
+            vec!["grant-refused".into(), GRANT_BY_UNAUTHORISED_ADMIN.into()],
+        )
+        .await,
+        Some(1),
+        "refused for its author"
+    );
+}
+
+/// The cache entries a refresh drops: every user's, at once (a role may concern any user).
+#[tokio::test]
+async fn the_refresh_drops_every_cached_permission() {
+    let p = plant().await;
+    let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+    let held = |user: i64| {
+        let (db, cache) = (&p.db, &cache);
+        async move {
+            crate::auth::rbac::check_permission_cached(
+                db,
+                cache,
+                i32::try_from(user).expect("user id"),
+                crate::rbac::permissions::ADM_USERS,
+                &crate::auth::rbac::PermissionScope::Global,
+            )
+            .await
+            .expect("check")
+        }
+    };
+    assert!(held(p.manager).await, "cached while held");
+    let mut withdrawal = payload(&p.db, "user_scope_assignments", &p.manager_assignment).await;
+    withdrawal.insert("deleted_at".into(), now().into());
+    let run = receive_through_inbox(&p.db, "user_scope_assignments", &p.manager_assignment, withdrawal).await;
+    assert!(run.rights_changed);
+    assert!(held(p.manager).await, "the stale entry still answers until the refresh");
+    cache.write().await.invalidate_all();
+    assert!(!held(p.manager).await, "withdrawn at once after the refresh");
+}

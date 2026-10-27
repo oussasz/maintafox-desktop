@@ -25,7 +25,23 @@ pub struct MaterializeInboxResult {
     /// Waiting for a parent row or a materializer; retried on the next run.
     pub deferred: i64,
     pub errors: Vec<String>,
+    /// A row of a table the effective rights are computed from ([`RIGHTS_ENTITY_TYPES`]) was
+    /// written: the permission cache and the window's permissions must be refreshed (AU-107).
+    #[serde(default)]
+    pub rights_changed: bool,
 }
+
+/// Entity types whose rows the effective rights are read from (`auth::rbac`, `auth::scope`): the
+/// accounts (active, admin), roles, their permissions, the user's assignments, and the org nodes a
+/// node assignment grants on (a node deleted or moved changes what it grants). Delegated admin
+/// policies are read live (`rbac::delegation`), never cached, so they are not listed.
+pub const RIGHTS_ENTITY_TYPES: &[&str] = &[
+    "user_accounts",
+    "roles",
+    "role_permissions",
+    "user_scope_assignments",
+    "org_nodes",
+];
 
 /// Deferral code for a row whose parent has not been applied yet.
 pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
@@ -224,6 +240,7 @@ async fn materialize_inbox_run(
         skipped: 0,
         deferred: 0,
         errors: Vec::new(),
+        rights_changed: false,
     };
     let add = |total: &mut MaterializeInboxResult, r: MaterializeInboxResult| {
         total.processed += r.processed;
@@ -231,6 +248,7 @@ async fn materialize_inbox_run(
         total.conflicts += r.conflicts;
         total.skipped += r.skipped;
         total.errors.extend(r.errors);
+        total.rights_changed |= r.rights_changed;
     };
     // PM plan versions refused before two versions could share a number are applied again first,
     // so the rows waiting for them follow in this run (`pm::version_clash`).
@@ -430,6 +448,7 @@ async fn materialize_pass(
         skipped: 0,
         deferred: 0,
         errors: Vec::new(),
+        rights_changed: false,
     };
 
     // One transaction per pass (one disk commit for up to `limit` rows instead of one per row);
@@ -448,6 +467,9 @@ async fn materialize_pass(
                 ApplyOutcome::Applied => {
                     result.applied += 1;
                     progressed = true;
+                    if RIGHTS_ENTITY_TYPES.contains(&item.entity_type.as_str()) {
+                        result.rights_changed = true;
+                    }
                     if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
                         late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
                     }
