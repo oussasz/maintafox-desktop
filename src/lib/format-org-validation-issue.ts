@@ -37,7 +37,9 @@ function issueKeys(code: string, orgNs: string): string[] {
 }
 
 /** The issue's params for display: instants in the user's language and time zone. */
-function displayParams(params: Record<string, string> | null | undefined): Record<string, string> {
+export function displayParams(
+  params: Record<string, string> | null | undefined,
+): Record<string, string> {
   // "fr" | "en" (the formatters' locale codes), also when i18next reports a region ("en-US").
   const language = (i18n.resolvedLanguage || i18n.language || "").split("-")[0] ?? "";
   return localizeDateTimeParams(params ?? {}, language);

@@ -12,11 +12,12 @@
  *  - a response that fails schema validation (ZodError) gets a plain message; the technical
  *    detail goes to the console, never on screen.
  */
-import type { TOptions } from "i18next";
+import type { TFunction, TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
-import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { displayParams, formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { permissionLabel } from "@/lib/permission-labels";
 import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import {
   extractIpcErrorCode,
@@ -24,6 +25,7 @@ import {
   formatOrgIpcError,
   toErrorMessage,
 } from "@/utils/errors";
+import { PERMISSION_CATALOG } from "@shared/rbac/permissions.generated";
 
 export interface AppErrorDescription {
   title: string;
@@ -37,6 +39,13 @@ export interface AppErrorDescription {
 export function appErrorText(err: unknown): string {
   const { title, description } = describeAppError(err);
   return description ?? title;
+}
+
+/** The readable name of the right a "permission denied" sentence names; null when it names none. */
+function missingRight(message: string): string | null {
+  const names = message.match(/[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g) ?? [];
+  const known = names.find((n) => PERMISSION_CATALOG.some((p) => p.name === n));
+  return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
 }
 
 export function describeAppError(err: unknown): AppErrorDescription {
@@ -61,11 +70,15 @@ export function describeAppError(err: unknown): AppErrorDescription {
   }
 
   // A refused right: the translated refusal, never the server's own (English, technical) text.
-  // The rights have no readable names in the locale data, so the generic reason is given.
+  // The server's sentence names the missing right ("Permission requise : ot.close"); it is shown
+  // by its readable name (`permission-labels.ts`), the generic reason when no right can be read.
   if (code === "PERMISSION_DENIED") {
+    const right = missingRight(rawMsg);
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
-      description: String(i18n.t("errors:generic.forbidden")),
+      description: right
+        ? String(i18n.t("errors:generic.rightRequired", { right }))
+        : String(i18n.t("errors:generic.forbidden")),
       code,
       // The server's text names the missing right: kept for "Détails techniques" and support.
       technical: rawMsg.trim() || null,
@@ -82,7 +95,7 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const codeTitle = i18nKey && i18n.exists(i18nKey) ? String(i18n.t(i18nKey)) : "";
   const details = extractIpcValidationDetails(err);
   // The parameters the backend sent with the GATE code fill its text ("de {{from}} à {{to}}").
-  const gateParams = details.find((d) => d.code === gateCode)?.params ?? {};
+  const gateParams = displayParams(details.find((d) => d.code === gateCode)?.params);
   const title =
     gateI18nKey && i18n.exists(gateI18nKey)
       ? String(i18n.t(gateI18nKey, gateParams as TOptions))
@@ -111,11 +124,13 @@ export function describeAppError(err: unknown): AppErrorDescription {
  * The translated text of the GATE code found in a backend sentence; the generic text when the
  * code has no translation (a GATE code never reaches the user); null when there is no GATE code.
  */
-function gateText(message: string): string | null {
+function gateText(message: string, params?: Record<string, string> | null): string | null {
   const code = message.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/)?.[1];
   if (!code) return null;
   const key = `errors:gateError.${code}`;
-  return i18n.exists(key) ? String(i18n.t(key)) : String(i18n.t("errors:generic.unexpected"));
+  return i18n.exists(key)
+    ? String(i18n.t(key, displayParams(params) as TOptions))
+    : String(i18n.t("errors:generic.unexpected"));
 }
 
 /**
@@ -129,7 +144,7 @@ export function appErrorLines(err: unknown): string[] {
   if (details.length === 0) return [appErrorReason(err)];
   const lines = details.map((d) => {
     if (d.code) return formatOrgIssuesWithI18n([d]);
-    return gateText(d.message) ?? d.message.replace(/^Validation failed:\s*/i, "");
+    return gateText(d.message, d.params) ?? d.message.replace(/^Validation failed:\s*/i, "");
   });
   return lines.filter((l) => l.trim() !== "");
 }

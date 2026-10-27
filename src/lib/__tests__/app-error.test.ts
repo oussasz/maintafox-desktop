@@ -208,3 +208,29 @@ describe("a GATE refusal's title uses the parameters the backend sent", () => {
     expect(described.title).not.toContain("{{");
   });
 });
+
+describe("describeAppError (refused right)", () => {
+  const refused = {
+    code: "PERMISSION_DENIED",
+    message: "Permission denied: Permission requise : ot.close",
+  };
+
+  it("names the missing right in the user's language", async () => {
+    await i18n.changeLanguage("fr");
+    expect(describeAppError(refused).description).toBe(
+      "Droit requis : Clôturer les ordres de travail",
+    );
+    await i18n.changeLanguage("en");
+    expect(describeAppError(refused).description).toBe("Required right: Close work orders");
+    expect(describeAppError(refused).technical).toContain("ot.close");
+  });
+
+  it("gives the generic reason when the sentence names no known right", async () => {
+    await i18n.changeLanguage("en");
+    const described = describeAppError({
+      code: "PERMISSION_DENIED",
+      message: "Permission denied: action 'x' on resource 'y'",
+    });
+    expect(described.description).toBe(String(i18n.t("errors:generic.forbidden")));
+  });
+});

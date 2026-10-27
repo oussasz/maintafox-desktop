@@ -312,7 +312,9 @@
     "emptyHint": "Your account must be linked to your personnel record to see your certifications here."
   },
   "errors": {
-    "WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED": "Clearing a permit requirement set by a rule needs the permit-issue right.",
+    "WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED": "$t(training:errors.WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED_{{origin}})",
+    "WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED_rule": "Clearing a permit requirement set by a plant rule needs the permit-issue right at the work order's site.",
+    "WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED_safety_request": "Clearing a permit requirement that comes from a request flagged as a safety risk needs the permit-issue right at the work order's site.",
     "WO_PERMIT_RULE_CLEAR_REASON_REQUIRED": "Give a reason of at least {{min}} characters to clear the permit requirement.",
     "WO_PERMIT_RULE_FLAG_ABSENT": "This work order has no permit requirement set by a rule (or it is already cleared).",
     "WO_PERMIT_RULE_FLAG_NEEDS_CLEAR": "The permit requirement comes from the rule {{rule}}: it is cleared with the permit-issue right and a reason, not by editing the work order.",

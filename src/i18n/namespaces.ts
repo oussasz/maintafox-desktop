@@ -67,6 +67,8 @@ export const ISSUE_NAMESPACES = [
   "inspections",
   "pm",
   "budget",
+  // Not coded refusals: the readable names of the rights a refused action needs (app-error.ts).
+  "admin",
 ] as const;
 
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];
