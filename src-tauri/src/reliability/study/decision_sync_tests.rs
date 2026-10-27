@@ -1720,6 +1720,285 @@ async fn a_seal_only_resend_crossing_an_unsent_apply_settles_on_pull() {
     assert_eq!(open.len(), 1);
     assert_eq!((open[0].0, open[0].1), (4, Some(3)));
     assert_eq!(open[0].3.get("status").and_then(Value::as_str), Some("applied"));
+    // The received row is done with (review R4-N5): marked applied, and the settlement audited once.
+    assert_eq!(
+        text(
+            &f,
+            &format!("SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{sid}' AND row_version = 3")
+        )
+        .await,
+        "applied"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'reliability.decision.seal_resend_settled' \
+                   AND target_id = '{sid}' AND json_extract(details_json, '$.path') = 'pull' \
+                   AND json_extract(details_json, '$.server_row_version') = 3"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        text(
+            &f,
+            &format!(
+                "SELECT synced_row_version || ':' || synced_payload_hash FROM sync_entity_state \
+                  WHERE entity_type = '{ENTITY}' AND entity_sync_id = '{sid}'"
+            )
+        )
+        .await,
+        format!("3:h-{sid}-3")
+    );
+}
+
+/// Review R4-N2: a seal-only re-send received with a version not newer than the one this PC knows
+/// the server holds is never settled (it runs before the concurrency check): the known version is
+/// not moved back, this PC's change stays to be sent and a person decides.
+#[tokio::test]
+async fn a_seal_only_resend_not_newer_than_the_known_version_is_not_settled() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (id, sid, resend) = pc_a_with_unsent_apply(&f, study_id).await;
+    let pending_before: Vec<_> = sends_of(&f, &sid)
+        .await
+        .into_iter()
+        .filter(|s| s.2 == "pending")
+        .map(|s| (s.0, s.1))
+        .collect();
+    for rv in [2, 1] {
+        inbox(&f, &sid, &resend, rv).await;
+        materialize(&f).await;
+        assert_eq!(
+            text(
+                &f,
+                &format!(
+                    "SELECT synced_row_version || ':' || synced_payload_hash FROM sync_entity_state \
+                      WHERE entity_type = '{ENTITY}' AND entity_sync_id = '{sid}'"
+                )
+            )
+            .await,
+            "2:h-v2",
+            "v{rv}: the known version is not moved"
+        );
+        assert_eq!(
+            text(
+                &f,
+                &format!("SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{sid}' AND row_version = {rv} AND server_batch_id = 'b-{sid}-{rv}'")
+            )
+            .await,
+            "conflict",
+            "v{rv}: a person decides"
+        );
+    }
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM audit_events WHERE action_code = 'reliability.decision.seal_resend_settled' AND target_id = '{sid}'")
+        )
+        .await,
+        0,
+        "nothing settled"
+    );
+    let pending_after: Vec<_> = sends_of(&f, &sid)
+        .await
+        .into_iter()
+        .filter(|s| s.2 == "pending")
+        .map(|s| (s.0, s.1))
+        .collect();
+    assert_eq!(pending_after, pending_before, "this PC's change is still to be sent");
+    assert_eq!(decision_status(&f, id).await, "applied");
+}
+
+/// Review R4-N3: on the pull path, this PC's item already in `conflict` (with its server conflict
+/// open for a person) is superseded by the settlement and that conflict is closed with it, noted
+/// and counted in the audit; the change is staged again on top of the received version.
+#[tokio::test]
+async fn a_pull_settlement_closes_the_open_conflict_of_the_superseded_item() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (id, sid, resend) = pc_a_with_unsent_apply(&f, study_id).await;
+    let v3 = scalar(
+        &f.db,
+        &format!("SELECT id FROM sync_outbox WHERE entity_sync_id = '{sid}' AND idempotency_key = 'k-v3'"),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!("UPDATE sync_outbox SET status = 'conflict' WHERE id = {v3}"),
+    )
+    .await;
+    crate::sync::queries::record_sync_conflict(
+        &f.db,
+        crate::sync::queries::NewSyncConflict {
+            source_scope: "outbox",
+            source_batch_id: Some("push-1".into()),
+            linked_outbox_id: Some(v3),
+            linked_inbox_id: None,
+            entity_type: ENTITY.into(),
+            entity_sync_id: sid.clone(),
+            operation: "upsert".into(),
+            conflict_type: "SERVER_CONFLICT".into(),
+            local_payload_json: Some("{\"status\":\"applied\"}".into()),
+            inbound_payload_json: None,
+            checkpoint_token: None,
+            local_row_version: Some(3),
+            inbound_row_version: Some(3),
+            detail_message: None,
+        },
+    )
+    .await
+    .expect("conflict");
+    let (conflict_id, _, _) = open_conflict(&f, &sid).await;
+    inbox(&f, &sid, &resend, 3).await;
+    materialize(&f).await;
+    assert_eq!(
+        text(
+            &f,
+            &format!("SELECT status || ':' || resolution_action FROM sync_conflicts WHERE id = {conflict_id}")
+        )
+        .await,
+        "resolved_remote:seal_resend_settled"
+    );
+    assert!(text(
+        &f,
+        &format!("SELECT resolution_note FROM sync_conflicts WHERE id = {conflict_id}")
+    )
+    .await
+    .contains("server version 3"));
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM sync_conflicts WHERE entity_sync_id = '{sid}' \
+                   AND status IN ('new', 'triaged', 'escalated')"
+            )
+        )
+        .await,
+        0,
+        "no stale item left for a person"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'reliability.decision.seal_resend_settled' \
+                   AND target_id = '{sid}' AND json_extract(details_json, '$.conflicts_closed') = 1"
+            )
+        )
+        .await,
+        1
+    );
+    let sends = sends_of(&f, &sid).await;
+    let open: Vec<_> = sends.iter().filter(|s| s.2 == "pending").collect();
+    assert_eq!(open.len(), 1, "{sends:?}");
+    assert_eq!(open[0].1, Some(3), "staged again on top of the received version");
+    assert_eq!(open[0].3.get("status").and_then(Value::as_str), Some("applied"));
+    assert_eq!(
+        text(&f, &format!("SELECT status FROM sync_outbox WHERE id = {v3}")).await,
+        "superseded"
+    );
+    assert_eq!(decision_status(&f, id).await, "applied");
+}
+
+/// Review R4-N5: a version that differs from the base in anything a person can change is not a
+/// seal-only re-send, whatever its seal: a status, the decider, an extra key, a null where the base
+/// has no key, a refusal mark, or another seal. Nothing is settled, the known version is unchanged.
+#[tokio::test]
+async fn a_resend_differing_in_anything_else_is_not_settled() {
+    use crate::reliability::study::decision_sync::settle_seal_resend_server_conflict;
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let (_id, sid, resend) = pc_a_with_unsent_apply(&f, study_id).await;
+    let with = |key: &str, value: Value| {
+        let mut p = resend.clone();
+        p.insert(key.into(), value);
+        (key.to_string(), p)
+    };
+    let variants = [
+        with("status", "applied".into()),
+        with("decided_by_sync_id", "pc-x-another-person".into()),
+        with("extra_key", "x".into()),
+        with("extra_null", Value::Null),
+        with("sync_refused_at", "2026-10-27T08:00:00Z".into()),
+        with("sync_refused_reason", "DECISION_APPROVER_UNAUTHORISED".into()),
+        with("approval_seal", "v1:another-seal".into()),
+    ];
+    for (key, payload) in variants {
+        let conflict = crate::sync::domain::SyncServerConflictInput {
+            idempotency_key: "k-v3".into(),
+            entity_type: ENTITY.into(),
+            entity_sync_id: sid.clone(),
+            local_row_version: 3,
+            local_base_row_version: Some(2),
+            server_row_version: 3,
+            server_operation: "upsert".into(),
+            server_payload_json: Some(serde_json::to_string(&payload).expect("json")),
+            server_payload_hash: Some("h-b-v3".into()),
+            server_owner_user_sync_id: None,
+            server_deleted: false,
+        };
+        assert!(
+            !settle_seal_resend_server_conflict(&f.db, &conflict)
+                .await
+                .expect("judge"),
+            "{key}: not a seal-only re-send"
+        );
+    }
+    // A key the base had, missing from the re-send (missing vs a value): not settled either.
+    let mut missing = resend.clone();
+    missing.remove("decision_note");
+    let conflict = crate::sync::domain::SyncServerConflictInput {
+        idempotency_key: "k-v3".into(),
+        entity_type: ENTITY.into(),
+        entity_sync_id: sid.clone(),
+        local_row_version: 3,
+        local_base_row_version: Some(2),
+        server_row_version: 3,
+        server_operation: "upsert".into(),
+        server_payload_json: Some(serde_json::to_string(&missing).expect("json")),
+        server_payload_hash: Some("h-b-v3".into()),
+        server_owner_user_sync_id: None,
+        server_deleted: false,
+    };
+    assert!(!settle_seal_resend_server_conflict(&f.db, &conflict)
+        .await
+        .expect("judge"));
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM audit_events WHERE action_code = 'reliability.decision.seal_resend_settled' AND target_id = '{sid}'")
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        text(
+            &f,
+            &format!(
+                "SELECT synced_row_version || ':' || synced_payload_hash FROM sync_entity_state \
+                  WHERE entity_type = '{ENTITY}' AND entity_sync_id = '{sid}'"
+            )
+        )
+        .await,
+        "2:h-v2"
+    );
+    // The unchanged re-send is still settled: the cases above fail on their difference only.
+    let conflict = crate::sync::domain::SyncServerConflictInput {
+        server_payload_json: Some(serde_json::to_string(&resend).expect("json")),
+        ..conflict
+    };
+    assert!(settle_seal_resend_server_conflict(&f.db, &conflict)
+        .await
+        .expect("settle"));
 }
 
 /// R3-N6: a change sent but not acknowledged at the upgrade (in flight) is kept, and the sealed row

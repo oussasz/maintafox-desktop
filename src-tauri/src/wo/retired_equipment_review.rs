@@ -632,11 +632,27 @@ fn list_select() -> String {
     let rec_first = format!(
         "(rev.occurred_at IS NOT NULL AND ({end_at} IS NULL OR julianday(rev.occurred_at) < julianday({end_at})))"
     );
+    // #187 LC-N1: a closed item whose record is now on another equipment than the item's was
+    // closed by that move, whatever closure this PC stored (a PC that received the move and the
+    // record's end in one row stored the end): every PC shows `other` from the same rows. An item
+    // stored as `other` (its record gone...) also keeps it when the candidate that would replace it
+    // came later: the record's end or a return to service after the item closed is not what closed
+    // it. Only the time shown can differ between PCs (the stored one).
+    let other_first = format!(
+        "(r.status = 'closed' AND ( \
+             (CASE r.record_kind WHEN 'work_order' THEN wo.id IS NOT NULL AND wo.equipment_id IS NOT r.equipment_id \
+                  ELSE ir.id IS NOT NULL AND ir.equipment_id IS NOT r.equipment_id END) \
+             OR (r.closure_kind = '{other}' \
+                 AND julianday(CASE WHEN {rec_first} THEN rev.occurred_at ELSE {end_at} END) > julianday(r.closed_at))))",
+        other = CLOSURE_OTHER,
+    );
     format!(
         "SELECT r.id, r.record_kind, r.record_sync_id, r.equipment_id, r.status, r.opened_at, \
             r.closure_kind AS stored_kind, r.closed_at AS stored_closed_at, \
             {end_at} AS end_at, CASE WHEN {rec_first} THEN 1 ELSE 0 END AS rec_first, \
-            CASE WHEN r.status = 'open' THEN NULL WHEN {rec_first} THEN rev.occurred_at \
+            CASE WHEN {other_first} THEN 1 ELSE 0 END AS other_first, \
+            CASE WHEN r.status = 'open' THEN NULL WHEN {other_first} THEN r.closed_at \
+                 WHEN {rec_first} THEN rev.occurred_at \
                  ELSE COALESCE({end_at}, r.closed_at) END AS resolved_at, \
             rev.occurred_at AS rec_at, rua.display_name AS rec_by, rev.notes AS rec_note, \
             wua.display_name AS wo_by, \
@@ -684,6 +700,8 @@ fn map_item(r: &QueryResult) -> AppResult<RetiredEquipmentReview> {
     // The closure as resolved now (see `list_select`); the stored one while neither is here.
     let (closure_kind, closed_by, closure_note) = if !closed {
         (None, None, None)
+    } else if opt_i(r, "other_first")? == Some(1) {
+        (Some(CLOSURE_OTHER.to_string()), None, None)
     } else if opt_i(r, "rec_first")? == Some(1) {
         (
             Some(CLOSURE_RECOMMISSIONED.to_string()),

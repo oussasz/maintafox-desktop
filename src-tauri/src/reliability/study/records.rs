@@ -150,7 +150,8 @@ async fn load_failures_scoped(
          LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id
          LEFT JOIN intervention_requests di ON di.id = wo.source_di_id
          LEFT JOIN work_order_failure_details wfd ON wfd.id = (
-              SELECT MAX(x.id) FROM work_order_failure_details x WHERE x.work_order_id = wo.id)
+              SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = wo.id
+              ORDER BY x.entity_sync_id, x.id LIMIT 1)
          LEFT JOIN reference_values mech ON mech.id = COALESCE(fe.failure_mechanism_id, wfd.failure_mechanism_id)
          WHERE fe.equipment_id = ? AND COALESCE(fe.is_planned, 0) = 0
            AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) >= datetime(?)

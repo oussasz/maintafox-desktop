@@ -536,6 +536,84 @@ pub(crate) async fn refuse_retired_equipment(conn: &impl ConnectionTrait, equipm
     Ok(())
 }
 
+/// The refusals of a new work order about who creates it, its equipment (known, not retired) and
+/// its org node (the given one, else the equipment's installation node; known). Returns that node.
+/// [`create_work_order_in`] runs it, and the PM execution runs it before anything is written for a
+/// finding whose follow-up is a work order (#185 N-R2-1).
+pub(crate) async fn refuse_creator_equipment_and_node(
+    conn: &impl ConnectionTrait,
+    creator_id: i64,
+    equipment_id: Option<i64>,
+    mut entity_id: Option<i64>,
+) -> AppResult<i64> {
+    let creator_ok = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE id = ?",
+            [creator_id.into()],
+        ))
+        .await?;
+    if creator_ok.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_CREATOR_UNKNOWN:creator_id={0}: Utilisateur introuvable (creator_id={0}).",
+            creator_id
+        )]));
+    }
+
+    if let Some(eid) = equipment_id {
+        let ex = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, installed_at_node_id FROM equipment \
+                 WHERE id = ? AND deleted_at IS NULL",
+                [eid.into()],
+            ))
+            .await?;
+        if let Some(row) = ex {
+            if entity_id.is_none() {
+                entity_id = row
+                    .try_get::<Option<i64>>("", "installed_at_node_id")
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.installed_at_node_id decode: {e}")))?;
+            }
+        } else {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={eid}: Équipement introuvable ou supprimé (equipment_id={eid})."
+            )]));
+        }
+        // AU-73: no new work order on retired equipment (Déclassé / Rebuté), whatever raises it
+        // (direct creation, PM, inspection, reliability action). A work order received by sync
+        // is applied by the sync materializer, not here.
+        refuse_retired_equipment(conn, eid).await?;
+    }
+    if equipment_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_WO_EQUIPMENT_REQUIRED: equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
+        ]));
+    }
+    if entity_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+             Affectez l'équipement à une entité organisationnelle avant de créer un OT."
+                .into(),
+        ]));
+    }
+    if let Some(nid) = entity_id {
+        let node_ok = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
+                [nid.into()],
+            ))
+            .await?;
+        if node_ok.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_WO_ENTITY_UNKNOWN:entity_id={nid}: Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
+            )]));
+        }
+    }
+    entity_id.ok_or_else(|| AppError::Internal(anyhow::anyhow!("work order node checked above")))
+}
+
 /// [`create_work_order`] in the caller's transaction: what the work order is raised from is linked
 /// to it in the same transaction (`inspection::routing`), never left half done.
 ///
@@ -565,73 +643,12 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(str::to_string);
-    let mut entity_id = input.entity_id.filter(|&e| e > 0);
-
-    let creator_ok = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE id = ?",
-            [input.creator_id.into()],
-        ))
-        .await?;
-    if creator_ok.is_none() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_WO_CREATOR_UNKNOWN:creator_id={0}: Utilisateur introuvable (creator_id={0}).",
-            input.creator_id
-        )]));
-    }
-
-    if let Some(eid) = equipment_id {
-        let ex = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, installed_at_node_id FROM equipment \
-                 WHERE id = ? AND deleted_at IS NULL",
-                [eid.into()],
-            ))
-            .await?;
-        if let Some(row) = ex {
-            if entity_id.is_none() {
-                entity_id = row
-                    .try_get::<Option<i64>>("", "installed_at_node_id")
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.installed_at_node_id decode: {e}")))?;
-            }
-        } else {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={eid}: Équipement introuvable ou supprimé (equipment_id={eid})."
-            )]));
-        }
-        // AU-73: no new work order on retired equipment (Déclassé / Rebuté), whatever raises it
-        // (direct creation, PM, inspection, reliability action). A work order received by sync
-        // is applied by the sync materializer, not here.
-        refuse_retired_equipment(txn, eid).await?;
-    }
-    if equipment_id.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_WO_EQUIPMENT_REQUIRED: equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
-        ]));
-    }
-    if entity_id.is_none() {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
-             Affectez l'équipement à une entité organisationnelle avant de créer un OT."
-                .into(),
-        ]));
-    }
-    if let Some(nid) = entity_id {
-        let node_ok = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
-                [nid.into()],
-            ))
-            .await?;
-        if node_ok.is_none() {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "GATE_WO_ENTITY_UNKNOWN:entity_id={nid}: Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
-            )]));
-        }
-    }
+    // Who creates it, its equipment and its org node (shared with the pre-check of a PM finding's
+    // follow-up, `pm::queries`).
+    let entity_id = Some(
+        refuse_creator_equipment_and_node(txn, input.creator_id, equipment_id, input.entity_id.filter(|&e| e > 0))
+            .await?,
+    );
 
     // Level of the shared DI / OT urgency scale (`WORK.URGENCY`).
     let urgency_id = match urgency_code.as_deref() {

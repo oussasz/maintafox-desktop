@@ -2,7 +2,7 @@
 //! Updated for Option B lifecycle (8 statuses).
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::analytics_contract::list_contract_versions;
@@ -339,7 +339,7 @@ mod tests {
         wo.row_version
     }
 
-    async fn ensure_failure_mode_and_cause_ids(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+    pub(crate) async fn ensure_failure_mode_and_cause_ids(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
         // Ensure a governed WORK.FAILURE_MODES value exists (close gate checks reference_values).
         let mode_id: i64 = match db
             .query_one(Statement::from_string(
