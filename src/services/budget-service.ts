@@ -1,6 +1,7 @@
 import { z, ZodError } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   AcknowledgeBudgetAlertInput,
   BudgetActual,
@@ -477,16 +478,18 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class BudgetIpcError extends Error {
   readonly code: string;
-
-  constructor(code: string, message: string) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, details: unknown = null) {
     super(message);
     this.name = "BudgetIpcError";
     this.code = code;
+    this.details = details;
   }
 }
 
 function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new BudgetIpcError(err.code, err.message);
+  if (isIpcError(err)) throw new BudgetIpcError(err.code, err.message, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }
