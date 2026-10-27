@@ -49,9 +49,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ),
     ("sync/row_codec.rs", "{table}: invalid payload_json"),
     // Machine code + payload, not yet translated by a screen text.
-    ("commands/reliability_study.rs", "ADVANCED_TOOL_DISABLED"),
     ("commands/settings.rs", "SETTING_REASON_REQUIRED"),
-    ("", "READINESS_DENY:"),
     ("", "FMECA_ITEM_REVIEW_REQUIRED"),
     ("", "ASSIGNEE_UNAVAILABLE"),
     // Demo / golden-data seeds: developer tools, never reachable from a normal screen.

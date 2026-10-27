@@ -245,7 +245,7 @@ async fn resolve_fta_graph_from_real_data(
 
         if exposure_h <= 0.0 {
             issues.push(format!(
-                "node '{node_id}': no runtime exposure in lookback window (equipment_id={}, lookback_days={})",
+                "GATE_REL_FTA_NO_EXPOSURE:equipment_id={0},lookback_days={1}: node '{node_id}': no runtime exposure in lookback window (equipment_id={0}, lookback_days={1})",
                 cfg.equipment_id, cfg.lookback_days
             ));
             continue;
@@ -337,7 +337,7 @@ async fn resolve_rbd_graph_from_real_data(
 
         if exposure_h <= 0.0 {
             issues.push(format!(
-                "node '{node_id}': no runtime exposure in lookback window (equipment_id={}, lookback_days={})",
+                "GATE_REL_RBD_NO_EXPOSURE:equipment_id={0},lookback_days={1}: node '{node_id}': no runtime exposure in lookback window (equipment_id={0}, lookback_days={1})",
                 cfg.equipment_id, cfg.lookback_days
             ));
             continue;

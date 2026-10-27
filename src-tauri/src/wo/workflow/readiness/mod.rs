@@ -273,7 +273,10 @@ pub async fn assert_ready_to_mark(db: &DatabaseConnection, wo_id: i64) -> AppRes
     if report.can_mark_ready {
         return Ok(());
     }
-    let mut errors: Vec<String> = vec!["Impossible de marquer prêt : des contrôles bloquants ont échoué.".into()];
+    let mut errors: Vec<String> = vec![format!(
+        "GATE_WO_MARK_READY_BLOCKED:count={}: Impossible de marquer prêt : des contrôles bloquants ont échoué.",
+        report.blocking_failed
+    )];
     for c in report.checks {
         if c.blocking && c.outcome == "fail" {
             errors.push(format!("[{}] {}", c.code, c.message.unwrap_or_else(|| "échec".into())));

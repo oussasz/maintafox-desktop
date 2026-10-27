@@ -525,7 +525,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
     if result.blocking_count > 0 {
         // Name each problem (with the value code) so the user can fix it without a report id.
         let mut messages = vec![format!(
-            "Le jeu contient {} problème(s) bloquant(s). Corrigez-les avant de valider.",
+            "GATE_REF_SET_BLOCKING_ISSUES:count={0}: Le jeu contient {0} problème(s) bloquant(s). Corrigez-les avant de valider.",
             result.blocking_count
         )];
         messages.extend(

@@ -1055,7 +1055,10 @@ pub async fn activate_policy(
         .collect();
     if !failures.is_empty() {
         return Err(AppError::ValidationFailed(
-            failures.into_iter().map(|f| f.message).collect(),
+            failures
+                .into_iter()
+                .map(|f| format!("GATE_SET_POLICY_RULE_FAILED:rule={}: {}", f.rule_name, f.message))
+                .collect(),
         ));
     }
 

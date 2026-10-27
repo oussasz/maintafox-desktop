@@ -236,7 +236,7 @@ pub async fn create_wo(
     let mut errors: Vec<String> = Vec::new();
 
     if input.title.trim().is_empty() {
-        errors.push("Le titre est obligatoire.".into());
+        errors.push("GATE_WO_TITLE_REQUIRED: Le titre est obligatoire.".into());
     }
 
     // Validate type_code resolves
@@ -258,7 +258,9 @@ pub async fn create_wo(
             ))
             .await?;
         match di_row {
-            None => errors.push(format!("DI introuvable (source_di_id={di_id}).")),
+            None => errors.push(format!(
+                "GATE_WO_SOURCE_DI_NOT_FOUND:source_di_id={di_id}: DI introuvable (source_di_id={di_id})."
+            )),
             Some(row) => {
                 let di_node: Option<i64> = row.try_get("", "org_node_id")?;
                 crate::auth::scope::require_at(

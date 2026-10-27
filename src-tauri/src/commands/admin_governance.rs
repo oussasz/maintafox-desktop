@@ -1083,7 +1083,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
                 .collect();
             let unknown: Vec<&String> = names.iter().filter(|n| !known.contains(*n)).collect();
             for u in &unknown {
-                errors.push(format!("Unknown permission: {u}"));
+                errors.push(super::admin_users::unknown_permission_refusal(u));
             }
         }
 

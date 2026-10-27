@@ -3511,14 +3511,22 @@ async fn validate_permission_names_exist(db: &impl ConnectionTrait, names: &Hash
     let missing: Vec<&String> = names.iter().filter(|n| !found.contains(*n)).collect();
     if !missing.is_empty() {
         return Err(AppError::ValidationFailed(
-            missing
-                .iter()
-                .map(|n| format!("Permission '{n}' does not exist"))
-                .collect(),
+            missing.iter().map(|n| unknown_permission_refusal(n)).collect(),
         ));
     }
 
     Ok(())
+}
+
+/// Refusal for a permission name that is not in the catalogue. The name rides as a parameter only
+/// when it fits the parameter alphabet (a role's permission names always do).
+pub(crate) fn unknown_permission_refusal(name: &str) -> String {
+    let safe = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
+    let shown = if safe { name } else { "unknown" };
+    format!("GATE_ADMIN_PERMISSION_UNKNOWN:permission={shown}: Permission '{name}' does not exist")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -122,6 +122,21 @@ const UNAVAILABLE_DIMENSIONS: &[&str] = &["external_integrations"];
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/// The coded refusal of one publish blocker: each readiness check has its own text, the sentence
+/// stays as the technical detail.
+fn blocker_refusal(issue: &ReferencePublishIssue) -> String {
+    let code = match issue.check.as_str() {
+        "set_status" => "GATE_REF_PUBLISH_SET_NOT_VALIDATED",
+        "validation_blockers" => "GATE_REF_PUBLISH_VALIDATION_BLOCKERS",
+        "validation_failed" => "GATE_REF_PUBLISH_VALIDATION_FAILED",
+        "validation_report_missing" => "GATE_REF_PUBLISH_VALIDATION_MISSING",
+        "unresolved_migrations" => "GATE_REF_PUBLISH_UNRESOLVED_MIGRATIONS",
+        "impact_preview_required" => "GATE_REF_PUBLISH_IMPACT_PREVIEW_REQUIRED",
+        _ => "GATE_REF_PUBLISH_BLOCKED",
+    };
+    format!("{code}: {}", issue.message)
+}
+
 /// Compute publish readiness for a reference set.
 ///
 /// Returns a structured assessment of all readiness gates. The `is_ready`
@@ -308,7 +323,7 @@ pub async fn publish_reference_set(
             .issues
             .iter()
             .filter(|i| i.severity == "blocker")
-            .map(|i| i.message.clone())
+            .map(blocker_refusal)
             .collect();
         return Err(AppError::ValidationFailed(blocker_msgs));
     }
