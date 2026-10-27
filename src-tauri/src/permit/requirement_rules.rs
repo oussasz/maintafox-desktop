@@ -891,9 +891,7 @@ pub async fn finding_for_started_without_rule(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wo.code, wo.entity_sync_id, wo.equipment_id, wo.type_id, wo.requires_permit, wo.permit_rule_code, \
-                    wo.permit_rule_permit_type, wo.actual_start, st.code AS status, \
-                    (SELECT COUNT(*) FROM wo_action_events e WHERE e.wo_id = wo.id \
-                      AND e.action_code = 'permit_rule_missing_on_arrival') AS found \
+                    wo.permit_rule_permit_type, wo.actual_start, st.code AS status \
                FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -904,9 +902,8 @@ pub async fn finding_for_started_without_rule(
     let held: Option<String> = row.try_get("", "permit_rule_code")?;
     let status: String = row.try_get("", "status")?;
     let actual_start: Option<String> = row.try_get("", "actual_start")?;
-    let found: i64 = row.try_get("", "found")?;
     let started = !not_started.contains(&status.as_str()) && (status != "cancelled" || actual_start.is_some());
-    if !started || found > 0 {
+    if !started {
         return Ok(None);
     }
     let mut received_rule: Option<(String, Option<String>)> = None;
@@ -944,6 +941,22 @@ pub async fn finding_for_started_without_rule(
             (rule, permit_type, requires != 0, false)
         }
     };
+    // Recorded once per difference (round 5, R5-N4): the same rule and type here and the same
+    // received rule and type found before is not recorded again; another one (received later naming
+    // a weaker rule, after a first finding without a rule) is, so it marks the work order for the
+    // re-check of its received rule ([`RECEIVED_RULE_MARK_SQL`]).
+    if finding_recorded(
+        conn,
+        wo_id,
+        &rule,
+        &permit_type,
+        received_rule.as_ref().map(|r| r.0.as_str()),
+        received_rule.as_ref().and_then(|r| r.1.as_deref()),
+    )
+    .await?
+    {
+        return Ok(None);
+    }
     let code: String = row.try_get("", "code")?;
     let wo_sync: String = row.try_get("", "entity_sync_id")?;
     let payload = serde_json::json!({
@@ -1006,6 +1019,37 @@ pub async fn finding_for_started_without_rule(
     )
     .await?;
     Ok(Some(rule))
+}
+
+/// Whether a started-without-rule finding naming this rule and type here, and this received rule
+/// and type (none: received without a rule), was already recorded on the work order.
+async fn finding_recorded(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    rule: &str,
+    permit_type: &str,
+    received_rule: Option<&str>,
+    received_type: Option<&str>,
+) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM wo_action_events e WHERE e.wo_id = ? \
+                AND e.action_code = 'permit_rule_missing_on_arrival' \
+                AND IFNULL(json_extract(e.payload_json, '$.rule_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.permit_type_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.received_rule_code'), '') = ? \
+                AND IFNULL(json_extract(e.payload_json, '$.received_permit_type_code'), '') = ?",
+            [
+                wo_id.into(),
+                rule.into(),
+                permit_type.into(),
+                received_rule.unwrap_or("").into(),
+                received_type.unwrap_or("").into(),
+            ],
+        ))
+        .await?
+        .is_some())
 }
 
 /// The plant rule held here on a work order before a received row was written over it, with the

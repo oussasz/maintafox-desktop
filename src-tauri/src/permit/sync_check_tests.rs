@@ -8468,6 +8468,67 @@ async fn two_isolation_rules_held_on_two_pcs_converge() {
     }
 }
 
+/// Round 5, R5-N4: a work order received started without a rule (a first finding), then received
+/// naming a weaker type of the rule here: a second finding naming the received rule and type, which
+/// marks it for the re-check of its received rule (a reopening to execution is refused); the same
+/// row received again records nothing more.
+#[tokio::test]
+async fn a_second_different_finding_is_recorded_and_marks_the_work_order() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N4", "wo-r5n4", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let unruled = wo_row(
+        &started,
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n4", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    async fn findings(db: &DatabaseConnection) -> Vec<Value> {
+        db.query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r5n4' AND e.action_code = 'permit_rule_missing_on_arrival' ORDER BY e.id"
+                .to_string(),
+        ))
+        .await
+        .expect("events")
+        .iter()
+        .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+        .collect()
+    }
+    assert_eq!(findings(&db).await.len(), 1, "first finding: no rule received");
+    for _ in 0..2 {
+        let outcome = apply(&db, "work_orders", "wo-r5n4", &started).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+    }
+    let found = findings(&db).await;
+    assert_eq!(found.len(), 2, "a second, different finding; not repeated: {found:?}");
+    assert_eq!(
+        (&found[1]["received_rule_code"], &found[1]["received_permit_type_code"]),
+        (&json!("CORRECTIVE_LOTO"), &json!("hot_work"))
+    );
+    let wo_id = wo_id_of(&db, "wo-r5n4").await;
+    assert_eq!(
+        crate::permit::requirement_rules::received_rule_differs_here(&db, wo_id)
+            .await
+            .expect("differs"),
+        Some(("CORRECTIVE_LOTO".to_string(), Some("loto".to_string()))),
+        "marked: re-checked before any restart"
+    );
+}
+
 /// Check 6, C6-N5: a work order received started naming a rule with no permit type, while the list
 /// here gives another rule: the finding notice's received permit type is "?", as in its title,
 /// never empty.
