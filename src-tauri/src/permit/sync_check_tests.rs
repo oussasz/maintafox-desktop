@@ -9007,6 +9007,54 @@ async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
     );
 }
 
+/// A work order received on hold with no hold segment here (its segment not received) is resumed:
+/// the permit gate judges it as usual (refused without its permit, not an internal error), and with
+/// a valid permit it resumes with no waiting time.
+#[tokio::test]
+async fn a_work_order_received_on_hold_with_no_hold_segment_here_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-NOSEG", "wo-noseg", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-noseg", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-noseg").await;
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(COUNT(*) AS TEXT) FROM work_order_delay_segments WHERE work_order_id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "no hold segment here"
+    );
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        matches!(&refused, Err(e) if !matches!(e, crate::errors::AppError::Internal(_))),
+        "the permit gate refuses it: {refused:?}"
+    );
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-NOSEG breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let resumed = resume(&db, wo_id).await.expect("resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(total_waiting_hours AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0.0")
+    );
+}
+
 /// C6-S3: a draft whose rule was kept as received (nothing here matched) gets this PC's rule on
 /// its next draft edit once the list here matches it (cause draft_edit).
 #[tokio::test]

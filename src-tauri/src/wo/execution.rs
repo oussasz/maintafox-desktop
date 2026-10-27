@@ -873,12 +873,13 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     ))
     .await?;
 
-    // Recompute total_waiting_hours
+    // Recompute total_waiting_hours. No segment here (a work order received on hold whose hold
+    // segment was not received): 0.0, a REAL like the sum, never an INTEGER 0 read as a number.
     let waiting_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM(ROUND((JULIANDAY(COALESCE(ended_at, strftime('%Y-%m-%dT%H:%M:%SZ','now'))) \
-              - JULIANDAY(started_at)) * 24, 2)), 0) AS total_waiting \
+              - JULIANDAY(started_at)) * 24, 2)), 0.0) AS total_waiting \
              FROM work_order_delay_segments \
              WHERE work_order_id = ?",
             [input.wo_id.into()],
