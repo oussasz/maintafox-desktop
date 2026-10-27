@@ -127,6 +127,73 @@ pub(crate) async fn complete_pull_done(conn: &impl ConnectionTrait) -> AppResult
     Ok(!tenant_id.trim().is_empty() && recorded.as_deref() == Some(tenant_id.as_str()))
 }
 
+/// Whether a row of `entity_type` new here, received with a snapshot, may be taken as the plant's
+/// history of this PC's first join, already judged where it was made (CMMS Advisor Q9, review of
+/// 536cb792): only while this PC has not completed a full pull of its organisation
+/// ([`complete_pull_done`]) AND nothing of that row is held here — no open sync conflict and no
+/// version waiting or refused from an exchange. A snapshot asked for again later (a re-bootstrap
+/// after the server refused the checkpoint) is no first join: its rows are judged as any other.
+/// The caller checks that the row is new here and that a snapshot row is being applied
+/// (`sync::materialize::applying_snapshot_row`). Shared by `inventory::count_four_eyes` (count
+/// lines) and `wo::closeout_sync` (work orders).
+pub(crate) async fn first_join_history(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<bool> {
+    if complete_pull_done(conn).await? {
+        return Ok(false);
+    }
+    let held = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "SELECT 1 AS h WHERE EXISTS (
+                     SELECT 1 FROM sync_conflicts WHERE entity_type = ? AND entity_sync_id = ?
+                        AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed'))
+                 OR EXISTS (
+                     SELECT 1 FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ?
+                        AND apply_status IN ('deferred', 'conflict')
+                        AND server_batch_id NOT LIKE '{}%')",
+                crate::sync::materialize::SNAPSHOT_BATCH_PREFIX
+            ),
+            [
+                entity_type.into(),
+                entity_sync_id.into(),
+                entity_type.into(),
+                entity_sync_id.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    Ok(!held)
+}
+
+/// Whether the received row being applied (new here: the caller checks it) is the plant's history
+/// of this PC's first join, not judged again by the work-order rules that skip it: a snapshot row
+/// is being applied (`sync::materialize::applying_snapshot_row`), this PC is activated, and
+/// [`first_join_history`] holds (no complete pull of its organisation, nothing of that row held
+/// here). A snapshot received again once the PC has joined (a re-bootstrap after the server refused
+/// its checkpoint) is judged as any received change. Fail safe: a PC with no activation judges.
+/// Used by `wo::closeout_sync` (completion, close, verifier rules), `permit::sync_check` (the
+/// permit start gate) and `sync::apply_hooks` (the started-without-rule finding).
+pub(crate) async fn first_join_snapshot_row(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<bool> {
+    if !crate::sync::materialize::applying_snapshot_row() {
+        return Ok(false);
+    }
+    let activated = crate::commands::product_license::get_activation_claim_tenant_id(conn)
+        .await?
+        .is_some_and(|tenant| !tenant.trim().is_empty());
+    if !activated {
+        return Ok(false);
+    }
+    first_join_history(conn, entity_type, entity_sync_id).await
+}
+
 /// Called by the sync worker once a pull for `tenant_id` is complete (all snapshot pages stored,
 /// exchanges caught up with the server head, received rows materialized). Records that a complete
 /// pull was done ([`COMPLETE_PULL_DONE_KEY`]), then the fact when this PC holds no user account and

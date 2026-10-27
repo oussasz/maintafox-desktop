@@ -6594,27 +6594,25 @@ async fn a_completion_received_from_ready_passes_the_permit_gate() {
     assert_eq!(status_of().await.as_deref(), Some("completed"));
 }
 
-/// N4: a completed work order new here received by a snapshot (plant history) is not judged by
-/// the permit gate; the same row received as a change waits for its permit.
-#[tokio::test]
-async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_gate() {
-    let db = setup().await;
-    let asset = insert_equipment(&db, "EQ-SYNC-N4S").await;
-    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+/// N4: a completed work order that never was here, as another PC sends it (removed here with what
+/// refers to it); returns its sync id and the row.
+async fn n4_completed_wo_new_here(db: &DatabaseConnection) -> (String, Payload) {
+    let asset = insert_equipment(db, "EQ-SYNC-N4S").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
     let wo_sync = text(
-        &db,
+        db,
         &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
     )
     .await
     .expect("wo sync id");
     let completed = text(
-        &db,
+        db,
         "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'completed'",
     )
     .await
     .expect("status sync id");
     let row = with(
-        wire(&db, "work_orders", &wo_sync).await,
+        wire(db, "work_orders", &wo_sync).await,
         &[
             ("status_sync_id", json!(completed)),
             ("actual_start", json!(now())),
@@ -6622,37 +6620,105 @@ async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_ga
         ],
     );
     // This PC never held it: removed here with what refers to it.
-    exec(&db, "PRAGMA foreign_keys = OFF").await;
+    exec(db, "PRAGMA foreign_keys = OFF").await;
     for table in ["wo_state_transition_log WHERE wo_id", "wo_change_events WHERE wo_id"] {
-        exec(&db, &format!("DELETE FROM {table} = {wo_id}")).await;
+        exec(db, &format!("DELETE FROM {table} = {wo_id}")).await;
     }
-    exec(&db, &format!("DELETE FROM work_orders WHERE id = {wo_id}")).await;
-    exec(&db, "PRAGMA foreign_keys = ON").await;
-    let insert = |batch: &str, version: i64| {
-        format!(
+    exec(db, &format!("DELETE FROM work_orders WHERE id = {wo_id}")).await;
+    exec(db, "PRAGMA foreign_keys = ON").await;
+    (wo_sync, row)
+}
+
+/// A received work order waiting in `db`'s inbox under `batch` (`snapshot-…` for a snapshot).
+async fn inbox_wo(db: &DatabaseConnection, batch: &str, wo_sync: &str, version: i64, row: &Payload) {
+    exec(
+        db,
+        &format!(
             "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
              row_version, payload_json, payload_hash, apply_status) VALUES ('{batch}', 'c1', 'work_orders', '{wo_sync}', \
              'upsert', {version}, '{}', 'h-{batch}', 'pending')",
-            serde_json::to_string(&row).expect("json").replace('\'', "''")
-        )
-    };
-    let applied_status = format!(
-        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id \
-         WHERE w.entity_sync_id = '{wo_sync}'"
-    );
+            serde_json::to_string(row).expect("json").replace('\'', "''")
+        ),
+    )
+    .await;
+}
+
+async fn wo_status_by_sync(db: &DatabaseConnection, wo_sync: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id \
+             WHERE w.entity_sync_id = '{wo_sync}'"
+        ),
+    )
+    .await
+}
+
+/// N4: a completed work order new here received by the snapshot of this PC's first join (plant
+/// history) is not judged by the permit gate; the same row received as a change waits for its
+/// permit.
+#[tokio::test]
+async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_gate() {
+    let db = setup().await;
+    let (wo_sync, row) = n4_completed_wo_new_here(&db).await;
 
     // As a change: waits for its permit, not written.
-    exec(&db, &insert("b-n4-delta", 5)).await;
+    inbox_wo(&db, "b-n4-delta", &wo_sync, 5, &row).await;
     let (_, conflicts) = inbox_pass(&db).await;
     assert_eq!(conflicts, 0);
-    assert_eq!(text(&db, &applied_status).await, None, "waits for its permit");
+    assert_eq!(wo_status_by_sync(&db, &wo_sync).await, None, "waits for its permit");
     exec(&db, "DELETE FROM sync_inbox WHERE server_batch_id = 'b-n4-delta'").await;
 
-    // By a snapshot this PC asked for: applied as the plant holds it.
-    exec(&db, &insert("snapshot-all-n4", 6)).await;
+    // By the snapshot of this PC's first join (activated, no complete pull yet): applied as the
+    // plant holds it.
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
+    inbox_wo(&db, "snapshot-all-n4", &wo_sync, 6, &row).await;
     let (_, conflicts) = inbox_pass(&db).await;
     assert_eq!(conflicts, 0);
-    assert_eq!(text(&db, &applied_status).await.as_deref(), Some("completed"));
+    assert_eq!(wo_status_by_sync(&db, &wo_sync).await.as_deref(), Some("completed"));
+}
+
+/// The permit start gate skips a snapshot only on a PC's first join: a snapshot received once this
+/// PC completed a full pull of its organisation (a re-bootstrap after the server refused its
+/// checkpoint), or on a PC with no activation, is judged as a change (waits for its permit).
+#[tokio::test]
+async fn the_permit_start_gate_judges_a_snapshot_after_the_first_join() {
+    for case in ["rebootstrap", "unactivated"] {
+        let db = setup().await;
+        let (wo_sync, row) = n4_completed_wo_new_here(&db).await;
+        if case == "rebootstrap" {
+            crate::commands::product_license::record_activation_claim_for_tests(
+                &db,
+                "tenant-plant-a",
+                "fp-a",
+                "token-a",
+            )
+            .await
+            .expect("activation");
+            crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+                .await
+                .expect("complete pull");
+        }
+        inbox_wo(&db, &format!("snapshot-all-{case}"), &wo_sync, 6, &row).await;
+        inbox_pass(&db).await;
+        assert_eq!(
+            wo_status_by_sync(&db, &wo_sync).await,
+            None,
+            "{case}: judged, not written"
+        );
+        assert_ne!(
+            text(
+                &db,
+                &format!("SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{wo_sync}'")
+            )
+            .await
+            .as_deref(),
+            Some("applied"),
+            "{case}"
+        );
+    }
 }
 
 // ── AU-04: plant permit rules on every work-order origin ──────────────────────────────────────
@@ -6846,6 +6912,154 @@ async fn a_received_work_order_without_the_rule_held_here_converges() {
         Some("1"),
         "once"
     );
+}
+
+/// A work order started without the rule held here, new here by a snapshot: no finding on this PC's
+/// first join (plant history); a finding once this PC completed a full pull of its organisation (a
+/// re-bootstrap after the server refused its checkpoint), or on a PC with no activation.
+#[tokio::test]
+async fn the_started_without_rule_finding_skips_a_snapshot_only_on_a_first_join() {
+    for (case, expected) in [("firstjoin", "0"), ("rebootstrap", "1"), ("unactivated", "1")] {
+        let db = setup().await;
+        let asset = insert_equipment(&db, "EQ-SYNC-RULE-FJ").await;
+        let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+        let wo_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+        )
+        .await
+        .expect("wo sync id");
+        let template = wire(&db, "work_orders", &wo_sync).await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "CORRECTIVE_LOTO",
+            json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+        )
+        .await;
+        let on_hold = text(
+            &db,
+            "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+        )
+        .await
+        .expect("status sync id");
+        let started = with(
+            template,
+            &[
+                ("code", json!("OT-RM-FJ")),
+                ("status_sync_id", json!(on_hold)),
+                ("requires_permit", json!(0)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        );
+        if case != "unactivated" {
+            crate::commands::product_license::record_activation_claim_for_tests(
+                &db,
+                "tenant-plant-a",
+                "fp-a",
+                "token-a",
+            )
+            .await
+            .expect("activation");
+        }
+        if case == "rebootstrap" {
+            crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+                .await
+                .expect("complete pull");
+        }
+        inbox_wo(&db, &format!("snapshot-all-{case}"), "wo-rule-fj", 5, &started).await;
+        let (_, conflicts) = inbox_pass(&db).await;
+        assert_eq!(conflicts, 0, "{case}");
+        assert_eq!(
+            wo_status_by_sync(&db, "wo-rule-fj").await.as_deref(),
+            Some("on_hold"),
+            "{case}: applied as received"
+        );
+        assert_eq!(
+            wo_events(&db, "wo-rule-fj", "permit_rule_missing_on_arrival")
+                .await
+                .as_deref(),
+            Some(expected),
+            "{case}"
+        );
+    }
+}
+
+/// Review S1: a work order held here, started without the rule held here, received again by a
+/// snapshot is judged (not new here): exactly one finding, and a later snapshot adds none.
+#[tokio::test]
+async fn a_held_work_order_received_by_a_snapshot_gets_the_finding_once() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-S1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("status sync id");
+    let started = |title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!("OT-RM-S1")),
+                ("title", json!(title)),
+                ("status_sync_id", json!(on_hold)),
+                ("requires_permit", json!(0)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        )
+    };
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
+    let findings = || wo_events(&db, "wo-rule-s1", "permit_rule_missing_on_arrival");
+
+    // New here by the first join's snapshot: the plant's history, no finding; now held here.
+    inbox_wo(&db, "snapshot-all-s1-a", "wo-rule-s1", 5, &started("Replace breaker")).await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("0"), "new here: history");
+
+    // Held here, received again by a snapshot: judged, one finding.
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-b",
+        "wo-rule-s1",
+        6,
+        &started("Replace breaker (2)"),
+    )
+    .await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "held here: judged");
+
+    // A later snapshot: still one.
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-c",
+        "wo-rule-s1",
+        7,
+        &started("Replace breaker (3)"),
+    )
+    .await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "once");
+    assert_eq!(wo_status_by_sync(&db, "wo-rule-s1").await.as_deref(), Some("on_hold"));
 }
 
 /// AU-04 B2: the rule list received here flags this PC's work orders not started yet that a rule

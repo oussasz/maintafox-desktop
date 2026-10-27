@@ -838,6 +838,7 @@ async fn a_snapshot_arrival_applies_history_without_false_conflicts() {
         let target = setup().await;
         seed_test_equipment(&target).await;
         super::closeout_tests::tests::create_second_user(&target).await;
+        activate(&target, "tenant-plant-a").await;
         if !children_first {
             inbox(&target, batch, "work_orders", &sync, 5, &wo_row).await;
         }
@@ -960,6 +961,13 @@ const CHILD_TABLES: &[(&str, &str)] = &[
     ("work_order_tools", "work_order_id"),
     ("work_order_verifications", "work_order_id"),
 ];
+
+/// Activates `db` into organisation `tenant` (a PC syncs only once activated).
+async fn activate(db: &DatabaseConnection, tenant: &str) {
+    crate::commands::product_license::record_activation_claim_for_tests(db, tenant, "fp-target", "token-target")
+        .await
+        .expect("activation");
+}
 
 /// A PC holding the same reference rows as `setup()` (equipment, second user).
 async fn target_pc() -> DatabaseConnection {
@@ -1138,6 +1146,7 @@ async fn snapshot_history_skips_the_verifier_rules_but_changes_do_not() {
     let wo_row = wire(&source, "work_orders", &sync).await;
 
     let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
     let result = receive(&target, "snapshot-all-history", (&sync, &wo_row), &rows, 5).await;
     assert_eq!(result.conflicts, 0, "{:?}", conflict_codes(&target).await);
     assert_eq!(status_by_sync(&target, &sync).await.as_deref(), Some("completed"));
@@ -1151,6 +1160,163 @@ async fn snapshot_history_skips_the_verifier_rules_but_changes_do_not() {
         assert!(found.iter().any(|c| c == "SYNC_GROUP_REFUSED"), "{batch}: {found:?}");
         assert_eq!(status_by_sync(&target, &sync).await, None, "{batch}: not written");
     }
+}
+
+/// The snapshot skip holds only on a PC's first join (no complete pull recorded for the
+/// organisation it is activated for) and while nothing of the work order is held here. The D7
+/// history above (a verifier who recorded the labour, no responsible): its verification follows its
+/// work order's decision (applied unjudged, or refused with it).
+#[tokio::test]
+async fn snapshot_history_is_skipped_only_on_a_first_join() {
+    let source = setup().await;
+    let (wo_id, rv) = create_wo_in_progress(&source).await;
+    advance_to_completed_verified(&source, wo_id, rv).await;
+    let actor = admin_id(&source).await;
+    exec(
+        &source,
+        "UPDATE work_orders SET primary_responsible_id = NULL WHERE id = ?",
+        vec![wo_id.into()],
+    )
+    .await;
+    exec(
+        &source,
+        "UPDATE work_order_verifications SET verified_by_id = ? WHERE work_order_id = ?",
+        vec![actor.into(), wo_id.into()],
+    )
+    .await;
+    let sync = wo_sync(&source, wo_id).await;
+    let rows = rows_of(&source, wo_id, CHILD_TABLES).await;
+    let wo_row = wire(&source, "work_orders", &sync).await;
+    // (a) First join: applied as the plant's history, its verification too.
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    let result = receive(&target, "snapshot-all-join", (&sync, &wo_row), &rows, 5).await;
+    assert_eq!(result.conflicts, 0, "{:?}", conflict_codes(&target).await);
+    assert_eq!(status_by_sync(&target, &sync).await.as_deref(), Some("completed"));
+    for (table, sid, _) in &rows {
+        assert_eq!(
+            inbox_status(&target, table, sid).await.as_deref(),
+            Some("applied"),
+            "first join: {table} follows its work order"
+        );
+    }
+
+    // (b) A snapshot asked for again once this PC completed a full pull of its organisation (the
+    // server refused its checkpoint): the work order new here is judged as a received change.
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    crate::sync::plant_join::record_complete_pull(&target, "tenant-plant-a")
+        .await
+        .expect("complete pull");
+    receive(&target, "snapshot-all-rebootstrap", (&sync, &wo_row), &rows, 5).await;
+    refused(&target, &sync, "re-bootstrap after a complete pull").await;
+
+    // (d) Re-activated into another organisation (no local data reset): that organisation's first
+    // snapshot here is its first join.
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    crate::sync::plant_join::record_complete_pull(&target, "tenant-plant-a")
+        .await
+        .expect("complete pull");
+    activate(&target, "tenant-plant-b").await;
+    let result = receive(&target, "snapshot-all-join-b", (&sync, &wo_row), &rows, 5).await;
+    assert_eq!(result.conflicts, 0, "{:?}", conflict_codes(&target).await);
+    assert_eq!(status_by_sync(&target, &sync).await.as_deref(), Some("completed"));
+
+    // Fail safe: a PC with no activation judges.
+    let target = target_pc().await;
+    receive(&target, "snapshot-all-unactivated", (&sync, &wo_row), &rows, 5).await;
+    refused(&target, &sync, "no activation").await;
+
+    // (c) Held here: refused from an exchange (open conflict), then received by the snapshot of the
+    // first join: judged again, never applied unjudged.
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    receive(&target, "b-delta-held", (&sync, &wo_row), &rows, 5).await;
+    refused(&target, &sync, "from an exchange").await;
+    receive(&target, "snapshot-all-held", (&sync, &wo_row), &rows, 6).await;
+    refused(&target, &sync, "first join, but held here in conflict").await;
+}
+
+/// A first-join snapshot row of a work order already held here is judged (R3): its completion with
+/// a mandatory task open here is refused.
+#[tokio::test]
+async fn a_snapshot_row_of_a_work_order_held_here_is_judged() {
+    let db = setup().await;
+    activate(&db, "tenant-plant-a").await;
+    let (wo_id, sync) = wo_ready_to_complete(&db).await;
+    add_task(&db, wo_id, "Lock out and try", true).await;
+    let payload = received_completed(&db, &sync).await;
+    inbox(&db, "snapshot-all-join", "work_orders", &sync, 80, &payload).await;
+    materialize(&db).await;
+    let found = conflict_codes(&db).await;
+    assert!(found.iter().any(|c| c == codes::COMPLETION_GATE), "{found:?}");
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "nothing written");
+}
+
+/// Review N1: a version of the work order waiting from an exchange makes it held here (judged); one
+/// waiting from an earlier page of a snapshot does not (still the plant's history of the first join).
+#[tokio::test]
+async fn a_waiting_exchange_version_makes_a_snapshot_work_order_held_but_a_snapshot_page_does_not() {
+    let source = setup().await;
+    let (wo_id, rv) = create_wo_in_progress(&source).await;
+    advance_to_completed_verified(&source, wo_id, rv).await;
+    let sync = wo_sync(&source, wo_id).await;
+    let wo_row = wire(&source, "work_orders", &sync).await;
+    let target = target_pc().await;
+    activate(&target, "tenant-plant-a").await;
+    let judged = || async {
+        crate::sync::materialize::judged_as_row_of_batch(
+            "snapshot-all-join",
+            crate::wo::closeout_sync::closeout_entry(&target, &sync, &wo_row),
+        )
+        .await
+        .expect("entry")
+        .expect("status here")
+        .expect("new here: an entry")
+        .judged
+    };
+    assert!(!judged().await, "nothing held: first-join history");
+
+    for (batch, held) in [("snapshot-all-page-1", false), ("b-delta-waiting", true)] {
+        inbox(&target, batch, "work_orders", &sync, 4, &wo_row).await;
+        exec(
+            &target,
+            "UPDATE sync_inbox SET apply_status = 'deferred' WHERE server_batch_id = ?",
+            vec![batch.into()],
+        )
+        .await;
+        assert_eq!(judged().await, held, "{batch}");
+        exec(
+            &target,
+            "DELETE FROM sync_inbox WHERE server_batch_id = ?",
+            vec![batch.into()],
+        )
+        .await;
+    }
+}
+
+/// The work order `sync` was refused here (its group, `SYNC_GROUP_REFUSED`), not written, and its
+/// verification not applied: the child follows its work order's decision.
+async fn refused(target: &DatabaseConnection, sync: &str, why: &str) {
+    let found = conflict_codes(target).await;
+    assert!(found.iter().any(|c| c == "SYNC_GROUP_REFUSED"), "{why}: {found:?}");
+    assert_eq!(status_by_sync(target, sync).await, None, "{why}: not written");
+    let verifications: Vec<String> = target
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT apply_status FROM sync_inbox WHERE entity_type = 'work_order_verifications'".to_string(),
+        ))
+        .await
+        .expect("inbox")
+        .iter()
+        .filter_map(|r| r.try_get_by_index::<String>(0).ok())
+        .collect();
+    assert!(!verifications.is_empty(), "{why}: a verification received");
+    assert!(
+        verifications.iter().all(|s| s != "applied"),
+        "{why}: the verification follows its work order: {verifications:?}"
+    );
 }
 
 /// S7 / N5: a mandatory task deleted or made optional past planning, and a task result received
