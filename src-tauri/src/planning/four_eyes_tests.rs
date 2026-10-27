@@ -317,6 +317,16 @@ async fn an_urgent_insert_into_a_frozen_week_is_signed_the_same_way() {
         approver_password: password.map(Into::into),
         dangerous_override_reason: Some("Guard missing".to_string()),
     };
+    // Without a break-in: the refusal reaches the screen in the shape the commit dialog reads to
+    // open its break-in step (code in `details`, with the week).
+    let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
+        .await
+        .expect_err("frozen week");
+    let json = serde_json::to_value(&err).expect("serialize");
+    assert_eq!(json["code"], "VALIDATION_FAILED", "{json}");
+    assert_eq!(json["details"][0]["code"], "PLANNING_WEEK_FROZEN", "{json}");
+    let week = json["details"][0]["params"]["week_start"].as_str().unwrap_or_default();
+    assert!(week.starts_with("2026-05-0"), "{json}");
     input.frozen_week_break_in = Some(with(None, None));
     let err = scheduling::create_schedule_commitment(&db, 1, input.clone())
         .await
