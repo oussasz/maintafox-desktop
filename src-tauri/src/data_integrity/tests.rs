@@ -865,3 +865,28 @@ async fn list_open_findings_excludes_cleared_and_clamps_limit() {
         .iter()
         .all(|f| f.finding_code == "WO_DOWNTIME_UNCLOSED" && f.status == "open"));
 }
+
+/// Below error severity a named approver other than the person waiving is checked as for an error
+/// finding; naming nobody, or oneself, records the person waiving (review of f337d31a).
+#[tokio::test]
+async fn waive_warning_checks_a_named_approver() {
+    let db = started_db().await;
+    let actor = admin_id(&db).await;
+    let bystander = insert_user(&db, "di_warn_bystander").await;
+    let wo = insert_wo(&db, "WO-WAIVE-WARN-APPR", None).await;
+    insert_segment(&db, wo, "2026-04-10T08:00:00Z", None).await;
+    run_data_integrity_detectors(&db).await.expect("run");
+    let f = only_open_finding(&db, "WO_DOWNTIME_UNCLOSED").await;
+    assert_ne!(f.severity, "error");
+
+    let msg = validation_text(
+        waive_data_integrity_finding(&db, waive(&f, f.row_version, "known", Some(bystander)), actor).await,
+    );
+    assert!(msg.starts_with("GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED"), "{msg}");
+    assert_eq!(audit_rows(&db, f.id).await, 0);
+
+    let w = waive_data_integrity_finding(&db, waive(&f, f.row_version, "known", Some(actor)), actor)
+        .await
+        .expect("waive");
+    assert_eq!(w.waiver_approver_id, Some(actor), "the person waiving approves it");
+}

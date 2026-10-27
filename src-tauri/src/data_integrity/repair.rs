@@ -114,6 +114,18 @@ async fn insert_repair_audit(
     Ok(())
 }
 
+/// A second person named on a waiver must be someone who could waive it: an active account holding
+/// `integrity.repair` plant-wide now through a role that is not an emergency grant and is within
+/// its dates (or an administrator), not any account id (AU-116).
+async fn ensure_waiver_approver(txn: &impl ConnectionTrait, approver_id: i64) -> AppResult<()> {
+    if crate::settings::site::holds_tenant_right(txn, approver_id, crate::rbac::permissions::INTEGRITY_REPAIR).await? {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![
+        "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED: the approver is not an active account holding integrity.repair".into(),
+    ]))
+}
+
 pub async fn waive_data_integrity_finding(
     db: &DatabaseConnection,
     input: WaiveDataIntegrityFindingInput,
@@ -152,17 +164,19 @@ pub async fn waive_data_integrity_finding(
                 "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED: second-person approval required for error findings".into(),
             ]));
         }
-        // The second person is someone who could waive it: an active account holding
-        // `integrity.repair` plant-wide now (or an administrator), not any account id (AU-116).
-        if !crate::settings::site::holds_tenant_right(&txn, appr, crate::rbac::permissions::INTEGRITY_REPAIR).await? {
-            return Err(AppError::ValidationFailed(vec![
-                "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED: the approver is not an active account holding integrity.repair"
-                    .into(),
-            ]));
-        }
+        ensure_waiver_approver(&txn, appr).await?;
         appr
     } else {
-        input.approver_id.unwrap_or(actor_id)
+        // Below error severity no second person is required: the waiver is approved by the person
+        // who waives, unless another person is named, who is then checked as for an error finding
+        // (a name stored as approver is always someone who could waive it).
+        match input.approver_id {
+            Some(appr) if appr != actor_id => {
+                ensure_waiver_approver(&txn, appr).await?;
+                appr
+            }
+            _ => actor_id,
+        }
     };
 
     let before_json = json!({ "finding": serde_json::to_value(&f0)? }).to_string();
