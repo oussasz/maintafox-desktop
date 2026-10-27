@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { gateSentenceText } from "@/lib/app-error";
 import { usePermissionText } from "@/lib/permission-labels";
 import {
   exportRoleModel,
@@ -476,7 +477,7 @@ export function RoleImportExportPanel() {
                         <strong>{s.name}</strong>
                         <ul className="mt-0.5 list-inside list-disc text-destructive">
                           {s.errors.map((e, i) => (
-                            <li key={i}>{e}</li>
+                            <li key={i}>{gateSentenceText(e)}</li>
                           ))}
                         </ul>
                       </div>

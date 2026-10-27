@@ -93,32 +93,38 @@ fn parse_node_binding(
         return Ok(None);
     };
     let Some(bind_obj) = binding.as_object() else {
-        return Err(format!("node '{node_id}': binding must be an object"));
+        return Err(format!(
+            "GATE_REL_NODE_BINDING_NOT_OBJECT: node '{node_id}': binding must be an object"
+        ));
     };
 
     let equipment_id = as_i64(bind_obj.get("equipment_id")).unwrap_or(default_equipment_id);
     if equipment_id <= 0 {
-        return Err(format!("node '{node_id}': binding.equipment_id must be > 0"));
-    }
-    let lookback_days = as_i64(bind_obj.get("lookback_days"))
-        .ok_or_else(|| format!("node '{node_id}': binding.lookback_days is required"))?;
-    if !(1..=3650).contains(&lookback_days) {
         return Err(format!(
-            "node '{node_id}': binding.lookback_days must be between 1 and 3650"
+            "GATE_REL_NODE_BINDING_EQUIPMENT_INVALID: node '{node_id}': binding.equipment_id must be > 0"
         ));
     }
-    let mission_hours = as_f64(bind_obj.get("mission_hours"))
-        .ok_or_else(|| format!("node '{node_id}': binding.mission_hours is required"))?;
+    let lookback_days = as_i64(bind_obj.get("lookback_days")).ok_or_else(|| {
+        format!("GATE_REL_NODE_BINDING_LOOKBACK_REQUIRED: node '{node_id}': binding.lookback_days is required")
+    })?;
+    if !(1..=3650).contains(&lookback_days) {
+        return Err(format!(
+            "GATE_REL_NODE_BINDING_LOOKBACK_RANGE: node '{node_id}': binding.lookback_days must be between 1 and 3650"
+        ));
+    }
+    let mission_hours = as_f64(bind_obj.get("mission_hours")).ok_or_else(|| {
+        format!("GATE_REL_NODE_BINDING_MISSION_REQUIRED: node '{node_id}': binding.mission_hours is required")
+    })?;
     if !(mission_hours.is_finite() && mission_hours > 0.0) {
         return Err(format!(
-            "node '{node_id}': binding.mission_hours must be a positive finite number"
+            "GATE_REL_NODE_BINDING_MISSION_INVALID: node '{node_id}': binding.mission_hours must be a positive finite number"
         ));
     }
     let failure_mode_id = as_i64(bind_obj.get("failure_mode_id"));
     if let Some(fm) = failure_mode_id {
         if fm <= 0 {
             return Err(format!(
-                "node '{node_id}': binding.failure_mode_id must be > 0 when provided"
+                "GATE_REL_NODE_BINDING_FAILURE_MODE_INVALID: node '{node_id}': binding.failure_mode_id must be > 0 when provided"
             ));
         }
     }
@@ -127,7 +133,7 @@ fn parse_node_binding(
     if let Some(sm) = &source_metric {
         if sm != "availability" && sm != "reliability" {
             return Err(format!(
-                "node '{node_id}': binding.source_metric must be 'availability' or 'reliability'"
+                "GATE_REL_NODE_BINDING_METRIC_INVALID: node '{node_id}': binding.source_metric must be 'availability' or 'reliability'"
             ));
         }
     }

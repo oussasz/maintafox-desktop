@@ -3518,8 +3518,11 @@ pub(crate) fn unknown_permission_refusal(name: &str) -> String {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
-    let shown = if safe { name } else { "unknown" };
-    format!("GATE_ADMIN_PERMISSION_UNKNOWN:permission={shown}: Permission '{name}' does not exist")
+    if safe {
+        format!("GATE_ADMIN_PERMISSION_UNKNOWN:permission={name}: Permission '{name}' does not exist")
+    } else {
+        format!("GATE_ADMIN_PERMISSION_UNKNOWN_UNNAMED: Permission '{name}' does not exist")
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

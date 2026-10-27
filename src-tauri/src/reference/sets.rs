@@ -501,6 +501,46 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
     Ok(())
 }
 
+/// One blocking issue of the validation engine as a refusal line: coded (`GATE_REF_ISSUE_*`, the
+/// value code as the `value` parameter) so the screen says it in the user's language; the
+/// backend sentence follows the code as its technical fallback. An issue without a code of its
+/// own, or a value code that does not fit the parameter alphabet, keeps its sentence.
+fn blocking_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
+    let code = match issue.check.as_str() {
+        "duplicate_code" => "GATE_REF_ISSUE_DUPLICATE_CODE",
+        "missing_label" => "GATE_REF_ISSUE_MISSING_LABEL",
+        "hierarchy_cycle" => "GATE_REF_ISSUE_HIERARCHY_CYCLE",
+        "orphan_parent" => "GATE_REF_ISSUE_ORPHAN_PARENT",
+        "parent_required" => "GATE_REF_ISSUE_PARENT_REQUIRED",
+        "invalid_permit_rule" => "GATE_REF_ISSUE_PERMIT_RULE",
+        "work_order_type_without_nature" => "GATE_REF_ISSUE_OT_TYPE_NO_NATURE",
+        "invalid_color_hex" => "GATE_REF_ISSUE_COLOR_HEX",
+        "invalid_external_code_pattern" => "GATE_REF_ISSUE_EXTERNAL_PATTERN",
+        "invalid_external_code" => "GATE_REF_ISSUE_EXTERNAL_CODE",
+        "protected_deactivation_no_migration" => "GATE_REF_ISSUE_PROTECTED_NO_MIGRATION",
+        _ => return plain_issue_line(issue),
+    };
+    match issue.value_code.as_deref() {
+        None if issue.check == "invalid_external_code_pattern" => format!("{code}: {}", issue.message),
+        Some(value)
+            if !value.is_empty()
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/')) =>
+        {
+            format!("{code}:value={value}: {}", issue.message)
+        }
+        _ => plain_issue_line(issue),
+    }
+}
+
+fn plain_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
+    match &issue.value_code {
+        Some(code) => format!("{code} : {}", issue.message),
+        None => issue.message.clone(),
+    }
+}
+
 /// Transitions a draft set to validated.
 ///
 /// Only sets with status `draft` can be validated. Runs the validation engine
@@ -533,10 +573,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
                 .issues
                 .iter()
                 .filter(|i| i.severity == super::validation::IssueSeverity::Blocking)
-                .map(|i| match &i.value_code {
-                    Some(code) => format!("{code} : {}", i.message),
-                    None => i.message.clone(),
-                }),
+                .map(blocking_issue_line),
         );
         return Err(AppError::ValidationFailed(messages));
     }
@@ -722,5 +759,37 @@ mod tests {
         };
         assert!(assert_set_is_draft(&set).is_err());
         assert!(assert_set_is_editable(&set).is_err());
+    }
+
+    fn issue(check: &str, value_code: Option<&str>) -> super::super::validation::ReferenceValidationIssue {
+        super::super::validation::ReferenceValidationIssue {
+            check: check.to_string(),
+            message: "message".to_string(),
+            severity: super::super::validation::IssueSeverity::Blocking,
+            value_id: Some(1),
+            value_code: value_code.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_blocking_issue_is_sent_with_its_code_and_value() {
+        assert_eq!(
+            blocking_issue_line(&issue("duplicate_code", Some("PUMP-1"))),
+            "GATE_REF_ISSUE_DUPLICATE_CODE:value=PUMP-1: message"
+        );
+        assert_eq!(
+            blocking_issue_line(&issue("invalid_external_code_pattern", None)),
+            "GATE_REF_ISSUE_EXTERNAL_PATTERN: message"
+        );
+    }
+
+    #[test]
+    fn an_issue_without_a_usable_code_keeps_its_sentence() {
+        assert_eq!(
+            blocking_issue_line(&issue("duplicate_code", Some("a b"))),
+            "a b : message"
+        );
+        assert_eq!(blocking_issue_line(&issue("invalid_unit", Some("KG"))), "KG : message");
+        assert_eq!(blocking_issue_line(&issue("missing_label", None)), "message");
     }
 }

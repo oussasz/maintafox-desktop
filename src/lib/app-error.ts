@@ -148,6 +148,39 @@ function gateText(message: string, params?: Record<string, string> | null): stri
     : String(i18n.t("errors:generic.unexpected"));
 }
 
+/** The `key=value` parameters a backend sentence carries after its GATE code (`GATE_X:a=1,b=2`). */
+function gateSentenceParams(rest: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const afterColon = rest.startsWith(":") ? rest.slice(1) : "";
+  const segment = afterColon.split(/[:\s]/)[0] ?? "";
+  if (!segment.includes("=")) return params;
+  for (const pair of segment.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq > 0) params[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return params;
+}
+
+/**
+ * The text of a backend sentence that carries a GATE code (`GATE_X:k=v: sentence`), in the user's
+ * language, for the screens that print backend strings as they are (import problem lists). The
+ * parameters after the code fill the text, as for a refusal. Text before the code is kept; a
+ * sentence without a GATE code is returned as it is; a code with no translation gives the generic
+ * text, never the code.
+ */
+export function gateSentenceText(sentence: string): string {
+  // Several refusals joined with a space (`errs.join(" ")`) are said one by one.
+  const parts = sentence.split(/\s+(?=GATE_[A-Z0-9_]+)/);
+  if (parts.length > 1) return parts.map(gateSentenceText).join(" ");
+  const match = sentence.match(/GATE_[A-Z0-9_]+(?::[A-Za-z0-9_=,\-./]+)?/);
+  if (!match || match.index === undefined) return sentence;
+  const code = /^GATE_[A-Z0-9_]+/.exec(match[0])?.[0] ?? "";
+  const params = gateSentenceParams(match[0].slice(code.length));
+  const text = gateText(code, params) ?? sentence;
+  const prefix = sentence.slice(0, match.index).trim();
+  return prefix ? `${prefix} ${text}` : text;
+}
+
 /**
  * Every reason of a refusal as its own translated line (a close-out refusal lists several rules).
  * Each detail is translated by its code, or by the GATE code its sentence starts with; a detail

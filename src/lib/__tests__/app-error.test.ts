@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { i18n } from "@/i18n/config";
-import { appErrorLines, appErrorReason, describeAppError } from "@/lib/app-error";
+import { appErrorLines, appErrorReason, describeAppError, gateSentenceText } from "@/lib/app-error";
 
 describe("describeAppError", () => {
   it("shows a plain message, not the raw schema dump, when a response has an unexpected format", () => {
@@ -254,5 +254,45 @@ describe("describeAppError (refused right)", () => {
       message: "Permission denied: action 'x' on resource 'y'",
     });
     expect(described.description).toBe(String(i18n.t("errors:generic.forbidden")));
+  });
+});
+
+describe("gateSentenceText", () => {
+  it("says a GATE-coded sentence in the app language and fills its parameters", async () => {
+    await i18n.changeLanguage("en");
+    expect(
+      gateSentenceText(
+        "GATE_ADMIN_PERMISSION_UNKNOWN:permission=cst.x: Permission 'cst.x' does not exist",
+      ),
+    ).toBe(
+      'Unknown permission: "cst.x" is not in the permission catalogue. Remove it or choose a permission from the list.',
+    );
+    await i18n.changeLanguage("fr");
+    expect(gateSentenceText("GATE_UNIT_BASE_REQUIRED: l'unité doit nommer sa base.")).toBe(
+      String(i18n.t("errors:gateError.GATE_UNIT_BASE_REQUIRED")),
+    );
+  });
+
+  it("keeps the text before the code and returns a sentence without a code as it is", async () => {
+    await i18n.changeLanguage("en");
+    expect(gateSentenceText("Row 3: GATE_WO_READY_EQUIPMENT_ASSIGNED: x")).toBe(
+      `Row 3: ${String(i18n.t("errors:gateError.GATE_WO_READY_EQUIPMENT_ASSIGNED"))}`,
+    );
+    expect(gateSentenceText("Role already exists")).toBe("Role already exists");
+  });
+
+  it("says every refusal of a joined list", async () => {
+    await i18n.changeLanguage("en");
+    const text = gateSentenceText("GATE_UNIT_BASE_REQUIRED: a. GATE_UNIT_IMPORT_REVIEW_FLAG: b.");
+    expect(text).not.toContain("GATE_");
+    expect(text).toContain(String(i18n.t("errors:gateError.GATE_UNIT_BASE_REQUIRED")));
+    expect(text).toContain(String(i18n.t("errors:gateError.GATE_UNIT_IMPORT_REVIEW_FLAG")));
+  });
+
+  it("never shows a code that has no translation", async () => {
+    await i18n.changeLanguage("en");
+    const text = gateSentenceText("GATE_NO_SUCH_CODE_ANYWHERE:a=1: whatever");
+    expect(text).toBe(String(i18n.t("errors:generic.unexpected")));
+    expect(text).not.toContain("GATE_");
   });
 });
