@@ -119,6 +119,10 @@ pub async fn email_channel_status(db: &DatabaseConnection) -> AppResult<ChannelA
 /// in-app only, `notifications::digest`). Same transaction as the notification. Never for the
 /// safety rule notice (`catalog::ALWAYS_DELIVERED`), whatever the preference says.
 pub async fn enqueue_email(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
+    // Never an email about a record its reader may not see (the inbox condition, AU-112).
+    if !crate::notifications::inbox::recipient_may_see(conn, notification_id).await? {
+        return Ok(false);
+    }
     let res = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

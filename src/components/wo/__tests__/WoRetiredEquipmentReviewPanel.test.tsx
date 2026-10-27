@@ -123,7 +123,7 @@ describe("WoRetiredEquipmentReviewPanel", () => {
 
     expect(await screen.findByText("Retired equipment — to review")).toBeInTheDocument();
     expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(1);
-    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledWith(false);
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledWith(false, false);
     expect(screen.getByText("OT-0041")).toBeInTheDocument();
     expect(screen.getByText("DI-0007")).toBeInTheDocument();
     // Settled only with the existing actions: nothing to dismiss, accept or close here.
@@ -154,7 +154,7 @@ describe("WoRetiredEquipmentReviewPanel", () => {
     expect(
       await screen.findByText("Closed by the cancellation of work order OT-0041"),
     ).toBeInTheDocument();
-    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true);
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true, false);
     expect(screen.getByText(/Amine, .*Reason: Equipment scrapped/)).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -214,7 +214,7 @@ describe("WoRetiredEquipmentReviewPanel", () => {
       </MemoryRouter>,
     );
     await flush();
-    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true);
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenLastCalledWith(true, false);
     expect(
       screen.getByText("Closed by the cancellation of work order OT-0041"),
     ).toBeInTheDocument();
@@ -248,5 +248,62 @@ describe("WoRetiredEquipmentReviewPanel", () => {
           : [`${prefix}${k}`],
       );
     expect(keys(frOt.retiredEquipment).sort()).toEqual(keys(enOt.retiredEquipment).sort());
+  });
+
+  it("on the Requests page lists the requests only and opens them in place (AU-112)", async () => {
+    mocks.listRetiredEquipmentReviews.mockResolvedValue({
+      items: [
+        review({
+          id: 2,
+          review_key: "di|sid-2",
+          kind: "intervention_request",
+          record_id: 7,
+          record_code: "DI-0007",
+          record_title: "Vibration",
+        }),
+      ],
+      closed_count: 0,
+    });
+    const onOpenRequest = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <WoRetiredEquipmentReviewPanel
+          requestsOnly
+          onOpenRequest={onOpenRequest}
+          reloadSignal={1}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("DI-0007")).toBeInTheDocument();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledWith(false, true);
+    expect(screen.queryByRole("link", { name: "Open" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(onOpenRequest).toHaveBeenCalledWith(7);
+
+    // The work-order list does not drive it there: the Requests page's own list does.
+    mocks.store.items = [{}];
+    rerender(
+      <MemoryRouter>
+        <WoRetiredEquipmentReviewPanel
+          requestsOnly
+          onOpenRequest={onOpenRequest}
+          reloadSignal={1}
+        />
+      </MemoryRouter>,
+    );
+    await flush();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(1);
+    rerender(
+      <MemoryRouter>
+        <WoRetiredEquipmentReviewPanel
+          requestsOnly
+          onOpenRequest={onOpenRequest}
+          reloadSignal={2}
+        />
+      </MemoryRouter>,
+    );
+    await flush();
+    expect(mocks.listRetiredEquipmentReviews).toHaveBeenCalledTimes(2);
   });
 });

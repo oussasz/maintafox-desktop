@@ -384,16 +384,18 @@ pub async fn unlink_asset_hierarchy(
 ///
 /// Preserves the asset row and increments `row_version` for optimistic
 /// concurrency control. Decommissioned/scrapped assets cannot be moved
-/// (admin override deferred to File 04).
+/// (admin override deferred to File 04). The move is recorded as a `MOVED` lifecycle event with
+/// an audit entry in the same transaction (D19).
 pub async fn move_asset_org_node(
     db: &DatabaseConnection,
     asset_id: i64,
     new_org_node_id: i64,
     expected_row_version: i64,
-    _actor_id: i32,
+    actor_id: i32,
 ) -> AppResult<identity::Asset> {
     let txn = db.begin().await?;
-    move_asset_org_node_in(&txn, asset_id, new_org_node_id, expected_row_version).await?;
+    crate::assets::lifecycle::move_asset_recorded_in(&txn, asset_id, new_org_node_id, expected_row_version, actor_id)
+        .await?;
 
     // ── Re-fetch full asset with resolved codes ──────────────────────────
     let sql = format!(

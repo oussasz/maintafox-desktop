@@ -133,14 +133,34 @@ pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) 
 
 /// Work orders and requests open on retired equipment, crossed in sync ("équipement déclassé — à
 /// revoir", AU-73b, `wo::retired_equipment_review`): requires ot.view; the work orders where the
-/// user holds ot.view, the requests where they hold di.view (none without it). Read only: they are
-/// settled by the existing actions (cancel, reject, return to service).
+/// user holds ot.view, the requests where they hold di.view (none without it). With
+/// `requests_only` (the Requests page, AU-112) it requires di.view instead and lists the requests
+/// only, so a reviewer without ot.view reaches them. Read only: they are settled by the existing
+/// actions (cancel, reject, return to service).
 #[tauri::command]
 pub async fn list_retired_equipment_reviews(
     include_closed: bool,
+    requests_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::retired_equipment_review::RetiredEquipmentReviewList> {
     let user = require_session!(state);
+    if requests_only.unwrap_or(false) {
+        let di_scope = crate::di::access::require_anywhere(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+        )
+        .await?;
+        let no_work_orders = AccessScope::Subtrees(Default::default());
+        return crate::wo::retired_equipment_review::list_reviews(
+            &state.db,
+            &no_work_orders,
+            &di_scope,
+            include_closed,
+        )
+        .await;
+    }
     let wo_scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
     let di_scope = if access::holds_anywhere(
         &state.db,

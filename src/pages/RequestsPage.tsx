@@ -59,6 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { WoRetiredEquipmentReviewPanel } from "@/components/wo/WoRetiredEquipmentReviewPanel";
 import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
@@ -809,6 +810,14 @@ export function RequestsPage() {
               onReset={resetFilters}
             />
           )}
+          {/* Requests open on retired equipment, crossed in sync (AU-73b, AU-112) */}
+          <PermissionGate permission={P.DI_VIEW}>
+            <WoRetiredEquipmentReviewPanel
+              requestsOnly
+              onOpenRequest={(id) => void openDi(id)}
+              reloadSignal={items}
+            />
+          </PermissionGate>
         </>
       }
     >

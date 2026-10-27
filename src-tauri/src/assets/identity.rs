@@ -30,7 +30,9 @@
 
 use crate::errors::{issue_params, org_validation_failed, AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -123,7 +125,7 @@ pub struct CreateAssetPayload {
 }
 
 /// Payload for updating asset identity fields. Only provided fields are changed.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateAssetIdentityPayload {
     pub asset_name: Option<String>,
     pub class_code: Option<String>,
@@ -139,6 +141,10 @@ pub struct UpdateAssetIdentityPayload {
     pub rams_utilization_factor: Option<f64>,
     pub commissioned_at: Option<Option<String>>,
     pub decommissioned_at: Option<Option<String>>,
+    /// A new location, moved in the same transaction as the edit and recorded as a `MOVED`
+    /// lifecycle event (D19): a refused move leaves the edit unsaved too.
+    #[serde(default)]
+    pub org_node_id: Option<i64>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1116,7 +1122,7 @@ pub async fn update_asset_identity(
     asset_id: i64,
     payload: UpdateAssetIdentityPayload,
     expected_row_version: i64,
-    _actor_id: i32,
+    actor_id: i32,
 ) -> AppResult<Asset> {
     let txn = db.begin().await?;
 
@@ -1340,12 +1346,49 @@ pub async fn update_asset_identity(
     // The end-of-life date is written only by Déclasser and recommission (checked above: an
     // identity edit can only send it back unchanged), so it is never rewritten here.
 
-    if sets.is_empty() {
+    if sets.is_empty() && payload.org_node_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
             "GATE_ASSET_NOTHING_TO_UPDATE: Aucun champ à mettre à jour.".into(),
         ]));
     }
+    let mut version_after_edit = expected_row_version;
+    if !sets.is_empty() {
+        update_identity_columns(&txn, asset_id, expected_row_version, sets, binds).await?;
+        version_after_edit += 1;
+    }
+    if let Some(new_node_id) = payload.org_node_id {
+        crate::assets::lifecycle::move_asset_recorded_in(&txn, asset_id, new_node_id, version_after_edit, actor_id)
+            .await?;
+    }
 
+    // Fetch updated asset with resolved codes
+    let select_sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
+    let asset_row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            select_sql,
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: asset_id.to_string(),
+        })?;
+    let asset = map_asset(&asset_row)?;
+
+    txn.commit().await?;
+
+    tracing::info!(asset_id, "asset identity updated");
+    Ok(asset)
+}
+
+async fn update_identity_columns(
+    txn: &DatabaseTransaction,
+    asset_id: i64,
+    expected_row_version: i64,
+    mut sets: Vec<String>,
+    mut binds: Vec<sea_orm::Value>,
+) -> AppResult<()> {
     // Always bump version and timestamp
     let now = Utc::now().to_rfc3339();
     sets.push("updated_at = ?".to_string());
@@ -1369,26 +1412,7 @@ pub async fn update_asset_identity(
                 .into(),
         ]));
     }
-
-    // Fetch updated asset with resolved codes
-    let select_sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
-    let asset_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            select_sql,
-            [asset_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "equipment".into(),
-            id: asset_id.to_string(),
-        })?;
-    let asset = map_asset(&asset_row)?;
-
-    txn.commit().await?;
-
-    tracing::info!(asset_id, "asset identity updated");
-    Ok(asset)
+    Ok(())
 }
 
 /// Replaces the commercial and warranty data of an asset (optimistic concurrency on `row_version`).
