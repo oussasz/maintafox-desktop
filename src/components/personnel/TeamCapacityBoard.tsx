@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { mfInput, mfLayout } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -293,7 +293,7 @@ export const TeamCapacityBoard = forwardRef<TeamCapacityBoardHandle, TeamCapacit
         setDialogOpen(false);
         refresh();
       } catch (err) {
-        setFormError(describeAppError(err).title);
+        setFormError(appErrorReason(err));
       } finally {
         setFormSaving(false);
       }
