@@ -1935,6 +1935,142 @@ async fn an_execution_with_a_follow_up_on_retired_equipment_writes_nothing() {
     }
 }
 
+/// #185 N-R2-1: every refusal an execution can meet is met before anything is written: a blank
+/// finding, a follow-up request on equipment with no location or an inactive one, a follow-up
+/// without an acting user, a follow-up work order of a type that is not corrective, and an unknown
+/// work order. The occurrence is unchanged and no execution is recorded.
+#[tokio::test]
+async fn an_execution_refused_for_any_reason_writes_nothing() {
+    type Case = (
+        &'static str,
+        &'static str,
+        fn(&mut crate::pm::domain::ExecutePmOccurrenceInput),
+        &'static str,
+    );
+    fn finding_of(
+        input: &mut crate::pm::domain::ExecutePmOccurrenceInput,
+    ) -> &mut crate::pm::domain::PmExecutionFindingInput {
+        &mut input.findings.as_mut().expect("findings")[0]
+    }
+    let cases: [Case; 8] = [
+        (
+            "blank description",
+            "",
+            |i| finding_of(i).description = "  ".into(),
+            "GATE_PM_FINDING_DESCRIPTION_REQUIRED",
+        ),
+        (
+            "blank type",
+            "",
+            |i| finding_of(i).finding_type = " ".into(),
+            "GATE_PM_FINDING_TYPE_REQUIRED",
+        ),
+        (
+            "no location",
+            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = 1",
+            |i| finding_of(i).create_follow_up_di = Some(true),
+            "GATE_PM_FOLLOWUP_NO_LOCATION",
+        ),
+        (
+            "inactive location",
+            "UPDATE org_nodes SET status = 'inactive' WHERE id = 1",
+            |i| finding_of(i).create_follow_up_di = Some(true),
+            "ORG_NODE_NOT_ACTIVE",
+        ),
+        (
+            "no acting user (request)",
+            "",
+            |i| {
+                finding_of(i).create_follow_up_di = Some(true);
+                i.actor_id = None;
+            },
+            "GATE_PM_ACTING_USER_REQUIRED",
+        ),
+        (
+            "no acting user (work order)",
+            "",
+            |i| {
+                finding_of(i).create_follow_up_work_order = Some(true);
+                i.actor_id = None;
+            },
+            "GATE_PM_ACTING_USER_REQUIRED",
+        ),
+        (
+            "unknown work order type",
+            "",
+            |i| {
+                finding_of(i).create_follow_up_work_order = Some(true);
+                finding_of(i).follow_up_work_order_type_id = Some(987_654);
+            },
+            "GATE_PM_WO_TYPE_UNKNOWN",
+        ),
+        (
+            "unknown work order",
+            "",
+            |i| i.work_order_id = Some(987_654),
+            "GATE_PM_WO_UNKNOWN",
+        ),
+    ];
+    for (label, setup_sql, change, code) in cases {
+        let db = setup_db().await;
+        let mut occ = generated_occurrence(&db, "PM-EXEC-REFUSED").await;
+        for next in ["ready_for_scheduling", "scheduled", "in_progress"] {
+            occ = queries::transition_pm_occurrence(
+                &db,
+                TransitionPmOccurrenceInput {
+                    occurrence_id: occ.id,
+                    expected_row_version: occ.row_version,
+                    next_status: next.to_string(),
+                    reason_code: None,
+                    note: None,
+                    generate_work_order: Some(false),
+                    work_order_type_id: None,
+                    actor_id: Some(1),
+                },
+            )
+            .await
+            .expect(next);
+        }
+        if !setup_sql.is_empty() {
+            db.execute_unprepared(setup_sql).await.expect(label);
+        }
+        let mut input = crate::pm::domain::ExecutePmOccurrenceInput {
+            occurrence_id: occ.id,
+            expected_occurrence_row_version: occ.row_version,
+            execution_result: "completed_with_findings".to_string(),
+            note: None,
+            actor_id: Some(1),
+            work_order_id: None,
+            defer_reason_code: None,
+            miss_reason_code: None,
+            findings: Some(vec![crate::pm::domain::PmExecutionFindingInput {
+                finding_type: "LEAK".to_string(),
+                severity: None,
+                description: "Fuite au presse-étoupe".to_string(),
+                create_follow_up_di: Some(false),
+                create_follow_up_work_order: Some(false),
+                follow_up_work_order_type_id: None,
+            }]),
+        };
+        change(&mut input);
+        let err = queries::execute_pm_occurrence(&db, input).await.expect_err(label);
+        assert!(format!("{err:?}").contains(code), "{label}: {err:?}");
+        let after = queries::get_pm_occurrence_by_id(&db, occ.id).await.expect("occurrence");
+        assert_eq!(after.status, "in_progress", "{label}: occurrence unchanged");
+        assert_eq!(after.row_version, occ.row_version, "{label}");
+        assert_eq!(
+            count_for(
+                &db,
+                "SELECT COUNT(*) AS c FROM pm_executions WHERE pm_occurrence_id = ?",
+                occ.id
+            )
+            .await,
+            0,
+            "{label}: no execution recorded"
+        );
+    }
+}
+
 async fn count_for(db: &DatabaseConnection, sql: &str, id: i64) -> i64 {
     db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [id.into()]))
         .await

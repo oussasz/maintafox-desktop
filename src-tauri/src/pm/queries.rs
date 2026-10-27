@@ -2038,17 +2038,26 @@ fn follow_up_title(occurrence: &PmOccurrence, finding: &PmExecutionFindingInput)
     crate::pm::wo_content::compose_title(&base, occurrence.asset_code.as_deref())
 }
 
-/// The refusals the follow-up of a finding would meet once the execution is written: a plan
-/// without an equipment scope, and a retired equipment (Déclassé / Rebuté).
+/// The refusals the follow-up of a finding would meet once the execution is written: no acting
+/// user, a plan without an equipment scope, a retired equipment (Déclassé / Rebuté), and for a
+/// follow-up request an equipment with no location or an inactive location, or no system symptom;
+/// for a follow-up work order a type that is unknown or not corrective (#185 N-R2-1).
 async fn refuse_follow_ups_that_cannot_be_created(
     db: &DatabaseConnection,
     occurrence_id: i64,
     findings: &[PmExecutionFindingInput],
+    actor_id: Option<i64>,
 ) -> AppResult<()> {
     let wants_di = findings.iter().any(|f| f.create_follow_up_di == Some(true));
     let wants_wo = findings.iter().any(|f| f.create_follow_up_work_order == Some(true));
     if !wants_di && !wants_wo {
         return Ok(());
+    }
+    if actor_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to create the follow-up of a PM finding."
+                .to_string(),
+        ]));
     }
     let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
     let plan_row = db
@@ -2072,9 +2081,35 @@ async fn refuse_follow_ups_that_cannot_be_created(
     };
     if wants_di {
         crate::di::queries::refuse_retired_equipment(db, equipment_id).await?;
+        let installed_at: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+                [equipment_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_FOLLOWUP_NO_EQUIPMENT: PM plan equipment not found for follow-up DI.".to_string(),
+                ])
+            })?
+            .try_get("", "installed_at_node_id")?;
+        let Some(org_node_id) = installed_at else {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FOLLOWUP_NO_LOCATION: PM plan equipment must have installed_at_node_id for follow-up DI routing."
+                    .to_string(),
+            ]));
+        };
+        crate::org::model_scope::assert_org_node_active(db, org_node_id).await?;
+        for finding in findings.iter().filter(|f| f.create_follow_up_di == Some(true)) {
+            crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
+        }
     }
     if wants_wo {
         crate::wo::queries::refuse_retired_equipment(db, equipment_id).await?;
+        for finding in findings.iter().filter(|f| f.create_follow_up_work_order == Some(true)) {
+            follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
+        }
     }
     Ok(())
 }
@@ -2441,6 +2476,16 @@ pub async fn execute_pm_occurrence(
         None => None,
     };
     for finding in &findings_input {
+        if finding.finding_type.trim().is_empty() {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FINDING_TYPE_REQUIRED: finding_type is required for each PM finding.".to_string(),
+            ]));
+        }
+        if finding.description.trim().is_empty() {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FINDING_DESCRIPTION_REQUIRED: description is required for each PM finding.".to_string(),
+            ]));
+        }
         if let Some(severity) = finding.severity.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             crate::pm::reason_catalog::checked_severity(db, severity).await?;
         }
@@ -2467,7 +2512,38 @@ pub async fn execute_pm_occurrence(
 
     // The follow-ups the findings ask for are checked before anything is written: an execution
     // is never recorded with its follow-up refused halfway (AU-73, review S4).
-    refuse_follow_ups_that_cannot_be_created(db, input.occurrence_id, &findings_input).await?;
+    refuse_follow_ups_that_cannot_be_created(db, input.occurrence_id, &findings_input, input.actor_id).await?;
+
+    // The work order the execution names is checked before anything is written too (#185 N-R2-1).
+    // The transition below never links a work order (`generate_work_order: false`), so the
+    // occurrence's link read now is the one the execution is recorded against.
+    let linked_before = get_pm_occurrence_by_id(db, input.occurrence_id)
+        .await?
+        .linked_work_order_id;
+    if let (Some(linked), Some(provided)) = (linked_before, input.work_order_id) {
+        if linked != provided {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_WO_MISMATCH: work_order_id must match linked occurrence work order when one already exists."
+                    .to_string(),
+            ]));
+        }
+    }
+    let wo_row = match input.work_order_id.or(linked_before) {
+        Some(wo_id) => Some(
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, code, actual_duration_hours, active_labor_hours
+                 FROM work_orders
+                 WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_PM_WO_UNKNOWN: work_order_id does not exist.".to_string()])
+            })?,
+        ),
+        None => None,
+    };
 
     let occurrence = transition_pm_occurrence(
         db,
@@ -2495,33 +2571,13 @@ pub async fn execute_pm_occurrence(
             ])
         })
     };
-    let mut work_order_id = input.work_order_id.or(occurrence.linked_work_order_id);
-    if let (Some(linked), Some(provided)) = (occurrence.linked_work_order_id, input.work_order_id) {
-        if linked != provided {
-            return Err(AppError::ValidationFailed(vec![
-                "GATE_PM_WO_MISMATCH: work_order_id must match linked occurrence work order when one already exists."
-                    .to_string(),
-            ]));
-        }
-    }
+    let mut work_order_id = input.work_order_id.or(linked_before);
 
     let mut work_order_code: Option<String> = None;
     let mut actual_duration_hours: Option<f64> = None;
     let mut actual_labor_hours: Option<f64> = None;
 
-    if let Some(wo_id) = work_order_id {
-        let wo_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, code, actual_duration_hours, active_labor_hours
-                 FROM work_orders
-                 WHERE id = ?",
-                [wo_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| {
-                AppError::ValidationFailed(vec!["GATE_PM_WO_UNKNOWN: work_order_id does not exist.".to_string()])
-            })?;
+    if let Some(wo_row) = wo_row {
         work_order_code = wo_row.try_get("", "code")?;
         actual_duration_hours = wo_row.try_get("", "actual_duration_hours")?;
         actual_labor_hours = wo_row.try_get("", "active_labor_hours")?;
@@ -2587,18 +2643,9 @@ pub async fn execute_pm_occurrence(
     let execution = decode_pm_execution_row(&execution_row)?;
 
     for finding in findings_input {
+        // Both checked non-empty before anything was written.
         let finding_type = finding.finding_type.trim().to_uppercase();
-        if finding_type.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "GATE_PM_FINDING_TYPE_REQUIRED: finding_type is required for each PM finding.".to_string(),
-            ]));
-        }
         let description = finding.description.trim().to_string();
-        if description.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "GATE_PM_FINDING_DESCRIPTION_REQUIRED: description is required for each PM finding.".to_string(),
-            ]));
-        }
 
         let mut follow_up_di_id: Option<i64> = None;
         let mut follow_up_wo_id: Option<i64> = None;
