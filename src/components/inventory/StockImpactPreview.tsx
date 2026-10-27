@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { projectInventoryStockImpact } from "@/services/inventory-service";
@@ -55,7 +55,7 @@ export function StockImpactPreview({
       .catch((err) => {
         if (!cancelled) {
           setProjection(null);
-          setError(describeAppError(err).title);
+          setError(appErrorReason(err));
         }
       })
       .finally(() => {

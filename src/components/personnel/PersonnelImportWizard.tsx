@@ -33,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { importProblemText } from "@/lib/import-problem-text";
 import {
   applyPersonnelImportBatch,
@@ -113,7 +113,7 @@ export function PersonnelImportWizard() {
         const loadedPreview = await getPersonnelImportPreview(created.id);
         setPreview(loadedPreview);
       } catch (err) {
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       } finally {
         setLoading(false);
       }
@@ -141,7 +141,7 @@ export function PersonnelImportWizard() {
       setPreview(refreshed);
       setBatch(result.batch);
     } catch (err) {
-      if (!isStepUpCancelled(err)) setError(describeAppError(err).title);
+      if (!isStepUpCancelled(err)) setError(appErrorReason(err));
     } finally {
       setApplying(false);
     }

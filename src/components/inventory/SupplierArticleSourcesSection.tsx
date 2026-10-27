@@ -33,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import {
   listSupplierArticleSources,
@@ -150,7 +150,7 @@ export function SupplierArticleSourcesSection({
     try {
       setSources(await listSupplierArticleSources(supplierId ?? null, articleId ?? null));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setLoading(false);
     }
@@ -206,7 +206,7 @@ export function SupplierArticleSourcesSection({
       onChanged?.();
       return true;
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       return false;
     } finally {
       setSaving(false);

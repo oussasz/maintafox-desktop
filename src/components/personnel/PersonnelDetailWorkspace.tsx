@@ -40,7 +40,7 @@ import { ReviewMark } from "@/components/ui/review-mark";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
   createRateCard,
@@ -208,7 +208,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       setOvertimeRateInput(null);
       await openPersonnel(p.id);
     } catch (err) {
-      setRateError(describeAppError(err).title);
+      setRateError(appErrorReason(err));
     } finally {
       setRateSaving(false);
     }
@@ -494,7 +494,7 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
                 <div key={rc.id} className="rounded border border-surface-border p-2 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">
-                      {t("detail.rates.effectiveFrom")}: {rc.effective_from}
+                      {t("detail.rates.effectiveFrom")}: {fmt(rc.effective_from)}
                     </span>
                     {isActive ? (
                       <Badge variant="secondary" className="text-[10px]">

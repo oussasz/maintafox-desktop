@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { mfInput } from "@/design-system/tokens";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   createAvailabilityBlock,
   isAvailabilityOverlapConfirmError,
@@ -193,7 +193,7 @@ export function AvailabilityBlockDialog({
         setError(t("availability.form.errors.overlapConfirm"));
       } else {
         setOverlapConfirmPending(false);
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       }
     } finally {
       setSaving(false);

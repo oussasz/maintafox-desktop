@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   deleteSupplierContact,
   listSupplierContacts,
@@ -77,7 +77,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
     try {
       setContacts(await listSupplierContacts(supplierId));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setLoading(false);
     }
@@ -95,7 +95,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
       await load();
       return true;
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       return false;
     } finally {
       setSaving(false);

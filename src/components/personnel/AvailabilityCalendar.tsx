@@ -45,7 +45,7 @@ import {
 } from "@/design-system/resource-timeline-tokens";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
@@ -402,7 +402,7 @@ export const AvailabilityCalendar = forwardRef<
         if (!cancelled) {
           // Never an empty list (= "available"): the inspector shows why nothing is listed.
           setPersonBlocks([]);
-          setBlocksError(describeAppError(err).title);
+          setBlocksError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -675,7 +675,7 @@ export const AvailabilityCalendar = forwardRef<
               }}
               {...(selectedBlockId != null ? { selectedItemIds: [selectedBlockId] } : {})}
               loading={loading}
-              error={error != null ? describeAppError(error).title : null}
+              error={error != null ? appErrorReason(error) : null}
               emptyTitle={t("availability.empty")}
               className="min-h-0 flex-1"
             />

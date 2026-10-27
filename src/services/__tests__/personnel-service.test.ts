@@ -14,6 +14,8 @@ const COMMANDS: Array<{
   call: () => Promise<unknown>;
   command: string;
   args: Record<string, unknown> | undefined;
+  /** The third `invoke` argument, when the command passes one. */
+  options?: { notifyOnError: boolean };
 }> = [
   {
     name: "getPersonnel",
@@ -232,12 +234,14 @@ const COMMANDS: Array<{
     call: () => svc.createAvailabilityBlock({ personnel_id: 4 } as never),
     command: "create_availability_block",
     args: { input: { personnel_id: 4 } },
+    options: { notifyOnError: false },
   },
   {
     name: "updateAvailabilityBlock",
     call: () => svc.updateAvailabilityBlock({ id: 8 } as never),
     command: "update_availability_block",
     args: { input: { id: 8 } },
+    options: { notifyOnError: false },
   },
   {
     name: "endAvailabilityBlock",
@@ -345,7 +349,7 @@ describe("personnel-service commands", () => {
   it.each(COMMANDS)("$name sends $command and refuses a payload of the wrong shape", async (c) => {
     mockInvoke.mockResolvedValue({ unexpected: true });
     const err = await c.call().catch((e: unknown) => e);
-    expect(mockInvoke).toHaveBeenCalledWith(c.command, c.args);
+    expect(mockInvoke).toHaveBeenCalledWith(c.command, c.args, ...(c.options ? [c.options] : []));
     expect(err).toBeInstanceOf(svc.PersonnelIpcError);
     expect((err as svc.PersonnelIpcError).code).toBe("VALIDATION_FAILED");
   });

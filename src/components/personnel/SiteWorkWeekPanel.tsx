@@ -30,13 +30,13 @@ import {
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone } from "@/design-system/tone";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type SiteWorkWeek,
   listSiteWorkWeeks,
   setSiteWorkWeek,
 } from "@/services/workforce-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
 const ALL_SITES = "__all__";
@@ -116,7 +116,7 @@ export function SiteWorkWeekPanel({ entities }: { entities: { id: number; name: 
       );
       setDraft(null);
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }
