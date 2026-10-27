@@ -166,7 +166,7 @@ fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
         .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .map_err(|_| {
             AppError::ValidationFailed(vec![format!(
-                "GATE_PERMIT_DATE_INVALID:field={field}: {field} must be an RFC 3339 timestamp."
+                "GATE_PERMIT_DATE_INVALID: {field} must be an RFC 3339 timestamp."
             )])
         })
 }

@@ -477,6 +477,8 @@ pub async fn require_active_value(
     id: Option<i64>,
 ) -> AppResult<i64> {
     let (missing, inactive, unknown) = list_value_codes(domain);
+    // Each code is bound to a variable named `gate` before the `{gate}` placeholder: gate_codes_tests
+    // reads a `{gate}` placeholder as a code. Do not inline it.
     let Some(id) = id else {
         let gate = missing;
         return Err(AppError::ValidationFailed(vec![format!(
