@@ -26,6 +26,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -822,14 +823,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
         <div className="space-y-2">
           <Label htmlFor="wo-service-cost">{t("closeout.serviceCost")}</Label>
-          <Input
+          <DecimalField
             id="wo-service-cost"
-            type="number"
+            decimals={2}
             min={0}
-            step={0.01}
             placeholder="0.00"
-            value={serviceCost}
-            onChange={(e) => setServiceCost(e.target.value)}
+            value={serviceCost.trim() === "" ? null : Number(serviceCost)}
+            onValueChange={(v) => setServiceCost(v == null ? "" : String(v))}
             disabled={!isDetailEditable}
             className="w-40"
           />
