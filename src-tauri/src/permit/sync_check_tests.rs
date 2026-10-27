@@ -8348,11 +8348,34 @@ async fn a_recheck_never_replaces_a_held_isolation_type() {
     );
 }
 
+/// The notices of category `wo_permit_rule_missing` about the work order `wo` written to `user`.
+async fn rule_notices_to(db: &DatabaseConnection, user: i32, wo: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notifications n \
+               JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE e.category_code = 'wo_permit_rule_missing' AND n.recipient_user_id = {user} \
+                AND json_extract(e.payload_json, '$.entity_sync_id') = '{wo}'"
+        ),
+    )
+    .await
+}
+
 /// A held hot-work rule replaced by the LOTO rule the list here now gives: the type change is
-/// recorded and the permit issuers of the site are told.
+/// recorded and the permit issuers of the work order's site are told, not those of another site
+/// (check 6, C6-N3).
 #[tokio::test]
 async fn a_held_rule_type_change_notifies_the_permit_issuers() {
+    use crate::auth::scope_tests::{assign, node, role, user};
     let db = setup().await;
+    let issuers = role(&db, "opta2 issuer", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let here = user(&db, "opta2_here").await;
+    let elsewhere = user(&db, "opta2_elsewhere").await;
+    let site = node(&db, "OPTA2-SITE", None).await;
+    let other_site = node(&db, "OPTA2-OTHER", None).await;
+    assign(&db, here, issuers, "org_node", Some(site)).await;
+    assign(&db, elsewhere, issuers, "org_node", Some(other_site)).await;
     crate::permit::requirement_rules::add_published_rule(
         &db,
         "H_RULE",
@@ -8360,6 +8383,7 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
     )
     .await;
     let row = new_row_naming(&db, "EQ-OPTA-2", "wo-opta-2", "H_RULE", "hot_work", false).await;
+    let row = wo_row(&row, &[("entity_sync_id", json!("scope-OPTA2-SITE"))]);
     let outcome = apply(&db, "work_orders", "wo-opta-2", &row).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("H_RULE", "hot_work"));
@@ -8386,6 +8410,45 @@ async fn a_held_rule_type_change_notifies_the_permit_issuers() {
     assert_eq!(
         (&params["previous_permit_type"], &params["permit_type"]),
         (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(rule_notices_to(&db, here, "wo-opta-2").await.as_deref(), Some("1"));
+    assert_eq!(
+        rule_notices_to(&db, elsewhere, "wo-opta-2").await.as_deref(),
+        Some("0"),
+        "a permit issuer of another site is not told"
+    );
+}
+
+/// Check 6, C6-N5: a work order received started naming a rule with no permit type, while the list
+/// here gives another rule: the finding notice's received permit type is "?", as in its title,
+/// never empty.
+#[tokio::test]
+async fn a_finding_on_a_received_rule_without_a_type_shows_a_question_mark() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-C6N5", "wo-c6n5", "SOME_RULE", "hot_work", true).await;
+    let started = wo_row(
+        &row,
+        &[
+            ("permit_rule_permit_type", Value::Null),
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c6n5", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let params: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-c6n5'",
+        )
+        .await
+        .expect("notice"),
+    )
+    .expect("json");
+    assert_eq!(
+        (&params["received_rule"], &params["received_permit_type"]),
+        (&json!("SOME_RULE"), &json!("?"))
     );
 }
 

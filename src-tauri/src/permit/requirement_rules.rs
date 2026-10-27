@@ -343,18 +343,7 @@ pub async fn evaluate_with(
     }
     outcome.reason_code = reasons::NO_RULE_MATCHED.into();
 
-    let class = match equipment_id {
-        Some(id) => equipment_class_code(db, id).await?,
-        None => None,
-    };
-    let work_type: Option<String> = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT code FROM reference_values WHERE id = ?",
-            [work_type_id.into()],
-        ))
-        .await?
-        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
 
     let mut chosen_isolation = false;
     for published in &rules.0 {
@@ -366,19 +355,12 @@ pub async fn evaluate_with(
         if published.unresolved {
             outcome.unresolved_rule_codes.push(code.clone());
         }
-        let class_ok = rule
-            .equipment_class_code
-            .as_ref()
-            .is_none_or(|c| class.as_deref() == Some(c.as_str()));
-        let type_ok = rule
-            .work_type_code
-            .as_ref()
-            .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
+        let matches = rule_matches(&rule, class.as_deref(), work_type.as_deref());
         // The rule recorded: the first matching rule whose permit type requires an energy isolation,
         // else the first matching rule (CMMS Advisor decision on AU-04 R5-S3, option A: an isolation
         // type always outranks one without; otherwise the list's order wins).
         let outranks = outcome.rule_code.is_none() || (published.isolation && !chosen_isolation);
-        if class_ok && type_ok && outranks {
+        if matches && outranks {
             outcome.requires_permit = true;
             outcome.reason_code = reasons::RULE_MATCHED.into();
             outcome.rule_code = Some(code);
@@ -413,6 +395,23 @@ pub async fn matching_permit_types(
     if rules.is_empty() {
         return Ok(Vec::new());
     }
+    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
+    let mut types: Vec<String> = Vec::new();
+    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
+        if rule_matches(rule, class.as_deref(), work_type.as_deref()) && !types.contains(&rule.permit_type_code) {
+            types.push(rule.permit_type_code.clone());
+        }
+    }
+    Ok(if types.len() > 1 { types } else { Vec::new() })
+}
+
+/// The equipment class code and the work type code a rule is matched against (check 6, C6-N4: one
+/// reading for [`evaluate_with`] and [`matching_permit_types`]).
+async fn class_and_work_type(
+    db: &impl ConnectionTrait,
+    equipment_id: Option<i64>,
+    work_type_id: i64,
+) -> AppResult<(Option<String>, Option<String>)> {
     let class = match equipment_id {
         Some(id) => equipment_class_code(db, id).await?,
         None => None,
@@ -425,21 +424,19 @@ pub async fn matching_permit_types(
         ))
         .await?
         .and_then(|r| r.try_get::<String>("", "code").ok());
-    let mut types: Vec<String> = Vec::new();
-    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
-        let class_ok = rule
-            .equipment_class_code
-            .as_ref()
-            .is_none_or(|c| class.as_deref() == Some(c.as_str()));
-        let type_ok = rule
-            .work_type_code
-            .as_ref()
-            .is_none_or(|t| work_type.as_deref() == Some(t.as_str()));
-        if class_ok && type_ok && !types.contains(&rule.permit_type_code) {
-            types.push(rule.permit_type_code.clone());
-        }
-    }
-    Ok(if types.len() > 1 { types } else { Vec::new() })
+    Ok((class, work_type))
+}
+
+/// Whether a rule matches this equipment class and work type: each one it names matches (a rule
+/// naming both matches only when both match). The single matching of [`evaluate_with`] and
+/// [`matching_permit_types`] (check 6, C6-N4).
+fn rule_matches(rule: &RuleSpec, class: Option<&str>, work_type: Option<&str>) -> bool {
+    let class_ok = rule
+        .equipment_class_code
+        .as_deref()
+        .is_none_or(|c| class == Some(c));
+    let type_ok = rule.work_type_code.as_deref().is_none_or(|t| work_type == Some(t));
+    class_ok && type_ok
 }
 
 /// Rules that did not read, or that name a code not held here, when they are evaluated for a work
