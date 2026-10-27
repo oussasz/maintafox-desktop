@@ -675,29 +675,10 @@ pub(crate) async fn held_judgement(
 /// (`sync::plant_join::complete_pull_done`) AND nothing of that line is held here — no open sync
 /// conflict and no version waiting or refused from an exchange. A snapshot asked for again (a
 /// re-bootstrap after the server refused the checkpoint) brings back a line held here in conflict,
-/// with its held adjustment: it is judged again, never applied unjudged.
+/// with its held adjustment: it is judged again, never applied unjudged. The rule is shared with
+/// `wo::closeout_sync` (`sync::plant_join::first_join_history`).
 async fn first_join_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<bool> {
-    if crate::sync::plant_join::complete_pull_done(conn).await? {
-        return Ok(false);
-    }
-    let held = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "SELECT 1 AS h WHERE EXISTS (
-                     SELECT 1 FROM sync_conflicts WHERE entity_type = ? AND entity_sync_id = ?
-                        AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed'))
-                 OR EXISTS (
-                     SELECT 1 FROM sync_inbox WHERE entity_type = ? AND entity_sync_id = ?
-                        AND apply_status IN ('deferred', 'conflict')
-                        AND server_batch_id NOT LIKE '{}%')",
-                crate::sync::materialize::SNAPSHOT_BATCH_PREFIX
-            ),
-            [LINES.into(), entity_sync_id.into(), LINES.into(), entity_sync_id.into()],
-        ))
-        .await?
-        .is_some();
-    Ok(!held)
+    crate::sync::plant_join::first_join_history(conn, LINES, entity_sync_id).await
 }
 
 /// After a received count line was written (`sync::apply_hooks::after_upsert`, capture
