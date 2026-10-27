@@ -1020,8 +1020,11 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
         // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
         // reference_* catalogs that seed_system_data does not cover (lookup_* only).
         crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db).await?;
+        // Never fails the reset (the wipe is committed): the language is set again in Settings.
         if let Some(code) = &plant_language {
-            crate::locale::write_plant_language(db, code).await?;
+            if let Err(e) = crate::locale::write_plant_language(db, code).await {
+                tracing::warn!(error = %e, language = %code, "reset: the plant language could not be written back");
+            }
         }
         Ok(wiped_rows_total)
     }

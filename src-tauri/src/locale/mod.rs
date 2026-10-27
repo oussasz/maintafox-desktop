@@ -130,9 +130,14 @@ pub fn pick_active_locale(user: Option<&str>, tenant: Option<&str>, os: Option<&
 }
 
 /// The plant default language: `locale.default_language`, else the Settings SSOT
-/// (`app_settings.locale.primary_language`, tenant scope); `None` when neither is set.
+/// (`app_settings.locale.primary_language`, tenant scope); `None` when neither holds a supported
+/// language. A stored value is read trimmed and in lower case; any other value counts as unset.
 pub async fn read_plant_language(db: &impl ConnectionTrait) -> AppResult<Option<String>> {
-    match read_locale_config(db, "locale.default_language").await? {
+    let stored = read_locale_config(db, "locale.default_language")
+        .await?
+        .map(|code| code.trim().to_lowercase())
+        .filter(|code| SUPPORTED_LOCALES.contains(&code.as_str()));
+    match stored {
         Some(code) => Ok(Some(code)),
         // Fall back to Settings SSOT when system_config tenant default was never seeded.
         None => read_app_settings_primary_language(db).await,

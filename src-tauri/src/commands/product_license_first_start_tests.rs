@@ -2862,3 +2862,51 @@ async fn the_plant_language_is_kept_across_a_reset() {
         Some("en")
     );
 }
+
+/// A stored runtime default that is not a supported language never fails the reset (the wipe is
+/// committed by then): it counts as unset, and the Settings row's language is kept (review of
+/// fca24e70). A supported one stored with spaces or capitals is read as that language.
+#[tokio::test]
+async fn an_unsupported_stored_language_never_fails_the_reset() {
+    let db = crate::sync::test_support::started_db().await;
+    crate::settings::set_setting(
+        &db,
+        "locale.primary_language",
+        "tenant",
+        r#""en""#,
+        None,
+        "plant language",
+    )
+    .await
+    .expect("setting");
+    crate::sync::test_support::exec(
+        &db,
+        "INSERT INTO system_config (key, value, updated_at) VALUES ('locale.default_language', 'de', '2026-10-27T08:00:00Z')          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        crate::locale::read_plant_language(&db).await.expect("read").as_deref(),
+        Some("en")
+    );
+
+    super::reset_local_tenant_runtime_data_impl(&db).await.expect("reset");
+    assert_eq!(
+        crate::locale::read_locale_config(&db, "locale.default_language")
+            .await
+            .expect("read")
+            .as_deref(),
+        Some("en")
+    );
+
+    crate::sync::test_support::exec(
+        &db,
+        "UPDATE system_config SET value = ' FR ' WHERE key = 'locale.default_language'",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        crate::locale::read_plant_language(&db).await.expect("read").as_deref(),
+        Some("fr")
+    );
+}
