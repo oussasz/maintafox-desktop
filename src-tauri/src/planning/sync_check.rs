@@ -1334,6 +1334,12 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
         let Ok(Value::Object(received)) = serde_json::from_str::<Value>(&payload) else {
             continue;
         };
+        // A newer version received from the server took the job off the schedule since, applied
+        // here, while it is off the schedule here too: the refused version is superseded (review
+        // N5-b).
+        if close_superseded_by_exit(db, inbox_id, conflict_id, &sid).await? {
+            continue;
+        }
         // Only a commitment this PC would let in now is worth a retry; the retry judges it again,
         // with its break-ins (review S2).
         let Judgement::Admitted(why) = judge_commitment(db, &sid, &received).await? else {
@@ -1376,6 +1382,87 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
         }
     }
     Ok(applied)
+}
+
+/// Audit action of a `PLANNING_WEEK_FROZEN` conflict closed because a newer version of the
+/// commitment received from the server, taking the job off the schedule (closed, cancelled,
+/// released), was applied here since (review N5-b).
+pub(crate) const WEEK_FROZEN_SUPERSEDED_EVENT: &str = "planning.week_frozen_conflict.closed_by_newer_version";
+
+/// A `PLANNING_WEEK_FROZEN` conflict on a commitment (`conflict_id`, its refused inbox row
+/// `inbox_id`) whose PC sent a newer version since that takes the job off the schedule, received
+/// and applied here, while the job is off the schedule here too (a job closed on both PCs, one of
+/// them having edited it first, review N5-b): the refused version can no longer enter anything. Its
+/// inbox row is superseded and the conflict closed (`resolved_remote`, `newer_version_applied`,
+/// noted) and audited. No data is changed. `true` when closed. A newer version still waiting or
+/// refused, or a job committed here, closes nothing: it is judged as before.
+async fn close_superseded_by_exit(
+    db: &DatabaseConnection,
+    inbox_id: i64,
+    conflict_id: i64,
+    sid: &str,
+) -> AppResult<bool> {
+    let newer = db
+        // The highest applied off-schedule version, not necessarily the latest one: what makes the
+        // close safe is the EXISTS on this PC's own commitment (off the schedule here now).
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT n.row_version AS v, json_extract(n.payload_json, '$.status') AS s \
+               FROM sync_inbox i JOIN sync_inbox n \
+                 ON n.entity_type = i.entity_type AND n.entity_sync_id = i.entity_sync_id \
+              WHERE i.id = ? AND n.apply_status = 'applied' AND n.row_version > i.row_version \
+                AND json_extract(n.payload_json, '$.status') IS NOT NULL \
+                AND json_extract(n.payload_json, '$.status') <> 'committed' \
+                AND EXISTS (SELECT 1 FROM schedule_commitments c \
+                             WHERE c.entity_sync_id = i.entity_sync_id AND c.status <> 'committed') \
+              ORDER BY n.row_version DESC LIMIT 1",
+            [inbox_id.into()],
+        ))
+        .await?;
+    let Some(newer) = newer else {
+        return Ok(false);
+    };
+    let version: i64 = newer.try_get("", "v").map_err(sync_err)?;
+    let status: String = newer.try_get("", "s").map_err(sync_err)?;
+    let note = format!(
+        "A newer version of the commitment, received from the server (version {version}, {status}) was applied here since: the \
+         job is off the schedule, the refused version enters no frozen week."
+    );
+    let tx = db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE sync_inbox SET apply_status = 'superseded', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+          WHERE id = ? AND apply_status = 'conflict'",
+        [inbox_id.into()],
+    ))
+    .await?;
+    let closed = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE sync_conflicts \
+                SET status = 'resolved_remote', resolution_action = 'newer_version_applied', resolution_note = ?, \
+                    resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1, \
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+              WHERE id = ? AND status IN ('new', 'triaged', 'escalated')",
+            [note.into(), conflict_id.into()],
+        ))
+        .await?
+        .rows_affected()
+        > 0;
+    tx.commit().await?;
+    if closed {
+        audit_closed(
+            db,
+            WEEK_FROZEN_SUPERSEDED_EVENT,
+            "Frozen-week conflict closed: a newer version received from the server took the job off the schedule",
+            "schedule_commitment",
+            "schedule_commitments",
+            conflict_id,
+            sid,
+        )
+        .await;
+    }
+    Ok(closed)
 }
 
 /// Audit action of a `WEEK_UNFREEZE_*` conflict closed once its reopening is judged valid here (its
