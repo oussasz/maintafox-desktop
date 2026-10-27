@@ -1334,8 +1334,9 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
         let Ok(Value::Object(received)) = serde_json::from_str::<Value>(&payload) else {
             continue;
         };
-        // A newer version from its PC took the job off the schedule since, applied here, while it
-        // is off the schedule here too: the refused version is superseded (review N5-b).
+        // A newer version received from the server took the job off the schedule since, applied
+        // here, while it is off the schedule here too: the refused version is superseded (review
+        // N5-b).
         if close_superseded_by_exit(db, inbox_id, conflict_id, &sid).await? {
             continue;
         }
@@ -1384,8 +1385,8 @@ pub(crate) async fn retry_frozen_week_conflicts(db: &DatabaseConnection) -> AppR
 }
 
 /// Audit action of a `PLANNING_WEEK_FROZEN` conflict closed because a newer version of the
-/// commitment from its PC, taking the job off the schedule (closed, cancelled, released), was
-/// applied here since (review N5-b).
+/// commitment received from the server, taking the job off the schedule (closed, cancelled,
+/// released), was applied here since (review N5-b).
 pub(crate) const WEEK_FROZEN_SUPERSEDED_EVENT: &str = "planning.week_frozen_conflict.closed_by_newer_version";
 
 /// A `PLANNING_WEEK_FROZEN` conflict on a commitment (`conflict_id`, its refused inbox row
@@ -1402,6 +1403,8 @@ async fn close_superseded_by_exit(
     sid: &str,
 ) -> AppResult<bool> {
     let newer = db
+        // The highest applied off-schedule version, not necessarily the latest one: what makes the
+        // close safe is the EXISTS on this PC's own commitment (off the schedule here now).
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT n.row_version AS v, json_extract(n.payload_json, '$.status') AS s \
@@ -1422,7 +1425,7 @@ async fn close_superseded_by_exit(
     let version: i64 = newer.try_get("", "v").map_err(sync_err)?;
     let status: String = newer.try_get("", "s").map_err(sync_err)?;
     let note = format!(
-        "A newer version of the commitment from its PC (version {version}, {status}) was applied here since: the \
+        "A newer version of the commitment, received from the server (version {version}, {status}) was applied here since: the \
          job is off the schedule, the refused version enters no frozen week."
     );
     let tx = db.begin().await?;
@@ -1451,7 +1454,7 @@ async fn close_superseded_by_exit(
         audit_closed(
             db,
             WEEK_FROZEN_SUPERSEDED_EVENT,
-            "Frozen-week conflict closed: a newer version from its PC took the job off the schedule",
+            "Frozen-week conflict closed: a newer version received from the server took the job off the schedule",
             "schedule_commitment",
             "schedule_commitments",
             conflict_id,
