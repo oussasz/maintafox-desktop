@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { GlobalStepUpHost } from "@/components/auth/GlobalStepUpHost";
+import { ActivationTechnicalDetails } from "@/components/auth/activation/ActivationTechnicalDetails";
 import { AuthAlert, AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { mfAuth, mfInput } from "@/design-system/tokens";
@@ -193,12 +194,19 @@ function AuthLockSurface() {
             <Link to="/" className="hover:text-text-secondary" onClick={() => clearLock()}>
               {t("interceptor.actions.backToApp")}
             </Link>
-            {lastFailure?.command ? (
-              <span className="truncate" title={lastFailure.message}>
-                {t("interceptor.hints.command")}: {lastFailure.command}
-              </span>
-            ) : null}
           </div>
+
+          {lastFailure?.command ? (
+            <ActivationTechnicalDetails
+              summaryLabel={t("interceptor.technicalDetails")}
+              rows={[
+                { label: t("interceptor.hints.command"), value: lastFailure.command },
+                ...(lastFailure.message
+                  ? [{ label: t("interceptor.hints.message"), value: lastFailure.message }]
+                  : []),
+              ]}
+            />
+          ) : null}
         </div>
       </div>
     </div>
