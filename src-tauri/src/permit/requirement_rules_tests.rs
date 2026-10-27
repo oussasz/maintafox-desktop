@@ -1806,8 +1806,10 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
         "UPDATE reference_values SET is_active = 0 WHERE code = 'A_PUMP_HOT'",
     )
     .await;
-    assert!(rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
-        .await
-        .expect("types")
-        .is_empty());
+    assert!(
+        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
+            .await
+            .expect("types")
+            .is_empty()
+    );
 }

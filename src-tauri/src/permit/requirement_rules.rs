@@ -438,10 +438,7 @@ async fn class_and_work_type(
 /// naming both matches only when both match). The single matching of [`evaluate_with`] and
 /// [`matching_permit_types`] (check 6, C6-N4).
 fn rule_matches(rule: &RuleSpec, class: Option<&str>, work_type: Option<&str>) -> bool {
-    let class_ok = rule
-        .equipment_class_code
-        .as_deref()
-        .is_none_or(|c| class == Some(c));
+    let class_ok = rule.equipment_class_code.as_deref().is_none_or(|c| class == Some(c));
     let type_ok = rule.work_type_code.as_deref().is_none_or(|t| work_type == Some(t));
     class_ok && type_ok
 }
@@ -1282,7 +1279,13 @@ pub async fn converge_received_rule(
     // The permit type of a rule held here changed: the permit issuers of its site are told (CMMS
     // Advisor decision on AU-04 R5-S3, option A).
     if let Some(h) = held.filter(|h| h.permit_type != kept.1) {
-        notify_rule_type_changed(conn, wo_id, (&h.code, h.permit_type.as_deref()), (&kept.0, kept.1.as_deref())).await?;
+        notify_rule_type_changed(
+            conn,
+            wo_id,
+            (&h.code, h.permit_type.as_deref()),
+            (&kept.0, kept.1.as_deref()),
+        )
+        .await?;
     }
     Ok(Some(kept.0))
 }

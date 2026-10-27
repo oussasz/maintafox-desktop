@@ -8859,9 +8859,7 @@ async fn a_received_work_order_on_hold_resumes_only_under_the_isolation_rule_her
     // Tried again: nothing more to re-stamp, still refused.
     assert!(resume(&db, wo_id).await.is_err());
     assert_eq!(
-        rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received")
-            .await
-            .len(),
+        rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await.len(),
         1
     );
 
