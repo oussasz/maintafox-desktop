@@ -8766,6 +8766,131 @@ async fn a_received_weaker_type_is_never_reopened_to_execution_and_is_rechecked_
     );
 }
 
+async fn resume(db: &DatabaseConnection, wo_id: i64) -> Result<crate::wo::domain::WorkOrder, crate::errors::AppError> {
+    let row_version: i64 = text(
+        db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    crate::wo::execution::resume_wo(
+        db,
+        crate::wo::execution::WoResumeInput {
+            wo_id,
+            actor_id: APPLIER,
+            expected_row_version: row_version,
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+}
+
+/// CMMS Advisor decision C7-N4 (option b): a work order received on hold whose rule came from
+/// another PC with a weaker type (hot work) than the LOTO rule the list here gives is re-stamped to
+/// LOTO when it is resumed, recorded (cause resumed_received) and told to the permit issuers; the
+/// permit gate then refuses the resume (a live hot-work permit is not a LOTO), and it stays on hold,
+/// re-stamped. A received LOTO rule over this PC's hot-work rule is never re-stamped weaker.
+#[tokio::test]
+async fn a_received_work_order_on_hold_resumes_only_under_the_isolation_rule_here() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-1", "wo-c7n4-1", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-1", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-c7n4-1").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    let wo_id = wo_id_of(&db, "wo-c7n4-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        format!("{refused:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {refused:?}"
+    );
+    assert_eq!(
+        rule_state(&db, "wo-c7n4-1").await,
+        ruled("CORRECTIVE_LOTO", "loto"),
+        "re-stamped, kept though the resume is refused"
+    );
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-1", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+             WHERE wo.entity_sync_id = 'wo-c7n4-1' AND c.action = 'permit_rule_applied' \
+               AND json_extract(c.details_json, '$.cause') = 'resumed_received'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "audited"
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the permit issuers are told"
+    );
+    // Tried again: nothing more to re-stamp, still refused.
+    assert!(resume(&db, wo_id).await.is_err());
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received")
+            .await
+            .len(),
+        1
+    );
+
+    // Never weaker: a received LOTO rule over the hot-work rule this PC's list gives stays LOTO.
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let planning = new_row_naming(&db, "EQ-C7N4-2", "wo-c7n4-2", "L_RECEIVED", "loto", false).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-2", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-2").await;
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, "wo-c7n4-2").await, ruled("L_RECEIVED", "loto"));
+    assert!(rule_events_with_cause(&db, "wo-c7n4-2", "resumed_received")
+        .await
+        .is_empty());
+}
+
 /// C6-S3: a draft whose rule was kept as received (nothing here matched) gets this PC's rule on
 /// its next draft edit once the list here matches it (cause draft_edit).
 #[tokio::test]
