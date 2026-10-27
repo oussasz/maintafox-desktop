@@ -45,6 +45,9 @@ export function appErrorText(err: unknown): string {
 function missingRight(message: string): string | null {
   const names = message.match(/[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g) ?? [];
   const known = names.find((n) => PERMISSION_CATALOG.some((p) => p.name === n));
+  // Before the rights' names are loaded the label would be the English catalogue text: the
+  // generic reason stands in instead.
+  if (!i18n.hasLoadedNamespace("admin")) return null;
   return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
 }
 

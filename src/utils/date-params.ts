@@ -55,7 +55,7 @@ export const NUMBER_PARAMS: ReadonlySet<string> = new Set([
   "share",
   "remaining",
   // Stock below its threshold (notifications).
-  "available_qty",
+  "reorder_point",
   "threshold_qty",
 ]);
 

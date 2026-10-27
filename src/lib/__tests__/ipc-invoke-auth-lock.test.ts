@@ -11,6 +11,7 @@ describe("ipc-invoke auth lock gating", () => {
   beforeAll(async () => {
     initI18n();
     await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
   });
 
   beforeEach(() => {

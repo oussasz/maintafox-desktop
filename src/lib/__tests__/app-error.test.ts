@@ -217,6 +217,7 @@ describe("describeAppError (refused right)", () => {
 
   it("names the missing right in the user's language", async () => {
     await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
     expect(describeAppError(refused).description).toBe(
       "Droit requis : Clôturer les ordres de travail",
     );
