@@ -3,7 +3,8 @@
 //! **Visibility (checked at read time).** A notification is listed and counted only when the
 //! reader may view its module (`notifications::catalog::MODULES`) where its record is: a view
 //! permission granted plant-wide shows the module, one granted on org nodes shows the records on
-//! those nodes and below (and the records without a node); a category without a known module is
+//! those nodes and below (and the records without a node, except work orders and requests: those
+//! are plant-wide records, `SITE_ANCHORED_MODULES`); a category without a known module is
 //! never shown. The bell, the inbox views and "mark all read" use the same conditions,
 //! so their numbers always agree.
 //!
@@ -53,12 +54,18 @@ const SEVERITY_SQL: &str = "CASE WHEN e.severity IN ('critical', 'error') THEN '
 
 /// What a reader may see, module by module, from the view permission of each module
 /// (`catalog::MODULES`) as their roles grant it now.
+/// Modules whose records without an org node are plant-wide only (work orders and requests:
+/// their lists and panels never show such a record to a site user, `auth::scope::scope_filter_sql`).
+/// A site user is not shown their notifications either: they would open a record the user cannot
+/// see (AU-112).
+pub const SITE_ANCHORED_MODULES: &[&str] = &["di", "ot"];
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Visibility {
     /// Modules seen plant-wide (a tenant-wide grant, elevated admin, or no permission needed).
     pub everywhere: Vec<String>,
     /// Modules granted on some org nodes only: the notifications of records on those nodes or
-    /// below them, and of records that belong to no node.
+    /// below them, and of records that belong to no node (except [`SITE_ANCHORED_MODULES`]).
     pub on_nodes: Vec<(String, Vec<i64>)>,
 }
 
@@ -86,13 +93,19 @@ impl Visibility {
             ));
         }
         for (module, nodes) in &self.on_nodes {
+            // Work orders and requests without a site are plant-wide records, as in their lists.
+            let no_node_shown = !SITE_ANCHORED_MODULES.contains(&module.as_str());
+            if nodes.is_empty() && !no_node_shown {
+                continue;
+            }
             values.push(module.clone().into());
             if nodes.is_empty() {
                 parts.push("(c.module_code = ? AND e.org_node_id IS NULL)".to_string());
             } else {
                 values.extend(nodes.iter().map(|n| (*n).into()));
+                let no_node = if no_node_shown { "e.org_node_id IS NULL OR " } else { "" };
                 parts.push(format!(
-                    "(c.module_code = ? AND (e.org_node_id IS NULL OR e.org_node_id IN ({})))",
+                    "(c.module_code = ? AND ({no_node}e.org_node_id IN ({})))",
                     vec!["?"; nodes.len()].join(",")
                 ));
             }
@@ -107,7 +120,8 @@ impl Visibility {
 
 /// What `user_id` may see now. A role granted plant-wide shows the whole module; a role granted on
 /// org nodes (site, area…) shows the notifications of records on those nodes and below, plus those
-/// of records without a node. Users with elevated admin access see everything, as in every module.
+/// of records without a node outside [`SITE_ANCHORED_MODULES`]. Users with elevated admin access
+/// see everything, as in every module.
 pub async fn visible_to(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Visibility> {
     if crate::auth::rbac::user_has_elevated_admin_access(db, user_id).await? {
         return Ok(Visibility::all());
