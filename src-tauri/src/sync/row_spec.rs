@@ -965,6 +965,17 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
             json_ref_hist("details_json", "$.after.work_order_id", "work_orders"),
+            // The person given a qualification override (`qualification::gate`): its personnel
+            // record or its login (the override itself is named by its sync id, sent as it is).
+            // Rule: personnel records and logins named here are never hard-deleted (deactivated
+            // only): their sync ids are in the sealed hash, and a deleted row would be encoded
+            // empty, breaking the chain of the PC that sealed the event.
+            json_ref_hist(
+                "details_json",
+                "$.qualification_override.personnel_id",
+                "personnel",
+            ),
+            json_ref_hist("details_json", "$.qualification_override.user_id", USER),
         ],
         // Audits kept on the device on purpose (never staged, so never a stage error): the
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
@@ -1024,6 +1035,16 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A qualification requirement created or changed
                         // (`qualification::requirements`; requirements are never deleted).
                         ("qualification_requirement", "qualification_requirements"),
+                        // A person let into a permit role without the qualifications it requires
+                        // (`qualification::gate`, override in a permit role): the target is the
+                        // permit, sent as its sync id; the role is in the details (`$.role`).
+                        // Events of this type sealed before this mapping existed were sealed in
+                        // their local form (`L1:` / `L2:`): the row filter keeps them on their PC
+                        // (only their stub travels) and their hash never depends on this mapping.
+                        // Rule: a permit named by a sealed audit is never hard-deleted (no code
+                        // deletes `work_permits` rows): its sync id is in the sealed hash, and a
+                        // deleted target would be encoded empty, breaking that PC's chain.
+                        ("permit_role", "work_permits"),
                         // A block's critical flag changed (`personnel::availability`): the target
                         // is already the block's sync id, the same on every PC, sent as it is, so
                         // the audit is unchanged when the block is deleted later.
