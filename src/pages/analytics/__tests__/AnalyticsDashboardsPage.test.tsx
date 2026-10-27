@@ -206,4 +206,23 @@ describe("AnalyticsDashboardsPage", () => {
     expect(screen.getByText(mtbf).closest("button")).not.toBeNull();
     expect(screen.getByText("widgets.reliability.openEvidence")).toBeInTheDocument();
   });
+
+  it("does not colour a rising PM-due-today or PM-due-in-7-days count; only overdue is red", async () => {
+    svc.getAnalyticsExecutiveDashboard.mockResolvedValue({
+      ...DATA,
+      pm_overdue: kpi("pm_overdue", 6, 2),
+      pm_due_today: kpi("pm_due_today", 6, 2),
+      pm_due_next_7d: kpi("pm_due_next_7d", 9, 5),
+    });
+    renderPage();
+    // The trend badge is red ("bg-status-danger") only for a rising "bad" sense.
+    const isRed = async (key: string) =>
+      (await screen.findByText(key))
+        .closest("button")
+        ?.querySelector("span[class*='bg-status-danger']") != null;
+    expect(await screen.findByText("hub.dashboards.kpi.pmDueToday")).toBeInTheDocument();
+    expect(await isRed("hub.dashboards.kpi.pmDueToday")).toBe(false);
+    expect(await isRed("hub.dashboards.kpi.pmDueNext7d")).toBe(false);
+    expect(await isRed("hub.dashboards.kpi.pmOverdue")).toBe(true);
+  });
 });

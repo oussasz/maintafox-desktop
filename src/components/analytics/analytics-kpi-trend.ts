@@ -30,12 +30,13 @@ export interface RatioTrendOptions {
 }
 
 /**
- * @param direction whether a rise is good (`up-good`, e.g. MTBF) or bad (`up-bad`, e.g. cost).
+ * @param direction whether a rise is good (`up-good`, e.g. MTBF), bad (`up-bad`, e.g. cost) or
+ * neither (`neutral`, e.g. PM due today: the change is shown, never coloured).
  * @returns `null` when there is nothing honest to compare with.
  */
 export function periodTrend(
   kpi: AnalyticsKpiValue | null | undefined,
-  direction: "up-good" | "up-bad",
+  direction: "up-good" | "up-bad" | "neutral",
   ratio?: RatioTrendOptions,
 ): KpiTrend | null {
   if (!kpi || !kpi.available) return null;
@@ -47,6 +48,7 @@ export function periodTrend(
     const points = (value - previous) * 100;
     if (Math.abs(points) < ratio.stablePoints) return { percent: 0, points: 0, sense: "neutral" };
     const good = direction === "up-good" ? points > 0 : points < 0;
+    if (direction === "neutral") return { percent: 0, points, sense: "neutral" };
     return { percent: 0, points, sense: good ? "up-good" : "up-bad" };
   }
   if (previous === 0) return value === 0 ? { percent: 0, sense: "neutral" } : null;
@@ -54,5 +56,6 @@ export function periodTrend(
   if (Math.abs(percent) < STABLE_PERCENT) return { percent: 0, sense: "neutral" };
   const up = percent > 0;
   const good = direction === "up-good" ? up : !up;
+  if (direction === "neutral") return { percent, sense: "neutral" };
   return { percent, sense: good ? "up-good" : "up-bad" };
 }

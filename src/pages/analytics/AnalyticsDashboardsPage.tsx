@@ -321,7 +321,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.today"),
               value: count(data?.pm_due_today.value),
               available: data?.pm_due_today.available ?? false,
-              trend: periodTrend(data?.pm_due_today, "up-bad"),
+              trend: periodTrend(data?.pm_due_today, "neutral"),
               onOpen: () => navigate(listLinks.pmDue("today")),
             })}
             {renderKpi({
@@ -329,7 +329,7 @@ export function AnalyticsDashboardsPage() {
               context: t("hub.dashboards.context.next7"),
               value: count(data?.pm_due_next_7d.value),
               available: data?.pm_due_next_7d.available ?? false,
-              trend: periodTrend(data?.pm_due_next_7d, "up-bad"),
+              trend: periodTrend(data?.pm_due_next_7d, "neutral"),
               onOpen: () => navigate(listLinks.pmDue("next7")),
             })}
           </div>

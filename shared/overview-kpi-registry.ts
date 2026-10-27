@@ -147,7 +147,8 @@ export const OVERVIEW_KPI_REGISTRY: OverviewKpiRegistryEntry[] = [
     semanticKey: OVERVIEW_KPI_SEMANTIC_KEYS.PM_DUE_TODAY,
     catalogId: "KPI-041",
     permission: P.PM_VIEW,
-    trendSense: "up-bad",
+    // D15: a rising load of PM due today is not bad news; only "en retard" is red.
+    trendSense: "neutral",
     valueKind: "count",
     vizKind: "histogram",
     drillPath: "/pm",
