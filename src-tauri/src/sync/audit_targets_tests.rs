@@ -485,3 +485,344 @@ async fn qualification_override_audit_details_name_the_same_override_and_person_
     let verified = verify_audit_chain(&b).await.expect("verify on B");
     assert!(verified.intact, "{verified:?}");
 }
+
+/// A qualification override audit in the shape `qualification::gate::write_override` writes it.
+fn override_event(
+    target_type: &str,
+    target_id: i64,
+    details: serde_json::Value,
+) -> crate::audit::writer::AuditEventInput {
+    crate::audit::writer::AuditEventInput {
+        action_code: "qualification.override".to_string(),
+        target_type: Some(target_type.to_string()),
+        target_id: Some(target_id.to_string()),
+        actor_id: None,
+        auth_context: "step_up".to_string(),
+        result: "success".to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(details),
+    }
+}
+
+/// Events sealed by earlier versions, and rows that arrive late:
+/// - an override audit in the old shape (local ids at the top level of the details, target
+///   `work_order`) still travels and verifies on both PCs: the new detail mappings do not touch it;
+/// - a permit_role audit an earlier version kept on its PC (sealed `L2:`) stays there: only its
+///   stub travels, and both PCs verify the chain;
+/// - a permit_role audit whose permit has not reached B yet waits, then is applied with B's id of
+///   the permit once it arrives;
+/// - a PC that received the new-shape audit before its own upgrade stored the sender's sync ids
+///   unchanged in the details: after the upgrade it still verifies the sender's chain.
+#[tokio::test]
+async fn override_audits_sealed_earlier_or_received_late_keep_a_verifiable_chain() {
+    use crate::audit::chain::{reseal_kept_on_device, verify_audit_chain};
+    use crate::audit::writer::write_audit_event;
+    use crate::sync::test_support::{exec, scalar_i64, scalar_opt_text, started_device_db, RowFactory, TestServer};
+
+    let mut server = TestServer::new();
+    let a = started_device_db().await;
+    let b = started_device_db().await;
+    let mut factory_a = RowFactory::for_device(1);
+    let mut factory_b = RowFactory::for_device(2);
+    for entity in ["personnel", "work_permits", "work_orders"] {
+        for _ in 0..3 {
+            factory_b.create(&b, entity).await.expect("row on B");
+        }
+    }
+    let person = factory_a.create(&a, "personnel").await.expect("person on A");
+    let work_order = factory_a.create(&a, "work_orders").await.expect("work order on A");
+    let permit = factory_a.create(&a, "work_permits").await.expect("permit on A");
+    let text_on = |db: &'static str, sql: &'static str, sync_id: String| {
+        let conn = if db == "A" { &a } else { &b };
+        async move { scalar_opt_text(conn, sql, vec![sync_id.into()]).await }
+    };
+    let event_sync_id = |id: i64| {
+        let a = &a;
+        async move {
+            scalar_opt_text(
+                a,
+                "SELECT entity_sync_id FROM audit_events WHERE id = ?",
+                vec![id.into()],
+            )
+            .await
+            .expect("sync id")
+        }
+    };
+    const HASH: &str = "SELECT chain_hash FROM audit_events WHERE entity_sync_id = ?";
+    let count_on_b = |sync_id: String| {
+        let b = &b;
+        async move {
+            scalar_i64(
+                b,
+                "SELECT COUNT(*) FROM audit_events WHERE entity_sync_id = ?",
+                vec![sync_id.into()],
+            )
+            .await
+        }
+    };
+
+    // Old shape, as the previous version wrote it (sealed in sync form: work_order was mapped).
+    let old_shape = write_audit_event(
+        &a,
+        override_event(
+            "work_order",
+            work_order.rowid,
+            serde_json::json!({
+                "override_id": 7,
+                "personnel_id": person.rowid,
+                "user_id": null,
+                "person": "Karim B.",
+                "reason": "Ancien format",
+            }),
+        ),
+    )
+    .await
+    .expect("old shape");
+    let old_shape = event_sync_id(old_shape).await;
+    let old_hash = text_on("A", HASH, old_shape.clone()).await.expect("hash");
+    assert!(!old_hash.starts_with('L'), "old shape: sync form: {old_hash}");
+
+    // A permit_role audit an earlier version kept on A (it could not encode the target).
+    let kept = write_audit_event(
+        &a,
+        override_event(
+            "permit_role",
+            permit.rowid,
+            serde_json::json!({ "role": "isolation_apply", "reason": "Gardé sur ce PC" }),
+        ),
+    )
+    .await
+    .expect("kept");
+    let kept = event_sync_id(kept).await;
+    reseal_kept_on_device(&a, &kept).await.expect("reseal as kept");
+
+    // A new permit_role audit, in the new shape.
+    let new_shape = write_audit_event(
+        &a,
+        override_event(
+            "permit_role",
+            permit.rowid,
+            serde_json::json!({
+                "qualification_override": {
+                    "sync_id": crate::sync::identity::new_entity_sync_id(),
+                    "personnel_id": person.rowid,
+                    "user_id": null,
+                },
+                "role": "isolation_apply",
+                "reason": "Nouveau format",
+            }),
+        ),
+    )
+    .await
+    .expect("new shape");
+    let new_shape = event_sync_id(new_shape).await;
+    let new_hash = text_on("A", HASH, new_shape.clone()).await.expect("hash");
+    assert!(!new_hash.starts_with('L'), "new shape: sync form: {new_hash}");
+    assert!(verify_audit_chain(&a).await.expect("verify on A").intact);
+
+    // The permit reaches B late: its permit type (and so the permit) is held back.
+    let push_a = server.exchange("A", &a).await;
+    assert_eq!(push_a.conflicts, 0, "{push_a:?}");
+    let permit_type = scalar_opt_text(
+        &a,
+        "SELECT pt.entity_sync_id FROM permit_types pt JOIN work_permits wp ON wp.permit_type_id = pt.id \
+         WHERE wp.id = ?",
+        vec![permit.rowid.into()],
+    )
+    .await
+    .expect("permit type");
+    server.hold_back("B", &permit_type);
+    let first = server.exchange("B", &b).await;
+    assert_eq!(first.materialized.conflicts, 0, "{first:?}");
+    assert_eq!(count_on_b(old_shape.clone()).await, 1, "the old shape travels");
+    assert_eq!(count_on_b(kept.clone()).await, 0, "an event kept before stays kept");
+    assert_eq!(count_on_b(new_shape.clone()).await, 0, "the audit waits for its permit");
+    let kept_hash = text_on("A", HASH, kept.clone()).await.expect("hash");
+    assert!(kept_hash.starts_with("L2:"), "kept, in its local form: {kept_hash}");
+
+    server.release("B");
+    let second = server.exchange("B", &b).await;
+    assert_eq!(second.materialized.conflicts, 0, "{second:?}");
+    let permit_on_b = scalar_i64(
+        &b,
+        "SELECT id FROM work_permits WHERE entity_sync_id = ?",
+        vec![permit.entity_sync_id.clone().into()],
+    )
+    .await;
+    assert_ne!(
+        permit_on_b, permit.rowid,
+        "the test needs different local ids on the two PCs"
+    );
+    assert_eq!(
+        text_on(
+            "B",
+            "SELECT target_id FROM audit_events WHERE entity_sync_id = ?",
+            new_shape.clone()
+        )
+        .await,
+        Some(permit_on_b.to_string()),
+        "applied once the permit arrived, naming B's id of it"
+    );
+    let on_a = verify_audit_chain(&a).await.expect("verify on A");
+    assert!(on_a.intact, "{on_a:?}");
+    let on_b = verify_audit_chain(&b).await.expect("verify on B");
+    assert!(on_b.intact, "{on_b:?}");
+    let from_a = on_b.chains.iter().find(|c| !c.is_this_device).expect("A's chain");
+    assert_eq!(
+        (from_a.events, from_a.kept_positions),
+        (2, 1),
+        "B holds the two travelling events and the stub of the kept one"
+    );
+
+    // As B stored the event before its upgrade: the sender's sync id in the details, unchanged.
+    exec(
+        &b,
+        "UPDATE audit_events SET details_json = \
+         json_set(details_json, '$.qualification_override.personnel_id', ?) WHERE entity_sync_id = ?",
+        vec![person.entity_sync_id.clone().into(), new_shape.clone().into()],
+    )
+    .await;
+    let upgraded = verify_audit_chain(&b).await.expect("verify on B after its upgrade");
+    assert!(
+        upgraded.intact,
+        "a sync id stored by an older B is re-encoded as it is: {upgraded:?}"
+    );
+}
+
+/// Through the real writer (`qualification::gate`): a person let into a permit role and an account
+/// let onto a work order, each by an override. The sealed audit names the override by the sync id
+/// of the row just written and the subject by its local id under `$.qualification_override` (no id
+/// left at the top level), and is sealed in its sync form, so it travels.
+#[tokio::test]
+async fn the_gate_seals_override_audits_with_details_that_travel() {
+    use crate::audit::chain::verify_audit_chain;
+    use crate::qualification::gate::{
+        enforce_permit_role, record_account_work_order_override, QualificationOverrideInput,
+    };
+    use crate::qualification::requirements::{upsert_requirement, QualificationRequirementUpsertInput};
+    use crate::sync::test_support::{exec, scalar_i64, scalar_opt_text, started_device_db, RowFactory};
+
+    let db = started_device_db().await;
+    let mut factory = RowFactory::for_device(1);
+    let approver = factory.create(&db, "user_accounts").await.expect("approver").rowid;
+    let cert = factory
+        .create(&db, "certification_types")
+        .await
+        .expect("certification type")
+        .rowid;
+    let person = factory.create(&db, "personnel").await.expect("person").rowid;
+    let permit = factory.create(&db, "work_permits").await.expect("permit").rowid;
+    let work_order = factory.create(&db, "work_orders").await.expect("work order").rowid;
+    let account = factory.create(&db, "user_accounts").await.expect("account").rowid;
+    // A login without a personnel record (the factory links one).
+    exec(
+        &db,
+        "UPDATE user_accounts SET personnel_id = NULL WHERE id = ?",
+        vec![account.into()],
+    )
+    .await;
+    let requirement = |kind: &str| QualificationRequirementUpsertInput {
+        id: None,
+        expected_row_version: None,
+        target_kind: kind.into(),
+        work_order_id: None,
+        target_code: None,
+        certification_type_id: Some(cert),
+        skill_reference_value_id: None,
+        min_proficiency_level: None,
+        coverage: None,
+        notes: None,
+        is_active: None,
+    };
+    upsert_requirement(
+        &db,
+        QualificationRequirementUpsertInput {
+            target_code: Some("isolation_apply".into()),
+            ..requirement("loto_role")
+        },
+        approver,
+    )
+    .await
+    .expect("role requirement");
+    upsert_requirement(
+        &db,
+        QualificationRequirementUpsertInput {
+            work_order_id: Some(work_order),
+            coverage: Some("each".into()),
+            ..requirement("work_order")
+        },
+        approver,
+    )
+    .await
+    .expect("work order requirement");
+    let input = QualificationOverrideInput {
+        reason: "Chargé de consignation absent, sous contrôle du responsable".into(),
+        approved_by_id: approver,
+    };
+
+    let person_override = enforce_permit_role(&db, person, permit, "isolation_apply", Some(&input))
+        .await
+        .expect("permit-role override")
+        .expect("override recorded");
+    let account_override = record_account_work_order_override(&db, account, work_order, &input)
+        .await
+        .expect("account override");
+
+    for (override_id, target_type, target_id, personnel_id, user_id) in [
+        (person_override, "permit_role", permit, Some(person), None),
+        (account_override, "work_order", work_order, None, Some(account)),
+    ] {
+        let sync_id = scalar_opt_text(
+            &db,
+            "SELECT entity_sync_id FROM qualification_overrides WHERE id = ?",
+            vec![override_id.into()],
+        )
+        .await
+        .expect("override sync id");
+        let of_event = |expr: &str| {
+            format!(
+                "SELECT {expr} FROM audit_events WHERE action_code = 'qualification.override' \
+                 AND json_extract(details_json, '$.qualification_override.sync_id') = ?"
+            )
+        };
+        assert_eq!(
+            scalar_i64(&db, &of_event("COUNT(*)"), vec![sync_id.clone().into()]).await,
+            1,
+            "{target_type}: one audit names the override row by its sync id"
+        );
+        let text = |expr: &'static str| {
+            let db = &db;
+            let sql = of_event(expr);
+            let sync_id = sync_id.clone();
+            async move { scalar_opt_text(db, &sql, vec![sync_id.into()]).await }
+        };
+        assert_eq!(text("target_type").await.as_deref(), Some(target_type));
+        assert_eq!(text("target_id").await, Some(target_id.to_string()));
+        assert_eq!(
+            text("CAST(json_extract(details_json, '$.qualification_override.personnel_id') AS TEXT)").await,
+            personnel_id.map(|v| v.to_string()),
+            "{target_type}: the personnel record"
+        );
+        assert_eq!(
+            text("CAST(json_extract(details_json, '$.qualification_override.user_id') AS TEXT)").await,
+            user_id.map(|v| v.to_string()),
+            "{target_type}: the login"
+        );
+        assert_eq!(
+            text(
+                "CAST((json_type(details_json, '$.override_id') IS NOT NULL) \
+                 + (json_type(details_json, '$.personnel_id') IS NOT NULL) \
+                 + (json_type(details_json, '$.user_id') IS NOT NULL) AS TEXT)"
+            )
+            .await
+            .as_deref(),
+            Some("0"),
+            "{target_type}: no local id left at the top level"
+        );
+        let hash = text("chain_hash").await.expect("sealed");
+        assert!(!hash.starts_with('L'), "{target_type}: sealed in its sync form: {hash}");
+    }
+    assert!(verify_audit_chain(&db).await.expect("verify").intact);
+}
