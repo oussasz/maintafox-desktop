@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -224,5 +227,14 @@ describe("AnalyticsDashboardsPage", () => {
     expect(await isRed("hub.dashboards.kpi.pmDueToday")).toBe(false);
     expect(await isRed("hub.dashboards.kpi.pmDueNext7d")).toBe(false);
     expect(await isRed("hub.dashboards.kpi.pmOverdue")).toBe(true);
+  });
+
+  it("takes every trend sense from the KPI registry: no sense literal in the page source", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/pages/analytics/AnalyticsDashboardsPage.tsx"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/periodTrend\([^)]*"(up-good|up-bad|neutral)"/s);
+    expect(source).not.toMatch(/"up-(good|bad)"/);
   });
 });

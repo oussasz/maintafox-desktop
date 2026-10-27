@@ -8,9 +8,13 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  ANALYTICS_HUB_KPI_REGISTRY,
   DEFAULT_KPI_STABLE_BELOW,
   OVERVIEW_KPI_REGISTRY,
   SMRP_KPI_REGISTRY,
+  hubCatalogId,
+  hubStableBelow,
+  hubTrendSense,
 } from "@shared/overview-kpi-registry";
 
 const catalog = readFileSync(
@@ -41,6 +45,31 @@ describe("KPI catalog matches the registry", () => {
       sense: e.trendSense,
     })),
   ];
+
+  // The hub tiles read the same fields through the accessors the screen uses.
+  const hubEntries = ANALYTICS_HUB_KPI_REGISTRY.map((e) => ({
+    key: e.key,
+    id: hubCatalogId(e.key) ?? "",
+    band: hubStableBelow(e.key),
+    sense: hubTrendSense(e.key),
+  }));
+
+  it.each(hubEntries)("hub $key ($id): stable band and trend sense", ({ id, band, sense }) => {
+    expect(id, "hub tile without a catalog id").toMatch(/^KPI-\d{3}$/);
+    const sec = section(id);
+    expect(field(sec, "Stable band")).toContain(`±${band} `);
+    const written = field(sec, "Trend sense");
+    expect(written, `${id} has no Trend sense in the catalog`).not.toBe("");
+    expect(written.startsWith(sense)).toBe(true);
+  });
+
+  it("a hub tile sharing an Overview figure holds no sense or band of its own", () => {
+    for (const e of ANALYTICS_HUB_KPI_REGISTRY) {
+      if ("overviewKey" in e) {
+        expect(Object.keys(e).sort()).toEqual(["key", "overviewKey"]);
+      }
+    }
+  });
 
   it.each(entries)("$id: stable band and trend sense", ({ id, band, sense }) => {
     const sec = section(id);
