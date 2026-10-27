@@ -6648,7 +6648,11 @@ async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_ga
     assert_eq!(text(&db, &applied_status).await, None, "waits for its permit");
     exec(&db, "DELETE FROM sync_inbox WHERE server_batch_id = 'b-n4-delta'").await;
 
-    // By a snapshot this PC asked for: applied as the plant holds it.
+    // By the snapshot of this PC's first join (activated, no complete pull yet): applied as the
+    // plant holds it (`wo::closeout_sync` judges a snapshot only once the PC has joined).
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
     exec(&db, &insert("snapshot-all-n4", 6)).await;
     let (_, conflicts) = inbox_pass(&db).await;
     assert_eq!(conflicts, 0);

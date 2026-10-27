@@ -69,12 +69,15 @@
 //!
 //! The state judged is the one held here: a row identical to the local one passes (sent again).
 //!
-//! A work order new here received by a snapshot this PC asked for (joining the plant, or
-//! bootstrapping again; `sync::materialize::applying_snapshot_row`) is the plant's history, already
-//! judged on the PCs that held it: it is applied with its children (R2), and neither it (R3 / R4)
-//! nor its children that came with the snapshot (R5-R7, the verifier rules) are judged again, so a
-//! PC joining never refuses a work order closed before these rules existed; a child received as a
-//! change since, applied in that group, is judged. Snapshot pages are all stored before any is
+//! A work order new here received by the snapshot of this PC's first join
+//! (`sync::materialize::applying_snapshot_row`, no complete pull recorded yet for the organisation
+//! it is activated for, nothing of that work order held here: `sync::plant_join::first_join_history`)
+//! is the plant's history, already judged on the PCs that held it: it is applied with its children
+//! (R2), and neither it (R3 / R4) nor its children that came with the snapshot (R5-R7, the verifier
+//! rules) are judged again, so a PC joining never refuses a work order closed before these rules
+//! existed; a child received as a change since, applied in that group, is judged. A snapshot
+//! received once this PC has joined (a re-bootstrap after the server refused its checkpoint), or on
+//! a PC with no activation, is judged like any received change. Snapshot pages are all stored before any is
 //! applied (`sync::transport::worker`), so a work order always finds its children in the inbox,
 //! whatever the order of the pages.
 
@@ -162,13 +165,33 @@ pub(crate) struct CloseoutEntry {
     pub target: CloseoutTarget,
     /// Its status here before the change (`None`: new here).
     pub previous_status: Option<String>,
-    /// Judged (R3 / R4, and its children by R5-R7): not for a work order new here received by a
-    /// snapshot.
+    /// Judged (R3 / R4, and its children by R5-R7): not for a work order new here received by the
+    /// snapshot of this PC's first join ([`first_join_snapshot_history`]).
     pub judged: bool,
 }
 
 fn sync_err(e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("close-out re-check of a received row: {e}"))
+}
+
+/// Whether the received work order (not held here: the caller checks it) is the plant's history of
+/// this PC's first join, applied without R3 / R4 and with its snapshot children unjudged: a
+/// snapshot row is being applied (`sync::materialize::applying_snapshot_row`), this PC is
+/// activated, it has not completed a full pull of the organisation it is activated for, and
+/// nothing of that work order is held here (`sync::plant_join::first_join_history`). A snapshot
+/// received again once the PC has joined (a re-bootstrap after the server refused its checkpoint)
+/// is judged as any received change. Fail safe: a PC with no activation judges.
+async fn first_join_snapshot_history(conn: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<bool> {
+    if !crate::sync::materialize::applying_snapshot_row() {
+        return Ok(false);
+    }
+    let activated = crate::commands::product_license::get_activation_claim_tenant_id(conn)
+        .await?
+        .is_some_and(|tenant| !tenant.trim().is_empty());
+    if !activated {
+        return Ok(false);
+    }
+    crate::sync::plant_join::first_join_history(conn, "work_orders", entity_sync_id).await
 }
 
 /// R1: `Some` when the received work order (its local copy overlaid by the row) changes status
@@ -218,7 +241,7 @@ pub(crate) async fn closeout_entry(
         "cancelled" => CloseoutTarget::Cancelled,
         _ => CloseoutTarget::Other,
     };
-    let judged = local.is_some() || !crate::sync::materialize::applying_snapshot_row();
+    let judged = local.is_some() || !first_join_snapshot_history(conn, entity_sync_id).await?;
     Ok(Ok(Some(CloseoutEntry {
         wo_sync_id: entity_sync_id.to_string(),
         target,
@@ -622,8 +645,8 @@ pub(crate) async fn inbound_closeout_child_check(
     let parent = parent_of(conn, &wo_sync).await?;
     let code = match &parent {
         Parent::Missing => return Ok(None),
-        // Snapshot history: applied as the plant holds it — a child that came with the snapshot too;
-        // one received as a change since is judged (review N1).
+        // First-join snapshot history (its parent's decision): applied as the plant holds it — a
+        // child that came with the snapshot too; one received as a change since is judged (review N1).
         Parent::InGroup { judged: false, .. } if crate::sync::materialize::applying_snapshot_row() => return Ok(None),
         Parent::InGroup { code, .. } | Parent::Held { code, .. } => code.clone(),
     };
