@@ -940,8 +940,11 @@ pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
     let fd_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT symptom_id, failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined \
-             FROM work_order_failure_details WHERE work_order_id = ? ORDER BY id DESC LIMIT 1",
+            format!(
+                "SELECT symptom_id, failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined \
+                 FROM work_order_failure_details WHERE id = {}",
+                crate::wo::closeout::failure_detail_of_wo_sql("?")
+            ),
             [wo_id.into()],
         ))
         .await?;
@@ -1947,12 +1950,13 @@ pub async fn list_wos_missing_failure_mode(
     let mut sql = format!(
         "SELECT wo.id AS work_order_id, wo.equipment_id, wo.closed_at, wot.code AS type_code
          FROM work_orders wo
-         INNER JOIN work_order_failure_details wfd ON wfd.work_order_id = wo.id
+         INNER JOIN work_order_failure_details wfd ON wfd.id = {}
          INNER JOIN reference_values wot ON wot.id = wo.type_id
          WHERE wo.closed_at IS NOT NULL
            AND wo.equipment_id IS NOT NULL
            AND wfd.failure_mode_id IS NULL
            AND {}",
+        crate::wo::closeout::failure_detail_of_wo_sql("wo.id"),
         crate::wo::types::tag_is_nature_sql("wot.semantic_tag", &crate::wo::types::MaintenanceNature::CORRECTIVE)
     );
     let mut vals: Vec<sea_orm::Value> = Vec::new();

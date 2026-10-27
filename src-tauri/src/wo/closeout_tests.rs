@@ -1332,4 +1332,126 @@ pub(crate) mod tests {
         assert_eq!(cost.try_get::<f64>("", "service_cost_input").expect("cost"), 120.0);
         assert_eq!(cost.try_get::<i64>("", "row_version").expect("rv"), rv + 1);
     }
+
+    /// #185 N-R2-2 interim (CMMS Advisor 2026-10-27): a work order coded on two PCs before they
+    /// synced holds two failure-coding rows. Whatever order they were inserted in, every reader
+    /// uses the same one (`closeout::failure_detail_of_wo_sql`): the close-out form and gate, the
+    /// reliability "missing failure mode" list, and the save that edits it. Nothing is merged.
+    #[tokio::test]
+    async fn two_failure_coding_rows_are_read_as_the_same_one_whatever_their_order() {
+        let mut seen = Vec::new();
+        for a_first in [true, false] {
+            let db = setup().await;
+            let (wo_id, _) = create_wo_in_progress(&db).await;
+            clear_rams_for_close_gate(&db, wo_id).await;
+            let (mode_id, _) = crate::wo::gap06_regression_tests::tests::ensure_failure_mode_and_cause_ids(&db).await;
+            // Row "fd-n-r2-2-a" is coded (failure mode), row "fd-n-r2-2-b" is not.
+            let a = ("fd-n-r2-2-a", Some(mode_id), "A");
+            let b = ("fd-n-r2-2-b", None::<i64>, "B");
+            let rows = if a_first { [a, b] } else { [b, a] };
+            for (sync_id, mode, notes) in rows {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO work_order_failure_details (work_order_id, failure_mode_id, notes, entity_sync_id) \
+                     VALUES (?, ?, ?, ?)",
+                    [wo_id.into(), mode.into(), notes.into(), sync_id.into()],
+                ))
+                .await
+                .expect("coding row");
+            }
+
+            // The close-out form shows the chosen row first.
+            let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+            assert_eq!(details.len(), 2, "nothing merged or deleted");
+            assert_eq!(details[0].notes.as_deref(), Some("A"), "a_first: {a_first}");
+
+            // The close-out gate reads the coded row: no "failure mode required".
+            let evidence = crate::wo::closeout::CloseEvidence {
+                closer_user_id: Some(admin_id(&db).await),
+                no_downtime_attestation: None,
+                no_downtime_attestation_reason: None,
+                fmeca_override_reason: None,
+                fmeca_override_signer_id: None,
+                fmeca_override_signer_password: crate::wo::closeout::SignerPassword::Given(None),
+            };
+            let rpn = crate::reliability::advanced_rams::queries::fmeca_rpn_critical_threshold_i64_in(&db)
+                .await
+                .expect("rpn");
+            let refusals = closeout::close_preflight(&db, wo_id, &evidence, rpn)
+                .await
+                .expect("preflight")
+                .0;
+            assert!(
+                !refusals
+                    .iter()
+                    .any(|m| m.starts_with("GATE_CLOSEOUT_FAILURE_MODE_REQUIRED")),
+                "a_first: {a_first}: {refusals:?}"
+            );
+
+            // The reliability list of closed corrective work orders without a failure mode.
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET closed_at = '2026-10-27T00:00:00Z' WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("closed at");
+            let missing = crate::reliability::queries::list_wos_missing_failure_mode(&db, None, None)
+                .await
+                .expect("missing failure mode");
+            assert!(
+                missing.iter().all(|r| r.work_order_id != wo_id),
+                "a_first: {a_first}: {missing:?}"
+            );
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET closed_at = NULL WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("reopen");
+
+            // A save edits the chosen row, never the other one.
+            let rv = closeout::wo_row_version(&db, wo_id).await.expect("rv");
+            closeout::save_failure_detail(
+                &db,
+                SaveFailureDetailInput {
+                    wo_id,
+                    expected_row_version: rv,
+                    symptom_id: None,
+                    failure_mode_id: Some(mode_id),
+                    failure_cause_id: None,
+                    failure_effect_id: None,
+                    is_temporary_repair: false,
+                    is_permanent_repair: true,
+                    cause_not_determined: false,
+                    notes: Some("A edited".into()),
+                },
+            )
+            .await
+            .expect("save");
+            let by_sync: Vec<(String, Option<String>)> = db
+                .query_all(Statement::from_string(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT entity_sync_id, notes FROM work_order_failure_details \
+                         WHERE work_order_id = {wo_id} ORDER BY entity_sync_id"
+                    ),
+                ))
+                .await
+                .expect("rows")
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get_by_index(0).expect("sync"),
+                        r.try_get_by_index(1).expect("notes"),
+                    )
+                })
+                .collect();
+            seen.push(by_sync);
+        }
+        assert_eq!(seen[0], seen[1], "the same row edited in both orders");
+        assert_eq!(seen[0][0].1.as_deref(), Some("A edited"));
+        assert_eq!(seen[0][1].1.as_deref(), Some("B"));
+    }
 }

@@ -1135,8 +1135,11 @@ pub(crate) async fn collect_completion_gates(
         let fd_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT symptom_id, failure_mode_id, cause_not_determined \
-                 FROM work_order_failure_details WHERE work_order_id = ?",
+                format!(
+                    "SELECT symptom_id, failure_mode_id, cause_not_determined \
+                     FROM work_order_failure_details WHERE id = {}",
+                    crate::wo::closeout::failure_detail_of_wo_sql("?")
+                ),
                 [wo_id.into()],
             ))
             .await?;
