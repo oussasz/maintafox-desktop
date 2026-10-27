@@ -1194,3 +1194,63 @@ async fn a_work_order_deleted_by_sync_closes_its_item() {
     );
     assert_eq!(items[0].record_id, None, "the work order is gone");
 }
+
+/// #187 LC-N1: an item closed as `other` (its work order moved to equipment in service) keeps that
+/// closure and its time when the work order is cancelled later: the later cancellation is not what
+/// closed it.
+#[tokio::test]
+async fn an_item_closed_as_other_keeps_its_closure_when_the_record_ends_later() {
+    let (_, target, sid) = target_with_received_work_order().await;
+    let wo_id = local_id(&target, "work_orders", &sid).await;
+    exec(
+        &target,
+        "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+         created_at, updated_at) VALUES (2, 'test-eq-lcn1-002', 'EQ-LCN1-002', 'Spare pump', 'active_in_service', 1, \
+         datetime('now'), datetime('now'))",
+        vec![],
+    )
+    .await;
+    const MOVED_AT: &str = "2026-10-21T00:00:00Z";
+    exec(
+        &target,
+        "UPDATE work_orders SET equipment_id = 2, updated_at = ?, row_version = row_version + 1 WHERE id = ?",
+        vec![MOVED_AT.into(), wo_id.into()],
+    )
+    .await;
+    let key = ReviewKey::work_order(&sid);
+    let tx = target.begin().await.expect("begin");
+    review::reconcile_in(&tx, &key).await.expect("reconcile");
+    tx.commit().await.expect("commit");
+    let moved = item(&target, &key).await;
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].status, "closed");
+    assert_eq!(moved[0].closure_kind.as_deref(), Some(review::CLOSURE_OTHER));
+    assert_eq!(moved[0].closed_at.as_deref(), Some(MOVED_AT));
+
+    let wo = crate::wo::queries::get_work_order(&target, wo_id)
+        .await
+        .expect("get")
+        .expect("wo");
+    crate::wo::queries::cancel_work_order(
+        &target,
+        crate::wo::domain::WoCancelInput {
+            id: wo_id,
+            expected_row_version: wo.row_version,
+            actor_id: admin_id(&target).await,
+            cancel_reason: "No longer needed".into(),
+        },
+    )
+    .await
+    .expect("cancel");
+
+    let after = item(&target, &key).await;
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        after[0].closure_kind.as_deref(),
+        Some(review::CLOSURE_OTHER),
+        "still other"
+    );
+    assert_eq!(after[0].closed_at.as_deref(), Some(MOVED_AT), "the stored closure time");
+    assert_eq!(after[0].closed_by, None);
+    assert_eq!(after[0].closure_note, None);
+}
