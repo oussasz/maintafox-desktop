@@ -1336,3 +1336,33 @@ async fn a_move_and_a_cancellation_received_together_or_apart_show_the_same_clos
         assert_eq!(items[0].closed_by, None, "{name}");
     }
 }
+
+// ── AU-112: the Requests page lists the requests only ───────────────────────────────────────────
+
+#[tokio::test]
+async fn the_requests_only_scope_lists_no_work_order() {
+    let source = pc().await;
+    let target = pc().await;
+    retire_here(&target).await;
+    watch(&target).await;
+    let (_, wo_sid) = work_order_on(&source).await;
+    let (_, di_sid) = request_on(&source).await;
+    for (entity, sid) in [("work_orders", &wo_sid), ("intervention_requests", &di_sid)] {
+        let outcome = apply(&target, entity, sid, &wire(&source, entity, sid).await).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    }
+    assert_eq!(list(&target, true).await.len(), 2, "both, plant-wide");
+
+    // What `list_retired_equipment_reviews(requests_only)` passes: no work-order scope.
+    let requests_only = review::list_reviews(
+        &target,
+        &AccessScope::Subtrees(Default::default()),
+        &AccessScope::Everywhere,
+        true,
+    )
+    .await
+    .expect("list");
+    let keys: Vec<&str> = requests_only.items.iter().map(|i| i.review_key.as_str()).collect();
+    assert_eq!(keys, vec![format!("di|{di_sid}").as_str()]);
+    assert_eq!(requests_only.closed_count, 0);
+}
