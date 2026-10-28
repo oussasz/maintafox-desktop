@@ -117,7 +117,7 @@ describe("QualificationMatrixView", () => {
     render(<QualificationMatrixView teams={[]} companies={[]} />);
     expect(
       await screen.findByRole("button", {
-        name: "Samir Sous-traitant — Electrical B2V: Expired, level , expires 2026-09-30",
+        name: "Samir Sous-traitant — Electrical B2V: Expired, level , expires 30/09/2026",
       }),
     ).toBeInTheDocument();
     expect(
@@ -135,7 +135,7 @@ describe("QualificationMatrixView", () => {
     render(<QualificationMatrixView teams={[]} companies={[]} />);
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Samir Sous-traitant — Electrical B2V: Expired, level , expires 2026-09-30",
+        name: "Samir Sous-traitant — Electrical B2V: Expired, level , expires 30/09/2026",
       }),
     );
     expect(screen.getByRole("dialog")).toHaveTextContent("sheet:Samir Sous-traitant:1");

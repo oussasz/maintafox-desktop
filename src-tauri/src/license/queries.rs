@@ -285,12 +285,12 @@ pub async fn apply_admin_license_action(
     let action = input.action.trim().to_lowercase();
     if !matches!(action.as_str(), "suspend" | "revoke" | "reactivate") {
         return Err(AppError::ValidationFailed(vec![
-            "action must be one of: suspend, revoke, reactivate.".to_string(),
+            "GATE_LIC_ACTION_INVALID: action must be one of: suspend, revoke, reactivate.".to_string(),
         ]));
     }
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "reason is required for admin license action.".to_string(),
+            "GATE_LIC_REASON_REQUIRED: reason is required for admin license action.".to_string(),
         ]));
     }
     let now = chrono::Utc::now().to_rfc3339();
@@ -328,7 +328,7 @@ pub async fn apply_admin_license_action(
     if let Some(expected) = input.expected_entitlement_state.as_deref() {
         if expected != entitlement_state_before {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Entitlement state mismatch: expected '{expected}', found '{}'.",
+                "GATE_LIC_ENTITLEMENT_STATE_MISMATCH: Entitlement state mismatch: expected '{expected}', found '{}'.",
                 entitlement_state_before
             )]));
         }
@@ -336,7 +336,7 @@ pub async fn apply_admin_license_action(
     if let Some(expected) = input.expected_activation_state.as_deref() {
         if expected != activation_state_before {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Activation state mismatch: expected '{expected}', found '{}'.",
+                "GATE_LIC_ACTIVATION_STATE_MISMATCH: Activation state mismatch: expected '{expected}', found '{}'.",
                 activation_state_before
             )]));
         }

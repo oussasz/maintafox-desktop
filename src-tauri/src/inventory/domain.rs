@@ -1140,7 +1140,9 @@ pub struct InventoryCountSession {
     pub warehouse_id: i64,
     pub location_id: Option<i64>,
     pub status: String,
-    pub critical_abs_threshold: f64,
+    /// Critical variance (a quantity) the session was opened with, before the four-eyes tolerance
+    /// (migration 259): history only; `None` for sessions opened since.
+    pub critical_abs_threshold: Option<f64>,
     pub submitted_by_id: Option<i64>,
     pub submitted_at: Option<String>,
     pub posted_by_id: Option<i64>,
@@ -1167,6 +1169,8 @@ pub struct InventoryCountLine {
     pub counted_qty: f64,
     pub variance_qty: f64,
     pub variance_reason_code: Option<String>,
+    /// 1: the variance is above the four-eyes tolerance (`inventory::count_four_eyes`), judged
+    /// when the quantity was entered.
     pub is_critical: i64,
     pub approval_required: i64,
     pub approved_by_id: Option<i64>,
@@ -1174,6 +1178,20 @@ pub struct InventoryCountLine {
     pub approved_by_name: Option<String>,
     pub approved_at: Option<String>,
     pub approval_note: Option<String>,
+    /// Who entered the counted quantity (the signed-in person; `None` before migration 259).
+    pub counted_by_id: Option<i64>,
+    pub counted_by_name: Option<String>,
+    /// 1: an "auto-approbation", derived on read on every PC (CMMS Advisor Q13,
+    /// `count_four_eyes::SELF_APPROVED_ON_READ_SQL`): flagged where it was approved (above the
+    /// tolerance under the site's four-eyes opt-out), or its variance approved by its own counter.
+    pub self_approved: i64,
+    /// The second approval of a self-approved variance above the tolerance, by someone other than
+    /// its counter, given where the count is applied so that a PC where four-eyes applies accepts
+    /// it (CMMS Advisor Q8).
+    pub second_approved_by_id: Option<i64>,
+    pub second_approved_by_name: Option<String>,
+    pub second_approved_at: Option<String>,
+    pub second_approval_note: Option<String>,
     pub posted_transaction_id: Option<i64>,
     pub reversed_transaction_id: Option<i64>,
     pub row_version: i64,
@@ -1226,6 +1244,12 @@ pub struct UpsertInventoryCountLineInput {
     pub location_id: i64,
     pub counted_qty: f64,
     pub variance_reason_code: Option<String>,
+    /// Version of the line the entry is made against: `None` for the first entry of the article at
+    /// the location, the line's `row_version` to enter it again (AU-68).
+    pub expected_row_version: Option<i64>,
+    /// The counter: always the signed-in user, set by the command (never a value from the UI).
+    #[serde(default)]
+    pub actor_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1241,6 +1265,16 @@ pub struct TransitionInventoryCountSessionInput {
 pub struct ApproveInventoryCountLineInput {
     pub line_id: i64,
     pub expected_row_version: i64,
+    pub reviewer_id: i64,
+    pub reviewer_evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecondApproveInventoryCountLineInput {
+    pub line_id: i64,
+    pub expected_row_version: i64,
+    /// The second approver: always the signed-in user (command layer), never a value of the screen.
+    #[serde(default)]
     pub reviewer_id: i64,
     pub reviewer_evidence: String,
 }

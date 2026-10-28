@@ -458,19 +458,23 @@ pub async fn ensure_active_currency(conn: &impl ConnectionTrait, code: &str) -> 
 pub fn checked_currency_metadata(code: &str, metadata_json: Option<&str>) -> AppResult<String> {
     crate::inventory::fx::normalize_currency_code(code)?;
     let meta: serde_json::Value = match metadata_json.map(str::trim).filter(|m| !m.is_empty()) {
-        Some(m) => serde_json::from_str(m)
-            .map_err(|_| AppError::ValidationFailed(vec!["The currency details are not valid JSON.".into()]))?,
+        Some(m) => serde_json::from_str(m).map_err(|_| {
+            AppError::ValidationFailed(vec![
+                "GATE_REF_CURRENCY_DETAILS_INVALID: The currency details are not valid JSON.".into(),
+            ])
+        })?,
         None => serde_json::Value::Object(serde_json::Map::new()),
     };
     let Some(obj) = meta.as_object() else {
         return Err(AppError::ValidationFailed(vec![
-            "The currency details must be an object.".into(),
+            "GATE_REF_CURRENCY_DETAILS_INVALID: The currency details must be an object.".into(),
         ]));
     };
     let minor = obj.get("minor_units").and_then(serde_json::Value::as_i64);
     if !matches!(minor, Some(0..=4)) {
         return Err(AppError::ValidationFailed(vec![
-            "A currency needs its number of minor units (0 to 4, e.g. 2 for cents).".into(),
+            "GATE_REF_CURRENCY_MINOR_UNITS: A currency needs its number of minor units (0 to 4, e.g. 2 for cents)."
+                .into(),
         ]));
     }
     if let Some(symbol) = obj.get("symbol") {
@@ -478,7 +482,7 @@ pub fn checked_currency_metadata(code: &str, metadata_json: Option<&str>) -> App
             Some(s) if !s.trim().is_empty() && s.chars().count() <= 8 => {}
             _ => {
                 return Err(AppError::ValidationFailed(vec![
-                    "The currency symbol must be 1 to 8 characters.".into(),
+                    "GATE_REF_CURRENCY_SYMBOL_LENGTH: The currency symbol must be 1 to 8 characters.".into(),
                 ]))
             }
         }

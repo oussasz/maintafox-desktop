@@ -9,6 +9,7 @@ import { useLookupOptions } from "@/components/inventory/use-lookup-options";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,7 @@ import {
   type InventoryCountLineRow,
   approveInventoryCountLine,
   createInventoryCountSession,
+  getInventoryCountTolerance,
   listInventoryArticles,
   listInventoryCountLines,
   listInventoryCountSessions,
@@ -47,11 +49,13 @@ import {
   postInventoryCountSession,
   reverseInventoryCountSession,
   runInventoryReconciliation,
+  secondApproveInventoryCountLine,
   transitionInventoryCountSession,
   upsertInventoryCountLine,
 } from "@/services/inventory-service";
 import type {
   InventoryCountSession,
+  InventoryCountTolerance,
   InventoryReconciliationFinding,
   InventoryReconciliationRun,
   InventoryTransaction,
@@ -78,7 +82,7 @@ export interface InventoryControlsPanelProps {
 export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPanelProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
-  const { formatDateTime, formatNumber } = useFormatters();
+  const { formatCurrency, formatDateTime, formatNumber } = useFormatters();
   const { info } = useSession();
   const varianceReasons = useLookupOptions("inventory.variance_reason");
   const movementReasons = useLookupOptions("inventory.movement_type");
@@ -86,6 +90,8 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [articles, setArticles] = useState<InventoryArticleRow[]>([]);
   const [sessions, setSessions] = useState<InventoryCountSession[]>([]);
+  /** The plant's four-eyes tolerance (Settings › Inventory); null until loaded. */
+  const [tolerance, setTolerance] = useState<InventoryCountTolerance | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [lines, setLines] = useState<InventoryCountLineRow[]>([]);
   const [linesError, setLinesError] = useState<unknown>(null);
@@ -106,6 +112,8 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const [lineVarianceReasonCode, setLineVarianceReasonCode] = useState("");
   const [approvalLine, setApprovalLine] = useState<InventoryCountLineRow | null>(null);
   const [approvalEvidence, setApprovalEvidence] = useState("");
+  /** The approval asked: of a variance, or the second approval of a self-approved one. */
+  const [approvalKind, setApprovalKind] = useState<"first" | "second">("first");
   const [sessionReversalReason, setSessionReversalReason] = useState("");
   const [reverseConfirmOpen, setReverseConfirmOpen] = useState(false);
 
@@ -133,7 +141,7 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows] =
+      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows, toleranceRow] =
         await Promise.all([
           listInventoryWarehouses(),
           listInventoryLocations(null),
@@ -141,7 +149,9 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
           listInventoryCountSessions(),
           listInventoryReconciliationRuns(),
           listInventoryTransactions({ source_type: "COUNT_SESSION", limit: COUNT_TRACE_LIMIT }),
+          getInventoryCountTolerance(),
         ]);
+      setTolerance(toleranceRow);
       setWarehouses(warehouseRows.filter((row) => row.is_active === 1));
       setLocations(locationRows.filter((row) => row.is_active === 1));
       setArticles(articleRows.filter((row) => row.is_active === 1));
@@ -230,6 +240,15 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
   const approveSelectedLine = async () => {
     if (!approvalLine || !approvalEvidence.trim()) return;
     const ok = await withSave(async () => {
+      if (approvalKind === "second") {
+        // The backend records the signed-in user as the second approver.
+        await secondApproveInventoryCountLine({
+          line_id: approvalLine.id,
+          expected_row_version: approvalLine.row_version,
+          reviewer_evidence: approvalEvidence.trim(),
+        });
+        return;
+      }
       await approveInventoryCountLine({
         line_id: approvalLine.id,
         expected_row_version: approvalLine.row_version,
@@ -243,9 +262,44 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
     setApprovalEvidence("");
   };
 
+  /** The four-eyes tolerance in words: the thresholds set, or "not set: every variance". */
+  const toleranceText = (() => {
+    if (!tolerance) return "";
+    const parts: string[] = [];
+    if (tolerance.value_threshold != null) {
+      parts.push(
+        t("controls.fourEyes.value", { value: formatCurrency(tolerance.value_threshold) }),
+      );
+    }
+    if (tolerance.percent_threshold != null) {
+      parts.push(
+        t("controls.fourEyes.percent", {
+          value: formatNumber(tolerance.percent_threshold, { maximumFractionDigits: 6 }),
+        }),
+      );
+    }
+    return parts.length > 0
+      ? t("controls.fourEyes.set", { thresholds: parts.join(t("controls.fourEyes.or")) })
+      : t("controls.fourEyes.notSet");
+  })();
+
   const pendingApprovals = lines.filter(
     (line) => line.approval_required === 1 && line.approved_by_id === null,
   ).length;
+
+  /**
+   * A second approval may be given to a posted, unreversed variance approved by its own counter
+   * (needed above the four-eyes tolerance, optional within it), by someone else: hidden from the
+   * counter, who approved it (the backend refuses them too).
+   */
+  const canSecondApprove = (line: InventoryCountLineRow) =>
+    line.second_approved_by_id === null &&
+    Math.abs(line.variance_qty) > 1e-9 &&
+    line.counted_by_id !== null &&
+    line.approved_by_id === line.counted_by_id &&
+    line.posted_transaction_id !== null &&
+    line.reversed_transaction_id === null &&
+    info?.user_id !== line.counted_by_id;
 
   const lineColumns: ColumnDef<InventoryCountLineRow>[] = [
     {
@@ -289,10 +343,21 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
       header: t("controls.lines.columns.critical"),
       cell: ({ row }) =>
         row.original.is_critical === 1 ? (
-          <StatusChip label={t("controls.lines.critical")} tone="danger" />
+          <span title={t("controls.lines.criticalMeaning")}>
+            <StatusChip label={t("controls.lines.critical")} tone="danger" />
+          </span>
         ) : (
           <StatusChip label={t("controls.lines.normal")} tone="neutral" />
         ),
+    },
+    {
+      id: "counted_by",
+      header: t("controls.lines.columns.countedBy"),
+      cell: ({ row }) => (
+        <span className="text-xs">
+          {row.original.counted_by_name ?? t("controls.lines.counterNotRecorded")}
+        </span>
+      ),
     },
     {
       id: "review",
@@ -301,11 +366,51 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
         const line = row.original;
         if (line.approved_by_id !== null) {
           return (
-            <span className="text-xs" title={line.approval_note ?? undefined}>
+            <span
+              className="flex flex-wrap items-center gap-1 text-xs"
+              title={line.approval_note ?? undefined}
+            >
               {t("controls.lines.approvedBy", {
                 name: line.approved_by_name ?? t("controls.lines.unknownReviewer"),
                 date: line.approved_at ? formatDateTime(line.approved_at) : "—",
               })}
+              {line.self_approved === 1 ? (
+                <span title={t("controls.lines.selfApprovedMeaning")}>
+                  <StatusChip label={t("controls.lines.selfApproved")} tone="warning" />
+                </span>
+              ) : null}
+              {line.second_approved_by_id !== null ? (
+                <span title={line.second_approval_note ?? undefined}>
+                  {t("controls.lines.secondApprovedBy", {
+                    name: line.second_approved_by_name ?? t("controls.lines.unknownReviewer"),
+                    date: line.second_approved_at ? formatDateTime(line.second_approved_at) : "—",
+                  })}
+                </span>
+              ) : canSecondApprove(line) ? (
+                <PermissionGate permission={P.INV_MANAGE} fallback={null}>
+                  <Button
+                    variant="outline"
+                    className="h-9"
+                    disabled={saving}
+                    title={t(
+                      line.is_critical === 1
+                        ? "controls.lines.secondApproveMeaning"
+                        : "controls.lines.secondApproveOptionalMeaning",
+                    )}
+                    onClick={() => {
+                      setApprovalKind("second");
+                      setApprovalLine(line);
+                      setApprovalEvidence("");
+                    }}
+                  >
+                    {t(
+                      line.is_critical === 1
+                        ? "controls.lines.secondApprove"
+                        : "controls.lines.secondApproveOptional",
+                    )}
+                  </Button>
+                </PermissionGate>
+              ) : null}
             </span>
           );
         }
@@ -326,6 +431,7 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
               className="h-9"
               disabled={saving}
               onClick={() => {
+                setApprovalKind("first");
                 setApprovalLine(line);
                 setApprovalEvidence("");
               }}
@@ -441,11 +547,14 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
         <section className="rounded-md border p-4">
           <h3 className="mb-1 text-sm font-semibold">{t("controls.sessions.title")}</h3>
           <p className="mb-1 text-xs text-text-muted">{t("controls.sessions.hint")}</p>
-          <p className="mb-3 text-xs text-text-muted">
+          <p className="mb-1 text-xs text-text-muted">
             {t("controls.sessions.criticalFromSettings")}{" "}
             <Link to={INVENTORY_SETTINGS_PATH} className="underline underline-offset-2">
               {t("controls.setInSettings")}
             </Link>
+          </p>
+          <p className="mb-3 text-xs text-text-secondary" data-testid="inv-cc-four-eyes-tolerance">
+            {toleranceText}
           </p>
           <div className="grid gap-2 md:grid-cols-3">
             <div className="space-y-1">
@@ -544,16 +653,18 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   tone={toneOf(COUNT_SESSION_STATUS_TONE, selectedSession.status)}
                   dot
                 />
-                <span
-                  className="text-xs text-text-secondary"
-                  data-testid="inv-cc-session-threshold"
-                >
-                  {t("controls.sessions.criticalThresholdOfSession", {
-                    value: formatNumber(selectedSession.critical_abs_threshold, {
-                      maximumFractionDigits: 6,
-                    }),
-                  })}
-                </span>
+                {selectedSession.critical_abs_threshold != null ? (
+                  <span
+                    className="text-xs text-text-secondary"
+                    data-testid="inv-cc-session-threshold"
+                  >
+                    {t("controls.sessions.criticalThresholdOfSession", {
+                      value: formatNumber(selectedSession.critical_abs_threshold, {
+                        maximumFractionDigits: 6,
+                      }),
+                    })}
+                  </span>
+                ) : null}
                 {selectedSession.status === "draft" ? (
                   <Button
                     variant="outline"
@@ -578,7 +689,10 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   <Button
                     variant="outline"
                     className="h-11"
-                    disabled={saving}
+                    // The count is approved once every variance has its reviewer's approval (the
+                    // server refuses it otherwise, and also requires the reviewer's note, which
+                    // the line approval always records); the pending count is shown above the lines.
+                    disabled={saving || pendingApprovals > 0}
                     onClick={() => transitionSession("approved")}
                   >
                     {t("controls.sessions.approve")}
@@ -677,13 +791,12 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                   <Label htmlFor="inv-cl-qty" className="text-xs">
                     {t("controls.lines.countedQty")}
                   </Label>
-                  <Input
+                  <DecimalField
                     id="inv-cl-qty"
-                    type="number"
+                    decimals={3}
                     min={0}
-                    step="0.01"
                     value={lineCountQty}
-                    onChange={(e) => setLineCountQty(Number(e.target.value || 0))}
+                    onValueChange={(v) => setLineCountQty(v ?? 0)}
                   />
                 </div>
                 <div className="space-y-1">
@@ -716,12 +829,20 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
                     disabled={saving || lineBlocker !== null}
                     onClick={() =>
                       void withSave(async () => {
+                        // Entered again against the version shown, so an entry made meanwhile
+                        // elsewhere is refused instead of overwritten (AU-68).
+                        const current = lines.find(
+                          (line) =>
+                            line.article_id === lineArticleId &&
+                            line.location_id === lineLocationId,
+                        );
                         await upsertInventoryCountLine({
                           session_id: selectedSession.id,
                           article_id: lineArticleId,
                           location_id: lineLocationId,
                           counted_qty: lineCountQty,
                           variance_reason_code: lineVarianceReasonCode || null,
+                          expected_row_version: current?.row_version ?? null,
                         });
                       })
                     }
@@ -871,16 +992,36 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("controls.approval.title")}</DialogTitle>
+            <DialogTitle>
+              {t(
+                approvalKind === "second"
+                  ? "controls.secondApproval.title"
+                  : "controls.approval.title",
+              )}
+            </DialogTitle>
             <DialogDescription>
               {approvalLine
-                ? t("controls.approval.description", {
+                ? `${t("controls.approval.description", {
                     article: `${approvalLine.article_code} — ${approvalLine.article_name}`,
                     location: approvalLine.location_code,
                     system: qty(approvalLine.system_qty),
                     counted: qty(approvalLine.counted_qty),
                     variance: qty(approvalLine.variance_qty),
-                  })
+                  })} ${t(
+                    approvalKind === "second"
+                      ? approvalLine.is_critical === 1
+                        ? "controls.secondApproval.description"
+                        : "controls.secondApproval.descriptionOptional"
+                      : approvalLine.is_critical === 1
+                        ? tolerance?.self_approval_allowed
+                          ? "controls.approval.aboveToleranceOptOut"
+                          : "controls.approval.aboveTolerance"
+                        : "controls.approval.withinTolerance",
+                    {
+                      counter:
+                        approvalLine.counted_by_name ?? t("controls.lines.counterNotRecorded"),
+                    },
+                  )}`
                 : ""}
             </DialogDescription>
           </DialogHeader>
@@ -908,7 +1049,11 @@ export function InventoryControlsPanel({ reloadToken = 0 }: InventoryControlsPan
               disabled={saving || !approvalEvidence.trim()}
               onClick={() => void approveSelectedLine()}
             >
-              {t("controls.approval.confirm")}
+              {t(
+                approvalKind === "second"
+                  ? "controls.secondApproval.confirm"
+                  : "controls.approval.confirm",
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

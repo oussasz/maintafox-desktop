@@ -154,24 +154,30 @@ pub fn recommend_tactic(a: &RcmAnswers) -> RcmRecommendation {
 /// MIL-STD-1629A failure mode criticality `Cm = β · α · λp · t`.
 pub fn mode_criticality(beta: f64, alpha: f64, lambda_per_hour: f64, operating_hours: f64) -> AppResult<f64> {
     let checks = [
-        (beta, "effect probability β", 0.0, 1.0),
-        (alpha, "failure mode ratio α", 0.0, 1.0),
+        (
+            beta,
+            "effect probability β",
+            "GATE_REL_EFFECT_PROBABILITY_RANGE",
+            0.0,
+            1.0,
+        ),
+        (alpha, "failure mode ratio α", "GATE_REL_MODE_RATIO_RANGE", 0.0, 1.0),
     ];
-    for (v, name, lo, hi) in checks {
+    for (v, name, code, lo, hi) in checks {
         if !v.is_finite() || v < lo || v > hi {
             return Err(AppError::ValidationFailed(vec![format!(
-                "{name} must be between {lo} and {hi}."
+                "{code}: {name} must be between {lo} and {hi}."
             )]));
         }
     }
     if !lambda_per_hour.is_finite() || lambda_per_hour < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "failure rate λp must be a non-negative number of failures per hour.".into(),
+            "GATE_REL_LAMBDA_INVALID: failure rate λp must be a non-negative number of failures per hour.".into(),
         ]));
     }
     if !operating_hours.is_finite() || operating_hours <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "operating time t must be positive (hours).".into(),
+            "GATE_REL_OPERATING_TIME_INVALID: operating time t must be positive (hours).".into(),
         ]));
     }
     Ok(beta * alpha * lambda_per_hour * operating_hours)
@@ -215,7 +221,7 @@ pub struct RcmDecisionLogic {
 
 const LOGIC_SELECT: &str = "SELECT d.id, d.row_version, d.selected_tactic, d.consequence_category, d.justification, \
      d.recommended_tactic, d.decision_inputs_json, d.decision_path_json, d.linked_pm_plan_id, \
-     d.linked_pm_plan_version_id, p.code AS pm_plan_code, v.version_no AS pm_version_no, \
+     d.linked_pm_plan_version_id, p.code AS pm_plan_code, (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS pm_version_no, \
      d.linked_work_order_id, wo.code AS work_order_code \
      FROM rcm_decisions d \
      LEFT JOIN pm_plan_versions v ON v.id = d.linked_pm_plan_version_id \
@@ -323,19 +329,19 @@ pub async fn apply_rcm_decision_logic(
     ];
     if !allowed.contains(&selected.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unknown tactic '{selected}'."
+            "GATE_REL_TACTIC_INVALID: Unknown tactic '{selected}'."
         )]));
     }
     let justification = input.justification.as_deref().map(str::trim).unwrap_or("").to_string();
     if selected != rec.recommended_tactic && justification.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The decision logic recommends '{}': a justification is required to retain '{selected}'.",
+            "GATE_REL_TACTIC_JUSTIFICATION_REQUIRED: The decision logic recommends '{}': a justification is required to retain '{selected}'.",
             rec.recommended_tactic
         )]));
     }
     if rec.redesign_compulsory && selected != TACTIC_REDESIGN {
         return Err(AppError::ValidationFailed(vec![
-            "Redesign is compulsory: no task brings the safety or environmental risk to a tolerable level.".into(),
+            "GATE_REL_REDESIGN_COMPULSORY: Redesign is compulsory: no task brings the safety or environmental risk to a tolerable level.".into(),
         ]));
     }
     let txn = db.begin().await?;
@@ -360,7 +366,8 @@ pub async fn apply_rcm_decision_logic(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "rcm_decisions update conflict (stale row_version or unknown decision).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: rcm_decisions update conflict (stale row_version or unknown decision)."
+                .into(),
         ]));
     }
     let out = get_rcm_decision_logic(&txn, input.decision_id).await?;
@@ -426,14 +433,17 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
              JOIN rcm_studies s ON s.id = d.study_id WHERE d.id = ?",
             "functional_failure",
         ),
-        // The decision acts on one equipment of its study (set when the decision is recorded).
+        // The decision acts on one equipment of its study (set when the decision is recorded). It is
+        // read only once `apply_decision` has claimed it (`applied`, in the same transaction): a
+        // decision that is not approved never drives a PM revision or a work order.
         SOURCE_RELIABILITY_DECISION => (
-            "SELECT d.equipment_id, d.title AS label, NULL AS tactic, 0 AS review_required FROM reliability_study_decisions d WHERE d.id = ? AND d.equipment_id IS NOT NULL",
+            "SELECT d.equipment_id, d.title AS label, NULL AS tactic, 0 AS review_required FROM reliability_study_decisions d \
+             WHERE d.id = ? AND d.equipment_id IS NOT NULL AND d.status = 'applied'",
             "title",
         ),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
+                "GATE_REL_LOOP_SOURCE_INVALID: source_type must be '{SOURCE_FMECA_ITEM}', '{SOURCE_RCM_DECISION}' or '{SOURCE_RELIABILITY_DECISION}' (got '{other}')."
             )]))
         }
     };
@@ -465,37 +475,65 @@ async fn load_source(db: &impl ConnectionTrait, source_type: &str, source_id: i6
     })
 }
 
+/// A reliability study decision is carried out only through `study::decisions::apply_decision`
+/// (approved, by its designated approver, under the site's four-eyes rule). The generic "action
+/// from a RAMS source" commands refuse it (audit finding AU-69).
+fn refuse_governed_source(source_type: &str) -> AppResult<()> {
+    if source_type == SOURCE_RELIABILITY_DECISION {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_APPLY_ONLY: A reliability study decision is carried out only by applying it from the decision log, once approved."
+                .into(),
+        ]));
+    }
+    Ok(())
+}
+
 /// Creates a draft PM plan version from the plan's latest version (new trigger when given),
 /// records its source, and links the source to it. The version stays a draft: publishing it
-/// goes through the normal PM review.
+/// goes through the normal PM review. The version and its links are written together.
 pub async fn create_pm_revision_from_source(
     db: &DatabaseConnection,
+    input: PmRevisionFromSourceInput,
+) -> AppResult<SourceAction> {
+    refuse_governed_source(&input.source_type)?;
+    let txn = db.begin().await?;
+    let action = create_pm_revision_from_source_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(action)
+}
+
+/// [`create_pm_revision_from_source`] inside the caller's transaction, for any source (the
+/// reliability decision path claims the decision first, `study::decisions::apply_decision`).
+pub(crate) async fn create_pm_revision_from_source_in(
+    db: &impl ConnectionTrait,
     input: PmRevisionFromSourceInput,
 ) -> AppResult<SourceAction> {
     let ctx = load_source(db, &input.source_type, input.source_id).await?;
     if let Some(tactic) = &ctx.tactic {
         if !PM_TACTICS.contains(&tactic.as_str()) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "A '{tactic}' decision is not carried out by preventive maintenance."
+                "GATE_REL_TACTIC_NOT_PM: A '{tactic}' decision is not carried out by preventive maintenance."
             )]));
         }
     }
     let note = input.change_note.trim();
     if note.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["A change note is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_CHANGE_NOTE_REQUIRED: A change note is required.".into(),
+        ]));
     }
     let latest = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT trigger_definition_json, task_package_json, required_parts_json, required_skills_json, \
              required_tools_json, estimated_duration_hours, planned_crew_size, estimated_labor_cost, estimated_parts_cost, \
-             estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC LIMIT 1",
+             estimated_service_cost FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC, entity_sync_id DESC LIMIT 1",
             [input.pm_plan_id.into()],
         ))
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "The PM plan has no version yet: create its first version in the PM module.".into(),
+                "GATE_PM_NO_VERSION_TO_REVISE: The PM plan has no version yet: create its first version in the PM module.".into(),
             ])
         })?;
     let get_s = |c: &str| -> AppResult<Option<String>> { latest.try_get("", c).map_err(|e| decode_err(c, e)) };
@@ -508,7 +546,7 @@ pub async fn create_pm_revision_from_source(
         Some(t) => t,
         None => get_s("trigger_definition_json")?.ok_or_else(|| decode_err("trigger_definition_json", "missing"))?,
     };
-    let version = crate::pm::queries::create_pm_plan_version(
+    let version = crate::pm::queries::create_pm_plan_version_in(
         db,
         input.pm_plan_id,
         crate::pm::domain::CreatePmPlanVersionInput {
@@ -536,43 +574,32 @@ pub async fn create_pm_revision_from_source(
     )
     .await?;
 
-    // The draft exists from here: link it in one transaction; on failure the error names it.
-    let link = async {
-        let txn = db.begin().await?;
-        txn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE pm_plan_versions SET source_type = ?, source_id = ? WHERE id = ?",
-            [
-                input.source_type.clone().into(),
-                input.source_id.into(),
-                version.id.into(),
-            ],
-        ))
-        .await?;
-        let table = source_table(&input.source_type);
-        txn.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            format!(
-                "UPDATE {table} SET linked_pm_plan_id = ?, linked_pm_plan_version_id = ?, \
-                 row_version = row_version + 1, updated_at = ? WHERE id = ?"
-            ),
-            [
-                input.pm_plan_id.into(),
-                version.id.into(),
-                Utc::now().to_rfc3339().into(),
-                input.source_id.into(),
-            ],
-        ))
-        .await?;
-        txn.commit().await?;
-        AppResult::Ok(())
-    };
-    link.await.map_err(|e| {
-        AppError::ValidationFailed(vec![format!(
-            "Draft version {} was created but could not be linked to its source: {e}",
-            version.version_no
-        )])
-    })?;
+    // Linked both ways in the caller's transaction: no draft is left without its source.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plan_versions SET source_type = ?, source_id = ? WHERE id = ?",
+        [
+            input.source_type.clone().into(),
+            input.source_id.into(),
+            version.id.into(),
+        ],
+    ))
+    .await?;
+    let table = source_table(&input.source_type);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!(
+            "UPDATE {table} SET linked_pm_plan_id = ?, linked_pm_plan_version_id = ?, \
+             row_version = row_version + 1, updated_at = ? WHERE id = ?"
+        ),
+        [
+            input.pm_plan_id.into(),
+            version.id.into(),
+            Utc::now().to_rfc3339().into(),
+            input.source_id.into(),
+        ],
+    ))
+    .await?;
     Ok(SourceAction {
         source_type: input.source_type,
         source_id: input.source_id,
@@ -593,16 +620,30 @@ pub struct WoFromSourceInput {
     pub title: Option<String>,
 }
 
-/// Creates a work order on the source's equipment and links the source to it.
+/// Creates a work order on the source's equipment and links the source to it, together.
 pub async fn create_wo_from_source(
     db: &DatabaseConnection,
+    input: WoFromSourceInput,
+    actor_id: i64,
+) -> AppResult<SourceAction> {
+    refuse_governed_source(&input.source_type)?;
+    let txn = db.begin().await?;
+    let action = create_wo_from_source_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(action)
+}
+
+/// [`create_wo_from_source`] inside the caller's transaction, for any source (the reliability
+/// decision path claims the decision first, `study::decisions::apply_decision`).
+pub(crate) async fn create_wo_from_source_in(
+    db: &impl ConnectionTrait,
     input: WoFromSourceInput,
     actor_id: i64,
 ) -> AppResult<SourceAction> {
     let ctx = load_source(db, &input.source_type, input.source_id).await?;
     if input.source_type == SOURCE_RCM_DECISION && ctx.tactic.as_deref() == Some(TACTIC_RUN_TO_FAILURE) {
         return Err(AppError::ValidationFailed(vec![
-            "A run-to-failure decision does not call for a work order.".into(),
+            "GATE_REL_RTF_NO_WORK_ORDER: A run-to-failure decision does not call for a work order.".into(),
         ]));
     }
     let title = input
@@ -613,10 +654,10 @@ pub async fn create_wo_from_source(
         .map_or_else(|| ctx.label.clone(), str::to_string);
     if title.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "A work order title is required.".into()
+            "GATE_REL_WO_TITLE_REQUIRED: A work order title is required.".into(),
         ]));
     }
-    let wo = crate::wo::queries::create_work_order(
+    let wo = crate::wo::queries::create_work_order_in(
         db,
         crate::wo::domain::WoCreateInput {
             type_code: input.type_code.clone(),
@@ -651,13 +692,7 @@ pub async fn create_wo_from_source(
         ),
         [wo.id.into(), Utc::now().to_rfc3339().into(), input.source_id.into()],
     ))
-    .await
-    .map_err(|e| {
-        AppError::ValidationFailed(vec![format!(
-            "Work order {} was created but could not be linked to its source: {e}",
-            wo.code
-        )])
-    })?;
+    .await?;
     Ok(SourceAction {
         source_type: input.source_type,
         source_id: input.source_id,
@@ -786,7 +821,8 @@ pub async fn compute_fmeca_criticality(
     let evidence = fmeca_criticality_evidence(db, input.item_id).await?;
     let alpha = input.mode_ratio.or(evidence.mode_ratio).ok_or_else(|| {
         AppError::ValidationFailed(vec![
-            "No failure history for this failure mode: enter the failure mode ratio α.".into(),
+            "GATE_REL_MODE_RATIO_REQUIRED: No failure history for this failure mode: enter the failure mode ratio α."
+                .into(),
         ])
     })?;
     let lambda = input
@@ -794,7 +830,7 @@ pub async fn compute_fmeca_criticality(
         .or(evidence.failure_rate_per_hour)
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "No failure rate is known for this equipment: enter λp (failures per hour).".into(),
+                "GATE_REL_FAILURE_RATE_REQUIRED: No failure rate is known for this equipment: enter λp (failures per hour).".into(),
             ])
         })?;
     let cm = mode_criticality(input.effect_probability, alpha, lambda, input.operating_hours)?;
@@ -819,7 +855,7 @@ pub async fn compute_fmeca_criticality(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "fmeca_items update conflict (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: fmeca_items update conflict (stale row_version).".into(),
         ]));
     }
     let row = txn

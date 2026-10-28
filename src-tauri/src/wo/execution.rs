@@ -132,7 +132,7 @@ fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .to_string(),
         ]));
@@ -384,7 +384,7 @@ async fn hold_wo(
 ) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
 
-    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    let (_, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Hold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::OnHold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
@@ -409,32 +409,262 @@ async fn hold_wo(
             .map_err(|e| decode_err("delay_reason code", e))?,
         None => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Code de délai introuvable (delay_reason_id={}).",
+                "GATE_WO_DELAY_REASON_UNKNOWN: Code de délai introuvable (delay_reason_id={}).",
                 input.delay_reason_id
             )]))
         }
     };
 
-    let on_hold_status_id = resolve_status_id(&txn, "on_hold").await?;
+    let wo = hold_wo_in(&txn, &input, &reason_code, hold_kind).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// The fixed delay reason of a work order put on hold by the suspension of its permit (owner
+/// decision D5). A value of the plant's `WORK.DELAY_REASONS` list (reference data, seeded by
+/// `reference::system_catalog_integrity`, its label editable there); its code is fixed because the
+/// backend writes it itself on the suspension, never chosen on screen.
+pub const PERMIT_SUSPENDED_DELAY_REASON: &str = "permit_suspended";
+
+/// Puts work order `wo_id`, running, on hold because its permit `permit_code` was suspended (owner
+/// decision D5), in the caller's transaction (the suspension's): a delay segment of the fixed reason
+/// [`PERMIT_SUSPENDED_DELAY_REASON`] waiting for a prerequisite, the status change and its history
+/// row recorded as `actor_id`'s, the same writes as a hold made on screen. The reason is found by its
+/// code whatever its active flag (a plant hiding it from the hold screen never blocks a suspension);
+/// it is created first when the plant's list lacks it.
+///
+/// The hold is the suspending user's action (D5), whatever their own work-order rights: the history
+/// row and the delay segment name them, and the segment's comment names the permit and the reason.
+/// That comment is stored as written, in French ("Permis <code> suspendu : <motif>"), like any
+/// comment typed on the hold screen; it is not translated on display.
+pub(crate) async fn hold_for_permit_suspension(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: i64,
+    permit_code: &str,
+    suspension_reason: &str,
+) -> AppResult<WorkOrder> {
+    let delay_reason_id = system_delay_reason_id(txn, PERMIT_SUSPENDED_DELAY_REASON).await?;
+    let (_, _, row_version) = load_wo_status(txn, wo_id).await?;
+    hold_wo_in(
+        txn,
+        &WoPauseInput {
+            wo_id,
+            actor_id,
+            expected_row_version: row_version,
+            delay_reason_id,
+            comment: Some(format!("Permis {permit_code} suspendu : {suspension_reason}")),
+        },
+        PERMIT_SUSPENDED_DELAY_REASON,
+        crate::wo::lifecycle::HoldKind::Prerequisite,
+    )
+    .await
+}
+
+/// The fixed delay reason of a running work order put on hold because its permit was closed,
+/// handed back or cancelled on another PC (CMMS Advisor answer to AU-101, option B). A value of the
+/// plant's `WORK.DELAY_REASONS` list (reference data, seeded by
+/// `reference::system_catalog_integrity`, its label editable there); its code is fixed because the
+/// backend writes it itself after applying the received permit, never chosen on screen.
+pub const PERMIT_ENDED_DELAY_REASON: &str = "permit_ended";
+
+/// Audit action: a running work order put on hold because its permit ended on another PC
+/// ("permis terminé ailleurs"), recorded as the system.
+pub const AUDIT_HELD_PERMIT_ENDED_ELSEWHERE: &str = "wo.held_permit_ended_elsewhere";
+
+/// The id of the system delay reason `code` of `WORK.DELAY_REASONS`, made sure of first (created
+/// when the plant's list lacks it), found whatever its active flag (a plant hiding it from the hold
+/// screen never blocks the hold the backend writes).
+async fn system_delay_reason_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<i64> {
+    crate::reference::system_catalog_integrity::ensure_system_delay_reason(txn, code).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id AS id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+             WHERE rv.code = ? AND UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' \
+             ORDER BY (rs.status = 'published') DESC, rs.version_no DESC, rv.id LIMIT 1",
+            [code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "WORK.DELAY_REASONS has no '{code}' value and none could be created"
+            ))
+        })?;
+    row.try_get("", "id").map_err(|e| decode_err("delay reason id", e))
+}
+
+/// A permit of work order `wo_id` received from another PC as ended (`permit_status`: closed,
+/// handed back, cancelled; or suspended, waiting for revalidation) while the work order runs here:
+/// the work order is put on hold, in the caller's transaction — its own, opened after the received
+/// permit row was applied and committed (`permit::ended_hold::after_sync_pass`), so a failure here
+/// never refuses the permit row, its review conflict or its notices. CMMS Advisor answer to AU-101,
+/// option B.
+///
+/// The same writes as a hold made on screen, recorded as the system (no person: the history row and
+/// the delay segment carry no actor), with the fixed reason [`PERMIT_SUSPENDED_DELAY_REASON`] or
+/// [`PERMIT_ENDED_DELAY_REASON`], waiting for a prerequisite; audited
+/// ([`AUDIT_HELD_PERMIT_ENDED_ELSEWHERE`], "permis terminé ailleurs", with the permit's sync id).
+/// Sent to the other PCs as any local change. Nothing is written when the work order is not running
+/// here (already on hold, completed, closed): `false`.
+///
+/// Two PCs receiving the same end each hold the work order: the delay segment's identity is derived
+/// from the fact (work order, permit, status received, last start), so both write the same segment,
+/// and the crossing of the two holds is settled by sync without a person
+/// (`permit::ended_hold::settle_crossed_hold_*`).
+pub(crate) async fn hold_for_permit_ended_elsewhere(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+    permit_status: &str,
+) -> AppResult<bool> {
+    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
+    if status != WoStatus::InProgress {
+        return Ok(false);
+    }
+    let suspended = matches!(permit_status, "suspended" | "revalidation_required");
+    let reason_code = if suspended {
+        PERMIT_SUSPENDED_DELAY_REASON
+    } else {
+        PERMIT_ENDED_DELAY_REASON
+    };
+    let delay_reason_id = system_delay_reason_id(txn, reason_code).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT w.entity_sync_id AS sync_id, \
+                    COALESCE((SELECT t.acted_at FROM wo_state_transition_log t \
+                              WHERE t.wo_id = w.id AND t.to_status = 'in_progress' \
+                              ORDER BY t.acted_at DESC, t.id DESC LIMIT 1), w.actual_start) AS last_start \
+             FROM work_orders w WHERE w.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let wo_sync: Option<String> = row.try_get("", "sync_id").map_err(|e| decode_err("wo sync id", e))?;
+    let last_start: Option<String> = row.try_get("", "last_start").map_err(|e| decode_err("last start", e))?;
+    let segment_sync_id = crate::sync::identity::derived_entity_sync_id(
+        "work_order_delay_segments",
+        &format!(
+            "permit-ended-hold|{}|{permit_sync_id}|{permit_status}|{}",
+            wo_sync.as_deref().unwrap_or_default(),
+            last_start.as_deref().unwrap_or_default()
+        ),
+    );
+    let comment = if suspended {
+        format!("Permis {permit_code} suspendu sur un autre poste")
+    } else {
+        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
+    };
+    hold_writes(
+        txn,
+        &HoldWrites {
+            wo_id,
+            expected_row_version: row_version,
+            delay_reason_id,
+            comment: Some(comment),
+            actor_id: None,
+            segment_sync_id: Some(segment_sync_id.clone()),
+        },
+        reason_code,
+        crate::wo::lifecycle::HoldKind::Prerequisite,
+    )
+    .await?;
+    crate::audit::writer::write_audit_event_in(
+        txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE.to_string(),
+            target_type: Some("work_order".to_string()),
+            target_id: Some(wo_id.to_string()),
+            actor_id: None,
+            auth_context: "system".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "permis terminé ailleurs",
+                "permit_sync_id": permit_sync_id,
+                "permit_code": permit_code,
+                "permit_status": permit_status,
+                "delay_reason": reason_code,
+                "delay_segment_sync_id": segment_sync_id,
+            })),
+        },
+    )
+    .await?;
+    Ok(true)
+}
+
+/// The writes of a hold, the delay reason already resolved.
+struct HoldWrites {
+    wo_id: i64,
+    expected_row_version: i64,
+    delay_reason_id: i64,
+    comment: Option<String>,
+    /// Who holds; `None`: the system (a hold the application makes by itself).
+    actor_id: Option<i64>,
+    /// The delay segment's identity, when it is derived from the fact (`None`: a new one).
+    segment_sync_id: Option<String>,
+}
+
+/// The writes of a hold (in_progress → on_hold) in the caller's transaction, the delay reason
+/// already resolved (`reason_code`: its code, recorded on the history row).
+async fn hold_wo_in(
+    txn: &impl ConnectionTrait,
+    input: &WoPauseInput,
+    reason_code: &str,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
+    hold_writes(
+        txn,
+        &HoldWrites {
+            wo_id: input.wo_id,
+            expected_row_version: input.expected_row_version,
+            delay_reason_id: input.delay_reason_id,
+            comment: input.comment.clone(),
+            actor_id: Some(input.actor_id),
+            segment_sync_id: None,
+        },
+        reason_code,
+        hold_kind,
+    )
+    .await
+}
+
+async fn hold_writes(
+    txn: &impl ConnectionTrait,
+    input: &HoldWrites,
+    reason_code: &str,
+    hold_kind: crate::wo::lifecycle::HoldKind,
+) -> AppResult<WorkOrder> {
+    let (from_code, current_status, _rv) = load_wo_status(txn, input.wo_id).await?;
+    assert_action_allowed(&current_status, WoAction::Hold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::OnHold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let on_hold_status_id = resolve_status_id(txn, "on_hold").await?;
     let now = now_utc_z();
 
     // Open delay segment
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_delay_segments \
-         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind) \
-         VALUES (?, ?, NULL, ?, ?, ?, ?)",
+         (work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id, hold_kind, entity_sync_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             now.clone().into(),
             input.delay_reason_id.into(),
-            input
-                .comment
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input.comment.clone().into(),
             input.actor_id.into(),
             hold_kind.as_str().into(),
+            input.segment_sync_id.clone().into(),
         ],
     ))
     .await?;
@@ -457,38 +687,143 @@ async fn hold_wo(
         .await?;
     check_concurrency(result.rows_affected())?;
 
-    log_transition(
-        &txn,
-        input.wo_id,
-        &from_code,
-        "on_hold",
-        "hold",
-        input.actor_id,
-        Some(&reason_code),
-        input.comment.as_deref(),
-        &now,
-    )
-    .await?;
+    match input.actor_id {
+        Some(actor_id) => {
+            log_transition(
+                txn,
+                input.wo_id,
+                &from_code,
+                "on_hold",
+                "hold",
+                actor_id,
+                Some(reason_code),
+                input.comment.as_deref(),
+                &now,
+            )
+            .await?;
+        }
+        None => {
+            crate::wo::workflow::transition::log_system_transition(
+                txn,
+                input.wo_id,
+                &from_code,
+                "on_hold",
+                "hold",
+                Some(reason_code),
+                input.comment.as_deref(),
+                &now,
+            )
+            .await?;
+        }
+    }
 
     emit_action_event(
-        &txn,
+        txn,
         input.wo_id,
         "held",
-        Some(input.actor_id),
+        input.actor_id,
         Some(&from_code),
         Some("on_hold"),
         None,
     )
     .await?;
 
-    let wo = queries::get_work_order(&txn, input.wo_id)
+    queries::get_work_order(txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })?;
-    txn.commit().await?;
-    Ok(wo)
+        })
+}
+
+/// Audit action: the downtime of a mechanically complete work order ended because the removal of
+/// its last fitted lock was verified (owner decision D4, CMMS Advisor condition 2).
+pub const AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL: &str = "wo.downtime_ended_by_lock_removal";
+
+/// After a lock removal was verified (here, `actor_id` the verifier; or received by sync and
+/// applied, `actor_id` `None`: the system), in the caller's transaction: when work order `wo_id` is
+/// mechanically complete ("Terminé") and no lock is fitted under its permits any more, its open
+/// downtime segments end at `verified_at`, the moment of that verification — the equipment goes
+/// back in service only now, never at "Terminé" while a lock is fitted. Audited, and shown in the
+/// execution log. Nothing to do otherwise (work still running or on hold, another lock still
+/// fitted, no open downtime). Returns the number of segments ended.
+///
+/// Only a segment that started at or before `verified_at` is ended. A segment opened after that
+/// verification (for example received from a PC whose clock runs ahead) is not held by a lock: it
+/// is left open and the integrity detector flags it unclosed for a person, so no negative duration
+/// is ever written. A start time that cannot be read is left open the same way.
+pub(crate) async fn end_downtime_after_lock_removal(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    verified_at: &str,
+    actor_id: Option<i64>,
+    isolation_sync_id: &str,
+) -> AppResult<u64> {
+    let (status_code, _, _) = load_wo_status(txn, wo_id).await?;
+    if status_code != "completed" || crate::permit::wo_gate::permit_holds(txn, wo_id).await?.fitted_locks > 0 {
+        return Ok(0);
+    }
+    let open = txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, downtime_type FROM work_order_downtime_segments WHERE work_order_id = ? AND ended_at IS NULL \
+             AND julianday(started_at) <= julianday(?)",
+            [wo_id.into(), verified_at.into()],
+        ))
+        .await?;
+    if open.is_empty() {
+        return Ok(0);
+    }
+    let ended = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_downtime_segments SET ended_at = ? WHERE work_order_id = ? AND ended_at IS NULL \
+             AND julianday(started_at) <= julianday(?)",
+            [verified_at.into(), wo_id.into(), verified_at.into()],
+        ))
+        .await?
+        .rows_affected();
+    let mut segment_ids = Vec::with_capacity(open.len());
+    for row in &open {
+        let id: i64 = row.try_get("", "id").map_err(|e| decode_err("downtime id", e))?;
+        let kind: Option<String> = row
+            .try_get("", "downtime_type")
+            .map_err(|e| decode_err("downtime_type", e))?;
+        crate::wo::execution_log::emit_execution_event(
+            txn,
+            wo_id,
+            "downtime_closed",
+            "executionLog.downtimeClosed",
+            serde_json::json!({ "downtime_type": kind, "ended_by": "lock_removal_verified" }),
+            Some("downtime"),
+            Some(id),
+            actor_id,
+        )
+        .await?;
+        segment_ids.push(id);
+    }
+    crate::audit::writer::write_audit_event_in(
+        txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_DOWNTIME_ENDED_BY_LOCK_REMOVAL.to_string(),
+            target_type: Some("work_order".to_string()),
+            target_id: Some(wo_id.to_string()),
+            actor_id,
+            auth_context: if actor_id.is_some() { "session" } else { "system" }.to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
+                "summary": "Downtime ended: removal of the last fitted lock verified",
+                "ended_at": verified_at,
+                "segment_ids": segment_ids,
+                "isolation_sync_id": isolation_sync_id,
+            })),
+        },
+    )
+    .await?;
+    Ok(ended)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -499,6 +834,24 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     let remaining = crate::permit::wo_gate::checked_remaining_hours(input.estimated_remaining_hours)?;
     // One clock read: the moment judged by the permit gate is the resume recorded below.
     let at = now_utc_second();
+    // A work order received on hold whose plant rule came from another PC never resumes under a
+    // rule weaker than this PC's list gives (CMMS Advisor decision C7-N4): re-stamped to the rule
+    // with an energy isolation first, in its own transaction, so it stays re-stamped when the gate
+    // below refuses the resume (it waits on hold until a valid permit of that type exists).
+    let restamped = {
+        let txn = db.begin().await?;
+        let restamped = crate::permit::requirement_rules::restamp_received_rule_on_resume(
+            &txn,
+            input.wo_id,
+            Some(input.actor_id),
+            input.expected_row_version,
+        )
+        .await?;
+        txn.commit().await?;
+        restamped
+    };
+    // The re-stamp moved the version the screen read; the resume below is checked against it.
+    let expected_row_version = input.expected_row_version + i64::from(restamped);
     let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
     crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, remaining, at).await?;
@@ -520,12 +873,13 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     ))
     .await?;
 
-    // Recompute total_waiting_hours
+    // Recompute total_waiting_hours. No segment here (a work order received on hold whose hold
+    // segment was not received): 0.0, a REAL like the sum, never an INTEGER 0 read as a number.
     let waiting_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM(ROUND((JULIANDAY(COALESCE(ended_at, strftime('%Y-%m-%dT%H:%M:%SZ','now'))) \
-              - JULIANDAY(started_at)) * 24, 2)), 0) AS total_waiting \
+              - JULIANDAY(started_at)) * 24, 2)), 0.0) AS total_waiting \
              FROM work_order_delay_segments \
              WHERE work_order_id = ?",
             [input.wo_id.into()],
@@ -550,7 +904,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
                 total_waiting.into(),
                 now.clone().into(),
                 input.wo_id.into(),
-                input.expected_row_version.into(),
+                expected_row_version.into(),
             ],
         ))
         .await?;
@@ -636,7 +990,10 @@ pub struct WoCompletionGate {
     pub detail: Option<String>,
 }
 
-async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoCompletionGate>> {
+pub(crate) async fn collect_completion_gates(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Vec<WoCompletionGate>> {
     let mut gates = Vec::new();
 
     // ── Labor: no open entries ────────────────────────────────────────────
@@ -666,21 +1023,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         },
     });
 
-    // ── Tasks: mandatory completed ────────────────────────────────────────
-    let incomplete_tasks = conn
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT task_description \
-             FROM work_order_tasks \
-             WHERE work_order_id = ? AND is_mandatory = 1 AND is_completed = 0 \
-             ORDER BY sequence_order ASC",
-            [wo_id.into()],
-        ))
-        .await?;
-    let incomplete_descs: Vec<String> = incomplete_tasks
-        .iter()
-        .filter_map(|r| r.try_get::<String>("", "task_description").ok())
-        .collect();
+    // ── Tasks: every mandatory task closed with an accepted result (D3) ────
+    let incomplete_descs = crate::wo::tasks::open_mandatory_tasks(conn, wo_id).await?;
     gates.push(WoCompletionGate {
         code: "TASKS".into(),
         passed: incomplete_descs.is_empty(),
@@ -759,11 +1103,21 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
     let open_dt: i64 = open_dt_row
         .try_get::<i64>("", "cnt")
         .map_err(|e| decode_err("open_dt cnt", e))?;
+    // A lock still fitted under the work order's permits keeps the equipment down past "Terminé"
+    // (owner decision D4, CMMS Advisor condition 2): its downtime stays open and ends when the
+    // removal of the last fitted lock is verified (`end_downtime_after_lock_removal`). Without a
+    // fitted lock, open downtime must be ended first, as before.
+    let downtime_held_by_locks =
+        open_dt > 0 && crate::permit::wo_gate::permit_holds(conn, wo_id).await?.fitted_locks > 0;
     gates.push(WoCompletionGate {
         code: "OPEN_DOWNTIME".into(),
-        passed: open_dt == 0,
+        passed: open_dt == 0 || downtime_held_by_locks,
         required: true,
-        detail: if open_dt > 0 {
+        detail: if downtime_held_by_locks {
+            Some(format!(
+                "{open_dt} open downtime segments, ended when the removal of the last fitted lock is verified"
+            ))
+        } else if open_dt > 0 {
             Some(format!("{open_dt} open downtime segments"))
         } else {
             None
@@ -800,8 +1154,11 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         let fd_row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT symptom_id, failure_mode_id, cause_not_determined \
-                 FROM work_order_failure_details WHERE work_order_id = ?",
+                format!(
+                    "SELECT symptom_id, failure_mode_id, cause_not_determined \
+                     FROM work_order_failure_details WHERE id = {}",
+                    crate::wo::closeout::failure_detail_of_wo_sql("?")
+                ),
                 [wo_id.into()],
             ))
             .await?;
@@ -869,10 +1226,10 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
         .filter(|g| g.required && !g.passed)
         .map(|g| match g.code.as_str() {
             "OPEN_LABOR" => {
-                "Les entrées de main-d'œuvre ouvertes doivent être clôturées avant la complétion. (Open labor entries must be closed first.)".into()
+                "GATE_COMPLETE_OPEN_LABOR: Les entrées de main-d'œuvre ouvertes doivent être clôturées avant la complétion. (Open labor entries must be closed first.)".into()
             }
             "TASKS" => format!(
-                "Tâches obligatoires non terminées{}. (Mandatory tasks incomplete.)",
+                "GATE_COMPLETE_TASKS_INCOMPLETE: Tâches obligatoires non terminées{}. (Mandatory tasks incomplete.)",
                 g.detail
                     .as_ref()
                     .map(|d| format!(" : {d}"))
@@ -884,26 +1241,26 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
                     .unwrap_or("")
                     .contains("pending disposition")
                 {
-                    "Toutes les pièces planifiées doivent être marquées Utilisée ou Non utilisée avant complétion. \
+                    "GATE_COMPLETE_PARTS_UNDISPOSED: Toutes les pièces planifiées doivent être marquées Utilisée ou Non utilisée avant complétion. \
 (All planned parts must be marked Used or Not used before completion.)".into()
                 } else {
-                    "Réels des pièces non confirmés. Ajoutez une pièce consommée ou marquez « aucune pièce utilisée ». \
+                    "GATE_COMPLETE_PARTS_UNCONFIRMED: Réels des pièces non confirmés. Ajoutez une pièce consommée ou marquez « aucune pièce utilisée ». \
 (Parts actuals not confirmed. Add a consumed part or mark none used.)".into()
                 }
             }
             "OPEN_DOWNTIME" => {
-                "Les segments de temps d'arrêt ouverts doivent être clôturés avant la complétion. (Open downtime segments must be closed before completion.)".into()
+                "GATE_COMPLETE_OPEN_DOWNTIME: Les segments de temps d'arrêt ouverts doivent être clôturés avant la complétion. (Open downtime segments must be closed before completion.)".into()
             }
             "SYMPTOM" => {
-                "Symptôme requis avant complétion mécanique (RAMS data quality).".into()
+                "GATE_COMPLETE_SYMPTOM_REQUIRED: Symptôme requis avant complétion mécanique (RAMS data quality).".into()
             }
             "FAILURE_MODE" => {
-                "Mode de défaillance requis avant complétion mécanique (RAMS data quality).".into()
+                "GATE_COMPLETE_FAILURE_MODE_REQUIRED: Mode de défaillance requis avant complétion mécanique (RAMS data quality).".into()
             }
             "ROOT_CAUSE" => {
-                "Résumé de cause racine requis avant complétion mécanique.".into()
+                "GATE_COMPLETE_ROOT_CAUSE_REQUIRED: Résumé de cause racine requis avant complétion mécanique.".into()
             }
-            other => format!("Completion gate failed: {other}"),
+            other => format!("GATE_COMPLETE_GATE_FAILED:gate={other}: Completion gate failed: {other}"),
         })
         .collect();
 

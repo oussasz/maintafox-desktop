@@ -1,4 +1,4 @@
-import { Bell, Camera, KeyRound, Lock, Shield, Smartphone, Trash2 } from "lucide-react";
+import { Bell, KeyRound, Lock, Shield, Smartphone, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -16,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
-import { describeAppError } from "@/lib/app-error";
+import { i18n } from "@/i18n";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -34,6 +35,7 @@ import {
   revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -48,7 +50,7 @@ import type {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -141,7 +143,7 @@ export function ProfileSettingsPanel() {
         setSelectedSkillRef(null);
       }
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setLoadError(msg);
       setProfile(null);
     } finally {
@@ -163,7 +165,7 @@ export function ProfileSettingsPanel() {
       setEditing(false);
       setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
@@ -186,7 +188,7 @@ export function ProfileSettingsPanel() {
       });
       setMySkills(refreshed);
     } catch (err) {
-      const msg = describeAppError(err).title;
+      const msg = appErrorReason(err);
       setToast({ type: "error", message: msg });
     } finally {
       setDeclaringSkill(false);
@@ -206,11 +208,9 @@ export function ProfileSettingsPanel() {
   if (loadError || !profile) {
     return (
       <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 p-4">
-        <p className="text-sm text-destructive">
-          {loadError ?? t("profile.loadError", "Failed to load profile.")}
-        </p>
+        <p className="text-sm text-destructive">{loadError ?? t("profile.loadError")}</p>
         <Button type="button" variant="outline" size="sm" onClick={() => void loadData()}>
-          {t("profile.retry", "Retry")}
+          {t("profile.retry")}
         </Button>
       </div>
     );
@@ -231,13 +231,6 @@ export function ProfileSettingsPanel() {
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-xl font-semibold text-primary">
             {initials}
           </div>
-          <button
-            type="button"
-            className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-surface-1 border border-surface-border text-text-muted hover:text-text-primary"
-            aria-label="Change avatar"
-          >
-            <Camera className="h-3 w-3" />
-          </button>
         </div>
         <div>
           <h2 className="text-lg font-semibold text-text-primary">
@@ -348,7 +341,7 @@ export function ProfileSettingsPanel() {
                 value={selectedSkillRef != null ? String(selectedSkillRef) : null}
                 onChange={(idStr) => setSelectedSkillRef(idStr ? Number(idStr) : null)}
                 allowClear={false}
-                placeholder={t("profile.selectSkill", "Select a skill")}
+                placeholder={t("profile.selectSkill")}
               />
               <select
                 aria-label={t("profile.level", "Level")}
@@ -893,7 +886,7 @@ export function PinRemoveDialog({
       onRemoved();
     } catch (err) {
       // The backend refuses a wrong password: it belongs to this field.
-      setFieldError(describeAppError(err).title);
+      setFieldError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }
@@ -993,7 +986,7 @@ function TrustedDevicesDialog({
   };
 
   const formatDeviceDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, {
+    new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
       year: "numeric",
       month: "short",
       day: "numeric",

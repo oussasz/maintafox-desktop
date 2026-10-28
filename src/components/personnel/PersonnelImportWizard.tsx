@@ -32,7 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { describeAppError } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import { importProblemText } from "@/lib/import-problem-text";
 import {
   applyPersonnelImportBatch,
@@ -66,6 +67,7 @@ export function PersonnelImportWizard() {
   const { t } = useTranslation("personnel");
   const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ImportMode>("create_and_update");
   const [batch, setBatch] = useState<PersonnelImportBatchSummary | null>(null);
@@ -111,7 +113,7 @@ export function PersonnelImportWizard() {
         const loadedPreview = await getPersonnelImportPreview(created.id);
         setPreview(loadedPreview);
       } catch (err) {
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       } finally {
         setLoading(false);
       }
@@ -133,17 +135,17 @@ export function PersonnelImportWizard() {
     setApplying(true);
     setError(null);
     try {
-      const result = await applyPersonnelImportBatch(batch.id);
+      const result = await withStepUp(() => applyPersonnelImportBatch(batch.id));
       setApplyResult(result);
       const refreshed = await getPersonnelImportPreview(batch.id);
       setPreview(refreshed);
       setBatch(result.batch);
     } catch (err) {
-      setError(describeAppError(err).title);
+      if (!isStepUpCancelled(err)) setError(appErrorReason(err));
     } finally {
       setApplying(false);
     }
-  }, [batch]);
+  }, [batch, withStepUp]);
 
   const canApply = useMemo(() => batch?.status === "validated", [batch?.status]);
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
@@ -329,6 +331,7 @@ export function PersonnelImportWizard() {
           void applyImport();
         }}
       />
+      {StepUpDialogElement}
     </PermissionGate>
   );
 }

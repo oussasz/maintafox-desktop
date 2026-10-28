@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { mfInput } from "@/design-system/tokens";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   createAvailabilityBlock,
   isAvailabilityOverlapConfirmError,
@@ -168,6 +169,7 @@ export function AvailabilityBlockDialog({
             : { reason_note: reason.trim() || null }),
           is_critical: forcedCritical || isCritical,
           ...(confirmOverlap ? { confirm_overlap: true as const } : {}),
+          expected_row_version: editingBlock.row_version,
         };
         await updateAvailabilityBlock(updateInput);
       } else if (personnelId != null) {
@@ -191,7 +193,7 @@ export function AvailabilityBlockDialog({
         setError(t("availability.form.errors.overlapConfirm"));
       } else {
         setOverlapConfirmPending(false);
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       }
     } finally {
       setSaving(false);
@@ -247,16 +249,12 @@ export function AvailabilityBlockDialog({
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.startAt")}</span>
-            <Input
-              type="datetime-local"
-              value={startAt}
-              onChange={(e) => setStartAt(e.target.value)}
-            />
+            <DateTimeField value={startAt} onChange={(v) => setStartAt(v)} />
           </label>
 
           <label className="text-sm">
             <span className="mb-1 block text-text-muted">{t("availability.form.endAt")}</span>
-            <Input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+            <DateTimeField value={endAt} onChange={(v) => setEndAt(v)} />
           </label>
 
           {reasonHidden ? (

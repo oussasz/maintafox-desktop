@@ -289,7 +289,7 @@ function RuleRow({
                   }}
                 >
                   <SelectTrigger
-                    className="h-7 w-48 text-xs"
+                    className="h-10 w-48 text-xs"
                     aria-label={t("rules.pickPermission")}
                   >
                     <SelectValue placeholder={t("rules.pickPermission")} />
@@ -312,7 +312,7 @@ function RuleRow({
                     else setAudiences([...rule.audiences, v]);
                   }}
                 >
-                  <SelectTrigger className="h-7 w-40 text-xs" aria-label={t("rules.addAudience")}>
+                  <SelectTrigger className="h-10 w-40 text-xs" aria-label={t("rules.addAudience")}>
                     <SelectValue placeholder={t("rules.addAudience")} />
                   </SelectTrigger>
                   <SelectContent>
@@ -348,7 +348,7 @@ function RuleRow({
           }
         >
           <SelectTrigger
-            className="h-8 w-48 text-xs"
+            className="h-10 w-48 text-xs"
             aria-label={`${t("rules.col.escalation")} ${label}`}
           >
             <SelectValue />
@@ -374,7 +374,7 @@ function RuleRow({
               inputMode="numeric"
               min={1}
               step={1}
-              className="h-8 w-20 text-sm"
+              className="h-10 w-20 text-sm"
               disabled={disabled}
               value={lead}
               aria-label={`${t("rules.col.leadTime")} ${label}`}
@@ -386,7 +386,7 @@ function RuleRow({
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8"
+                className="h-10"
                 disabled={disabled}
                 onClick={() => onUpdate({ rule_id: rule.rule_id, lead_time_minutes: leadValue })}
               >
@@ -463,7 +463,7 @@ function StepRow({
             inputMode="numeric"
             min={1}
             step={1}
-            className="h-8 w-20 text-sm"
+            className="h-10 w-20 text-sm"
             disabled={disabled}
             value={wait}
             aria-label={t("rules.col.delay")}
@@ -475,7 +475,7 @@ function StepRow({
       </td>
       <td className="px-2 py-2">
         <Select value={target} disabled={disabled} onValueChange={setTarget}>
-          <SelectTrigger className="h-8 w-56 text-xs" aria-label={t("rules.col.target")}>
+          <SelectTrigger className="h-10 w-56 text-xs" aria-label={t("rules.col.target")}>
             <SelectValue placeholder={t("rules.pickTarget")} />
           </SelectTrigger>
           <SelectContent>
@@ -490,7 +490,7 @@ function StepRow({
       <td className="px-2 py-2">
         {target === "permission" ? (
           <Select value={reference} disabled={disabled} onValueChange={setReference}>
-            <SelectTrigger className="h-8 w-48 text-xs" aria-label={t("rules.col.reference")}>
+            <SelectTrigger className="h-10 w-48 text-xs" aria-label={t("rules.col.reference")}>
               <SelectValue placeholder={t("rules.pickPermission")} />
             </SelectTrigger>
             <SelectContent>
@@ -503,7 +503,7 @@ function StepRow({
           </Select>
         ) : target === "role" ? (
           <Input
-            className="h-8 w-48 text-sm"
+            className="h-10 w-48 text-sm"
             disabled={disabled}
             value={reference}
             placeholder={t("rules.roleName")}
@@ -520,7 +520,7 @@ function StepRow({
             <Button
               size="sm"
               variant={step ? "outline" : "default"}
-              className="h-8"
+              className="h-10"
               disabled={!valid}
               onClick={() =>
                 waitValue != null &&
@@ -545,7 +545,7 @@ function StepRow({
             <Button
               size="sm"
               variant="ghost"
-              className="h-8"
+              className="h-10"
               aria-label={t("rules.removeLevel", { level: levelNo })}
               onClick={onRemove}
             >
@@ -587,7 +587,7 @@ function RetentionSection({
           inputMode="numeric"
           min={r.min_days}
           max={r.max_days}
-          className="h-8 w-24 text-sm"
+          className="h-10 w-24 text-sm"
           disabled={disabled}
           value={days}
           aria-label={t("rules.retentionDays")}
@@ -597,7 +597,7 @@ function RetentionSection({
         <span className="text-sm text-text-muted">{t("rules.days")}</span>
         {r.is_default ? <StatusChip label={t("rules.defaultValue")} tone="neutral" /> : null}
         {!disabled && valid && n !== r.expiry_days ? (
-          <Button size="sm" variant="outline" className="h-8" onClick={() => onSave(n)}>
+          <Button size="sm" variant="outline" className="h-10" onClick={() => onSave(n)}>
             {t("rules.save")}
           </Button>
         ) : null}

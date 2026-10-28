@@ -11,6 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -286,22 +287,20 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
 
             <div className="space-y-1">
               <Label htmlFor="wo-complete-end">{t("completion.endDate")}</Label>
-              <Input
+              <DateTimeField
                 id="wo-complete-end"
-                type="datetime-local"
                 value={actualEnd}
-                onChange={(e) => setActualEnd(e.target.value)}
+                onChange={(v) => setActualEnd(v)}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="wo-complete-hours">{t("completion.hoursWorked")}</Label>
-              <Input
+              <DecimalField
                 id="wo-complete-hours"
-                type="number"
+                decimals={2}
                 min={0}
-                step={0.25}
-                value={hoursWorked}
-                onChange={(e) => setHoursWorked(e.target.value)}
+                value={hoursWorked.trim() === "" ? null : Number(hoursWorked)}
+                onValueChange={(v) => setHoursWorked(v == null ? "" : String(v))}
                 placeholder={t("completion.hoursPlaceholder")}
               />
             </div>

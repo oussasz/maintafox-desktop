@@ -122,7 +122,7 @@ pub async fn save_di_attachment(
     // ── Validate file size ────────────────────────────────────────────────
     if input.file_bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La taille du fichier dépasse la limite de {} Mo.",
+            "GATE_DI_ATTACHMENT_TOO_LARGE:max_mb={0}: La taille du fichier dépasse la limite de {0} Mo.",
             MAX_FILE_SIZE_BYTES / (1024 * 1024)
         )]));
     }
@@ -130,7 +130,7 @@ pub async fn save_di_attachment(
     // ── Validate attachment type ──────────────────────────────────────────
     if !VALID_ATTACHMENT_TYPES.contains(&input.attachment_type.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type de pièce jointe invalide : '{}'. Valeurs autorisées : photo, sensor_snapshot, pdf, other.",
+            "GATE_DI_ATTACHMENT_TYPE_INVALID: Type de pièce jointe invalide : '{}'. Valeurs autorisées : photo, sensor_snapshot, pdf, other.",
             input.attachment_type
         )]));
     }
@@ -141,7 +141,9 @@ pub async fn save_di_attachment(
         .and_then(|n| n.to_str())
         .unwrap_or("attachment");
     if sanitized_name.is_empty() || sanitized_name.contains("..") {
-        return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_ATTACHMENT_NAME_INVALID: Nom de fichier invalide.".into(),
+        ]));
     }
 
     // Read before the transaction: the tenant lookup runs on the pool connection.
@@ -167,7 +169,7 @@ pub async fn save_di_attachment(
 
     if status == "archived" {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible d'ajouter une pièce jointe à une DI archivée.".into(),
+            "GATE_DI_ATTACHMENT_ARCHIVED: Impossible d'ajouter une pièce jointe à une DI archivée.".into(),
         ]));
     }
 
@@ -254,7 +256,7 @@ pub async fn save_di_attachment_from_path(
     let src = Path::new(source_path);
     if !src.is_file() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Fichier introuvable : {source_path}"
+            "GATE_DI_ATTACHMENT_FILE_MISSING: Fichier introuvable : {source_path}"
         )]));
     }
 
@@ -262,7 +264,7 @@ pub async fn save_di_attachment_from_path(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("metadata for DI attachment source: {e}")))?;
     if meta.len() as usize > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Fichier trop volumineux (max {} Mo).",
+            "GATE_DI_ATTACHMENT_TOO_LARGE:max_mb={0}: Fichier trop volumineux (max {0} Mo).",
             MAX_FILE_SIZE_BYTES / (1024 * 1024)
         )]));
     }
@@ -360,7 +362,7 @@ pub async fn read_di_attachment_preview(
 
     if !mime_type.starts_with("image/") {
         return Err(AppError::ValidationFailed(vec![
-            "Aperçu disponible uniquement pour les images.".into(),
+            "GATE_DI_PREVIEW_IMAGES_ONLY: Aperçu disponible uniquement pour les images.".into(),
         ]));
     }
 
@@ -376,7 +378,7 @@ pub async fn read_di_attachment_preview(
         std::fs::read(&abs).map_err(|e| AppError::Internal(anyhow::anyhow!("read DI attachment preview: {e}")))?;
     if bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![
-            "Fichier trop volumineux pour l'aperçu.".into(),
+            "GATE_DI_PREVIEW_TOO_LARGE: Fichier trop volumineux pour l'aperçu.".into(),
         ]));
     }
 

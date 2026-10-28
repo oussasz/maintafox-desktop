@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 
 use crate::auth::session_manager::SessionManager;
 use crate::background::BackgroundTaskSupervisor;
+use crate::commands::product_license::PendingActivationClaimSlot;
 use crate::jobs::ComputationJobRunner;
 use crate::rbac::cache::PermissionCache;
 use crate::sync::transport::SyncWorkerHandle;
@@ -59,6 +60,9 @@ pub struct AppState {
     pub permission_cache: Arc<RwLock<PermissionCache>>,
     /// Sync worker status and control (the worker itself runs as background task `sync`).
     pub sync_worker: SyncWorkerHandle,
+    /// The activation claim taken and not yet recorded by the key entry, with its activation token
+    /// (`commands::product_license::claim_product_activation`). Never sent to the webview.
+    pub pending_activation_claim: PendingActivationClaimSlot,
 }
 
 impl AppState {
@@ -72,6 +76,7 @@ impl AppState {
             computation_jobs: ComputationJobRunner::new(),
             permission_cache: Arc::new(RwLock::new(PermissionCache::default())),
             sync_worker: SyncWorkerHandle::new(),
+            pending_activation_claim: PendingActivationClaimSlot::default(),
         }
     }
 }

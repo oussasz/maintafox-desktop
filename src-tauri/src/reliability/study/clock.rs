@@ -200,7 +200,7 @@ pub async fn load_clock(db: &DatabaseConnection, equipment_id: i64) -> AppResult
 
 /// Parse an RFC 3339 (or SQLite `YYYY-MM-DD HH:MM:SS`) timestamp.
 pub fn parse_instant(raw: &str) -> AppResult<DateTime<Utc>> {
-    parse_ts(raw).ok_or_else(|| AppError::ValidationFailed(vec![format!("STUDY_INVALID_DATE: {raw}")]))
+    parse_ts(raw).ok_or_else(|| AppError::ValidationFailed(vec![format!("GATE_REL_DATE_INVALID: invalid date: {raw}")]))
 }
 
 /// Lenient variant for stored values.

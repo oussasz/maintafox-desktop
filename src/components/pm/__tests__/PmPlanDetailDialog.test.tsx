@@ -189,6 +189,20 @@ describe("PmPlanDetailDialog", () => {
     expect(screen.getByText("P-101")).toBeInTheDocument();
   });
 
+  it("flags a plan whose version in force comes from a refused or waiting decision", () => {
+    renderDialog({ plan: { ...plan, source_decision_to_review: true } });
+    const flag = screen.getByText("From a refused / waiting decision — to review");
+    expect(flag.closest("[title]")).toHaveAttribute(
+      "title",
+      expect.stringContaining("publishing another version clears this flag"),
+    );
+  });
+
+  it("shows no decision flag on a plan whose version in force is accepted here", () => {
+    renderDialog({ plan: { ...plan, source_decision_to_review: false } });
+    expect(screen.queryByText("From a refused / waiting decision — to review")).toBeNull();
+  });
+
   it("translates the version status and explains why a published version cannot be deleted", () => {
     renderDialog();
     openTab("Versions");

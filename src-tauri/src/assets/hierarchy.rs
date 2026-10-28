@@ -100,7 +100,7 @@ async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppRes
         .map_err(|e| decode_err("lifecycle_status", e))?;
     if status == "DECOMMISSIONED" || status == "SCRAPPED" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "L'équipement {asset_id} a le statut '{status}' et ne peut pas \
+            "GATE_ASSET_HIER_STATUS:status={status}: L'équipement {asset_id} a le statut '{status}' et ne peut pas \
              participer à une relation hiérarchique active."
         )]));
     }
@@ -124,7 +124,7 @@ async fn validate_relationship_type(db: &impl ConnectionTrait, code: &str) -> Ap
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type de relation '{code}' introuvable dans le domaine \
+            "GATE_ASSET_HIER_RELATION_UNKNOWN: Type de relation '{code}' introuvable dans le domaine \
              'equipment.hierarchy_relationship'."
         )]));
     }
@@ -151,7 +151,7 @@ async fn assert_single_parent(db: &impl ConnectionTrait, child_id: i64, relation
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "L'équipement {child_id} a déjà un parent actif pour le type \
+            "GATE_ASSET_HIER_PARENT_EXISTS: L'équipement {child_id} a déjà un parent actif pour le type \
              de relation '{relation_type}'. Dissociez d'abord la relation existante."
         )]));
     }
@@ -164,7 +164,7 @@ async fn assert_single_parent(db: &impl ConnectionTrait, child_id: i64, relation
 async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
     if parent_id == child_id {
         return Err(AppError::ValidationFailed(vec![
-            "Un équipement ne peut pas être son propre parent.".into(),
+            "GATE_ASSET_HIER_SELF_PARENT: Un équipement ne peut pas être son propre parent.".into(),
         ]));
     }
 
@@ -175,7 +175,7 @@ async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) 
     while let Some(current) = queue.pop() {
         if current == child_id {
             return Err(AppError::ValidationFailed(vec![
-                "Cette relation créerait un cycle dans la hiérarchie \
+                "GATE_ASSET_HIER_CYCLE: Cette relation créerait un cycle dans la hiérarchie \
                  des équipements."
                     .into(),
             ]));
@@ -342,7 +342,7 @@ pub async fn unlink_asset_hierarchy(
 
     if current_eff_to.is_some() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La relation {relation_id} est déjà terminée \
+            "GATE_ASSET_HIER_RELATION_ENDED: La relation {relation_id} est déjà terminée \
              (effective_to est déjà défini)."
         )]));
     }
@@ -384,64 +384,18 @@ pub async fn unlink_asset_hierarchy(
 ///
 /// Preserves the asset row and increments `row_version` for optimistic
 /// concurrency control. Decommissioned/scrapped assets cannot be moved
-/// (admin override deferred to File 04).
+/// (admin override deferred to File 04). The move is recorded as a `MOVED` lifecycle event with
+/// an audit entry in the same transaction (D19).
 pub async fn move_asset_org_node(
     db: &DatabaseConnection,
     asset_id: i64,
     new_org_node_id: i64,
     expected_row_version: i64,
-    _actor_id: i32,
+    actor_id: i32,
 ) -> AppResult<identity::Asset> {
     let txn = db.begin().await?;
-
-    // ── Fetch current row and verify row_version ─────────────────────────
-    let current = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT row_version, lifecycle_status FROM equipment \
-             WHERE id = ? AND deleted_at IS NULL",
-            [asset_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "equipment".into(),
-            id: asset_id.to_string(),
-        })?;
-
-    let current_version: i64 = current
-        .try_get("", "row_version")
-        .map_err(|e| decode_err("row_version", e))?;
-    if current_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Conflit de version : version attendue {expected_row_version}, \
-             version actuelle {current_version}."
-        )]));
-    }
-
-    let status: String = current
-        .try_get("", "lifecycle_status")
-        .map_err(|e| decode_err("lifecycle_status", e))?;
-    if status == "DECOMMISSIONED" || status == "SCRAPPED" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "L'équipement {asset_id} a le statut '{status}' et ne peut pas \
-             être déplacé. Contactez un administrateur pour forcer le \
-             déplacement."
-        )]));
-    }
-
-    // ── Validate new org node ────────────────────────────────────────────
-    identity::assert_org_node_active(&txn, new_org_node_id).await?;
-
-    // ── Update org node and increment row_version ────────────────────────
-    let now = Utc::now().to_rfc3339();
-
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE equipment SET installed_at_node_id = ?, updated_at = ?, \
-         row_version = row_version + 1 WHERE id = ?",
-        [new_org_node_id.into(), now.into(), asset_id.into()],
-    ))
-    .await?;
+    crate::assets::lifecycle::move_asset_recorded_in(&txn, asset_id, new_org_node_id, expected_row_version, actor_id)
+        .await?;
 
     // ── Re-fetch full asset with resolved codes ──────────────────────────
     let sql = format!(
@@ -463,4 +417,66 @@ pub async fn move_asset_org_node(
 
     tracing::info!(asset_id, new_org_node_id, "asset org node moved");
     Ok(asset)
+}
+
+/// The checks and the write of a move, in the caller's transaction: the asset is at the version
+/// the person saw, it is not retired, and the target node is active. Shared by the move action
+/// and by a `MOVED` lifecycle event (`assets::lifecycle`), so neither can move an asset the other
+/// would refuse (AU-77).
+pub(crate) async fn move_asset_org_node_in(
+    txn: &impl ConnectionTrait,
+    asset_id: i64,
+    new_org_node_id: i64,
+    expected_row_version: i64,
+) -> AppResult<()> {
+    // ── Fetch current row and verify row_version ─────────────────────────
+    let current = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT row_version, lifecycle_status FROM equipment \
+             WHERE id = ? AND deleted_at IS NULL",
+            [asset_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: asset_id.to_string(),
+        })?;
+
+    let current_version: i64 = current
+        .try_get("", "row_version")
+        .map_err(|e| decode_err("row_version", e))?;
+    if current_version != expected_row_version {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : version attendue {expected_row_version}, \
+             version actuelle {current_version}."
+        )]));
+    }
+
+    let status: String = current
+        .try_get("", "lifecycle_status")
+        .map_err(|e| decode_err("lifecycle_status", e))?;
+    // Retired as the reference data says (tag `retired` of EQUIPMENT.STATUS), as for new work.
+    if identity::is_retired_status_code(txn, &status).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_HIER_MOVE_STATUS:status={status}: L'équipement {asset_id} a le statut '{status}' et ne peut pas \
+             être déplacé. Contactez un administrateur pour forcer le \
+             déplacement."
+        )]));
+    }
+
+    // ── Validate new org node ────────────────────────────────────────────
+    identity::assert_org_node_active(txn, new_org_node_id).await?;
+
+    // ── Update org node and increment row_version ────────────────────────
+    let now = Utc::now().to_rfc3339();
+
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE equipment SET installed_at_node_id = ?, updated_at = ?, \
+         row_version = row_version + 1 WHERE id = ?",
+        [new_org_node_id.into(), now.into(), asset_id.into()],
+    ))
+    .await?;
+    Ok(())
 }

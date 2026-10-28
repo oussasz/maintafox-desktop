@@ -65,12 +65,22 @@ impl ReliabilityReadinessGate {
     /// Error returned by analyses that must not run on DENY.
     #[must_use]
     pub fn deny_error(&self) -> AppError {
-        AppError::ValidationFailed(
-            self.blocking_reasons
-                .iter()
-                .map(|r| format!("READINESS_DENY:{r}"))
-                .collect(),
-        )
+        AppError::ValidationFailed(self.blocking_reasons.iter().map(|r| deny_refusal(r)).collect())
+    }
+}
+
+/// The coded refusal of one blocking reason of the readiness gate: the three reasons the gate can
+/// raise each have their own text; any other reason rides as a parameter of the generic code.
+fn deny_refusal(reason: &str) -> String {
+    match reason {
+        "MISSING_EXPOSURE" => "GATE_REL_READINESS_NO_EXPOSURE: no runtime exposure for this equipment.".to_string(),
+        "MISSING_FAILURE_MODE" => {
+            "GATE_REL_READINESS_NO_FAILURE_MODE: eligible events without a failure mode.".to_string()
+        }
+        REASON_INSUFFICIENT_EVENTS => {
+            "GATE_REL_READINESS_FEW_EVENTS: not enough eligible events in the period.".to_string()
+        }
+        other => format!("GATE_REL_READINESS_DENIED:reason={other}: the reliability data is not ready ({other})."),
     }
 }
 
@@ -102,7 +112,7 @@ pub fn decide(report: &AssetReadinessReport, min_sample_n: i64) -> (bool, Vec<St
 fn parse_dt(s: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s.trim())
         .map(|d| d.with_timezone(&Utc))
-        .map_err(|e| AppError::ValidationFailed(vec![format!("invalid timestamp '{s}': {e}")]))
+        .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_DATE_INVALID: invalid timestamp '{s}': {e}")]))
 }
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
@@ -191,7 +201,7 @@ pub async fn evaluate_equipment_readiness(
     };
     if p1 < p0 {
         return Err(AppError::ValidationFailed(vec![
-            "period_end before period_start.".into()
+            "GATE_REL_PERIOD_ORDER: period_end before period_start.".into(),
         ]));
     }
     // A caller may ask for a stricter sample, never a looser one than the governed default.

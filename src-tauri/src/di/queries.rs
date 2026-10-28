@@ -83,7 +83,7 @@ fn queue_predicate(queue: &str) -> AppResult<Option<String>> {
         "mine" => format!("ir.status NOT IN {}", super::stats::TERMINAL_STATUSES_SQL),
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "File de travail inconnue : '{other}'."
+                "GATE_DI_QUEUE_UNKNOWN: File de travail inconnue : '{other}'."
             )]))
         }
     };
@@ -614,6 +614,39 @@ pub async fn create_intervention_request(
     db: &DatabaseConnection,
     input: DiCreateInput,
 ) -> AppResult<InterventionRequest> {
+    // The DI row, its logs and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    let di = create_intervention_request_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(di)
+}
+
+/// A new request names an equipment, org node or submitter that does not exist. Also checked for
+/// the submitter before a PM execution whose finding raises a request is written (#185 N-R2-1).
+pub(crate) fn reference_invalid() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_DI_REFERENCE_INVALID: Référence invalide (equipment_id, org_node_id, ou submitter_id).".into(),
+    ])
+}
+
+/// Refuses a new request on a retired equipment (Déclassé / Rebuté, AU-73). Shared by every
+/// creation path, including the follow-up of a PM finding checked before the execution is written.
+pub(crate) async fn refuse_retired_equipment(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
+    if let Some(asset) = crate::assets::identity::retired_equipment_code(db, equipment_id).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_DI_EQUIPMENT_RETIRED:asset={asset}: L'équipement {asset} est déclassé ou mis au rebut : \
+             aucune demande d'intervention ne peut y être créée."
+        )]));
+    }
+    Ok(())
+}
+
+/// [`create_intervention_request`] in the caller's transaction: what the request is raised from is
+/// linked to it in the same transaction (`inspection::routing`), never left half done.
+pub async fn create_intervention_request_in(
+    db: &impl ConnectionTrait,
+    input: DiCreateInput,
+) -> AppResult<InterventionRequest> {
     // Catalog membership (Category B) — same philosophy as equipment taxonomy.
     let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
     let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
@@ -624,14 +657,15 @@ pub async fn create_intervention_request(
     // Decision O7: every new request names its org node (its anchor for site-scoped roles).
     super::access::require_org_node(input.org_node_id)?;
     crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
+    // AU-73: no new request on retired equipment (Déclassé / Rebuté), from the form or from an
+    // inspection anomaly. A request received by sync is applied by the sync materializer.
+    refuse_retired_equipment(db, input.equipment_id).await?;
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    // The DI row, its logs and its sync outbox entry commit together.
-    let txn = db.begin().await?;
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
             entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type, request_type, \
@@ -672,18 +706,18 @@ pub async fn create_intervention_request(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un code DI en doublon a été généré. Veuillez réessayer.".into()])
-        } else if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![
-                "Référence invalide (equipment_id, org_node_id, ou submitter_id).".into()
+                "GATE_DI_CODE_DUPLICATE: Un code DI en doublon a été généré. Veuillez réessayer.".into(),
             ])
+        } else if e.to_string().contains("FOREIGN KEY") {
+            reference_invalid()
         } else {
             AppError::Database(e)
         }
     })?;
 
     // Fetch the inserted row by code (code is UNIQUE)
-    let row = txn
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -700,7 +734,7 @@ pub async fn create_intervention_request(
     let di = map_intervention_request(&row)?;
 
     // Write initial transition log entry
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
          VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
@@ -709,9 +743,9 @@ pub async fn create_intervention_request(
     .await?;
 
     // Freeze immutable SLA on the DI, then persist full audit snapshot.
-    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let di = super::sla::freeze_sla_on_di(db, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
-    txn.execute(Statement::from_sql_and_values(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
@@ -738,7 +772,6 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
-    txn.commit().await?;
     Ok(di)
 }
 
@@ -746,9 +779,11 @@ pub async fn create_intervention_request(
 // F) update_di_draft_fields — optimistic concurrency + status guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// `actor_id`: who makes the change (recorded on the work orders a newly set safety flag protects).
 pub async fn update_di_draft_fields(
     db: &DatabaseConnection,
     input: DiDraftUpdateInput,
+    actor_id: Option<i64>,
 ) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
 
@@ -766,7 +801,7 @@ pub async fn update_di_draft_fields(
     // 2. Guard: only allow draft edits on mutable intake states
     if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Les champs ne peuvent être modifiés qu'au statut 'submitted' ou \
+            "GATE_DI_EDIT_STATUS_INVALID: Les champs ne peuvent être modifiés qu'au statut 'submitted' ou \
              'returned_for_clarification'. Statut actuel : '{}'.",
             current.status
         )]));
@@ -792,7 +827,9 @@ pub async fn update_di_draft_fields(
     if let Some(ref symptom_code_id) = input.symptom_code_id {
         match symptom_code_id {
             None => {
-                return Err(AppError::ValidationFailed(vec!["Le symptôme est obligatoire.".into()]));
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into(),
+                ]));
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
@@ -864,10 +901,17 @@ pub async fn update_di_draft_fields(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
+    }
+
+    // A request flagged "sécurité" now: its work orders not started yet require a permit, protected
+    // like a converted one (audit finding AU-01, permit_from_safety_di), in this transaction.
+    if input.safety_flag == Some(true) && !current.safety_flag {
+        crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(&txn, input.id, actor_id)
+            .await?;
     }
 
     // 5. Re-fetch and return updated row
@@ -904,7 +948,7 @@ pub async fn triage_submitted_di(
 
     if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seules les demandes au statut « soumis » ou « retourné pour clarification » \
+            "GATE_DI_SUBMIT_STATUS_INVALID: Seules les demandes au statut « soumis » ou « retourné pour clarification » \
              peuvent être (re)soumises vers la revue. \
              Statut actuel : '{}'.",
             current.status
@@ -933,7 +977,7 @@ pub async fn triage_submitted_di(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));

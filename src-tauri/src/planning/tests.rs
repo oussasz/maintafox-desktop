@@ -26,7 +26,7 @@ pub(super) async fn setup_db() -> DatabaseConnection {
     db
 }
 
-async fn insert_candidate(
+pub(super) async fn insert_candidate(
     db: &DatabaseConnection,
     source_type: &str,
     source_id: i64,
@@ -359,7 +359,17 @@ pub(super) async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee
     personnel_id
 }
 
-async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_id: i64) {
+/// The password of the approvers made by `ensure_approver_user` (they sign break-ins with it).
+pub(super) const APPROVER_PASSWORD: &str = "Approver-Pass-1";
+
+/// An approver holding plan.confirm plant-wide, linked to a new personnel record.
+pub(super) async fn signing_approver(db: &DatabaseConnection, user_id: i64, employee_code: &str) -> i64 {
+    let personnel = ensure_personnel_with_rate(db, employee_code).await;
+    ensure_approver_user(db, user_id, personnel).await;
+    user_id
+}
+
+pub(super) async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_id: i64) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO users (id) VALUES (?)",
@@ -370,14 +380,18 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
-            (id, entity_sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, 0, 0, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            (id, entity_sync_id, username, display_name, is_active, is_admin, force_password_change, personnel_id,
+             password_hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 0, 0, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [
             user_id.into(),
             format!("approver-sync-{user_id}").into(),
             format!("approver-{user_id}").into(),
             format!("Approver {user_id}").into(),
             personnel_id.into(),
+            crate::auth::password::hash_password(APPROVER_PASSWORD)
+                .expect("hash")
+                .into(),
         ],
     ))
     .await
@@ -860,6 +874,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await
@@ -883,6 +898,7 @@ async fn break_in_requires_approval_or_dangerous_override() {
             override_reason: Some("line stop".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: Some(APPROVER_PASSWORD.into()),
         },
     )
     .await
@@ -1139,7 +1155,7 @@ async fn seed_equipment_for_wo(db: &DatabaseConnection) {
     .expect("seed equipment");
 }
 
-async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) {
+pub(super) async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) {
     seed_equipment_for_wo(db).await;
     let actor = db
         .query_one(Statement::from_sql_and_values(
@@ -1380,6 +1396,7 @@ async fn break_in_write_back_updates_work_order_slot() {
             override_reason: Some("Emergency move".to_string()),
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: Some(APPROVER_PASSWORD.into()),
             bypass_availability: Some(true),
         },
     )
@@ -1512,7 +1529,7 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
 // ── Step A: load over working days, finished work, estimates, no-capacity days ───────────────
 
 /// An RFC 3339 instant for a local date-time (`YYYY-MM-DDTHH:MM`), as the planning screen sends it.
-fn local(at: &str) -> String {
+pub(super) fn local(at: &str) -> String {
     use chrono::TimeZone;
     let naive = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M").expect("local date-time");
     chrono::Local
@@ -1527,7 +1544,7 @@ fn day(d: &str) -> chrono::NaiveDate {
     chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").expect("day")
 }
 
-fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> CreateScheduleCommitmentInput {
+pub(super) fn commit_input(candidate_id: i64, team_id: i64, start: &str, end: &str) -> CreateScheduleCommitmentInput {
     CreateScheduleCommitmentInput {
         schedule_candidate_id: candidate_id,
         expected_candidate_row_version: None,
@@ -1835,6 +1852,7 @@ async fn a_break_in_can_unassign_the_technician() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await
@@ -2625,12 +2643,14 @@ async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
         .await
         .expect("commitment");
 
+    // An urgent break-in is signed by a second planner (D6).
+    let approver = signing_approver(&db, 94, "APPROVER-ACK").await;
     // Moved to 18:00–20:00, after the technician's shift.
     let break_in = |reason: Option<&str>, acknowledged: Vec<String>| CreateScheduleBreakInInput {
         schedule_commitment_id: commitment.id,
         expected_commitment_row_version: commitment.row_version,
         break_in_reason: "emergency".to_string(),
-        approved_by_user_id: None,
+        approved_by_user_id: Some(approver),
         new_slot_start: local("2026-05-04T18:00"),
         new_slot_end: local("2026-05-04T20:00"),
         new_assigned_team_id: Some(team_id),
@@ -2640,6 +2660,7 @@ async fn a_break_in_overrides_only_acknowledged_refusals_and_logs_them() {
         override_reason: reason.map(str::to_string),
         acknowledged_assignee_issues: acknowledged,
         dangerous_override_reason: Some("Pump failure, line stopped".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     };
     let refused = scheduling::create_schedule_break_in(&db, 1, break_in(Some("Night callout"), Vec::new()))
         .await
@@ -2723,13 +2744,13 @@ async fn an_older_commitment_counts_labour_per_person_or_is_reported_unknown() {
 
 // ── Step C: planning windows per site / equipment, reasons, qualifications of every job ──────
 
-async fn exec_sql(db: &DatabaseConnection, sql: &str) {
+pub(super) async fn exec_sql(db: &DatabaseConnection, sql: &str) {
     db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("{sql}: {e}"));
 }
 
-async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
+pub(super) async fn scalar(db: &DatabaseConnection, sql: &str) -> i64 {
     db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
         .await
         .expect("query")
@@ -3399,6 +3420,7 @@ fn break_in_input(
         override_reason: None,
         acknowledged_assignee_issues: Vec::new(),
         dangerous_override_reason: dangerous_override_reason.map(str::to_string),
+        approver_password: None,
     }
 }
 
@@ -3430,8 +3452,8 @@ async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reaso
     .expect_err("blocking conflict on a break-in");
     assert!(format!("{refused:?}").contains("NO_FEASIBLE_WINDOW"), "{refused:?}");
 
-    // Forced with the dangerous-override reason: moved, recorded, and the bar stays critical.
-    scheduling::create_schedule_break_in(
+    // A dangerous-override reason alone no longer forces it: a second planner signs (Q1).
+    let unsigned = scheduling::create_schedule_break_in(
         &db,
         1,
         break_in_input(
@@ -3442,7 +3464,31 @@ async fn a_break_in_runs_the_blocking_checks_unless_forced_with_a_recorded_reaso
         ),
     )
     .await
-    .expect("forced break-in");
+    .expect_err("forcing needs the signature");
+    assert!(
+        format!("{unsigned:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
+        "{unsigned:?}"
+    );
+    // Forced with the reason and the signature: moved, recorded, and the bar stays critical.
+    let approver = signing_approver(&db, 93, "APPROVER-FORCE").await;
+    let mut forced = break_in_input(
+        &commitment,
+        "2026-05-04T10:00",
+        "2026-05-04T11:00",
+        Some("Line stopped by the breakdown itself"),
+    );
+    forced.approved_by_user_id = Some(approver);
+    forced.approver_password = Some(APPROVER_PASSWORD.into());
+    let forced = scheduling::create_schedule_break_in(&db, 1, forced)
+        .await
+        .expect("forced break-in");
+    // The shutdown requirement blocks the job's readiness too: both forced checks are recorded.
+    assert!(
+        forced.forced_checks.contains(&"shutdown_window".to_string()),
+        "{:?}",
+        forced.forced_checks
+    );
+    assert!(forced.approver_signed_at.is_some(), "the signature is recorded");
     let moved = scheduling::list_schedule_commitments(
         &db,
         ScheduleCommitmentFilter {
@@ -3543,6 +3589,7 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
         let mut input = break_in_input(commitment, "2026-05-04T10:00", "2026-05-04T11:00", None);
         input.break_in_reason = "emergency".to_string();
         input.approved_by_user_id = Some(approver);
+        input.approver_password = Some(APPROVER_PASSWORD.into());
         input
     };
 
@@ -3595,7 +3642,7 @@ async fn an_expired_emergency_grant_gives_no_planning_approval_right() {
 /// A planning site (a node whose type can own work) and a crew attached to it, with roster
 /// capacity. The site's week follows the seeded all-sites weekend (Friday-Saturday): Sunday to
 /// Saturday.
-async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
+pub(super) async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
     let _ = get_any_team_id(db).await;
     exec_sql(
         db,
@@ -3641,7 +3688,7 @@ async fn weekly_site(db: &DatabaseConnection, code: &str) -> (i64, i64) {
     (site, team)
 }
 
-fn week_ref(site: i64, day: &str, rv: Option<i64>) -> crate::planning::weekly_schedule::WeeklyScheduleRef {
+pub(super) fn week_ref(site: i64, day: &str, rv: Option<i64>) -> crate::planning::weekly_schedule::WeeklyScheduleRef {
     crate::planning::weekly_schedule::WeeklyScheduleRef {
         site_id: site,
         day: day.to_string(),
@@ -3829,6 +3876,7 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
         reason: "emergency".to_string(),
         approved_by_user_id: None,
         dangerous_override_reason: None,
+        approver_password: None,
     });
     let refused = scheduling::create_schedule_commitment(&db, 1, emergency.clone())
         .await
@@ -3837,10 +3885,26 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
         format!("{refused:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
         "{refused:?}"
     );
+    // A dangerous-override reason no longer stands in for the signature (D6).
     emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
         reason: "emergency".to_string(),
         approved_by_user_id: None,
         dangerous_override_reason: Some("Pump seized on line 2".to_string()),
+        approver_password: None,
+    });
+    let refused = scheduling::create_schedule_commitment(&db, 1, emergency.clone())
+        .await
+        .expect_err("urgent needs the signature");
+    assert!(
+        format!("{refused:?}").contains("PLANNING_BREAK_IN_APPROVAL_REQUIRED"),
+        "{refused:?}"
+    );
+    let approver = signing_approver(&db, 91, "APPROVER-INSERT").await;
+    emergency.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
+        reason: "emergency".to_string(),
+        approved_by_user_id: Some(approver),
+        dangerous_override_reason: Some("Pump seized on line 2".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     });
     let inserted = scheduling::create_schedule_commitment(&db, 1, emergency)
         .await
@@ -3873,14 +3937,15 @@ async fn a_frozen_week_changes_only_through_break_ins_and_a_four_eyes_unfreeze()
             &db,
             &format!(
                 "SELECT COUNT(*) FROM schedule_break_ins WHERE schedule_commitment_id = {} AND kind = 'insert' \
-                   AND old_slot_start IS NULL AND old_slot_end IS NULL AND approved_by_user_id IS NULL \
+                   AND old_slot_start IS NULL AND old_slot_end IS NULL AND approved_by_user_id = {approver} \
+                   AND approver_signed_at IS NOT NULL AND forced_checks_json IS NULL \
                    AND override_reason = 'Pump seized on line 2'",
                 inserted.id
             )
         )
         .await,
         1,
-        "an inserted job has no old slot and no approver it did not have"
+        "an inserted job has no old slot, and its signer is recorded"
     );
     assert_eq!(
         scalar(
@@ -4888,10 +4953,12 @@ async fn planning_kpis_measure_the_frozen_baseline() {
         "2026-05-07T08:00",
         "2026-05-07T09:00",
     );
+    let approver = signing_approver(&db, 92, "APPROVER-KPI").await;
     urgent.frozen_week_break_in = Some(crate::planning::domain::CommitBreakIn {
         reason: "emergency".to_string(),
-        approved_by_user_id: None,
+        approved_by_user_id: Some(approver),
         dangerous_override_reason: Some("Line stopped".to_string()),
+        approver_password: Some(APPROVER_PASSWORD.into()),
     });
     let urgent = scheduling::create_schedule_commitment(&db, actor, urgent)
         .await
@@ -4919,6 +4986,7 @@ async fn planning_kpis_measure_the_frozen_baseline() {
             override_reason: None,
             acknowledged_assignee_issues: Vec::new(),
             dangerous_override_reason: None,
+            approver_password: None,
         },
     )
     .await
@@ -5694,4 +5762,587 @@ fn a_new_part_line_must_say_whether_it_is_required() {
     assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X"}]"#)).is_err());
     assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"["X"]"#)).is_err());
     assert!(crate::pm::wo_content::validate_required_parts_json(Some(r#"[{"code":"X","required":false}]"#)).is_ok());
+}
+
+#[test]
+fn planning_pdf_prints_local_time_and_labels_in_the_report_language() {
+    use crate::reports::export::ReportLocale;
+    let instant = "2026-10-12T06:00:00Z";
+    let local = chrono::DateTime::parse_from_rfc3339(instant)
+        .expect("instant")
+        .with_timezone(&chrono::Local);
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::Fr, instant),
+        local.format("%d/%m/%Y %H:%M").to_string()
+    );
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::En, instant),
+        local.format("%Y-%m-%d %H:%M").to_string()
+    );
+    assert_eq!(
+        scheduling::local_pdf_instant(ReportLocale::Fr, "not a date"),
+        "not a date"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::Fr, "work_order"),
+        "Ordre de travail"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::En, "work_order"),
+        "Work order"
+    );
+    assert_eq!(
+        scheduling::pdf_source_type_label(ReportLocale::En, "pm_occurrence"),
+        "PM occurrence"
+    );
+}
+
+// ── A crew's site change and the frozen weeks of its jobs (AU-129) ───────────────────────────
+
+/// A day `days` from today at `hour` (local), as the planning inputs write it.
+pub(super) fn crew_site_day(days: i64, hour: &str) -> String {
+    let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
+    format!("{}T{hour}", day.format("%Y-%m-%d"))
+}
+
+/// Commits a job of `team` at `[start, end)` whatever the weeks of its site (committed while the
+/// crew has no site, then its node is put back).
+pub(super) async fn crew_site_job(db: &DatabaseConnection, team: i64, source_id: i64, start: &str, end: &str) -> i64 {
+    let node = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!("SELECT primary_node_id FROM teams WHERE id = {team}"),
+        ))
+        .await
+        .expect("query")
+        .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten());
+    exec_sql(
+        db,
+        &format!("UPDATE teams SET primary_node_id = NULL WHERE id = {team}"),
+    )
+    .await;
+    let candidate = insert_candidate(db, "manual_test", source_id, "ready", 100.0).await;
+    let commitment = scheduling::create_schedule_commitment(db, 1, commit_input(candidate, team, start, end))
+        .await
+        .expect("committed");
+    let node = node.map_or_else(|| "NULL".to_string(), |n| n.to_string());
+    exec_sql(
+        db,
+        &format!("UPDATE teams SET primary_node_id = {node} WHERE id = {team}"),
+    )
+    .await;
+    commitment.id
+}
+
+/// Freezes (baseline 1) the week of `site` holding `day` (`YYYY-MM-DD...`).
+pub(super) async fn crew_site_freeze(db: &DatabaseConnection, site: i64, day: &str) {
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(db, site, &day[..10])
+        .await
+        .expect("week");
+    exec_sql(
+        db,
+        &format!(
+            "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status, frozen_at, baseline_no)
+             VALUES ('crew-site-week-{site}-{start}', {site}, '{start}', '{end}', 'frozen', '2026-01-01T00:00:00Z', 1)",
+            start = view.week.week_start,
+            end = view.week.week_end,
+        ),
+    )
+    .await;
+}
+
+pub(super) async fn crew_node(db: &DatabaseConnection, team: i64) -> Option<i64> {
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("SELECT primary_node_id FROM teams WHERE id = {team}"),
+    ))
+    .await
+    .expect("query")
+    .and_then(|r| r.try_get::<Option<i64>>("", "primary_node_id").ok().flatten())
+}
+
+pub(super) async fn move_crew(
+    db: &DatabaseConnection,
+    team: i64,
+    node: i64,
+) -> crate::errors::AppResult<crate::repository::team_repository::TeamSummary> {
+    crate::repository::team_repository::update_team(
+        db,
+        crate::repository::team_repository::TeamUpdateInput {
+            id: team,
+            code: None,
+            name: None,
+            team_type: None,
+            primary_node_id: Some(node),
+            description: None,
+            status: None,
+            icon_key: None,
+            accent_color: None,
+        },
+    )
+    .await
+}
+
+fn assert_week_frozen_refusal(err: &crate::errors::AppError) {
+    match err {
+        crate::errors::AppError::OrgValidationFailed(issues) => {
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| format!("{i:?}").contains("PLANNING_WEEK_FROZEN")
+                        && format!("{i:?}").contains("week_start")),
+                "{issues:?}"
+            );
+        }
+        other => panic!("expected PLANNING_WEEK_FROZEN, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_committed_job_into_a_frozen_week_of_its_new_site() {
+    let db = setup_db().await;
+    let (_site_a, team) = weekly_site(&db, "CSA").await;
+    let (site_b, _) = weekly_site(&db, "CSB").await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8101, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    let before = crew_node(&db, team).await;
+
+    let refused = move_crew(&db, team, site_b)
+        .await
+        .expect_err("frozen week of the new site");
+    assert_week_frozen_refusal(&refused);
+    assert_eq!(crew_node(&db, team).await, before, "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_committed_job_into_a_week_of_its_new_site_due_to_freeze() {
+    let db = setup_db().await;
+    let (_site_a, team) = weekly_site(&db, "CSC").await;
+    let (site_b, _) = weekly_site(&db, "CSD").await;
+    // A crew without a site: only the site it joins is judged. The clock is pinned: on Wednesday
+    // 5 June 2030 the week holding Thursday 6 June is the current one, its freeze due (never run).
+    exec_sql(
+        &db,
+        &format!("UPDATE teams SET primary_node_id = NULL WHERE id = {team}"),
+    )
+    .await;
+    crew_site_job(&db, team, 8111, "2030-06-06T08:00", "2030-06-06T09:00").await;
+
+    let block = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-06-05T12:00"))
+        .await
+        .expect("judged")
+        .expect("week due to freeze");
+    assert_eq!(block.jobs, 1);
+    let week = crate::planning::weekly::site_week(&db, site_b, day("2030-06-06"))
+        .await
+        .expect("week");
+    assert_eq!(block.weeks, vec![week.week_start.to_string()]);
+    assert_week_frozen_refusal(&block.refusal());
+    // Two weeks earlier that week is not due yet: the crew moves with its job.
+    let early = crate::planning::crew_site::crew_site_change_block(&db, team, Some(site_b), utc_at("2030-05-20T12:00"))
+        .await
+        .expect("judged");
+    assert!(early.is_none(), "{early:?}");
+}
+
+#[tokio::test]
+async fn a_frozen_job_names_the_start_of_its_week_when_no_frozen_week_is_found() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSL").await;
+    let (site_b, _) = weekly_site(&db, "CSM").await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8161, &start, &crew_site_day(21, "09:00")).await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET frozen_at = '2026-01-01T00:00:00Z' WHERE id = {job}"),
+    )
+    .await;
+
+    let refused = move_crew(&db, team, site_b).await.expect_err("a frozen job");
+    assert_week_frozen_refusal(&refused);
+    let week = crate::planning::weekly::site_week(&db, site_a, day(&start[..10]))
+        .await
+        .expect("week");
+    let crate::errors::AppError::OrgValidationFailed(issues) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(
+        issues[0].params.get("week_start"),
+        Some(&week.week_start.to_string()),
+        "the start of the job's week at the site it leaves"
+    );
+    assert_eq!(issues[0].params.get("count").map(String::as_str), Some("1"));
+    assert_eq!(crew_node(&db, team).await, Some(site_a), "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_moved_by_sync_off_a_deactivated_node_into_a_frozen_week_is_a_conflict() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSN").await;
+    let (site_b, _) = weekly_site(&db, "CSO").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'crew-site-leaf-type', structure_model_id, 'CSLEAF', 'Atelier', 1, 0, 0, 0, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes WHERE id = {site_a}"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'crew-site-leaf', 'CS-LEAF', 'Atelier', t.id, {site_a}, '/{site_a}/', 1, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'crew-site-leaf-type'"
+        ),
+    )
+    .await;
+    let leaf = scalar(&db, "SELECT id FROM org_nodes WHERE entity_sync_id = 'crew-site-leaf'").await;
+    move_crew(&db, team, leaf).await.expect("same site");
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8171, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+    // Another PC deactivated the leaf, then moved the crew: the leaf arrives first.
+    exec_sql(
+        &db,
+        &format!("UPDATE org_nodes SET status = 'inactive' WHERE id = {leaf}"),
+    )
+    .await;
+
+    let mut received = crate::permit::sync_check::local_wire(&db, "teams", "wk-team-CSN")
+        .await
+        .expect("wire")
+        .expect("crew");
+    received.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        serde_json::Value::from("wk-node-CSO"),
+    );
+    let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, "wk-team-CSN", &received)
+        .await
+        .expect("judged");
+    assert!(
+        matches!(
+            verdict,
+            Some(crate::settings::site::InboundVerdict::Conflict {
+                code: "PLANNING_WEEK_FROZEN",
+                ..
+            })
+        ),
+        "{verdict:?}"
+    );
+    assert_eq!(crew_node(&db, team).await, Some(leaf));
+}
+
+#[tokio::test]
+async fn a_crew_never_takes_a_job_out_of_a_frozen_week_of_the_site_it_leaves() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSE").await;
+    let (site_b, _) = weekly_site(&db, "CSF").await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8121, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_a, &start).await;
+
+    let refused = move_crew(&db, team, site_b)
+        .await
+        .expect_err("frozen week of the old site");
+    assert_week_frozen_refusal(&refused);
+    assert_eq!(crew_node(&db, team).await, Some(site_a), "nothing written");
+}
+
+#[tokio::test]
+async fn a_crew_moves_with_its_jobs_in_open_weeks_and_ended_or_released_jobs_never_hold_it() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSG").await;
+    let (site_b, _) = weekly_site(&db, "CSH").await;
+    // No committed job: free to move.
+    move_crew(&db, team, site_b).await.expect("no job");
+    move_crew(&db, team, site_a).await.expect("no job");
+
+    // A job in weeks open at both sites moves with the crew.
+    let open = crew_site_job(
+        &db,
+        team,
+        8131,
+        &crew_site_day(21, "08:00"),
+        &crew_site_day(21, "09:00"),
+    )
+    .await;
+    let moved = move_crew(&db, team, site_b).await.expect("open weeks");
+    assert_eq!(moved.primary_node_id, Some(site_b));
+    assert_eq!(commitment_status(&db, open).await, "committed");
+    move_crew(&db, team, site_a).await.expect("open weeks");
+
+    // A released job in a frozen week of the new site, and a job that ended in one: not held.
+    let released = crew_site_job(
+        &db,
+        team,
+        8132,
+        &crew_site_day(28, "08:00"),
+        &crew_site_day(28, "09:00"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {released}"),
+    )
+    .await;
+    crew_site_freeze(&db, site_b, &crew_site_day(28, "08:00")).await;
+    let ended = crew_site_job(
+        &db,
+        team,
+        8133,
+        &crew_site_day(35, "08:00"),
+        &crew_site_day(35, "09:00"),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "UPDATE schedule_commitments SET committed_start = '{}', committed_end = '{}' WHERE id = {ended}",
+            local(&crew_site_day(-8, "08:00")),
+            local(&crew_site_day(-8, "09:00")),
+        ),
+    )
+    .await;
+    crew_site_freeze(&db, site_b, &crew_site_day(-8, "08:00")).await;
+    assert_eq!(commitment_status(&db, ended).await, "committed");
+    move_crew(&db, team, site_b).await.expect("released and ended jobs");
+    assert_eq!(crew_node(&db, team).await, Some(site_b));
+}
+
+#[tokio::test]
+async fn a_crew_moved_to_another_node_of_its_site_is_never_refused() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSI").await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+                can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
+             SELECT 'crew-site-workshop-type', structure_model_id, 'CSWORKSHOP', 'Atelier', 1, 0, 0, 0, 0, 0, 1,
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM org_nodes WHERE id = {site_a}"
+        ),
+    )
+    .await;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+                created_at, updated_at, row_version, structure_model_id)
+             SELECT 'crew-site-workshop', 'CS-WS', 'Atelier', t.id, {site_a}, '/{site_a}/', 1, 'active',
+                    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, t.structure_model_id
+               FROM org_node_types t WHERE t.entity_sync_id = 'crew-site-workshop-type'"
+        ),
+    )
+    .await;
+    let workshop = scalar(
+        &db,
+        "SELECT id FROM org_nodes WHERE entity_sync_id = 'crew-site-workshop'",
+    )
+    .await;
+    let start = crew_site_day(21, "08:00");
+    crew_site_job(&db, team, 8141, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_a, &start).await;
+
+    let moved = move_crew(&db, team, workshop).await.expect("same planning site");
+    assert_eq!(moved.primary_node_id, Some(workshop));
+}
+
+#[tokio::test]
+async fn a_crew_site_change_received_by_sync_into_a_frozen_week_is_a_conflict_for_review() {
+    let db = setup_db().await;
+    let (site_a, team) = weekly_site(&db, "CSJ").await;
+    let (site_b, _) = weekly_site(&db, "CSK").await;
+    let start = crew_site_day(21, "08:00");
+    let job = crew_site_job(&db, team, 8151, &start, &crew_site_day(21, "09:00")).await;
+    crew_site_freeze(&db, site_b, &start).await;
+
+    let sid = "wk-team-CSJ";
+    let mut received = crate::permit::sync_check::local_wire(&db, "teams", sid)
+        .await
+        .expect("wire")
+        .expect("crew");
+    received.insert(
+        crate::sync::row_layout::ref_payload_key("primary_node_id"),
+        serde_json::Value::from("wk-node-CSK"),
+    );
+    received.insert("updated_at".into(), serde_json::Value::from("2026-10-27T09:00:00Z"));
+    let rv = scalar(&db, &format!("SELECT row_version FROM teams WHERE id = {team}")).await;
+    let outcome = crate::sync::materialize::apply_inbound_payload(
+        &db,
+        "teams",
+        sid,
+        "upsert",
+        rv + 1,
+        &serde_json::Value::Object(received.clone()).to_string(),
+    )
+    .await
+    .expect("judged");
+    match outcome {
+        crate::sync::materialize::ApplyOutcome::Conflict { code, .. } => assert_eq!(code, "PLANNING_WEEK_FROZEN"),
+        other => panic!("expected a PLANNING_WEEK_FROZEN conflict, got {other:?}"),
+    }
+    assert_eq!(
+        crew_node(&db, team).await,
+        Some(site_a),
+        "the crew stays at its site here"
+    );
+
+    // Its job released here: the same change crosses no frozen week any more.
+    exec_sql(
+        &db,
+        &format!("UPDATE schedule_commitments SET status = 'released' WHERE id = {job}"),
+    )
+    .await;
+    let verdict = crate::planning::sync_check::inbound_crew_site_check(&db, sid, &received)
+        .await
+        .expect("judged");
+    assert!(verdict.is_none(), "{verdict:?}");
+}
+
+/// Audit finding AU-130: a new organisation structure published over a planning site moves the
+/// site's frozen week to the node replacing it, with its crew. New work entering that week for the
+/// new site still needs a break-in, as it did before the publish.
+#[tokio::test]
+async fn a_frozen_week_still_holds_its_site_after_a_publish_replaced_the_site() {
+    use crate::org::node_types::{self, CreateNodeTypePayload};
+    use crate::org::nodes::{self, CreateOrgNodePayload};
+    use crate::org::structure_model::{self, CreateStructureModelPayload};
+
+    let db = setup_db().await;
+    let model = structure_model::create_model(
+        &db,
+        CreateStructureModelPayload {
+            description: Some("Structure v1".to_string()),
+        },
+        1,
+    )
+    .await
+    .expect("structure v1");
+    let site_type = node_types::create_node_type(
+        &db,
+        CreateNodeTypePayload {
+            structure_model_id: model.id,
+            code: "AUSITE".to_string(),
+            label: "Site".to_string(),
+            icon_key: None,
+            color: None,
+            depth_hint: Some(0),
+            can_host_assets: true,
+            can_own_work: true,
+            can_carry_cost_center: false,
+            can_aggregate_kpis: true,
+            can_receive_permits: false,
+            is_root_type: true,
+        },
+    )
+    .await
+    .expect("site type");
+    structure_model::publish_model(&db, model.id, 1)
+        .await
+        .expect("publish v1");
+    let site = nodes::create_org_node(
+        &db,
+        CreateOrgNodePayload {
+            code: "AU130".to_string(),
+            name: "Site AU-130".to_string(),
+            node_type_id: site_type.id as i64,
+            parent_id: None,
+            description: None,
+            cost_center_code: None,
+            external_reference: None,
+            effective_from: None,
+            erp_reference: None,
+            notes: None,
+            structure_model_id: model.id as i64,
+        },
+        1,
+    )
+    .await
+    .expect("site")
+    .id;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)
+             VALUES ('au130-team', 'CREW-AU130', 'Equipe AU-130', 'maintenance', {site}, 'active',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let team = scalar(&db, "SELECT id FROM teams WHERE entity_sync_id = 'au130-team'").await;
+    give_team_roster_capacity(&db, team).await;
+    let planned = insert_candidate(&db, "manual_test", 7991, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(planned, team, "2026-05-04T08:00", "2026-05-04T09:00"),
+    )
+    .await
+    .expect("committed");
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+
+    let draft = structure_model::fork_draft_from_published(
+        &db,
+        &CreateStructureModelPayload {
+            description: Some("Structure v2".to_string()),
+        },
+        1,
+    )
+    .await
+    .expect("draft v2");
+    crate::org::validation::publish_model_with_remap(&db, draft.id as i64, 1)
+        .await
+        .expect("publish v2 with remap");
+    let new_site = scalar(
+        &db,
+        "SELECT n.id FROM org_nodes n JOIN org_structure_models m ON m.id = n.structure_model_id \
+         AND m.status = 'active' WHERE n.code = 'AU130' AND n.deleted_at IS NULL",
+    )
+    .await;
+    assert_ne!(new_site, site, "the site was replaced by its copy");
+
+    // The week moved with the site, frozen, with its baseline; nothing is left on the former node.
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {new_site} AND status = 'frozen' \
+                 AND baseline_no = 1"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {site}")
+        )
+        .await,
+        0
+    );
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, new_site, "2026-05-04")
+        .await
+        .expect("week of the new site");
+    assert_eq!(view.schedule.expect("schedule").status, "frozen");
+    assert!(view.crews.iter().any(|c| c.team_id == team), "its crew is still on it");
+
+    // New work entering the week for the new site is refused without a break-in.
+    let urgent = insert_candidate(&db, "manual_test", 7992, "ready", 100.0).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(urgent, team, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect_err("frozen week of the new site");
+    assert!(format!("{refused:?}").contains("PLANNING_WEEK_FROZEN"), "{refused:?}");
 }

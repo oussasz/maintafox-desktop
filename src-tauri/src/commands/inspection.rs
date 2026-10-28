@@ -16,7 +16,6 @@ use crate::inspection::domain::{
     InspectionRoundSummaryFilter, InspectionScheduleSummary, InspectionTemplate, InspectionTemplateVersion,
     InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
     RefreshInspectionReliabilitySignalsInput, SaveInspectionScheduleInput, ScheduleInspectionRoundInput,
-    UpdateInspectionAnomalyInput,
 };
 use crate::inspection::insights;
 use crate::inspection::queries;
@@ -224,9 +223,9 @@ pub async fn record_inspection_result(
         crate::rbac::permissions::INS_EXECUTE,
         PermissionScope::Global
     );
-    let pid = actor_personnel_id(&state, user.user_id)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["User has no personnel_id.".into()]))?;
+    let pid = actor_personnel_id(&state, user.user_id).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_CMD_USER_NO_PERSONNEL: User has no personnel_id.".into()])
+    })?;
     results::record_inspection_result(&state.db, input, pid).await
 }
 
@@ -242,25 +241,10 @@ pub async fn add_inspection_evidence(
         crate::rbac::permissions::INS_EXECUTE,
         PermissionScope::Global
     );
-    let pid = actor_personnel_id(&state, user.user_id)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["User has no personnel_id.".into()]))?;
+    let pid = actor_personnel_id(&state, user.user_id).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_CMD_USER_NO_PERSONNEL: User has no personnel_id.".into()])
+    })?;
     results::add_inspection_evidence(&state.db, input, pid).await
-}
-
-#[tauri::command]
-pub async fn update_inspection_anomaly(
-    input: UpdateInspectionAnomalyInput,
-    state: State<'_, AppState>,
-) -> AppResult<InspectionAnomaly> {
-    let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::INS_EXECUTE,
-        PermissionScope::Global
-    );
-    results::update_inspection_anomaly(&state.db, input).await
 }
 
 #[tauri::command]

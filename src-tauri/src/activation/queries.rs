@@ -11,11 +11,11 @@ use crate::activation::domain::{
     RebindMachineActivationResult, RotateActivationSecretInput, RotateActivationSecretResult,
 };
 use crate::audit;
+use crate::build_identity::KEYRING_SERVICE;
 use crate::entitlements;
 use crate::errors::{AppError, AppResult};
 use crate::license::security::{append_license_trace, register_api_exchange, LicenseTraceInput};
 
-const KEYRING_SERVICE: &str = "maintafox-desktop";
 const KEYRING_ACTIVATION_SECRET_KEY: &str = "machine-activation-binding-secret";
 const KEYRING_ACTIVATION_TOKEN_KEY: &str = "machine-activation-refresh-token";
 
@@ -330,8 +330,8 @@ pub async fn apply_machine_activation(
     let trusted_binding = drift <= policy.fingerprint_max_drift;
     if !trusted_binding {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Fingerprint drift score {drift} exceeds tolerance {}.",
-            policy.fingerprint_max_drift
+            "GATE_ACT_FINGERPRINT_DRIFT:drift={drift},max={}: Fingerprint drift score {drift} exceeds tolerance {}.",
+            policy.fingerprint_max_drift, policy.fingerprint_max_drift
         )]));
     }
 
@@ -372,7 +372,8 @@ pub async fn apply_machine_activation(
         .map_err(|e| decode_err("slot_conflict", e))?;
     if slot_conflict > 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Slot assignment conflict detected against existing active machine contract.".to_string(),
+            "GATE_ACT_SLOT_CONFLICT: Slot assignment conflict detected against existing active machine contract."
+                .to_string(),
         ]));
     }
 
@@ -783,7 +784,7 @@ pub async fn rotate_activation_binding_secret(
 ) -> AppResult<RotateActivationSecretResult> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "reason is required for activation secret rotation.".to_string(),
+            "GATE_ACT_ROTATE_REASON_REQUIRED: reason is required for activation secret rotation.".to_string(),
         ]));
     }
     use rand_core::{OsRng, RngCore};
@@ -840,7 +841,7 @@ pub async fn request_machine_rebind(
 ) -> AppResult<RebindMachineActivationResult> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "reason is required for machine activation rebind.".to_string(),
+            "GATE_ACT_REBIND_REASON_REQUIRED: reason is required for machine activation rebind.".to_string(),
         ]));
     }
     let now = Utc::now().to_rfc3339();

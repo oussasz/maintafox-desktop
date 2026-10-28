@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 
 import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
@@ -31,7 +32,6 @@ import {
   fileToNumberArray,
   MAX_ATTACHMENT_SIZE_BYTES,
 } from "@/services/di-attachment-service";
-import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiAttachment, DiAttachmentType } from "@shared/ipc-types";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -65,17 +65,11 @@ function attachmentIcon(type: string) {
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPanelProps) {
-  const { t, i18n } = useTranslation("di");
-  const dateLocale = intlLocaleForLanguage(i18n.language);
+  const { t } = useTranslation("di");
+  const { formatBytes, formatDate } = useFormatters();
   const [attachments, setAttachments] = useState<DiAttachment[]>([]);
   const [previews, setPreviews] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -406,12 +400,7 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {formatBytes(att.size_bytes)} ·{" "}
-                    {new Date(att.uploaded_at).toLocaleDateString(dateLocale, {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    })}
+                    {formatBytes(att.size_bytes)} · {formatDate(att.uploaded_at)}
                   </p>
                   <MediaFileStateBadge
                     state={fileStates.get(att.relative_path)}

@@ -1173,6 +1173,19 @@ export const PERMISSION_ALIAS_MAP: Readonly<Record<string, PermissionName>> = {
   "cfg.admin": P.CFG_MANAGE,
 };
 
+/** Permissions kept in the catalog and on roles, but not shown on the plant's role screens. */
+export const HIDDEN_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set([P.IOT_VIEW, P.IOT_MANAGE, P.ERP_VIEW, P.ERP_CONFIGURE]);
+
+/** Whole permission categories not shown on the plant's role screens. */
+export const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set(["vendor_console"]);
+
+/** Whether a permission appears on the plant's role screens (custom names do; legacy aliases do not). */
+export function isShownInPlantRoleScreens(name: string): boolean {
+  if (HIDDEN_FROM_PLANT_SCREENS.has(name) || name in PERMISSION_ALIAS_MAP) return false;
+  const meta = PERMISSION_CATALOG.find((p) => p.name === name);
+  return !meta || !HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.has(meta.category);
+}
+
 export const ROLE_TEMPLATES: Readonly<Record<string, readonly PermissionName[]>> = {
   "Supervisor Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.OT_APPROVE, P.OT_CLOSE, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.DI_REVIEW, P.DI_APPROVE, P.DI_CONVERT, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PM_APPROVE, P.PER_VIEW, P.PER_MANAGE, P.PER_REPORT, P.PER_POSITION_VIEW, P.PER_POSITION_MANAGE, P.EQ_VIEW, P.EQ_MANAGE, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
   "Technician Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_CREATE_OWN, P.EQ_VIEW, P.EQ_MANAGE],

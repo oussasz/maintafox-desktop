@@ -24,7 +24,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { describeAppError } from "@/lib/app-error";
+import { useFormatters } from "@/hooks/use-formatters";
+import { appErrorReason } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   getTeam,
@@ -72,6 +73,7 @@ export function TeamDetailWorkspace({
   initialTab,
 }: TeamDetailWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const { formatDecimal, formatDate, formatPercent } = useFormatters();
   const [team, setTeam] = useState<TeamSummary | null>(null);
   const [members, setMembers] = useState<TeamMemberRow[]>([]);
   const [skills, setSkills] = useState<SkillMatrixRow[]>([]);
@@ -96,7 +98,7 @@ export function TeamDetailWorkspace({
         getTeam(teamId),
         listTeamMembers(teamId),
         listSkillsMatrix({ team_id: teamId, include_inactive: false }).catch((err: unknown) => {
-          setSkillsError(describeAppError(err).title);
+          setSkillsError(appErrorReason(err));
           return [] as SkillMatrixRow[];
         }),
         scanSuccessionRisk(null, teamId),
@@ -116,7 +118,7 @@ export function TeamDetailWorkspace({
         setCapacityNote(t("crews.detail.capacityLoadUnavailable"));
       }
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       setTeam(null);
     } finally {
       setLoading(false);
@@ -146,7 +148,7 @@ export function TeamDetailWorkspace({
         await load();
         onRosterChanged?.();
       } catch (err) {
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       } finally {
         setLeadBusyId(null);
       }
@@ -204,7 +206,9 @@ export function TeamDetailWorkspace({
         accessorKey: "allocation_percent",
         header: t("crews.detail.allocation"),
         cell: ({ row }) => (
-          <span className="text-xs">{Math.round(row.original.allocation_percent)}%</span>
+          <span className="text-xs">
+            {formatPercent(Math.round(row.original.allocation_percent))}
+          </span>
         ),
       },
     ];
@@ -237,7 +241,7 @@ export function TeamDetailWorkspace({
     }
 
     return cols;
-  }, [t, canManage, leadBusyId, handleLeadToggle]);
+  }, [t, canManage, leadBusyId, handleLeadToggle, formatPercent]);
 
   const riskColumns = useMemo<ColumnDef<SuccessionRiskRow>[]>(
     () => [
@@ -282,17 +286,19 @@ export function TeamDetailWorkspace({
       {
         accessorKey: "work_date",
         header: t("crews.detail.workDate"),
-        cell: ({ row }) => <span className="font-mono text-xs">{row.original.work_date}</span>,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs">{formatDate(row.original.work_date)}</span>
+        ),
       },
       {
         accessorKey: "available_hours",
         header: t("crews.detail.availableHours"),
-        cell: ({ row }) => row.original.available_hours.toFixed(1),
+        cell: ({ row }) => formatDecimal(row.original.available_hours, 1),
       },
       {
         accessorKey: "committed_hours",
         header: t("crews.detail.committedHours"),
-        cell: ({ row }) => row.original.committed_hours.toFixed(1),
+        cell: ({ row }) => formatDecimal(row.original.committed_hours, 1),
       },
       {
         accessorKey: "utilization_ratio",
@@ -300,10 +306,10 @@ export function TeamDetailWorkspace({
         cell: ({ row }) =>
           row.original.utilization_ratio == null
             ? "—"
-            : `${Math.round(row.original.utilization_ratio * 100)}%`,
+            : formatPercent(Math.round(row.original.utilization_ratio * 100)),
       },
     ],
-    [t],
+    [t, formatDecimal, formatDate, formatPercent],
   );
 
   return (

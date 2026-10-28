@@ -186,7 +186,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -196,6 +196,9 @@ mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -213,12 +216,15 @@ mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
@@ -639,14 +645,14 @@ mod tests {
             .await
             .expect("record_actual_usage");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: Some("mechanical done".into()),
@@ -718,14 +724,14 @@ mod tests {
             .await
             .expect("confirm_no_parts_used");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -802,14 +808,14 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -909,18 +915,26 @@ mod tests {
             .await
             .expect("record usage");
 
-        costs::update_service_cost(&db, wo.id, 30.0, actor)
-            .await
-            .expect("update service cost");
+        costs::update_service_cost(
+            &db,
+            wo.id,
+            30.0,
+            crate::wo::closeout::wo_row_version(&db, wo.id)
+                .await
+                .expect("wo row_version"),
+            actor,
+        )
+        .await
+        .expect("update service cost");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: None,
                 actual_duration_hours: None,
                 conclusion: None,
@@ -965,6 +979,57 @@ mod tests {
         approx_eq(summary.parts_cost, 90.0, 0.01);
         approx_eq(summary.service_cost, 30.0, 0.01);
         approx_eq(summary.total_cost, 400.0, 0.01);
+    }
+
+    /// Review N6: costs and hours left empty (NULL) on a work order are read as 0.0 by the cost
+    /// summary, the cost-posting hook, the plan adherence and the close-out gate, never refused as an
+    /// integer 0 that does not read as a number.
+    #[tokio::test]
+    async fn empty_costs_and_hours_read_as_zero() {
+        let db = setup().await;
+        let wo = create_wo_draft(&db, "Empty costs and hours").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET labor_cost = NULL, parts_cost = NULL, service_cost = NULL, \
+                    service_cost_input = NULL, total_cost = NULL, active_labor_hours = NULL, \
+                    total_waiting_hours = NULL, downtime_hours = NULL WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .expect("empty");
+
+        let summary = costs::get_cost_summary(&db, wo.id).await.expect("cost summary");
+        approx_eq(summary.total_cost, 0.0, 0.001);
+        crate::wo::plan_adherence::get_plan_adherence(&db, wo.id)
+            .await
+            .expect("plan adherence");
+        let evidence = crate::wo::closeout::CloseEvidence {
+            closer_user_id: Some(admin_id(&db).await),
+            no_downtime_attestation: None,
+            no_downtime_attestation_reason: None,
+            fmeca_override_reason: None,
+            fmeca_override_signer_id: None,
+            fmeca_override_signer_password: crate::wo::closeout::SignerPassword::Given(None),
+        };
+        let refusals = crate::wo::closeout::close_preflight(&db, wo.id, &evidence, 1000)
+            .await
+            .expect("close-out gate")
+            .0;
+        assert!(
+            refusals.iter().any(|m| m.starts_with("GATE_CLOSEOUT_LABOR_REQUIRED")),
+            "{refusals:?}"
+        );
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'closed') \
+              WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .expect("closed");
+        let hook = costs::get_cost_posting_hook(&db, wo.id).await.expect("cost hook");
+        approx_eq(hook.total_cost, 0.0, 0.001);
     }
 
     #[tokio::test]
@@ -1372,14 +1437,14 @@ mod tests {
             .await
             .expect("close_labor");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
                 wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: wo.row_version,
+                expected_row_version: rv,
                 actual_end: Some("2026-04-10T10:00:00Z".into()),
                 actual_duration_hours: Some(2.0),
                 conclusion: Some("mechanical complete".into()),

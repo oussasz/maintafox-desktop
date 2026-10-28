@@ -19,6 +19,7 @@
     "totalAssets": "Assets",
     "overdueItems": "Overdue",
     "noChange": "no change",
+    "points": "{{change}} pts",
     "vsPrevious": "vs previous period",
     "stable": "Stable",
     "trendNew": "New vs empty prior window",
@@ -173,7 +174,9 @@
         "today": "Today",
         "byUrgency": "My work orders by urgency",
         "listAria": "My most urgent work orders",
-        "empty": "No work order is assigned to you."
+        "empty": "No work order is assigned to you.",
+        "deisolation": "De-isolation to do",
+        "deisolationAria": "My completed work orders with a lock still fitted"
       },
       "di": {
         "title": "My requests",
@@ -338,6 +341,7 @@
       "myWoOpen": "Work orders you are primary responsible for whose work is still ahead (draft, planning, ready, in progress, on hold).",
       "woOverdue": "Work orders whose work is still ahead (draft to on hold) and whose planned end is past — the work order module's one rule.",
       "myWoToday": "Work orders whose planned period includes today (local day) and that are not overdue.",
+      "myWoDeisolation": "Completed work orders with a lock still fitted under their permits, that you are responsible for or whose lock you fitted: they stay here until the removal of the last lock is verified.",
       "myDiOpen": "Requests you submitted, neither closed nor turned into a work order (queue “My requests”).",
       "myDiAwaiting": "Your requests returned for clarification: they are waiting for your answer.",
       "roundOverdue": "Rounds assigned to you, still to do (scheduled, released, in progress) whose planned time is past (same rule as the Inspections module).",

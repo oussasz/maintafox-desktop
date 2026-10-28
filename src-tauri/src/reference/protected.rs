@@ -64,7 +64,7 @@ pub async fn assert_can_delete_value(db: &DatabaseConnection, value_id: i64) -> 
 
     if is_protected && !usages.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de supprimer la valeur '{}' (code '{}') du domaine protege '{}'. \
+            "GATE_REF_VALUE_IN_USE: Impossible de supprimer la valeur '{}' (code '{}') du domaine protege '{}'. \
              Elle est utilisee par : {}. \
              Utilisez la desactivation ou la migration a la place.",
             value.label,
@@ -76,7 +76,7 @@ pub async fn assert_can_delete_value(db: &DatabaseConnection, value_id: i64) -> 
 
     if !usages.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de supprimer la valeur '{}' (code '{}') car elle est utilisee par : {}.",
+            "GATE_REF_VALUE_IN_USE: Impossible de supprimer la valeur '{}' (code '{}') car elle est utilisee par : {}.",
             value.label,
             value.code,
             format_usage_summary(&usages),

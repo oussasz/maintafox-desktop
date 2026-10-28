@@ -232,7 +232,7 @@ pub async fn assign_equipment_to_node(payload: AssignEquipmentPayload, state: St
         crate::rbac::permissions::ORG_MANAGE,
         PermissionScope::Global
     );
-    equipment_assignment::assign_equipment_to_node(&state.db, payload).await
+    equipment_assignment::assign_equipment_to_node(&state.db, payload, user.user_id).await
 }
 
 #[tauri::command]

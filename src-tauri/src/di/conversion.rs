@@ -55,7 +55,7 @@ pub struct WoConversionResult {
 fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -131,7 +131,7 @@ pub async fn convert_di_to_work_order(
 
     if current_status != DiStatus::Approved {
         return Err(AppError::ValidationFailed(vec![format!(
-            "La conversion n'est possible qu'au statut 'approved'. Statut actuel : '{}'.",
+            "GATE_DI_CONVERT_STATUS_INVALID: La conversion n'est possible qu'au statut 'approved'. Statut actuel : '{}'.",
             current_status.as_str()
         )]));
     }
@@ -142,19 +142,21 @@ pub async fn convert_di_to_work_order(
     let mut errors: Vec<String> = Vec::new();
 
     if di.equipment_id == 0 {
-        errors.push("Contexte d'actif requis pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_ASSET_REQUIRED: Contexte d'actif requis pour la conversion.".into());
     }
     if di.org_node_id == 0 {
-        errors.push("Contexte d'entité requis pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_ORG_NODE_REQUIRED: Contexte d'entité requis pour la conversion.".into());
     }
 
     if di.classification_code_id.is_none() {
-        errors.push("Classification requise pour la conversion.".into());
+        errors.push("GATE_DI_CONVERT_CLASSIFICATION_REQUIRED: Classification requise pour la conversion.".into());
     }
 
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
     }
+    // AU-73: the equipment may have been retired since the request was approved.
+    crate::wo::queries::refuse_retired_equipment(&txn, di.equipment_id).await?;
 
     // ── 3. Create WO in work_orders table ───────────────────────────────
     let now = now_utc_z();
@@ -178,7 +180,7 @@ pub async fn convert_di_to_work_order(
         let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
         let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
         return Err(AppError::ValidationFailed(vec![format!(
-            "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
+            "GATE_DI_WO_ACTIVE_EXISTS:id={existing_id},code={existing_code}: Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
         )]));
     }
 
@@ -227,9 +229,9 @@ pub async fn convert_di_to_work_order(
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
             title, description, urgency_id, requires_permit, \
-            permit_rule_code, permit_rule_permit_type, \
+            permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
             entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
@@ -252,6 +254,9 @@ pub async fn convert_di_to_work_order(
             requires_permit.into(),
             permit_flag.rule_code.clone().into(),
             permit_flag.permit_type_code.clone().into(),
+            // The request's safety flag is the origin of the requirement: cleared only with the
+            // permit-issue right at the work order's site and a reason (migration 255).
+            i64::from(di.safety_flag).into(),
             crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),
@@ -260,7 +265,9 @@ pub async fn convert_di_to_work_order(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Code OT en doublon. Veuillez réessayer.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_DI_WO_CODE_DUPLICATE: Code OT en doublon. Veuillez réessayer.".into(),
+            ])
         } else {
             AppError::Database(e)
         }
@@ -337,6 +344,10 @@ pub async fn convert_di_to_work_order(
         ],
     ))
     .await?;
+
+    // Rules that do not read, or name codes not held here: in the work order's history and audit
+    // trail too (the conversion response shows them).
+    crate::permit::requirement_rules::record_rule_problems(&txn, wo_id, Some(input.actor_id), &permit_flag).await?;
 
     // ── 5. Update DI status ───────────────────────────────────────────────
     let result = txn

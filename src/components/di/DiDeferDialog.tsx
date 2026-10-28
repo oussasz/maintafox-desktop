@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDiReviewStore } from "@/stores/di-review-store";
@@ -104,15 +104,14 @@ export function DiDeferDialog({ di, open, onOpenChange, onDeferred }: DiDeferDia
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="di-defer-until">{t("deferral.until")}</Label>
-            <Input
+            <DateField
               id="di-defer-until"
-              type="date"
               className="h-11"
               min={minDate}
               value={until}
               aria-invalid={touched && dateError != null}
               aria-describedby={touched && dateError ? "di-defer-until-error" : undefined}
-              onChange={(e) => setUntil(e.target.value)}
+              onChange={(v) => setUntil(v)}
             />
             {touched && dateError ? (
               <p id="di-defer-until-error" className="text-xs text-tone-danger-fg">

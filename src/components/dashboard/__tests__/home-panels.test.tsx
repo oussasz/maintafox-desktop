@@ -76,6 +76,8 @@ const myWork: HomeMyWork = {
         overdue: true,
       },
     ],
+    deisolation_pending: 0,
+    deisolation_items: [],
   },
   requests: { open: 2, awaiting_my_answer: 1 },
   rounds: { personnel_linked: false, overdue: 0, today: 0, next_7_days: 0, todo: 0, items: [] },
@@ -99,6 +101,44 @@ describe("HomeMyWorkPanel", () => {
     expect(screen.getByText("home.more:8")).toBeTruthy();
     fireEvent.click(screen.getByText("OT-44 — Seal"));
     expect(screen.getByTestId("where").textContent).toBe("/work-orders?openWo=44");
+  });
+
+  it("keeps a completed work order with a lock still fitted on the list until de-isolation", async () => {
+    const base = myWork.work_orders;
+    if (!base) throw new Error("fixture has work orders");
+    svc.getHomeMyWork.mockResolvedValueOnce({
+      ...myWork,
+      work_orders: {
+        ...base,
+        deisolation_pending: 1,
+        deisolation_items: [
+          {
+            id: 51,
+            code: "OT-51",
+            title: "Breaker",
+            status_code: "completed",
+            urgency_code: null,
+            planned_start: null,
+            planned_end: null,
+            asset_label: null,
+            overdue: false,
+          },
+        ],
+      },
+    });
+    renderAt(<HomeMyWorkPanel />);
+    const list = await screen.findByRole("list", { name: "home.myWork.wo.deisolationAria" });
+    expect(list.textContent).toContain("OT-51 — Breaker");
+    expect(list.textContent).toContain("home.myWork.wo.deisolation");
+    fireEvent.click(screen.getByText("OT-51 — Breaker"));
+    expect(screen.getByTestId("where").textContent).toBe("/work-orders?openWo=51");
+  });
+
+  it("shows no de-isolation list when nothing is fitted", async () => {
+    svc.getHomeMyWork.mockResolvedValueOnce(myWork);
+    renderAt(<HomeMyWorkPanel />);
+    await screen.findByText("OT-44 — Seal");
+    expect(screen.queryByRole("list", { name: "home.myWork.wo.deisolationAria" })).toBeNull();
   });
 
   it("opens my requests queue", async () => {

@@ -17,9 +17,15 @@ import { listLinks } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import type { SmrpKpis, SmrpMetric } from "@/services/analytics-dashboard-service";
-
-/** Change below this many percentage points reads "stable". */
-const STABLE_POINTS = 0.5;
+import {
+  DEFAULT_KPI_STABLE_BELOW,
+  OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
+  SMRP_KPI_KEYS,
+  smrpStableBelow,
+  smrpTrendSense,
+} from "@shared/overview-kpi-registry";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 export type SmrpDirection = "up-good" | "up-bad" | "neutral";
 
@@ -28,15 +34,20 @@ export interface PointsTrend {
   tone: Tone | null;
 }
 
-/** Change between two percentages, in points; `null` without both values. */
+/**
+ * Change between two percentages, in points; `null` without both values. A move below
+ * `stablePoints` reads "stable": the band belongs to the indicator's registry entry
+ * (`shared/overview-kpi-registry.ts`), never to this screen.
+ */
 export function pointsTrend(
   current: number | null | undefined,
   previous: number | null | undefined,
   direction: SmrpDirection,
+  stablePoints: number,
 ): PointsTrend | null {
   if (current == null || previous == null) return null;
   const points = current - previous;
-  if (Math.abs(points) < STABLE_POINTS) return { points: 0, tone: null };
+  if (Math.abs(points) < stablePoints) return { points: 0, tone: null };
   if (direction === "neutral") return { points, tone: null };
   const good = direction === "up-good" ? points > 0 : points < 0;
   return { points, tone: good ? "success" : "danger" };
@@ -54,6 +65,8 @@ interface TileProps {
   formula: string;
   unit: string;
   period: string;
+  /** The indicator's "stable" band, already worded (from the KPI registry). */
+  stableText?: string;
   onOpen?: () => void;
   openLabel?: string;
 }
@@ -69,6 +82,7 @@ function SmrpTile({
   formula,
   unit,
   period,
+  stableText,
   onOpen,
   openLabel,
 }: TileProps) {
@@ -107,6 +121,13 @@ function SmrpTile({
                 <dt className="font-medium text-text-secondary">{t("smrp.unit")}</dt>
                 <dd className="text-text-muted">{unit}</dd>
               </div>
+              {stableText ? (
+                <div>
+                  <dd className="text-text-muted" data-testid={`smrp-${id}-stable-band`}>
+                    {stableText}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </PopoverContent>
         </Popover>
@@ -146,7 +167,14 @@ function SmrpTile({
   );
 }
 
-export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
+export function SmrpIndicatorsSection({
+  smrp,
+  can = () => true,
+}: {
+  smrp: SmrpKpis | null;
+  /** The user's rights: a tile opens its module only when the user may enter it. */
+  can?: (permission: PermissionName) => boolean;
+}) {
   const { t } = useTranslation("reports");
   const navigate = useNavigate();
   const woOpenRuleText = useWoOpenRuleText();
@@ -162,8 +190,11 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
   });
   const pct = (v: number | null | undefined) => (v == null ? "—" : formatPercent(v));
   const hours = (v: number) => t("smrp.hoursValue", { value: formatDecimal(v, 1) });
-  const trendOf = (m: SmrpMetric, direction: SmrpDirection) => {
-    const tr = pointsTrend(m.current.value_pct, m.previous.value_pct, direction);
+  /** The "stable" band of a tile, worded from the registry value. */
+  const stableTextOf = (points: number) =>
+    t("smrp.stableBand", { points: formatDecimal(points, points < 0.1 ? 2 : 1) });
+  const trendOf = (m: SmrpMetric, direction: SmrpDirection, stablePoints: number) => {
+    const tr = pointsTrend(m.current.value_pct, m.previous.value_pct, direction, stablePoints);
     if (!tr) return null;
     if (tr.points === 0) return { label: t("smrp.trendStable"), tone: null };
     return {
@@ -190,11 +221,16 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           done: hours(m.current.numerator),
           total: hours(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good")}
+        trend={trendOf(
+          m,
+          smrpTrendSense(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE),
+          smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE),
+        )}
         formula={t("smrp.schedule.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/planning")}
+        stableText={stableTextOf(smrpStableBelow(SMRP_KPI_KEYS.SCHEDULE_COMPLIANCE))}
+        {...(can(P.PLAN_VIEW) ? { onOpen: () => navigate("/planning") } : {})}
       />,
     );
   }
@@ -212,10 +248,10 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
             part: formatNumber(m.current.numerator),
             total: formatNumber(m.current.denominator),
           });
-    for (const [key, m, direction] of [
-      ["planned", mix.planned, "up-good"],
-      ["reactive", mix.reactive, "up-bad"],
-      ["emergency", mix.emergency, "up-bad"],
+    for (const [key, m, band] of [
+      ["planned", mix.planned, SMRP_KPI_KEYS.WORK_MIX_PLANNED],
+      ["reactive", mix.reactive, SMRP_KPI_KEYS.WORK_MIX_REACTIVE],
+      ["emergency", mix.emergency, SMRP_KPI_KEYS.WORK_MIX_EMERGENCY],
     ] as const) {
       tiles.push(
         <SmrpTile
@@ -232,11 +268,23 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
               {basis}
             </>
           }
-          trend={trendOf(m, direction)}
+          trend={trendOf(m, smrpTrendSense(band), smrpStableBelow(band))}
           formula={t(`smrp.mix.${key}.formula`)}
           unit={t("smrp.unitPercent")}
           period={period}
-          onOpen={() => navigate(listLinks.workOrders({ mix: key }))}
+          stableText={stableTextOf(smrpStableBelow(band))}
+          {...(can(P.OT_VIEW)
+            ? {
+                onOpen: () =>
+                  navigate(
+                    listLinks.workOrders({
+                      mix: key,
+                      completedFrom: smrp.from,
+                      completedTo: smrp.to,
+                    }),
+                  ),
+              }
+            : {})}
         />,
       );
     }
@@ -244,6 +292,10 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
 
   if (smrp.pm_compliance) {
     const m = smrp.pm_compliance;
+    // Same figure as the Overview PM compliance: the band is that entry's.
+    const pmEntry = OVERVIEW_KPI_REGISTRY_BY_KEY.get(OVERVIEW_KPI_SEMANTIC_KEYS.PM_COMPLIANCE);
+    const pmStableBelow = pmEntry?.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
+    const pmTrendSense = pmEntry?.trendSense ?? "neutral";
     tiles.push(
       <SmrpTile
         key="pm"
@@ -256,11 +308,12 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
           done: formatNumber(m.current.numerator),
           total: formatNumber(m.current.denominator),
         })}
-        trend={trendOf(m, "up-good")}
+        trend={trendOf(m, pmTrendSense, pmStableBelow)}
         formula={t("smrp.pm.formula")}
         unit={t("smrp.unitPercent")}
         period={period}
-        onOpen={() => navigate("/pm")}
+        stableText={stableTextOf(pmStableBelow)}
+        {...(can(P.PM_VIEW) ? { onOpen: () => navigate("/pm") } : {})}
       />,
     );
   }
@@ -327,7 +380,7 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.backlog.formula")}
         unit={t("smrp.backlog.unit")}
         period={t("smrp.backlog.period")}
-        {...(backlogRule
+        {...(backlogRule && can(P.OT_VIEW)
           ? { onOpen: () => navigate(listLinks.workOrders({ scope: backlogRule.scope })) }
           : {})}
       />,
@@ -336,7 +389,12 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
 
   if (smrp.cost_to_rav) {
     const c = smrp.cost_to_rav;
-    const tr = pointsTrend(c.value_pct, c.previous_value_pct, "up-bad");
+    const tr = pointsTrend(
+      c.value_pct,
+      c.previous_value_pct,
+      smrpTrendSense(SMRP_KPI_KEYS.COST_TO_RAV),
+      smrpStableBelow(SMRP_KPI_KEYS.COST_TO_RAV),
+    );
     tiles.push(
       <SmrpTile
         key="rav"
@@ -373,7 +431,8 @@ export function SmrpIndicatorsSection({ smrp }: { smrp: SmrpKpis | null }) {
         formula={t("smrp.rav.formula")}
         unit={t("smrp.unitPercentYear")}
         period={period}
-        onOpen={() => navigate("/equipment")}
+        stableText={stableTextOf(smrpStableBelow(SMRP_KPI_KEYS.COST_TO_RAV))}
+        {...(can(P.EQ_VIEW) ? { onOpen: () => navigate("/equipment") } : {})}
         openLabel={c.value_pct == null ? t("smrp.rav.openAssets") : t("smrp.open")}
       />,
     );

@@ -266,7 +266,7 @@ export function SettlementWorklist({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 gap-1 text-xs"
+              className="h-10 gap-1 text-xs"
               disabled={busyId === row.original.id}
               onClick={(e) => {
                 e.stopPropagation();
@@ -291,7 +291,7 @@ export function SettlementWorklist({
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1 text-xs"
+              className="h-10 gap-1 text-xs"
               disabled={catchingUp}
               title={t("settlements.lateHint")}
               onClick={() => void catchUpLateCosts()}
@@ -304,7 +304,7 @@ export function SettlementWorklist({
             {t("settlements.filter")}
           </label>
           <Select value={filter} onValueChange={(v) => setFilter(v as Filter)}>
-            <SelectTrigger id="settlement-filter" className="h-8 w-44">
+            <SelectTrigger id="settlement-filter" className="h-10 w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

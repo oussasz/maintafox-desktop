@@ -327,7 +327,9 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute anyOf={[P.ADM_USERS, P.ADM_ROLES]} />,
+                    element: (
+                      <PermissionRoute anyOf={[P.ADM_USERS, P.ADM_ROLES, P.ADM_PERMISSIONS]} />
+                    ),
                     children: [{ path: "admin", element: <AdminPage /> }],
                   },
                   {
@@ -372,7 +374,7 @@ const routes: RouteObject[] = [
                   },
                   {
                     path: "activity",
-                    element: <Navigate to="/settings?tab=security" replace />,
+                    element: <Navigate to="/settings?tab=activity" replace />,
                   },
                   { path: "settings", element: <SettingsPage /> },
                   // Living design-system reference (docs/DESIGN_SYSTEM.md). Development builds only:

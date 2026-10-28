@@ -102,9 +102,11 @@ fn sanitize_file_name(path: &Path) -> AppResult<String> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Invalid file name.".into()]))?;
+        .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_ASSET_PHOTO_FILE_NAME: Invalid file name.".into()]))?;
     if name.is_empty() || name.contains("..") {
-        return Err(AppError::ValidationFailed(vec!["Invalid file name.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_PHOTO_FILE_NAME: Invalid file name.".into(),
+        ]));
     }
     Ok(name.to_string())
 }
@@ -156,7 +158,7 @@ pub async fn read_asset_photo_preview(
             "asset photo preview: file missing on disk"
         );
         return Err(AppError::ValidationFailed(vec![format!(
-            "Photo file not found on disk: {}",
+            "GATE_ASSET_PHOTO_MISSING: Photo file not found on disk: {}",
             abs.display()
         )]));
     }
@@ -167,11 +169,15 @@ pub async fn read_asset_photo_preview(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("read task join: {e}")))?
         .map_err(|e| {
             tracing::warn!(path = %abs.display(), error = %e, "asset photo preview: read failed");
-            AppError::ValidationFailed(vec![format!("Cannot read photo file: {e}")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_PHOTO_UNREADABLE: Cannot read photo file: {e}"
+            )])
         })?;
 
     if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(AppError::ValidationFailed(vec!["Photo exceeds size limit.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_PHOTO_TOO_LARGE: Photo exceeds size limit.".into(),
+        ]));
     }
 
     Ok(AssetPhotoPreview {
@@ -210,24 +216,30 @@ pub async fn upload_asset_photo(
     let file_name = sanitize_file_name(src)?;
     let Some(mime_type) = extension_mime(src) else {
         return Err(AppError::ValidationFailed(vec![
-            "Image type not allowed. Use png, jpg, jpeg, webp, or gif.".into(),
+            "GATE_ASSET_PHOTO_TYPE: Image type not allowed. Use png, jpg, jpeg, webp, or gif.".into(),
         ]));
     };
 
-    let meta = std::fs::metadata(src)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot read source file: {e}")]))?;
+    let meta = std::fs::metadata(src).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_PHOTO_UNREADABLE: Cannot read source file: {e}"
+        )])
+    })?;
     if !meta.is_file() {
-        return Err(AppError::ValidationFailed(vec!["Source path is not a file.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_PHOTO_NOT_FILE: Source path is not a file.".into(),
+        ]));
     }
     if meta.len() > MAX_FILE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "File exceeds {} MB limit.",
+            "GATE_ASSET_PHOTO_SIZE_LIMIT:mb={0}: File exceeds {} MB limit.",
             MAX_FILE_BYTES / (1024 * 1024)
         )]));
     }
 
-    let bytes =
-        std::fs::read(src).map_err(|e| AppError::ValidationFailed(vec![format!("Failed to read file: {e}")]))?;
+    let bytes = std::fs::read(src).map_err(|e| {
+        AppError::ValidationFailed(vec![format!("GATE_ASSET_PHOTO_UNREADABLE: Failed to read file: {e}")])
+    })?;
     let size_bytes = bytes.len() as i64;
 
     let ext = src

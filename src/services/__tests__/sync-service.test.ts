@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { conflictActions } from "@/components/sync/sync-conflict-display";
 import { mockInvoke } from "@/test/mocks/tauri";
 
 import {
@@ -13,8 +14,10 @@ import {
   getSyncStateSummary,
   getSyncWorkerStatus,
   listOutboxItems,
+  listSyncConflicts,
   pauseSync,
   reportNetworkOnline,
+  resolveSyncConflict,
   resumeSync,
   retryMediaDownload,
   runSyncNow,
@@ -54,6 +57,39 @@ const EMPTY_SUMMARY = {
   unresolved_conflict_count: 0,
 };
 
+function conflictRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 1,
+    conflict_key: "inventory_count_lines:line-1:COUNT_SELF_APPROVAL",
+    source_scope: "inbound",
+    source_batch_id: "b1",
+    linked_outbox_id: null,
+    linked_inbox_id: 10,
+    entity_type: "inventory_count_lines",
+    entity_sync_id: "line-1",
+    operation: "upsert",
+    conflict_type: "COUNT_SELF_APPROVAL",
+    local_payload_json: null,
+    inbound_payload_json: "{}",
+    authority_side: "server",
+    checkpoint_token: null,
+    auto_resolution_policy: "manual",
+    requires_operator_review: true,
+    recommended_action: "review",
+    status: "new",
+    resolution_action: null,
+    resolution_note: null,
+    resolved_by_id: null,
+    resolved_at: null,
+    row_version: 1,
+    local_row_version: null,
+    inbound_row_version: 3,
+    created_at: "2026-10-24T10:05:00Z",
+    updated_at: "2026-10-24T10:05:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockInvoke.mockReset();
 });
@@ -74,8 +110,9 @@ describe("sync worker status", () => {
         state: "retrying",
         consecutive_failures: 2,
         last_error: {
-          code: "server_unavailable",
-          message: "503",
+          code: "http_error",
+          kind: "server_unavailable",
+          message: "HTTP 503: unavailable",
           http_status: 503,
           at: "2026-10-11T08:01:00Z",
         },
@@ -84,6 +121,7 @@ describe("sync worker status", () => {
     const status = await getSyncWorkerStatus();
     expect(status.state).toBe("retrying");
     expect(status.last_error?.http_status).toBe(503);
+    expect(status.last_error?.kind).toBe("server_unavailable");
   });
 
   it("rejects an unknown worker state instead of rendering it", async () => {
@@ -171,6 +209,62 @@ describe("sync summary", () => {
   it("propagates other errors", async () => {
     mockInvoke.mockRejectedValueOnce(new Error("database is locked"));
     await expect(getSyncStateSummary()).rejects.toThrow("database is locked");
+  });
+
+  it("keeps the held count details of a conflict when listing and resolving", async () => {
+    const hold = {
+      session_code: "INV-2026-0042",
+      counter: "Karim",
+      posted_at: "2026-10-24T10:00:00Z",
+    };
+    mockInvoke.mockResolvedValueOnce([conflictRecord({ count_hold: hold })]);
+    const listed = await listSyncConflicts();
+    expect(listed[0]?.count_hold).toEqual(hold);
+
+    mockInvoke.mockResolvedValueOnce(conflictRecord({ count_hold: hold, status: "resolved" }));
+    const resolved = await resolveSyncConflict({
+      conflict_id: 1,
+      expected_row_version: 1,
+      action: "retry_later",
+      resolution_note: null,
+    } as never);
+    expect(resolved.count_hold).toEqual(hold);
+
+    // A conflict of another kind carries none.
+    mockInvoke.mockResolvedValueOnce([conflictRecord()]);
+    const other = await listSyncConflicts();
+    expect(other[0]?.count_hold).toBeNull();
+  });
+
+  it("keeps whether a refused count movement is held here, and the choices follow it", async () => {
+    const movement = {
+      entity_type: "inventory_transactions",
+      entity_sync_id: "mov-1",
+      conflict_type: "COUNT_APPROVAL_RECORD_INVALID",
+    };
+    const choices = async (
+      overrides: Record<string, unknown>,
+    ): Promise<{ held: boolean | null | undefined; actions: string[] | null }> => {
+      mockInvoke.mockResolvedValueOnce([conflictRecord({ ...movement, ...overrides })]);
+      const [c] = await listSyncConflicts();
+      return {
+        held: c?.history_row_held,
+        actions: c
+          ? conflictActions(c.conflict_type, false, c.entity_type, c.history_row_held)
+          : null,
+      };
+    };
+    // Held here: "keep mine" sends the movement again (the repair); "take theirs" is never offered.
+    expect(await choices({ history_row_held: true })).toEqual({
+      held: true,
+      actions: ["accept_local", "escalate", "dismiss"],
+    });
+    // Not held here, or not said: only the two choices the server always accepts.
+    expect(await choices({ history_row_held: false })).toEqual({
+      held: false,
+      actions: ["escalate", "dismiss"],
+    });
+    expect(await choices({})).toEqual({ held: null, actions: ["escalate", "dismiss"] });
   });
 
   it("lists outbox items with the given filter", async () => {

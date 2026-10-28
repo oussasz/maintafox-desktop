@@ -56,7 +56,7 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
     let tracking = article_tracking(db, article_id).await?;
     if !tracking.is_tracked() {
         return Err(AppError::ValidationFailed(vec![
-            "This article is not lot- or serial-tracked; no lot can be recorded.".to_string(),
+            "GATE_INV_NOT_LOT_TRACKED: This article is not lot- or serial-tracked; no lot can be recorded.".to_string(),
         ]));
     }
     let lot_number = clean(input.lot_number.as_deref());
@@ -67,17 +67,17 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
     }
     if tracking.serial && serial_number.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "This article is serial-tracked: enter the serial number.".to_string(),
+            "GATE_INV_SERIAL_REQUIRED: This article is serial-tracked: enter the serial number.".to_string(),
         ]));
     }
     if tracking.batch && !tracking.serial && lot_number.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "This article is lot-tracked: enter the lot number.".to_string(),
+            "GATE_INV_LOT_REQUIRED: This article is lot-tracked: enter the lot number.".to_string(),
         ]));
     }
     if tracking.expiry && expiry_date.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "This article has a shelf life: enter the expiry date.".to_string(),
+            "GATE_INV_EXPIRY_REQUIRED: This article has a shelf life: enter the expiry date.".to_string(),
         ]));
     }
 
@@ -95,7 +95,7 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
             // no unit of it is in stock anywhere.
             if lot_total_on_hand(db, lot_id).await? > EPS {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Serial number {serial} is already in stock."
+                    "GATE_INV_SERIAL_IN_STOCK: Serial number {serial} is already in stock."
                 )]));
             }
             return Ok(lot_id);
@@ -114,8 +114,8 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
             let stored: Option<String> = row.try_get("", "expiry_date")?;
             if stored != expiry_date {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Lot {lot} is already recorded with expiry {}; a lot has one expiry date.",
-                    stored.unwrap_or_else(|| "—".to_string())
+                    "GATE_INV_LOT_EXPIRY_CONFLICT:expiry={expiry}: Lot {lot} is already recorded with expiry {expiry}; a lot has one expiry date.",
+                    expiry = stored.unwrap_or_else(|| "—".to_string())
                 )]));
             }
             return Ok(lot_id);
@@ -247,7 +247,7 @@ pub async fn list_lot_stock<C: ConnectionTrait>(
 pub async fn list_expiring_lots(db: &DatabaseConnection, within_days: i64) -> AppResult<Vec<LotStock>> {
     if within_days < 0 {
         return Err(AppError::ValidationFailed(vec![
-            "within_days cannot be negative.".to_string()
+            "GATE_INV_WITHIN_DAYS_NEGATIVE: within_days cannot be negative.".to_string(),
         ]));
     }
     let rows = db
@@ -322,13 +322,13 @@ pub async fn ensure_lot_available<C: ConnectionTrait>(
     let label: String = row.try_get("", "label")?;
     if lot_article != article_id {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Lot {label} belongs to another article."
+            "GATE_INV_LOT_OTHER_ARTICLE: Lot {label} belongs to another article."
         )]));
     }
     let available = lot_stock_at(db, lot_id, location_id).await?;
     if available + EPS < quantity {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Lot {label} holds {available:.3} at this location, less than {quantity:.3}."
+            "GATE_INV_LOT_INSUFFICIENT:available={available:.3},quantity={quantity:.3}: Lot {label} holds {available:.3} at this location, less than {quantity:.3}."
         )]));
     }
     Ok(())
@@ -349,7 +349,7 @@ pub async fn set_movement_lot<C: ConnectionTrait>(db: &C, transaction_id: i64, l
 pub fn ensure_whole_units(tracking: &ArticleTracking, quantity: f64) -> AppResult<()> {
     if tracking.serial && (quantity.fract().abs() > EPS) {
         return Err(AppError::ValidationFailed(vec![
-            "Serial-tracked articles move by whole units.".to_string(),
+            "GATE_INV_SERIAL_WHOLE_UNITS: Serial-tracked articles move by whole units.".to_string(),
         ]));
     }
     Ok(())

@@ -81,6 +81,8 @@ export interface SessionInfo {
   force_password_change: boolean | null;
   expires_at: string | null;
   last_activity_at: string | null;
+  /** Minutes without user input before the session locks (session policy at sign-in). */
+  idle_timeout_minutes?: number | null;
   password_expires_in_days: number | null;
   pin_configured: boolean | null;
   tenant_id?: string | null;
@@ -1116,7 +1118,15 @@ export interface SettingDefinitionView {
   key: string;
   category: string;
   scope: string;
-  kind: "choice" | "integer" | "decimal" | "currency" | "month" | "document_header" | "module";
+  kind:
+    | "choice"
+    | "integer"
+    | "decimal"
+    | "optional_decimal"
+    | "currency"
+    | "month"
+    | "document_header"
+    | "module";
   options: string[];
   /** Bounds of an `integer`, `decimal` or `month` value (a decimal's bounds may be fractional). */
   min: number | null;
@@ -2280,6 +2290,8 @@ export interface UpdateAssetIdentityPayload {
   rams_utilization_factor?: number;
   commissioned_at?: string | null;
   decommissioned_at?: string | null;
+  /** New location, moved in the same save and recorded as a "Déplacé" event. */
+  org_node_id?: number;
 }
 
 export interface LinkAssetPayload {
@@ -2539,12 +2551,18 @@ export interface AssetPickerSuggestFilters {
   query?: string | null;
   include_decommissioned?: boolean;
   limit?: number | null;
+  /** Empty query: list the whole register when it has at most this many assets (server cap 200). */
+  full_list_max?: number | null;
 }
 
 export interface AssetPickerSuggestions {
-  /** `"recent"` | `"frequent"` | `"search"` */
+  /** `"recent"` | `"frequent"` | `"register"` | `"search"` */
   mode: string;
   items: AssetSearchResult[];
+  /** Pickable assets in the register (empty query only). */
+  total: number;
+  /** True when `items` is the whole register. */
+  complete: boolean;
 }
 
 export interface AssetSuggestion {
@@ -3341,8 +3359,11 @@ export interface InventoryCountSession {
   warehouse_id: number;
   location_id: number | null;
   status: string;
-  /** Critical variance this session was opened with (Settings › Inventory at its creation). */
-  critical_abs_threshold: number;
+  /**
+   * Critical variance (a quantity) the session was opened with before the four-eyes tolerance
+   * (migration 259): history only; null for sessions opened since.
+   */
+  critical_abs_threshold: number | null;
   submitted_by_id: number | null;
   submitted_at: string | null;
   posted_by_id: number | null;
@@ -3368,16 +3389,42 @@ export interface InventoryCountLine {
   counted_qty: number;
   variance_qty: number;
   variance_reason_code: string | null;
+  /** 1: the variance is above the plant's four-eyes tolerance (judged when it was entered). */
   is_critical: number;
   approval_required: number;
   approved_by_id: number | null;
   approved_at: string | null;
   approval_note: string | null;
+  /** Who entered the counted quantity (null for lines entered before the four-eyes update). */
+  counted_by_id: number | null;
+  counted_by_name: string | null;
+  /**
+   * 1: an "auto-approbation", derived on read on every PC (CMMS Advisor Q13): flagged where it was
+   * approved (above the tolerance under the site's opt-out), or its variance approved by its own
+   * counter. Nothing stored is rewritten.
+   */
+  self_approved: number;
+  /**
+   * Second approval of a self-approved line by another person, so that a PC where four-eyes
+   * applies accepts the count it holds back (CMMS Advisor Q8).
+   */
+  second_approved_by_id: number | null;
+  second_approved_by_name: string | null;
+  second_approved_at: string | null;
+  second_approval_note: string | null;
   posted_transaction_id: number | null;
   reversed_transaction_id: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
+}
+
+/** The plant's four-eyes tolerance of a count variance (Settings › Inventory); null = blank. */
+export interface InventoryCountTolerance {
+  value_threshold: number | null;
+  percent_threshold: number | null;
+  /** The stores' site opted out of four-eyes: the counter may approve ("auto-approbation"). */
+  self_approval_allowed: boolean;
 }
 
 export interface CreateInventoryCountSessionInput {
@@ -3392,6 +3439,8 @@ export interface UpsertInventoryCountLineInput {
   location_id: number;
   counted_qty: number;
   variance_reason_code?: string | null;
+  /** Version of the line entered again (its `row_version`); null for a first entry (AU-68). */
+  expected_row_version: number | null;
 }
 
 export interface TransitionInventoryCountSessionInput {
@@ -3406,6 +3455,13 @@ export interface ApproveInventoryCountLineInput {
   line_id: number;
   expected_row_version: number;
   reviewer_id: number;
+  reviewer_evidence: string;
+}
+
+/** The second approval of a self-approved count line (the approver is the signed-in user). */
+export interface SecondApproveInventoryCountLineInput {
+  line_id: number;
+  expected_row_version: number;
   reviewer_evidence: string;
 }
 
@@ -4661,6 +4717,11 @@ export interface PermitFlagOutcome {
   safety_flag: boolean;
   /** Published rules that do not read (ignored, to fix in Données de référence). */
   unreadable_rule_codes: string[];
+  /**
+   * Published rules that read but name a code not held here: applied as written (a match flags
+   * the work order), to fix in Données de référence.
+   */
+  unresolved_rule_codes?: string[];
 }
 
 export interface WoConversionResult {
@@ -4812,6 +4873,12 @@ export interface HomeMyWorkOrders {
   today: number;
   by_urgency: HomeUrgencyCount[];
   items: HomeMyWorkOrderItem[];
+  /**
+   * "Déconsignation à faire": completed work orders with a lock still fitted, for their permit
+   * holders (responsible, or who fitted one of the locks); not counted in `open`.
+   */
+  deisolation_pending: number;
+  deisolation_items: HomeMyWorkOrderItem[];
 }
 
 export interface HomeMyRequests {
@@ -5256,6 +5323,8 @@ export interface WorkOrder {
   permit_rule_cleared_by_id: number | null;
   permit_rule_cleared_at: string | null;
   permit_rule_clear_reason: string | null;
+  /** The requirement came from the request it was converted from, flagged "sécurité" (cleared like a rule flag). */
+  permit_from_safety_di?: boolean;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;
@@ -5302,6 +5371,17 @@ export interface WorkOrder {
   schedule_frozen?: boolean | null;
   /** PRD §6.5 lifecycle state derived from the WO's facts (Rust `wo::lifecycle`). */
   lifecycle_state?: string | null;
+  /**
+   * "Déconsignation à faire": mechanically complete with a lock still fitted under one of its
+   * permits (Rust `permit::wo_gate::deisolation_pending_sql`); derived on read.
+   */
+  deisolation_pending?: boolean;
+  /**
+   * The permit types of every plant rule that matches this work order now, when they differ
+   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
+   * `permit::requirement_rules::matching_permit_types`).
+   */
+  permit_rule_matching_types?: string[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
@@ -5462,6 +5542,9 @@ export interface WoListFilter {
   overdue_only?: boolean | null;
   /** Only OTs not yet closed: the reports' / analytics "open OT" rule (`wo::backlog::NOT_CLOSED_SQL`). */
   not_closed_only?: boolean | null;
+  /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
+  completed_from?: string | null;
+  completed_to?: string | null;
   limit: number;
   offset: number;
 }
@@ -5760,6 +5843,10 @@ export interface WoExecTask {
   notes: string | null;
   /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
   origin?: string | null | undefined;
+  /** What a NOK result found (migration 256). */
+  finding_note?: string | null | undefined;
+  /** The work order opened to deal with a NOK result (migration 256). */
+  follow_up_work_order_id?: number | null | undefined;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
@@ -7111,6 +7198,8 @@ export interface AvailabilityBlockUpdateInput {
   keep_reason_note?: boolean;
   is_critical?: boolean;
   confirm_overlap?: boolean;
+  /** The block's `row_version` as read; a block changed since is refused (GATE_RECORD_CHANGED_ELSEWHERE). */
+  expected_row_version: number;
 }
 
 export interface PersonnelAvailabilityBlock {
@@ -7128,6 +7217,8 @@ export interface PersonnelAvailabilityBlock {
   created_by_id: number | null;
   created_by_label: string | null;
   created_at: string;
+  /** Sent back on update, end and delete, which refuse a block changed since. */
+  row_version: number;
   /** `reason_note` withheld (no per.sensitiveview, not the person's own record). */
   reason_masked: boolean;
   /** The absence type withheld: show the neutral tag only. */
@@ -8633,15 +8724,6 @@ export interface AddInspectionEvidenceInput {
   expected_row_version?: number | null;
 }
 
-export interface UpdateInspectionAnomalyInput {
-  id: number;
-  resolution_status: string;
-  linked_di_id?: number | null;
-  linked_work_order_id?: number | null;
-  requires_permit_review?: boolean | null;
-  expected_row_version: number;
-}
-
 export interface InspectionResultsFilter {
   round_id?: number | null;
 }
@@ -9305,6 +9387,23 @@ export interface ScheduleBreakIn {
   approved_by_display_name: string | null;
   old_assignee_name: string | null;
   new_assignee_name: string | null;
+  /** When the approver's password was verified (null: nobody signed, or recorded before 0.9.2). */
+  approver_signed_at: string | null;
+  /** Blocking checks the break-in forced: crew_capacity, locked_window, readiness, shutdown_window. */
+  forced_checks: string[];
+  /** The crew the work leaves (null: new work, or before 0.9.2) and the crew it goes to. */
+  old_team_id: number | null;
+  new_team_id: number | null;
+  /** Refused by a planner on a PC that received it ("refusé (sync)"): history, never valid. */
+  sync_refused_at: string | null;
+  sync_refused_reason: string | null;
+}
+
+/** A person who may sign a break-in of a crew (plan.confirm at the crew's site). */
+export interface BreakInApproverOption {
+  user_id: number;
+  display_name: string;
+  personnel_id: number;
 }
 
 export interface ScheduleBreakInFilter {
@@ -9328,6 +9427,8 @@ export interface CreateScheduleBreakInInput {
   bypass_availability?: boolean | null;
   override_reason?: string | null;
   dangerous_override_reason?: string | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   /** Assignee refusals (`PLANNING_ASSIGNEE_*`) the planner saw and overrides with the reason. */
   acknowledged_assignee_issues?: string[];
 }
@@ -10451,6 +10552,13 @@ export type SyncWorkerState =
 export interface SyncWorkerError {
   /** Server error code (e.g. `rate_limited`), `offline`, `interrupted` or `local_error`. */
   code: string;
+  /**
+   * Stable reason the screens translate (`shell:sync.worker.errorKind.*`): `network_unreachable`,
+   * `connection_interrupted`, `server_unavailable`, `access_refused`, `request_refused`,
+   * `invalid_server_response`, `local_error`, `not_configured` or `other`.
+   */
+  kind: string;
+  /** Raw text ("HTTP 503: …"): technical details and support only, never the message shown. */
   message: string;
   http_status: number | null;
   at: string;
@@ -10518,8 +10626,88 @@ export interface SyncConflictRecord {
   row_version: number;
   local_row_version: number | null;
   inbound_row_version: number | null;
+  /** The error or rule text recorded when the conflict was found (technical details). */
+  detail_message: string | null;
+  /** That text as a coded reason, for a row the database refused (`sync::apply_reason`). */
+  reason: SyncConflictReason | null;
+  /** A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): what it is. */
+  count_hold?: SyncConflictCountHold | null;
+  /** Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the two times the card shows. */
+  planning_times?: SyncConflictPlanningTimes | null;
+  history_row_held?: boolean | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The two times a `PLANNING_WEEK_FROZEN` conflict card shows (CMMS Advisor decision 4,
+ * `planning::sync_check::planning_conflict_times`); neither is used to let the work in.
+ */
+export interface SyncConflictPlanningTimes {
+  /** When the other PC changed the commitment, by that PC's clock (as received). */
+  changed_at: string | null;
+  /** When the week froze here (or was due to freeze); `null`: not recorded. */
+  frozen_at: string | null;
+}
+
+/**
+ * The count a `COUNT_SELF_APPROVAL` conflict holds back (CMMS Advisor Q12), read from what this PC
+ * holds (`inventory::count_four_eyes::count_hold_context`); `null`: not here yet.
+ */
+export interface SyncConflictCountHold {
+  /** The count's reference (`CC-…`). */
+  session_code: string | null;
+  /** Who counted it (and approved it). */
+  counter: string | null;
+  /** When it was posted where it is applied. */
+  posted_at: string | null;
+}
+
+/** `UNIQUE_TAKEN` | `REQUIRED_MISSING` | `LINK_MISSING` | `RULE_REFUSED` | `INVALID_DATA` | `TECHNICAL`. */
+export interface SyncConflictReason {
+  code: string;
+  table: string | null;
+  columns: string[];
+  rule: string | null;
+}
+
+/**
+ * What a waiting received row waits for (`sync::waiting`): `conflict` (an open conflict, by id),
+ * `refused`, `not_received`, `ready` (applied at the next synchronisation), `chain_unresolved` (a
+ * chain of waiting rows that loops or is too long) or `own_reason` (`reason_code`: an app update, a
+ * right, a person…).
+ */
+export interface SyncWaitTarget {
+  state: string;
+  conflict_id: number | null;
+  entity_type: string | null;
+  entity_sync_id: string | null;
+  reason_code: string | null;
+}
+
+export interface SyncWaitingInboxRow {
+  inbox_id: number;
+  entity_type: string;
+  entity_sync_id: string;
+  payload_json: string;
+  reason_code: string | null;
+  detail_message: string | null;
+  waits_for_entity_type: string | null;
+  waits_for_sync_id: string | null;
+  target: SyncWaitTarget;
+  attempt_count: number;
+  last_attempt_at: string | null;
+}
+
+export interface SyncWaitingGroup {
+  target: SyncWaitTarget;
+  count: number;
+}
+
+export interface SyncWaitingInboxReport {
+  total: number;
+  groups: SyncWaitingGroup[];
+  rows: SyncWaitingInboxRow[];
 }
 
 export interface ResolveSyncConflictInput {
@@ -10547,7 +10735,7 @@ export interface ResolveSyncConflictInput {
 
 export interface ReplaySyncFailuresInput {
   replay_key: string;
-  mode: "single_item" | "batch" | "window" | "checkpoint_rollback";
+  mode: "single_item" | "checkpoint_rollback";
   reason: string;
   conflict_id?: number | null;
   outbox_id?: number | null;
@@ -10670,7 +10858,8 @@ export interface EntitlementDiagnostics {
 }
 
 export interface SyncRepairPreviewInput {
-  mode: "requeue_rejected_outbox" | "retry_operator_conflicts" | "checkpoint_realign";
+  /** Only the checkpoint is realigned; bulk requeue / conflict retry are refused (AU-44). */
+  mode: "checkpoint_realign";
   reason: string;
   outbox_ids?: number[] | null;
   conflict_ids?: number[] | null;
@@ -10768,6 +10957,12 @@ export interface DataIntegrityFindingRow {
   status: string;
   waiver_reason: string | null;
   waiver_approver_id: number | null;
+}
+
+/** A person who may approve a waiver: holds `integrity.repair` plant-wide (permanent role) or is an administrator (AU-116). */
+export interface IntegrityWaiverApproverOption {
+  user_id: number;
+  display_name: string;
 }
 
 export interface WaiveDataIntegrityFindingInput {
@@ -11160,6 +11355,8 @@ export interface AssessCriticalityResult {
 export interface CommitBreakIn {
   reason: string;
   approved_by_user_id?: number | null;
+  /** The approver's password, typed by them to sign (never stored). */
+  approver_password?: string | null;
   dangerous_override_reason?: string | null;
 }
 

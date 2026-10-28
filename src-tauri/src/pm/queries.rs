@@ -40,7 +40,7 @@ fn normalize_strategy_type(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM strategy type '{value}'."
+            "GATE_PM_STRATEGY_INVALID: Unsupported PM strategy type '{value}'."
         )]))
     }
 }
@@ -51,7 +51,7 @@ fn normalize_asset_scope_type(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM asset scope type '{value}'."
+            "GATE_PM_SCOPE_TYPE_INVALID: Unsupported PM asset scope type '{value}'."
         )]))
     }
 }
@@ -62,7 +62,7 @@ fn normalize_lifecycle_status(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM lifecycle status '{value}'."
+            "GATE_PM_STATUS_INVALID: Unsupported PM lifecycle status '{value}'."
         )]))
     }
 }
@@ -86,8 +86,11 @@ fn lifecycle_transition_allowed(current: &str, next: &str) -> bool {
 }
 
 fn validate_rfc3339(ts: &str, field: &str) -> AppResult<()> {
-    DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
+    DateTime::parse_from_rfc3339(ts).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PM_DATE_INVALID: {field} must be a valid RFC3339 timestamp."
+        )])
+    })?;
     Ok(())
 }
 
@@ -98,16 +101,20 @@ fn validate_effective_window(effective_from: &str, effective_to: Option<&str>) -
         if DateTime::parse_from_rfc3339(effective_to)
             .map(|v| v.with_timezone(&Utc))
             .map_err(|_| {
-                AppError::ValidationFailed(vec!["effective_to must be a valid RFC3339 timestamp.".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: effective_to must be a valid RFC3339 timestamp.".to_string(),
+                ])
             })?
             < DateTime::parse_from_rfc3339(effective_from)
                 .map(|v| v.with_timezone(&Utc))
                 .map_err(|_| {
-                    AppError::ValidationFailed(vec!["effective_from must be a valid RFC3339 timestamp.".to_string()])
+                    AppError::ValidationFailed(vec![
+                        "GATE_PM_DATE_INVALID: effective_from must be a valid RFC3339 timestamp.".to_string(),
+                    ])
                 })?
         {
             return Err(AppError::ValidationFailed(vec![
-                "effective_to must be >= effective_from.".to_string(),
+                "GATE_PM_DATE_ORDER: effective_to must be >= effective_from.".to_string(),
             ]));
         }
     }
@@ -132,33 +139,36 @@ async fn ensure_lookup_value_in_domain(
         .await?;
     let Some(row) = row else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{field_name} does not exist."
+            "GATE_PM_REFERENCE_INVALID: {field_name} does not exist."
         )]));
     };
     let domain_key: String = row.try_get("", "domain_key")?;
     if domain_key != expected_domain_key {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{field_name} must reference domain '{expected_domain_key}'."
+            "GATE_PM_REFERENCE_INVALID: {field_name} must reference domain '{expected_domain_key}'."
         )]));
     }
     Ok(())
 }
 
-async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&str>) -> AppResult<()> {
+async fn validate_required_skills_json(db: &impl ConnectionTrait, input: Option<&str>) -> AppResult<()> {
     let Some(raw) = input else {
         return Ok(());
     };
-    let parsed = serde_json::from_str::<Value>(raw)
-        .map_err(|_| AppError::ValidationFailed(vec!["required_skills_json must be valid JSON.".to_string()]))?;
+    let parsed = serde_json::from_str::<Value>(raw).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_PM_DEFINITION_INVALID: required_skills_json must be valid JSON.".to_string(),
+        ])
+    })?;
     let Some(codes) = parsed.as_array() else {
         return Err(AppError::ValidationFailed(vec![
-            "required_skills_json must be an array of skill codes.".to_string(),
+            "GATE_PM_DEFINITION_INVALID: required_skills_json must be an array of skill codes.".to_string(),
         ]));
     };
     for code in codes {
         let Some(code) = code.as_str() else {
             return Err(AppError::ValidationFailed(vec![
-                "required_skills_json must contain strings only.".to_string(),
+                "GATE_PM_DEFINITION_INVALID: required_skills_json must contain strings only.".to_string(),
             ]));
         };
         let row = db
@@ -176,7 +186,7 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
         let cnt: i64 = row.try_get("", "cnt")?;
         if cnt == 0 {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Skill code '{code}' is not published in PERSONNEL.SKILLS."
+                "GATE_PM_SKILL_UNKNOWN: Skill code '{code}' is not published in PERSONNEL.SKILLS."
             )]));
         }
     }
@@ -187,7 +197,7 @@ async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&s
 /// (`meter_type`, legacy `meter_source`) resolved per asset at generation time; with an absolute
 /// `threshold_value` (chosen meter only) or a recurring `interval_value`.
 async fn validate_meter_spec(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     spec: &serde_json::Map<String, Value>,
     allow_absolute: bool,
 ) -> AppResult<()> {
@@ -197,7 +207,7 @@ async fn validate_meter_spec(
     if let Some(start) = spec.get("start_reading") {
         if !start.is_null() && start.as_f64().map(|r| r < 0.0).unwrap_or(true) {
             return Err(AppError::ValidationFailed(vec![
-                "start_reading must be a number >= 0.".to_string()
+                "GATE_PM_START_READING_INVALID: start_reading must be a number >= 0.".to_string(),
             ]));
         }
     }
@@ -211,14 +221,14 @@ async fn validate_meter_spec(
             .await?;
         if exists.is_none() {
             return Err(AppError::ValidationFailed(vec![
-                "Meter trigger references unknown or inactive asset meter.".to_string(),
+                "GATE_PM_METER_UNKNOWN: Meter trigger references unknown or inactive asset meter.".to_string(),
             ]));
         }
         if interval_value > 0.0 || (allow_absolute && threshold_value > 0.0) {
             return Ok(());
         }
         return Err(AppError::ValidationFailed(vec![
-            "Meter trigger on an asset meter requires interval_value > 0 (or threshold_value > 0).".to_string(),
+            "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger on an asset meter requires interval_value > 0 (or threshold_value > 0).".to_string(),
         ]));
     }
     let meter_type = spec
@@ -235,7 +245,7 @@ async fn validate_meter_spec(
     let has_type = meter_type.is_some() || matches!(meter_source.as_str(), "odometer" | "operating_hours");
     if !has_type || interval_value <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
+            "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
         ]));
     }
     if let Some(meter_type) = meter_type {
@@ -251,7 +261,7 @@ async fn validate_meter_spec(
             .await?;
         if known.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown meter type '{meter_type}'."
+                "GATE_PM_METER_TYPE_UNKNOWN: Unknown meter type '{meter_type}'."
             )]));
         }
     }
@@ -259,15 +269,18 @@ async fn validate_meter_spec(
 }
 
 async fn validate_trigger_definition(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     strategy_type: &str,
     trigger_definition_json: &str,
 ) -> AppResult<()> {
-    let parsed = serde_json::from_str::<Value>(trigger_definition_json)
-        .map_err(|_| AppError::ValidationFailed(vec!["trigger_definition_json must be valid JSON.".to_string()]))?;
+    let parsed = serde_json::from_str::<Value>(trigger_definition_json).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be valid JSON.".to_string(),
+        ])
+    })?;
     let Some(obj) = parsed.as_object() else {
         return Err(AppError::ValidationFailed(vec![
-            "trigger_definition_json must be an object.".to_string(),
+            "GATE_PM_DEFINITION_INVALID: trigger_definition_json must be an object.".to_string(),
         ]));
     };
     crate::pm::schedule::parse_tolerance(obj)?;
@@ -277,7 +290,7 @@ async fn validate_trigger_definition(
             if let Some(meter) = obj.get("meter").filter(|m| !m.is_null()) {
                 let Some(meter) = meter.as_object() else {
                     return Err(AppError::ValidationFailed(vec![
-                        "meter (whichever comes first) must be an object.".to_string(),
+                        "GATE_PM_DEFINITION_INVALID: meter (whichever comes first) must be an object.".to_string(),
                     ]));
                 };
                 validate_meter_spec(db, meter, false).await?;
@@ -288,7 +301,7 @@ async fn validate_trigger_definition(
             let code = obj.get("event_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Event trigger requires event_code.".to_string()
+                    "GATE_PM_TRIGGER_FIELD_REQUIRED: Event trigger requires event_code.".to_string(),
                 ]));
             }
         }
@@ -296,7 +309,7 @@ async fn validate_trigger_definition(
             let code = obj.get("condition_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Condition trigger requires condition_code.".to_string(),
+                    "GATE_PM_TRIGGER_FIELD_REQUIRED: Condition trigger requires condition_code.".to_string(),
                 ]));
             }
         }
@@ -332,6 +345,7 @@ fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
         asset_code: row.try_get("", "asset_code")?,
         asset_name: row.try_get("", "asset_name")?,
         asset_scope_label: row.try_get("", "asset_scope_label")?,
+        source_decision_to_review: row.try_get("", "source_decision_to_review")?,
     })
 }
 
@@ -375,7 +389,13 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
                   WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
                   WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
                   WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
-                END AS asset_scope_label
+                END AS asset_scope_label,
+                EXISTS (SELECT 1 FROM pm_plan_versions cv
+                         WHERE cv.id = p.current_version_id AND cv.source_type = 'reliability_study_decision'
+                           AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
+                                            WHERE d.id = cv.source_id AND d.status = 'applied'
+                                              AND d.linked_pm_plan_version_id = cv.id
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -384,7 +404,7 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
     rows.iter().map(decode_pm_plan_row).collect()
 }
 
-pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmPlan> {
+pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<PmPlan> {
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite,
         "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
                 p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
@@ -399,7 +419,13 @@ pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmP
                   WHEN 'family' THEN (SELECT rv.label FROM reference_values rv WHERE rv.id = p.asset_scope_id)
                   WHEN 'location' THEN (SELECT n.name FROM org_nodes n WHERE n.id = p.asset_scope_id)
                   WHEN 'criticality_group' THEN (SELECT lv2.label FROM lookup_values lv2 WHERE lv2.id = p.asset_scope_id)
-                END AS asset_scope_label
+                END AS asset_scope_label,
+                EXISTS (SELECT 1 FROM pm_plan_versions cv
+                         WHERE cv.id = p.current_version_id AND cv.source_type = 'reliability_study_decision'
+                           AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
+                                            WHERE d.id = cv.source_id AND d.status = 'applied'
+                                              AND d.linked_pm_plan_version_id = cv.id
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
@@ -414,7 +440,7 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
     let title = input.title.trim().to_string();
     if code.is_empty() || title.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan code and title are required.".to_string()
+            "GATE_PM_PLAN_CODE_TITLE_REQUIRED: PM plan code and title are required.".to_string(),
         ]));
     }
     let strategy_type = normalize_strategy_type(&input.strategy_type)?;
@@ -452,7 +478,7 @@ pub async fn update_pm_plan(
     let current = get_pm_plan(db, plan_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let title = input.title.unwrap_or(current.title);
@@ -473,7 +499,9 @@ pub async fn update_pm_plan(
          WHERE id=? AND row_version=?",
         [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),assigned_team_id.into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
     if result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan update failed.".to_string(),
+        ]));
     }
     tx.commit().await?;
     get_pm_plan(db, plan_id).await
@@ -486,19 +514,19 @@ pub async fn transition_pm_plan_lifecycle(
     let current = get_pm_plan(db, input.plan_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM lifecycle transition failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM lifecycle transition failed (stale row_version).".to_string(),
         ]));
     }
     let next = normalize_lifecycle_status(&input.next_status)?;
     if !lifecycle_transition_allowed(&current.lifecycle_status, &next) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid PM lifecycle transition: {} -> {}.",
+            "GATE_PM_LIFECYCLE_TRANSITION:from={0},to={1}: Invalid PM lifecycle transition: {} -> {}.",
             current.lifecycle_status, next
         )]));
     }
     if next == "active" && current.current_version_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot activate PM plan without a published current version.".to_string(),
+            "GATE_PM_NO_PUBLISHED_VERSION: Cannot activate PM plan without a published current version.".to_string(),
         ]));
     }
     let tx = db.begin().await?;
@@ -511,8 +539,8 @@ pub async fn transition_pm_plan_lifecycle(
 
 pub async fn list_pm_plan_versions(db: &DatabaseConnection, pm_plan_id: i64) -> AppResult<Vec<PmPlanVersion>> {
     let rows = db.query_all(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at
-         FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY version_no DESC", [pm_plan_id.into()])).await?;
+        "SELECT id,pm_plan_id,(SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = pm_plan_versions.id) AS version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at
+         FROM pm_plan_versions WHERE pm_plan_id = ? ORDER BY 3 DESC", [pm_plan_id.into()])).await?;
     rows.iter().map(decode_pm_plan_version_row).collect()
 }
 
@@ -521,6 +549,20 @@ pub async fn create_pm_plan_version(
     pm_plan_id: i64,
     input: CreatePmPlanVersionInput,
 ) -> AppResult<PmPlanVersion> {
+    let tx = db.begin().await?;
+    let version = create_pm_plan_version_in(&tx, pm_plan_id, input).await?;
+    tx.commit().await?;
+    Ok(version)
+}
+
+/// [`create_pm_plan_version`] inside the caller's transaction (an applied reliability decision
+/// creates its draft version and becomes `applied` together, `reliability::study::decisions`).
+pub async fn create_pm_plan_version_in(
+    tx: &impl ConnectionTrait,
+    pm_plan_id: i64,
+    input: CreatePmPlanVersionInput,
+) -> AppResult<PmPlanVersion> {
+    let db = tx;
     let plan = get_pm_plan(db, pm_plan_id).await?;
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
@@ -537,25 +579,22 @@ pub async fn create_pm_plan_version(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("next version not found")))?;
     let next_no: i64 = version_no_row.try_get("", "next_no")?;
     let version_entity_sync_id = crate::sync::identity::new_entity_sync_id();
-    let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
          VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [version_entity_sync_id.into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.planned_crew_size.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
+        [version_entity_sync_id.clone().into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.planned_crew_size.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
     let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM pm_plan_versions WHERE pm_plan_id = ? AND version_no = ?",
-            [pm_plan_id.into(), next_no.into()],
+            "SELECT id FROM pm_plan_versions WHERE entity_sync_id = ?",
+            [version_entity_sync_id.clone().into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version not found")))?;
     let id: i64 = row.try_get("", "id")?;
-    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,(SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = pm_plan_versions.id) AS version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version missing")))?;
-    let version = decode_pm_plan_version_row(&row)?;
-    tx.commit().await?;
-    Ok(version)
+    decode_pm_plan_version_row(&row)
 }
 
 pub async fn update_pm_plan_version(
@@ -578,14 +617,14 @@ pub async fn update_pm_plan_version(
     let status: String = row.try_get("", "status")?;
     if status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft PM plan versions can be edited.".to_string(),
+            "GATE_PM_VERSION_NOT_DRAFT_EDIT: Only draft PM plan versions can be edited.".to_string(),
         ]));
     }
     crate::pm::wo_content::validate_required_parts_json(input.required_parts_json.as_deref())?;
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan version was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM plan version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
@@ -604,11 +643,65 @@ pub async fn update_pm_plan_version(
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plan_versions SET effective_from=?,effective_to=?,trigger_definition_json=?,task_package_json=?,required_parts_json=?,required_skills_json=?,required_tools_json=?,estimated_duration_hours=?,planned_crew_size=?,estimated_labor_cost=?,estimated_parts_cost=?,estimated_service_cost=?,change_reason=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),(if input.clear_planned_crew_size { None } else { input.planned_crew_size.or(row.try_get("", "planned_crew_size")?) }).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
-    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
+    let row = tx.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,(SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = pm_plan_versions.id) AS version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated version missing")))?;
     let version = decode_pm_plan_version_row(&row)?;
     tx.commit().await?;
     Ok(version)
+}
+
+/// A version created from a reliability study decision is published only once that decision is
+/// applied here and names this version: a version received by synchronisation (or made by an older
+/// version of the app) from a decision that is not approved never becomes the plan's current
+/// version (audit finding AU-69). A decision not received yet blocks it until it arrives.
+async fn ensure_source_decision_applied(
+    db: &impl ConnectionTrait,
+    version: &sea_orm::QueryResult,
+    version_id: i64,
+) -> AppResult<()> {
+    let source_type: Option<String> = version.try_get("", "source_type")?;
+    if source_type.as_deref() != Some(crate::reliability::rcm_loop::SOURCE_RELIABILITY_DECISION) {
+        return Ok(());
+    }
+    let source_id: Option<i64> = version.try_get("", "source_id")?;
+    // A decision refused at synchronisation (here, or on another PC, received with its mark) never
+    // has its version published, on any PC (AU-76b, CMMS Advisor Q5).
+    if let Some(id) = source_id {
+        let refused = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS r FROM reliability_study_decisions WHERE id = ? AND sync_refused_at IS NOT NULL",
+                [id.into()],
+            ))
+            .await?
+            .is_some();
+        if refused {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_SOURCE_DECISION_REFUSED: This version comes from a reliability study decision refused at synchronisation; it cannot be published."
+                    .to_string(),
+            ]));
+        }
+    }
+    let applied = match source_id {
+        Some(id) => db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM reliability_study_decisions \
+                 WHERE id = ? AND status = 'applied' AND linked_pm_plan_version_id = ?",
+                [id.into(), version_id.into()],
+            ))
+            .await?
+            .is_some(),
+        None => false,
+    };
+    if applied {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(vec![
+            "GATE_PM_SOURCE_DECISION_NOT_APPLIED: This version comes from a reliability study decision that is not applied on this computer; it cannot be published."
+                .to_string(),
+        ]))
+    }
 }
 
 pub async fn publish_pm_plan_version(
@@ -629,16 +722,18 @@ pub async fn publish_pm_plan_version(
     let rv: i64 = row.try_get("", "row_version")?;
     if rv != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM version publish failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM version publish failed (stale row_version).".to_string(),
         ]));
     }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
     let plan = get_pm_plan(db, plan_id).await?;
     if !matches!(plan.lifecycle_status.as_str(), "approved" | "active" | "suspended") {
         return Err(AppError::ValidationFailed(vec![
-            "Plan must be approved, active, or suspended before publishing a version.".to_string(),
+            "GATE_PM_PLAN_NOT_PUBLISHABLE: Plan must be approved, active, or suspended before publishing a version."
+                .to_string(),
         ]));
     }
+    ensure_source_decision_applied(db, &row, input.version_id).await?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='superseded',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE pm_plan_id=? AND status='published' AND id != ?", [plan_id.into(), input.version_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='published',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?", [input.version_id.into(),input.expected_row_version.into()])).await?;
@@ -649,7 +744,7 @@ pub async fn publish_pm_plan_version(
     };
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plans SET current_version_id=?,lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?", [input.version_id.into(), next_plan_lifecycle.into(), plan_id.into()])).await?;
     tx.commit().await?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
+    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,(SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = pm_plan_versions.id) AS version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,planned_crew_size,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("published version missing")))?;
     decode_pm_plan_version_row(&row)
 }
@@ -672,7 +767,7 @@ fn normalize_occurrence_status(value: &str) -> AppResult<String> {
         Ok(normalized)
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM occurrence status '{value}'."
+            "GATE_PM_STATUS_INVALID: Unsupported PM occurrence status '{value}'."
         )]))
     }
 }
@@ -714,7 +809,9 @@ pub(crate) fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>
     match as_of {
         Some(raw) => {
             let parsed = DateTime::parse_from_rfc3339(raw).map_err(|_| {
-                AppError::ValidationFailed(vec!["as_of must be a valid RFC3339 timestamp.".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: as_of must be a valid RFC3339 timestamp.".to_string()
+                ])
             })?;
             Ok(parsed.with_timezone(&Utc))
         }
@@ -1429,14 +1526,14 @@ pub async fn transition_pm_occurrence(
     let current = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
     let next_status = normalize_occurrence_status(&input.next_status)?;
     if !occurrence_transition_allowed(&current.status, &next_status) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid PM occurrence transition: {} -> {}.",
+            "GATE_PM_OCCURRENCE_TRANSITION:from={0},to={1}: Invalid PM occurrence transition: {} -> {}.",
             current.status, next_status
         )]));
     }
@@ -1450,7 +1547,8 @@ pub async fn transition_pm_occurrence(
             .is_empty()
     {
         return Err(AppError::ValidationFailed(vec![
-            "reason_code is required for deferred, missed, and cancelled transitions.".to_string(),
+            "GATE_PM_REASON_REQUIRED: reason_code is required for deferred, missed, and cancelled transitions."
+                .to_string(),
         ]));
     }
     // The reason of a deferral, miss or cancellation is a value of `PM.DEFERRAL_REASONS`.
@@ -1461,10 +1559,9 @@ pub async fn transition_pm_occurrence(
         }
     }
 
-    let mut linked_work_order_id = current.linked_work_order_id;
-    if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
-        // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
-        // permit). See `pm::wo_content` for the mapping rules.
+    // The OT receives what the PM version prescribes (title, tasks, tools, parts, duration,
+    // permit). See `pm::wo_content` for the mapping rules. Read before the transaction.
+    let wo_to_create = if input.generate_work_order == Some(true) && current.linked_work_order_id.is_none() {
         let content = crate::pm::wo_content::build_pm_work_order_content(
             db,
             current.pm_plan_id,
@@ -1472,11 +1569,32 @@ pub async fn transition_pm_occurrence(
             current.equipment_id,
         )
         .await?;
-
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
-        let wo = wo_queries::create_work_order(
-            db,
+        Some((content, wo_type_code))
+    } else {
+        None
+    };
+
+    let deferral_reason = if next_status == "deferred" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+    let missed_reason = if next_status == "missed" {
+        input.reason_code.clone()
+    } else {
+        None
+    };
+
+    // The OT is created and the occurrence claimed (version-checked) in one transaction: when the
+    // occurrence changed meanwhile, the refusal rolls the OT back too, never leaving an orphan.
+    let tx = db.begin().await?;
+    let mut linked_work_order_id = current.linked_work_order_id;
+    let mut created_wo: Option<(i64, crate::pm::wo_content::PmWoContent)> = None;
+    if let Some((content, wo_type_code)) = wo_to_create {
+        let wo = wo_queries::create_work_order_in(
+            &tx,
             WoCreateInput {
                 type_code: wo_type_code,
                 equipment_id: content.equipment_id,
@@ -1506,31 +1624,17 @@ pub async fn transition_pm_occurrence(
                 // The OT's creator is the person who generated it: never a stand-in user.
                 creator_id: input.actor_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "An acting user is required to generate the work order of a PM occurrence.".to_string(),
+                        "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to generate the work order of a PM occurrence.".to_string(),
                     ])
                 })?,
                 requires_permit: Some(content.requires_permit),
             },
         )
         .await?;
-        // WO functions own their transactions (no shared transaction across modules): the
-        // checklist, tools and parts are added right after creation, on the draft OT.
-        crate::pm::wo_content::apply_pm_content_to_work_order(db, wo.id, &content).await?;
         linked_work_order_id = Some(wo.id);
+        created_wo = Some((wo.id, content));
     }
 
-    let deferral_reason = if next_status == "deferred" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-    let missed_reason = if next_status == "missed" {
-        input.reason_code.clone()
-    } else {
-        None
-    };
-
-    let tx = db.begin().await?;
     let update = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1555,7 +1659,7 @@ pub async fn transition_pm_occurrence(
 
     if update.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "PM occurrence transition failed due to stale row_version.".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM occurrence transition failed due to stale row_version.".to_string(),
         ]));
     }
 
@@ -1573,6 +1677,13 @@ pub async fn transition_pm_occurrence(
         ],
     ))
     .await?;
+
+    // The checklist, tools and parts are added in the same transaction (the WO child functions'
+    // own transactions are savepoints of it): a part that cannot be reserved leaves no work order
+    // and the occurrence unchanged, never a half-filled linked draft.
+    if let Some((wo_id, content)) = created_wo {
+        crate::pm::wo_content::apply_pm_content_to_work_order(&tx, wo_id, &content).await?;
+    }
 
     tx.commit().await?;
 
@@ -1631,7 +1742,7 @@ fn normalize_execution_result(value: &str) -> AppResult<String> {
     match normalized.as_str() {
         "completed_no_findings" | "completed_with_findings" | "deferred" | "missed" | "cancelled" => Ok(normalized),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported PM execution result '{}'.",
+            "GATE_PM_RESULT_INVALID: Unsupported PM execution result '{}'.",
             value
         )])),
     }
@@ -1663,19 +1774,27 @@ fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult
     let now = Utc::now();
     let from = match input_from {
         Some(value) => DateTime::parse_from_rfc3339(value)
-            .map_err(|_| AppError::ValidationFailed(vec!["from must be a valid RFC3339 timestamp.".to_string()]))?
+            .map_err(|_| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: from must be a valid RFC3339 timestamp.".to_string()
+                ])
+            })?
             .with_timezone(&Utc),
         None => now - Duration::days(30),
     };
     let to = match input_to {
         Some(value) => DateTime::parse_from_rfc3339(value)
-            .map_err(|_| AppError::ValidationFailed(vec!["to must be a valid RFC3339 timestamp.".to_string()]))?
+            .map_err(|_| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_DATE_INVALID: to must be a valid RFC3339 timestamp.".to_string()
+                ])
+            })?
             .with_timezone(&Utc),
         None => now,
     };
     if to < from {
         return Err(AppError::ValidationFailed(vec![
-            "to must be greater than or equal to from.".to_string(),
+            "GATE_PM_DATE_ORDER: to must be greater than or equal to from.".to_string(),
         ]));
     }
     Ok((
@@ -1919,6 +2038,103 @@ fn follow_up_title(occurrence: &PmOccurrence, finding: &PmExecutionFindingInput)
     crate::pm::wo_content::compose_title(&base, occurrence.asset_code.as_deref())
 }
 
+/// The refusals the follow-up of a finding would meet once the execution is written, with the same
+/// codes (#185 N-R2-1): no acting user, a plan without an equipment scope, a retired equipment
+/// (Déclassé / Rebuté); for a follow-up request an unknown submitter, an equipment with no location
+/// or an inactive one, the request catalog (origin `pm`, type `repair`, the system symptom); for a
+/// follow-up work order an unknown creator, equipment or org node, an equipment with no node
+/// (`wo::queries::refuse_creator_equipment_and_node`), an unreadable planned start, and a type that
+/// is unknown or not corrective.
+async fn refuse_follow_ups_that_cannot_be_created(
+    db: &DatabaseConnection,
+    occurrence_id: i64,
+    findings: &[PmExecutionFindingInput],
+    actor_id: Option<i64>,
+) -> AppResult<()> {
+    let wants_di = findings.iter().any(|f| f.create_follow_up_di == Some(true));
+    let wants_wo = findings.iter().any(|f| f.create_follow_up_work_order == Some(true));
+    if !wants_di && !wants_wo {
+        return Ok(());
+    }
+    let Some(actor_id) = actor_id else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to create the follow-up of a PM finding."
+                .to_string(),
+        ]));
+    };
+    let occurrence = get_pm_occurrence_by_id(db, occurrence_id).await?;
+    let plan_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
+            [occurrence.pm_plan_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_plan".to_string(),
+            id: occurrence.pm_plan_id.to_string(),
+        })?;
+    let asset_scope_type: String = plan_row.try_get("", "asset_scope_type")?;
+    let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
+    let Some(equipment_id) = asset_scope_id.filter(|_| asset_scope_type == "equipment") else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: A PM finding follow-up requires a PM plan scoped to one equipment."
+                .to_string(),
+        ]));
+    };
+    if wants_di {
+        crate::di::queries::refuse_retired_equipment(db, equipment_id).await?;
+        let installed_at: Option<i64> = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+                [equipment_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_PM_FOLLOWUP_NO_EQUIPMENT: PM plan equipment not found for follow-up DI.".to_string(),
+                ])
+            })?
+            .try_get("", "installed_at_node_id")?;
+        let Some(org_node_id) = installed_at else {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FOLLOWUP_NO_LOCATION: PM plan equipment must have installed_at_node_id for follow-up DI routing."
+                    .to_string(),
+            ]));
+        };
+        crate::org::model_scope::assert_org_node_active(db, org_node_id).await?;
+        crate::di::reference_catalog::validate_di_origin_code(db, "pm").await?;
+        crate::di::reference_catalog::validate_di_request_type(db, "repair").await?;
+        for finding in findings.iter().filter(|f| f.create_follow_up_di == Some(true)) {
+            let symptom = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
+            crate::di::reference_catalog::require_di_symptom_id(db, Some(symptom)).await?;
+        }
+        let submitter = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE id = ?",
+                [actor_id.into()],
+            ))
+            .await?;
+        if submitter.is_none() {
+            return Err(crate::di::queries::reference_invalid());
+        }
+    }
+    if wants_wo {
+        crate::wo::queries::refuse_retired_equipment(db, equipment_id).await?;
+        crate::wo::queries::refuse_creator_equipment_and_node(db, actor_id, Some(equipment_id), None).await?;
+        crate::wo::time::stored_planned_time(
+            occurrence.due_at.as_deref(),
+            crate::wo::time::CODE_PLANNED_START_UNREADABLE,
+        )?;
+        for finding in findings.iter().filter(|f| f.create_follow_up_work_order == Some(true)) {
+            follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn create_follow_up_di_from_finding(
     db: &DatabaseConnection,
     occurrence: &PmOccurrence,
@@ -1943,7 +2159,7 @@ async fn create_follow_up_di_from_finding(
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
     if asset_scope_type != "equipment" || asset_scope_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Follow-up DI creation requires PM plan asset_scope_type = 'equipment' with asset_scope_id.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: Follow-up DI creation requires PM plan asset_scope_type = 'equipment' with asset_scope_id.".to_string(),
         ]));
     }
 
@@ -1955,11 +2171,16 @@ async fn create_follow_up_di_from_finding(
             [equipment_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["PM plan equipment not found for follow-up DI.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_PM_FOLLOWUP_NO_EQUIPMENT: PM plan equipment not found for follow-up DI.".to_string(),
+            ])
+        })?;
     let org_node_id: Option<i64> = node_row.try_get("", "installed_at_node_id")?;
     let Some(org_node_id) = org_node_id else {
         return Err(AppError::ValidationFailed(vec![
-            "PM plan equipment must have installed_at_node_id for follow-up DI routing.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_LOCATION: PM plan equipment must have installed_at_node_id for follow-up DI routing."
+                .to_string(),
         ]));
     };
 
@@ -2031,7 +2252,7 @@ async fn create_follow_up_wo_from_finding(
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
     if asset_scope_type != "equipment" || asset_scope_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
+            "GATE_PM_FOLLOWUP_NO_EQUIPMENT: Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
         ]));
     }
     let wo_type_code = follow_up_work_order_type_code(db, finding.follow_up_work_order_type_id).await?;
@@ -2085,7 +2306,11 @@ async fn follow_up_work_order_type_code(db: &DatabaseConnection, explicit_type_i
         .await?
         .into_iter()
         .find(|t| t.id == type_id && t.is_active)
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Type d'OT introuvable (type_id={type_id}).")]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PM_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_id={type_id})."
+            )])
+        })?;
     if !ty
         .nature
         .as_deref()
@@ -2252,12 +2477,12 @@ pub async fn execute_pm_occurrence(
 
     if execution_result == "completed_no_findings" && !findings_input.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "completed_no_findings cannot include findings payload.".to_string(),
+            "GATE_PM_FINDINGS_NOT_ALLOWED: completed_no_findings cannot include findings payload.".to_string(),
         ]));
     }
     if execution_result == "completed_with_findings" && findings_input.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "completed_with_findings requires at least one finding.".to_string(),
+            "GATE_PM_FINDINGS_REQUIRED: completed_with_findings requires at least one finding.".to_string(),
         ]));
     }
 
@@ -2272,6 +2497,16 @@ pub async fn execute_pm_occurrence(
         None => None,
     };
     for finding in &findings_input {
+        if finding.finding_type.trim().is_empty() {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FINDING_TYPE_REQUIRED: finding_type is required for each PM finding.".to_string(),
+            ]));
+        }
+        if finding.description.trim().is_empty() {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_FINDING_DESCRIPTION_REQUIRED: description is required for each PM finding.".to_string(),
+            ]));
+        }
         if let Some(severity) = finding.severity.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             crate::pm::reason_catalog::checked_severity(db, severity).await?;
         }
@@ -2279,12 +2514,12 @@ pub async fn execute_pm_occurrence(
 
     if execution_result == "deferred" && defer_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "defer_reason_code is required for deferred execution outcomes.".to_string(),
+            "GATE_PM_REASON_REQUIRED: defer_reason_code is required for deferred execution outcomes.".to_string(),
         ]));
     }
     if execution_result == "missed" && miss_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "miss_reason_code is required for missed execution outcomes.".to_string(),
+            "GATE_PM_REASON_REQUIRED: miss_reason_code is required for missed execution outcomes.".to_string(),
         ]));
     }
 
@@ -2294,6 +2529,41 @@ pub async fn execute_pm_occurrence(
         "missed" => "missed".to_string(),
         "cancelled" => "cancelled".to_string(),
         _ => unreachable!(),
+    };
+
+    // The follow-ups the findings ask for are checked before anything is written: an execution
+    // is never recorded with its follow-up refused halfway (AU-73, review S4).
+    refuse_follow_ups_that_cannot_be_created(db, input.occurrence_id, &findings_input, input.actor_id).await?;
+
+    // The work order the execution names is checked before anything is written too (#185 N-R2-1).
+    // The transition below never links a work order (`generate_work_order: false`), so the
+    // occurrence's link read now is the one the execution is recorded against.
+    let linked_before = get_pm_occurrence_by_id(db, input.occurrence_id)
+        .await?
+        .linked_work_order_id;
+    if let (Some(linked), Some(provided)) = (linked_before, input.work_order_id) {
+        if linked != provided {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_PM_WO_MISMATCH: work_order_id must match linked occurrence work order when one already exists."
+                    .to_string(),
+            ]));
+        }
+    }
+    let wo_row = match input.work_order_id.or(linked_before) {
+        Some(wo_id) => Some(
+            db.query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id, code, actual_duration_hours, active_labor_hours
+                 FROM work_orders
+                 WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec!["GATE_PM_WO_UNKNOWN: work_order_id does not exist.".to_string()])
+            })?,
+        ),
+        None => None,
     };
 
     let occurrence = transition_pm_occurrence(
@@ -2317,34 +2587,18 @@ pub async fn execute_pm_occurrence(
     let creator = || {
         actor_id.ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "An acting user is required to create the follow-up of a PM finding.".to_string(),
+                "GATE_PM_ACTING_USER_REQUIRED: An acting user is required to create the follow-up of a PM finding."
+                    .to_string(),
             ])
         })
     };
-    let mut work_order_id = input.work_order_id.or(occurrence.linked_work_order_id);
-    if let (Some(linked), Some(provided)) = (occurrence.linked_work_order_id, input.work_order_id) {
-        if linked != provided {
-            return Err(AppError::ValidationFailed(vec![
-                "work_order_id must match linked occurrence work order when one already exists.".to_string(),
-            ]));
-        }
-    }
+    let mut work_order_id = input.work_order_id.or(linked_before);
 
     let mut work_order_code: Option<String> = None;
     let mut actual_duration_hours: Option<f64> = None;
     let mut actual_labor_hours: Option<f64> = None;
 
-    if let Some(wo_id) = work_order_id {
-        let wo_row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, code, actual_duration_hours, active_labor_hours
-                 FROM work_orders
-                 WHERE id = ?",
-                [wo_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_id does not exist.".to_string()]))?;
+    if let Some(wo_row) = wo_row {
         work_order_code = wo_row.try_get("", "code")?;
         actual_duration_hours = wo_row.try_get("", "actual_duration_hours")?;
         actual_labor_hours = wo_row.try_get("", "active_labor_hours")?;
@@ -2410,18 +2664,9 @@ pub async fn execute_pm_occurrence(
     let execution = decode_pm_execution_row(&execution_row)?;
 
     for finding in findings_input {
+        // Both checked non-empty before anything was written.
         let finding_type = finding.finding_type.trim().to_uppercase();
-        if finding_type.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "finding_type is required for each PM finding.".to_string(),
-            ]));
-        }
         let description = finding.description.trim().to_string();
-        if description.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "description is required for each PM finding.".to_string(),
-            ]));
-        }
 
         let mut follow_up_di_id: Option<i64> = None;
         let mut follow_up_wo_id: Option<i64> = None;

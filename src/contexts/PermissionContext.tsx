@@ -11,10 +11,11 @@ import {
 import { Outlet } from "react-router-dom";
 
 import { useSession } from "@/hooks/use-session";
+import { confirmSessionAfterSilentFailure } from "@/lib/ipc-invoke";
 import { readPermissionCache, writePermissionCache } from "@/lib/permission-cache";
 import { getMyPermissions } from "@/services/rbac-service";
 import type { PermissionRecord } from "@shared/ipc-types";
-import { type PermissionName } from "@shared/rbac/permissions.generated";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 // ── Context value ─────────────────────────────────────────────────────────
 
@@ -47,6 +48,9 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
   const session = useSession();
   const authenticated = session.info?.is_authenticated === true;
   const userId = session.info?.user_id ?? null;
+  // Raised at each sign-in, unlock or re-login, and once after an authentication race: a list
+  // that failed while there was no usable session loads again (F1, owner test of 0.9.1).
+  const sessionGeneration = session.sessionGeneration;
 
   const [permissions, setPermissions] = useState<PermissionRecord[]>(() =>
     readPermissionCache(userId),
@@ -77,13 +81,15 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
       }
       writePermissionCache(userId, perms);
       setPermissions(perms);
-    } catch {
+    } catch (err) {
       if (generation !== loadGeneration.current) {
         return;
       }
       // Any failure: keep last known / cache. Never collapse nav to ungated-only.
       const cached = readPermissionCache(userId);
       setPermissions((prev) => (prev.length > 0 ? prev : cached));
+      // A session error: re-read the session; a valid one (race) raises the generation → reload.
+      void confirmSessionAfterSilentFailure(err);
     } finally {
       if (generation === loadGeneration.current) {
         setIsLoading(false);
@@ -91,10 +97,10 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
     }
   }, [authenticated, userId]);
 
-  // Load whenever auth presence / user changes.
+  // Load whenever auth presence / user changes, and at each new session generation.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, sessionGeneration]);
 
   // Listen for rbac-changed event (emitted on role/assignment mutations)
   useEffect(() => {

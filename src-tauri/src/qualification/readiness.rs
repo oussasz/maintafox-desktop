@@ -41,8 +41,8 @@ fn cert_acceptable_for_requirement(pc: &PersonnelCertification) -> bool {
 fn profile_codes(p: &QualificationRequirementProfile) -> AppResult<Vec<String>> {
     serde_json::from_str(&p.applies_to_permit_type_codes_json).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Qualification profile '{}' has unreadable permit type codes: {e}",
-            p.profile_name
+            "GATE_QUAL_PROFILE_PERMIT_CODES_UNREADABLE:profile_id={}: Qualification profile '{}' has unreadable permit type codes: {e}",
+            p.id, p.profile_name
         )])
     })
 }
@@ -50,8 +50,8 @@ fn profile_codes(p: &QualificationRequirementProfile) -> AppResult<Vec<String>> 
 fn profile_required_ids(p: &QualificationRequirementProfile) -> AppResult<Vec<i64>> {
     serde_json::from_str(&p.required_certification_type_ids_json).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "Qualification profile '{}' has unreadable certification types: {e}",
-            p.profile_name
+            "GATE_QUAL_PROFILE_CERT_TYPES_UNREADABLE:profile_id={}: Qualification profile '{}' has unreadable certification types: {e}",
+            p.id, p.profile_name
         )])
     })
 }
@@ -190,7 +190,7 @@ pub async fn list_personnel_readiness(
             Ok(rows)
         }
         _ => Err(AppError::ValidationFailed(vec![
-            "personnel_id is required (optionally with permit_type_code).".into(),
+            "GATE_QUAL_READINESS_TARGET_REQUIRED: personnel_id is required (optionally with permit_type_code).".into(),
         ])),
     }
 }
@@ -201,7 +201,7 @@ pub async fn evaluate_crew_permit_skill_gaps(
 ) -> AppResult<CrewPermitSkillGapResult> {
     if input.personnel_ids.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "personnel_ids must not be empty.".into()
+            "GATE_QUAL_CREW_EMPTY: personnel_ids must not be empty.".into(),
         ]));
     }
 
@@ -229,7 +229,8 @@ pub async fn evaluate_crew_permit_skill_gaps(
         });
     } else {
         return Err(AppError::ValidationFailed(vec![
-            "Work order requires a permit but none is linked; pass permit_type_code.".into(),
+            "GATE_QUAL_CREW_PERMIT_TYPE_REQUIRED: Work order requires a permit but none is linked; pass permit_type_code."
+                .into(),
         ]));
     };
 
@@ -329,22 +330,31 @@ pub async fn upsert_personnel_readiness_snapshot(
     input: PersonnelReadinessSnapshotUpsertInput,
 ) -> AppResult<PersonnelReadinessSnapshot> {
     if input.period.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["period is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_QUAL_SNAPSHOT_PERIOD_REQUIRED: period is required.".into(),
+        ]));
     }
-    serde_json::from_str::<serde_json::Value>(&input.payload_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("payload_json must be valid JSON: {e}")]))?;
+    serde_json::from_str::<serde_json::Value>(&input.payload_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_QUAL_SNAPSHOT_PAYLOAD_INVALID: payload_json must be valid JSON: {e}"
+        )])
+    })?;
     let txn = db.begin().await?;
 
     if let Some(id) = input.id {
-        let ev = input
-            .expected_row_version
-            .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
+        let ev = input.expected_row_version.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required for update.".into(),
+            ])
+        })?;
         let current = get_snapshot_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "PersonnelReadinessSnapshot".into(),
             id: id.to_string(),
         })?;
         if current.row_version != ev {
-            return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_RECORD_CHANGED_ELSEWHERE: Row version mismatch.".into(),
+            ]));
         }
         let new_rv = current.row_version + 1;
         let affected = txn
@@ -363,7 +373,7 @@ pub async fn upsert_personnel_readiness_snapshot(
             .await?;
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "Concurrent update on personnel_readiness_snapshots.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on personnel_readiness_snapshots.".into(),
             ]));
         }
         let updated = get_snapshot_by_id(&txn, id).await?.expect("row");

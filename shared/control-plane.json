@@ -1,4 +1,4 @@
 {
-  "$comment": "Control API defaults shared by the webview (product-license-service.ts) and Rust (src-tauri/build.rs). VITE_ADMIN_API_BASE_URL overrides the URL for both.",
+  "$comment": "Control API defaults read by Rust (src-tauri/build.rs), which sends every control API call (sync, updates, licence activation). VITE_ADMIN_API_BASE_URL overrides the URL.",
   "defaultApiBaseUrl": "https://api.maintafox.systems"
 }

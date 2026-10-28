@@ -131,6 +131,58 @@ pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) 
     queries::list_work_orders_in_scope(&state.db, filter, &scope).await
 }
 
+/// Work orders and requests open on retired equipment, crossed in sync ("équipement déclassé — à
+/// revoir", AU-73b, `wo::retired_equipment_review`): requires ot.view; the work orders where the
+/// user holds ot.view, the requests where they hold di.view (none without it). With
+/// `requests_only` (the Requests page, AU-112) it requires di.view instead and lists the requests
+/// only, so a reviewer without ot.view reaches them. Read only: they are settled by the existing
+/// actions (cancel, reject, return to service).
+#[tauri::command]
+pub async fn list_retired_equipment_reviews(
+    include_closed: bool,
+    requests_only: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::retired_equipment_review::RetiredEquipmentReviewList> {
+    let user = require_session!(state);
+    if requests_only.unwrap_or(false) {
+        let di_scope = crate::di::access::require_anywhere(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+        )
+        .await?;
+        let no_work_orders = AccessScope::Subtrees(Default::default());
+        return crate::wo::retired_equipment_review::list_reviews(
+            &state.db,
+            &no_work_orders,
+            &di_scope,
+            include_closed,
+        )
+        .await;
+    }
+    let wo_scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
+    let di_scope = if access::holds_anywhere(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+    )
+    .await?
+    {
+        crate::di::access::require_anywhere(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+        )
+        .await?
+    } else {
+        AccessScope::Subtrees(Default::default())
+    };
+    crate::wo::retired_equipment_review::list_reviews(&state.db, &wo_scope, &di_scope, include_closed).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) get_wo — requires ot.view
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -140,7 +192,7 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
     let user = require_session!(state);
     let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
 
-    let wo = queries::get_work_order(&state.db, id)
+    let mut wo = queries::get_work_order(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
@@ -153,10 +205,26 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
         Anchor::of(wo.entity_id),
     )
     .await?;
+    // Several plant rules naming different permit types match it, or the rule it carries (received
+    // from another PC) names a type the list here does not give: shown with its rule (display only).
+    wo.permit_rule_matching_types = crate::permit::requirement_rules::matching_permit_types(
+        &state.db,
+        wo.equipment_id,
+        wo.type_id,
+        wo.permit_rule_permit_type.as_deref(),
+    )
+    .await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
+    // Read after the work order: a coding saved in between moved the version, so the next
+    // version-checked save is refused instead of overwriting it.
+    let failure_detail = closeout::get_failure_details(&state.db, id).await?.into_iter().next();
 
-    Ok(queries::WoGetResponse { wo, transitions })
+    Ok(queries::WoGetResponse {
+        wo,
+        transitions,
+        failure_detail,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -188,7 +256,7 @@ pub async fn create_wo(
     let mut errors: Vec<String> = Vec::new();
 
     if input.title.trim().is_empty() {
-        errors.push("Le titre est obligatoire.".into());
+        errors.push("GATE_WO_TITLE_REQUIRED: Le titre est obligatoire.".into());
     }
 
     // Validate type_code resolves
@@ -210,7 +278,9 @@ pub async fn create_wo(
             ))
             .await?;
         match di_row {
-            None => errors.push(format!("DI introuvable (source_di_id={di_id}).")),
+            None => errors.push(format!(
+                "GATE_WO_SOURCE_DI_NOT_FOUND:source_di_id={di_id}: DI introuvable (source_di_id={di_id})."
+            )),
             Some(row) => {
                 let di_node: Option<i64> = row.try_get("", "org_node_id")?;
                 crate::auth::scope::require_at(
@@ -425,7 +495,7 @@ pub async fn update_wo_draft(
     )
     .await?;
     let before = queries::get_work_order(&state.db, input.id).await?;
-    let wo = queries::update_wo_draft_fields(&state.db, input).await?;
+    let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
     // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
     // whether the order moved with it to another location (org node).
     if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {
@@ -593,48 +663,24 @@ pub async fn set_wo_permit_requirement(
     Ok(wo)
 }
 
-/// Clear the permit flag a plant rule set when the work order was converted from a request.
-/// Needs the permit-issue right (`ptw.issue`) — editing the work order is not enough — and a
-/// reason of 10 characters or more; recorded on the work order and in its audit trail.
+/// Clear the permit flag a plant rule set when the work order was converted from a request, or the
+/// permit requirement carried from a request flagged "sécurité" (migration 255). Needs the
+/// permit-issue right (`ptw.issue`) — editing the work order is not enough — and a reason of 10
+/// characters or more; recorded on the work order and in its audit trail.
 #[tauri::command]
 pub async fn clear_wo_permit_rule_flag(
     input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    // A safety gate: clearing a permit requirement set by a plant rule stays plant-wide (the
-    // action itself re-checks the plant-wide right in its transaction).
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PTW_ISSUE,
-        PermissionScope::Global
-    );
+    // A safety gate: `ptw.issue` at the work order's site (plant-wide for a work order without a
+    // site), with the entitlement and licence checks. The action re-checks, in its transaction,
+    // the right its origin needs: plant-wide for a plant rule (a site role does not lift a plant
+    // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
-    let reason = input.reason.trim().to_string();
-    let wo =
-        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
-    audit::record_wo_change_event(
-        &state.db,
-        audit::WoAuditInput {
-            wo_id: Some(wo.id),
-            action: "permit_rule_flag_cleared".into(),
-            actor_id: Some(actor_id),
-            summary: Some("Exigence de permis (règle) levée".into()),
-            details_json: Some(
-                serde_json::json!({
-                    "requires_permit": false,
-                    "rule": wo.permit_rule_code,
-                    "reason": reason,
-                })
-                .to_string(),
-            ),
-            requires_step_up: false,
-            apply_result: "applied".into(),
-        },
-    )
-    .await;
-    Ok(wo)
+    // The action writes the audit trail entry (origin, reason, site) in its own transaction.
+    crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1207,6 +1253,8 @@ pub async fn complete_task(
     actor_id: i64,
     result_code: String,
     notes: Option<String>,
+    finding_note: Option<String>,
+    follow_up_work_order_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
@@ -1220,7 +1268,36 @@ pub async fn complete_task(
     .await?;
     // The actor is the signed-in user; the id the screen still sends is not used.
     let _ = actor_id;
-    tasks::complete_task(&state.db, task_id, i64::from(user.user_id), result_code, notes).await
+    tasks::complete_task_with(
+        &state.db,
+        task_id,
+        i64::from(user.user_id),
+        tasks::CompleteTaskInput {
+            result_code,
+            notes,
+            finding_note,
+            follow_up_work_order_id,
+        },
+    )
+    .await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T2) reopen_task — "Rouvrir la tâche", same right as recording a result (ot.edit at the WO's site)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn reopen_task(task_id: i64, comment: String, state: State<'_, AppState>) -> AppResult<tasks::WoTask> {
+    let user = require_session!(state);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Task,
+        task_id,
+    )
+    .await?;
+    tasks::reopen_task(&state.db, task_id, i64::from(user.user_id), comment).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1388,7 +1465,7 @@ pub async fn list_downtime_segments(
 pub async fn save_failure_detail(
     input: closeout::SaveFailureCodingInput,
     state: State<'_, AppState>,
-) -> AppResult<closeout::WoFailureDetail> {
+) -> AppResult<closeout::FailureDetailSaved> {
     let user = require_session!(state);
     require_on_wo(
         &state,
@@ -1452,14 +1529,55 @@ pub async fn save_verification(
 
 #[tauri::command]
 pub async fn close_wo(
-    mut input: closeout::WoCloseInput,
+    input: closeout::WoCloseInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    close_wo_impl(state.inner(), input).await
+}
+
+pub(crate) async fn close_wo_impl(
+    state: &AppState,
+    mut input: closeout::WoCloseInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_CLOSE, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
 
+    // Self-signed override (the policy may allow the closer as signer): the password checked is
+    // the signed-in user's own, so a lockout it causes ends the session, as every other password
+    // check inside a session does (`commands::auth::check_session_password`).
+    let self_signed = input.fmeca_parts_override_signed_by_id == Some(input.actor_id)
+        && input
+            .fmeca_parts_override_signer_password
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
+    let own_session = if self_signed {
+        let id = crate::commands::auth::current_session_db_id(state).await?;
+        crate::commands::auth::end_session_if_locked_out(state, &user, &id).await?;
+        Some(id)
+    } else {
+        None
+    };
+
+    let result = close_wo_audited(state, &user, input).await;
+    // Checked whatever the outcome: the signer password is checked and counted even when the
+    // close-out goes through (critical FMECA suggestions with matched parts), so a close that
+    // succeeds can still have locked the account. A committed close stays reported as such.
+    if let Some(id) = &own_session {
+        let locked_out = crate::commands::auth::end_session_if_locked_out(state, &user, id).await;
+        if result.is_err() {
+            locked_out?;
+        }
+    }
+    result
+}
+
+async fn close_wo_audited(
+    state: &AppState,
+    user: &crate::auth::session_manager::AuthenticatedUser,
+    input: closeout::WoCloseInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
             audit::record_wo_change_event(
@@ -1555,11 +1673,11 @@ pub async fn reopen_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let wo_id = input.wo_id;
-    closeout::update_wo_rca(&state.db, input).await?;
+    let row_version = closeout::update_wo_rca(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
@@ -1573,7 +1691,7 @@ pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, A
         },
     )
     .await;
-    Ok(())
+    Ok(row_version)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1671,10 +1789,22 @@ pub async fn get_cost_summary(wo_id: i64, state: State<'_, AppState>) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn update_service_cost(
+    wo_id: i64,
+    service_cost: f64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<i64> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
-    costs::update_service_cost(&state.db, wo_id, service_cost, i64::from(user.user_id)).await?;
+    let row_version = costs::update_service_cost(
+        &state.db,
+        wo_id,
+        service_cost,
+        expected_row_version,
+        i64::from(user.user_id),
+    )
+    .await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
@@ -1688,7 +1818,7 @@ pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_,
         },
     )
     .await;
-    Ok(())
+    Ok(row_version)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

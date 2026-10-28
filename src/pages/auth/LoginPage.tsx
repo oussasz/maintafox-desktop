@@ -9,7 +9,16 @@ import { formatLicenseDate } from "@/components/auth/activation/OrganizationLice
 import { AuthField } from "@/components/auth/shell/AuthField";
 import { AuthAlert, AuthButton, AuthStatusChip } from "@/components/auth/shell/AuthPrimitives";
 import { AuthShell } from "@/components/auth/shell/AuthShell";
+import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   useProductLicenseGate,
   useProductLicenseGateReconcile,
@@ -18,17 +27,20 @@ import {
 import { mfAuth, mfAuthAlert } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorText } from "@/lib/app-error";
+import { editionLabel } from "@/lib/edition-label";
 import { cn } from "@/lib/utils";
 import {
+  type ActivationLicenseMetadata,
+  POST_ACTIVATION_LOGIN_HINT_KEY,
   clearProductLicenseBrowserState,
   getActivationBootstrapState,
   getActivationLicenseMetadata,
   getProductLicenseOnboardingState,
-  POST_ACTIVATION_LOGIN_HINT_KEY,
   resetProductLicenseActivation,
-  type ActivationLicenseMetadata,
 } from "@/services/product-license-service";
+import { ACCOUNT_LOCKED, sessionErrorText } from "@/store/session-store";
+import { AUTH_UPDATE_IN_PROGRESS } from "@/utils/errors";
 
 export function LoginPage() {
   const { t } = useTranslation("auth");
@@ -52,14 +64,25 @@ export function LoginPage() {
    * The PC is activated and has no administrator yet (`get_activation_bootstrap_state`): no named
    * administrator was ever created here, so the first-start screen is still open. Also true on a
    * PC whose only administrator is the built-in "admin" account with its password never changed.
-   * The backend alone decides whether the creation is allowed (`bootstrap_initial_tenant_admin`).
+   * Not offered once accounts have arrived from the plant (`plant_join` "sign_in"). The first-start
+   * screen joins the plant before it offers the creation; the backend alone decides whether the
+   * creation is allowed (`bootstrap_initial_tenant_admin`).
    */
   const [firstAdminPending, setFirstAdminPending] = useState(false);
+  /**
+   * The PC is activated and the plant has an administrator (`has_tenant_admin` of the same
+   * `get_activation_bootstrap_state` answer). A signed-out reset is then refused
+   * (`LICENSE_RESET_REQUIRES_ADMIN_SIGNIN`), so the screen offers the two routes that work instead:
+   * an administrator signed in with a fresh identity check, or a vendor recovery code.
+   */
+  const [plantAdministered, setPlantAdministered] = useState(false);
+  const [changeKeyOpen, setChangeKeyOpen] = useState(false);
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const signInAfterChangeKeyRef = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -79,18 +102,25 @@ export function LoginPage() {
       const ready = Boolean(s.complete && s.tenant_id && s.tenant_id.trim().length > 0);
       setActivationReady(ready);
       let pending = false;
+      let administered = false;
       if (ready) {
         try {
           const bootstrap = await getActivationBootstrapState();
-          pending = Boolean(bootstrap.tenant_id?.trim()) && !bootstrap.has_tenant_admin;
+          pending =
+            Boolean(bootstrap.tenant_id?.trim()) &&
+            !bootstrap.has_tenant_admin &&
+            bootstrap.plant_join !== "sign_in";
+          administered = bootstrap.has_tenant_admin;
         } catch {
           // No answer: offer nothing; the sign-in form stays available.
         }
       }
       setFirstAdminPending(pending);
+      setPlantAdministered(administered);
     } catch {
       setActivationReady(false);
       setFirstAdminPending(false);
+      setPlantAdministered(false);
     } finally {
       setActivationCheckLoading(false);
     }
@@ -127,9 +157,8 @@ export function LoginPage() {
       }
       navigate("/", { replace: true });
     } catch (e) {
-      setResetActivationError(
-        describeAppError(e).title || t("login.resetActivation.errorFallback"),
-      );
+      // A coded refusal (`LICENSE_RESET_*`) gives its translated reason, not the generic title.
+      setResetActivationError(appErrorText(e) || t("login.resetActivation.errorFallback"));
     } finally {
       if (mountedRef.current) {
         setResettingActivation(false);
@@ -161,7 +190,7 @@ export function LoginPage() {
 
   const licenseSummary = [
     licenseMeta?.company_display_name ?? licenseMeta?.tenant_id ?? null,
-    licenseMeta?.license_tier ?? null,
+    editionLabel(licenseMeta?.license_tier),
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join(" · ");
@@ -195,7 +224,7 @@ export function LoginPage() {
       {showLicenseMeta ? (
         <dl className={cn("mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5", mfAuthAlert.info)}>
           <dt className="font-medium">{t("login.licenseDetails.tier")}</dt>
-          <dd>{licenseMeta?.license_tier ?? t("login.licenseDetails.na")}</dd>
+          <dd>{editionLabel(licenseMeta?.license_tier) ?? t("login.licenseDetails.na")}</dd>
           <dt className="font-medium">{t("login.licenseDetails.slotLimit")}</dt>
           <dd>{licenseMeta?.device_limit ?? t("login.licenseDetails.na")}</dd>
           <dt className="font-medium">{t("login.licenseDetails.expiry")}</dt>
@@ -312,8 +341,16 @@ export function LoginPage() {
           }
         />
 
-        {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
-          <AuthAlert tone="warning">{session.error}</AuthAlert>
+        {session.errorCode === ACCOUNT_LOCKED ? (
+          <AuthAlert tone="warning">{sessionErrorText(session)}</AuthAlert>
+        ) : session.error && session.errorCode === "PASSWORD_NOT_RECEIVED" ? (
+          // The account arrived by sync without its password (a change refused on arrival).
+          <AuthAlert tone="warning" title={t("login.passwordNotReceived.title")}>
+            <p>{t("login.passwordNotReceived.message")}</p>
+          </AuthAlert>
+        ) : session.error && session.errorCode === AUTH_UPDATE_IN_PROGRESS ? (
+          // An update is installing (pre-update backup until the restart): no sign-in now.
+          <AuthAlert tone="info">{t("login.updateInProgress")}</AuthAlert>
         ) : session.error && tenantScopeDenied ? (
           <AuthAlert tone="warning" title={t("login.tenantScopeDenied.title")}>
             <p>{session.error}</p>
@@ -326,12 +363,16 @@ export function LoginPage() {
             <AuthButton
               variant="secondary"
               className="mt-2"
-              onClick={() => setConfirmResetOpen(true)}
+              onClick={() =>
+                plantAdministered ? setChangeKeyOpen(true) : setConfirmResetOpen(true)
+              }
               disabled={resettingActivation}
             >
-              {resettingActivation
-                ? t("login.staleSession.resetting")
-                : t("login.staleSession.resetCta")}
+              {plantAdministered
+                ? t("login.changeKey.link")
+                : resettingActivation
+                  ? t("login.staleSession.resetting")
+                  : t("login.staleSession.resetCta")}
             </AuthButton>
           </AuthAlert>
         ) : session.error ? (
@@ -384,24 +425,88 @@ export function LoginPage() {
         destructive
         onConfirm={handleResetActivation}
       />
+      <Dialog open={changeKeyOpen} onOpenChange={setChangeKeyOpen}>
+        <DialogContent
+          className="max-w-md"
+          data-testid="login-change-key-dialog"
+          onCloseAutoFocus={(e) => {
+            // "Sign in as an administrator" puts the cursor in the username field.
+            if (signInAfterChangeKeyRef.current) {
+              signInAfterChangeKeyRef.current = false;
+              e.preventDefault();
+              usernameRef.current?.focus();
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{t("login.changeKey.title")}</DialogTitle>
+            <DialogDescription>{t("login.changeKey.description")}</DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal space-y-2 pl-5 text-sm text-text-secondary">
+            <li>{t("login.changeKey.signInRoute")}</li>
+            <li>{t("login.changeKey.recoveryRoute")}</li>
+          </ol>
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col">
+            <Button
+              type="button"
+              onClick={() => {
+                signInAfterChangeKeyRef.current = true;
+                setChangeKeyOpen(false);
+              }}
+            >
+              {t("login.changeKey.signIn")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setChangeKeyOpen(false);
+                setRecoveryCodeOpen(true);
+              }}
+            >
+              {t("login.changeKey.useRecoveryCode")}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setChangeKeyOpen(false)}>
+              {t("login.changeKey.close")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="mt-6 border-t border-surface-border pt-5 text-center">
-        <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
-        {resetActivationError ? (
-          <AuthAlert tone="danger" className="mb-2 text-left">
-            {resetActivationError}
-          </AuthAlert>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => setConfirmResetOpen(true)}
-          disabled={resettingActivation || activationCheckLoading}
-          className={mfAuth.linkPrimary}
-        >
-          {resettingActivation
-            ? t("login.resetActivation.resetting")
-            : t("login.resetActivation.cta")}
-        </button>
+        {plantAdministered && activationReady ? (
+          <>
+            <p className="mb-2 text-xs text-text-muted">{t("login.changeKey.hint")}</p>
+            <button
+              type="button"
+              onClick={() => setChangeKeyOpen(true)}
+              disabled={activationCheckLoading}
+              className={mfAuth.linkPrimary}
+              data-testid="login-change-key-link"
+            >
+              {t("login.changeKey.link")}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
+            {resetActivationError ? (
+              <AuthAlert tone="danger" className="mb-2 text-left">
+                {resetActivationError}
+              </AuthAlert>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setConfirmResetOpen(true)}
+              disabled={resettingActivation || activationCheckLoading}
+              className={mfAuth.linkPrimary}
+            >
+              {resettingActivation
+                ? t("login.resetActivation.resetting")
+                : t("login.resetActivation.cta")}
+            </button>
+          </>
+        )}
       </div>
     </AuthShell>
   );

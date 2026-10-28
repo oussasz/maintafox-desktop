@@ -140,10 +140,10 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "data_integrity_findings", table: "data_integrity_findings", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_order_failure_details", "work_order_downtime_segments", "work_orders"], note: None },
     SyncEntityDef { entity_type: "data_integrity_repair_actions", table: "data_integrity_repair_actions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "data_integrity_findings"], note: None },
     SyncEntityDef { entity_type: "delay_reason_codes", table: "delay_reason_codes", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
-    SyncEntityDef { entity_type: "delegated_admin_policies", table: "delegated_admin_policies", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["roles", "org_nodes", "teams"], note: None },
+    SyncEntityDef { entity_type: "delegated_admin_policies", table: "delegated_admin_policies", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["roles", "org_nodes", "teams", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "di_attachments", table: "di_attachments", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["intervention_requests", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "di_change_events", table: "di_change_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &[], note: None },
-    SyncEntityDef { entity_type: "di_review_events", table: "di_review_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["intervention_requests"], note: None },
+    SyncEntityDef { entity_type: "di_review_events", table: "di_review_events", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["intervention_requests"], note: None },
     SyncEntityDef { entity_type: "di_sla_rules", table: "di_sla_rules", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "di_state_transition_log", table: "di_state_transition_log", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &[], note: None },
     SyncEntityDef { entity_type: "document_acknowledgements", table: "document_acknowledgements", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["personnel"], note: None },
@@ -276,7 +276,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "roles", table: "roles", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: Some("System roles are seeded on every replica; seeded rows must use identity::seeded_entity_sync_id.") },
     SyncEntityDef { entity_type: "runtime_exposure_logs", table: "runtime_exposure_logs", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment"], note: None },
     SyncEntityDef { entity_type: "saved_activity_filters", table: "saved_activity_filters", scope: SyncScope::User, owner_user_column: Some("user_id"), has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts"], note: None },
-    SyncEntityDef { entity_type: "schedule_break_ins", table: "schedule_break_ins", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["personnel", "schedule_commitments", "user_accounts"], note: None },
+    SyncEntityDef { entity_type: "schedule_break_ins", table: "schedule_break_ins", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["personnel", "schedule_commitments", "teams", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "schedule_candidates", table: "schedule_candidates", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["teams", "personnel", "reference_values", "intervention_requests", "work_orders", "pm_occurrences"], note: None },
     SyncEntityDef { entity_type: "schedule_change_log", table: "schedule_change_log", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["schedule_commitments", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "schedule_commitments", table: "schedule_commitments", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["personnel", "teams", "schedule_candidates", "work_orders", "pm_occurrences", "intervention_requests", "user_accounts"], note: None },
@@ -316,7 +316,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "work_order_statuses", table: "work_order_statuses", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &[], note: None },
     SyncEntityDef { entity_type: "work_order_tasks", table: "work_order_tasks", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_order_tools", table: "work_order_tools", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_orders"], note: None },
-    SyncEntityDef { entity_type: "work_order_verifications", table: "work_order_verifications", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "work_orders"], note: None },
+    SyncEntityDef { entity_type: "work_order_verifications", table: "work_order_verifications", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["user_accounts", "work_orders"], note: None },
     SyncEntityDef { entity_type: "work_orders", table: "work_orders", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "ram_ishikawa_diagrams", "closeout_validation_policies", "inspection_anomalies", "equipment", "teams", "intervention_requests", "reference_values", "work_order_statuses", "org_nodes", "schedule_class_versions"], note: None },
     SyncEntityDef { entity_type: "work_permits", table: "work_permits", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["work_orders", "permit_types", "equipment", "org_nodes", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "wo_cost_estimates", table: "wo_cost_estimates", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts", "cost_centers", "work_orders"], note: None },
@@ -547,10 +547,23 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         table: "stock_balances",
         category: LocalOnlyCategory::DerivedProjection,
     },
+    // Article/location pairs whose reserved stock is recomputed at the end of the sync pass
+    // (`inventory::reservations`).
+    LocalOnlyTable {
+        table: "stock_reserved_dirty",
+        category: LocalOnlyCategory::JobQueue,
+    },
     // Balances below zero to reconcile (`inventory::negative_stock`): open exactly while the
     // location's on-hand stock is below zero, so every PC with the same ledger shows the same.
     LocalOnlyTable {
         table: "stock_negative_reviews",
+        category: LocalOnlyCategory::DerivedProjection,
+    },
+    // Open work orders and requests on retired equipment (`wo::retired_equipment_review`, AU-73b):
+    // open exactly while the record is open and its equipment retired, so every PC with the same
+    // rows shows the same items, keyed by the record's sync id.
+    LocalOnlyTable {
+        table: "retired_equipment_reviews",
         category: LocalOnlyCategory::DerivedProjection,
     },
     // Computed on each device from synchronised personnel and certification data
@@ -615,6 +628,11 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
 /// Look up a registered entity type.
 pub fn entity(entity_type: &str) -> Option<&'static SyncEntityDef> {
     SYNC_ENTITIES.iter().find(|e| e.entity_type == entity_type)
+}
+
+/// The registered entity type stored in `table`.
+pub fn entity_by_table(table: &str) -> Option<&'static SyncEntityDef> {
+    SYNC_ENTITIES.iter().find(|e| e.table == table)
 }
 
 /// Look up a registered entity type, failing with a sync error when it is unknown.

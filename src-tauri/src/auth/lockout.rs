@@ -103,6 +103,24 @@ pub async fn check_lockout(db: &sea_orm::DatabaseConnection, user_id: i32) -> Ap
     Ok(())
 }
 
+// ── Reset after a correct password ─────────────────────────────────────────────
+
+/// A correct password ends the run of failures, as a successful sign-in does
+/// (`session_manager::record_successful_login`): counter, lock and progressive count are reset.
+/// Used by the password checks made inside a session (unlock, step-up).
+pub async fn clear_failed_attempts(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts \
+         SET failed_login_attempts = 0, locked_until = NULL, consecutive_lockouts = 0, updated_at = ? \
+         WHERE id = ?",
+        [now.into(), user_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 // ── Record failed attempt ─────────────────────────────────────────────────────
 
 /// Increment `failed_login_attempts`. If threshold reached, lock the account.

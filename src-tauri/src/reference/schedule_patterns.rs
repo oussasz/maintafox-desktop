@@ -93,7 +93,7 @@ fn validate_time(raw: &str) -> AppResult<()> {
         || chrono::NaiveTime::parse_from_str(raw, "%H:%M").is_ok();
     if !ok {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Heure invalide '{raw}' (attendu HH:MM)."
+            "GATE_REF_SCHEDULE_TIME_INVALID: Heure invalide '{raw}' (attendu HH:MM)."
         )]));
     }
     Ok(())
@@ -102,20 +102,20 @@ fn validate_time(raw: &str) -> AppResult<()> {
 fn validate_details(details: &[ScheduleDayPattern]) -> AppResult<()> {
     if details.len() != 7 {
         return Err(AppError::ValidationFailed(vec![
-            "Le modèle horaire doit contenir exactement 7 jours (lundi–dimanche).".into(),
+            "GATE_REF_SCHEDULE_DAYS_COUNT: Le modèle horaire doit contenir exactement 7 jours (lundi–dimanche).".into(),
         ]));
     }
     let mut seen = [false; 8];
     for d in details {
         if !(1..=7).contains(&d.day_of_week) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "day_of_week invalide: {} (attendu 1–7).",
+                "GATE_REF_SCHEDULE_DAY_INVALID: day_of_week invalide: {} (attendu 1–7).",
                 d.day_of_week
             )]));
         }
         if seen[d.day_of_week as usize] {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Jour dupliqué: {}.",
+                "GATE_REF_SCHEDULE_DAY_DUPLICATE: Jour dupliqué: {}.",
                 d.day_of_week
             )]));
         }
@@ -142,20 +142,24 @@ pub async fn assert_schedule_reference_value_active(
             [reference_value_id.into()],
         ))
         .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Classe horaire {reference_value_id} introuvable.")]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REF_SCHEDULE_CLASS_UNKNOWN: Classe horaire {reference_value_id} introuvable."
+            )])
+        })?;
 
     let domain_code: String = row
         .try_get("", "domain_code")
         .map_err(|e| decode_err("domain_code", e))?;
     if domain_code != SCHEDULE_CLASS_DOMAIN_CODE {
         return Err(AppError::ValidationFailed(vec![
-            "La valeur sélectionnée n'appartient pas au domaine Classes horaires.".into(),
+            "GATE_REF_SCHEDULE_NOT_CLASS: La valeur sélectionnée n'appartient pas au domaine Classes horaires.".into(),
         ]));
     }
     let is_active: i64 = row.try_get("", "is_active").map_err(|e| decode_err("is_active", e))?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Classe horaire {reference_value_id} inactive."
+            "GATE_REF_SCHEDULE_CLASS_INACTIVE: Classe horaire {reference_value_id} inactive."
         )]));
     }
     Ok(())
@@ -170,7 +174,7 @@ async fn assert_is_schedule_class_value(
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     if domain.code.to_ascii_uppercase() != SCHEDULE_CLASS_DOMAIN_CODE {
         return Err(AppError::ValidationFailed(vec![
-            "Le modèle horaire n'est disponible que pour ORG.SCHEDULE_CLASS.".into(),
+            "GATE_REF_SCHEDULE_NOT_CLASS: Le modèle horaire n'est disponible que pour ORG.SCHEDULE_CLASS.".into(),
         ]));
     }
     Ok(value)
@@ -308,7 +312,7 @@ pub async fn upsert_schedule_pattern(
         let trimmed = code.trim().to_string();
         if trimmed.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Le code de modèle de poste est obligatoire.".into(),
+                "GATE_REF_SCHEDULE_CODE_REQUIRED: Le code de modèle de poste est obligatoire.".into(),
             ]));
         }
         meta.shift_pattern_code = Some(trimmed);
@@ -319,7 +323,7 @@ pub async fn upsert_schedule_pattern(
     if let Some(v) = payload.nominal_hours_per_day {
         if !v.is_finite() || v <= 0.0 || v > 24.0 {
             return Err(AppError::ValidationFailed(vec![
-                "Les heures nominales par jour doivent être entre 0 et 24.".into(),
+                "GATE_REF_SCHEDULE_HOURS_RANGE: Les heures nominales par jour doivent être entre 0 et 24.".into(),
             ]));
         }
         meta.nominal_hours_per_day = Some(v);

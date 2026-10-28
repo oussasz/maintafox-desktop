@@ -149,7 +149,7 @@ fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
 fn validate_code(code: &str) -> AppResult<()> {
     if code.is_empty() || code.len() > 64 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine doit comporter entre 1 et 64 caractères.".into(),
+            "GATE_REF_DOMAIN_CODE_LENGTH: Le code de domaine doit comporter entre 1 et 64 caractères.".into(),
         ]));
     }
     if !code
@@ -157,7 +157,7 @@ fn validate_code(code: &str) -> AppResult<()> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '.')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine ne peut contenir que des lettres majuscules ASCII, \
+            "GATE_REF_DOMAIN_CODE_CHARS: Le code de domaine ne peut contenir que des lettres majuscules ASCII, \
              des chiffres, des underscores et des points."
                 .into(),
         ]));
@@ -165,7 +165,7 @@ fn validate_code(code: &str) -> AppResult<()> {
     // Must start with a letter
     if !code.starts_with(|c: char| c.is_ascii_uppercase()) {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine doit commencer par une lettre majuscule.".into(),
+            "GATE_REF_DOMAIN_CODE_FORMAT: Le code de domaine doit commencer par une lettre majuscule.".into(),
         ]));
     }
     Ok(())
@@ -174,7 +174,7 @@ fn validate_code(code: &str) -> AppResult<()> {
 fn validate_structure_type(st: &str) -> AppResult<()> {
     if !STRUCTURE_TYPES.contains(&st) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type de structure '{st}' invalide. Valeurs autorisées : {}.",
+            "GATE_REF_STRUCTURE_INVALID: Type de structure '{st}' invalide. Valeurs autorisées : {}.",
             STRUCTURE_TYPES.join(", ")
         )]));
     }
@@ -184,7 +184,7 @@ fn validate_structure_type(st: &str) -> AppResult<()> {
 fn validate_governance_level(gl: &str) -> AppResult<()> {
     if !GOVERNANCE_LEVELS.contains(&gl) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Niveau de gouvernance '{gl}' invalide. Valeurs autorisées : {}.",
+            "GATE_REF_GOVERNANCE_LEVEL_INVALID: Niveau de gouvernance '{gl}' invalide. Valeurs autorisées : {}.",
             GOVERNANCE_LEVELS.join(", ")
         )]));
     }
@@ -194,7 +194,7 @@ fn validate_governance_level(gl: &str) -> AppResult<()> {
 fn validate_governance_category(cat: &str) -> AppResult<()> {
     if !GOVERNANCE_CATEGORIES.contains(&cat) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Catégorie de gouvernance '{cat}' invalide. Valeurs autorisées : {}.",
+            "GATE_REF_GOVERNANCE_CATEGORY_INVALID: Catégorie de gouvernance '{cat}' invalide. Valeurs autorisées : {}.",
             GOVERNANCE_CATEGORIES.join(", ")
         )]));
     }
@@ -205,7 +205,7 @@ fn validate_name(name: &str) -> AppResult<()> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.len() > 255 {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom du domaine doit comporter entre 1 et 255 caractères.".into(),
+            "GATE_REF_DOMAIN_NAME_LENGTH: Le nom du domaine doit comporter entre 1 et 255 caractères.".into(),
         ]));
     }
     Ok(())
@@ -217,7 +217,7 @@ fn validate_rules_json(json: &Option<String>) -> AppResult<()> {
         if !raw.is_empty() {
             serde_json::from_str::<serde_json::Value>(raw).map_err(|e| {
                 AppError::ValidationFailed(vec![format!(
-                    "Le champ validation_rules_json n'est pas du JSON valide : {e}"
+                    "GATE_REF_RULES_INVALID: Le champ validation_rules_json n'est pas du JSON valide : {e}"
                 )])
             })?;
         }
@@ -272,9 +272,9 @@ pub async fn get_reference_domain(db: &DatabaseConnection, domain_id: i64) -> Ap
 pub async fn get_reference_domain_by_code(db: &DatabaseConnection, domain_code: &str) -> AppResult<ReferenceDomain> {
     let code = normalize_code(domain_code);
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(
-            vec!["Le code de domaine est requis.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REF_DOMAIN_CODE_REQUIRED: Le code de domaine est requis.".into(),
+        ]));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -314,8 +314,11 @@ pub async fn create_reference_domain(
 
     let category = if let Some(ref raw) = payload.governance_category {
         validate_governance_category(raw)?;
-        GovernanceCategory::parse(raw)
-            .ok_or_else(|| AppError::ValidationFailed(vec![format!("Catégorie de gouvernance '{raw}' invalide.")]))?
+        GovernanceCategory::parse(raw).ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REF_GOVERNANCE_CATEGORY_INVALID: Catégorie de gouvernance '{raw}' invalide."
+            )])
+        })?
     } else {
         derive_category_for_persist(&code, &payload.governance_level)
     };
@@ -356,7 +359,9 @@ pub async fn create_reference_domain(
     .map_err(|e| {
         // SQLite unique constraint violation on code
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![format!("Un domaine avec le code '{code}' existe déjà.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REF_DOMAIN_EXISTS:code={code}: Un domaine avec le code '{code}' existe déjà."
+            )])
         } else {
             AppError::Database(e)
         }

@@ -615,6 +615,16 @@ pub struct SetWorkOrderTypeNatureInput {
     pub reason: String,
 }
 
+/// How the audit of a work-order type names it: the type's sync id (the same on every PC), or a
+/// device-marked key for a row without one (no capture installed).
+pub async fn audit_type_ref(conn: &impl ConnectionTrait, type_id: i64) -> AppResult<String> {
+    Ok(
+        crate::sync::identity::optional_entity_sync_id(conn, "reference_values", type_id)
+            .await?
+            .unwrap_or_else(|| format!("local-{type_id}")),
+    )
+}
+
 /// Give a plant's own OT type (carried over without a nature, flagged "to review") its maintenance
 /// nature, once. The person holds the reference-data manage right (or is an administrator),
 /// checked here; a reason of 10 characters or more is required. The nature is written only while
@@ -706,12 +716,17 @@ pub async fn set_work_order_type_nature(
             params(&[("code", code)]),
         ));
     }
+    // The type is named by its sync id, the same on every PC: the audit travels (`sync::row_spec`,
+    // audit_events) and stays unchanged in the audit chain (`audit::chain`) if the value is deleted
+    // later (a discarded draft set). A row without a sync id (no capture installed) keeps a
+    // device-marked key.
+    let type_ref = audit_type_ref(&txn, input.type_id).await?;
     crate::audit::writer::write_audit_event_in(
         &txn,
         crate::audit::writer::AuditEventInput {
             action_code: "wo_type.nature.set".to_string(),
             target_type: Some("work_order_type".to_string()),
-            target_id: Some(input.type_id.to_string()),
+            target_id: Some(type_ref),
             actor_id: Some(actor_id),
             auth_context: "session".to_string(),
             result: "success".to_string(),
@@ -765,16 +780,16 @@ pub async fn resolve_work_order_type_id_by_code(conn: &impl ConnectionTrait, typ
     let normalized = type_code.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le type d'OT est obligatoire (type_code).".into(),
+            "GATE_WO_TYPE_REQUIRED: Le type d'OT est obligatoire (type_code).".into(),
         ]));
     }
     let found = type_by(conn, "LOWER(TRIM(t.code)) = ?", normalized.clone().into()).await?;
     match found {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT introuvable (type_code='{normalized}')."
+            "GATE_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_code='{normalized}')."
         )])),
         Some(t) if !t.is_active => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT inactif (type_code='{normalized}')."
+            "GATE_WO_TYPE_INACTIVE: Type d'OT inactif (type_code='{normalized}')."
         )])),
         Some(t) => Ok(t.id),
     }
@@ -784,10 +799,10 @@ pub async fn resolve_work_order_type_id_by_code(conn: &impl ConnectionTrait, typ
 pub async fn resolve_work_order_type_code_by_id(conn: &impl ConnectionTrait, type_id: i64) -> AppResult<String> {
     match type_by(conn, "t.id = ?", type_id.into()).await? {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT introuvable (type_id={type_id})."
+            "GATE_WO_TYPE_UNKNOWN: Type d'OT introuvable (type_id={type_id})."
         )])),
         Some(t) if !t.is_active => Err(AppError::ValidationFailed(vec![format!(
-            "Type d'OT inactif (type_id={type_id})."
+            "GATE_WO_TYPE_INACTIVE: Type d'OT inactif (type_id={type_id})."
         )])),
         Some(t) => Ok(t.code),
     }

@@ -8,6 +8,7 @@
 //!   update_service_cost   — manual vendor/service cost entry
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -69,14 +70,14 @@ pub async fn get_cost_summary(db: &impl ConnectionTrait, wo_id: i64) -> AppResul
             DbBackend::Sqlite,
             "SELECT \
                 wo.id AS wo_id, \
-                COALESCE(wo.labor_cost, 0) AS labor_cost, \
-                COALESCE(wo.parts_cost, 0) AS parts_cost, \
-                COALESCE(wo.service_cost, COALESCE(wo.service_cost_input, 0)) AS service_cost, \
-                COALESCE(wo.total_cost, 0) AS total_cost, \
+                COALESCE(wo.labor_cost, 0.0) AS labor_cost, \
+                COALESCE(wo.parts_cost, 0.0) AS parts_cost, \
+                COALESCE(wo.service_cost, COALESCE(wo.service_cost_input, 0.0)) AS service_cost, \
+                COALESCE(wo.total_cost, 0.0) AS total_cost, \
                 wo.expected_duration_hours, \
                 wo.actual_duration_hours, \
-                COALESCE(wo.active_labor_hours, 0) AS active_labor_hours, \
-                COALESCE(wo.total_waiting_hours, 0) AS total_waiting_hours \
+                COALESCE(wo.active_labor_hours, 0.0) AS active_labor_hours, \
+                COALESCE(wo.total_waiting_hours, 0.0) AS total_waiting_hours \
              FROM work_orders wo WHERE wo.id = ?",
             [wo_id.into()],
         ))
@@ -173,10 +174,10 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
                 wo.equipment_id AS asset_id, \
                 wot.code AS type_code, \
                 ul.code AS urgency_code, wot.semantic_tag AS nature_code, \
-                COALESCE(wo.total_cost, 0) AS total_cost, \
-                COALESCE(wo.labor_cost, 0) AS labor_cost, \
-                COALESCE(wo.parts_cost, 0) AS parts_cost, \
-                COALESCE(wo.service_cost, 0) AS service_cost, \
+                COALESCE(wo.total_cost, 0.0) AS total_cost, \
+                COALESCE(wo.labor_cost, 0.0) AS labor_cost, \
+                COALESCE(wo.parts_cost, 0.0) AS parts_cost, \
+                COALESCE(wo.service_cost, 0.0) AS service_cost, \
                 wo.closed_at, \
                 wos.code AS status_code \
              FROM work_orders wo \
@@ -197,8 +198,9 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
         .map_err(|e| decode_err("status_code", e))?;
 
     if !matches!(status_code.as_str(), "closed" | "technically_verified") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le hook de cout n'est disponible que pour les OT clotures ou verifies techniquement. \
+            "GATE_WO_COST_HOOK_STATUS:status={status_key}: Le hook de cout n'est disponible que pour les OT clotures ou verifies techniquement. \
              Statut actuel : '{status_code}'."
         )]));
     }
@@ -250,13 +252,15 @@ pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> App
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Update the manual service cost input on a WO.
-/// WO must not be in closed or cancelled state.
+/// WO must not be in closed or cancelled state, and still at `expected_row_version` (the version
+/// the screen loaded); bumps it and returns the new version.
 pub async fn update_service_cost(
     db: &DatabaseConnection,
     wo_id: i64,
     service_cost: f64,
+    expected_row_version: i64,
     _actor_id: i64,
-) -> AppResult<()> {
+) -> AppResult<i64> {
     // Guard: load status
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -278,24 +282,28 @@ pub async fn update_service_cost(
         .map_err(|e| decode_err("status_code", e))?;
 
     if matches!(status_code.as_str(), "closed" | "cancelled") {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier le cout de service pour un OT en statut '{status_code}'."
+            "GATE_WO_SERVICE_COST_LOCKED:status={status_key}: Impossible de modifier le cout de service pour un OT en statut '{status_code}'."
         )]));
     }
 
     if service_cost < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le cout de service ne peut pas etre negatif.".to_string(),
+            "GATE_WO_SERVICE_COST_NEGATIVE: Le cout de service ne peut pas etre negatif.".to_string(),
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE work_orders SET service_cost_input = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-         WHERE id = ?",
-        [service_cost.into(), wo_id.into()],
-    ))
-    .await?;
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET service_cost_input = ?, row_version = row_version + 1, \
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+             WHERE id = ? AND row_version = ?",
+            [service_cost.into(), wo_id.into(), expected_row_version.into()],
+        ))
+        .await?;
+    crate::wo::closeout::check_concurrency(result.rows_affected())?;
 
-    Ok(())
+    Ok(expected_row_version + 1)
 }

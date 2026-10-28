@@ -468,6 +468,10 @@ pub async fn validate_draft_model_for_publish(
         for c in collect_site_rules_on_draft_copies(db, model_id).await? {
             issues.push(site_rule_on_draft_copy_issue(&c));
         }
+        // A week planned on an active node and on its copy: the same.
+        for c in collect_weekly_schedules_on_draft_copies(db, model_id).await? {
+            issues.push(weekly_schedule_on_draft_copy_issue(&c));
+        }
     }
 
     // remap_count = draft nodes with an origin_node_id (clones of active nodes)
@@ -624,8 +628,9 @@ async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -
     // intervention_requests use hard deletes or status flags instead: every one of their rows
     // counts, closed or not (their node is the site the site-scoped rights read,
     // `docs/SITE_SCOPED_ROLES.md` §4). The same for the per-site rules, the site a reliability
-    // decision was proposed for, PM plans scoped to a location and the site calendars: every row
-    // counts, whatever its status (they are moved like the others, `remap_node_ops_fks`).
+    // decision was proposed for, PM plans scoped to a location, the site calendars and the site's
+    // weekly schedules: every row counts, whatever its status (they are moved like the others,
+    // `remap_node_ops_fks`).
     let check_sql = format!(
         "SELECT \
           (SELECT COUNT(*) FROM equipment WHERE installed_at_node_id = {id} AND deleted_at IS NULL) + \
@@ -646,7 +651,8 @@ async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -
           (SELECT COUNT(*) FROM reliability_study_decisions WHERE site_node_id = {id}) + \
           (SELECT COUNT(*) FROM pm_plans WHERE asset_scope_type = 'location' AND asset_scope_id = {id}) + \
           (SELECT COUNT(*) FROM work_calendar_holidays WHERE entity_id = {id}) + \
-          (SELECT COUNT(*) FROM site_work_weeks WHERE entity_id = {id}) \
+          (SELECT COUNT(*) FROM site_work_weeks WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {id}) \
          AS total",
         id = active_node_id
     );
@@ -755,6 +761,13 @@ async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64
     .await?;
     remap_integer_fk(txn, "work_calendar_holidays", "entity_id", old_id, new_id, now).await?;
     remap_integer_fk(txn, "site_work_weeks", "entity_id", old_id, new_id, now).await?;
+    // The site's weekly schedules (audit finding AU-130): left on the former node, its frozen weeks
+    // would no longer hold its crews (moved above), and work would enter them with no break-in
+    // (`planning::weekly_schedule::frozen_week_for_slot`). Every week moves, whatever its status,
+    // keeping its identity, events and baselines (they point to the schedule, not to the node). A
+    // week the copy already holds refuses the publish beforehand
+    // (`collect_weekly_schedules_on_draft_copies`).
+    remap_integer_fk(txn, "weekly_schedules", "entity_id", old_id, new_id, now).await?;
 
     // user_scope_assignments.scope_reference is TEXT; remap both scope types that store node IDs.
     remap_scope_reference(txn, "entity", old_id, new_id, now).await?;
@@ -814,6 +827,59 @@ fn site_rule_on_draft_copy_issue(c: &SiteRuleOnDraftCopy) -> AppValidationIssue 
         ),
         Some(c.node_id),
         issue_params(&[("nodeName", c.node_name.clone()), ("settingKey", c.setting_key.clone())]),
+    )
+}
+
+/// A week planned both on an active node and on its draft copy (`weekly_schedules` holds one row
+/// per site and week, so the active node's week cannot move onto the copy). The planning screens
+/// only offer live sites; a copy's week can only come from a call naming the draft node.
+#[derive(Debug, Clone)]
+pub struct WeeklyScheduleOnDraftCopy {
+    pub node_id: i64,
+    pub node_name: String,
+    pub week_start: String,
+}
+
+/// Shared publish/validate check: weeks planned on an active node and on its draft copy. The
+/// publish is refused rather than one week given up: neither a frozen week nor its baseline is
+/// ever dropped or merged by a publish.
+pub async fn collect_weekly_schedules_on_draft_copies(
+    db: &impl ConnectionTrait,
+    draft_model_id: i64,
+) -> AppResult<Vec<WeeklyScheduleOnDraftCopy>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.id AS node_id, a.name AS node_name, w.week_start AS week_start \
+             FROM weekly_schedules w \
+             JOIN org_nodes a ON a.id = w.entity_id AND a.deleted_at IS NULL \
+             JOIN org_nodes d ON d.origin_node_id = a.id AND d.structure_model_id = ? AND d.deleted_at IS NULL \
+             JOIN weekly_schedules c ON c.entity_id = d.id AND c.week_start = w.week_start \
+             ORDER BY a.id, w.week_start",
+            [draft_model_id.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(WeeklyScheduleOnDraftCopy {
+                node_id: r.try_get("", "node_id").map_err(|e| decode_err("node_id", e))?,
+                node_name: r.try_get("", "node_name").map_err(|e| decode_err("node_name", e))?,
+                week_start: r.try_get("", "week_start").map_err(|e| decode_err("week_start", e))?,
+            })
+        })
+        .collect()
+}
+
+fn weekly_schedule_on_draft_copy_issue(c: &WeeklyScheduleOnDraftCopy) -> AppValidationIssue {
+    AppValidationIssue::error_with_related(
+        "WEEKLY_SCHEDULE_ON_DRAFT_COPY",
+        format!(
+            "The week of {} is planned both on '{}' and on its copy in this draft: the week in force \
+             cannot move onto the copy. Contact support to remove the copy's week before publishing.",
+            c.week_start, c.node_name
+        ),
+        Some(c.node_id),
+        issue_params(&[("nodeName", c.node_name.clone()), ("weekStart", c.week_start.clone())]),
     )
 }
 
@@ -1004,6 +1070,15 @@ pub async fn publish_model_with_remap(
         if !collisions.is_empty() {
             return Err(org_validation_failed_issues(
                 collisions.iter().map(site_rule_on_draft_copy_issue).collect(),
+            ));
+        }
+        let week_collisions = collect_weekly_schedules_on_draft_copies(&txn, draft_model_id).await?;
+        if !week_collisions.is_empty() {
+            return Err(org_validation_failed_issues(
+                week_collisions
+                    .iter()
+                    .map(weekly_schedule_on_draft_copy_issue)
+                    .collect(),
             ));
         }
 

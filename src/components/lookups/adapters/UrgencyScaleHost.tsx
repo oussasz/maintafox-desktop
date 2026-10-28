@@ -162,7 +162,7 @@ export function UrgencyScaleHost() {
       inputMode="numeric"
       min={1}
       step={1}
-      className="h-7 w-20 text-sm"
+      className="h-10 w-20 text-sm"
       aria-label={label}
       value={draft?.[field] ?? ""}
       onChange={(e) => setDraft((d) => (d ? { ...d, [field]: e.target.value } : d))}
@@ -245,7 +245,7 @@ export function UrgencyScaleHost() {
                 <ReferenceValueTableCell>
                   {editing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       aria-label={t("urgencyScale.colLabelFr")}
                       value={draft.label_fr}
                       onChange={(e) =>
@@ -259,7 +259,7 @@ export function UrgencyScaleHost() {
                 <ReferenceValueTableCell>
                   {editing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       aria-label={t("urgencyScale.colLabelEn")}
                       value={draft.label_en}
                       onChange={(e) =>

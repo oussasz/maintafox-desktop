@@ -208,16 +208,6 @@ pub struct AddInspectionEvidenceInput {
     pub expected_row_version: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateInspectionAnomalyInput {
-    pub id: i64,
-    pub resolution_status: String,
-    pub linked_di_id: Option<i64>,
-    pub linked_work_order_id: Option<i64>,
-    pub requires_permit_review: Option<bool>,
-    pub expected_row_version: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InspectionResultsFilter {
     pub round_id: Option<i64>,

@@ -1,7 +1,7 @@
 import sqlite3
 import sys
 
-db = sys.argv[1] if len(sys.argv) > 1 else r"C:\Users\LENOVO\AppData\Roaming\systems.maintafox.desktop\maintafox.db"
+db = sys.argv[1] if len(sys.argv) > 1 else r"C:\Users\LENOVO\AppData\Roaming\systems.maintafox.desktop.dev\maintafox.db"
 eq_id = int(sys.argv[2]) if len(sys.argv) > 2 else 71
 
 con = sqlite3.connect(db)

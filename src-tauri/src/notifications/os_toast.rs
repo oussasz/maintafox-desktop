@@ -59,6 +59,13 @@ pub async fn pending_os_toasts(
         });
     };
     // Categories in daily digest or in-app only are not toasted one by one (`notifications::digest`).
+    // Only what the inbox would show the reader: never a toast about a record they may not see
+    // (AU-112).
+    let user = i32::try_from(user_id).map_err(|e| AppError::Internal(anyhow::anyhow!("user id {user_id}: {e}")))?;
+    let vis = crate::notifications::inbox::visible_to(conn, user).await?;
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), since_id.into()];
+    let visible = crate::notifications::inbox::channel_condition(&vis, &mut values);
+    values.push(MAX_TOASTS_PER_CALL.into());
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -66,9 +73,10 @@ pub async fn pending_os_toasts(
                 concat!(
                     "SELECT n.id, n.title, n.body, e.severity, e.category_code FROM notifications n \
                      JOIN notification_events e ON e.id = n.notification_event_id \
+                     JOIN notification_categories c ON c.code = e.category_code \
                      LEFT JOIN notification_preferences p \
                             ON p.user_id = n.recipient_user_id AND p.category_code = e.category_code \
-                     WHERE n.recipient_user_id = ? AND n.id > ? \
+                     WHERE n.recipient_user_id = ? AND n.id > ? AND {} \
                        AND n.delivery_state IN ('pending', 'delivered') \
                        AND (e.category_code IN ",
                     crate::safety_notice_categories_sql!(),
@@ -79,9 +87,10 @@ pub async fn pending_os_toasts(
                                    WHERE d.notification_id = n.id AND d.channel = 'os') \
                  ORDER BY n.id LIMIT ?"
                 ),
+                visible,
                 crate::notifications::digest::INSTANT_DELIVERY_SQL
             ),
-            [user_id.into(), since_id.into(), MAX_TOASTS_PER_CALL.into()],
+            values,
         ))
         .await?;
     let mut items = Vec::with_capacity(rows.len());
@@ -105,7 +114,9 @@ pub async fn pending_os_toasts(
 /// Fails unless every notification belongs to `user_id`.
 pub async fn ensure_owned(conn: &impl ConnectionTrait, user_id: i64, notification_ids: &[i64]) -> AppResult<()> {
     if notification_ids.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["notification_ids is empty.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_NOTIF_IDS_EMPTY: notification_ids is empty.".into(),
+        ]));
     }
     for id in notification_ids {
         let owner = conn

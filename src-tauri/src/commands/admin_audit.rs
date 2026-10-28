@@ -170,7 +170,11 @@ fn normalize_bound(raw: &str, end_of_day: bool) -> AppResult<String> {
     }
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|t| t.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .map_err(|_| AppError::ValidationFailed(vec![format!("'{value}' is not a date (YYYY-MM-DD).")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ADMIN_DATE_INVALID: '{value}' is not a date (YYYY-MM-DD)."
+            )])
+        })
 }
 
 /// WHERE clause + values for the caller's visible actions and the user filters.
@@ -219,7 +223,7 @@ fn build_conditions(
     if let (Some(f), Some(t)) = (&from, &to) {
         if f > t {
             return Err(AppError::ValidationFailed(vec![
-                "The start date must be before the end date.".into(),
+                "GATE_CMD_AUDIT_DATE_ORDER: The start date must be before the end date.".into(),
             ]));
         }
     }

@@ -40,7 +40,6 @@ import type {
   RouteInspectionAnomalyToDiInput,
   RouteInspectionAnomalyToWoInput,
   ScheduleInspectionRoundInput,
-  UpdateInspectionAnomalyInput,
 } from "@shared/ipc-types";
 
 const InspectionTemplateSchema = z.object({
@@ -329,13 +328,6 @@ export async function addInspectionEvidence(
 ): Promise<InspectionEvidence> {
   const raw = await invoke<unknown>("add_inspection_evidence", { input });
   return InspectionEvidenceSchema.parse(raw);
-}
-
-export async function updateInspectionAnomaly(
-  input: UpdateInspectionAnomalyInput,
-): Promise<InspectionAnomaly> {
-  const raw = await invoke<unknown>("update_inspection_anomaly", { input });
-  return InspectionAnomalySchema.parse(raw);
 }
 
 /** The record created from an anomaly (request or work order), as far as the link needs it. */

@@ -52,7 +52,7 @@ async fn update_finding_waived(
         .await?;
     if aff.rows_affected() != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     Ok(())
@@ -71,7 +71,7 @@ async fn update_finding_repaired(txn: &impl ConnectionTrait, id: i64, expected_r
         .await?;
     if aff.rows_affected() != 1 {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     Ok(())
@@ -114,13 +114,27 @@ async fn insert_repair_audit(
     Ok(())
 }
 
+/// A second person named on a waiver must be someone who could waive it: an active account holding
+/// `integrity.repair` plant-wide now through a role that is not an emergency grant and is within
+/// its dates (or an administrator), not any account id (AU-116).
+async fn ensure_waiver_approver(txn: &impl ConnectionTrait, approver_id: i64) -> AppResult<()> {
+    if crate::settings::site::holds_tenant_right(txn, approver_id, crate::rbac::permissions::INTEGRITY_REPAIR).await? {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![
+        "GATE_DI_INTEGRITY_APPROVER_NOT_ALLOWED: the approver is not an active account holding integrity.repair".into(),
+    ]))
+}
+
 pub async fn waive_data_integrity_finding(
     db: &DatabaseConnection,
     input: WaiveDataIntegrityFindingInput,
     actor_id: i64,
 ) -> AppResult<DataIntegrityFindingRow> {
     if input.reason.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["waiver reason required".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_WAIVER_REASON_REQUIRED: waiver reason required".into(),
+        ]));
     }
     let txn = db.begin().await?;
     let f0 = get_finding(&txn, input.finding_id)
@@ -130,25 +144,39 @@ pub async fn waive_data_integrity_finding(
             id: input.finding_id.to_string(),
         })?;
     if f0.status != "open" {
-        return Err(AppError::ValidationFailed(vec!["finding is not open".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_FINDING_NOT_OPEN: finding is not open".into(),
+        ]));
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
     let waiver_approver = if f0.severity == "error" {
-        let appr = input
-            .approver_id
-            .ok_or_else(|| AppError::ValidationFailed(vec!["approver_id required for error severity".into()]))?;
+        let appr = input.approver_id.ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_DI_INTEGRITY_APPROVER_REQUIRED: approver_id required for error severity".into(),
+            ])
+        })?;
         if appr == actor_id {
             return Err(AppError::ValidationFailed(vec![
-                "second-person approval required for error findings".into(),
+                "GATE_DI_INTEGRITY_SECOND_PERSON_REQUIRED: second-person approval required for error findings".into(),
             ]));
         }
+        ensure_waiver_approver(&txn, appr).await?;
         appr
     } else {
-        input.approver_id.unwrap_or(actor_id)
+        // Below error severity no second person is required: the waiver is approved by the person
+        // who waives, unless another person is named, who is then checked as for an error finding
+        // (a name stored as approver is always someone who could waive it).
+        match input.approver_id {
+            Some(appr) if appr != actor_id => {
+                ensure_waiver_approver(&txn, appr).await?;
+                appr
+            }
+            _ => actor_id,
+        }
     };
 
     let before_json = json!({ "finding": serde_json::to_value(&f0)? }).to_string();
@@ -211,7 +239,7 @@ async fn ensure_failure_mode_is_dangling(txn: &impl ConnectionTrait, fd_id: i64)
     };
     match refusal {
         Some(why) => Err(AppError::ValidationFailed(vec![format!(
-            "Repair refused, the failure mode is not provably orphaned: {why}."
+            "GATE_DI_INTEGRITY_NOT_ORPHANED: Repair refused, the failure mode is not provably orphaned: {why}."
         )])),
         None => Ok(()),
     }
@@ -230,11 +258,13 @@ pub async fn apply_data_integrity_repair(
             id: input.finding_id.to_string(),
         })?;
     if f0.status != "open" {
-        return Err(AppError::ValidationFailed(vec!["finding is not open".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_INTEGRITY_FINDING_NOT_OPEN: finding is not open".into(),
+        ]));
     }
     if f0.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "data_integrity_finding was modified elsewhere (stale row_version).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: data_integrity_finding was modified elsewhere (stale row_version).".into(),
         ]));
     }
 
@@ -332,6 +362,27 @@ pub async fn apply_data_integrity_repair(
                     id: seg_id.to_string(),
                 })?;
             let s: String = row.try_get("", "started_at").map_err(|e| map_err("started_at", e))?;
+            // Never while a lock is fitted under the work order's permits (a finding raised before
+            // the lock was fitted): the downtime ends with the last removal (owner decision D4).
+            let held = txn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT {} AS held FROM work_order_downtime_segments s WHERE s.id = ?",
+                        crate::permit::wo_gate::downtime_held_by_locks_sql("s.work_order_id")
+                    ),
+                    [seg_id.into()],
+                ))
+                .await?
+                .map(|r| r.try_get::<i64>("", "held"))
+                .transpose()
+                .map_err(|e| map_err("held", e))?
+                .unwrap_or(0);
+            if held != 0 {
+                return Err(AppError::ValidationFailed(vec![
+                    crate::wo::delay::DOWNTIME_HELD_BY_LOCKS.to_string(),
+                ]));
+            }
             let before_row = json!({ "started_at": s, "ended_at": Option::<String>::None });
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -413,12 +464,12 @@ pub async fn apply_data_integrity_repair(
         }
         ("WO_DOWNTIME_SUM_EXCEEDS_WINDOW", _) => {
             return Err(AppError::ValidationFailed(vec![
-                "no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually".into(),
+                "GATE_DI_INTEGRITY_NO_AUTO_REPAIR: no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually".into(),
             ]));
         }
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "unsupported repair for {} / {}",
+                "GATE_DI_INTEGRITY_REPAIR_UNSUPPORTED: unsupported repair for {} / {}",
                 f0.finding_code, input.repair_kind
             )]));
         }

@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EntityFormImageUploader } from "@/components/entity-form/EntityFormImageUploader";
@@ -10,6 +10,8 @@ import { PositionCombobox } from "@/components/personnel/PositionCombobox";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -19,10 +21,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListAccessNote } from "@/components/ui/list-access-note";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
+import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
@@ -123,8 +127,8 @@ export function PersonnelCreateDialog() {
   const [phone, setPhone] = useState("");
 
   // ── Labor rates (optional → creates personnel_rate_cards row) ─────────────
-  const [laborRateInput, setLaborRateInput] = useState("");
-  const [overtimeRateInput, setOvertimeRateInput] = useState("");
+  const [laborRateInput, setLaborRateInput] = useState<number | null>(null);
+  const [overtimeRateInput, setOvertimeRateInput] = useState<number | null>(null);
 
   // ── Access ────────────────────────────────────────────────────────────────
   const [createAccount, setCreateAccount] = useState(false);
@@ -150,30 +154,85 @@ export function PersonnelCreateDialog() {
   const isExternal = employmentOrigin === "external";
   const canCreateUsers = can(P.ADM_USERS);
 
-  const loadLookups = useCallback(async () => {
-    try {
-      const [snap, ext, personnel, certList] = await Promise.all([
-        getOrgDesignerSnapshot(),
-        listExternalCompanies({}),
-        listPersonnel({ limit: 2000, offset: 0 }),
-        listCertificationTypes(),
-      ]);
-      const nodes = snap.nodes.filter((n) => n.status === "active");
-      const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
-      setEntityNodes(
-        entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
-      );
-      setCompanies(ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })));
-      setPersonnelList(personnel.items);
-      setCertTypes(certList);
-    } catch {
-      // partial failures are OK — just leave empty lists
-    }
-  }, []);
+  // Each picker list has its own read right (organisation, personnel, training): a list the user
+  // may not read is not asked for and its picker says which right is missing. Each list loads
+  // while the dialog is open once its right is known (still loading is not "not readable": the
+  // list is asked as soon as the rights arrive). One list failing leaves only that picker empty.
+  const permissionsLoading = usePermissionsLoading();
+  const readable = useReadableLists([
+    "orgNodes",
+    "companies",
+    "people",
+    "teams",
+    "certificationTypes",
+  ]);
+  const readableRef = useRef(readable);
+  readableRef.current = readable;
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.orgNodes) return;
+    let stale = false;
+    getOrgDesignerSnapshot()
+      .then((snap) => {
+        if (stale) return;
+        const nodes = snap.nodes.filter((n) => n.status === "active");
+        const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+        setEntityNodes(
+          entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.orgNodes]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.companies) return;
+    let stale = false;
+    listExternalCompanies({})
+      .then((ext) => {
+        if (!stale) {
+          setCompanies(
+            ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.companies]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.people) return;
+    let stale = false;
+    listPersonnel({ limit: 2000, offset: 0 })
+      .then((personnel) => {
+        if (!stale) setPersonnelList(personnel.items);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.people]);
+
+  useEffect(() => {
+    if (!showCreateForm || !readable.certificationTypes) return;
+    let stale = false;
+    listCertificationTypes()
+      .then((rows) => {
+        if (!stale) setCertTypes(rows);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [showCreateForm, readable.certificationTypes]);
 
   const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
     setEntityId(nextEntityId);
-    if (nextEntityId == null) {
+    if (nextEntityId == null || !readableRef.current.teams) {
       setTeamId(null);
       setCrewOptions([]);
       return;
@@ -215,18 +274,25 @@ export function PersonnelCreateDialog() {
     setCerts([]);
     setEmail("");
     setPhone("");
-    setLaborRateInput("");
-    setOvertimeRateInput("");
+    setLaborRateInput(null);
+    setOvertimeRateInput(null);
     setCreateAccount(false);
     setNotes("");
     setLocalError(null);
   }, []);
 
+  // The form is reset and prefilled once per opening, when the rights are known (the team list of
+  // the edited person needs them); a later reload of the rights does not wipe what was typed.
+  const preparedForOpen = useRef(false);
   useEffect(() => {
-    if (!showCreateForm) return;
+    if (!showCreateForm) {
+      preparedForOpen.current = false;
+      return;
+    }
+    if (permissionsLoading || preparedForOpen.current) return;
+    preparedForOpen.current = true;
     resetForm();
     void (async () => {
-      await loadLookups();
       const editing = usePersonnelStore.getState().editingPersonnel;
       if (!editing) return;
       setFullName(editing.full_name);
@@ -250,7 +316,7 @@ export function PersonnelCreateDialog() {
       setPhone(editing.phone ?? "");
       setNotes(editing.notes ?? "");
       setEntityId(editing.primary_entity_id);
-      if (editing.primary_entity_id == null) {
+      if (editing.primary_entity_id == null || !readableRef.current.teams) {
         setCrewOptions([]);
         setTeamId(null);
         return;
@@ -271,7 +337,7 @@ export function PersonnelCreateDialog() {
         setCrewsLoading(false);
       }
     })();
-  }, [showCreateForm, resetForm, loadLookups]);
+  }, [showCreateForm, permissionsLoading, resetForm]);
 
   // Seed skills/certs when position changes
   const handlePositionChange = useCallback(
@@ -311,7 +377,7 @@ export function PersonnelCreateDialog() {
         });
       } catch (err) {
         // Said, not swallowed: the form still works, the requirements are added by hand.
-        setLocalError(t("create.positionSeedFailed", { msg: describeAppError(err).title }));
+        setLocalError(t("create.positionSeedFailed", { msg: appErrorReason(err) }));
       }
     },
     [t],
@@ -392,29 +458,11 @@ export function PersonnelCreateDialog() {
     if (isExternal && !externalCompanyId)
       errors.push(t("validation.companyRequired", "External company is required"));
 
-    const laborTrim = laborRateInput.trim();
-    const overtimeTrim = overtimeRateInput.trim();
-    let parsedLabor: number | null = null;
-    let parsedOvertime = 0;
-    if (overtimeTrim && !laborTrim) {
+    if (overtimeRateInput !== null && laborRateInput === null) {
       errors.push(t("validation.laborRateRequiredForOvertime"));
     }
-    if (laborTrim) {
-      const laborNum = Number(laborTrim.replace(",", "."));
-      if (!Number.isFinite(laborNum) || laborNum < 0) {
-        errors.push(t("validation.laborRateInvalid"));
-      } else {
-        parsedLabor = laborNum;
-      }
-      if (overtimeTrim) {
-        const otNum = Number(overtimeTrim.replace(",", "."));
-        if (!Number.isFinite(otNum) || otNum < 0) {
-          errors.push(t("validation.overtimeRateInvalid"));
-        } else {
-          parsedOvertime = otNum;
-        }
-      }
-    }
+    const parsedLabor: number | null = laborRateInput;
+    const parsedOvertime = laborRateInput !== null ? (overtimeRateInput ?? 0) : 0;
 
     if (errors.length > 0) {
       setLocalError(errors.join(" · "));
@@ -497,7 +545,7 @@ export function PersonnelCreateDialog() {
         try {
           await persistRateCard(editingPersonnel.id);
         } catch (rateErr) {
-          setLocalError(t("create.rateCardFailed", { msg: describeAppError(rateErr).title }));
+          setLocalError(t("create.rateCardFailed", { msg: appErrorReason(rateErr) }));
           return;
         }
         // A photo chosen while editing replaces the current one (the edit form starts empty).
@@ -507,9 +555,7 @@ export function PersonnelCreateDialog() {
           try {
             await uploadPersonnelPhoto(editingPersonnel.id, editPhoto.path);
           } catch (photoErr) {
-            setLocalError(
-              t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }),
-            );
+            setLocalError(t("create.photoUploadWarning", { msg: appErrorReason(photoErr) }));
             return;
           } finally {
             setPhotoUploading(false);
@@ -526,7 +572,7 @@ export function PersonnelCreateDialog() {
       } catch (rateErr) {
         await usePersonnelStore.getState().openPersonnel(created.id);
         usePersonnelStore.setState({
-          error: t("create.rateCardFailed", { msg: describeAppError(rateErr).title }),
+          error: t("create.rateCardFailed", { msg: appErrorReason(rateErr) }),
         });
         return;
       }
@@ -539,7 +585,7 @@ export function PersonnelCreateDialog() {
           await uploadPersonnelPhoto(created.id, stagedPhoto.path);
         } catch (photoErr) {
           // Non-fatal — show warning but don't block
-          setLocalError(t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }));
+          setLocalError(t("create.photoUploadWarning", { msg: appErrorReason(photoErr) }));
         } finally {
           setPhotoUploading(false);
         }
@@ -648,10 +694,7 @@ export function PersonnelCreateDialog() {
                       onChange={() => setEmploymentOrigin(origin)}
                       className="h-4 w-4"
                     />
-                    {t(
-                      `employmentOrigin.${origin}`,
-                      origin === "internal" ? "Internal" : "External",
-                    )}
+                    {t(`employmentOrigin.${origin}`)}
                   </label>
                 ))}
               </div>
@@ -690,6 +733,7 @@ export function PersonnelCreateDialog() {
                       </option>
                     ))}
                   </select>
+                  {!readable.companies ? <ListAccessNote list="companies" /> : null}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="space-y-1.5">
@@ -706,22 +750,20 @@ export function PersonnelCreateDialog() {
                     <Label htmlFor="per-contract-start">
                       {t("field.contractStart", "Contract start")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-start"
-                      type="date"
                       value={contractStart}
-                      onChange={(e) => setContractStart(e.target.value)}
+                      onChange={(v) => setContractStart(v)}
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="per-contract-end">
                       {t("field.contractEnd", "Contract end")}
                     </Label>
-                    <Input
+                    <DateField
                       id="per-contract-end"
-                      type="date"
                       value={contractEnd}
-                      onChange={(e) => setContractEnd(e.target.value)}
+                      onChange={(v) => setContractEnd(v)}
                     />
                   </div>
                 </div>
@@ -750,6 +792,7 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
+                {!readable.orgNodes ? <ListAccessNote list="orgNodes" /> : null}
               </div>
               <div className="space-y-1.5">
                 <Label>{t("field.team")} *</Label>
@@ -766,7 +809,8 @@ export function PersonnelCreateDialog() {
                     </option>
                   ))}
                 </select>
-                {entityId != null && !crewsLoading && crewOptions.length === 0 ? (
+                {!readable.teams ? <ListAccessNote list="teams" /> : null}
+                {readable.teams && entityId != null && !crewsLoading && crewOptions.length === 0 ? (
                   <p className="text-xs text-destructive">{t("validation.noCrewsForEntity")}</p>
                 ) : null}
               </div>
@@ -791,8 +835,9 @@ export function PersonnelCreateDialog() {
                   items={personnelList}
                   value={supervisorId}
                   onChange={setSupervisorId}
-                  placeholder={t("create.supervisor.placeholder", "Search supervisor…")}
+                  placeholder={t("create.supervisor.placeholder")}
                 />
+                {!readable.people ? <ListAccessNote list="people" /> : null}
               </div>
             </div>
 
@@ -808,12 +853,7 @@ export function PersonnelCreateDialog() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="per-hire-date">{t("field.hireDate")}</Label>
-                <Input
-                  id="per-hire-date"
-                  type="date"
-                  value={hireDate}
-                  onChange={(e) => setHireDate(e.target.value)}
-                />
+                <DateField id="per-hire-date" value={hireDate} onChange={(v) => setHireDate(v)} />
               </div>
             </div>
 
@@ -825,15 +865,11 @@ export function PersonnelCreateDialog() {
               onPickFiles={pickSinglePhoto}
               uploading={photoUploading}
               maxItems={1}
-              emptyLabel={
-                isEdit
-                  ? t("create.photo.editKeepsCurrent")
-                  : t("create.photo.empty", "No photo yet")
-              }
+              emptyLabel={isEdit ? t("create.photo.editKeepsCurrent") : t("create.photo.empty")}
               hintLabel={t("create.photo.hint", "Click to select a profile photo (PNG, JPG, WEBP)")}
-              addLabel={t("create.photo.add", "Add photo")}
-              primaryLabel={t("create.photo.primary", "Primary")}
-              removeLabel={t("create.photo.remove", "Remove")}
+              addLabel={t("create.photo.add")}
+              primaryLabel={t("create.photo.primary")}
+              removeLabel={t("create.photo.remove")}
             />
 
             {isEdit ? (
@@ -862,12 +898,7 @@ export function PersonnelCreateDialog() {
                   </Button>
                 </div>
                 {skills.length === 0 ? (
-                  <p className="text-xs text-text-muted">
-                    {t(
-                      "create.skill.empty",
-                      "No skills added. Selecting a position will pre-fill from its requirement profile.",
-                    )}
-                  </p>
+                  <p className="text-xs text-text-muted">{t("create.skill.empty")}</p>
                 ) : (
                   <div className="space-y-2">
                     {skills.map((skill) => (
@@ -878,7 +909,7 @@ export function PersonnelCreateDialog() {
                             valueMode="id"
                             value={skill.refValueIdStr}
                             onChange={(val) => updateSkillRef(skill.key, val)}
-                            placeholder={t("create.skill.placeholder", "Select skill…")}
+                            placeholder={t("create.skill.placeholder")}
                           />
                         </div>
                         <select
@@ -910,21 +941,23 @@ export function PersonnelCreateDialog() {
                 {/* ── Certifications ───────────────────────────────────────── */}
                 <div className="flex items-center justify-between">
                   <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-4 h-9 gap-1 text-xs"
-                    onClick={addCert}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t("create.cert.add", "Add certification")}
-                  </Button>
+                  {readable.certificationTypes ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-4 h-9 gap-1 text-xs"
+                      onClick={addCert}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("create.cert.add", "Add certification")}
+                    </Button>
+                  ) : null}
                 </div>
-                {certs.length === 0 ? (
-                  <p className="text-xs text-text-muted">
-                    {t("create.cert.empty", "No certifications added.")}
-                  </p>
+                {!readable.certificationTypes ? (
+                  <ListAccessNote list="certificationTypes" />
+                ) : certs.length === 0 ? (
+                  <p className="text-xs text-text-muted">{t("create.cert.empty")}</p>
                 ) : (
                   <div className="space-y-2">
                     {certs.map((cert) => (
@@ -934,9 +967,7 @@ export function PersonnelCreateDialog() {
                           value={cert.certTypeId ?? ""}
                           onChange={(e) => updateCertType(cert.key, e.target.value)}
                         >
-                          <option value="">
-                            {t("create.cert.placeholder", "Select certification…")}
-                          </option>
+                          <option value="">{t("create.cert.placeholder")}</option>
                           {certTypes.map((ct) => (
                             <option key={ct.id} value={ct.id}>
                               {ct.code} — {ct.name}
@@ -990,27 +1021,21 @@ export function PersonnelCreateDialog() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="per-labor-rate">{t("field.laborRate")}</Label>
-                <Input
+                <DecimalField
                   id="per-labor-rate"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
+                  fixed
                   value={laborRateInput}
-                  onChange={(e) => setLaborRateInput(e.target.value)}
+                  onValueChange={setLaborRateInput}
                   placeholder={t("field.laborRatePlaceholder")}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="per-overtime-rate">{t("field.overtimeRate")}</Label>
-                <Input
+                <DecimalField
                   id="per-overtime-rate"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
+                  fixed
                   value={overtimeRateInput}
-                  onChange={(e) => setOvertimeRateInput(e.target.value)}
+                  onValueChange={setOvertimeRateInput}
                   placeholder={t("field.overtimeRatePlaceholder")}
                 />
               </div>
@@ -1032,11 +1057,9 @@ export function PersonnelCreateDialog() {
                       htmlFor="per-create-account"
                       className="cursor-pointer text-sm font-medium"
                     >
-                      {t("create.account.label", "Create MaintaFox account")}
+                      {t("create.account.label")}
                     </label>
-                    <p className="mt-0.5 text-xs text-text-secondary">
-                      {t("create.account.hint", "Opens the user creation dialog after saving.")}
-                    </p>
+                    <p className="mt-0.5 text-xs text-text-secondary">{t("create.account.hint")}</p>
                   </div>
                 </div>
               </>
@@ -1049,7 +1072,7 @@ export function PersonnelCreateDialog() {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              placeholder={t("create.notes.placeholder", "Additional notes…")}
+              placeholder={t("create.notes.placeholder")}
             />
           </div>
 

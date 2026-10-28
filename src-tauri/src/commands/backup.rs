@@ -40,7 +40,7 @@ pub async fn run_manual_backup(
     let target = payload.target_path.trim();
     if target.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "target_path must not be empty".to_string()
+            "GATE_BACKUP_TARGET_EMPTY: target_path must not be empty".to_string(),
         ]));
     }
 
@@ -113,7 +113,7 @@ pub async fn restore_from_backup(app: AppHandle, state: State<'_, AppState>, bac
     let backup_path = backup_path.trim();
     if backup_path.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "backup_path must not be empty".to_string()
+            "GATE_BACKUP_SOURCE_EMPTY: backup_path must not be empty".to_string(),
         ]));
     }
     let key = require_database_key()?;
@@ -165,7 +165,7 @@ pub async fn factory_reset(app: AppHandle, state: State<'_, AppState>, payload: 
     require_step_up!(state);
     if !factory_reset_phrase_matches(&payload.confirmation_phrase) {
         return Err(AppError::ValidationFailed(vec![
-            "factory_reset confirmation phrase does not match".to_string(),
+            "GATE_BACKUP_RESET_PHRASE: factory_reset confirmation phrase does not match".to_string(),
         ]));
     }
 

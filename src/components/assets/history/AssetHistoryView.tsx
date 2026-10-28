@@ -5,8 +5,10 @@ import { useNavigate } from "react-router-dom";
 import { AssetLifeSummaryStrip } from "@/components/assets/history/AssetLifeSummaryStrip";
 import { AssetTimelineFilters } from "@/components/assets/history/AssetTimelineFilters";
 import { AssetTimelineList } from "@/components/assets/history/AssetTimelineList";
+import { historyLinkTarget } from "@/components/assets/history/history-links";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getAssetHistorySummary, listAssetHistoryEvents } from "@/services/asset-history-service";
 import type {
@@ -41,6 +43,7 @@ function mapTypeFilterToEventTypes(typeFilter: string): AssetHistoryEventType[] 
 export function AssetHistoryView({ assetId }: { assetId: number }) {
   const { t } = useTranslation("equipment");
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const [summary, setSummary] = useState<AssetHistorySummary | null>(null);
   const [events, setEvents] = useState<AssetHistoryEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,18 +116,13 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
   };
 
   const openRef = (ev: AssetHistoryEvent) => {
-    const hint = ev.ref?.route_hint;
-    if (hint) {
-      navigate(hint);
-      return;
-    }
-    if (ev.ref?.entity_type === "wo" && ev.ref.entity_id != null) {
-      navigate(`/work-orders?openWo=${ev.ref.entity_id}`);
-    } else if (ev.ref?.entity_type === "di" && ev.ref.entity_id != null) {
-      navigate(`/requests?openDi=${ev.ref.entity_id}`);
-    } else if (ev.ref?.entity_type === "pm" && ev.ref.entity_id != null) {
-      navigate(`/pm?planId=${ev.ref.entity_id}`);
-    }
+    const { path } = historyLinkTarget(ev);
+    if (path) navigate(path);
+  };
+  const canOpenRef = (ev: AssetHistoryEvent) => {
+    const { path, permission } = historyLinkTarget(ev);
+    // No screen to open, or one the user may not enter: not a link.
+    return path !== null && (permission === null || can(permission));
   };
 
   if (loading && events.length === 0) {
@@ -146,7 +144,7 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
         onPeriodChange={setPeriod}
         onSearchChange={setSearch}
       />
-      <AssetTimelineList events={events} onOpenRef={openRef} />
+      <AssetTimelineList events={events} onOpenRef={openRef} canOpenRef={canOpenRef} />
       {mayHaveMore ? (
         <div
           role="status"

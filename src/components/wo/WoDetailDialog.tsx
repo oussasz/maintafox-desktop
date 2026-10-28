@@ -50,6 +50,7 @@ import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
+import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
@@ -61,6 +62,7 @@ import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
+import { useFormatters } from "@/hooks/use-formatters";
 import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
@@ -94,6 +96,7 @@ interface WoDetailDialogProps {
 
 export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
+  const { formatHours } = useFormatters();
   const { typeLabel, natureLabel } = useWoTypeLabels();
   // The actions offered are the user's rights at this work order's site (its org node), not
   // anywhere in the plant; the backend checks the same and stays the authority.
@@ -252,6 +255,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                     {t(`lifecycle.${wo.lifecycle_state}`)}
                   </Badge>
                 ) : null}
+                <WoDeisolationBadge wo={wo} />
                 {wo.requires_shutdown ? <WoShutdownBadge /> : null}
                 <UrgencyBadge code={wo.urgency_code} size="md" />
                 <WoNoSiteBadge wo={wo} size="md" />
@@ -348,7 +352,9 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
                 <InfoRow
                   label={t("detail.fields.estimatedHours")}
                   value={
-                    wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"
+                    wo.expected_duration_hours != null
+                      ? formatHours(wo.expected_duration_hours)
+                      : "—"
                   }
                 />
                 {(wo.source_di_code ?? "").trim() !== "" && (
@@ -621,7 +627,12 @@ function FooterActions({
 
       {s === "planning" && can(P.OT_EDIT) && (
         <>
-          {needsApproval && (
+          {needsApproval && !can(P.OT_APPROVE) && (
+            <Badge variant="outline" className="text-xs">
+              {t("status.awaitingApproval")}
+            </Badge>
+          )}
+          {needsApproval && can(P.OT_APPROVE) && (
             <Button
               size="sm"
               variant="outline"

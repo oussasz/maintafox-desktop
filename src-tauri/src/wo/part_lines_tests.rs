@@ -649,6 +649,125 @@ mod tests {
         assert_eq!(reservation_state(&db, part.reservation_id.unwrap()).await.0, "released");
     }
 
+    async fn on_hand_qty(db: &sea_orm::DatabaseConnection, article_id: i64, location_id: i64) -> f64 {
+        scalar_f64(
+            db,
+            "SELECT on_hand_qty FROM stock_balances WHERE article_id = ? AND location_id = ?",
+            vec![article_id.into(), location_id.into()],
+        )
+        .await
+    }
+
+    async fn movements(db: &sea_orm::DatabaseConnection, article_id: i64, movement_type: &str) -> i64 {
+        scalar_i64(
+            db,
+            "SELECT COUNT(*) FROM inventory_transactions WHERE article_id = ? AND movement_type = ?",
+            vec![article_id.into(), movement_type.into()],
+        )
+        .await
+    }
+
+    /// The line's used quantity cannot be written (forced failure of the step after the issue).
+    async fn fail_used_quantity_update(db: &sea_orm::DatabaseConnection) {
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "CREATE TRIGGER test_fail_part_used BEFORE UPDATE OF quantity_used ON work_order_parts \
+             BEGIN SELECT RAISE(ABORT, 'forced used-quantity failure'); END"
+                .to_string(),
+        ))
+        .await
+        .expect("failure trigger");
+    }
+
+    async fn drop_used_quantity_failure(db: &sea_orm::DatabaseConnection) {
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DROP TRIGGER test_fail_part_used".to_string(),
+        ))
+        .await
+        .expect("drop trigger");
+    }
+
+    /// AU-20 (b): a reserved part. The issue and the used quantity commit together: when the
+    /// second step fails no stock leaves the store, and the retry issues the parts once.
+    #[tokio::test]
+    async fn a_failed_usage_entry_issues_no_stock_and_its_retry_issues_once() {
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-USAGE-TX-1", 5.0).await;
+        let part = add_planned(&db, wo_id, article_id, location_id, 2.0).await;
+        let reservation_id = part.reservation_id.expect("reserved");
+        set_wo_status(&db, wo_id, "in_progress").await;
+
+        fail_used_quantity_update(&db).await;
+        parts::record_actual_usage(&db, part.id, 2.0, None)
+            .await
+            .expect_err("the used quantity cannot be written");
+        assert_eq!(movements(&db, article_id, "ISSUE").await, 0, "no stock movement");
+        assert_eq!(on_hand_qty(&db, article_id, location_id).await, 5.0);
+        assert_eq!(
+            reservation_state(&db, reservation_id).await,
+            ("active".to_string(), 0.0)
+        );
+        let line = &parts::list_wo_parts(&db, wo_id).await.unwrap()[0];
+        assert_eq!(line.quantity_used, None);
+
+        drop_used_quantity_failure(&db).await;
+        let used = parts::record_actual_usage(&db, part.id, 2.0, None)
+            .await
+            .expect("retry");
+        assert_eq!(used.quantity_used, Some(2.0));
+        assert_eq!(movements(&db, article_id, "ISSUE").await, 1, "issued once");
+        assert_eq!(on_hand_qty(&db, article_id, location_id).await, 3.0);
+    }
+
+    /// AU-20 (b): a stock article without reservation is reserved and issued in the same
+    /// transaction as the used quantity: a failure leaves neither the reservation nor the issue.
+    #[tokio::test]
+    async fn a_failed_usage_entry_without_reservation_leaves_no_reservation_or_issue() {
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "PL-USAGE-TX-2", 5.0).await;
+        let part = parts::add_planned_part(
+            &db,
+            parts::AddPartInput {
+                wo_id,
+                article_id: Some(article_id),
+                article_ref: None,
+                quantity_planned: 2.0,
+                unit_cost: Some(5.0),
+                stock_location_id: Some(location_id),
+                auto_reserve: Some(false),
+                notes: None,
+                origin: None,
+                is_required: true,
+            },
+        )
+        .await
+        .expect("add part without reservation");
+        assert!(part.reservation_id.is_none());
+        set_wo_status(&db, wo_id, "in_progress").await;
+
+        fail_used_quantity_update(&db).await;
+        parts::record_actual_usage(&db, part.id, 2.0, None)
+            .await
+            .expect_err("the used quantity cannot be written");
+        assert_eq!(movements(&db, article_id, "RESERVE").await, 0);
+        assert_eq!(movements(&db, article_id, "ISSUE").await, 0);
+        assert_eq!(on_hand_qty(&db, article_id, location_id).await, 5.0);
+        assert_eq!(reserved_qty(&db, article_id, location_id).await, 0.0);
+        let line = &parts::list_wo_parts(&db, wo_id).await.unwrap()[0];
+        assert!(line.reservation_id.is_none());
+        assert_eq!(line.quantity_issued, 0.0);
+
+        drop_used_quantity_failure(&db).await;
+        parts::record_actual_usage(&db, part.id, 2.0, None)
+            .await
+            .expect("retry");
+        assert_eq!(movements(&db, article_id, "ISSUE").await, 1, "issued once");
+        assert_eq!(on_hand_qty(&db, article_id, location_id).await, 3.0);
+    }
+
     #[tokio::test]
     async fn a_failure_after_the_release_leaves_status_reservation_and_audit_unchanged() {
         let db = crate::db::test_db::seeded().await;

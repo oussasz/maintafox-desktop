@@ -33,7 +33,11 @@ pub fn parse_utc_timestamp(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
             NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%SZ")
                 .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
         })
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 UTC timestamp.")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_WO_TIMESTAMP_INVALID:field={field}: {field} must be a valid RFC3339 UTC timestamp."
+            )])
+        })
 }
 
 /// Stable codes: a planned start / planned end that is not a date and time.

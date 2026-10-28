@@ -36,12 +36,15 @@ fn extension_mime(path: &Path) -> Option<&'static str> {
 }
 
 fn sanitize_file_name(path: &Path) -> AppResult<String> {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]))?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_PERS_PHOTO_FILE_NAME_INVALID: Nom de fichier invalide.".into()
+        ])
+    })?;
     if name.is_empty() || name.contains("..") {
-        return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PERS_PHOTO_FILE_NAME_INVALID: Nom de fichier invalide.".into(),
+        ]));
     }
     Ok(name.to_string())
 }
@@ -50,12 +53,14 @@ fn ensure_path_under_app_data(file: &Path, app_data_dir: &Path) -> AppResult<()>
     let root = app_data_dir
         .canonicalize()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}")))?;
-    let abs = file
-        .canonicalize()
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin photo : {e}")]))?;
+    let abs = file.canonicalize().map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PERS_PHOTO_PATH_UNRESOLVED: Impossible de résoudre le chemin photo : {e}"
+        )])
+    })?;
     if !abs.starts_with(&root) {
         return Err(AppError::ValidationFailed(vec![
-            "Chemin photo hors du répertoire de données de l'application.".into(),
+            "GATE_PERS_PHOTO_PATH_OUTSIDE_DATA: Chemin photo hors du répertoire de données de l'application.".into(),
         ]));
     }
     Ok(())
@@ -100,7 +105,7 @@ pub async fn read_personnel_photo_preview(
             "personnel photo preview: file missing on disk"
         );
         return Err(AppError::ValidationFailed(vec![format!(
-            "Fichier photo introuvable : {}",
+            "GATE_PERS_PHOTO_FILE_MISSING: Fichier photo introuvable : {}",
             abs.display()
         )]));
     }
@@ -113,12 +118,14 @@ pub async fn read_personnel_photo_preview(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("read task join: {e}")))?
         .map_err(|e| {
             tracing::warn!(path = %abs.display(), error = %e, "personnel photo preview: read failed");
-            AppError::ValidationFailed(vec![format!("Impossible de lire le fichier photo : {e}")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERS_PHOTO_READ_FAILED: Impossible de lire le fichier photo : {e}"
+            )])
         })?;
 
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(AppError::ValidationFailed(vec![
-            "La photo dépasse la limite de taille.".into(),
+            "GATE_PERS_PHOTO_PREVIEW_TOO_LARGE: La photo dépasse la limite de taille.".into(),
         ]));
     }
 
@@ -156,20 +163,23 @@ pub async fn upload_personnel_photo(
     let _file_name = sanitize_file_name(src)?;
     let Some(_mime) = extension_mime(src) else {
         return Err(AppError::ValidationFailed(vec![
-            "Type d'image non autorisé. Utilisez png, jpg, jpeg, webp ou gif.".into(),
+            "GATE_PERS_PHOTO_TYPE_NOT_ALLOWED: Type d'image non autorisé. Utilisez png, jpg, jpeg, webp ou gif.".into(),
         ]));
     };
 
-    let meta = std::fs::metadata(src)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")]))?;
+    let meta = std::fs::metadata(src).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PERS_PHOTO_READ_FAILED: Impossible de lire le fichier source : {e}"
+        )])
+    })?;
     if !meta.is_file() {
         return Err(AppError::ValidationFailed(vec![
-            "Le chemin source n'est pas un fichier.".into(),
+            "GATE_PERS_PHOTO_SOURCE_NOT_FILE: Le chemin source n'est pas un fichier.".into(),
         ]));
     }
     if meta.len() > MAX_FILE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le fichier dépasse la limite de {} Mo.",
+            "GATE_PERS_PHOTO_TOO_LARGE:limit_mb={0}: Le fichier dépasse la limite de {0} Mo.",
             MAX_FILE_BYTES / (1024 * 1024)
         )]));
     }
@@ -193,8 +203,11 @@ pub async fn upload_personnel_photo(
         std::fs::create_dir_all(parent)?;
     }
 
-    let bytes = std::fs::read(src)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier : {e}")]))?;
+    let bytes = std::fs::read(src).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PERS_PHOTO_READ_FAILED: Impossible de lire le fichier : {e}"
+        )])
+    })?;
     std::fs::write(&absolute, &bytes)?;
 
     let mut abs_str = absolute.to_string_lossy().to_string();

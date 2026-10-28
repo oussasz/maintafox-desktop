@@ -56,13 +56,26 @@ pub async fn issue_stock_with_source(
     request: IssueStockRequest,
     source: IssueSourceOverride,
 ) -> AppResult<IssueOutcome> {
+    let tx = db.begin().await?;
+    let outcome = issue_stock_with_source_in(&tx, request, source).await?;
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+/// [`issue_stock_with_source`] inside the caller's transaction: a caller that records the issue
+/// elsewhere too (the WO part line, `wo::parts`) commits both together or neither.
+pub(crate) async fn issue_stock_with_source_in<C: ConnectionTrait>(
+    tx: &C,
+    request: IssueStockRequest,
+    source: IssueSourceOverride,
+) -> AppResult<IssueOutcome> {
     if !request.quantity.is_finite() || request.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "The issued quantity must be greater than 0.".to_string(),
+            "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
     let converted = crate::inventory::unit_conversions::to_stock_quantity(
-        db,
+        tx,
         request.article_id,
         request.entered_unit_value_id,
         request.quantity,
@@ -71,14 +84,13 @@ pub async fn issue_stock_with_source(
     let stock_quantity = converted.stock_quantity;
     if stock_quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "The issued quantity must be greater than 0.".to_string(),
+            "GATE_INV_QTY_POSITIVE: The issued quantity must be greater than 0.".to_string(),
         ]));
     }
-    let tracking = lots::article_tracking(db, request.article_id).await?;
+    let tracking = lots::article_tracking(tx, request.article_id).await?;
     crate::inventory::unit_conversions::ensure_whole_stock_units(&tracking, &converted)?;
     lots::ensure_whole_units(&tracking, stock_quantity)?;
 
-    let tx = db.begin().await?;
     let (reservation_id, work_order_id, work_order_code_value) = match request.reservation_id {
         Some(reservation_id) => {
             let row = tx
@@ -102,7 +114,7 @@ pub async fn issue_stock_with_source(
             let location_id: i64 = row.try_get("", "location_id")?;
             if article_id != request.article_id || location_id != request.location_id {
                 return Err(AppError::ValidationFailed(vec![
-                    "The reservation is for another article or location.".to_string(),
+                    "GATE_INV_RESERVATION_MISMATCH: The reservation is for another article or location.".to_string(),
                 ]));
             }
             let wo_code: Option<String> = row.try_get("", "wo_code").ok().flatten();
@@ -116,17 +128,19 @@ pub async fn issue_stock_with_source(
         None => {
             let Some(work_order_id) = request.work_order_id else {
                 return Err(AppError::ValidationFailed(vec![
-                    "An issue from the store names the work order the parts go to.".to_string(),
+                    "GATE_INV_ISSUE_WO_REQUIRED: An issue from the store names the work order the parts go to."
+                        .to_string(),
                 ]));
             };
-            let (code, status) = work_order_code(&tx, work_order_id).await?;
+            let (code, status) = work_order_code(tx, work_order_id).await?;
             if !PARTS_OPEN_WO_STATUSES.contains(&status.as_str()) {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Work order {code} is not open for parts (status: {status})."
+                    "GATE_INV_WO_NOT_OPEN:wo={code},status={}: Work order {code} is not open for parts (status: {status}).",
+                    crate::wo::workflow::state_machine::status_i18n_key(&status)
                 )]));
             }
             let reservation_id = queries::reserve_stock_in(
-                &tx,
+                tx,
                 &InventoryReserveInput {
                     article_id: request.article_id,
                     location_id: request.location_id,
@@ -145,10 +159,10 @@ pub async fn issue_stock_with_source(
     let allocation: Vec<(Option<i64>, f64)> = if tracking.is_tracked() {
         match request.lot_id {
             Some(lot) => {
-                lots::ensure_lot_available(&tx, lot, request.article_id, request.location_id, stock_quantity).await?;
+                lots::ensure_lot_available(tx, lot, request.article_id, request.location_id, stock_quantity).await?;
                 vec![(Some(lot), stock_quantity)]
             }
-            None => lots::fefo_allocate(&tx, request.article_id, request.location_id, stock_quantity)
+            None => lots::fefo_allocate(tx, request.article_id, request.location_id, stock_quantity)
                 .await?
                 .into_iter()
                 .map(|(lot, qty)| (Some(lot), qty))
@@ -157,7 +171,7 @@ pub async fn issue_stock_with_source(
     } else {
         if request.lot_id.is_some() {
             return Err(AppError::ValidationFailed(vec![
-                "This article is not lot-tracked; issue it without a lot.".to_string(),
+                "GATE_INV_NOT_LOT_TRACKED: This article is not lot-tracked; issue it without a lot.".to_string(),
             ]));
         }
         vec![(None, stock_quantity)]
@@ -169,7 +183,7 @@ pub async fn issue_stock_with_source(
     let mut lines = Vec::new();
     for (lot_id, quantity) in allocation {
         let (transaction_id, unit_cost) = queries::issue_reserved_in(
-            &tx,
+            tx,
             reservation_id,
             quantity,
             lot_id,
@@ -185,7 +199,7 @@ pub async fn issue_stock_with_source(
             request.actor_id,
         )
         .await?;
-        crate::inventory::unit_conversions::stamp_entered_unit(&tx, transaction_id, &converted, quantity).await?;
+        crate::inventory::unit_conversions::stamp_entered_unit(tx, transaction_id, &converted, quantity).await?;
         let (lot_number, serial_number) = match lot_id {
             Some(lot) => {
                 let row = tx
@@ -218,7 +232,6 @@ pub async fn issue_stock_with_source(
             extended_cost: unit_cost.map(|c| c * quantity),
         });
     }
-    tx.commit().await?;
 
     let valued: Vec<f64> = lines.iter().filter_map(|l| l.extended_cost).collect();
     Ok(IssueOutcome {
@@ -238,7 +251,9 @@ pub async fn issue_stock_with_source(
 pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<ScanResolution> {
     let scanned = value.trim().to_string();
     if scanned.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Nothing was scanned.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_SCAN_EMPTY: Nothing was scanned.".to_string(),
+        ]));
     }
     let article = |row: sea_orm::QueryResult, lot_id: Option<i64>, matched: &str| -> AppResult<ScanResolution> {
         Ok(ScanResolution {
@@ -262,7 +277,7 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
             .await?;
         if rows.len() > 1 {
             return Err(AppError::ValidationFailed(vec![format!(
-                "'{scanned}' matches several articles; scan the article code instead."
+                "GATE_INV_SCAN_AMBIGUOUS_ARTICLE: '{scanned}' matches several articles; scan the article code instead."
             )]));
         }
         if let Some(row) = rows.into_iter().next() {
@@ -297,10 +312,10 @@ pub async fn resolve_scan(db: &DatabaseConnection, value: String) -> AppResult<S
     }
     if lots.len() > 1 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "'{scanned}' is a lot number used by several articles; scan the article first."
+            "GATE_INV_SCAN_AMBIGUOUS_LOT: '{scanned}' is a lot number used by several articles; scan the article first."
         )]));
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "No active article, barcode, lot or serial number matches '{scanned}'."
+        "GATE_INV_SCAN_NO_MATCH: No active article, barcode, lot or serial number matches '{scanned}'."
     )]))
 }

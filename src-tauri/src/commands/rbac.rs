@@ -9,7 +9,7 @@ use tauri::State;
 use crate::auth::password_policy::PasswordPolicy;
 use crate::auth::rbac;
 use crate::auth::rbac::PermissionScope;
-use crate::auth::{password, session_manager};
+use crate::auth::session_manager;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -103,38 +103,23 @@ pub(crate) async fn password_policy_settings(db: &sea_orm::DatabaseConnection) -
 /// The step-up window (the session policy `step_up_window_minutes`) starts from this moment.
 #[tauri::command]
 pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) -> AppResult<StepUpResponse> {
+    verify_step_up_impl(state.inner(), payload).await
+}
+
+/// The password check runs under the sign-in lockout (`commands::auth::verify_password_in_session`):
+/// too many wrong passwords lock the account and end the session (`ACCOUNT_LOCKED`).
+pub(crate) async fn verify_step_up_impl(state: &AppState, payload: StepUpRequest) -> AppResult<StepUpResponse> {
     let user = require_session!(state);
+    let session_db_id = crate::commands::auth::current_session_db_id(state).await?;
 
-    // Look up the current password hash from the database
-    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
-
-    let pw_hash = match user_record {
-        Some(row) => match row.5 {
-            Some(hash) => hash,
-            None => {
-                return Err(AppError::Auth("Aucun mot de passe configuré.".into()));
-            }
-        },
-        None => {
-            return Err(AppError::Auth("Utilisateur introuvable.".into()));
-        }
-    };
-
-    // Verify the provided password against the stored hash
-    let valid = password::verify_password(&payload.password, &pw_hash)?;
-    if !valid {
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::STEP_UP_FAILURE,
-                actor_id: Some(user.user_id),
-                summary: "Step-up reauthentication failed: wrong password",
-                ..Default::default()
-            },
-        )
-        .await;
-        return Err(AppError::Auth("Mot de passe incorrect.".into()));
-    }
+    crate::commands::auth::verify_password_in_session(
+        state,
+        &user,
+        &session_db_id,
+        &payload.password,
+        "Step-up reauthentication failed: wrong password",
+    )
+    .await?;
 
     // Record the step-up timestamp in the session
     let mut sm = state.session.write().await;
@@ -223,7 +208,7 @@ const EDITABLE_RBAC_SETTINGS: &[(&str, RbacSettingRule)] = &[
 fn validate_rbac_setting(key: &str, value: &str) -> AppResult<String> {
     let Some((_, rule)) = EDITABLE_RBAC_SETTINGS.iter().find(|(k, _)| *k == key) else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The security setting '{key}' cannot be changed here."
+            "GATE_RBAC_SETTING_LOCKED: The security setting '{key}' cannot be changed here."
         )]));
     };
     let value = value.trim();
@@ -232,12 +217,14 @@ fn validate_rbac_setting(key: &str, value: &str) -> AppResult<String> {
             "0" | "1" => Ok(value.to_string()),
             "true" => Ok("1".into()),
             "false" => Ok("0".into()),
-            _ => Err(AppError::ValidationFailed(vec![format!("{key} must be 0 or 1.")])),
+            _ => Err(AppError::ValidationFailed(vec![format!(
+                "GATE_RBAC_SETTING_FLAG: {key} must be 0 or 1."
+            )])),
         },
         RbacSettingRule::Range(min, max) => match value.parse::<i64>() {
             Ok(n) if (*min..=*max).contains(&n) => Ok(n.to_string()),
             _ => Err(AppError::ValidationFailed(vec![format!(
-                "{key} must be a whole number between {min} and {max}."
+                "GATE_RBAC_SETTING_RANGE:min={min},max={max}: {key} must be a whole number between {min} and {max}."
             )])),
         },
     }
@@ -322,7 +309,7 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
     let number = || -> AppResult<i64> {
         value
             .parse()
-            .map_err(|_| AppError::ValidationFailed(vec![format!("{key} must be a number.")]))
+            .map_err(|_| AppError::ValidationFailed(vec![format!("GATE_RBAC_SETTING_NUMBER: {key} must be a number.")]))
     };
     if key == "password_warn_days" {
         if let Some(max_age) = stored_rbac_number(&state.db, "password_max_age_days").await? {
@@ -340,7 +327,7 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
 fn check_warn_within_max_age(warn_days: i64, max_age_days: i64) -> AppResult<()> {
     if max_age_days > 0 && warn_days > max_age_days {
         return Err(AppError::ValidationFailed(vec![
-            "The expiry warning cannot start before the password's maximum age.".into(),
+            "GATE_RBAC_WARN_AFTER_MAX_AGE: The expiry warning cannot start before the password's maximum age.".into(),
         ]));
     }
     Ok(())

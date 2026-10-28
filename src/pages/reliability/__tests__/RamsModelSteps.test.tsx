@@ -20,6 +20,7 @@ import type {
 import type { ReliabilityStudy } from "@/services/reliability-study-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { mockInvoke } from "@/test/mocks/tauri";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Keys resolve against the real English catalogue: a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -56,8 +57,13 @@ vi.mock("react-i18next", () => ({
 }));
 // Signed in as user 3.
 vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 3 } }) }));
+let deniedRights: string[] = [];
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 // The Ishikawa canvas has its own tests; here only its placement in step 3 matters.
 vi.mock("@/components/reliability/IshikawaDiagramCanvas", () => ({
@@ -925,7 +931,9 @@ describe("StudyDecisionsStep", () => {
     const mine = await rowOf("Mine");
     expect(mine.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(mine.getByText("You proposed it: another person approves.")).toBeInTheDocument();
-    expect(mine.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    // The proposer's own rejection is a withdrawal (owner decision D10).
+    expect(mine.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
+    expect(mine.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
 
     const forLead = await rowOf("For J. Lead");
     expect(forLead.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
@@ -940,6 +948,48 @@ describe("StudyDecisionsStep", () => {
     expect(old.getByTitle("Approved by the person who proposed it.")).toHaveTextContent(
       "Self-approved",
     );
+  });
+
+  it("lets the proposer withdraw their proposal whoever was designated, and shows it withdrawn", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({
+            id: 1,
+            title: "Mine, for J. Lead",
+            proposed_by_id: 3,
+            approver_id: 8,
+            approver_name: "J. Lead",
+          }),
+          decision({
+            id: 2,
+            title: "Withdrawn one",
+            status: "rejected",
+            proposed_by_id: 9,
+            decided_by_id: 9,
+          }),
+          decision({
+            id: 3,
+            title: "Rejected one",
+            status: "rejected",
+            proposed_by_id: 9,
+            decided_by_id: 8,
+          }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+    const rowOf = async (title: string) => {
+      const row = (await screen.findByText(title)).closest("tr");
+      if (!row) throw new Error(`row ${title} missing`);
+      return within(row);
+    };
+    const mine = await rowOf("Mine, for J. Lead");
+    expect(mine.getByText("Awaiting J. Lead")).toBeInTheDocument();
+    expect(mine.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(mine.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
+    expect((await rowOf("Withdrawn one")).getByText("Withdrawn")).toBeInTheDocument();
+    expect((await rowOf("Rejected one")).getByText("Rejected")).toBeInTheDocument();
   });
 
   it("lets the proposer approve when the decision's site opted out of four-eyes", async () => {
@@ -958,10 +1008,71 @@ describe("StudyDecisionsStep", () => {
       within(row).queryByText("You proposed it: another person approves."),
     ).not.toBeInTheDocument();
   });
+
+  it("offers Apply only with the right of the module it writes in (AU-85)", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({ id: 1, title: "Interval", action_kind: "pm_interval", status: "approved" }),
+          decision({ id: 2, title: "Repair", status: "approved" }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    deniedRights = [P.PM_EDIT];
+    try {
+      render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+      const interval = within((await screen.findByText("Interval")).closest("tr") as HTMLElement);
+      expect(interval.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+      expect(
+        interval.getByText("Applying requires the right to edit preventive plans."),
+      ).toBeInTheDocument();
+      const repair = within(screen.getByText("Repair").closest("tr") as HTMLElement);
+      expect(repair.getByRole("button", { name: "Apply" })).toBeInTheDocument();
+    } finally {
+      deniedRights = [];
+    }
+  });
+
+  it("shows a decision refused at synchronisation with its reason and offers neither Approve nor Apply (AU-76b)", async () => {
+    const reason = "refusé (sync) : contenu modifié après approbation — vérifié avec le site";
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [
+          decision({
+            id: 1,
+            title: "Refused approved",
+            status: "approved",
+            sync_refused_at: "2026-10-26T10:00:00Z",
+            sync_refused_reason: reason,
+          }),
+          decision({
+            id: 2,
+            title: "Refused proposed",
+            sync_refused_at: "2026-10-26T10:00:00Z",
+            sync_refused_reason: reason,
+          }),
+          decision({ id: 3, title: "Fine approved", status: "approved" }),
+        ];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+    const approved = within(
+      (await screen.findByText("Refused approved")).closest("tr") as HTMLElement,
+    );
+    expect(approved.getByText("Refused at synchronisation")).toBeInTheDocument();
+    expect(approved.getByText(reason)).toBeInTheDocument();
+    expect(approved.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+    const proposed = within(screen.getByText("Refused proposed").closest("tr") as HTMLElement);
+    expect(proposed.getByText("Refused at synchronisation")).toBeInTheDocument();
+    expect(proposed.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    const fine = within(screen.getByText("Fine approved").closest("tr") as HTMLElement);
+    expect(fine.queryByText("Refused at synchronisation")).not.toBeInTheDocument();
+    expect(fine.getByRole("button", { name: "Apply" })).toBeInTheDocument();
+  });
 });
 
 describe("RatingScalesDialog", () => {
-  it("says the grids are plant-wide and refuses to save a threshold that is not a number", () => {
+  it("says the grids are plant-wide and keeps the last valid threshold when the text is not a number", () => {
     render(
       <RatingScalesDialog
         open
@@ -977,13 +1088,15 @@ describe("RatingScalesDialog", () => {
       name: "Threshold of rating 3 (failures per year)",
     });
     fireEvent.change(threshold, { target: { value: "0,5x" } });
+    // The field flags the text, keeps the last valid threshold, and gives it back on blur.
     expect(threshold).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByRole("alert")).toHaveTextContent(/must be a number of 0 or more/);
-    expect(screen.getByRole("button", { name: "Save the grids" })).toBeDisabled();
+    fireEvent.blur(threshold);
+    expect(threshold).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Save the grids" })).toBeEnabled();
 
     // A decimal with a comma is accepted.
     fireEvent.change(threshold, { target: { value: "0,5" } });
-    expect(threshold).toHaveAttribute("aria-invalid", "false");
+    expect(threshold).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save the grids" })).toBeEnabled();
   });

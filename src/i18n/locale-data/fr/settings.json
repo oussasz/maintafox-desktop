@@ -55,6 +55,7 @@
     "device": "Appareil"
   },
   "keys": {
+    "notifications.expiry_days": "Durée de conservation des notifications",
     "locale.primary_language": "Langue principale",
     "locale.fallback_language": "Langue de secours",
     "locale.date_format": "Format de date",
@@ -73,7 +74,8 @@
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
     "documents.default_header": "En-tête de document par défaut",
     "wo.reopen_window_days": "Délai de réouverture après clôture (jours)",
-    "inventory.count_critical_variance": "Écart critique d'un comptage d'inventaire",
+    "inventory.count_four_eyes_value_threshold": "Tolérance de double validation d'un comptage : valeur de l'écart",
+    "inventory.count_four_eyes_percent_threshold": "Tolérance de double validation d'un comptage : part de la quantité théorique",
     "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
     "locale.fiscal_year_start_month": "Début de l'exercice comptable"
   },
@@ -115,6 +117,8 @@
     }
   },
   "auditLog": {
+    "technicalSetting": "Paramètre technique",
+    "changed": "Valeur modifiée",
     "title": "Journal des modifications",
     "empty": "Aucune modification enregistrée",
     "summary": "Résumé",
@@ -252,14 +256,16 @@
     "profile": "Mon profil",
     "notifications": "Notifications",
     "general": "Général",
-    "security": "Sécurité & Logs",
+    "security": "Sécurité",
     "backup": "Sauvegarde & Ops",
     "integrations": "Système & Sync",
+    "activity": "Journal d'activité",
     "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
     "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
     "generalHint": "Langue, devise et exercice fiscal, ordres de travail, fiabilité, en-tête des documents imprimés. Chaque paramètre montre sa valeur livrée, qui peut le modifier et son historique.",
-    "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
-    "integrationsHint": "État de sync, licence, connexions et diagnostics."
+    "securityHint": "Politique mot de passe et session.",
+    "integrationsHint": "État de sync, licence, connexions et diagnostics.",
+    "activityHint": "Ce qui a été fait dans l'application, par qui et quand, et le journal d'audit."
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",
@@ -340,6 +346,7 @@
   },
   "catalog": {
     "shipped": "Valeur livrée",
+    "notSet": "Non définie",
     "changed": "Modifiée",
     "lastChange": "Modifiée par {{who}} le {{when}}",
     "restoreShipped": "Revenir à la valeur livrée",
@@ -360,7 +367,8 @@
       "locale.currency_code": "Devise de valorisation du stock, des achats et des coûts (code ISO 4217).",
       "locale.fiscal_year_start_month": "Mois de début de l'exercice : périodes budgétaires, imputations, clôtures.",
       "wo.reopen_window_days": "Nombre de jours après clôture pendant lesquels un OT clôturé peut être rouvert (0 = jamais).",
-      "inventory.count_critical_variance": "Une ligne comptée dont l'écart atteint cette quantité (dans l'unité de l'article) est critique et doit être approuvée. Chaque session d'inventaire garde la valeur du jour de sa création.",
+      "inventory.count_four_eyes_value_threshold": "Un écart compté dont la valeur (écart × coût unitaire à l'emplacement, devise de l'usine) dépasse ce montant est « critique » : une autre personne que celle qui a compté l'approuve. Laissez vide pour juger sur la part seule. Les deux vides : tout écart exige une double validation.",
+      "inventory.count_four_eyes_percent_threshold": "Un écart compté qui dépasse cette part de la quantité théorique (%) est « critique » : une autre personne que celle qui a compté l'approuve. Une quantité théorique nulle ou négative est toujours critique. Laissez vide pour juger sur la valeur seule ; vide n'est jamais zéro.",
       "inventory.reconciliation_drift_break": "Un écart entre le journal des mouvements et le solde de stock qui atteint cette quantité (dans l'unité de l'article) est une rupture. Doit être supérieur à zéro.",
       "ram.fmeca_rpn_critical_threshold": "À partir de cet indice de priorité de risque (G × O × D), un mode de défaillance AMDEC est critique.",
       "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
@@ -370,7 +378,8 @@
     "units": {
       "wo.reopen_window_days_one": "{{count}} jour",
       "wo.reopen_window_days_other": "{{count}} jours",
-      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
+      "inventory.count_four_eyes_value_threshold": "{{value, number(maximumFractionDigits: 6)}} (devise de l'usine)",
+      "inventory.count_four_eyes_percent_threshold": "{{value, number(maximumFractionDigits: 6)}} %",
       "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (unité de l'article)",
       "ram.fmeca_rpn_critical_threshold": "{{count}}",
       "backup.retention_daily_one": "{{count}} sauvegarde",
@@ -401,6 +410,25 @@
     "edition": "Édition {{edition}}",
     "pendingWrites": "Modifications en attente d'envoi :",
     "lastAction": "Dernière action d'administration :",
+    "traceEvent": {
+      "activation_applied": "Activation appliquée",
+      "activation_contract_applied": "Contrat d'activation appliqué",
+      "activation_revocation_applied": "Révocation d'activation appliquée",
+      "activation_secret_rotated": "Secret de liaison renouvelé",
+      "activation_rebind_requested": "Nouvelle liaison demandée",
+      "entitlement_envelope_applied": "Droits de licence reçus",
+      "license_admin_action_applied": "Action d'administration de licence appliquée",
+      "license_admin_action_reconciled": "Action d'administration de licence rapprochée",
+      "license_compromise_response_applied": "Réponse à une compromission appliquée",
+      "other": "Événement de licence"
+    },
+    "traceOutcome": {
+      "accepted": "accepté",
+      "applied": "appliqué",
+      "requested": "demandé",
+      "rejected": "rejeté",
+      "other": "résultat enregistré"
+    },
     "traces_one": "{{count}} événement de licence récent (détails techniques)",
     "traces_other": "{{count}} événements de licence récents (détails techniques)",
     "reason": "Motif",
@@ -519,11 +547,13 @@
     "SITE_SETTING_NOT_A_SITE": "Ce nœud d'organisation n'est pas un site de planification (son type ne peut pas porter de travaux).",
     "SITE_SETTING_UNKNOWN": "Règle de site inconnue.",
     "FIRST_ADMIN_ALREADY_EXISTS": "Un administrateur existe déjà pour cette organisation : connectez-vous avec ce compte.",
+    "FIRST_ADMIN_PLANT_JOIN_REQUIRED": "Ce poste n'a pas encore rejoint votre site : il doit se synchroniser une fois pour vérifier si votre organisation a déjà des comptes. Connectez-le au réseau, puis réessayez.",
     "LICENSE_RECONCILE_ADMIN_REQUIRED": "Ce changement de licence demande un administrateur : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique le changement.",
     "LICENSE_EXTENSION_ADMIN_REQUIRED": "Cette mise à jour de licence étend les conditions de la licence ou lève un refus (échéance, postes, édition, droits) : connectez-vous en tant qu'administrateur ; l'écran de licence vous demande alors de confirmer votre identité et applique la mise à jour.",
     "LICENSE_CLAIM_INVALID": "Les données de licence reçues sont incomplètes ou mal formées (organisation, licence, poste ou jeton d'activation) : rien n'a été modifié.",
     "LICENSE_FIRST_ADMIN_RETRY": "Le premier administrateur n'a pas pu être enregistré car un autre est en cours de création au même moment : patientez un instant, puis réessayez.",
     "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "Ce poste détient une licence et n'est encore accessible que par son compte administrateur intégré : créez le premier administrateur, puis connectez-vous avec ce compte pour réinitialiser les données locales.",
+    "LICENSE_RESET_REQUIRES_ADMIN_SIGNIN": "Ce poste a déjà un administrateur : connectez-vous en administrateur (confirmation du mot de passe demandée) pour changer de clé, ou utilisez un code de récupération éditeur.",
     "LAST_ADMINISTRATOR_REQUIRED": "Cette modification laisserait l'usine sans administrateur actif : créez ou réactivez d'abord un second administrateur.",
     "ADMIN_RECOVERY_CODE_MALFORMED": "Ce n'est pas un code de récupération valide : copiez le code entier, qui commence par MFXREC1.",
     "ADMIN_RECOVERY_CODE_NON_CANONICAL": "Ce code de récupération a été modifié : demandez-en un nouveau à l'éditeur.",

@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import {
   Select,
   SelectContent,
@@ -22,7 +22,9 @@ import {
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type ScheduleClassVersion,
@@ -34,7 +36,6 @@ import {
   listTeamSchedule,
   setTeamSchedule,
 } from "@/services/workforce-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
 const NONE = "__none__";
@@ -78,6 +79,7 @@ export function TeamTimetablePanel({
     () => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "UTC" }),
     [i18n.language],
   );
+  const { formatPercent } = useFormatters();
   const num = useMemo(
     () => new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 1 }),
     [i18n.language],
@@ -146,7 +148,7 @@ export function TeamTimetablePanel({
       await load();
       onChanged?.();
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }
@@ -158,7 +160,7 @@ export function TeamTimetablePanel({
     try {
       setLinks(await confirmTeamScheduleReview(teamId));
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }
@@ -247,7 +249,7 @@ export function TeamTimetablePanel({
           <div>
             <dt className="text-xs text-text-muted">{t("timetable.editor.utilisation")}</dt>
             <dd className="tabular-nums">
-              {currentClass ? `${num.format(currentClass.version.utilisation_percent)} %` : "—"}
+              {currentClass ? formatPercent(currentClass.version.utilisation_percent) : "—"}
             </dd>
           </div>
         </dl>
@@ -275,12 +277,11 @@ export function TeamTimetablePanel({
             </Select>
           </FormField>
           <FormField name="team-class-from" label={t("timetable.editor.effectiveFrom")}>
-            <Input
+            <DateField
               id="team-class-from"
-              type="date"
               min={today}
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(v) => setFrom(v)}
               className="h-9"
             />
           </FormField>

@@ -42,7 +42,7 @@ pub fn parse_tolerance(trigger: &Map<String, Value>) -> AppResult<Option<Toleran
     }
     let Some(obj) = raw.as_object() else {
         return Err(AppError::ValidationFailed(vec![
-            "tolerance must be an object {unit, early, late}.".to_string(),
+            "GATE_PM_TOLERANCE_INVALID: tolerance must be an object {unit, early, late}.".to_string(),
         ]));
     };
     let unit = match obj.get("unit").and_then(Value::as_str).unwrap_or_default() {
@@ -50,7 +50,7 @@ pub fn parse_tolerance(trigger: &Map<String, Value>) -> AppResult<Option<Toleran
         "percent" => ToleranceUnit::Percent,
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "tolerance.unit must be 'days' or 'percent' (got '{other}')."
+                "GATE_PM_TOLERANCE_INVALID: tolerance.unit must be 'days' or 'percent' (got '{other}')."
             )]))
         }
     };
@@ -58,7 +58,7 @@ pub fn parse_tolerance(trigger: &Map<String, Value>) -> AppResult<Option<Toleran
     let late = obj.get("late").and_then(Value::as_f64).unwrap_or(0.0);
     if early < 0.0 || late < 0.0 || (unit == ToleranceUnit::Percent && (early > 100.0 || late > 100.0)) {
         return Err(AppError::ValidationFailed(vec![
-            "tolerance early/late must be >= 0 (and <= 100 for a percentage).".to_string(),
+            "GATE_PM_TOLERANCE_INVALID: tolerance early/late must be >= 0 (and <= 100 for a percentage).".to_string(),
         ]));
     }
     Ok(Some(Tolerance { unit, early, late }))
@@ -148,7 +148,7 @@ pub fn parse_recurrence(trigger: &Map<String, Value>) -> AppResult<Recurrence> {
     let value = trigger.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
     if value <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "interval_value must be > 0 for fixed/floating strategies.".to_string(),
+            "GATE_PM_INTERVAL_REQUIRED: interval_value must be > 0 for fixed/floating strategies.".to_string(),
         ]));
     }
     let amount = value.round().max(1.0) as i64;
@@ -159,7 +159,7 @@ pub fn parse_recurrence(trigger: &Map<String, Value>) -> AppResult<Recurrence> {
         "month" | "months" => Ok(Recurrence::Months(u32::try_from(amount).unwrap_or(u32::MAX))),
         "year" | "years" => Ok(Recurrence::Months(u32::try_from(amount * 12).unwrap_or(u32::MAX))),
         _ => Err(AppError::ValidationFailed(vec![
-            "interval_unit must be one of: hour, day, week, month, year.".to_string(),
+            "GATE_PM_INTERVAL_UNIT_INVALID: interval_unit must be one of: hour, day, week, month, year.".to_string(),
         ])),
     }
 }

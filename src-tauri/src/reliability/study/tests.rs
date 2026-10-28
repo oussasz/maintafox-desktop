@@ -2212,6 +2212,10 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
             wire.insert("decided_by_sync_id".into(), admin_sync.into());
             wire.insert("site_node_sync_id".into(), site.into());
             wire.insert("site_recorded".into(), 1.into());
+            // Sealed, as an app version that seals approvals sends it (AU-76b).
+            wire.insert("decided_at".into(), "2026-10-02T08:00:00Z".into());
+            let seal = crate::reliability::study::decision_sync::approval_seal(&wire);
+            wire.insert("approval_seal".into(), seal.into());
             apply_wire(f, "reliability_study_decisions", &sync_id, "upsert", &wire).await
         }
     };
@@ -2471,3 +2475,494 @@ async fn site_rule_times_are_instants_and_never_in_the_future() {
         Some(true)
     );
 }
+
+// ── Audit findings AU-69, AU-76 and owner decision D10 ─────────────────────────────────────────
+
+/// A user besides the admin and the reviewer, for "someone else" cases.
+async fn third_user(f: &Fixture) -> i64 {
+    exec(
+        &f.db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, \
+         is_admin, force_password_change, created_at, updated_at) \
+         VALUES ('rs-user-other', 'other', 'Other', 'local', 1, 0, 0, \
+         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    )
+    .await;
+    scalar(&f.db, "SELECT id FROM user_accounts WHERE username = 'other'").await
+}
+
+/// A one-off work-order decision on P-101 proposed by the admin.
+async fn wo_decision(
+    f: &Fixture,
+    study_id: i64,
+    approver: Option<i64>,
+) -> crate::reliability::study::domain::StudyDecision {
+    create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Contrôle d'alignement P-101".into(),
+            action_kind: "one_off_wo".into(),
+            equipment_id: Some(f.p101),
+            pm_plan_id: None,
+            proposed_interval_hours: None,
+            wo_type_code: Some("corrective".into()),
+            approver_id: approver,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: None,
+            failure_cost: None,
+        },
+        f.admin,
+    )
+    .await
+    .expect("wo decision")
+}
+
+fn decide(d: &crate::reliability::study::domain::StudyDecision, note: Option<&str>) -> DecideDecisionInput {
+    DecideDecisionInput {
+        decision_id: d.id,
+        expected_row_version: d.row_version,
+        note: note.map(str::to_string),
+    }
+}
+
+fn refusal_code<T: std::fmt::Debug>(r: AppResult<T>) -> String {
+    match r {
+        Err(AppError::ValidationFailed(m)) => m[0].split(':').next().unwrap_or_default().to_string(),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// Work orders raised from reliability study decisions.
+async fn decision_wos(f: &Fixture) -> i64 {
+    scalar(
+        &f.db,
+        "SELECT COUNT(*) FROM work_orders WHERE source_rca_cause_text LIKE 'reliability_study_decision:%'",
+    )
+    .await
+}
+
+async fn decision_sync_id(f: &Fixture, id: i64) -> String {
+    text(
+        f,
+        &format!("SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {id}"),
+    )
+    .await
+}
+
+async fn decision_status(f: &Fixture, id: i64) -> String {
+    text(
+        f,
+        &format!("SELECT status FROM reliability_study_decisions WHERE id = {id}"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_reliability_decision_is_carried_out_only_by_applying_it_once_approved() {
+    use crate::reliability::rcm_loop::{
+        create_pm_revision_from_source, create_wo_from_source, PmRevisionFromSourceInput, WoFromSourceInput,
+        SOURCE_RELIABILITY_DECISION,
+    };
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let d = wo_decision(&f, study_id, None).await;
+    assert_eq!(d.status, "proposed");
+
+    // The generic "action from a RAMS source" path refuses a study decision, proposed or approved:
+    // no work order, no PM version, no link.
+    let wo_from = || WoFromSourceInput {
+        source_type: SOURCE_RELIABILITY_DECISION.into(),
+        source_id: d.id,
+        type_code: "corrective".into(),
+        title: None,
+    };
+    let pm_from = || PmRevisionFromSourceInput {
+        source_type: SOURCE_RELIABILITY_DECISION.into(),
+        source_id: d.id,
+        pm_plan_id: 1,
+        trigger_definition_json: None,
+        change_note: "bypass".into(),
+    };
+    assert_eq!(
+        refusal_code(create_wo_from_source(&f.db, wo_from(), f.admin).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(
+        refusal_code(create_pm_revision_from_source(&f.db, pm_from()).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    let approved = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(create_wo_from_source(&f.db, wo_from(), f.admin).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(
+        refusal_code(create_pm_revision_from_source(&f.db, pm_from()).await),
+        "GATE_REL_DECISION_APPLY_ONLY"
+    );
+    assert_eq!(decision_wos(&f).await, 0);
+    let held = crate::reliability::study::decisions::get_decision(&f.db, d.id)
+        .await
+        .expect("get");
+    assert_eq!(held.status, "approved");
+    assert!(held.linked_work_order_id.is_none() && held.linked_pm_plan_version_id.is_none());
+
+    // The governed path carries it out.
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    assert_eq!(applied.status, "applied");
+    assert!(applied.linked_work_order_id.is_some());
+    assert_eq!(decision_wos(&f).await, 1);
+
+    // By synchronisation: the same decision received while proposed or rejected, naming the work
+    // order created from it, is refused (never applied here).
+    let sync_id = decision_sync_id(&f, d.id).await;
+    let wire = wire_of(&f, "reliability_study_decisions", &sync_id).await;
+    assert!(
+        wire.get("linked_work_order_sync_id")
+            .is_some_and(serde_json::Value::is_string),
+        "the link travels by sync id: {wire:?}"
+    );
+    for status in ["proposed", "rejected"] {
+        let mut unapproved = wire.clone();
+        unapproved.insert("status".into(), status.into());
+        unapproved.insert("decided_by_sync_id".into(), serde_json::Value::Null);
+        let outcome = apply_wire(&f, "reliability_study_decisions", &sync_id, "upsert", &unapproved).await;
+        assert_eq!(conflict_code(&outcome), Some("INVALID_VALUE"), "{status}: {outcome:?}");
+        assert!(
+            matches!(&outcome, crate::sync::materialize::ApplyOutcome::Conflict { message, .. } if message.contains("only an approved decision")),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(
+        decision_status(&f, d.id).await,
+        "applied",
+        "the refused rows changed nothing here"
+    );
+    // A proposed decision received without any link is applied as before.
+    let fresh = wo_decision(&f, study_id, None).await;
+    let fresh_sync = decision_sync_id(&f, fresh.id).await;
+    let fresh_wire = wire_of(&f, "reliability_study_decisions", &fresh_sync).await;
+    let outcome = apply_wire(&f, "reliability_study_decisions", &fresh_sync, "upsert", &fresh_wire).await;
+    assert_eq!(conflict_code(&outcome), None, "{outcome:?}");
+}
+
+#[tokio::test]
+async fn applying_a_decision_twice_creates_one_work_order() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+
+    // Two applies at the same time, on the version both screens show: exactly one work order.
+    let d = wo_decision(&f, study_id, None).await;
+    let approved = approve_decision(&f.db, decide(&d, None), f.reviewer)
+        .await
+        .expect("approve");
+    let (a, b) = tokio::join!(
+        apply_decision(&f.db, decide(&approved, None), f.admin),
+        apply_decision(&f.db, decide(&approved, None), f.reviewer),
+    );
+    let (ok, refused): (Vec<_>, Vec<_>) = [a, b].into_iter().partition(Result::is_ok);
+    assert_eq!((ok.len(), refused.len()), (1, 1), "one apply wins");
+    assert_eq!(
+        refusal_code(refused.into_iter().next().expect("refused")),
+        "DECISION_NOT_APPROVED"
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+    // Again, later, with the version that was shown: refused, still one work order.
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&approved, None), f.admin).await),
+        "DECISION_NOT_APPROVED"
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+
+    // An approved decision applied from an older version than the current one: reload first.
+    let d2 = wo_decision(&f, study_id, None).await;
+    let approved2 = approve_decision(&f.db, decide(&d2, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(apply_decision(&f.db, decide(&d2, None), f.admin).await),
+        "DECISION_STALE"
+    );
+    // A failure while creating the work order leaves the decision approved, nothing created.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE reliability_study_decisions SET wo_type_code = 'NO_SUCH_TYPE' WHERE id = {}",
+            d2.id
+        ),
+    )
+    .await;
+    assert!(apply_decision(&f.db, decide(&approved2, None), f.admin).await.is_err());
+    assert_eq!(decision_status(&f, d2.id).await, "approved");
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM reliability_study_decisions WHERE id = {} \
+                 AND linked_work_order_id IS NULL AND applied_at IS NULL AND applied_by_id IS NULL",
+                d2.id
+            ),
+        )
+        .await,
+        1
+    );
+    assert_eq!(decision_wos(&f).await, 1);
+}
+
+#[tokio::test]
+async fn the_proposer_withdraws_their_own_proposal_until_it_is_decided() {
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let other = third_user(&f).await;
+    grant_ram_manage(&f, other).await;
+    let audits = |action: &'static str, id: i64| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM audit_events WHERE action_code = '{action}' \
+                     AND target_type = 'reliability_study_decisions' \
+                     AND target_id = (SELECT entity_sync_id FROM reliability_study_decisions WHERE id = {id}) \
+                     AND json_extract(details_json, '$.reason') IS NOT NULL"
+                ),
+            )
+            .await
+        }
+    };
+
+    // The reviewer is designated: someone else who may approve decisions cannot reject it, nor
+    // withdraw it on the proposer's behalf.
+    let d = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&d, Some("Pas d'accord")), other).await),
+        "DECISION_NOT_DESIGNATED_APPROVER"
+    );
+    // The proposer withdraws it, whoever was designated (a reason is required).
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&d, None), f.admin).await),
+        "DECISION_REJECT_REASON_REQUIRED"
+    );
+    assert!(crate::reliability::study::decisions::is_proposer(&f.db, d.id, f.admin)
+        .await
+        .expect("proposer"));
+    let withdrawn = reject_decision(&f.db, decide(&d, Some("Proposition retirée")), f.admin)
+        .await
+        .expect("the proposer withdraws");
+    assert_eq!(withdrawn.status, "rejected");
+    assert_eq!(withdrawn.decided_by_id, Some(f.admin));
+    assert!(!withdrawn.self_approved, "a withdrawal approves nothing");
+    assert_eq!(audits("reliability.decision.withdrawn", d.id).await, 1);
+    // Once decided, it can no longer be withdrawn or rejected, and nothing more is audited.
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&withdrawn, Some("Encore")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    assert_eq!(audits("reliability.decision.withdrawn", d.id).await, 1);
+
+    // Approved by the designated approver: the proposer can no longer withdraw it; applied, neither.
+    let d2 = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    let approved = approve_decision(&f.db, decide(&d2, None), f.reviewer)
+        .await
+        .expect("approve");
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&approved, Some("Trop tard")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    assert_eq!(
+        refusal_code(reject_decision(&f.db, decide(&applied, Some("Trop tard")), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    assert_eq!(decision_status(&f, d2.id).await, "applied");
+    assert_eq!(audits("reliability.decision.withdrawn", d2.id).await, 0);
+
+    // The designated approver rejects: audited as a rejection, not a withdrawal.
+    let d3 = wo_decision(&f, study_id, Some(f.reviewer)).await;
+    let rejected = reject_decision(&f.db, decide(&d3, Some("Non justifié")), f.reviewer)
+        .await
+        .expect("designated approver rejects");
+    assert_eq!(rejected.decided_by_id, Some(f.reviewer));
+    assert_eq!(audits("reliability.decision.rejected", d3.id).await, 1);
+    assert_eq!(audits("reliability.decision.withdrawn", d3.id).await, 0);
+}
+
+#[test]
+fn the_proposer_withdraws_with_either_reliability_right() {
+    use crate::rbac::permissions::{RAM_ANALYZE, RAM_MANAGE};
+    use crate::reliability::study::decisions::reject_right;
+    // The proposer: the right they proposed with, or (without it) the approve right.
+    assert_eq!(reject_right(true, true), RAM_ANALYZE);
+    assert_eq!(reject_right(true, false), RAM_MANAGE);
+    // Anyone else rejects with the approve right only.
+    assert_eq!(reject_right(false, true), RAM_MANAGE);
+    assert_eq!(reject_right(false, false), RAM_MANAGE);
+}
+
+/// A PM-interval decision on a plan of P-101 with one version, proposed by the admin.
+async fn pm_decision(f: &Fixture, study_id: i64, plan_id: i64) -> crate::reliability::study::domain::StudyDecision {
+    create_decision(
+        &f.db,
+        CreateDecisionInput {
+            study_id,
+            title: "Remplacer le roulement toutes les 16 semaines".into(),
+            action_kind: "pm_interval".into(),
+            equipment_id: None,
+            pm_plan_id: Some(plan_id),
+            proposed_interval_hours: Some(16.0 * 168.0),
+            wo_type_code: None,
+            approver_id: None,
+            fmeca_item_id: None,
+            rcm_decision_id: None,
+            justification: None,
+            planned_cost: Some(1_000.0),
+            failure_cost: Some(9_000.0),
+        },
+        f.admin,
+    )
+    .await
+    .expect("pm decision")
+}
+
+#[tokio::test]
+async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_applied() {
+    use crate::pm::domain::PublishPmPlanVersionInput;
+    use crate::pm::queries::{create_pm_plan, create_pm_plan_version, publish_pm_plan_version};
+    let f = setup().await;
+    let study_id = life_fixture(&f).await;
+    make_site(&f, 1).await;
+    grant_ram_manage(&f, f.reviewer).await;
+    let plan = create_pm_plan(
+        &f.db,
+        CreatePmPlanInput {
+            code: "PM-ST-N5".into(),
+            title: "Roulement pompe".into(),
+            description: None,
+            asset_scope_type: "equipment".into(),
+            asset_scope_id: Some(f.p101),
+            strategy_type: "fixed".into(),
+            criticality_value_id: None,
+            assigned_team_id: None,
+            requires_shutdown: false,
+            requires_permit: false,
+            is_active: Some(true),
+        },
+    )
+    .await
+    .expect("plan");
+    let version_input = || CreatePmPlanVersionInput {
+        effective_from: "2025-01-01T00:00:00Z".into(),
+        effective_to: None,
+        trigger_definition_json: r#"{"interval_unit":"week","interval_value":36}"#.into(),
+        task_package_json: None,
+        required_parts_json: None,
+        required_skills_json: Some("[]".into()),
+        required_tools_json: None,
+        estimated_duration_hours: Some(3.0),
+        planned_crew_size: None,
+        estimated_labor_cost: None,
+        estimated_parts_cost: None,
+        estimated_service_cost: None,
+        change_reason: None,
+    };
+    create_pm_plan_version(&f.db, plan.id, version_input())
+        .await
+        .expect("version 1");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plans SET lifecycle_status = 'approved' WHERE id = {}",
+            plan.id
+        ),
+    )
+    .await;
+    let publish = |version_id: i64| {
+        let db = &f.db;
+        async move {
+            let rv = scalar(
+                db,
+                &format!("SELECT row_version FROM pm_plan_versions WHERE id = {version_id}"),
+            )
+            .await;
+            publish_pm_plan_version(
+                db,
+                PublishPmPlanVersionInput {
+                    version_id,
+                    expected_row_version: rv,
+                },
+            )
+            .await
+        }
+    };
+
+    // A draft naming a decision still proposed here (as received from another computer, or made
+    // by an older version through the generic path): never published.
+    let proposed = pm_decision(&f, study_id, plan.id).await;
+    let foreign = create_pm_plan_version(&f.db, plan.id, version_input())
+        .await
+        .expect("draft");
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plan_versions SET source_type = 'reliability_study_decision', source_id = {} WHERE id = {}",
+            proposed.id, foreign.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+    // Its decision not received here yet (no local id): refused too.
+    exec(
+        &f.db,
+        &format!("UPDATE pm_plan_versions SET source_id = NULL WHERE id = {}", foreign.id),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+
+    // Approved and applied here: its own draft is published.
+    let approved = approve_decision(&f.db, decide(&proposed, None), f.reviewer)
+        .await
+        .expect("approve");
+    let applied = apply_decision(&f.db, decide(&approved, None), f.admin)
+        .await
+        .expect("apply");
+    let own = applied.linked_pm_plan_version_id.expect("draft of the decision");
+    // Another draft naming the applied decision, but not the one it created: refused.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE pm_plan_versions SET source_id = {} WHERE id = {}",
+            proposed.id, foreign.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        refusal_code(publish(foreign.id).await),
+        "GATE_PM_SOURCE_DECISION_NOT_APPLIED"
+    );
+    let published = publish(own).await.expect("publish the applied decision's draft");
+    assert_eq!(published.status, "published");
+}
+
+#[path = "decision_sync_tests.rs"]
+mod decision_sync_tests;

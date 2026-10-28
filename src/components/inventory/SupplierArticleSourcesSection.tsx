@@ -7,6 +7,7 @@ import { DetailSectionCard } from "@/components/detail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatOrDash } from "@/lib/display";
 import {
   listSupplierArticleSources,
@@ -149,7 +150,7 @@ export function SupplierArticleSourcesSection({
     try {
       setSources(await listSupplierArticleSources(supplierId ?? null, articleId ?? null));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setLoading(false);
     }
@@ -205,7 +206,7 @@ export function SupplierArticleSourcesSection({
       onChanged?.();
       return true;
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       return false;
     } finally {
       setSaving(false);
@@ -467,24 +468,27 @@ export function SupplierArticleSourcesSection({
                 <Label htmlFor="source-price-hint">
                   {t("procurement.suppliers.sources.fields.priceHint")}
                 </Label>
-                <Input
+                <DecimalField
                   id="source-price-hint"
-                  type="number"
+                  decimals={2}
+                  fixed
                   min={0}
-                  step="0.01"
-                  value={form.unitPriceHint}
-                  onChange={(e) => setForm((prev) => ({ ...prev, unitPriceHint: e.target.value }))}
+                  value={form.unitPriceHint.trim() === "" ? null : Number(form.unitPriceHint)}
+                  onValueChange={(v) =>
+                    setForm((prev) => ({ ...prev, unitPriceHint: v == null ? "" : String(v) }))
+                  }
                 />
               </div>
               <div>
                 <Label htmlFor="source-moq">{t("procurement.suppliers.sources.fields.moq")}</Label>
-                <Input
+                <DecimalField
                   id="source-moq"
-                  type="number"
+                  decimals={3}
                   min={0}
-                  step="0.01"
-                  value={form.minOrderQty}
-                  onChange={(e) => setForm((prev) => ({ ...prev, minOrderQty: e.target.value }))}
+                  value={form.minOrderQty.trim() === "" ? null : Number(form.minOrderQty)}
+                  onValueChange={(v) =>
+                    setForm((prev) => ({ ...prev, minOrderQty: v == null ? "" : String(v) }))
+                  }
                 />
               </div>
             </div>

@@ -125,6 +125,7 @@ export const WorkOrderSchema = z.object({
   permit_rule_cleared_by_id: z.number().nullable(),
   permit_rule_cleared_at: z.string().nullable(),
   permit_rule_clear_reason: z.string().nullable(),
+  permit_from_safety_di: z.boolean().optional(),
   entity_sync_id: z.string().nullable().optional(),
   closeout_validation_profile_id: z.number().nullable().optional(),
   closeout_validation_passed: z.boolean().optional(),
@@ -173,6 +174,8 @@ export const WorkOrderSchema = z.object({
   schedule_commitment_id: z.number().nullable().optional(),
   schedule_frozen: z.boolean().nullable().optional(),
   lifecycle_state: z.string().nullable().optional(),
+  deisolation_pending: z.boolean().optional(),
+  permit_rule_matching_types: z.array(z.string()).optional(),
   source_inspection_round_id: z.number().nullable().optional(),
   source_inspection_round_code: z.string().nullable().optional(),
   source_inspection_round_title: z.string().nullable().optional(),
@@ -281,6 +284,10 @@ export class CompletionBlockedError extends Error {
 }
 
 export function normalizePreflightCode(message: string): string {
+  if (message.startsWith("GATE_COMPLETE_OPEN_LABOR")) return "OPEN_LABOR";
+  if (message.startsWith("GATE_COMPLETE_TASKS_INCOMPLETE")) return "INCOMPLETE_TASKS";
+  if (message.startsWith("GATE_COMPLETE_PARTS_")) return "MISSING_PARTS";
+  if (message.startsWith("GATE_COMPLETE_OPEN_DOWNTIME")) return "OPEN_DOWNTIME";
   const lower = message.toLowerCase();
 
   if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {

@@ -95,7 +95,9 @@ pub async fn create_ram_expert_sign_off(
     let eid = format!("ram_signoff:{}", Uuid::new_v4());
     let title = input.title.trim().to_string();
     if title.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["title required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_TITLE_REQUIRED: title required.".into(),
+        ]));
     }
     let rn = input.reviewer_name.unwrap_or_default();
     let rr = input.reviewer_role.unwrap_or_default();
@@ -150,7 +152,9 @@ pub async fn update_ram_expert_sign_off(
         vals.push(tr.into());
     }
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["no fields to update.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NOTHING_TO_UPDATE: no fields to update.".into(),
+        ]));
     }
     sets.push("row_version = row_version + 1");
     sets.push("updated_at = ?");
@@ -167,7 +171,7 @@ pub async fn update_ram_expert_sign_off(
         .rows_affected();
     if n == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "ram_expert_sign_offs update conflict.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: ram_expert_sign_offs update conflict.".into(),
         ]));
     }
     load_by_id(db, input.id).await
@@ -195,7 +199,9 @@ pub async fn sign_ram_expert_review(
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["sign-off conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: sign-off conflict.".into(),
+        ]));
     }
     load_by_id(db, input.id).await
 }

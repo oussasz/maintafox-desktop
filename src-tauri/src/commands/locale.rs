@@ -26,17 +26,18 @@ pub struct SetLocalePayload {
 }
 
 /// Set the locale preference.
-/// User preference → sets `locale.user_language` in `system_config`.
+/// User preference → sets `locale.user_language` in `system_config`. Needs no session: the
+/// language picked on the sign-in screen is kept for this PC and applied from the first screen
+/// (the value is checked against the supported languages, nothing else can be written).
 /// Tenant default  → sets `locale.default_language` (requires adm.settings).
 #[tauri::command]
 pub async fn set_locale_preference(
     payload: SetLocalePayload,
     state: State<'_, AppState>,
 ) -> AppResult<LocalePreference> {
-    // Require session to change locale preference
-    let user = crate::require_session!(state);
-
-    let key = if payload.as_tenant_default.unwrap_or(false) {
+    let as_tenant_default = payload.as_tenant_default.unwrap_or(false);
+    let key = if as_tenant_default {
+        let user = crate::require_session!(state);
         // Check adm.settings permission for tenant-wide change
         let allowed = crate::auth::rbac::check_permission(
             &state.db,
@@ -52,23 +53,27 @@ pub async fn set_locale_preference(
         }
         "locale.default_language"
     } else {
+        // From the pre-update backup until the restart, nothing can be changed (updater SF1).
+        crate::updater::refuse_while_installing()?;
         "locale.user_language"
     };
+
+    // The follow-Windows value is a personal choice, never a plant default.
+    if as_tenant_default && payload.locale == locale::FOLLOW_OS_LOCALE {
+        return Err(crate::errors::AppError::ValidationFailed(vec![
+            "GATE_CMD_LOCALE_TENANT_DEFAULT: The plant default language must be French or English.".into(),
+        ]));
+    }
 
     locale::write_locale_config(&state.db, key, &payload.locale).await?;
 
     // Tenant-wide Settings change must also clear a stale user override so the
     // admin-selected language actually becomes the active runtime locale.
-    if payload.as_tenant_default.unwrap_or(false) {
+    if as_tenant_default {
         locale::write_locale_config(&state.db, "locale.user_language", &payload.locale).await?;
     }
 
-    tracing::info!(
-        user_id = %user.user_id,
-        locale = %payload.locale,
-        key = %key,
-        "locale::preference_updated"
-    );
+    tracing::info!(locale = %payload.locale, key = %key, "locale::preference_updated");
 
     locale::resolve_locale_preference(&state.db).await
 }

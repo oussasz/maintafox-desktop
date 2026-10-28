@@ -673,6 +673,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await;
 
@@ -861,6 +862,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await;
         assert!(update_result.is_err(), "update_di_draft on closed DI must fail");
@@ -923,6 +925,7 @@ mod tests {
                 reported_urgency: None,
                 observed_at: None,
             },
+            None,
         )
         .await
         .expect("update_di_draft in returned state must succeed");

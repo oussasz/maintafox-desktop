@@ -406,6 +406,9 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
         db,
         SaveFailureDetailInput {
             wo_id: wo.id,
+            expected_row_version: crate::wo::closeout::wo_row_version(db, wo.id)
+                .await
+                .expect("wo row_version"),
             symptom_id: Some(symptom_id),
             failure_mode_id: None,
             failure_cause_id: None,
@@ -423,6 +426,9 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
         db,
         UpdateWoRcaInput {
             wo_id: wo.id,
+            expected_row_version: crate::wo::closeout::wo_row_version(db, wo.id)
+                .await
+                .expect("wo row_version"),
             root_cause_summary: Some("rca".into()),
             corrective_action_summary: Some("fix".into()),
         },
@@ -1352,6 +1358,9 @@ async fn test_obs_12_full_observability_chain() {
         &db,
         SaveFailureDetailInput {
             wo_id: wo_work.id,
+            expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_work.id)
+                .await
+                .expect("wo row_version"),
             symptom_id: Some(obs12_symptom),
             failure_mode_id: None,
             failure_cause_id: None,
@@ -1369,6 +1378,9 @@ async fn test_obs_12_full_observability_chain() {
         &db,
         UpdateWoRcaInput {
             wo_id: wo_work.id,
+            expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_work.id)
+                .await
+                .expect("wo row_version"),
             root_cause_summary: Some("Root cause recorded by observability chain test.".into()),
             corrective_action_summary: Some("Corrective action recorded by test.".into()),
         },

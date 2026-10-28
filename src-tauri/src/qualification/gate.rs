@@ -1411,6 +1411,7 @@ async fn write_override(
         OverrideSubject::Account { user_id, name } => (None, Some(*user_id), *name),
     };
     let gaps_json = serde_json::to_string(gaps)?;
+    let override_sync_id = crate::sync::identity::new_entity_sync_id();
     let now = now_ts();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1419,7 +1420,7 @@ async fn write_override(
           reason, approved_by_id, approved_at, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            crate::sync::identity::new_entity_sync_id().into(),
+            override_sync_id.clone().into(),
             personnel_id.into(),
             user_id.into(),
             kind.into(),
@@ -1456,10 +1457,16 @@ async fn write_override(
             before_hash: None,
             after_hash: None,
             retention_class: "standard".to_string(),
+            // The override and the person are named so every PC finds the same rows: the
+            // override by its sync id (sent as it is), the personnel record and the login by
+            // their local ids, sent as sync ids (`sync::row_spec`, audit_events details). They
+            // sit under their own key so no other audit's details are read as these ids.
             details_json: Some(serde_json::json!({
-                "override_id": id,
-                "personnel_id": personnel_id,
-                "user_id": user_id,
+                "qualification_override": {
+                    "sync_id": override_sync_id,
+                    "personnel_id": personnel_id,
+                    "user_id": user_id,
+                },
                 "person": name,
                 "role": role,
                 "gaps": gaps.iter().map(|g| serde_json::json!({

@@ -19,6 +19,8 @@ pub mod teams;
 pub mod timetable;
 
 #[cfg(test)]
+mod availability_version_tests;
+#[cfg(test)]
 mod capacity_tests;
 #[cfg(test)]
 mod e2e_tests;

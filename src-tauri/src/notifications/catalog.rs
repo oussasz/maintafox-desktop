@@ -150,6 +150,12 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "daily_digest",
     "safety_rule_received",
     "loto_forced_removal",
+    "pm_concurrent_versions",
+    "permit_suspended_work_held",
+    "permit_ended_under_work",
+    "wo_permit_rule_missing",
+    "insp_anomaly_origin_cancelled",
+    "rel_decision_refused_wo_kept",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -167,14 +173,69 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
 pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     ("safety_rule_received", "permission:adm.settings"),
     ("loto_forced_removal", "permission:ptw.close"),
+    // Two concurrent versions of a PM plan (`pm::version_clash`): the PM planners.
+    ("pm_concurrent_versions", "permission:pm.edit"),
+    // A running work order put on hold by the suspension of its permit (owner decision D5): its
+    // responsible (the permit's work order routes `assignee` to it); nobody there: the fallback
+    // ([`ALWAYS_DELIVERED_FALLBACK`]).
+    ("permit_suspended_work_held", "assignee"),
+    // A permit ended on another PC before, or while, its work ran here (owner decision D9): the
+    // work order's responsible and the permit close-right holders of the permit's site.
+    ("permit_ended_under_work", "assignee"),
+    ("permit_ended_under_work", "permission:ptw.close"),
+    // A work order received started without the plant permit rule that concerns it here (owner
+    // decision D2 (a), audit finding AU-04 R2-S3): the permit-issue right holders of its site.
+    ("wo_permit_rule_missing", "permission:ptw.issue"),
+    // An inspection anomaly cancelled after it was routed (CMMS Advisor decision on AU-72, option B):
+    // the responsible of its work order (or of the work order its request was converted to).
+    ("insp_anomaly_origin_cancelled", "assignee"),
+    // A reliability decision refused at synchronisation whose work order is kept, or whose PM
+    // version stays published (AU-76b, CMMS Advisor Q6 and S4): the work order's planner, and as
+    // the event's watchers the decision's proposer, the work order's responsible when it has no
+    // planner, or the PM planners (`settings::received_notice::announce_refused_decision`).
+    ("rel_decision_refused_wo_kept", "planner"),
+    ("rel_decision_refused_wo_kept", "watcher"),
 ];
 
-/// The fixed audience of an [`ALWAYS_DELIVERED`] category.
+/// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
+/// safety notice must reach someone. A running work order held by its permit's suspension (D5)
+/// whose responsible is unset, or not an active user here, goes to the permit close-right holders of
+/// the permit's site, the audience of a permit ended under work (D9). A work order received started
+/// without its plant permit rule, at a site where nobody holds the permit-issue right here, goes to
+/// the settings administrators (who keep the rule list).
+pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
+    ("permit_suspended_work_held", "permission:ptw.close"),
+    ("wo_permit_rule_missing", "permission:adm.settings"),
+    // No responsible: the work order's planner, or the request's reviewer (its node's responsibles
+    // when it has none).
+    ("insp_anomaly_origin_cancelled", "planner"),
+    ("insp_anomaly_origin_cancelled", "reviewer"),
+    // Neither a planner nor a proposer active here: the holders of the right to approve decisions.
+    ("rel_decision_refused_wo_kept", "permission:ram.manage"),
+];
+
+/// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).
+pub fn always_delivered_fallback(category: &str) -> Vec<Audience> {
+    ALWAYS_DELIVERED_FALLBACK
+        .iter()
+        .filter(|(c, _)| *c == category)
+        .filter_map(|(_, a)| parse_audience(a))
+        .collect()
+}
+
+/// The fixed audience of an [`ALWAYS_DELIVERED`] category (its first, when it has several).
 pub fn always_delivered_audience(category: &str) -> Option<Audience> {
+    always_delivered_audiences(category).into_iter().next()
+}
+
+/// Every fixed audience of an [`ALWAYS_DELIVERED`] category (empty: the category is routed by its
+/// rule).
+pub fn always_delivered_audiences(category: &str) -> Vec<Audience> {
     ALWAYS_DELIVERED
         .iter()
-        .find(|(c, _)| *c == category)
-        .and_then(|(_, a)| parse_audience(a))
+        .filter(|(c, _)| *c == category)
+        .filter_map(|(_, a)| parse_audience(a))
+        .collect()
 }
 
 #[cfg(test)]

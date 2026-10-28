@@ -849,13 +849,22 @@ async fn a_view_permission_granted_on_a_site_shows_the_notifications_of_that_sit
         })
         .collect();
     codes.sort();
-    // The area below the granted site, and the order without a node; not the other site.
-    assert_eq!(codes, vec!["OT-21".to_string(), "OT-23".to_string()]);
+    // The area below the granted site; not the other site, nor the order without a site: a work
+    // order without a site is a plant-wide record its list never shows a site user (AU-112).
+    assert_eq!(codes, vec!["OT-21".to_string()]);
     assert_eq!(
         inbox::unread_count(&db, 90, &vis).await.expect("bell"),
-        2,
+        1,
         "bell = inbox"
     );
+    let no_site = scalar_i64(
+        &db,
+        "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
+         WHERE e.source_record_id = '23'",
+        vec![],
+    )
+    .await;
+    assert!(inbox::ensure_visible(&db, 90, &vis, no_site).await.is_err());
     let other_site = scalar_i64(
         &db,
         "SELECT n.id FROM notifications n JOIN notification_events e ON e.id = n.notification_event_id \
@@ -1066,4 +1075,129 @@ async fn a_stock_occurrence_is_identified_by_the_movement_that_crossed_the_reord
     // 10 → 7 stays above 5; 7 → 3 crosses it: the occurrence every device names the same way.
     assert_eq!(seal.record_key, "nt-art-910|nt-tx-3");
     assert_eq!(seal.since, watchers::parse_time("2026-10-03T08:00:00Z"));
+}
+
+/// AU-112: a request notice is shown to a site reviewer when the request is on their site now; a
+/// grant on a deleted node shows nothing; a plant-wide grant shows every one.
+#[tokio::test]
+async fn a_request_notice_follows_the_request_site() {
+    let db = db().await;
+    org_node(&db, 911, None).await;
+    org_node(&db, 912, None).await;
+    user(&db, 91, None).await;
+    grant_on_node(&db, 91, crate::rbac::permissions::DI_VIEW, 911).await;
+    for (id, node) in [(311_i64, 911_i64), (312, 912)] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO intervention_requests (id, code, equipment_id, org_node_id, status, title, description, \
+                 origin_type, impact_level, production_impact, safety_flag, environmental_flag, quality_flag, \
+                 reported_urgency, observed_at, submitted_at, reviewer_id, submitter_id, entity_sync_id, created_at, \
+                 updated_at, row_version) \
+                 VALUES (?, ?, 1, ?, 'in_review', 'Leak', 'Oil leak', 'operator', 'minor', 0, 0, 0, 0, 'high', {NOW}, \
+                 {NOW}, 91, 91, ?, {NOW}, {NOW}, 1)"
+            ),
+            vec![
+                id.into(),
+                format!("DI-{id}").into(),
+                node.into(),
+                format!("nt-di-{id}").into(),
+            ],
+        )
+        .await;
+        emitter::emit_event(
+            &db,
+            emitter::NotificationEventInput {
+                source_module: "di".into(),
+                source_record_id: Some(id.to_string()),
+                event_code: "di_entered_in_review".into(),
+                category_code: "di_pending_review".into(),
+                severity: "info".into(),
+                dedupe_key: Some(format!("di-review-{id}")),
+                payload_json: None,
+                title: format!("DI en revue — DI-{id}"),
+                body: None,
+                action_url: None,
+            },
+        )
+        .await
+        .expect("emit");
+    }
+    let seen = |db: DatabaseConnection| async move {
+        let vis = inbox::visible_to(&db, 91).await.expect("visibility");
+        let items = inbox::list(&db, 91, &vis, &InboxFilter::default()).await.expect("list");
+        let mut ids: Vec<String> = items.into_iter().filter_map(|i| i.source_record_id).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+    assert_eq!(
+        seen(db.clone()).await,
+        vec!["311".to_string()],
+        "the site's request only"
+    );
+
+    // The notice follows its request: moved to the reviewer's site, it is shown (review S1).
+    exec(
+        &db,
+        "UPDATE intervention_requests SET org_node_id = 911 WHERE id = 312",
+        vec![],
+    )
+    .await;
+    assert_eq!(seen(db.clone()).await, vec!["311".to_string(), "312".to_string()]);
+
+    // A grant on a deleted node shows nothing, as in the lists (review N1).
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET deleted_at = {NOW} WHERE id = 911"),
+        vec![],
+    )
+    .await;
+    assert!(seen(db.clone()).await.is_empty(), "no grant left on a live node");
+
+    grant(&db, 91, &[crate::rbac::permissions::DI_VIEW]).await;
+    assert_eq!(
+        seen(db.clone()).await,
+        vec!["311".to_string(), "312".to_string()],
+        "plant-wide: every request notice"
+    );
+}
+
+/// AU-112 review S1: a work order without a site gets one; its notice is then shown to the
+/// site's users (and one moved to another site follows it).
+#[tokio::test]
+async fn a_work_order_notice_follows_its_site() {
+    let db = db().await;
+    org_node(&db, 921, None).await;
+    org_node(&db, 922, None).await;
+    user(&db, 93, None).await;
+    grant_on_node(&db, 93, crate::rbac::permissions::OT_VIEW, 921).await;
+    tick(&db).await;
+    watching_since_yesterday(&db).await;
+    for id in [41_i64, 42] {
+        work_order(&db, id, Some(93), None, None).await;
+    }
+    exec(
+        &db,
+        "UPDATE work_orders SET entity_id = CASE id WHEN 41 THEN NULL ELSE 922 END WHERE id IN (41, 42)",
+        vec![],
+    )
+    .await;
+    tick(&db).await;
+    let seen = |db: DatabaseConnection| async move {
+        let vis = inbox::visible_to(&db, 93).await.expect("visibility");
+        let items = inbox::list(&db, 93, &vis, &InboxFilter::default()).await.expect("list");
+        let mut ids: Vec<String> = items.into_iter().filter_map(|i| i.source_record_id).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+    assert!(seen(db.clone()).await.is_empty(), "no site, and another site");
+    exec(
+        &db,
+        "UPDATE work_orders SET entity_id = 921 WHERE id IN (41, 42)",
+        vec![],
+    )
+    .await;
+    assert_eq!(seen(db.clone()).await, vec!["41".to_string(), "42".to_string()]);
 }

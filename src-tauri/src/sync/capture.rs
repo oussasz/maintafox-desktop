@@ -111,7 +111,17 @@ pub async fn install_capture_in(conn: &impl ConnectionTrait) -> AppResult<Captur
             ))
             .await?;
         }
-        for sql in trigger_sql(&layout)? {
+        let present: Vec<String> = conn
+            .query_all(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT name FROM pragma_table_info(?)",
+                [layout.table().into()],
+            ))
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get::<String>("", "name").ok())
+            .collect();
+        for sql in trigger_sql(&layout, &present)? {
             conn.execute_unprepared(&sql).await?;
         }
         report.baseline_rows += baseline(conn, &layout).await?;
@@ -177,11 +187,16 @@ const NOT_SUPPRESSED: &str = "NOT EXISTS (SELECT 1 FROM sync_capture_suppression
 /// An update is a change to send only when a synchronised column changed: updates of device-local
 /// or derived columns (a login time, an SLA "notified" stamp, an org path) and of the local
 /// version counter alone stay on the device.
-fn replicated_change_sql(layout: &EntityLayout) -> String {
+/// `present`: the table's columns in this database. The layout is computed once per process from
+/// the current schema; a database still before a migration that added a column (only in tests that
+/// build one, `sync::test_support::started_db_before_migration`) has no such column for the trigger
+/// to read. In the app every replicated column exists once the migrations have run.
+fn replicated_change_sql(layout: &EntityLayout, present: &[String]) -> String {
     let changed: Vec<String> = layout
         .columns
         .iter()
         .filter(|c| matches!(c.role, Role::Identity | Role::Value { .. } | Role::Ref { .. }))
+        .filter(|c| present.iter().any(|p| p == &c.name))
         .map(|c| format!("NEW.{0} IS NOT OLD.{0}", quote(&c.name)))
         .collect();
     if changed.is_empty() {
@@ -191,7 +206,20 @@ fn replicated_change_sql(layout: &EntityLayout) -> String {
     }
 }
 
-fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
+fn trigger_sql(layout: &EntityLayout, present: &[String]) -> AppResult<Vec<String>> {
+    // In the app every replicated column exists once the migrations have run (capture is installed
+    // after them, `startup`): a missing one would silently leave it out of change capture, so it
+    // fails loudly instead. Only test databases built before a migration may lack one.
+    #[cfg(not(test))]
+    if let Some(missing) = layout.columns.iter().find(|c| {
+        matches!(c.role, Role::Identity | Role::Value { .. } | Role::Ref { .. }) && !present.contains(&c.name)
+    }) {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "sync capture: column {}.{} is in the sync layout but not in the database",
+            layout.table(),
+            missing.name
+        )));
+    }
     let table = quote(layout.table());
     let et = layout.def.entity_type;
     let name = |suffix: &str| quote(&format!("{TRIGGER_PREFIX}{}_{suffix}", layout.table()));
@@ -224,7 +252,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE NEW.entity_sync_id IS NOT OLD.entity_sync_id AND {filter_old};
                  END",
                 au = name("au"),
-                changed = replicated_change_sql(layout),
+                changed = replicated_change_sql(layout, present),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),
@@ -268,7 +296,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE {key_new} IS NOT {key_old} AND {filter_old};
                  END",
                 au = name("au"),
-                changed = replicated_change_sql(layout),
+                changed = replicated_change_sql(layout, present),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),
@@ -550,12 +578,12 @@ pub async fn drain_capture_journal(conn: &impl ConnectionTrait) -> AppResult<Cap
                 Ok(true) => {
                     report.staged += 1;
                     delete_journal_rows(conn, &group.ids).await?;
-                    close_stage_failure(conn, &group).await?;
+                    close_stage_failure(conn, &group, StageClose::Staged).await?;
                 }
                 Ok(false) => {
                     report.skipped += 1;
                     delete_journal_rows(conn, &group.ids).await?;
-                    close_stage_failure(conn, &group).await?;
+                    close_stage_failure(conn, &group, StageClose::NotSent).await?;
                 }
                 Err(e) => {
                     report.failed += 1;
@@ -610,6 +638,7 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
             checkpoint_token: None,
             local_row_version: None,
             inbound_row_version: None,
+            detail_message: Some(error.to_string()),
         },
     )
     .await?;
@@ -627,30 +656,53 @@ async fn record_stage_failure(conn: &impl ConnectionTrait, group: &Group, error:
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE source_scope = 'outbox' AND conflict_type = 'STAGE_ERROR'
            AND entity_type = ? AND entity_sync_id = ?
-           AND status = 'resolved_local' AND resolution_action = 'auto_restaged'",
+           AND status = 'resolved_local' AND resolution_action IN ('auto_restaged', 'auto_not_sent')",
         [group.entity_type.clone().into(), group.entity_sync_id.clone().into()],
     ))
     .await?;
     Ok(())
 }
 
-/// A change that failed to stage earlier and now stages: its open `STAGE_ERROR` conflict is
-/// closed, so the conflict list (and the replay guard) no longer shows a problem that is gone.
-async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group) -> AppResult<()> {
+/// How a change that failed to stage earlier was settled by a later drain.
+#[derive(Clone, Copy)]
+enum StageClose {
+    /// Staged: it is on its way to the server.
+    Staged,
+    /// Nothing was sent: the row is kept on this PC (outside its entity's sync row filter), or it
+    /// was removed before it was ever sent. The note must not claim it was sent.
+    NotSent,
+}
+
+/// A change that failed to stage earlier and is now settled (staged, or with nothing to send): its
+/// open `STAGE_ERROR` conflict is closed with a note saying which, so the conflict list (and the
+/// replay guard) no longer shows a problem that is gone.
+async fn close_stage_failure(conn: &impl ConnectionTrait, group: &Group, how: StageClose) -> AppResult<()> {
+    let (action, note) = match how {
+        StageClose::Staged => ("auto_restaged", "The change was staged on a later attempt."),
+        StageClose::NotSent => (
+            "auto_not_sent",
+            "Not sent: kept on this PC (outside synchronisation), or removed before it was ever sent.",
+        ),
+    };
     conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "UPDATE sync_conflicts
          SET status = 'resolved_local',
-             resolution_action = 'auto_restaged',
+             resolution_action = ?,
              resolved_by_id = NULL,
-             resolution_note = 'The change was staged on a later attempt.',
+             resolution_note = ?,
              resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE source_scope = 'outbox' AND conflict_type = 'STAGE_ERROR'
            AND entity_type = ? AND entity_sync_id = ?
            AND status IN ('new', 'triaged', 'escalated')",
-        [group.entity_type.clone().into(), group.entity_sync_id.clone().into()],
+        [
+            action.into(),
+            note.into(),
+            group.entity_type.clone().into(),
+            group.entity_sync_id.clone().into(),
+        ],
     ))
     .await?;
     Ok(())

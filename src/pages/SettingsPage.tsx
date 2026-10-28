@@ -63,6 +63,15 @@ function isAdmSettingsTab(tab: SettingsTabId): boolean {
   return SETTINGS_TABS.find((entry) => entry.id === tab)?.requiresAdmSettings === true;
 }
 
+/** Sentences the app writes itself when a change carries no reason (English, not for display). */
+function isGeneratedSummary(summary: string): boolean {
+  return (
+    /^Setting '.+' updated via IPC$/.test(summary) ||
+    summary === "Notification retention changed" ||
+    summary === "tenant activation bootstrap updated"
+  );
+}
+
 export function SettingsPage() {
   const { t } = useTranslation("settings");
   const tAny = t as unknown as (key: string, options?: Record<string, unknown>) => string;
@@ -87,10 +96,10 @@ export function SettingsPage() {
   const visibleTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
-        if (!tab.requiresAdmSettings) return true;
-        return canManageSettings;
+        if (tab.requiresAdmSettings && !canManageSettings) return false;
+        return tab.permission ? can(tab.permission) : true;
       }),
-    [canManageSettings],
+    [canManageSettings, can],
   );
 
   const defaultTabForUser: SettingsTabId = canManageSettings ? "general" : "profile";
@@ -390,9 +399,15 @@ export function SettingsPage() {
                       <PasswordPolicyPanel />
                       <LockoutPolicyPanel />
                       <PolicyEditorPanel domain="session" onToast={onToast} />
-                      <PermissionGate permission={P.LOG_VIEW}>
-                        <ActivityLogSettingsSection />
-                      </PermissionGate>
+                    </section>
+                  ) : null}
+
+                  {activeTab === "activity" && can(P.LOG_VIEW) ? (
+                    <section className="space-y-6">
+                      <p className="text-sm leading-relaxed text-text-muted">
+                        {t("tabs.activityHint")}
+                      </p>
+                      <ActivityLogSettingsSection />
                     </section>
                   ) : null}
 
@@ -423,7 +438,10 @@ export function SettingsPage() {
                         {t("tabs.integrationsHint")}
                       </p>
                       <SyncFeedbackPanel />
-                      <LicenseEnforcementPanel />
+                      {/* `get_license_enforcement_state` asks for lic.view. */}
+                      <PermissionGate permission={P.LIC_VIEW}>
+                        <LicenseEnforcementPanel />
+                      </PermissionGate>
                       <ConnectionProfilesPanel onToast={onToast} />
                       <DiagnosticsPanel />
                     </section>
@@ -460,8 +478,20 @@ export function SettingsPage() {
                           : null;
                       return {
                         id: String(evt.id),
-                        title: def ? tAny(`keys.${def.key}`) : evt.setting_key_or_domain,
-                        description: valueChange ?? evt.change_summary,
+                        // A key without a catalogue entry gets its own label when one exists, else
+                        // a plain "technical setting"; never the raw key.
+                        title: def
+                          ? tAny(`keys.${def.key}`)
+                          : tAny(`keys.${evt.setting_key_or_domain}`, {
+                              defaultValue: t("auditLog.technicalSetting"),
+                            }),
+                        // Only a reason a person wrote is shown; the English sentences the app writes
+                        // itself are replaced by a plain line.
+                        description:
+                          valueChange ??
+                          (evt.change_summary && !isGeneratedSummary(evt.change_summary)
+                            ? evt.change_summary
+                            : t("auditLog.changed")),
                         timestamp: evt.changed_at,
                         ...(evt.changed_by_name ? { actor: evt.changed_by_name } : {}),
                         ...(evt.required_step_up

@@ -26,6 +26,7 @@ import {
 } from "@/components/timeline/ResourceTimeline";
 import { Badge } from "@/components/ui/badge";
 import { RESOURCE_TIMELINE_STATE_CLASS } from "@/design-system/resource-timeline-tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import type {
@@ -86,6 +87,7 @@ export function PlanningBoard({
   maxZoom,
 }: PlanningBoardProps) {
   const { t } = useTranslation("planning");
+  const { formatDecimal } = useFormatters();
   const absenceType = useAbsenceTypeLookup();
 
   const groups = useMemo<ResourceTimelineGroup[]>(() => {
@@ -251,8 +253,8 @@ export function PlanningBoard({
         )}
         title={
           t("gantt.capacityLine", {
-            committed: row.committed_hours.toFixed(1),
-            available: (row.available_hours + row.overtime_hours).toFixed(1),
+            committed: formatDecimal(row.committed_hours, 1),
+            available: formatDecimal(row.available_hours + row.overtime_hours, 1),
           }) + (basisLabel ? ` · ${basisLabel}` : "")
         }
       >

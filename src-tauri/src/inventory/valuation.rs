@@ -24,7 +24,7 @@ pub struct ReplenishmentProjection {
 }
 
 pub async fn evaluate_unit_cost(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     article_id: i64,
     warehouse_id: i64,
     location_id: i64,
@@ -152,11 +152,13 @@ pub async fn evaluate_unit_cost(
                     confidence: "medium".to_string(),
                 })
             }
-            _ => Err(AppError::ValidationFailed(vec![format!("Bad method {method}")])),
+            _ => Err(AppError::ValidationFailed(vec![format!(
+                "GATE_INV_VALUATION_METHOD_INVALID: Bad method {method}"
+            )])),
         };
     }
     Err(AppError::ValidationFailed(vec![
-        "No matching valuation policy.".to_string()
+        "GATE_INV_VALUATION_POLICY_MISSING: No matching valuation policy.".to_string(),
     ]))
 }
 
@@ -195,7 +197,7 @@ pub const COST_SOURCE_MOVING_AVG: &str = "MOVING_AVG";
 pub fn validate_unit_cost(unit_cost: f64) -> AppResult<()> {
     if !unit_cost.is_finite() || unit_cost < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "unit_cost must be a number greater than or equal to 0.".to_string(),
+            "GATE_INV_PRICE_NEGATIVE: unit_cost must be a number greater than or equal to 0.".to_string(),
         ]));
     }
     Ok(())

@@ -2,13 +2,14 @@
  * OT estimate by cost category (SAP PM "estimated costs") and the optional cost-centre override
  * the OT settles to. Amounts are in the tenant currency.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { COST_BUCKETS, type CostBucket } from "@/components/finance/finance-tone";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -72,11 +72,11 @@ export function WoCostEstimateDialog({
   const { t } = useTranslation("budget");
   const { formatCurrency, currencyCode } = useFormatters();
   const { categoryLabel } = useFinanceCatalogs();
-  const [amounts, setAmounts] = useState<Record<CostBucket, string>>(() => ({
-    labor: estimate ? String(estimate.estimated_labor) : "",
-    parts: estimate ? String(estimate.estimated_parts) : "",
-    services: estimate ? String(estimate.estimated_services) : "",
-    other: estimate ? String(estimate.estimated_other) : "",
+  const [amounts, setAmounts] = useState<Record<CostBucket, number | null>>(() => ({
+    labor: estimate ? estimate.estimated_labor : null,
+    parts: estimate ? estimate.estimated_parts : null,
+    services: estimate ? estimate.estimated_services : null,
+    other: estimate ? estimate.estimated_other : null,
   }));
   const [costCenter, setCostCenter] = useState<string>(
     estimate?.cost_center_id != null ? String(estimate.cost_center_id) : AUTO,
@@ -93,19 +93,12 @@ export function WoCostEstimateDialog({
       .catch((err: unknown) => setError(err));
   }, [open, canChangeCostCenter]);
 
-  const parsed = useMemo(
-    () =>
-      Object.fromEntries(COST_BUCKETS.map((b) => [b, parseAmount(amounts[b])])) as Record<
-        CostBucket,
-        number | null
-      >,
-    [amounts],
-  );
-  const invalid = COST_BUCKETS.some((b) => parsed[b] == null);
+  // An emptied amount counts as zero; text that is not a number never reaches the state.
+  const parsed = amounts;
   const total = COST_BUCKETS.reduce((sum, b) => sum + (parsed[b] ?? 0), 0);
 
   const submit = async () => {
-    if (invalid || saving) return;
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -149,17 +142,14 @@ export function WoCostEstimateDialog({
             {COST_BUCKETS.map((bucket) => (
               <div key={bucket} className="space-y-1">
                 <Label htmlFor={`est-${bucket}`}>{categoryLabel(bucket)}</Label>
-                <Input
+                <DecimalField
                   id={`est-${bucket}`}
-                  inputMode="decimal"
+                  fixed
+                  min={0}
                   value={amounts[bucket]}
-                  aria-invalid={parsed[bucket] == null}
-                  onChange={(e) => setAmounts((a) => ({ ...a, [bucket]: e.target.value }))}
+                  onValueChange={(v) => setAmounts((a) => ({ ...a, [bucket]: v }))}
                   placeholder="0"
                 />
-                {parsed[bucket] == null ? (
-                  <p className="text-xs text-tone-danger-fg">{t("estimate.invalidAmount")}</p>
-                ) : null}
               </div>
             ))}
           </div>
@@ -209,7 +199,7 @@ export function WoCostEstimateDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("actions.cancel")}
             </Button>
-            <Button type="submit" disabled={invalid || saving}>
+            <Button type="submit" disabled={saving}>
               {saving ? t("actions.saving") : t("actions.save")}
             </Button>
           </DialogFooter>

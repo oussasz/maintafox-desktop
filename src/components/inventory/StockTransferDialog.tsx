@@ -60,7 +60,7 @@ export function StockTransferDialog({
   onTransferred,
 }: StockTransferDialogProps) {
   const { t } = useTranslation("inventory");
-  const { formatNumber } = useFormatters();
+  const { formatNumber, formatDate } = useFormatters();
   const [stores, setStores] = useState<StockLocation[]>([]);
   const [storesFailed, setStoresFailed] = useState(false);
   const [lots, setLots] = useState<LotStock[]>([]);
@@ -259,7 +259,7 @@ export function StockTransferDialog({
                   {lots.map((l) => (
                     <SelectItem key={l.lot_id} value={String(l.lot_id)}>
                       {`${l.serial_number ?? l.lot_number ?? ""} · ${fmt(l.quantity)}${
-                        l.expiry_date ? ` · ${l.expiry_date}` : ""
+                        l.expiry_date ? ` · ${formatDate(l.expiry_date)}` : ""
                       }`}
                     </SelectItem>
                   ))}

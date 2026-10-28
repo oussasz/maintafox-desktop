@@ -153,6 +153,13 @@ pub async fn update_pm_generation_settings(
     generation_control::get_pm_generation_status(&state.db).await
 }
 
+/// The acting user of a PM occurrence write (transition, execution) is always the session user:
+/// an actor id sent by the screen is ignored, as in the WO commands, so the audit trail and the
+/// creator of a generated WO can never name someone else.
+fn bind_session_actor(actor_id: &mut Option<i64>, session_user_id: impl Into<i64>) {
+    *actor_id = Some(session_user_id.into());
+}
+
 #[tauri::command]
 pub async fn transition_pm_occurrence(
     mut input: TransitionPmOccurrenceInput,
@@ -160,9 +167,7 @@ pub async fn transition_pm_occurrence(
 ) -> AppResult<PmOccurrence> {
     let user = require_session!(state);
     require_pm_edit_or_manage(&state, &user).await?;
-    if input.actor_id.is_none() {
-        input.actor_id = Some(i64::from(user.user_id));
-    }
+    bind_session_actor(&mut input.actor_id, user.user_id);
     queries::transition_pm_occurrence(&state.db, input).await
 }
 
@@ -210,9 +215,7 @@ pub async fn execute_pm_occurrence(
 ) -> AppResult<ExecutePmOccurrenceResult> {
     let user = require_session!(state);
     require_pm_edit_or_manage(&state, &user).await?;
-    if input.actor_id.is_none() {
-        input.actor_id = Some(i64::from(user.user_id));
-    }
+    bind_session_actor(&mut input.actor_id, user.user_id);
     queries::execute_pm_occurrence(&state.db, input).await
 }
 
@@ -368,4 +371,23 @@ pub(crate) async fn require_pm_delete_or_manage(
         "Permission requise : {}",
         crate::rbac::permissions::PM_DELETE
     )))
+}
+
+#[cfg(test)]
+mod session_actor_tests {
+    use super::bind_session_actor;
+
+    #[test]
+    fn a_caller_sent_actor_is_replaced_by_the_session_user() {
+        let mut actor = Some(999_i64);
+        bind_session_actor(&mut actor, 5_i32);
+        assert_eq!(actor, Some(5));
+    }
+
+    #[test]
+    fn a_missing_actor_is_the_session_user() {
+        let mut actor = None;
+        bind_session_actor(&mut actor, 7_i32);
+        assert_eq!(actor, Some(7));
+    }
 }

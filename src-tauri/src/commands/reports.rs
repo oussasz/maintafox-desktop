@@ -9,7 +9,7 @@ use crate::errors::{AppError, AppResult};
 use crate::planning::domain::ExportedBinaryDocument;
 use crate::reports::artifacts::{persist_run_artifact, read_run_document};
 use crate::reports::domain::{ExportReportInput, ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
-use crate::reports::export::{export_report_document, ReportLocale};
+use crate::reports::export::{export_report_document, ReportAudience, ReportLocale};
 use crate::reports::queries::{
     delete_schedule, get_template_by_code, get_template_by_id, insert_run, list_my_runs, list_my_schedules,
     list_report_templates as query_list_report_templates, upsert_schedule,
@@ -24,7 +24,7 @@ fn validate_export_format(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![
-            "export_format must be pdf or xlsx.".into()
+            "GATE_REPORT_FORMAT_INVALID: export_format must be pdf or xlsx.".into(),
         ]))
     }
 }
@@ -76,7 +76,9 @@ pub async fn upsert_my_report_schedule(input: UpsertReportScheduleInput, state: 
             id: input.template_id.to_string(),
         })?;
     if !template.is_active {
-        return Err(AppError::ValidationFailed(vec!["template inactive.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPORT_TEMPLATE_INACTIVE: template inactive.".into(),
+        ]));
     }
     let schedule = Schedule::from_str(input.cron_expr.trim())
         .map_err(|e| AppError::ValidationFailed(vec![format!("cron: {e}")]))?;
@@ -136,11 +138,14 @@ pub async fn export_report_now(
             id: input.template_code.clone(),
         })?;
     if !t.is_active {
-        return Err(AppError::ValidationFailed(vec!["template inactive.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REPORT_TEMPLATE_INACTIVE: template inactive.".into(),
+        ]));
     }
     let fmt = input.export_format.to_ascii_lowercase();
     let locale = ReportLocale::resolve(&state.db, input.locale.as_deref()).await;
-    let doc = export_report_document(&state.db, &t.code, &fmt, locale).await?;
+    let audience = ReportAudience::of_user(&state.db, &state.permission_cache, user.user_id).await?;
+    let doc = export_report_document(&state.db, &t.code, &fmt, locale, audience).await?;
     let run_id = insert_run(&state.db, None, t.id, i64::from(user.user_id), "running", &fmt).await?;
     let data_dir = app_data_dir(&app)?;
     if let Err(e) = persist_run_artifact(&state.db, &data_dir, run_id, &fmt, &doc.file_name, &doc.bytes).await {

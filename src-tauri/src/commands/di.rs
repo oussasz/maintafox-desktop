@@ -190,19 +190,19 @@ pub async fn create_di(
     let mut errors: Vec<String> = Vec::new();
 
     if input.title.trim().is_empty() {
-        errors.push("Le titre est obligatoire.".into());
+        errors.push("GATE_DI_TITLE_REQUIRED: Le titre est obligatoire.".into());
     }
     if input.description.trim().is_empty() {
-        errors.push("La description est obligatoire.".into());
+        errors.push("GATE_DI_DESCRIPTION_REQUIRED: La description est obligatoire.".into());
     }
     if input.origin_type.trim().is_empty() {
-        errors.push("Le type d'origine est obligatoire.".into());
+        errors.push("GATE_DI_ORIGIN_REQUIRED: Le type d'origine est obligatoire.".into());
     }
     if input.request_type.trim().is_empty() {
-        errors.push("Le type de demande est obligatoire.".into());
+        errors.push("GATE_DI_REQUEST_TYPE_REQUIRED: Le type de demande est obligatoire.".into());
     }
     if input.symptom_code_id.is_none() {
-        errors.push("Le symptôme est obligatoire.".into());
+        errors.push("GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into());
     }
 
     let asset_exists = state
@@ -214,7 +214,10 @@ pub async fn create_di(
         ))
         .await?;
     if asset_exists.is_none() {
-        errors.push(format!("Équipement introuvable (equipment_id={}).", input.equipment_id));
+        errors.push(format!(
+            "GATE_DI_EQUIPMENT_NOT_FOUND:equipment_id={0}: Équipement introuvable (equipment_id={0}).",
+            input.equipment_id
+        ));
     }
 
     let node_exists = state
@@ -227,7 +230,7 @@ pub async fn create_di(
         .await?;
     if node_exists.is_none() {
         errors.push(format!(
-            "Nœud organisationnel introuvable (org_node_id={}).",
+            "GATE_DI_ORG_NODE_NOT_FOUND:org_node_id={0}: Nœud organisationnel introuvable (org_node_id={0}).",
             input.org_node_id
         ));
     }
@@ -319,7 +322,7 @@ pub async fn update_di_draft(
     // is, so its own anchor is the only one to check (no move, rule §2.7 does not apply).
     require_own_or_review(&state, user.user_id, &current_di).await?;
 
-    queries::update_di_draft_fields(&state.db, input).await
+    queries::update_di_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -464,7 +467,7 @@ pub async fn close_di(
         }
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                "GATE_DI_CLOSE_STATUS_INVALID: La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
                  Statut actuel : '{}'.",
                 other
             )]));

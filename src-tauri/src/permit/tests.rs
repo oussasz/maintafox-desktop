@@ -1104,7 +1104,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
     (wo.id, wo.row_version)
 }
 
-async fn start(db: &DatabaseConnection, wo_id: i64, rv: i64) -> Result<(), AppError> {
+pub(super) async fn start(db: &DatabaseConnection, wo_id: i64, rv: i64) -> Result<(), AppError> {
     let actor = admin_id(db).await;
     execution::start_wo(
         db,
@@ -3459,15 +3459,16 @@ async fn planned_dates_typed_without_a_zone_are_stored_as_instants() {
         subtype_code: None,
         requires_permit: None,
     };
-    let edited = crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, wo.row_version, "2026-10-21T09:15"))
-        .await
-        .expect("edit");
+    let edited =
+        crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, wo.row_version, "2026-10-21T09:15"), None)
+            .await
+            .expect("edit");
     assert_eq!(planned("planned_end", wo.id).await, utc_of_local("2026-10-21T09:15"));
-    match crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "soon")).await {
+    match crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "soon"), None).await {
         Err(AppError::OrgValidationFailed(issues)) => assert_eq!(issues[0].code, "WO_PLANNED_END_UNREADABLE"),
         other => panic!("expected WO_PLANNED_END_UNREADABLE, got {other:?}"),
     }
-    crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "  "))
+    crate::wo::queries::update_wo_draft_fields(&db, draft(wo.id, edited.row_version, "  "), None)
         .await
         .expect("clear");
     assert_eq!(

@@ -22,6 +22,7 @@
     "balance": "On hand {{onHand}}, reserved {{reserved}}, available {{available}}",
     "openedAt": "Found below zero on {{date}} (last exit: {{movement}})",
     "recordCount": "Record a count",
+    "selfApproved": "self-approval (variance approved by its counter)",
     "overReservedTitle": "Reservations above stock (warning)",
     "overReservedLine": "{{article}} at {{location}}: {{reserved}} reserved for {{onHand}} on hand",
     "closure": {
@@ -36,7 +37,7 @@
     "loading": "Loading the stock to reconcile…",
     "dialog": {
       "title": "Record a stock count",
-      "description": "{{article}} at {{location}} stands at {{onHand}} on this PC. Count what is physically there: the stock becomes the counted quantity and the item closes. The count is posted like any count and audited.",
+      "description": "{{article}} at {{location}} stands at {{onHand}} on this PC. Count what is physically there: within the four-eyes tolerance the stock becomes the counted quantity and the item closes; above it, the count waits for a second person's approval and moves nothing until then. The count is recorded like any count and audited.",
       "counted": "Quantity counted",
       "varianceReason": "Variance reason",
       "varianceReasonPlaceholder": "Choose a reason",
@@ -56,9 +57,66 @@
         "count_session": "count session {{session}}"
       }
     },
+    "doublePosting": {
+      "list": "Counts posted twice",
+      "movementLine": "{{who}}, {{date}}: {{quantity}} (the stock ledger does not record the PC)",
+      "flagKind": {
+        "posted_twice": "Count posted twice — to verify",
+        "divergent": "Divergent count — to verify"
+      },
+      "movementLineDevice": "{{who}} on PC {{device}}, {{date}}: {{quantity}}",
+      "explainKind": {
+        "posted_twice": {
+          "COUNT_ADJUST": "Count {{session}} was posted to stock more than once (the same count on two PCs, older version): beyond the count's correction of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted more than once (on two PCs, older version): beyond the reversal of {{variance}}, the stock moved {{excess}} more (now {{onHand}} on hand). Check the stock and record a new count."
+        },
+        "divergent": {
+          "COUNT_ADJUST": "Count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Its count line is a sync conflict on the PC whose version was replaced. Check the stock and record a new count.",
+          "COUNT_REVERSAL": "The reversal of count {{session}} was posted on two PCs with different quantities: the version that reached the server first ({{variance}}) is kept on every PC and the stock follows it; the other differed by {{excess}} (now {{onHand}} on hand). Check the stock and record a new count."
+        }
+      }
+    },
+    "overQuantity": {
+      "list": "Over-issues and over-receipts to reconcile",
+      "flagKind": {
+        "over_issue": "Over-issue — to reconcile",
+        "over_receipt": "Over-receipt — to reconcile"
+      },
+      "explainKind": {
+        "over_issue": "{{document}}: {{expected}} reserved, {{actual}} issued in all (issues made on several PCs, returns deducted), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these issues.",
+        "over_receipt": "Purchase order {{document}}: {{expected}} ordered, {{actual}} received in all (receipts made on several PCs), {{excess}} too many. {{onHand}} on hand now. Check the stock and record a count on a PC that has received all these receipts."
+      },
+      "documentWorkOrder": "Reservation for work order {{code}}",
+      "documentReservation": "Reservation {{ref}}",
+      "documentNone": "Reservation without work order",
+      "receiptRejected": "If these receipts were rejected in full at inspection, no stock moved: the count confirms the stock as it stands.",
+      "closedByReturn": "Regularised by return: {{quantity}} returned by {{who}}, {{date}}",
+      "closedByCount": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}",
+      "closedByCountApproved": "Closed by count {{session}} {{path}}: counted by {{who}}, {{date}}, variance approved by {{approver}}",
+      "closedPath": {
+        "reconciliation": "from the stock-to-reconcile list",
+        "count_session": "from a count session or inventory campaign"
+      },
+      "movementLine": "{{movement}} — {{who}}, {{date}}: {{quantity}}",
+      "movementLineRef": "{{movement}} {{ref}} — {{who}}, {{date}}: {{quantity}}",
+      "syncNotice": "{{count}} over-issue(s) or over-receipt(s) (issues or receipts made on several PCs beyond the quantity reserved or ordered): to reconcile with a count (Inventory › Controls)."
+    },
     "label": "Negative stock",
     "hint": "To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
-    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls)."
+    "hintTotal": "Total over all stores is negative. To be corrected: another PC may have recorded a movement. Record a count in “Stock to reconcile” (Inventory › Controls).",
+    "pending": {
+      "flag": "Count waiting for approval",
+      "list": "Counts waiting for approval",
+      "line": "Counted by {{who}} on {{date}} ({{session}}): system {{system}}, counted {{counted}}, variance {{variance}}.",
+      "rule": "Above the four-eyes tolerance: someone other than the counter approves it; that posts it and closes the item.",
+      "approve": "Approve the count",
+      "notByCounter": "You made this count: another person must approve it.",
+      "dialogTitle": "Approve the count",
+      "dialogDescription": "{{article}} at {{location}}, counted by {{who}}: {{counted}} (variance {{variance}}). Approving posts the count: the stock becomes the counted quantity.",
+      "note": "Approval note",
+      "confirm": "Approve and post",
+      "recorded": "The count is above the four-eyes tolerance: it is saved and waits for a second person's approval. Nothing moved yet."
+    }
   },
   "transfer": {
     "action": "Transfer",
@@ -1061,7 +1119,13 @@
         "REVIEW": "Review",
         "INSUFFICIENT_DATA": "Insufficient data",
         "insufficientData": "Not enough cost history to recommend repair or replace.",
-        "reasons": {}
+        "reasons": {
+          "MISSING_REPAIR_COST": "Repair cost is unknown.",
+          "MISSING_REPLACEMENT_COST": "Replacement cost is unknown.",
+          "RATIO_NEAR_THRESHOLD": "The repair/replacement ratio is close to the threshold: review.",
+          "REPAIR_COST_FROM_HISTORY_AVG": "Repair cost estimated from the average of earlier repairs.",
+          "REPLACEMENT_COST_PROVISIONAL": "Replacement cost is provisional (low-confidence valuation)."
+        }
       },
       "history": {
         "repairCount": "Prior repairs",
@@ -1483,8 +1547,8 @@
       "cancelled": "Cancelled"
     },
     "sessions": {
-      "criticalFromSettings": "A new session's critical variance is the plant's value; each session keeps the one it was opened with:",
-      "criticalThresholdOfSession": "This session's critical variance: {{value}}",
+      "criticalFromSettings": "A variance is critical when it is above the plant's four-eyes tolerance: someone other than the person who counted it approves it (unless the site opted out of four-eyes).",
+      "criticalThresholdOfSession": "Critical variance of this session under the former rule (a quantity): {{value}}",
       "title": "Cycle counts",
       "hint": "Count a warehouse or one location, review the variances, then post them to stock.",
       "warehouse": "Warehouse",
@@ -1509,9 +1573,9 @@
     },
     "lines": {
       "title": "Counted lines",
-      "hint": "Record counted quantities; critical variances need a reviewer's approval before posting.",
-      "pendingCount_one": "{{count}} critical variance waits for approval.",
-      "pendingCount_other": "{{count}} critical variances wait for approval.",
+      "hint": "Record counted quantities; every variance is approved with a note before posting, a critical one (above the four-eyes tolerance) by someone other than its counter.",
+      "pendingCount_one": "{{count}} variance waits for approval.",
+      "pendingCount_other": "{{count}} variances wait for approval.",
       "article": "Article",
       "location": "Location",
       "countedQty": "Counted quantity",
@@ -1529,7 +1593,8 @@
         "countedQty": "Counted qty",
         "variance": "Variance",
         "critical": "Criticality",
-        "review": "Review"
+        "review": "Review",
+        "countedBy": "Counted by"
       },
       "critical": "Critical",
       "normal": "Normal",
@@ -1537,14 +1602,32 @@
       "approvedBy": "Approved by {{name}} on {{date}}",
       "unknownReviewer": "unknown user",
       "noApprovalNeeded": "No approval needed",
-      "pendingApproval": "Waiting for approval"
+      "pendingApproval": "Waiting for approval",
+      "criticalMeaning": "Above the four-eyes tolerance: approved by someone other than the counter.",
+      "counterNotRecorded": "not recorded",
+      "selfApproved": "Self-approval",
+      "selfApprovedMeaning": "Approved by its own counter (no second person): flagged on every PC for a manager to review.",
+      "secondApprove": "Second approval",
+      "secondApproveMeaning": "Someone other than the counter approves this variance: the PCs where four-eyes applies, which hold this count back, then apply it.",
+      "secondApprovedBy": "Second approval by {{name}} on {{date}}",
+      "secondApproveOptional": "Second approval (optional)",
+      "secondApproveOptionalMeaning": "Variance within this PC's four-eyes tolerance, approved by the person who counted it: a second approval is optional. It settles this count on the PCs with a stricter tolerance that hold it back."
     },
     "approval": {
       "title": "Approve the variance",
       "description": "{{article}} at {{location}}: system {{system}}, counted {{counted}}, variance {{variance}}.",
       "evidence": "Reviewer evidence",
       "evidencePlaceholder": "What was checked (recount, document, photo…)",
-      "confirm": "Approve variance"
+      "confirm": "Approve variance",
+      "aboveTolerance": "Above the four-eyes tolerance: counted by {{counter}}, approved by someone else.",
+      "aboveToleranceOptOut": "Above the four-eyes tolerance (counted by {{counter}}): the site lifted four-eyes; the counter may approve it (self-approval).",
+      "withinTolerance": "Within the four-eyes tolerance (counted by {{counter}})."
+    },
+    "secondApproval": {
+      "title": "Second approval of the variance",
+      "description": "Counted and approved by {{counter}} (self-approval): another person approves it in turn.",
+      "descriptionOptional": "Counted and approved by {{counter}}, within this PC's four-eyes tolerance: this second approval is optional; it settles this count on the PCs with a stricter tolerance that hold it back.",
+      "confirm": "Give the second approval"
     },
     "reversal": {
       "reason": "Reversal reason",
@@ -1589,6 +1672,13 @@
         "reason": "Reason",
         "notes": "Notes"
       }
+    },
+    "fourEyes": {
+      "set": "Four-eyes tolerance: a variance is critical when {{thresholds}}.",
+      "or": " or ",
+      "value": "its value is above {{value}}",
+      "percent": "it is above {{value}} % of the system quantity",
+      "notSet": "Four-eyes tolerance: not set — every variance needs a second person."
     }
   },
   "issueDesk": {
@@ -1816,11 +1906,18 @@
     }
   },
   "errors": {
+    "INV_GR_ARTICLE_MISMATCH": "PO line {{po_line}} is for article {{ordered_article}}, not {{received_article}}: receive the article that was ordered.",
+    "INV_ISSUE_WO_ENDED": "Work order {{work_order}} is closed or cancelled: no more parts ({{article}}) can be issued against its reservation.",
     "NEGATIVE_STOCK_REASON_SHORT": "Give the reason of the count (at least {{min}} characters).",
     "NEGATIVE_STOCK_COUNT_INVALID": "The counted quantity must be zero or more.",
     "NEGATIVE_STOCK_VARIANCE_REASON_REQUIRED": "Choose the variance reason of the count.",
     "NEGATIVE_STOCK_NOT_OPEN": "This location's stock is no longer below zero: nothing to reconcile. Refresh the list.",
     "NEGATIVE_STOCK_ENTRY_REASON_SHORT": "This location is below zero: an entry here reconciles it and needs a reason in the comment (at least {{min}} characters).",
-    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session."
+    "COUNT_SESSION_STALE_SNAPSHOT": "A count was posted for this article and location since this session was opened: cancel this session and count again in a new session.",
+    "COUNT_SESSION_STATUS_POSTING_ONLY": "A count is posted or reversed only with “Post variances to stock” or “Reverse posting”: the stock moves with them.",
+    "COUNT_LINE_NOT_APPROVED": "{{lines}} counted line(s) with a variance still need a reviewer's approval before the count is approved.",
+    "COUNT_ALREADY_POSTED": "Count {{session}} has already moved the stock of this article at this location (posted or reversed on another PC): refresh the session; nothing was moved twice.",
+    "NEGATIVE_STOCK_COUNT_NOT_PENDING": "This count is no longer waiting for its approval (approved, replaced by a new count or cancelled): refresh the list.",
+    "NEGATIVE_STOCK_COUNT_STALE": "The stock of this location moved since count {{session}} was made: approving it would no longer give the counted quantity. Count the location again."
   }
 }

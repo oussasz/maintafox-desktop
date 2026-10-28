@@ -325,14 +325,14 @@ pub async fn stage_import_rows(
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
+            "GATE_REF_IMPORT_NOT_LOADABLE: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
             batch.status
         )]));
     }
 
     if rows.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Aucune ligne fournie pour le chargement.".into(),
+            "GATE_REF_IMPORT_NO_ROWS_GIVEN: Aucune ligne fournie pour le chargement.".into(),
         ]));
     }
 
@@ -394,13 +394,13 @@ pub async fn validate_import_batch(
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
+            "GATE_REF_IMPORT_NOT_VALIDATABLE: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
             batch.status
         )]));
     }
     if batch.total_rows == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le lot d'import ne contient aucune ligne.".into(),
+            "GATE_REF_IMPORT_EMPTY: Le lot d'import ne contient aucune ligne.".into(),
         ]));
     }
 
@@ -705,13 +705,13 @@ pub async fn apply_import_batch(
     db: &DatabaseConnection,
     batch_id: i64,
     policy: RefImportApplyPolicy,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<RefImportApplyResult> {
     let batch = get_batch_by_id(db, batch_id).await?;
     crate::reference::audience::assert_domain_id_editable(db, batch.domain_id).await?;
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
+            "GATE_REF_IMPORT_NOT_APPLICABLE: Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
             batch.status
         )]));
     }
@@ -720,12 +720,12 @@ pub async fn apply_import_batch(
     let target_set = sets::get_reference_set(db, policy.target_set_id).await?;
     if target_set.status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Le jeu cible doit etre en statut 'draft'.".into(),
+            "GATE_REF_IMPORT_SET_NOT_DRAFT: Le jeu cible doit etre en statut 'draft'.".into(),
         ]));
     }
     if target_set.domain_id != batch.domain_id {
         return Err(AppError::ValidationFailed(vec![
-            "Le jeu cible doit appartenir au meme domaine que le lot d'import.".into(),
+            "GATE_REF_IMPORT_SET_DOMAIN: Le jeu cible doit appartenir au meme domaine que le lot d'import.".into(),
         ]));
     }
 
@@ -893,6 +893,19 @@ pub async fn apply_import_batch(
                 }
             }
         }
+        if crate::permit::requirement_rules::is_rules_domain(&target_domain.code) {
+            // Same rules as the editor: a permit rule names what it matches and an existing permit
+            // type (`permit::requirement_rules::checked_rule_metadata`).
+            match crate::permit::requirement_rules::checked_rule_metadata(&txn, &code, input.metadata_json.as_deref())
+                .await
+            {
+                Ok(meta) => input.metadata_json = Some(meta),
+                Err(_) => {
+                    errored += 1;
+                    continue;
+                }
+            }
+        }
 
         // Check if this code already exists in the draft set.
         if let Some(existing_id) = existing_in_set.get(&code) {
@@ -970,6 +983,10 @@ pub async fn apply_import_batch(
         [now.into(), batch_id.into()],
     ))
     .await?;
+    // Imported permit rules: the work orders not started yet that the published list matches get
+    // it, in the same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for
+    // another list; the import fills a draft set, applied to work orders once it is published).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, policy.target_set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
 

@@ -16,6 +16,7 @@
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",
+    "severalTypes": "Plusieurs règles de permis : {{types}}",
     "requiredShort": "Requis (règle {{rule}})",
     "clearHint": "Seule une personne habilitée à délivrer les permis peut lever cette exigence, avec un motif, avant le démarrage.",
     "checkboxLocked": "Exigé par la règle {{rule}} : se lève avec « Lever l'exigence » ci-dessous.",
@@ -26,6 +27,11 @@
     "reason": "Motif",
     "reasonHint": "Au moins {{min}} caractères : pourquoi la règle ne s'applique pas à ce travail.",
     "cleared": "Exigence de la règle {{rule}} levée le {{date}} : {{reason}}"
+  },
+  "permitSafety": {
+    "clearBody": "{{code}} pourra démarrer sans permis bien que la demande d'origine signale un risque sécurité. Le motif, la date et votre nom sont conservés sur l'OT et dans son historique.",
+    "reasonHint": "Au moins {{min}} caractères : pourquoi ce travail ne demande pas de permis.",
+    "cleared": "Exigence de la demande sécurité levée le {{date}} : {{reason}}"
   },
   "shutdownRequirement": {
     "sectionTitle": "Arrêt de l'équipement",
@@ -88,6 +94,44 @@
     "repair.swapDowntime": "Swap début/fin de segment (durée négative)",
     "repair.closeAtStart": "Clôturer le segment à l'heure de début",
     "repair.trimOverlap": "Tronquer la fin du premier segment (chevauchement)",
+    "severity": { "error": "Erreur", "warning": "Avertissement" },
+    "code": {
+      "FK_ORPHAN_FAILURE_MODE": "Mode de défaillance introuvable",
+      "WO_DOWNTIME_NEGATIVE_DURATION": "Arrêt de durée négative",
+      "WO_DOWNTIME_UNCLOSED": "Arrêt non clôturé",
+      "WO_DOWNTIME_SUM_EXCEEDS_WINDOW": "Arrêts supérieurs à la durée de l'OT",
+      "WO_DOWNTIME_OVERLAP": "Arrêts qui se chevauchent",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Site du permis différent de celui de l'équipement"
+    },
+    "domain": {
+      "failure_coding": "Codification des défaillances",
+      "downtime": "Temps d'arrêt",
+      "wo_closeout": "Clôture des OT",
+      "permit_site": "Site des permis"
+    },
+    "recordClass": {
+      "wo_failure_details": "Détail de défaillance",
+      "work_order_downtime_segments": "Segment d'arrêt",
+      "work_orders": "Ordre de travail",
+      "work_permits": "Permis de travail"
+    },
+    "detail": {
+      "work_order_id": "OT n°",
+      "failure_mode_id": "Mode de défaillance n°",
+      "segment_id": "Segment n°",
+      "segment_id_a": "Segment A n°",
+      "segment_id_b": "Segment B n°",
+      "segment_sum_hours": "Arrêts cumulés (h)",
+      "window_hours": "Durée de l'OT (h)",
+      "permit_code": "Permis",
+      "status": "Statut du permis",
+      "equipment_code": "Équipement",
+      "linked_work_order_id": "OT lié n°"
+    },
+    "approverPick": "Approbateur (autre que vous)",
+    "approverNoneAvailable": "Aucun approbateur disponible : personnel actif avec un compte, autre que vous.",
+    "approverNone": "Choisir une personne",
+    "unknownCode": "Constat non répertorié",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"
   },
   "list": {
@@ -107,6 +151,8 @@
       "scopeNotClosed": "Pas encore clôturés",
       "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
+      "completed": "Terminés sur la période",
+      "completedValue": "Du {{from}} au {{to}}",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
         "reactive": "Réactifs (correctif)",
@@ -185,6 +231,7 @@
     "completed": "Terminé",
     "closed": "Clôturé",
     "cancelled": "Annulé",
+    "unknown": "Statut inconnu",
     "awaitingApproval": "En attente d'approbation",
     "planned": "Planifié",
     "released": "Lancé",
@@ -454,6 +501,18 @@
     "reservations": "Réservations stock",
     "releaseReservation": "Libérer",
     "taskDone": "Terminée",
+    "taskMandatory": "Obligatoire",
+    "taskFindingNote": "Constat",
+    "taskFindingNotePlaceholder": "Ce qui a été constaté",
+    "taskFollowUp": "OT de suivi",
+    "taskFollowUpPlaceholder": "N° de l'OT de suivi (facultatif)",
+    "taskFollowUpNotFound": "Aucun OT « {{code}} »",
+    "taskNokEvidenceHint": "Tâche obligatoire NOK : saisissez le constat ou l'OT de suivi.",
+    "reopenTask": "Rouvrir la tâche",
+    "reopenTaskComment": "Motif de réouverture",
+    "reopenTaskCommentPlaceholder": "Pourquoi la tâche est rouverte",
+    "reopenTaskConfirm": "Rouvrir",
+    "reopenTaskCancel": "Annuler",
     "downtimeType": "Type",
     "downtimeOpen": "En cours",
     "validationHint": "Lorsque l'exécution est terminée, utilisez Marquer terminé dans le pied de page.",
@@ -512,6 +571,7 @@
     "reasonFallback": "Raison #{{id}}",
     "error": {
       "startWo": "Impossible de démarrer l'ordre de travail.",
+      "reopenTask": "Impossible de rouvrir la tâche.",
       "resumeWo": "Impossible de reprendre l'ordre de travail.",
       "submitDelay": "Impossible de soumettre l'action de délai.",
       "intervenerId": "L'ID intervenant est requis.",
@@ -663,6 +723,7 @@
       "taskAdded": "Tâche ajoutée : {{label}}",
       "taskCompleted": "Tâche terminée : {{label}}",
       "taskCancelled": "Tâche annulée : {{label}}",
+      "taskReopened": "Tâche rouverte : {{label}} (résultat précédent : {{previous_result}})",
       "downtimeOpened": "Arrêt ouvert",
       "downtimeClosed": "Arrêt fermé",
       "toolAdded": "Outil ajouté : {{label}}",
@@ -766,6 +827,9 @@
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
     "actions": {
+      "task_reopened": "Tâche rouverte",
+      "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",
+      "labor_closed_by_closeout": "Main-d'œuvre ouverte clôturée par la clôture",
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
@@ -990,8 +1054,6 @@
     "columnOpen": "Ouvert",
     "columnExecuting": "En exécution",
     "columnCompleted": "Terminé",
-    "columnClosed": "Fermé",
-    "columnCancelled": "Annulé",
     "emptyDraft": "Aucun brouillon",
     "emptyPlanning": "Aucun OT en planification",
     "emptyReady": "Aucun OT prêt à démarrer",
@@ -1003,6 +1065,7 @@
     "unassigned": "Non assigné",
     "loadMore": "Charger plus ({{count}} restants)",
     "statusFromDetailHint": "Cliquez sur une carte pour ouvrir l'OT : les changements de statut se font depuis sa fiche, où chaque étape vérifie ses conditions (permis, pièces, motifs).",
+    "archiveOnlyNotice": "Les OT fermés et annulés n'ont pas de colonne : ils se trouvent dans la section Archive, sous le tableau.",
     "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
   },
   "print": {
@@ -1066,6 +1129,10 @@
     "button": "Imprimer",
     "title": "Fiche d'impression OT"
   },
+  "deisolation": {
+    "badge": "Déconsignation à faire",
+    "title": "Terminé avec un cadenas encore posé sous ses permis : l'équipement reste à l'arrêt et le temps d'arrêt continue jusqu'à la vérification de la dépose du dernier cadenas."
+  },
   "lifecycle": {
     "title": "État du cycle de vie PRD (déduit des faits de l'OT)",
     "draft": "Brouillon",
@@ -1080,5 +1147,30 @@
     "technically_verified": "Vérifié techniquement",
     "closed": "Clôturé",
     "cancelled": "Annulé"
+  },
+  "retiredEquipment": {
+    "title": "Équipement déclassé — à revoir",
+    "intro": "Ces OT et demandes sont ouverts alors que leur équipement est déclassé ou mis au rebut : les deux se sont croisés à la synchronisation. Annulez l'OT ou rejetez la demande avec un motif, ou remettez l'équipement en service.",
+    "kind": {
+      "work_order": "OT",
+      "intervention_request": "DI"
+    },
+    "equipment": "Équipement {{code}} {{name}}",
+    "open": "Ouvrir",
+    "history": "Historique ({{count}})",
+    "historyLink": "Équipement déclassé : historique ({{count}})",
+    "closure": {
+      "wo_closed": "Clos par la clôture de l'OT {{code}}",
+      "wo_cancelled": "Clos par l'annulation de l'OT {{code}}",
+      "di_rejected": "Clos par le rejet de la demande {{code}}",
+      "di_closed": "Clos par la clôture de la demande {{code}}",
+      "di_converted": "Clos par la conversion de la demande {{code}} en OT {{wo}} (l'OT a son propre cas)",
+      "recommissioned": "Clos par la remise en service de l'équipement {{equipment}}",
+      "other": "Clos : {{code}} n'est plus ouvert sur un équipement déclassé"
+    },
+    "closedBy": "{{who}}, le {{when}}",
+    "closedAt": "Le {{when}}",
+    "note": "Motif : {{note}}",
+    "loadFailed": "Impossible de charger les OT et demandes sur équipement déclassé."
   }
 }

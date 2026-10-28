@@ -84,10 +84,28 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   rust-quality:
     name: Rust Quality
-    runs-on: ubuntu-latest
+    # Pinned: `ubuntu-latest` is moving to Ubuntu 26, and this job was losing its runner (exit 143).
+    runs-on: ubuntu-24.04
+    env:
+      # One ~400,000-line crate: linking its test executables with full debug info (several at once) exhausted
+      # the 16 GB runner. Line tables keep file:line in backtraces; incremental compilation is useless in CI.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Safety net against an out-of-memory kill during the test build. On the runner's temporary disk.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -m
+          df -h / /mnt
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -123,7 +141,16 @@ jobs:
       # The schema integration tests and RAMS golden benchmarks are part of it.
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test
+        env:
+          # At most two of the big test-executable links at a time (the library test, the integration tests, the
+          # binary and the cdylib are all links of the same crate).
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          # Memory and disk every 30 s, so a lost runner leaves its last readings in the log.
+          ( while true; do echo "[mon] $(date +%H:%M:%S) mem_used_mb=$(free -m | awk 'NR==2{print $3}') swap_used_mb=$(free -m | awk 'NR==3{print $3}') disk_free=$(df -h / | awk 'NR==2{print $4}')"; sleep 30; done ) &
+          MON=$!
+          trap 'kill "$MON" 2>/dev/null || true' EXIT
+          cargo test
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 3: Frontend tests with coverage

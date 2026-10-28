@@ -20,7 +20,7 @@ use serde_json::{Map, Number, Value};
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::identity::seeded_entity_sync_id;
-use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_PARENT};
+use crate::sync::materialize::{ApplyOutcome, WaitsFor, DEFER_MISSING_PARENT};
 use crate::sync::registry::ConflictPolicy;
 use crate::sync::row_layout::{
     EntityLayout, JsonRef, JsonSeg, LayoutColumn, Role, Target, PAYLOAD_FORMAT, PAYLOAD_FORMAT_KEY,
@@ -453,6 +453,10 @@ async fn translate_url_in(
                 return Ok(Err(ApplyOutcome::Deferred {
                     code: DEFER_MISSING_PARENT.into(),
                     message: format!("{} needs {} {value}, not received yet", column.name, r.entity_type),
+                    waits_for: Some(WaitsFor {
+                        entity_type: r.entity_type.to_string(),
+                        sync_id: value.clone(),
+                    }),
                 }))
             }
         }
@@ -483,6 +487,15 @@ async fn translate_json_out(
             let Some(slot) = doc.pointer_mut(&pointer) else {
                 continue;
             };
+            // A history value that already is a sync id is sent as it is: a PC that received the
+            // row before its own version mapped this path stored the sender's sync id unchanged,
+            // and re-encoding it the same way keeps the sender's audit hash valid there after it
+            // upgrades. Only a UUID passes (sync ids are UUIDs); any other text is still refused.
+            if let Value::String(s) = slot {
+                if r.history && uuid::Uuid::parse_str(s.trim()).is_ok() {
+                    continue;
+                }
+            }
             let local_id = match slot {
                 Value::Null => continue,
                 Value::Number(n) => n.as_i64(),
@@ -557,6 +570,10 @@ async fn translate_json_in(
                     return Ok(Err(ApplyOutcome::Deferred {
                         code: DEFER_MISSING_PARENT.into(),
                         message: format!("{} needs {} {sync_id}, not received yet", column.name, r.entity_type),
+                        waits_for: Some(WaitsFor {
+                            entity_type: r.entity_type.to_string(),
+                            sync_id,
+                        }),
                     }))
                 }
             }
@@ -637,11 +654,36 @@ pub(crate) async fn load_row_payload(
         PAYLOAD_FORMAT_KEY.to_string(),
         Value::String(PAYLOAD_FORMAT.to_string()),
     );
-    let payload: Map<String, Value> = payload.into_iter().collect();
+    let mut payload: Map<String, Value> = payload.into_iter().collect();
     let entity_sync_id = match identity {
         Some(id) => id,
         None => natural_entity_sync_id(layout, &payload)?,
     };
+    // A soft reference received before its target is empty here until the target arrives
+    // (`sync_pending_refs`): the row sent again (a local change) still names the target, so the
+    // other devices never lose the link.
+    for column in &layout.columns {
+        if let Role::Ref { key, soft: true, .. } = &column.role {
+            if payload.get(key).is_none_or(Value::is_null) {
+                let pending = conn
+                    .query_one(Statement::from_sql_and_values(
+                        DatabaseBackend::Sqlite,
+                        "SELECT target_sync_id FROM sync_pending_refs \
+                          WHERE entity_type = ? AND entity_sync_id = ? AND column_name = ?",
+                        [
+                            layout.def.entity_type.into(),
+                            entity_sync_id.as_str().into(),
+                            column.name.as_str().into(),
+                        ],
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<String>("", "target_sync_id").ok());
+                if let Some(target) = pending {
+                    payload.insert(key.clone(), Value::String(target));
+                }
+            }
+        }
+    }
     let owner_user_sync_id = match layout.owner_payload_key()? {
         None => None,
         Some(key) => Some(
@@ -906,6 +948,19 @@ async fn row_exists(conn: &impl ConnectionTrait, layout: &EntityLayout, locator:
         .is_some())
 }
 
+/// Whether a received row of an append-only entity, already held here, is skipped by the apply
+/// (history is never rewritten) rather than adopted (`apply_hooks::adopt_existing_append_only`).
+/// The apply and the hooks that skip judging such a row (`wo::closeout_sync`) share this test.
+pub(crate) async fn append_only_replay_skipped(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> AppResult<bool> {
+    Ok(layout.def.conflict_policy == ConflictPolicy::AppendOnly
+        && !crate::sync::apply_hooks::adopt_existing_append_only(conn, layout, entity_sync_id, payload).await?)
+}
+
 fn is_delete(operation: &str) -> bool {
     operation == "delete" || operation == "archive"
 }
@@ -951,6 +1006,7 @@ pub(crate) async fn apply_row(
         let Some(locator) = locator else {
             return Ok(ApplyOutcome::Unchanged);
         };
+        let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
         let (where_sql, values) = locator.where_sql("");
         let sql = format!("DELETE FROM \"{table}\" WHERE {where_sql}");
         let result = conn
@@ -961,6 +1017,7 @@ pub(crate) async fn apply_row(
         }
         clear_ref_cache();
         crate::sync::apply_hooks::after_delete(conn, layout, entity_sync_id).await?;
+        crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, None, rights_before).await?;
         return Ok(ApplyOutcome::Applied);
     }
 
@@ -972,7 +1029,19 @@ pub(crate) async fn apply_row(
     {
         return Ok(outcome);
     }
+    // `user_accounts`: a password change or a re-enable whose author could not make it here is held
+    // back (its keys leave the payload; the rest of the row applies), after the checks above so a
+    // row they refuse records nothing (`sync::credential_check`).
+    if let Some(outcome) =
+        crate::sync::credential_check::inbound_credential_check(conn, layout, entity_sync_id, &mut payload).await?
+    {
+        return Ok(outcome);
+    }
     let group = crate::sync::apply_hooks::upsert_group(conn, layout, entity_sync_id, &payload).await?;
+    let held = crate::sync::apply_hooks::held_before_write(conn, layout, entity_sync_id, &payload).await?;
+    let rights_before = crate::sync::grant_check::rights_before(conn, layout).await?;
+    // Columns the row passed its checks with but that are kept as held here (`apply_hooks::before_write`).
+    let written_note = crate::sync::apply_hooks::before_write(conn, layout, entity_sync_id, &mut payload).await?;
 
     let mut assignments: Vec<(String, SqlValue)> = Vec::new();
     let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
@@ -1011,6 +1080,10 @@ pub(crate) async fn apply_row(
                         return Ok(ApplyOutcome::Deferred {
                             code: DEFER_MISSING_PARENT.into(),
                             message: format!("{} needs {target_entity} {sync_id}, not received yet", column.name),
+                            waits_for: Some(WaitsFor {
+                                entity_type: target_entity.to_string(),
+                                sync_id,
+                            }),
                         });
                     }
                 }
@@ -1023,7 +1096,7 @@ pub(crate) async fn apply_row(
         _ => None,
     };
     let (local_row, inserted) = if let Some(locator) = existing {
-        if layout.def.conflict_policy == ConflictPolicy::AppendOnly {
+        if append_only_replay_skipped(conn, layout, entity_sync_id, &payload).await? {
             // History rows are never rewritten; a replayed row is a no-op.
             return Ok(ApplyOutcome::Unchanged);
         }
@@ -1106,7 +1179,17 @@ pub(crate) async fn apply_row(
         .await?;
     }
     complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
-    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted).await?;
+    crate::sync::apply_hooks::after_upsert(
+        conn,
+        layout,
+        &local_row,
+        inserted,
+        &payload,
+        held,
+        written_note.as_ref(),
+    )
+    .await?;
+    crate::sync::grant_check::after_rights_change(conn, layout, entity_sync_id, Some(&payload), rights_before).await?;
     if let Some(group) = group {
         if let Some(outcome) = crate::sync::apply_hooks::after_upsert_group(conn, group).await? {
             return Ok(outcome);

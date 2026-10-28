@@ -13,22 +13,23 @@ import {
   DetailSectionCard,
   ENTITY_DETAIL_HEADER_ACTION_BTN,
   EntityDetailHeader,
-  EntitySummaryKpiStrip,
   type EntitySummaryKpi,
+  EntitySummaryKpiStrip,
 } from "@/components/detail";
 import { absenceBlockTitle } from "@/components/personnel/absence-block-display";
 import {
+  type AvailabilityCellState,
+  type AvailabilityPersonRow,
   CELL_STATE_CLASS,
   deriveCellState,
   eachDateInclusive,
-  type AvailabilityCellState,
-  type AvailabilityPersonRow,
 } from "@/components/personnel/availability-model";
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { describeAppError } from "@/lib/app-error";
+import { useFormatters } from "@/hooks/use-formatters";
+import { appErrorReason } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
@@ -81,19 +82,6 @@ function isBlockActiveNow(block: PersonnelAvailabilityBlock): boolean {
   return start < now && now < end;
 }
 
-function formatHorizonInstant(iso: string): string {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(ms));
-  } catch {
-    return iso;
-  }
-}
-
 export function AvailabilityInspectorWorkspace({
   person,
   selectedBlock,
@@ -111,6 +99,8 @@ export function AvailabilityInspectorWorkspace({
   onBlocksChanged,
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
+  const { formatDateTime } = useFormatters();
+  const formatHorizonInstant = (iso: string) => formatDateTime(iso);
   const woOpenRuleText = useWoOpenRuleText();
   // Absence types are named from the plant's list (Données de référence), by exact code.
   const lists = usePersonnelLists();
@@ -205,7 +195,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setAvailabilityState(null);
-          setStateError(describeAppError(err).title);
+          setStateError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -219,7 +209,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setSkills([]);
-          setSkillsError(describeAppError(err).title);
+          setSkillsError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -233,7 +223,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setWorkload(null);
-          setWorkloadError(describeAppError(err).title);
+          setWorkloadError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -250,11 +240,11 @@ export function AvailabilityInspectorWorkspace({
     setEnding(true);
     setEndError(null);
     try {
-      await endAvailabilityBlock(selectedBlock.id);
+      await endAvailabilityBlock(selectedBlock.id, selectedBlock.row_version);
       onSelectBlock(null);
       onBlocksChanged();
     } catch (err) {
-      setEndError(describeAppError(err).title);
+      setEndError(appErrorReason(err));
     } finally {
       setEnding(false);
     }

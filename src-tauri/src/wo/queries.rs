@@ -6,6 +6,7 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -19,7 +20,7 @@ use super::time::now_utc_z;
 use super::types::resolve_work_order_type_id_by_code;
 
 /// Ensures at least one closeout policy row exists and returns its id (for COALESCE on new WOs).
-async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn ensure_default_closeout_validation_policy_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -98,6 +99,13 @@ pub struct WoListFilter {
     /// "open OT" count: also the completed OTs waiting for close-out).
     #[serde(default)]
     pub not_closed_only: Option<bool>,
+    /// Only the work orders completed in `[completed_from, completed_to)` (ISO instants): the
+    /// population of the SMRP work-mix indicators (`analytics::smrp::work_mix_totals`) — mechanical
+    /// completion, else closing, falling in the window; cancelled work excluded.
+    #[serde(default)]
+    pub completed_from: Option<String>,
+    #[serde(default)]
+    pub completed_to: Option<String>,
     pub limit: i64,
     pub offset: i64,
 }
@@ -120,6 +128,9 @@ pub struct WoListPage {
 pub struct WoGetResponse {
     pub wo: WorkOrder,
     pub transitions: Vec<WoTransitionRow>,
+    /// The work order's failure coding (one row per WO), read after the work order: the close-out
+    /// screen loads it with the version above, whatever the status (AU-18).
+    pub failure_detail: Option<crate::wo::closeout::WoFailureDetail>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -153,7 +164,7 @@ const WO_COLS: &str = "\
     wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
     wo.requires_permit, \
     wo.permit_rule_code, wo.permit_rule_permit_type, wo.permit_rule_cleared_by_id, \
-    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, \
+    wo.permit_rule_cleared_at, wo.permit_rule_clear_reason, wo.permit_from_safety_di, \
     wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
     wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
@@ -264,7 +275,7 @@ pub async fn list_work_orders_in_scope(
             for st in states {
                 if crate::wo::lifecycle::LifecycleState::try_from_str(st).is_none() {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Unknown lifecycle state '{st}'."
+                        "GATE_WO_LIFECYCLE_STATE_UNKNOWN: Unknown lifecycle state '{st}'."
                     )]));
                 }
             }
@@ -348,6 +359,26 @@ pub async fn list_work_orders_in_scope(
         binds.push(crate::analytics::as_of::instant(chrono::Utc::now()).into());
     }
 
+    // ── Completed in a window (the work-mix indicators' own predicate) ───────────────────
+    let completed_from = filter
+        .completed_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let completed_to = filter.completed_to.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    if completed_from.is_some() || completed_to.is_some() {
+        where_clauses.push("wos.code <> 'cancelled'".to_string());
+        where_clauses.push("COALESCE(wo.mechanically_completed_at, wo.closed_at) IS NOT NULL".to_string());
+    }
+    if let Some(from) = completed_from {
+        where_clauses.push("datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) >= datetime(?)".to_string());
+        binds.push(from.to_string().into());
+    }
+    if let Some(to) = completed_to {
+        where_clauses.push("datetime(COALESCE(wo.mechanically_completed_at, wo.closed_at)) < datetime(?)".to_string());
+        binds.push(to.to_string().into());
+    }
+
     // ── Free-text search (code + title + equipment name) ─────────────────
     if let Some(ref search) = filter.search {
         let trimmed = search.trim();
@@ -416,8 +447,9 @@ pub async fn list_work_orders_in_scope(
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let data_sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE {where_sql} \
@@ -444,8 +476,9 @@ pub async fn list_work_orders_in_scope(
 
 pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let (join_cols, joins) = (wo_join_cols(), wo_joins());
+    let deisolation = crate::permit::wo_gate::deisolation_pending_sql("wo");
     let sql = format!(
-        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state \
+        "SELECT {WO_COLS}, {join_cols}, {LIFECYCLE} AS lifecycle_state, {deisolation} AS deisolation_pending \
          FROM work_orders wo \
          {joins} \
          WHERE wo.id = ?"
@@ -483,46 +516,52 @@ pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppRe
 // D) create_work_order — full insert + transition log
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput) -> AppResult<WorkOrder> {
-    crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
-    // Planned dates in their stored form (UTC), never a zone-less text (`wo::time`).
-    input.planned_start = super::time::stored_planned_time(
-        input.planned_start.as_deref(),
-        super::time::CODE_PLANNED_START_UNREADABLE,
-    )?;
-    input.planned_end =
-        super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
-    ensure_work_order_statuses_if_needed(db).await?;
-    let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
-
+pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) -> AppResult<WorkOrder> {
     // The WO row, its transition log entry and its sync outbox entry commit together.
     let txn = db.begin().await?;
+    let wo = create_work_order_in(&txn, input).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
 
-    let equipment_id = input.equipment_id.filter(|&e| e > 0);
-    let urgency_code = input
-        .urgency_code
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-        .map(str::to_string);
-    let mut entity_id = input.entity_id.filter(|&e| e > 0);
+/// Refuses a new work order on a retired equipment (Déclassé / Rebuté, AU-73). Shared by every
+/// creation path, including the request → work order conversion (`di::conversion`).
+pub(crate) async fn refuse_retired_equipment(conn: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
+    if let Some(code) = crate::assets::identity::retired_equipment_code(conn, equipment_id).await? {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_WO_EQUIPMENT_RETIRED:asset={code}: L'équipement {code} est déclassé ou mis au rebut : \
+             aucun ordre de travail ne peut y être créé."
+        )]));
+    }
+    Ok(())
+}
 
-    let creator_ok = txn
+/// The refusals of a new work order about who creates it, its equipment (known, not retired) and
+/// its org node (the given one, else the equipment's installation node; known). Returns that node.
+/// [`create_work_order_in`] runs it, and the PM execution runs it before anything is written for a
+/// finding whose follow-up is a work order (#185 N-R2-1).
+pub(crate) async fn refuse_creator_equipment_and_node(
+    conn: &impl ConnectionTrait,
+    creator_id: i64,
+    equipment_id: Option<i64>,
+    mut entity_id: Option<i64>,
+) -> AppResult<i64> {
+    let creator_ok = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM user_accounts WHERE id = ?",
-            [input.creator_id.into()],
+            [creator_id.into()],
         ))
         .await?;
     if creator_ok.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Utilisateur introuvable (creator_id={}).",
-            input.creator_id
+            "GATE_WO_CREATOR_UNKNOWN:creator_id={0}: Utilisateur introuvable (creator_id={0}).",
+            creator_id
         )]));
     }
 
     if let Some(eid) = equipment_id {
-        let ex = txn
+        let ex = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id, installed_at_node_id FROM equipment \
@@ -538,24 +577,28 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             }
         } else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Équipement introuvable ou supprimé (equipment_id={eid})."
+                "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={eid}: Équipement introuvable ou supprimé (equipment_id={eid})."
             )]));
         }
+        // AU-73: no new work order on retired equipment (Déclassé / Rebuté), whatever raises it
+        // (direct creation, PM, inspection, reliability action). A work order received by sync
+        // is applied by the sync materializer, not here.
+        refuse_retired_equipment(conn, eid).await?;
     }
     if equipment_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
+            "GATE_WO_EQUIPMENT_REQUIRED: equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
         ]));
     }
     if entity_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+            "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
              Affectez l'équipement à une entité organisationnelle avant de créer un OT."
                 .into(),
         ]));
     }
     if let Some(nid) = entity_id {
-        let node_ok = txn
+        let node_ok = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
@@ -564,37 +607,79 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if node_ok.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
+                "GATE_WO_ENTITY_UNKNOWN:entity_id={nid}: Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
             )]));
         }
     }
+    entity_id.ok_or_else(|| AppError::Internal(anyhow::anyhow!("work order node checked above")))
+}
+
+/// [`create_work_order`] in the caller's transaction: what the work order is raised from is linked
+/// to it in the same transaction (`inspection::routing`), never left half done.
+///
+/// Every work order, whatever creates it (direct creation, PM, inspection anomaly, reliability
+/// action, a request), gets the plant's permit rules here (`permit::requirement_rules::evaluate`,
+/// owner decision D2 (a), audit finding AU-04): the hazard comes from the equipment and the job. A
+/// matching rule is recorded on the work order (`permit_rule_code`, `permit_rule_permit_type`) and
+/// protects its requirement like a converted request's. A rule only adds a requirement: an explicit
+/// "requires permit" (the form's tick, the PM version, the anomaly's permit review) and the source
+/// request's safety flag still apply.
+pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreateInput) -> AppResult<WorkOrder> {
+    crate::wo::domain::validate_wo_shift(input.shift.as_deref())?;
+    // Planned dates in their stored form (UTC), never a zone-less text (`wo::time`).
+    input.planned_start = super::time::stored_planned_time(
+        input.planned_start.as_deref(),
+        super::time::CODE_PLANNED_START_UNREADABLE,
+    )?;
+    input.planned_end =
+        super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
+    ensure_work_order_statuses_if_needed(txn).await?;
+    let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(txn).await?;
+
+    let equipment_id = input.equipment_id.filter(|&e| e > 0);
+    let urgency_code = input
+        .urgency_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+    // Who creates it, its equipment and its org node (shared with the pre-check of a PM finding's
+    // follow-up, `pm::queries`).
+    let entity_id = Some(
+        refuse_creator_equipment_and_node(txn, input.creator_id, equipment_id, input.entity_id.filter(|&e| e > 0))
+            .await?,
+    );
 
     // Level of the shared DI / OT urgency scale (`WORK.URGENCY`).
     let urgency_id = match urgency_code.as_deref() {
-        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(&txn, code).await?),
+        Some(code) => Some(crate::reference::urgency_scale::urgency_value_id(txn, code).await?),
         None => None,
     };
 
-    let type_id = resolve_work_order_type_id_by_code(&txn, &input.type_code).await?;
+    let type_id = resolve_work_order_type_id_by_code(txn, &input.type_code).await?;
     let subtype_id = match input.subtype_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-        Some(code) => Some(crate::wo::types::resolve_subtype_for_type(&txn, code, type_id).await?),
+        Some(code) => Some(crate::wo::types::resolve_subtype_for_type(txn, code, type_id).await?),
         None => None,
     };
 
-    // If source_di_id is provided, verify the DI exists
+    // If source_di_id is provided, verify the DI exists. A request flagged "sécurité" makes the
+    // permit / LOTO requirement mandatory and protected, whatever the input says (audit finding
+    // AU-01: the same origin as a conversion, `permit_from_safety_di`, migration 255).
+    let mut from_safety_di = false;
     if let Some(di_id) = input.source_di_id {
-        let di_exists = txn
+        let di_row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id FROM intervention_requests WHERE id = ?",
+                "SELECT safety_flag FROM intervention_requests WHERE id = ?",
                 [di_id.into()],
             ))
             .await?;
-        if di_exists.is_none() {
+        let Some(di_row) = di_row else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "DI introuvable (source_di_id={di_id})."
+                "GATE_WO_DI_UNKNOWN:di_id={di_id}: DI introuvable (source_di_id={di_id})."
             )]));
-        }
+        };
+        from_safety_di = di_row.try_get::<i64>("", "safety_flag")? != 0;
         let existing_wo = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -613,7 +698,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
             let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
             return Err(AppError::ValidationFailed(vec![format!(
-                "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
+                "GATE_WO_DI_ALREADY_CONVERTED:wo_id={existing_id},wo_code={existing_code}: Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
             )]));
         }
     }
@@ -628,7 +713,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if a_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Anomalie d'inspection introuvable (source_inspection_anomaly_id={aid})."
+                "GATE_WO_ANOMALY_UNKNOWN:anomaly_id={aid}: Anomalie d'inspection introuvable (source_inspection_anomaly_id={aid})."
             )]));
         }
     }
@@ -643,7 +728,7 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             .await?;
         if d_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Diagramme Ishikawa introuvable (source_ram_ishikawa_diagram_id={did})."
+                "GATE_WO_ISHIKAWA_UNKNOWN:diagram_id={did}: Diagramme Ishikawa introuvable (source_ram_ishikawa_diagram_id={did})."
             )]));
         }
     }
@@ -675,7 +760,14 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         "create_work_order: resolved FK targets before INSERT"
     );
 
-    let code = generate_wo_code(&txn).await?;
+    // The plant's permit rules (equipment class / work type → permit type), for every origin. A rule
+    // only adds to an explicit "requires permit" and to the source request's safety flag.
+    // Rules that do not read, or name codes not held here, are recorded on the work order once it
+    // exists (`record_rule_problems`, below).
+    let permit_flag = crate::permit::requirement_rules::evaluate(txn, equipment_id, type_id, from_safety_di).await?;
+    let requires_permit = permit_flag.requires_permit || input.requires_permit.unwrap_or(false);
+
+    let code = generate_wo_code(txn).await?;
     let now = now_utc_z();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
@@ -688,9 +780,9 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
             entity_id, planner_id, requester_id, urgency_id, subtype_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
-            requires_permit, entity_sync_id, \
-            row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            requires_permit, permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
+            entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -763,12 +855,10 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
                 .expected_duration_hours
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            (if input.requires_permit.unwrap_or(false) {
-                1i64
-            } else {
-                0i64
-            })
-            .into(),
+            i64::from(requires_permit).into(),
+            permit_flag.rule_code.clone().into(),
+            permit_flag.permit_type_code.clone().into(),
+            i64::from(from_safety_di).into(),
             entity_sync_id.into(),
             now.clone().into(),
             now.clone().into(),
@@ -777,9 +867,13 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un code OT en doublon a été généré. Veuillez réessayer.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_WO_CODE_DUPLICATE: Un code OT en doublon a été généré. Veuillez réessayer.".into(),
+            ])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec![format!("Référence invalide (contrainte FK). Détail SQLite: {e}")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_WO_REFERENCE_INVALID: Référence invalide (contrainte FK). Détail SQLite: {e}"
+            )])
         } else {
             AppError::Database(e)
         }
@@ -809,20 +903,20 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
     .map_err(|e| {
         if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![format!(
-                "Profil de clôture invalide (closeout_validation_profile_id). Détail: {e}"
+                "GATE_WO_CLOSEOUT_PROFILE_INVALID: Profil de clôture invalide (closeout_validation_profile_id). Détail: {e}"
             )])
         } else {
             AppError::Database(e)
         }
     })?;
 
-    let wo = get_work_order(&txn, new_id)
+    let wo = get_work_order(txn, new_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
 
     // Write initial transition log entry
     crate::wo::workflow::transition::log_transition(
-        &txn,
+        txn,
         wo.id,
         "none",
         "draft",
@@ -833,8 +927,8 @@ pub async fn create_work_order(db: &DatabaseConnection, mut input: WoCreateInput
         &now,
     )
     .await?;
+    crate::permit::requirement_rules::record_rule_problems(txn, wo.id, Some(input.creator_id), &permit_flag).await?;
 
-    txn.commit().await?;
     Ok(wo)
 }
 
@@ -858,29 +952,30 @@ async fn refuse_equipment_change_with_old_items(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT (SELECT COUNT(*) FROM stock_reservations r WHERE r.source_id = ? AND r.source_type IN ({wo_sources}) AND LOWER(r.status) IN ('active', 'partial')) AS reservations, (SELECT COUNT(*) FROM work_permits p WHERE p.linked_work_order_id = ? AND p.status NOT IN ('closed', 'handed_back', 'cancelled', 'expired')) AS permits, (SELECT COUNT(*) FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id WHERE p.linked_work_order_id = ? AND pi.applied_at IS NOT NULL AND pi.removal_verified_at IS NULL) AS locks"
+                "SELECT COUNT(*) AS reservations FROM stock_reservations r WHERE r.source_id = ? AND r.source_type IN ({wo_sources}) AND LOWER(r.status) IN ('active', 'partial')"
             ),
-            [wo_id.into(), wo_id.into(), wo_id.into()],
+            [wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("site move check returned no row")))?;
     let reservations: i64 = row.try_get("", "reservations")?;
-    let permits: i64 = row.try_get("", "permits")?;
-    let locks: i64 = row.try_get("", "locks")?;
+    // The same reading as the close and the cancellation of a work order (AU-02).
+    let holds = crate::permit::wo_gate::permit_holds(db, wo_id).await?;
+    let (permits, locks) = (holds.open_permits, holds.fitted_locks);
     let mut errors = Vec::new();
     if location_changes && reservations > 0 {
         errors.push(format!(
-            "Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs (le magasin appartient à son site)."
+            "GATE_WO_SITE_MOVE_RESERVATIONS:count={reservations}: Cet OT a {reservations} réservation(s) de stock en cours : libérez-les avant de choisir un équipement installé ailleurs (le magasin appartient à son site)."
         ));
     }
     if permits > 0 {
         errors.push(format!(
-            "Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un autre équipement."
+            "GATE_WO_SITE_MOVE_PERMITS_OPEN:count={permits}: Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un autre équipement."
         ));
     }
     if locks > 0 {
         errors.push(format!(
-            "Cet OT a {locks} consignation(s) posée(s) sous ses permis dont la dépose n'est pas vérifiée : faites vérifier la dépose avant de choisir un autre équipement."
+            "GATE_WO_SITE_MOVE_LOCKS_FITTED:count={locks}: Cet OT a {locks} consignation(s) posée(s) sous ses permis dont la dépose n'est pas vérifiée : faites vérifier la dépose avant de choisir un autre équipement."
         ));
     }
     if errors.is_empty() {
@@ -890,9 +985,12 @@ async fn refuse_equipment_change_with_old_items(
     }
 }
 
+/// `actor_id`: who makes the change (recorded on the permit-requirement consequences: a clearing
+/// withdrawn by a re-tick or voided by a site move).
 pub async fn update_wo_draft_fields(
     db: &DatabaseConnection,
     input: super::domain::WoDraftUpdateInput,
+    actor_id: Option<i64>,
 ) -> AppResult<WorkOrder> {
     super::domain::validate_wo_shift(input.shift.as_deref())?;
     let txn = db.begin().await?;
@@ -908,8 +1006,9 @@ pub async fn update_wo_draft_fields(
     // 2. Guard: only allow draft edits
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
     if status_code != "draft" {
+        let status_key = status_i18n_key(status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Les champs ne peuvent être modifiés qu'au statut 'draft'. \
+            "GATE_WO_DRAFT_ONLY:status={status_key}: Les champs ne peuvent être modifiés qu'au statut 'draft'. \
              Statut actuel : '{status_code}'."
         )]));
     }
@@ -947,6 +1046,9 @@ pub async fn update_wo_draft_fields(
         }
         None => {}
     }
+    // The site the order moves to with its equipment, when it changes (a cleared safety requirement
+    // is void at another site: `permit_requirement::void_clearing_on_site_change`).
+    let mut moved_to_site: Option<i64> = None;
     if let Some(equipment_id) = input.equipment_id {
         sets.push("equipment_id = ?".into());
         values.push(equipment_id.into());
@@ -962,7 +1064,7 @@ pub async fn update_wo_draft_fields(
                 .await?
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![format!(
-                        "Équipement introuvable ou supprimé (equipment_id={equipment_id})."
+                        "GATE_WO_EQUIPMENT_UNKNOWN:equipment_id={equipment_id}: Équipement introuvable ou supprimé (equipment_id={equipment_id})."
                     )])
                 })?
                 .try_get::<Option<i64>>("", "installed_at_node_id")
@@ -970,7 +1072,7 @@ pub async fn update_wo_draft_fields(
                 .filter(|&n| n > 0)
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+                        "GATE_WO_EQUIPMENT_NO_NODE: L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
                          Affectez l'équipement à une entité organisationnelle avant de le choisir."
                             .into(),
                     ])
@@ -978,6 +1080,9 @@ pub async fn update_wo_draft_fields(
             refuse_equipment_change_with_old_items(&txn, input.id, current.entity_id != Some(node)).await?;
             sets.push("entity_id = ?".into());
             values.push(node.into());
+            if current.entity_id != Some(node) {
+                moved_to_site = Some(node);
+            }
         }
     }
     if let Some(location_id) = input.location_id {
@@ -1018,8 +1123,12 @@ pub async fn update_wo_draft_fields(
         values.push(urgency_id.into());
     }
     if let Some(rp) = input.requires_permit {
-        // A flag set by a plant permit rule is cleared only by the clear command.
-        if !rp {
+        // A flag set by a plant permit rule (or a safety request) is cleared only by the clear
+        // command; required again after a clearing, it is protected again.
+        if rp {
+            crate::wo::workflow::actions::permit_requirement::withdraw_clearing_on_retick(&txn, input.id, actor_id)
+                .await?;
+        } else {
             crate::wo::workflow::actions::permit_requirement::assert_not_rule_flagged(&txn, input.id).await?;
         }
         sets.push("requires_permit = ?".into());
@@ -1053,11 +1162,42 @@ pub async fn update_wo_draft_fields(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
     }
+
+    if let Some(new_site) = moved_to_site {
+        crate::wo::workflow::actions::permit_requirement::void_clearing_on_site_change(
+            &txn,
+            input.id,
+            current.entity_id,
+            Some(new_site),
+            actor_id,
+        )
+        .await?;
+    }
+
+    // A plant rule that matches the draft's equipment and work type now is recorded on it (it only
+    // adds: owner decision D2 (a), audit finding AU-04 B1): a draft moved to another equipment or
+    // work type gets the rule's protection like one created with them. An untick sent in the same
+    // save gives way to the rule.
+    crate::permit::requirement_rules::stamp_matching_rule(
+        &txn,
+        input.id,
+        actor_id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
+    // A rule that came from another PC and was not derived here is judged again by the list here
+    // (audit finding AU-04 R5-S1).
+    crate::permit::requirement_rules::recheck_received_rule(
+        &txn,
+        input.id,
+        crate::permit::requirement_rules::stamp_causes::DRAFT_EDIT,
+    )
+    .await?;
 
     // 5. Re-fetch and return updated row
     let wo = get_work_order(&txn, input.id)
@@ -1078,7 +1218,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     // Validate cancel_reason is not empty
     if input.cancel_reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le motif d'annulation est obligatoire.".into(),
+            "GATE_WO_CANCEL_REASON_REQUIRED: Le motif d'annulation est obligatoire.".into(),
         ]));
     }
 
@@ -1098,6 +1238,15 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}")))?;
     guard_wo_transition(&from_status, &WoStatus::Cancelled).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
+    // 2b. Nothing of its permits still holds the plant (AU-02, owner decision D4): refused before
+    // anything is written. The same rule judges a cancellation received by synchronisation
+    // (`wo::closeout_sync`).
+    let holds = crate::permit::wo_gate::permit_holds(&txn, input.id).await?;
+    let refusals = crate::permit::wo_gate::end_of_work_refusals(holds, crate::permit::wo_gate::WorkOrderEnd::Cancel);
+    if !refusals.is_empty() {
+        return Err(AppError::ValidationFailed(refusals));
+    }
+
     // 3. Resolve cancelled status_id
     let cancelled_row = txn
         .query_one(Statement::from_sql_and_values(
@@ -1112,6 +1261,18 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         .map_err(|e| AppError::Internal(anyhow::anyhow!("cancelled status_id decode: {e}")))?;
 
     let now = now_utc_z();
+
+    // Labour still open is closed at the cancel time (no entry stays open on a cancelled OT),
+    // before the OT row changes: captured first, so another PC receives the closed labour before
+    // the cancel (an entry arriving after it would be refused there).
+    crate::wo::labor::close_open_labor_at_end(
+        &txn,
+        input.id,
+        &now,
+        input.actor_id,
+        crate::wo::labor::LaborEnd::Cancelled,
+    )
+    .await?;
 
     // 4. Update
     let result = txn
@@ -1134,7 +1295,7 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -1166,6 +1327,14 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
         })?;
     // Its schedule commitments are closed with it (`planning::lifecycle`).
     crate::planning::lifecycle::close_commitments_of_work_order(&txn, input.id).await?;
+    // D13: the stock still reserved for it is released with the cancellation, each release audited.
+    crate::inventory::reservations::release_for_closed_wo(
+        &txn,
+        input.id,
+        input.actor_id,
+        crate::inventory::reservations::WoEnd::Cancelled,
+    )
+    .await?;
     txn.commit().await?;
     Ok(wo)
 }

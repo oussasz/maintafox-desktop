@@ -57,6 +57,7 @@ async fn create_first_admin(db: &DatabaseConnection, username: &str) {
     record_activation_claim_for_tests(db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(db, TENANT).await;
     bootstrap_initial_tenant_admin_in(db, first_admin(username))
         .await
         .expect("first administrator");
@@ -139,6 +140,16 @@ async fn first_start_creates_the_first_administrator_on_a_fresh_release_pc() {
         .await,
         1
     );
+    // The administrator chose the password: the account is its author (`sync::credential_check`).
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM user_accounts WHERE username = 'chef' AND password_changed_by_id = id AND password_set_by_id = id AND password_set_at IS NOT NULL",
+            vec![]
+        )
+        .await,
+        1
+    );
     assert!(
         builtin_admin_row(&db).await.expect("read").is_none(),
         "no built-in account appears"
@@ -188,6 +199,7 @@ async fn the_first_admin_is_refused_a_password_that_breaks_the_plant_policy() {
     record_activation_claim_for_tests(&db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     exec(
         &db,
         "INSERT INTO rbac_settings (key, value) VALUES ('password_min_length', '16')
@@ -751,7 +763,6 @@ const SIGNED_OUT: LicenceCaller = LicenceCaller {
     may_administer: false,
     step_up: false,
 };
-const ADMINISTERED_REFUSAL: &str = "administered";
 
 /// A licence check result for `tenant` / `licence` on this machine, no terms stated.
 fn reconciliation(tenant: &str, licence: &str) -> String {
@@ -832,28 +843,22 @@ async fn l3_a_signed_out_keep_or_reduce_refresh_is_still_allowed() {
 #[tokio::test]
 async fn l3_a_signed_out_reset_is_refused() {
     let db = licensed_pc_with_unused_builtin_admin().await;
-    let err = authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect_err("pre-administered");
+    let err = authorize_signed_out_reset(&db).await.expect_err("pre-administered");
     assert_eq!(code_of(&err), Some("LICENSE_RESET_BUILTIN_ADMIN_PENDING"), "{err:?}");
 }
 
 #[tokio::test]
 async fn l3_the_first_admin_is_still_allowed_and_replaces_the_builtin_account() {
     let db = licensed_pc_with_unused_builtin_admin().await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, first_admin("chef"))
         .await
         .expect("first start stays open");
     assert!(!builtin(&db).await.is_active, "the built-in account is retired");
     assert!(plant_has_administrator(&db).await.expect("check"));
     // Now an ordinary administered plant: the existing refusal applies.
-    let err = authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect_err("administered");
-    assert!(
-        matches!(&err, AppError::Auth(m) if m == ADMINISTERED_REFUSAL),
-        "{err:?}"
-    );
+    let err = authorize_signed_out_reset(&db).await.expect_err("administered");
+    assert_eq!(code_of(&err), Some("LICENSE_RESET_REQUIRES_ADMIN_SIGNIN"), "{err:?}");
 }
 
 /// The L3 limits need both conditions: without a stored claim (a true first start) or without the
@@ -862,15 +867,13 @@ async fn l3_the_first_admin_is_still_allowed_and_replaces_the_builtin_account() 
 async fn l3_does_not_apply_to_a_true_first_start() {
     // Built-in account, no claim.
     let db = crate::db::test_db::seeded().await;
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
-        .await
-        .expect("no claim: first start");
+    authorize_signed_out_reset(&db).await.expect("no claim: first start");
     // Claim, no built-in account (release install).
     let db = release_fresh_db().await;
     record_activation_claim_for_tests(&db, TENANT, "fp-e1", "token-e1")
         .await
         .expect("claim");
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
+    authorize_signed_out_reset(&db)
         .await
         .expect("no built-in account: first start");
     apply_product_license_reconciliation_in(&db, SIGNED_OUT, &reconciliation("tenant-other", "lic-other"))
@@ -884,7 +887,7 @@ async fn l3_does_not_apply_to_a_true_first_start() {
         vec![],
     )
     .await;
-    authorize_signed_out_reset(&db, ADMINISTERED_REFUSAL)
+    authorize_signed_out_reset(&db)
         .await
         .expect("disabled built-in account");
 }
@@ -1004,7 +1007,20 @@ mod sync_arrival {
             !row.is_active,
             "a later version never re-enables a default-password administrator this PC retired"
         );
-        assert_eq!(retire_audits(&db, row.user_id).await, 2, "each arrival audited");
+        // The later version's re-enable names nobody: held back on arrival
+        // (`sync::credential_check`) and audited there, so the account is never active again here
+        // and needs no second retirement.
+        assert_eq!(retire_audits(&db, row.user_id).await, 1, "the first arrival retired it");
+        assert_eq!(
+            scalar(
+                &db,
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = ?",
+                vec![crate::sync::credential_check::ACCOUNT_REENABLE_UNAUTHORISED.into()],
+            )
+            .await,
+            1,
+            "the second arrival's re-enable audited"
+        );
     }
 
     /// Review SF-1, scenario B: an upgraded PC retired its own built-in account because a named

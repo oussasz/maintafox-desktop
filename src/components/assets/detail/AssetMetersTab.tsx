@@ -17,6 +17,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import {
@@ -324,12 +325,11 @@ function RecordReadingDialog({
           required
           error={future ? t("meters.errors.future") : undefined}
         >
-          <Input
+          <DateTimeField
             id={`${formId}-at`}
-            type="datetime-local"
             value={readingAt}
             max={nowLocalInput()}
-            onChange={(e) => setReadingAt(e.target.value)}
+            onChange={(v) => setReadingAt(v)}
           />
         </FormField>
         <FormField name={`${formId}-source`} label={t("meters.source")} required>

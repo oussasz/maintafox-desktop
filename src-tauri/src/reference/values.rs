@@ -152,7 +152,7 @@ async fn get_value_by_id(db: &impl ConnectionTrait, value_id: i64) -> AppResult<
 fn validate_code(code: &str) -> AppResult<()> {
     if code.is_empty() || code.len() > 64 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur doit comporter entre 1 et 64 caractères.".into(),
+            "GATE_REF_VALUE_CODE_LENGTH: Le code de valeur doit comporter entre 1 et 64 caractères.".into(),
         ]));
     }
     if !code
@@ -160,14 +160,14 @@ fn validate_code(code: &str) -> AppResult<()> {
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '.')
     {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur ne peut contenir que des lettres majuscules ASCII, \
+            "GATE_REF_VALUE_CODE_CHARS: Le code de valeur ne peut contenir que des lettres majuscules ASCII, \
              des chiffres, des underscores et des points."
                 .into(),
         ]));
     }
     if !code.starts_with(|c: char| c.is_ascii_uppercase()) {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de valeur doit commencer par une lettre majuscule.".into(),
+            "GATE_REF_VALUE_CODE_FORMAT: Le code de valeur doit commencer par une lettre majuscule.".into(),
         ]));
     }
     Ok(())
@@ -177,7 +177,7 @@ fn validate_label(label: &str) -> AppResult<()> {
     let trimmed = label.trim();
     if trimmed.is_empty() || trimmed.len() > 255 {
         return Err(AppError::ValidationFailed(vec![
-            "Le libellé doit comporter entre 1 et 255 caractères.".into(),
+            "GATE_REF_LABEL_LENGTH: Le libellé doit comporter entre 1 et 255 caractères.".into(),
         ]));
     }
     Ok(())
@@ -231,7 +231,7 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
     }
     if out.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres.".into(),
+            "GATE_REF_CODE_NOT_GENERATED: Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres.".into(),
         ]));
     }
     if !out.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
@@ -447,7 +447,7 @@ async fn validate_parent(db: &DatabaseConnection, set_id: i64, parent_id: i64) -
 
     match row {
         None => Err(AppError::ValidationFailed(vec![format!(
-            "La valeur parente (id={parent_id}) n'existe pas."
+            "GATE_REF_PARENT_UNKNOWN: La valeur parente (id={parent_id}) n'existe pas."
         )])),
         Some(r) => {
             let parent_set_id: i64 = r.try_get("", "set_id").map_err(|e| decode_err("set_id", e))?;
@@ -456,7 +456,7 @@ async fn validate_parent(db: &DatabaseConnection, set_id: i64, parent_id: i64) -
                 .map_err(|e| decode_err("parent.domain_code", e))?;
             if parent_set_id != set_id && !allows_cross_domain_parent(&child_domain_code, &parent_domain_code) {
                 return Err(AppError::ValidationFailed(vec![
-                    "La valeur parente n'est pas autorisée pour ce domaine.".into(),
+                    "GATE_REF_PARENT_NOT_ALLOWED: La valeur parente n'est pas autorisée pour ce domaine.".into(),
                 ]));
             }
             Ok(())
@@ -472,9 +472,11 @@ async fn detect_cycle(db: &DatabaseConnection, target_value_id: i64, start_paren
 
     while let Some(cid) = current_id {
         if cid == target_value_id {
-            return Err(AppError::ValidationFailed(vec!["Cycle détecté dans la hiérarchie. \
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_REF_CYCLE: Cycle détecté dans la hiérarchie. \
                  Impossible de déplacer une valeur sous l'un de ses descendants."
-                .into()]));
+                    .into(),
+            ]));
         }
         if !visited.insert(cid) {
             // Already visited — corrupt hierarchy, but not our target cycle
@@ -531,7 +533,7 @@ pub async fn get_value(db: &DatabaseConnection, value_id: i64) -> AppResult<Refe
 pub async fn create_value(
     db: &DatabaseConnection,
     payload: CreateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
@@ -581,7 +583,9 @@ pub async fn create_value(
         payload.metadata_json.clone()
     };
 
-    db.execute(Statement::from_sql_and_values(
+    // The value and the permit rules it gives the open work orders commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
               color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
@@ -604,14 +608,16 @@ pub async fn create_value(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![format!("Le code '{code}' existe déjà dans ce jeu de référence.")])
+            AppError::ValidationFailed(vec![format!(
+                "GATE_REF_CODE_EXISTS:code={code}: Le code '{code}' existe déjà dans ce jeu de référence."
+            )])
         } else {
             AppError::Database(e)
         }
     })?;
 
     // Fetch by set_id + code (unique index)
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
@@ -621,6 +627,10 @@ pub async fn create_value(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after insert")))?;
 
     let created = map_value(&row)?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, created.set_id, Some(actor_id)).await?;
+    txn.commit().await?;
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
     Ok(created)
 }
@@ -637,12 +647,12 @@ pub async fn create_value(
 pub async fn create_operational_value(
     db: &DatabaseConnection,
     payload: CreateOperationalReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let domain_code = normalize_code(&payload.domain_code);
     if domain_code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine est obligatoire.".into()
+            "GATE_REF_DOMAIN_CODE_REQUIRED: Le code de domaine est obligatoire.".into(),
         ]));
     }
 
@@ -674,7 +684,7 @@ pub async fn create_operational_value(
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Aucun jeu publié pour le domaine '{domain_code}'. \
+                "GATE_REF_NO_PUBLISHED_SET: Aucun jeu publié pour le domaine '{domain_code}'. \
                  Publiez un jeu dans Données de référence avant d'ajouter des valeurs."
             )])
         })?;
@@ -727,7 +737,7 @@ pub async fn create_operational_value(
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
             AppError::ValidationFailed(vec![format!(
-                "Le code '{code}' existe déjà dans le jeu publié de '{domain_code}'."
+                "GATE_REF_CODE_EXISTS_PUBLISHED:code={code}: Le code '{code}' existe déjà dans le jeu publié de '{domain_code}'."
             )])
         } else {
             AppError::Database(e)
@@ -744,6 +754,9 @@ pub async fn create_operational_value(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after operational insert")))?;
 
     let created = map_value(&row)?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, created.set_id, Some(actor_id)).await?;
     txn.commit().await?;
 
     // Schedule details hang off the committed value; the helper runs on the pool connection.
@@ -757,7 +770,7 @@ pub async fn update_value(
     db: &DatabaseConnection,
     value_id: i64,
     payload: UpdateReferenceValuePayload,
-    _actor_id: i64,
+    actor_id: i64,
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
@@ -865,6 +878,9 @@ pub async fn update_value(
         .await?;
 
     let updated = get_value_by_id(&txn, value_id).await?;
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, updated.set_id, Some(actor_id)).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -884,7 +900,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
-            "Cette valeur est déjà désactivée.".into()
+            "GATE_REF_VALUE_ALREADY_INACTIVE: Cette valeur est déjà désactivée.".into(),
         ]));
     }
     if crate::reference::currencies::is_currency_domain(&domain.code) {
@@ -905,7 +921,7 @@ pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
 /// Reactivates a previously deactivated reference value.
 ///
 /// Same mutation gate as `deactivate_value`.
-pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id: i64) -> AppResult<ReferenceValue> {
+pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, actor_id: i64) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -914,16 +930,24 @@ pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id:
     crate::reference::governance::assert_system_value_mutable(&domain, existing.metadata_json.as_deref())?;
 
     if existing.is_active {
-        return Err(AppError::ValidationFailed(vec!["Cette valeur est déjà active.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REF_VALUE_ALREADY_ACTIVE: Cette valeur est déjà active.".into(),
+        ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    // The value and the permit rules it gives the open work orders commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_values SET is_active = 1 WHERE id = ?",
         [value_id.into()],
     ))
     .await?;
 
+    // A permit rule added or changed: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, existing.set_id, Some(actor_id)).await?;
+    txn.commit().await?;
     get_value_by_id(db, value_id).await
 }
 
@@ -947,7 +971,7 @@ pub async fn move_value_parent(
         // Cannot parent to self
         if pid == value_id {
             return Err(AppError::ValidationFailed(vec![
-                "Une valeur ne peut pas être son propre parent.".into(),
+                "GATE_REF_PARENT_SELF: Une valeur ne peut pas être son propre parent.".into(),
             ]));
         }
         validate_parent(db, existing.set_id, pid).await?;

@@ -543,7 +543,9 @@ pub async fn show_os_toast(
     let user = require_session!(state);
     crate::notifications::os_toast::ensure_owned(&state.db, i64::from(user.user_id), &input.notification_ids).await?;
     if input.title.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["title is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_CMD_NOTIF_TITLE_REQUIRED: title is required.".into(),
+        ]));
     }
     let outcome = app
         .notification()

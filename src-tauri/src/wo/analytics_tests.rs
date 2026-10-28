@@ -123,7 +123,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -133,6 +133,9 @@ mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -150,12 +153,15 @@ mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     async fn create_wo_draft(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
@@ -338,11 +344,19 @@ mod tests {
             .await
             .expect("record actual usage");
 
-        costs::update_service_cost(db, wo_id, 50.0, actor)
-            .await
-            .expect("update_service_cost");
+        costs::update_service_cost(
+            db,
+            wo_id,
+            50.0,
+            crate::wo::closeout::wo_row_version(db, wo_id)
+                .await
+                .expect("wo row_version"),
+            actor,
+        )
+        .await
+        .expect("update_service_cost");
 
-        seed_rams_for_complete(db, wo_id).await;
+        let rv = seed_rams_for_complete(db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             db,

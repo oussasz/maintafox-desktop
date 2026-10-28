@@ -210,12 +210,12 @@ pub async fn create_personnel(input: PersonnelCreateInput, state: State<'_, AppS
     let trimmed = input.full_name.trim().to_string();
     if trimmed.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom complet est obligatoire.".into()
+            "GATE_PERS_FULL_NAME_REQUIRED: Le nom complet est obligatoire.".into(),
         ]));
     }
     if trimmed.chars().count() > 200 {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom complet ne peut pas dépasser 200 caractères.".into(),
+            "GATE_PERS_FULL_NAME_TOO_LONG:max=200: Le nom complet ne peut pas dépasser 200 caractères.".into(),
         ]));
     }
 
@@ -604,7 +604,7 @@ pub async fn create_external_company(
     );
     if name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le nom de l'entreprise est obligatoire.".into(),
+            "GATE_PERS_COMPANY_NAME_REQUIRED: Le nom de l'entreprise est obligatoire.".into(),
         ]));
     }
     queries::create_external_company(&state.db, name, service_domain, contract_start, contract_end, notes).await
@@ -869,7 +869,11 @@ pub async fn update_availability_block(
 }
 
 #[tauri::command]
-pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn delete_availability_block(
+    id: i64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -877,12 +881,13 @@ pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> A
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    availability::delete_availability_block(&state.db, id).await
+    availability::delete_availability_block(&state.db, id, expected_row_version).await
 }
 
 #[tauri::command]
 pub async fn end_availability_block(
     id: i64,
+    expected_row_version: i64,
     state: State<'_, AppState>,
 ) -> AppResult<availability::PersonnelAvailabilityBlock> {
     let user = require_session!(state);
@@ -892,7 +897,7 @@ pub async fn end_availability_block(
         crate::rbac::permissions::PER_MANAGE,
         PermissionScope::Global
     );
-    let block = availability::end_availability_block(&state.db, id).await?;
+    let block = availability::end_availability_block(&state.db, id, expected_row_version).await?;
     readable_block(&state, user.user_id, block).await
 }
 
@@ -973,7 +978,7 @@ pub async fn declare_own_skill(payload: DeclareOwnSkillInput, state: State<'_, A
     let user = require_session!(state);
     let Some(personnel_id) = linked_personnel_id(&state, user.user_id).await? else {
         return Err(AppError::ValidationFailed(vec![
-            "No personnel record linked to current session user.".to_string(),
+            "GATE_CMD_USER_NO_PERSONNEL: No personnel record linked to current session user.".to_string(),
         ]));
     };
     skills::declare_personnel_skill(
@@ -1095,7 +1100,7 @@ pub async fn export_workforce_report_csv(report_kind: String, state: State<'_, A
         "skills_gap" => reports::export_skills_gap_csv(&state.db).await,
         "kpi" => reports::export_kpis_csv(&state.db).await,
         _ => Err(AppError::ValidationFailed(vec![
-            "report_kind must be one of: summary, skills_gap, kpi.".to_string(),
+            "GATE_PERS_REPORT_KIND_INVALID: report_kind must be one of: summary, skills_gap, kpi.".to_string(),
         ])),
     }
 }
@@ -1412,17 +1417,47 @@ pub async fn delete_personnel_schedule_exception(id: i64, state: State<'_, AppSt
     timetable::delete_personnel_schedule_exception(&state.db, id).await
 }
 
+/// Readers of the site work weeks: the schedule-class screens of Données de référence and the
+/// people managers (same readers as `list_schedule_class_versions`). Weekday numbers per site.
+pub(crate) const SITE_WORK_WEEK_READERS: &[&str] =
+    &[crate::rbac::permissions::REF_VIEW, crate::rbac::permissions::PER_VIEW];
+
 /// Weekly rest days of every site and of the sites that set their own.
 #[tauri::command]
 pub async fn list_site_work_weeks(state: State<'_, AppState>) -> AppResult<Vec<calendar::SiteWorkWeek>> {
     let user = require_session!(state);
-    require_permission!(
-        state,
-        &user,
-        crate::rbac::permissions::PER_VIEW,
-        PermissionScope::Global
-    );
+    crate::commands::qualification::require_any_permission(&state, &user, SITE_WORK_WEEK_READERS).await?;
     calendar::list_site_work_weeks(&state.db).await
+}
+
+#[cfg(test)]
+mod site_work_week_readers_tests {
+    use super::SITE_WORK_WEEK_READERS;
+    use crate::auth::scope_tests::{assign, role, user};
+    use crate::commands::qualification::first_held_permission;
+    use crate::rbac::permissions::{OT_VIEW, PER_VIEW, REF_VIEW};
+
+    async fn reads(db: &sea_orm::DatabaseConnection, name: &str, perms: &[&str]) -> bool {
+        let id = user(db, name).await;
+        let r = role(db, &format!("work weeks {name}"), perms).await;
+        assign(db, id, r, "tenant", None).await;
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        first_held_permission(db, &cache, id, SITE_WORK_WEEK_READERS)
+            .await
+            .expect("rbac")
+            .is_some()
+    }
+
+    #[tokio::test]
+    async fn reference_data_readers_read_the_site_work_weeks() {
+        let db = crate::db::test_db::seeded().await;
+        assert!(reads(&db, "ref.reader", &[REF_VIEW]).await, "ref.view alone is enough");
+        assert!(reads(&db, "per.reader", &[PER_VIEW]).await, "per.view as before");
+        assert!(
+            !reads(&db, "ot.reader", &[OT_VIEW]).await,
+            "another module's right is not"
+        );
+    }
 }
 
 #[tauri::command]

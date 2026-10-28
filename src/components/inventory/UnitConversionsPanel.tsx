@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { mfInput } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type ConvertedQuantity,
@@ -117,7 +117,7 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
       setNotes("");
       await load();
     } catch (e) {
-      setError(describeAppError(e).title);
+      setError(appErrorReason(e));
     } finally {
       setBusy(false);
     }
@@ -138,7 +138,7 @@ export function UnitConversionsPanel({ unitOptions, articles }: Props) {
     try {
       setResult(await convertUnitQuantity(q, Number(from), Number(to), articleId));
     } catch (e) {
-      setConvertError(describeAppError(e).title);
+      setConvertError(appErrorReason(e));
     }
   };
 

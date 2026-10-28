@@ -329,7 +329,9 @@ fn optional_trimmed(value: &Option<String>) -> Option<String> {
 fn required_trimmed(field: &str, value: &str) -> AppResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(AppError::ValidationFailed(vec![format!("{field} is required.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_FIN_FIELD_REQUIRED: {field} is required."
+        )]));
     }
     Ok(trimmed.to_string())
 }
@@ -427,7 +429,7 @@ async fn validate_cost_center_parent(
 
     if current_id.is_some_and(|id| id == parent_id) {
         return Err(AppError::ValidationFailed(vec![
-            "A cost center cannot be its own parent.".to_string(),
+            "GATE_FIN_CC_OWN_PARENT: A cost center cannot be its own parent.".to_string(),
         ]));
     }
 
@@ -435,14 +437,14 @@ async fn validate_cost_center_parent(
 
     if child_is_active && parent_is_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "An active cost center cannot be attached to an inactive parent.".to_string(),
+            "GATE_FIN_CC_INACTIVE_PARENT: An active cost center cannot be attached to an inactive parent.".to_string(),
         ]));
     }
 
     while let Some(ancestor_id) = ancestor {
         if current_id.is_some_and(|id| id == ancestor_id) {
             return Err(AppError::ValidationFailed(vec![
-                "Cost center hierarchy cannot contain a cycle.".to_string(),
+                "GATE_FIN_CC_CYCLE: Cost center hierarchy cannot contain a cycle.".to_string(),
             ]));
         }
         let (_, next_parent, _) = get_cost_center_row(db, ancestor_id).await?;
@@ -471,7 +473,7 @@ async fn ensure_version_editable(db: &impl ConnectionTrait, version_id: i64) -> 
     let version = get_budget_version(db, version_id).await?;
     if version.status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft budget versions can be edited directly.".to_string(),
+            "GATE_FIN_VERSION_DRAFT_ONLY: Only draft budget versions can be edited directly.".to_string(),
         ]));
     }
     Ok(version)
@@ -512,7 +514,8 @@ async fn ensure_single_frozen_baseline(
         .await?;
     if row.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Only one frozen control baseline is allowed per fiscal year and scenario.".to_string(),
+            "GATE_FIN_BASELINE_EXISTS: Only one frozen control baseline is allowed per fiscal year and scenario."
+                .to_string(),
         ]));
     }
     Ok(())
@@ -628,7 +631,7 @@ pub async fn update_cost_center(
 
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Cost center was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Cost center was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -679,7 +682,7 @@ pub async fn update_cost_center(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Cost center update failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Cost center update failed (stale row_version).".to_string(),
         ]));
     }
 
@@ -794,7 +797,7 @@ pub async fn create_budget_successor_version(
     let source = get_budget_version(&txn, input.source_version_id).await?;
     if !matches!(source.status.as_str(), "approved" | "frozen" | "closed" | "superseded") {
         return Err(AppError::ValidationFailed(vec![
-            "Successor versions can only be created from approved, frozen, closed, or superseded baselines."
+            "GATE_FIN_SUCCESSOR_SOURCE: Successor versions can only be created from approved, frozen, closed, or superseded baselines."
                 .to_string(),
         ]));
     }
@@ -905,7 +908,7 @@ pub async fn update_budget_version(
     let version = ensure_version_editable(&txn, version_id).await?;
     if version.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget version was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -955,7 +958,7 @@ pub async fn update_budget_version(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Budget version update failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget version update failed (stale row_version).".to_string(),
         ]));
     }
 
@@ -973,13 +976,13 @@ pub async fn transition_budget_version_lifecycle(
     let version = get_budget_version(&txn, input.version_id).await?;
     if version.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget lifecycle transition failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget lifecycle transition failed (stale row_version).".to_string(),
         ]));
     }
     if !valid_version_transition(&version.status, &input.next_status) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid budget lifecycle transition: {} -> {}.",
-            version.status, input.next_status
+            "GATE_FIN_VERSION_TRANSITION:from={},to={}: Invalid budget lifecycle transition: {} -> {}.",
+            version.status, input.next_status, version.status, input.next_status
         )]));
     }
     if input.next_status == "frozen" {
@@ -1029,7 +1032,7 @@ pub async fn transition_budget_version_lifecycle(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Budget lifecycle transition failed.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget version was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
 
@@ -1075,7 +1078,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     .await?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
-            "Period month must be between 1 and 12.".to_string(),
+            "GATE_FIN_MONTH_INVALID: Period month must be between 1 and 12.".to_string(),
         ]));
     }
     let entity_sync_id = Uuid::new_v4().to_string();
@@ -1166,12 +1169,12 @@ pub async fn update_budget_line(
     ensure_version_editable(&txn, budget_version_id).await?;
     if row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget line was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget line was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
-            "Period month must be between 1 and 12.".to_string(),
+            "GATE_FIN_MONTH_INVALID: Period month must be between 1 and 12.".to_string(),
         ]));
     }
     let budget_bucket = input
@@ -1226,7 +1229,7 @@ pub async fn update_budget_line(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Budget line update failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget line update failed (stale row_version).".to_string(),
         ]));
     }
 
@@ -1311,23 +1314,23 @@ pub async fn create_budget_actual(
     let base_currency = required_trimmed("Base currency", &input.base_currency)?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
-            "Period month must be between 1 and 12.".to_string(),
+            "GATE_FIN_MONTH_INVALID: Period month must be between 1 and 12.".to_string(),
         ]));
     }
     if input.amount_base.abs() < f64::EPSILON {
         return Err(AppError::ValidationFailed(vec![
-            "Actual amount_base cannot be zero.".to_string()
+            "GATE_FIN_ACTUAL_ZERO: Actual amount_base cannot be zero.".to_string(),
         ]));
     }
     let posting_status = optional_trimmed(&input.posting_status).unwrap_or_else(|| "provisional".to_string());
     if posting_status != "provisional" && posting_status != "posted" {
         return Err(AppError::ValidationFailed(vec![
-            "posting_status must be provisional or posted.".to_string(),
+            "GATE_FIN_POSTING_STATUS: posting_status must be provisional or posted.".to_string(),
         ]));
     }
     if posting_status == "posted" && !allow_posted {
         return Err(AppError::ValidationFailed(vec![
-            "Posting actuals requires fin.post permission.".to_string(),
+            "GATE_FIN_POST_RIGHT: Posting actuals requires fin.post permission.".to_string(),
         ]));
     }
     if budget_bucket == "labor"
@@ -1336,7 +1339,7 @@ pub async fn create_budget_actual(
         && optional_trimmed(&input.rate_card_lane).is_none()
     {
         return Err(AppError::ValidationFailed(vec![
-            "Labor actuals must preserve at least one split dimension: personnel_id, team_id, or rate_card_lane."
+            "GATE_FIN_LABOR_SPLIT: Labor actuals must preserve at least one split dimension: personnel_id, team_id, or rate_card_lane."
                 .to_string(),
         ]));
     }
@@ -1451,12 +1454,12 @@ pub async fn post_budget_actual(
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget actual was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget actual was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     if posting_status != "provisional" {
         return Err(AppError::ValidationFailed(vec![
-            "Only provisional actuals can be posted.".to_string(),
+            "GATE_FIN_ACTUAL_NOT_PROVISIONAL: Only provisional actuals can be posted.".to_string(),
         ]));
     }
 
@@ -1479,7 +1482,7 @@ pub async fn post_budget_actual(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Budget actual posting failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget actual posting failed (stale row_version).".to_string(),
         ]));
     }
 
@@ -1537,17 +1540,17 @@ pub async fn reverse_budget_actual(
 
     if current_row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget actual reversal failed (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget actual reversal failed (stale row_version).".to_string(),
         ]));
     }
     if current_posting_status != "posted" {
         return Err(AppError::ValidationFailed(vec![
-            "Only posted actuals can be reversed.".to_string()
+            "GATE_FIN_ACTUAL_NOT_POSTED: Only posted actuals can be reversed.".to_string(),
         ]));
     }
     if current_reversal_of_actual_id.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Reversal records cannot be reversed again.".to_string(),
+            "GATE_FIN_REVERSAL_OF_REVERSAL: Reversal records cannot be reversed again.".to_string(),
         ]));
     }
     let already_reversed = db
@@ -1559,7 +1562,7 @@ pub async fn reverse_budget_actual(
         .await?;
     if already_reversed.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Actual already has a reversal record.".to_string(),
+            "GATE_FIN_ACTUAL_ALREADY_REVERSED: Actual already has a reversal record.".to_string(),
         ]));
     }
 
@@ -1702,7 +1705,7 @@ pub async fn create_budget_commitment(
     let _ = get_budget_version(db, input.budget_version_id).await?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
-            "Period month must be between 1 and 12.".to_string(),
+            "GATE_FIN_MONTH_INVALID: Period month must be between 1 and 12.".to_string(),
         ]));
     }
     let budget_bucket = required_trimmed("Budget bucket", &input.budget_bucket)?;
@@ -2128,7 +2131,7 @@ pub async fn create_budget_variance_review(
     let snapshot_context_json = required_trimmed("Snapshot context json", &input.snapshot_context_json)?;
     if input.period_month.is_some_and(|month| !(1..=12).contains(&month)) {
         return Err(AppError::ValidationFailed(vec![
-            "Period month must be between 1 and 12.".to_string(),
+            "GATE_FIN_MONTH_INVALID: Period month must be between 1 and 12.".to_string(),
         ]));
     }
     crate::finance::reference_catalog::ensure_active_code(
@@ -2159,7 +2162,7 @@ pub async fn create_budget_variance_review(
         .await?;
     if duplicate.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Duplicate open variance review exists for the same budget scope.".to_string(),
+            "GATE_FIN_VARIANCE_DUPLICATE: Duplicate open variance review exists for the same budget scope.".to_string(),
         ]));
     }
 
@@ -2244,26 +2247,26 @@ pub async fn transition_budget_variance_review(
 
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Variance review was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Variance review was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
     if !valid_variance_transition(&current_status, &next_status) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Invalid variance review lifecycle transition: {} -> {}.",
-            current_status, next_status
+            "GATE_FIN_VARIANCE_TRANSITION:from={},to={}: Invalid variance review lifecycle transition: {} -> {}.",
+            current_status, next_status, current_status, next_status
         )]));
     }
 
     let commentary = optional_trimmed(&input.review_commentary).unwrap_or(current_commentary);
     if matches!(next_status.as_str(), "accepted" | "closed") && (action_owner_id <= 0 || commentary.trim().is_empty()) {
         return Err(AppError::ValidationFailed(vec![
-            "Accepted/closed variance reviews require accountable owner and disposition commentary.".to_string(),
+            "GATE_FIN_VARIANCE_OWNER_REQUIRED: Accepted/closed variance reviews require accountable owner and disposition commentary.".to_string(),
         ]));
     }
     let reopen_reason = optional_trimmed(&input.reopen_reason);
     if next_status == "open" && current_status != "open" && reopen_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Reopening a variance review requires reopen_reason.".to_string(),
+            "GATE_FIN_VARIANCE_REOPEN_REASON: Reopening a variance review requires reopen_reason.".to_string(),
         ]));
     }
 
@@ -2655,7 +2658,7 @@ pub async fn import_erp_cost_center_master(
     let import_batch_id = required_trimmed("Import batch id", &input.import_batch_id)?;
     if input.records.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one ERP master record is required.".to_string(),
+            "GATE_FIN_ERP_EMPTY: At least one ERP master record is required.".to_string(),
         ]));
     }
 
@@ -2675,7 +2678,7 @@ pub async fn import_erp_cost_center_master(
         let external_name = required_trimmed("ERP external_name", &external_name)?;
         if !seen_codes.insert(external_code.clone()) {
             return Err(AppError::ValidationFailed(vec![
-                "Duplicate ERP external_code provided in import payload.".to_string(),
+                "GATE_FIN_ERP_DUPLICATE_CODE: Duplicate ERP external_code provided in import payload.".to_string(),
             ]));
         }
 
@@ -2988,14 +2991,14 @@ pub async fn record_erp_export_batch(
         }
         _ => {
             return Err(AppError::ValidationFailed(vec![
-                "export_kind must be posted_actuals or approved_reforecasts.".to_string(),
+                "GATE_FIN_EXPORT_KIND: export_kind must be posted_actuals or approved_reforecasts.".to_string(),
             ]));
         }
     };
 
     if lines_arr.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Nothing to export for the selected kind.".to_string(),
+            "GATE_FIN_EXPORT_EMPTY: Nothing to export for the selected kind.".to_string(),
         ]));
     }
 
@@ -3174,7 +3177,8 @@ pub async fn update_integration_exception(
     let rv: i64 = current.try_get("", "row_version")?;
     if rv != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Integration exception was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Integration exception was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     let ext = optional_trimmed(&input.external_value_snapshot);
@@ -3200,7 +3204,7 @@ pub async fn update_integration_exception(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Integration exception update failed.".to_string()
+            "GATE_RECORD_CHANGED_ELSEWHERE: Integration exception update failed.".to_string(),
         ]));
     }
     let row = txn
@@ -3255,20 +3259,20 @@ pub async fn create_budget_alert_config(
     let alert_type = required_trimmed("Alert type", &input.alert_type)?;
     if !valid_alert_type(&alert_type) {
         return Err(AppError::ValidationFailed(vec![
-            "alert_type is not supported by budget controls.".to_string(),
+            "GATE_FIN_ALERT_TYPE_UNSUPPORTED: alert_type is not supported by budget controls.".to_string(),
         ]));
     }
     if let Some(version_id) = input.budget_version_id {
         let version = get_budget_version(&txn, version_id).await?;
         if version.status != "frozen" {
             return Err(AppError::ValidationFailed(vec![
-                "Only frozen control baselines may be bound to production alert configs.".to_string(),
+                "GATE_FIN_ALERT_BASELINE_NOT_FROZEN: Only frozen control baselines may be bound to production alert configs.".to_string(),
             ]));
         }
     }
     if input.dedupe_window_minutes.unwrap_or(240) <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string()
+            "GATE_FIN_DEDUPE_WINDOW_POSITIVE: dedupe_window_minutes must be > 0.".to_string(),
         ]));
     }
 
@@ -3344,7 +3348,8 @@ pub async fn update_budget_alert_config(
     let row_version: i64 = current.try_get("", "row_version")?;
     if row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Budget alert config was modified elsewhere (stale row_version).".to_string(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget alert config was modified elsewhere (stale row_version)."
+                .to_string(),
         ]));
     }
     let dedupe_window_minutes = input
@@ -3352,7 +3357,7 @@ pub async fn update_budget_alert_config(
         .unwrap_or(current.try_get::<i64>("", "dedupe_window_minutes")?);
     if dedupe_window_minutes <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string()
+            "GATE_FIN_DEDUPE_WINDOW_POSITIVE: dedupe_window_minutes must be > 0.".to_string(),
         ]));
     }
     let budget_bucket = if input.budget_bucket.is_some() {
@@ -3469,7 +3474,8 @@ pub async fn evaluate_budget_alerts(
     let version = get_budget_version(db, input.budget_version_id).await?;
     if version.status != "frozen" {
         return Err(AppError::ValidationFailed(vec![
-            "Only frozen control baselines may drive production alerts.".to_string(),
+            "GATE_FIN_ALERT_BASELINE_NOT_FROZEN: Only frozen control baselines may drive production alerts."
+                .to_string(),
         ]));
     }
 
@@ -3959,7 +3965,7 @@ pub async fn build_budget_report_pack(
             // reassignments (planning change log) and break-ins.
             "SELECT (SELECT COUNT(*) FROM schedule_change_log \
                       WHERE action_type IN ('reschedule_commitment', 'emergency_reassign')) \
-                  + (SELECT COUNT(*) FROM schedule_break_ins) AS churn",
+                  + (SELECT COUNT(*) FROM schedule_break_ins WHERE sync_refused_at IS NULL) AS churn",
             [],
         ))
         .await?;
@@ -4078,7 +4084,7 @@ pub async fn export_budget_report_pack(
     let format = required_trimmed("Export format", &input.format)?.to_lowercase();
     if !matches!(format.as_str(), "pdf" | "excel") {
         return Err(AppError::ValidationFailed(vec![
-            "format must be one of: pdf, excel".to_string()
+            "GATE_REPORT_FORMAT_INVALID: format must be one of: pdf, excel".to_string(),
         ]));
     }
     let report = build_budget_report_pack(db, input.filter).await?;

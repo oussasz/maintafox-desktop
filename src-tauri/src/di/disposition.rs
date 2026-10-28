@@ -34,22 +34,23 @@ pub async fn validate_close_disposition(
     let code = disposition_code.trim();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de disposition est obligatoire pour clôturer une DI.".into(),
+            "GATE_DI_DISPOSITION_REQUIRED: Le code de disposition est obligatoire pour clôturer une DI.".into(),
         ]));
     }
     if code == DISPOSITION_CONVERTED_TO_WO {
         return Err(AppError::ValidationFailed(vec![
-            "La disposition 'converted_to_wo' est réservée à la conversion en OT.".into(),
+            "GATE_DI_DISPOSITION_CONVERT_ONLY: La disposition 'converted_to_wo' est réservée à la conversion en OT."
+                .into(),
         ]));
     }
     if code == DISPOSITION_CANCELLED_BY_REQUESTER {
         return Err(AppError::ValidationFailed(vec![
-            "Utilisez cancel_own_di pour l'annulation demandeur.".into(),
+            "GATE_DI_DISPOSITION_USE_CANCEL_OWN: Utilisez cancel_own_di pour l'annulation demandeur.".into(),
         ]));
     }
     if !CLOSE_DISPOSITIONS.contains(&code) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Disposition inconnue ou non autorisée pour close_di: '{code}'."
+            "GATE_DI_DISPOSITION_NOT_ALLOWED: Disposition inconnue ou non autorisée pour close_di: '{code}'."
         )]));
     }
 
@@ -60,7 +61,7 @@ pub async fn validate_close_disposition(
         let n = notes.map(str::trim).unwrap_or("");
         if n.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Des notes sont obligatoires pour la disposition 'other'.".into(),
+                "GATE_DI_DISPOSITION_NOTES_REQUIRED: Des notes sont obligatoires pour la disposition 'other'.".into(),
             ]));
         }
     }
@@ -68,12 +69,12 @@ pub async fn validate_close_disposition(
     if code == DISPOSITION_DUPLICATE {
         let Some(related_id) = related_di_id else {
             return Err(AppError::ValidationFailed(vec![
-                "related_di_id est obligatoire pour la disposition 'duplicate'.".into(),
+                "GATE_DI_RELATED_REQUIRED: related_di_id est obligatoire pour la disposition 'duplicate'.".into(),
             ]));
         };
         if related_id == closing_di_id {
             return Err(AppError::ValidationFailed(vec![
-                "related_di_id ne peut pas pointer vers la DI en cours de clôture.".into(),
+                "GATE_DI_RELATED_SELF: related_di_id ne peut pas pointer vers la DI en cours de clôture.".into(),
             ]));
         }
         let exists = db
@@ -85,7 +86,7 @@ pub async fn validate_close_disposition(
             .await?;
         if exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "DI liée introuvable (related_di_id={related_id})."
+                "GATE_DI_RELATED_NOT_FOUND:id={related_id}: DI liée introuvable (related_di_id={related_id})."
             )]));
         }
     }

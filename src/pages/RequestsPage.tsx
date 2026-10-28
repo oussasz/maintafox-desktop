@@ -59,6 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { WoRetiredEquipmentReviewPanel } from "@/components/wo/WoRetiredEquipmentReviewPanel";
 import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
@@ -76,7 +77,9 @@ import {
 } from "@/lib/list-links";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { triageSubmittedDi } from "@/services/di-service";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useDiReviewStore } from "@/stores/di-review-store";
+import { useDiStatsStore } from "@/stores/di-stats-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiQueue, InterventionRequest } from "@shared/ipc-types";
@@ -130,6 +133,7 @@ export function RequestsPage() {
   const activeDi = useDiStore((s) => s.activeDi);
   const queueCounts = useDiStore((s) => s.queueCounts);
   const loadDis = useDiStore((s) => s.loadDis);
+  const loadDiStats = useDiStatsStore((s) => s.loadStats);
   const loadMoreDis = useDiStore((s) => s.loadMoreDis);
   const loadQueueCounts = useDiStore((s) => s.loadQueueCounts);
   const openDi = useDiStore((s) => s.openDi);
@@ -168,7 +172,6 @@ export function RequestsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   // A requester without a review role lands on their own requests.
   const defaultQueue: DiQueueSelection =
@@ -558,20 +561,20 @@ export function RequestsPage() {
 
   const triageOne = useCallback(
     async (di: InterventionRequest) => {
-      setActionError(null);
       try {
         await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
         void loadDis();
-      } catch (err) {
-        setActionError(describeAppError(err).title);
+      } catch {
+        // The IPC layer already shows the failure as a toast.
       }
     },
     [loadDis],
   );
 
   const printOne = useCallback((di: InterventionRequest) => {
-    setActionError(null);
-    printDiFiche(di).catch((err: unknown) => setActionError(describeAppError(err).title));
+    printDiFiche(di).catch((err: unknown) =>
+      pushAppToast({ title: describeAppError(err).title, variant: "destructive" }),
+    );
   }, []);
 
   // ── Columns ─────────────────────────────────────────────────────────────
@@ -769,17 +772,26 @@ export function RequestsPage() {
             </Button>
           </PermissionGate>
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
-          <FilterToggleButton
-            open={showFilters}
-            onToggle={toggleFilters}
-            activeCount={activeFilterCount}
-          />
+          {recordView ? (
+            <FilterToggleButton
+              open={showFilters}
+              onToggle={toggleFilters}
+              activeCount={activeFilterCount}
+            />
+          ) : null}
           {canManageSla && (
             <Button variant="outline" className="h-11" onClick={() => setSlaOpen(true)}>
               {t("sla.title")}
             </Button>
           )}
-          <RefreshButton onRefresh={() => void loadDis()} loading={loading} />
+          <RefreshButton
+            onRefresh={() => {
+              // The dashboard reads its own figures: reload those, not the hidden list.
+              if (view === "dashboard") void loadDiStats();
+              else void loadDis();
+            }}
+            loading={loading}
+          />
         </>
       }
       filterBar={
@@ -798,19 +810,20 @@ export function RequestsPage() {
               onReset={resetFilters}
             />
           )}
+          {/* Requests open on retired equipment, crossed in sync (AU-73b, AU-112) */}
+          <PermissionGate permission={P.DI_VIEW}>
+            <WoRetiredEquipmentReviewPanel
+              requestsOnly
+              onOpenRequest={(id) => void openDi(id)}
+              reloadSignal={items}
+            />
+          </PermissionGate>
         </>
       }
     >
       {recordView && showListError ? (
         <div className="p-4">
           <ErrorState error={listError} onRetry={() => void loadDis()} retrying={loading} />
-        </div>
-      ) : null}
-      {actionError ? (
-        <div className="px-4 pt-3">
-          <p role="alert" className="text-sm text-tone-danger-fg">
-            {actionError}
-          </p>
         </div>
       ) : null}
       {recordView && canBulkTriage && (selectedCount > 0 || bulkMessage) ? (

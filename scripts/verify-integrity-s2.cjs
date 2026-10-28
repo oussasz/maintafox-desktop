@@ -8,7 +8,7 @@ const Database = require('better-sqlite3');
 
 const dbPath = path.join(
   process.env.APPDATA,
-  'systems.maintafox.desktop',
+  'systems.maintafox.desktop.dev',
   'maintafox.db'
 );
 console.log('Database:', dbPath);

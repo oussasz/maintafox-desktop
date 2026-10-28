@@ -75,7 +75,7 @@ describe("AssigneeCapacityDetails", () => {
     render(<AssigneeCapacityDetails capacity={capacity()} assigned />);
     const days = screen.getByRole("list", { name: "The technician's days over the slot" });
     expect(days.textContent).toContain("08:00–16:00");
-    expect(days.textContent).toContain("2.0 h left");
+    expect(days.textContent).toContain("2,0 h left");
     expect(days.textContent).toContain("rest day");
   });
 
@@ -107,9 +107,13 @@ describe("AssigneeCapacityDetails", () => {
   });
 });
 
+const plainDecimal = (value: number, decimals = 2) => value.toFixed(decimals);
+
 describe("assigneeOptionSuffix", () => {
   it("gives the hours left each day and the shift", () => {
-    expect(assigneeOptionSuffix(capacity(), t)).toBe("2.0 / 0.0 h left · 08:00–16:00");
+    expect(assigneeOptionSuffix(capacity(), t, plainDecimal)).toBe(
+      "2.0 / 0.0 h left · 08:00–16:00",
+    );
   });
 
   it("gives the hours without a shift when none is known", () => {
@@ -126,12 +130,12 @@ describe("assigneeOptionSuffix", () => {
         },
       ],
     });
-    expect(assigneeOptionSuffix(noShift, t)).toBe("8.0 h left");
+    expect(assigneeOptionSuffix(noShift, t, plainDecimal)).toBe("8.0 h left");
   });
 
   it("says why the person does not work during the slot", () => {
     const off = capacity({ issues: ["PLANNING_ASSIGNEE_NOT_WORKING"], slot_working_hours: 0 });
-    expect(assigneeOptionSuffix(off, t)).toBe("not working (rest day)");
+    expect(assigneeOptionSuffix(off, t, plainDecimal)).toBe("not working (rest day)");
     const outside = capacity({
       slot_working_hours: 0,
       days: [
@@ -146,7 +150,9 @@ describe("assigneeOptionSuffix", () => {
         },
       ],
     });
-    expect(assigneeOptionSuffix(outside, t)).toBe("not working (outside their shift)");
+    expect(assigneeOptionSuffix(outside, t, plainDecimal)).toBe(
+      "not working (outside their shift)",
+    );
   });
 });
 

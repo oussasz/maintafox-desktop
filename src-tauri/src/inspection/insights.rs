@@ -237,7 +237,7 @@ pub async fn list_inspection_anomaly_rows(
     if let Some(statuses) = filter.statuses.as_ref().filter(|s| !s.is_empty()) {
         if let Some(bad) = statuses.iter().find(|s| !ANOMALY_STATUSES.contains(&s.as_str())) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown anomaly status '{bad}'."
+                "GATE_INSP_ANOMALY_STATUS_INVALID: Unknown anomaly status '{bad}'."
             )]));
         }
         clauses.push(format!(

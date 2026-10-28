@@ -7,7 +7,9 @@
 //! device" (`renumber_local_record`): the local record gets a new number of this device
 //! (`sync::device_code`), that change is sent like any edit, and the received record is applied
 //! with its own number. Numbers created before device codes existed are the usual source; new
-//! numbers carry the device code and do not clash unless two device codes are equal.
+//! numbers carry the device code and do not clash unless two device codes are equal. PM plan codes
+//! are typed by people, so two PCs can give two plans the same code: such a clash is handled the
+//! same way, the plan on this device getting a `PM-<device>-<sequence>` code when renumbered.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -50,6 +52,9 @@ fn request_prefix() -> String {
 fn personnel_prefix() -> String {
     "PER".to_string()
 }
+fn pm_plan_prefix() -> String {
+    "PM".to_string()
+}
 fn permit_prefix() -> String {
     format!("PTW-{}", chrono::Utc::now().format("%Y"))
 }
@@ -83,7 +88,16 @@ pub const WORK_PERMITS: NumberedTable = NumberedTable {
     width: 6,
 };
 
-pub const NUMBERED_TABLES: &[NumberedTable] = &[WORK_ORDERS, INTERVENTION_REQUESTS, PERSONNEL, WORK_PERMITS];
+/// PM plan codes are typed by people (unique on each PC); renumbering gives a device code.
+pub const PM_PLANS: NumberedTable = NumberedTable {
+    entity_type: "pm_plans",
+    table: "pm_plans",
+    column: "code",
+    prefix: pm_plan_prefix,
+    width: 4,
+};
+
+pub const NUMBERED_TABLES: &[NumberedTable] = &[WORK_ORDERS, INTERVENTION_REQUESTS, PERSONNEL, WORK_PERMITS, PM_PLANS];
 
 pub fn numbered_table(entity_type: &str) -> Option<&'static NumberedTable> {
     NUMBERED_TABLES.iter().find(|t| t.entity_type == entity_type)
@@ -171,16 +185,44 @@ pub(crate) async fn close_outdated_clashes(
     if numbered_table(entity_type).is_none() {
         return Ok(());
     }
-    // Usually there is none: look them up first (a small table) so a received numbered row costs
-    // one indexed read, never a scan of the inbox.
+    close_conflicts_superseded_by(
+        conn,
+        CODE_CLASH,
+        entity_type,
+        entity_sync_id,
+        applied_row_version,
+        "The record was renumbered on its device; its newer version was applied.",
+    )
+    .await
+}
+
+/// Closes the open `conflict_type` conflicts of a record older than the version just applied here
+/// (`resolved_remote`, `newer_version_applied`, with `note`) and supersedes their inbox rows. Used
+/// for the clashes a newer version removes: a number (`CODE_CLASH`), a username
+/// (`sync::username_clash`). No data is changed.
+pub(crate) async fn close_conflicts_superseded_by(
+    conn: &impl ConnectionTrait,
+    conflict_type: &str,
+    entity_type: &str,
+    entity_sync_id: &str,
+    applied_row_version: i64,
+    note: &str,
+) -> AppResult<()> {
+    // Usually there is none: look them up first (a small table) so a received row costs one
+    // indexed read, never a scan of the inbox.
     let rows = conn
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "SELECT id, linked_inbox_id FROM sync_conflicts
-             WHERE conflict_type = 'CODE_CLASH' AND entity_type = ? AND entity_sync_id = ?
+             WHERE conflict_type = ? AND entity_type = ? AND entity_sync_id = ?
                AND inbound_row_version < ?
                AND status NOT IN ('resolved_local', 'resolved_remote', 'merged', 'dismissed')",
-            [entity_type.into(), entity_sync_id.into(), applied_row_version.into()],
+            [
+                conflict_type.into(),
+                entity_type.into(),
+                entity_sync_id.into(),
+                applied_row_version.into(),
+            ],
         ))
         .await?;
     for row in rows {
@@ -203,11 +245,11 @@ pub(crate) async fn close_outdated_clashes(
             DatabaseBackend::Sqlite,
             "UPDATE sync_conflicts
              SET status = 'resolved_remote', resolution_action = 'newer_version_applied',
-                 resolution_note = 'The record was renumbered on its device; its newer version was applied.',
+                 resolution_note = ?,
                  resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ?",
-            [conflict_id.into()],
+            [note.into(), conflict_id.into()],
         ))
         .await?;
     }
@@ -243,12 +285,12 @@ pub(crate) async fn renumber_local_record(
 ) -> AppResult<Option<Renumbered>> {
     if conflict.conflict_type != CODE_CLASH {
         return Err(AppError::ValidationFailed(vec![
-            "Renumbering is only available for a number clash.".to_string(),
+            "GATE_SYNC_RENUMBER_NOT_CLASH: Renumbering is only available for a number clash.".to_string(),
         ]));
     }
     let table = numbered_table(&conflict.entity_type).ok_or_else(|| {
         AppError::ValidationFailed(vec![format!(
-            "'{}' records have no generated number.",
+            "GATE_SYNC_ENTITY_NO_NUMBER:entity={0}: '{0}' records have no generated number.",
             conflict.entity_type
         )])
     })?;
@@ -256,7 +298,11 @@ pub(crate) async fn renumber_local_record(
         .inbound_payload_json
         .as_deref()
         .and_then(|p| inbound_number(table, p))
-        .ok_or_else(|| AppError::ValidationFailed(vec!["The received record carries no number.".to_string()]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_SYNC_RECEIVED_NO_NUMBER: The received record carries no number.".to_string(),
+            ])
+        })?;
     // The received record may already be here in a newer version (renumbered on its own device
     // meanwhile): applying this older copy would bring the clashing number back.
     if let (Some((applied, _)), Some(inbound)) = (
@@ -322,6 +368,74 @@ mod tests {
             vec![esid.into()],
         )
         .await
+    }
+
+    async fn add_pm_plan(db: &sea_orm::DatabaseConnection, esid: &str, code: &str) {
+        exec(
+            db,
+            "INSERT INTO pm_plans (entity_sync_id, code, title, asset_scope_type, strategy_type, row_version)
+             VALUES (?, ?, 'Clash test plan', 'equipment', 'fixed', 1)",
+            vec![esid.into(), code.into()],
+        )
+        .await;
+    }
+
+    async fn plan_code_of(db: &sea_orm::DatabaseConnection, esid: &str) -> Option<String> {
+        scalar_opt_text(
+            db,
+            "SELECT code FROM pm_plans WHERE entity_sync_id = ?",
+            vec![esid.into()],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_pm_plan_code_typed_on_two_pcs_is_a_number_clash() {
+        let mut server = TestServer::new();
+        let a = started_device_db().await;
+        let b = started_device_db().await;
+        add_pm_plan(&a, "plan-from-a", "PM-POMPE-01").await;
+        add_pm_plan(&b, "plan-from-b", "PM-POMPE-01").await;
+        server.exchange("A", &a).await;
+        let report = server.exchange("B", &b).await;
+        assert_eq!(report.materialized.conflicts, 1, "{report:?}");
+        let conflicts = list_sync_conflicts(
+            &b,
+            SyncConflictFilter {
+                statuses: None,
+                conflict_type: Some(CODE_CLASH.to_string()),
+                requires_operator_review: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("conflicts");
+        assert_eq!(conflicts.len(), 1, "a coded clash, not a MATERIALIZE_ERROR");
+        let clash = &conflicts[0];
+        assert_eq!(clash.entity_type, "pm_plans");
+        assert_eq!(clash.recommended_action, "renumber_local");
+
+        let person = scalar_i64(&b, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await;
+        resolve_sync_conflict(
+            &b,
+            person,
+            ResolveSyncConflictInput {
+                conflict_id: clash.id,
+                expected_row_version: clash.row_version,
+                action: "renumber_local".to_string(),
+                resolution_note: Some("Two different plans; renumber ours".to_string()),
+            },
+        )
+        .await
+        .expect("renumber");
+        let dev_b = crate::sync::device_code::this_device_code(&b).await.expect("code");
+        assert_eq!(plan_code_of(&b, "plan-from-b").await, Some(format!("PM-{dev_b}-0001")));
+        assert_eq!(plan_code_of(&b, "plan-from-a").await.as_deref(), Some("PM-POMPE-01"));
+
+        server.exchange("B", &b).await;
+        let report = server.exchange("A", &a).await;
+        assert_eq!(report.materialized.conflicts, 0, "{report:?}");
+        assert_eq!(plan_code_of(&a, "plan-from-b").await, Some(format!("PM-{dev_b}-0001")));
     }
 
     #[tokio::test]

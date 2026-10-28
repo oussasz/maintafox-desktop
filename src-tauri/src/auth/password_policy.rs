@@ -188,31 +188,31 @@ pub async fn check_password_expiry(
 /// Validate password strength against policy rules.
 ///
 /// Returns `Ok(())` if the password meets all requirements, or `Err(violations)`
-/// with a list of human-readable messages describing each violated rule.
+/// with one coded refusal per violated rule (`GATE_PASSWORD_*`, translated by the screen).
 pub fn validate_password_strength(password: &str, policy: &PasswordPolicy) -> Result<(), Vec<String>> {
     let mut violations = Vec::new();
 
     if password.len() < policy.min_length {
         violations.push(format!(
-            "Le mot de passe doit contenir au moins {} caractères.",
-            policy.min_length
+            "GATE_PASSWORD_MIN_LENGTH:min={}: Le mot de passe doit contenir au moins {} caractères.",
+            policy.min_length, policy.min_length
         ));
     }
 
     if policy.require_uppercase && !password.chars().any(|c| c.is_uppercase()) {
-        violations.push("Le mot de passe doit contenir au moins une lettre majuscule.".into());
+        violations.push("GATE_PASSWORD_UPPERCASE: Le mot de passe doit contenir au moins une lettre majuscule.".into());
     }
 
     if policy.require_lowercase && !password.chars().any(|c| c.is_lowercase()) {
-        violations.push("Le mot de passe doit contenir au moins une lettre minuscule.".into());
+        violations.push("GATE_PASSWORD_LOWERCASE: Le mot de passe doit contenir au moins une lettre minuscule.".into());
     }
 
     if policy.require_digit && !password.chars().any(|c| c.is_ascii_digit()) {
-        violations.push("Le mot de passe doit contenir au moins un chiffre.".into());
+        violations.push("GATE_PASSWORD_DIGIT: Le mot de passe doit contenir au moins un chiffre.".into());
     }
 
     if policy.require_special && !password.chars().any(|c| !c.is_alphanumeric()) {
-        violations.push("Le mot de passe doit contenir au moins un caractère spécial.".into());
+        violations.push("GATE_PASSWORD_SPECIAL: Le mot de passe doit contenir au moins un caractère spécial.".into());
     }
 
     if violations.is_empty() {
@@ -272,4 +272,39 @@ async fn flag_setting(db: &DatabaseConnection, key: &str, unreadable: &mut Vec<S
         unreadable.push(key.to_string());
     }
     value
+}
+
+#[cfg(test)]
+mod strength_tests {
+    use super::{validate_password_strength, PasswordPolicy};
+
+    /// Each broken plant-policy rule is its own coded refusal; the minimum length is a parameter.
+    #[test]
+    fn each_broken_policy_rule_is_a_coded_refusal() {
+        let policy = PasswordPolicy {
+            max_age_days: 90,
+            warn_days_before_expiry: 7,
+            min_length: 12,
+            require_uppercase: true,
+            require_lowercase: true,
+            require_digit: true,
+            require_special: true,
+        };
+        let violations = validate_password_strength("abc", &policy).expect_err("weak password");
+        let codes: Vec<&str> = violations
+            .iter()
+            .map(|m| m.split(':').next().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                "GATE_PASSWORD_MIN_LENGTH",
+                "GATE_PASSWORD_UPPERCASE",
+                "GATE_PASSWORD_DIGIT",
+                "GATE_PASSWORD_SPECIAL"
+            ]
+        );
+        assert!(violations[0].starts_with("GATE_PASSWORD_MIN_LENGTH:min=12: "));
+        assert!(validate_password_strength("Abcdefgh123!", &policy).is_ok());
+    }
 }

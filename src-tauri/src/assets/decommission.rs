@@ -26,7 +26,7 @@ fn normalize_target_status(raw: &str) -> AppResult<String> {
     let code = identity::normalize_status_code_for_reference(raw)?;
     if !TERMINAL_STATUSES.contains(&code.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Statut cible '{raw}' invalide. Valeurs autorisées: DECOMMISSIONED, SCRAPPED."
+            "GATE_ASSET_DECOMMISSION_TARGET_INVALID: Statut cible '{raw}' invalide. Valeurs autorisées: DECOMMISSIONED, SCRAPPED."
         )]));
     }
     Ok(code)
@@ -48,7 +48,7 @@ pub async fn decommission_asset(
     let reason = payload.reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le motif de déclassement est obligatoire.".into(),
+            "GATE_ASSET_DECOMMISSION_REASON_REQUIRED: Le motif de déclassement est obligatoire.".into(),
         ]));
     }
 
@@ -72,7 +72,7 @@ pub async fn decommission_asset(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.lifecycle_status: {e}")))?;
     if TERMINAL_STATUSES.contains(&status.as_str()) || identity::is_retired_status_code(&txn, &status).await? {
         return Err(AppError::ValidationFailed(vec![format!(
-            "L'équipement est déjà en statut terminal '{status}'."
+            "GATE_ASSET_ALREADY_TERMINAL:status={status}: L'équipement est déjà en statut terminal '{status}'."
         )]));
     }
 
@@ -105,12 +105,12 @@ pub async fn decommission_asset(
         let mut msgs = Vec::new();
         if open_di > 0 {
             msgs.push(format!(
-                "Impossible de déclasser: {open_di} demande(s) d'intervention ouverte(s)."
+                "GATE_ASSET_DECOMMISSION_OPEN_DI:count={open_di}: Impossible de déclasser: {open_di} demande(s) d'intervention ouverte(s)."
             ));
         }
         if open_wo > 0 {
             msgs.push(format!(
-                "Impossible de déclasser: {open_wo} ordre(s) de travail ouvert(s)."
+                "GATE_ASSET_DECOMMISSION_OPEN_WO:count={open_wo}: Impossible de déclasser: {open_wo} ordre(s) de travail ouvert(s)."
             ));
         }
         return Err(AppError::ValidationFailed(msgs));

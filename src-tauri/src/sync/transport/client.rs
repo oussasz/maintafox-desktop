@@ -23,6 +23,10 @@ pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 /// yet (or it was removed from object storage).
 pub const OBJECT_NOT_FOUND: &str = "object_not_found";
 
+/// Longest answer `post_json_raw` reads (a licence answer is a few KiB): a larger one is cut off
+/// instead of being held in memory.
+pub const RAW_ANSWER_MAX_BYTES: usize = 256 * 1024;
+
 /// Why a request did not produce a usable answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransportError {
@@ -194,6 +198,45 @@ impl ControlPlaneClient {
         }
         serde_json::from_str(&text)
             .map_err(|e| TransportError::Contract(format!("{path} answer does not follow the sync contract: {e}")))
+    }
+
+    /// `POST {path}`, with the bearer token when one is given, answering the status and body as
+    /// received, for a caller that reads the server's answer, error bodies included, by its own
+    /// contract (the licence activation calls of `commands::product_license`: policy refresh,
+    /// preview and claim without a token, tenant initialisation). A request that produced no
+    /// answer is an error (`Offline`, `Interrupted`); so is an answer longer than
+    /// [`RAW_ANSWER_MAX_BYTES`], cut off there and never read whole (`Contract`).
+    pub async fn post_json_raw(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: String,
+    ) -> Result<(u16, String), TransportError> {
+        let mut request = self.http.post(format!("{}{path}", self.base_url));
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let mut response = request
+            .header(CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| map_send_error(&e))?;
+        let status = response.status().as_u16();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| TransportError::Interrupted(format!("Control API answer interrupted: {e}")))?
+        {
+            if bytes.len() + chunk.len() > RAW_ANSWER_MAX_BYTES {
+                return Err(TransportError::Contract(format!(
+                    "{path} answer (HTTP {status}) is larger than {RAW_ANSWER_MAX_BYTES} bytes"
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
     }
 
     /// `POST /api/v1/sync/exchange` with an already serialized v2 body (the exact bytes stored

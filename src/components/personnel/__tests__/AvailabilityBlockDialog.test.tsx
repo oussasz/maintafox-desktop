@@ -122,4 +122,40 @@ describe("AvailabilityBlockDialog", () => {
 
     expect(screen.getByLabelText("availability.form.reason")).toHaveValue("Congé annuel");
   });
+
+  it("an edit sends back the version it read, so a block changed since is refused", async () => {
+    withAbsenceTypes([opt("leave", "Congé", { tag: "leave" })]);
+    svc.updateAvailabilityBlock.mockResolvedValue(undefined);
+    render(
+      <AvailabilityBlockDialog
+        open
+        onOpenChange={vi.fn()}
+        mode="edit"
+        personOptions={[{ id: 1, label: "Amine" }]}
+        editingBlock={{
+          id: 9,
+          personnel_id: 1,
+          block_type: "leave",
+          start_at: "2026-10-19T08:00:00Z",
+          end_at: "2026-10-19T16:00:00Z",
+          reason_note: null,
+          is_critical: false,
+          created_by_id: null,
+          created_by_label: null,
+          created_at: "2026-10-01T00:00:00Z",
+          row_version: 4,
+          reason_masked: false,
+          type_masked: false,
+          critical_for_planning: false,
+        }}
+        onSaved={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "availability.form.save" }));
+    await waitFor(() =>
+      expect(svc.updateAvailabilityBlock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 9, expected_row_version: 4 }),
+      ),
+    );
+  });
 });

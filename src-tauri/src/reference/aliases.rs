@@ -101,7 +101,7 @@ fn validate_alias_label(label: &str) -> AppResult<()> {
     let trimmed = label.trim();
     if trimmed.is_empty() || trimmed.len() > 255 {
         return Err(AppError::ValidationFailed(vec![
-            "Le libellé d'alias doit comporter entre 1 et 255 caractères.".into(),
+            "GATE_REF_ALIAS_LABEL_LENGTH: Le libellé d'alias doit comporter entre 1 et 255 caractères.".into(),
         ]));
     }
     Ok(())
@@ -111,7 +111,7 @@ fn validate_locale(locale: &str) -> AppResult<()> {
     let trimmed = locale.trim();
     if trimmed.is_empty() || trimmed.len() > 10 {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de locale doit comporter entre 1 et 10 caractères.".into(),
+            "GATE_REF_ALIAS_LOCALE_LENGTH: Le code de locale doit comporter entre 1 et 10 caractères.".into(),
         ]));
     }
     Ok(())
@@ -120,7 +120,7 @@ fn validate_locale(locale: &str) -> AppResult<()> {
 fn validate_alias_type(alias_type: &str) -> AppResult<()> {
     if !ALIAS_TYPES.contains(&alias_type) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type d'alias '{alias_type}' invalide. Valeurs autorisées : {}.",
+            "GATE_REF_ALIAS_TYPE_INVALID: Type d'alias '{alias_type}' invalide. Valeurs autorisées : {}.",
             ALIAS_TYPES.join(", ")
         )]));
     }
@@ -288,7 +288,7 @@ pub async fn create_alias(
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
             AppError::ValidationFailed(vec![format!(
-                "Un alias '{label}' existe déjà pour cette valeur, locale '{locale}', \
+                "GATE_REF_ALIAS_EXISTS: Un alias '{label}' existe déjà pour cette valeur, locale '{locale}', \
                  et type '{alias_type}'."
             )])
         } else {
@@ -381,9 +381,11 @@ pub async fn update_alias(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Un alias avec ce libellé existe déjà pour cette combinaison \
+            AppError::ValidationFailed(vec![
+                "GATE_REF_ALIAS_EXISTS: Un alias avec ce libellé existe déjà pour cette combinaison \
                  valeur/locale/type."
-                .into()])
+                    .into(),
+            ])
         } else {
             AppError::Database(e)
         }

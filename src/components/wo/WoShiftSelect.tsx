@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useFormatters } from "@/hooks/use-formatters";
 import { type WoShiftOptionsResult, listWoShiftOptions } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -51,6 +52,7 @@ export function WoShiftSelect({
   disabled,
 }: WoShiftSelectProps) {
   const { t } = useTranslation("ot");
+  const { formatNumber } = useFormatters();
   const [result, setResult] = useState<WoShiftOptionsResult | null>(null);
   const [failed, setFailed] = useState(false);
   // A team being assigned: its shifts are offered, saved with the assignment.
@@ -114,7 +116,7 @@ export function WoShiftSelect({
               {t("planning.shiftOption", {
                 label: o.class_label,
                 window: formatWindow(o.shift_start, o.shift_end),
-                hours: o.net_hours.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+                hours: formatNumber(o.net_hours),
                 members: o.members,
               })}
               {o.starts_previous_day ? ` · ${t("planning.shiftPreviousNight")}` : ""}

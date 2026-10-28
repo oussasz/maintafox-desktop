@@ -100,6 +100,7 @@ const planning = vi.hoisted(() => ({
   requestWeeklyUnfreeze: vi.fn(),
   decideWeeklyUnfreeze: vi.fn(),
   getPlanningKpis: vi.fn(),
+  listBreakInApprovers: vi.fn(),
 }));
 vi.mock("@/services/planning-service", () => planning);
 
@@ -279,37 +280,94 @@ describe("weekly schedule helpers", () => {
 });
 
 describe("FrozenWeekBreakInDialog", () => {
-  it("asks an urgent reason for an approver or a dangerous-override reason", async () => {
+  beforeEach(() => {
+    planning.listBreakInApprovers.mockResolvedValue([
+      { user_id: 58, display_name: "K. Benali", personnel_id: 7 },
+    ]);
+  });
+
+  it("asks an urgent reason for a second planner's signature: approver and password", async () => {
     const onConfirm = vi.fn();
     render(
       <FrozenWeekBreakInDialog
         open
         onOpenChange={vi.fn()}
         weekStart="2026-10-18"
-        approvers={[{ id: 58, label: "K. Benali" }]}
+        teamId={3}
         onConfirm={onConfirm}
       />,
     );
     await screen.findByRole("option", { name: "Emergency" });
+    await screen.findByRole("option", { name: "K. Benali" });
+    // Approvers of the crew's site, not the user administration list.
+    expect(planning.listBreakInApprovers).toHaveBeenCalledWith(3, null);
     const confirm = screen.getByRole("button", { name: "Commit as break-in" });
     expect(confirm).toBeDisabled();
 
-    const reasonSelect = screen.getAllByRole("combobox")[0];
-    if (!reasonSelect) throw new Error("reason select not rendered");
+    const [reasonSelect, approverSelect] = screen.getAllByRole("combobox");
+    if (!reasonSelect || !approverSelect) throw new Error("selects not rendered");
     fireEvent.change(reasonSelect, { target: { value: "emergency" } });
     expect(screen.getByText(enPlanning.breakIns.urgentHint)).toBeInTheDocument();
     expect(confirm).toBeDisabled();
 
+    // A dangerous-override reason no longer stands in for the signature.
     fireEvent.change(screen.getByLabelText(enPlanning.breakIns.dangerousOverrideReason), {
       target: { value: "Pump seized on line 2" },
     });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(approverSelect, { target: { value: "58" } });
+    expect(confirm).toBeDisabled();
+    const password = screen.getByLabelText(enPlanning.breakIns.approverPassword);
+    expect(password).toHaveAttribute("type", "password");
+    fireEvent.change(password, { target: { value: "s3cret!" } });
     expect(confirm).toBeEnabled();
     fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalledWith({
       reason: "emergency",
-      approved_by_user_id: null,
+      approved_by_user_id: 58,
+      approver_password: "s3cret!",
       dangerous_override_reason: "Pump seized on line 2",
     });
+  });
+
+  it("lets a non-urgent reason in without a signature", async () => {
+    const onConfirm = vi.fn();
+    render(
+      <FrozenWeekBreakInDialog
+        open
+        onOpenChange={vi.fn()}
+        weekStart="2026-10-18"
+        teamId={3}
+        onConfirm={onConfirm}
+      />,
+    );
+    await screen.findByRole("option", { name: "Other" });
+    const [reasonSelect] = screen.getAllByRole("combobox");
+    if (!reasonSelect) throw new Error("reason select not rendered");
+    fireEvent.change(reasonSelect, { target: { value: "other" } });
+    expect(screen.queryByLabelText(enPlanning.breakIns.approverPassword)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Commit as break-in" }));
+    expect(onConfirm).toHaveBeenCalledWith({
+      reason: "other",
+      approved_by_user_id: null,
+      approver_password: null,
+      dangerous_override_reason: null,
+    });
+  });
+
+  it("says when nobody else may sign at the crew's site", async () => {
+    planning.listBreakInApprovers.mockResolvedValue([]);
+    render(
+      <FrozenWeekBreakInDialog
+        open
+        onOpenChange={vi.fn()}
+        weekStart="2026-10-18"
+        teamId={3}
+        onConfirm={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText(enPlanning.breakIns.noApprovers)).toBeInTheDocument();
   });
 });
 

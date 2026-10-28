@@ -27,6 +27,7 @@ import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isLostSessionError, openSignInAgain } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getDashboardLayout,
@@ -34,6 +35,7 @@ import {
   getOverviewKpis,
 } from "@/services/dashboard-service";
 import { useAppStore } from "@/store/app-store";
+import { useSessionStore } from "@/store/session-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useDiStore } from "@/stores/di-store";
 import { useWoStore } from "@/stores/wo-store";
@@ -96,7 +98,10 @@ export function DashboardPage() {
 
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [customOpen, setCustomOpen] = useState(false);
-  const layouts = usePanelLoad<SavedLayouts>(loadLayouts);
+  // Raised at each sign-in, unlock or re-login: what failed without a usable session loads again.
+  const sessionGeneration = useSessionStore((s) => s.sessionGeneration);
+  const layouts = usePanelLoad<SavedLayouts>(loadLayouts, sessionGeneration);
+  const panelSignal = refreshSignal + sessionGeneration;
   const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT);
   const [overviewKpiLayout, setOverviewKpiLayout] = useState<OverviewKpiLayoutEntry[]>([]);
 
@@ -159,17 +164,17 @@ export function DashboardPage() {
   const renderWidget = (id: string) => {
     switch (id) {
       case DASHBOARD_WIDGET_IDS.MY_WORK:
-        return <HomeMyWorkPanel refreshSignal={refreshSignal} />;
+        return <HomeMyWorkPanel refreshSignal={panelSignal} />;
       case DASHBOARD_WIDGET_IDS.SUPERVISION:
-        return <HomeSupervisionPanel refreshSignal={refreshSignal} />;
+        return <HomeSupervisionPanel refreshSignal={panelSignal} />;
       case DASHBOARD_WIDGET_IDS.PLANNING:
-        return <HomePlanningPanel refreshSignal={refreshSignal} />;
+        return <HomePlanningPanel refreshSignal={panelSignal} />;
       case DASHBOARD_WIDGET_IDS.KPIS:
-        return <IndicatorsPanel layout={resolvedOverviewLayout} refreshSignal={refreshSignal} />;
+        return <IndicatorsPanel layout={resolvedOverviewLayout} refreshSignal={panelSignal} />;
       case DASHBOARD_WIDGET_IDS.WORKLOAD:
-        return <DashboardWorkloadChart refreshSignal={refreshSignal} />;
+        return <DashboardWorkloadChart refreshSignal={panelSignal} />;
       case DASHBOARD_WIDGET_IDS.DI_STATUS:
-        return <DashboardDiStatusChart refreshSignal={refreshSignal} />;
+        return <DashboardDiStatusChart refreshSignal={panelSignal} />;
       default:
         return null;
     }
@@ -216,6 +221,18 @@ export function DashboardPage() {
           onRetry={layouts.reload}
           retrying={layouts.loading}
         />
+      ) : null}
+      {layouts.error != null && isLostSessionError(layouts.error) ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            className="h-11"
+            data-testid="dashboard-sign-in-again"
+            onClick={() => openSignInAgain("get_dashboard_layout", layouts.error)}
+          >
+            {t("auth:session.expired.action")}
+          </Button>
+        </div>
       ) : null}
 
       <div

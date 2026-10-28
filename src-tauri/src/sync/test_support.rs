@@ -7,7 +7,7 @@
 //! per-user delivery), used to exercise the desktop engine quickly. The real API is exercised by
 //! the multi-device harness (Phase 2.5).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -62,7 +62,25 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
 }
 
 async fn prepare_started(db: &DatabaseConnection) {
-    crate::migrations::Migrator::up(db, None).await.expect("migrations");
+    prepare_started_up_to(db, None).await;
+}
+
+/// A database as the startup of an earlier version leaves it: every migration registered before
+/// the one named `migration` (looked up by name, so later migrations do not shift it), then the
+/// startup seeders and capture. For upgrade tests (run the rest with `Migrator::up(db, None)`).
+pub(crate) async fn started_db_before_migration(migration: &str) -> DatabaseConnection {
+    use sea_orm_migration::MigrationName;
+    let db = crate::db::test_db::empty_memory_db().await;
+    let steps = crate::migrations::Migrator::migrations()
+        .iter()
+        .position(|m| m.name() == migration)
+        .unwrap_or_else(|| panic!("migration {migration} is not registered"));
+    prepare_started_up_to(&db, Some(u32::try_from(steps).expect("steps"))).await;
+    db
+}
+
+async fn prepare_started_up_to(db: &DatabaseConnection, steps: Option<u32>) {
+    crate::migrations::Migrator::up(db, steps).await.expect("migrations");
     crate::db::seeder::seed_system_data(db).await.expect("system seed");
     crate::wo::types::ensure_work_order_type_catalog(db)
         .await
@@ -120,6 +138,10 @@ pub(crate) struct TestServer {
     seq: i64,
     pub state: BTreeMap<(String, String), ServerRow>,
     cursors: HashMap<String, i64>,
+    /// Rows not sent to a device yet ([`TestServer::hold_back`]): rows that reach it late.
+    held_back: HashMap<String, BTreeSet<(String, String)>>,
+    /// Rows held back from a device and released: sent at its next exchange.
+    released: HashMap<String, BTreeSet<(String, String)>>,
 }
 
 #[derive(Debug)]
@@ -134,6 +156,25 @@ pub(crate) struct ExchangeReport {
 impl TestServer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keeps from `device` the server's row `sync_id` and every row whose payload names it (the
+    /// rows that depend on it) until [`TestServer::release`], as when they reach it late. Only
+    /// rows already on the server are held.
+    pub fn hold_back(&mut self, device: &str, sync_id: &str) {
+        let held = self.held_back.entry(device.to_string()).or_default();
+        for (key, row) in &self.state {
+            if key.1 == sync_id || row.payload_json.contains(sync_id) {
+                held.insert(key.clone());
+            }
+        }
+    }
+
+    /// Sends what was held back from `device` at its next exchange.
+    pub fn release(&mut self, device: &str) {
+        if let Some(held) = self.held_back.remove(device) {
+            self.released.entry(device.to_string()).or_default().extend(held);
+        }
     }
 
     /// One exchange of `device` (push its outbox, receive what other devices changed), then the
@@ -211,10 +252,14 @@ impl TestServer {
         }
 
         let cursor = self.cursors.get(device).copied().unwrap_or(0);
+        let held = self.held_back.get(device).cloned().unwrap_or_default();
+        let released = self.released.remove(device).unwrap_or_default();
         let mut changed: Vec<(&(String, String), &ServerRow)> = self
             .state
             .iter()
-            .filter(|(_, r)| r.seq > cursor && r.origin_device != device)
+            .filter(|(key, r)| {
+                (r.seq > cursor && r.origin_device != device && !held.contains(*key)) || released.contains(*key)
+            })
             .filter(
                 |((entity_type, _), r)| match registry::entity(entity_type).map(|e| e.scope) {
                     Some(SyncScope::User) => r
@@ -281,6 +326,15 @@ impl TestServer {
 /// Literal values for columns the generic generator cannot guess (enumerations checked by code,
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
+    // What a reliability decision proposes never changes once proposed (a received change is a
+    // `DECISION_CONTENT_CHANGED` conflict, `reliability::study::decision_sync`, AU-76b): these are
+    // set at creation and never the column the round trip edits (its decision note is).
+    ("reliability_study_decisions", "title", "'Décision de test'"),
+    ("reliability_study_decisions", "action_kind", "'one_off_wo'"),
+    ("reliability_study_decisions", "wo_type_code", "'corrective'"),
+    ("reliability_study_decisions", "justification", "''"),
+    // Only the four statuses of a decision are received (review S1).
+    ("reliability_study_decisions", "status", "'proposed'"),
     // A received audit chain stub must be well formed (`audit::chain::inbound_stub_check`): a
     // position after 1 with its link, a stub-era hash and its content digest.
     (
@@ -305,6 +359,21 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ),
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
+    // A count line's approver and counter are the same generic account (one parent row per
+    // reference): within the four-eyes tolerance and not a self-approval, as such a line must be
+    // (`inventory::count_four_eyes::inbound_count_line_check`).
+    ("inventory_count_lines", "is_critical", "0"),
+    ("inventory_count_lines", "self_approved", "0"),
+    // ... and no variance: a variance is judged again on arrival, from counted − system.
+    ("inventory_count_lines", "counted_qty", "1"),
+    ("inventory_count_lines", "system_qty", "1"),
+    ("inventory_count_lines", "variance_qty", "0"),
+    // ... neither approved a second time nor reversed: a second approval is only given to a variance
+    // its counter approved above the tolerance, and a reversal named by a line is checked to be the
+    // reversal of that count (`inbound_count_line_check`); a generic movement is neither.
+    ("inventory_count_lines", "second_approved_by_id", "NULL"),
+    ("inventory_count_lines", "second_approved_at", "NULL"),
+    ("inventory_count_lines", "reversed_transaction_id", "NULL"),
     // The next run is computed from it on every device.
     ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
     // Only tenant settings are synchronised (device settings stay on the device).
@@ -433,21 +502,37 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    // Nor a permit requirement from a request flagged "sécurité" (migration 255, judged on arrival
+    // the same way).
+    ("work_orders", "permit_from_safety_di", "0"),
     // A generic record carries no assigned-site trace (written once by an administrator on a record
     // without a site and judged on arrival, `org::site_assignment::inbound_site_assignment_check`).
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic request is not flagged "sécurité": its generic work order carries no safety origin
+    // (migration 255, judged on arrival).
+    ("intervention_requests", "safety_flag", "0"),
     ("intervention_requests", "site_assigned_by_id", "NULL"),
     ("intervention_requests", "site_assigned_at", "NULL"),
     ("intervention_requests", "site_assign_reason", "NULL"),
     ("planning_windows", "site_assigned_by_id", "NULL"),
     ("planning_windows", "site_assigned_at", "NULL"),
     ("planning_windows", "site_assign_reason", "NULL"),
+    // A generic inspection anomaly is open and undecided (a received decision is judged against the
+    // decision rules of this PC, `inspection::sync_check`).
+    ("inspection_anomalies", "resolution_status", "'open'"),
+    ("inspection_anomalies", "routing_decision", "NULL"),
+    ("inspection_anomalies", "linked_di_id", "NULL"),
+    ("inspection_anomalies", "linked_work_order_id", "NULL"),
+    ("inspection_anomalies", "requires_permit_review", "0"),
     // A calendar day, not a timestamp.
     ("work_calendar_holidays", "holiday_date", "'2026-12-25'"),
     // A planned crew is 1–50 people (migration 207 triggers).
     ("work_orders", "planned_crew_size", "2"),
+    // A mandatory task is deleted by sync only while its work order is a draft or in planning
+    // (`wo::closeout_sync`); the generic work order has a generic status, so its task is optional.
+    ("work_order_tasks", "is_mandatory", "0"),
     ("pm_plan_versions", "planned_crew_size", "2"),
     ("schedule_candidates", "planned_crew_size", "2"),
     // Timetables (migrations 192, 197): calendar days, a weekly cycle, percentages in range.
@@ -463,6 +548,17 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("personnel_schedule_exceptions", "valid_from", "'2026-12-01'"),
     ("personnel_schedule_exceptions", "valid_to", "NULL"),
     ("personnel_schedule_exceptions", "work_percent", "50.0"),
+    // A break-in is judged again on arrival (`planning::sync_check`): the generic one gives a reason
+    // of the shipped list that is not urgent, forces nothing and names no approver.
+    ("schedule_break_ins", "break_in_reason", "'other'"),
+    ("schedule_break_ins", "approved_by_user_id", "NULL"),
+    ("schedule_break_ins", "approved_by_personnel_id", "NULL"),
+    ("schedule_break_ins", "approver_signed_at", "NULL"),
+    ("schedule_break_ins", "forced_checks_json", "NULL"),
+    ("schedule_break_ins", "old_team_id", "NULL"),
+    ("schedule_break_ins", "new_team_id", "NULL"),
+    ("schedule_break_ins", "sync_refused_at", "NULL"),
+    ("schedule_break_ins", "sync_refused_reason", "NULL"),
 ];
 
 #[derive(Debug, Clone)]
@@ -730,9 +826,13 @@ async fn factory_columns(
 ) -> Result<Vec<FactoryColumn>, String> {
     if super::row_spec::row_spec(entity_type).is_some() {
         let layout = row_layout::layout(db, entity_type).await.map_err(|e| e.to_string())?;
+        // The layout is computed once per process, from the current schema: a database built
+        // before a migration that added a column (`started_db_before_migration`) does not have it,
+        // and the row is made without it.
         return Ok(layout
             .columns
             .iter()
+            .filter(|c| raw.iter().any(|r| r.name == c.name))
             .map(|c| {
                 let raw_col = raw.iter().find(|r| r.name == c.name);
                 let kind = match &c.role {

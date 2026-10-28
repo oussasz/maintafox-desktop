@@ -1,6 +1,6 @@
 [package]
 name = "maintafox"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 # Code uses APIs stabilised in 1.80 (LazyLock) and 1.82; declare the real minimum.
 rust-version = "1.82"
@@ -92,6 +92,41 @@ harness = false
 [profile.dev]
 codegen-units = 16
 incremental = true
+
+# Crypto and the encrypted database, optimised even in dev/test builds (the release profile is unchanged).
+# At opt-level 0 Argon2id (64 MiB, auth/password.rs), the hashes, Ed25519 verification (ring) and SQLCipher run
+# 10-50x slower than release; the CI test run spent most of its 65 minutes in two-PC fixtures that create users
+# and open databases. Only the optimisation level changes: debug assertions and overflow checks stay on.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.password-hash]
+opt-level = 3
+[profile.dev.package.base64ct]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.crypto-common]
+opt-level = 3
+[profile.dev.package.subtle]
+opt-level = 3
+[profile.dev.package.cpufeatures]
+opt-level = 3
+[profile.dev.package.sha1]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.hkdf]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.ring]
+opt-level = 3
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

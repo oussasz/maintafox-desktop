@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AssetPicker } from "@/components/assets/AssetPicker";
+import { ASSET_PICKER_FULL_LIST_MAX, AssetPicker } from "@/components/assets/AssetPicker";
 import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 import { assetQrPayload } from "@/lib/asset-qr";
 import type { AssetSearchResult } from "@shared/ipc-types";
@@ -37,7 +37,12 @@ function asset(id: number, code: string): AssetSearchResult {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  svc.suggestPickerAssets.mockResolvedValue({ items: [], mode: "recent" });
+  svc.suggestPickerAssets.mockResolvedValue({
+    items: [],
+    mode: "recent",
+    total: 0,
+    complete: false,
+  });
 });
 
 function type(text: string) {
@@ -81,6 +86,58 @@ describe("AssetPicker", () => {
     svc.searchAssetsPage.mockResolvedValueOnce({ items: [asset(1, "PMP-101")], total: 1 });
     fireEvent.click(screen.getByRole("button", { name: "assetPicker.retry" }));
     expect(await screen.findByRole("option")).toHaveTextContent("Pompe PMP-101");
+  });
+
+  it("asks the server for the whole register when the plant is small and lists it on focus", async () => {
+    svc.suggestPickerAssets.mockResolvedValueOnce({
+      items: [asset(1, "PMP-101"), asset(2, "PMP-102")],
+      mode: "register",
+      total: 2,
+      complete: true,
+    });
+    render(<AssetPicker value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(await screen.findAllByRole("option")).toHaveLength(2);
+    expect(screen.getByText("assetPicker.all")).toBeInTheDocument();
+    expect(svc.suggestPickerAssets).toHaveBeenCalledWith(
+      expect.objectContaining({ full_list_max: ASSET_PICKER_FULL_LIST_MAX }),
+    );
+    expect(ASSET_PICKER_FULL_LIST_MAX).toBe(50);
+  });
+
+  it("for a large plant shows suggestions and says to type to search among all of them", async () => {
+    svc.suggestPickerAssets.mockResolvedValueOnce({
+      items: [asset(1, "PMP-101")],
+      mode: "frequent",
+      total: 120,
+      complete: false,
+    });
+    render(<AssetPicker value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(await screen.findByText("assetPicker.frequent")).toBeInTheDocument();
+    expect(screen.getByText(/assetPicker\.typeToSearch.*120/)).toBeInTheDocument();
+    expect(screen.queryByText("assetPicker.all")).not.toBeInTheDocument();
+  });
+
+  it("says the register is empty instead of 'no recent asset'", async () => {
+    svc.suggestPickerAssets.mockResolvedValueOnce({
+      items: [],
+      mode: "register",
+      total: 0,
+      complete: false,
+    });
+    render(<AssetPicker value={null} onChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+    expect(await screen.findByText("assetPicker.emptyRegister")).toBeInTheDocument();
+    expect(screen.queryByText("assetPicker.emptySuggestions")).not.toBeInTheDocument();
+  });
+
+  it("sizes the field and the scan button together in compact dialogs", () => {
+    const { rerender } = render(<AssetPicker value={null} onChange={vi.fn()} size="sm" />);
+    expect(screen.getByRole("combobox").className).toContain("h-8");
+    expect(screen.getByRole("button", { name: "assetPicker.scan" }).className).toContain("h-8");
+    rerender(<AssetPicker value={null} onChange={vi.fn()} />);
+    expect(screen.getByRole("combobox").className).not.toContain("h-8");
   });
 
   it("says when more assets match than are listed", async () => {

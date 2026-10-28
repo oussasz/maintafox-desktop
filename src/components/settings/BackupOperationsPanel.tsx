@@ -21,8 +21,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { useStepUp, isStepUpCancelled } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import {
   factoryReset,
   listBackupRuns,
@@ -80,7 +80,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.loadError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -111,9 +111,10 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
       });
       void reloadRuns();
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       onToast({
         title: t("backupOps.runError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -143,7 +144,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.validateError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -164,7 +165,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     } catch (err) {
       onToast({
         title: t("backupOps.restoreError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -179,9 +180,10 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
       // On success the application restarts; this call does not return.
       await withStepUp(() => restoreFromBackup(path));
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       onToast({
         title: t("backupOps.restoreError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -195,9 +197,10 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
       // On success the application restarts; this call does not return.
       await withStepUp(() => factoryReset(resetPhrase.trim()));
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       onToast({
         title: t("backupOps.resetError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {

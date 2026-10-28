@@ -89,3 +89,25 @@ pub async fn last_insert_rowid(db: &impl ConnectionTrait) -> AppResult<i64> {
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     row.try_get("", "id").map_err(|e| map_err("id", e))
 }
+
+/// A person who may be named as the second person approving a waiver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WaiverApproverOption {
+    pub user_id: i64,
+    pub display_name: String,
+}
+
+/// The people a waiver may name as approver: exactly those the waiver check accepts (an active
+/// account holding `integrity.repair` plant-wide through a permanent role in force, or an
+/// administrator: `settings::site::tenant_right_holders`), without the person waiving, who can
+/// never be the second person of an error finding (AU-116).
+pub async fn list_waiver_approvers<C: ConnectionTrait>(db: &C, actor_id: i64) -> AppResult<Vec<WaiverApproverOption>> {
+    Ok(
+        crate::settings::site::tenant_right_holders(db, crate::rbac::permissions::INTEGRITY_REPAIR)
+            .await?
+            .into_iter()
+            .filter(|(id, _)| *id != actor_id)
+            .map(|(user_id, display_name)| WaiverApproverOption { user_id, display_name })
+            .collect(),
+    )
+}

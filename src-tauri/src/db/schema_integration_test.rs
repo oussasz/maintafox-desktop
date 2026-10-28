@@ -161,11 +161,29 @@ mod tests {
         use sea_orm_migration::MigratorTrait;
         crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
 
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        // Migrations may write the change history of a setting they retire (migration 259 keeps the
+        // last value of `inventory.count_critical_variance` there): seeding itself adds nothing.
+        let events = |db: &sea_orm::DatabaseConnection| {
+            let db = db.clone();
+            async move {
+                db.query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(*) AS cnt FROM settings_change_events;".to_string(),
+                ))
+                .await
+                .expect("Count query for settings_change_events should succeed")
+                .expect("Count query for settings_change_events should return one row")
+                .try_get::<i64>("", "cnt")
+                .expect("Count column should be readable")
+            }
+        };
+        let events_before_seed = events(&db).await;
+
         crate::db::seeder::seed_default_settings(&db)
             .await
             .expect("Default settings seeding should succeed");
-
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
         // Migrations may also INSERT OR IGNORE into app_settings; assert baseline keys, not a brittle total.
         for key in [
@@ -203,21 +221,10 @@ mod tests {
             "tenant currency seed default must be DZD (customizable in Settings)"
         );
 
-        let events_row = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM settings_change_events;".to_string(),
-            ))
-            .await
-            .expect("Count query for settings_change_events should succeed")
-            .expect("Count query for settings_change_events should return one row");
-        let events_count = events_row
-            .try_get::<i64>("", "cnt")
-            .expect("Count column should be readable");
-
         assert_eq!(
-            events_count, 0,
-            "settings_change_events must remain empty during read-only seeding"
+            events(&db).await,
+            events_before_seed,
+            "seeding must not write to settings_change_events (read-only seeding)"
         );
     }
 

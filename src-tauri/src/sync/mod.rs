@@ -3,14 +3,18 @@
 //! Universal Entity Sync Standard: see `docs/engineering/SYNC_STRATEGY.md`.
 
 pub(crate) mod apply_hooks;
+pub mod apply_reason;
 pub mod capture;
 pub mod code_clash;
 pub mod conflicts;
+pub(crate) mod credential_check;
 pub mod device_code;
 pub mod domain;
+pub(crate) mod grant_check;
 pub mod identity;
 pub mod materialize;
 pub mod media;
+pub mod plant_join;
 pub mod queries;
 pub mod registry;
 pub(crate) mod row_codec;
@@ -19,11 +23,19 @@ pub mod row_spec;
 pub mod row_state;
 pub mod seeded_identity;
 pub mod transport;
+pub mod username_clash;
+pub mod waiting;
 
+#[cfg(test)]
+mod audit_targets_tests;
 #[cfg(test)]
 mod convergence_tests;
 #[cfg(test)]
+mod credential_check_tests;
+#[cfg(test)]
 mod foundation_tests;
+#[cfg(test)]
+mod grant_check_tests;
 #[cfg(test)]
 mod harness_tests;
 #[cfg(test)]

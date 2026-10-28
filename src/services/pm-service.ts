@@ -1,6 +1,7 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
@@ -9,19 +10,19 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
-  PmGenerationStatus,
-  PmGovernanceKpiInput,
-  PmGovernanceKpiReport,
-  PmPlanningReadinessInput,
-  PmPlanningReadinessProjection,
   PmExecution,
   PmExecutionFilter,
   PmFinding,
+  PmGenerationStatus,
+  PmGovernanceKpiInput,
+  PmGovernanceKpiReport,
   PmOccurrence,
   PmOccurrenceFilter,
   PmPlan,
   PmPlanFilter,
   PmPlanVersion,
+  PmPlanningReadinessInput,
+  PmPlanningReadinessProjection,
   PmRecurringFinding,
   PmRecurringFindingsInput,
   PublishPmPlanVersionInput,
@@ -44,6 +45,8 @@ export type PmPlanRow = PmPlan &
   PmAssetRef & {
     /** Name of the family / location / criticality group of a fanned-out plan. */
     asset_scope_label?: string | null | undefined;
+    /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
+    source_decision_to_review?: boolean | undefined;
   };
 
 /** `on_time` | `early` | `late` against the occurrence's tolerance window. */
@@ -149,6 +152,8 @@ const PmPlanSchema = z.object({
   asset_code: z.string().nullable().optional(),
   asset_name: z.string().nullable().optional(),
   asset_scope_label: z.string().nullable().optional(),
+  /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
+  source_decision_to_review: z.boolean().optional(),
 });
 
 const PmPlanVersionSchema = z.object({
@@ -396,11 +401,14 @@ export class PmIpcError extends Error {
    * user, so screens must not repeat it. False for a response the app could not read.
    */
   readonly reported: boolean;
-  constructor(code: string, message: string, reported = true) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, reported = true, details: unknown = null) {
     super(message);
     this.name = "PmIpcError";
     this.code = code;
     this.reported = reported;
+    this.details = details;
   }
 }
 
@@ -410,7 +418,7 @@ export function isReportedPmError(err: unknown): boolean {
 }
 
 function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new PmIpcError(err.code, err.message);
+  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, true, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }

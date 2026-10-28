@@ -8,6 +8,8 @@ import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { Button } from "@/components/ui/button";
+import { DateTimeField } from "@/components/ui/date-time-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -56,7 +57,7 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
   const [asset, setAsset] = useState<AssetSearchResult | null>(null);
   const [meters, setMeters] = useState<PmAssetMeter[] | null>(null);
   const [meterId, setMeterId] = useState("");
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState<number | null>(null);
   const [readAt, setReadAt] = useState(localNow);
   const [kind, setKind] = useState<PmMeterReadingKind>("normal");
   const [saving, setSaving] = useState(false);
@@ -67,7 +68,7 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
     setAsset(null);
     setMeters(null);
     setMeterId("");
-    setValue("");
+    setValue(null);
     setReadAt(localNow());
     setKind("normal");
     setError(null);
@@ -95,7 +96,7 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
   }, [asset]);
 
   const meter = meters?.find((m) => String(m.id) === meterId) ?? null;
-  const numeric = value.trim() ? Number(value.replace(",", ".")) : null;
+  const numeric = value;
   const lower = meter != null && numeric != null && numeric < meter.current_reading;
 
   async function submit() {
@@ -181,22 +182,17 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
                       ? t("fields.readingValue", { unit: meter.unit })
                       : t("fields.readingValueNoUnit")}
                   </Label>
-                  <Input
+                  <DecimalField
                     id="pm-reading-value"
-                    type="number"
+                    decimals={3}
                     min={0}
                     value={value}
-                    onChange={(e) => setValue(e.target.value)}
+                    onValueChange={setValue}
                   />
                 </div>
                 <div className="grid gap-1">
                   <Label htmlFor="pm-reading-at">{t("fields.readingAt")}</Label>
-                  <Input
-                    id="pm-reading-at"
-                    type="datetime-local"
-                    value={readAt}
-                    onChange={(e) => setReadAt(e.target.value)}
-                  />
+                  <DateTimeField id="pm-reading-at" value={readAt} onChange={(v) => setReadAt(v)} />
                 </div>
               </div>
               <fieldset className="grid gap-1">

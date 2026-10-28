@@ -134,14 +134,33 @@ pub async fn approve_reliability_study_decision(
     decisions::approve_decision(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Rejects a proposed decision (`ram.manage`, as its designated approver when one is named), or
+/// withdraws it when the user proposed it: the proposer needs the right they proposed with
+/// (`ram.analyze`) or `ram.manage`, whoever was designated (owner decision D10: a withdrawal
+/// approves nothing).
 #[tauri::command]
 pub async fn reject_reliability_study_decision(
     input: DecideDecisionInput,
     state: State<'_, AppState>,
 ) -> AppResult<StudyDecision> {
     let user = require_session!(state);
-    require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);
-    decisions::reject_decision(&state.db, input, i64::from(user.user_id)).await
+    let actor = i64::from(user.user_id);
+    let is_proposer = decisions::is_proposer(&state.db, input.decision_id, actor).await?;
+    let holds_analyze = is_proposer
+        && crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            RAM_ANALYZE,
+            &PermissionScope::Global,
+        )
+        .await?;
+    if decisions::reject_right(is_proposer, holds_analyze) == RAM_ANALYZE {
+        require_permission!(state, &user, RAM_ANALYZE, PermissionScope::Global);
+    } else {
+        require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);
+    }
+    decisions::reject_decision(&state.db, input, actor).await
 }
 
 /// Create the PM plan draft version or the work order of an approved decision.
@@ -176,7 +195,9 @@ use crate::reliability::study::system_model::{
 use crate::reliability::study::{advanced, data_quality, fmeca, rcm, scales, system_model};
 
 fn tool_disabled() -> crate::errors::AppError {
-    crate::errors::AppError::ValidationFailed(vec!["ADVANCED_TOOL_DISABLED".into()])
+    crate::errors::AppError::ValidationFailed(vec![
+        "GATE_REL_ADVANCED_TOOL_DISABLED: Advanced reliability tools are disabled.".into(),
+    ])
 }
 
 /// Step 3: FMECA worksheet with occurrence proposals and the criticality matrix (no write).

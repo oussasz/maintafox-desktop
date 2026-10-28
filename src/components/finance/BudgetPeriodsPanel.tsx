@@ -184,7 +184,7 @@ export function BudgetPeriodsPanel({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 gap-1 text-xs"
+                        className="h-10 gap-1 text-xs"
                         disabled={blocker != null}
                         title={
                           blocker
@@ -204,7 +204,7 @@ export function BudgetPeriodsPanel({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 gap-1 text-xs"
+                        className="h-10 gap-1 text-xs"
                         onClick={() => {
                           setText("");
                           setReopening(p);
