@@ -1070,7 +1070,13 @@
     "GATE_ACT_ROTATE_REASON_REQUIRED": "Activation secret rotation refused: enter the reason.",
     "GATE_ACT_REBIND_REASON_REQUIRED": "Computer rebind refused: enter the reason.",
     "GATE_AUTH_PIN_DIGITS_ONLY": "The PIN must contain digits only.",
-    "GATE_AUTH_PIN_LENGTH": "The PIN must be 4 to 6 digits long."
+    "GATE_AUTH_PIN_LENGTH": "The PIN must be 4 to 6 digits long.",
+    "GATE_PASSWORD_MIN_LENGTH": "Password refused: it must be at least {{min}} characters long.",
+    "GATE_PASSWORD_UPPERCASE": "Password refused: it must contain at least one uppercase letter.",
+    "GATE_PASSWORD_LOWERCASE": "Password refused: it must contain at least one lowercase letter.",
+    "GATE_PASSWORD_DIGIT": "Password refused: it must contain at least one digit.",
+    "GATE_PASSWORD_SPECIAL": "Password refused: it must contain at least one special character (for example ! @ # $).",
+    "GATE_SYNC_RESOLUTION_REASON": "Choice refused: give the reason for this choice (at least {{min}} characters)."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",
