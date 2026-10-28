@@ -938,6 +938,7 @@ pub fn run() {
         commands::wo::list_wo_change_events,
         commands::wo::list_all_wo_change_events,
         commands::data_integrity::list_data_integrity_findings,
+        commands::data_integrity::list_integrity_waiver_approvers,
         commands::data_integrity::run_data_integrity_detectors_cmd,
         commands::data_integrity::waive_data_integrity_finding_cmd,
         commands::data_integrity::apply_data_integrity_repair_cmd,

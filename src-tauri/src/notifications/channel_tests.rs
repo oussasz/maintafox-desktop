@@ -70,6 +70,14 @@ async fn setup() -> Fixture {
     let mut factory = RowFactory::for_device(1);
     let alice = factory.create(&db, "user_accounts").await.expect("alice");
     let bob = factory.create(&db, "user_accounts").await.expect("bob");
+    // Administrators: every module is theirs to see, so the channels here test delivery only
+    // (what a user may see is `inbox::visible_to`, tested on its own).
+    exec(
+        &db,
+        "UPDATE user_accounts SET is_admin = 1 WHERE id IN (?, ?)",
+        vec![alice.rowid.into(), bob.rowid.into()],
+    )
+    .await;
     // Alice wants emails for assigned work orders; Bob keeps the defaults (no email).
     exec(
         &db,
@@ -350,4 +358,32 @@ async fn toasts_only_cover_own_notifications() {
     assert!(ensure_owned(&f.db, f.alice, &[bobs]).await.is_err());
     assert!(ensure_owned(&f.db, f.bob, &[bobs]).await.is_ok());
     assert!(ensure_owned(&f.db, f.bob, &[]).await.is_err());
+}
+
+/// AU-112 review: no toast and no email about a record the reader may not see (the inbox
+/// condition): a user without the work-order view right gets neither.
+#[tokio::test]
+async fn no_toast_or_email_about_what_the_reader_may_not_see() {
+    let f = setup().await;
+    let mut factory = RowFactory::for_device(2);
+    let carol = factory.create(&f.db, "user_accounts").await.expect("carol").rowid;
+    exec(
+        &f.db,
+        "UPDATE user_accounts SET is_admin = 0 WHERE id = ?",
+        vec![carol.into()],
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO notification_preferences (user_id, category_code, email_enabled) VALUES (?, 'wo_assigned', 1)",
+        vec![carol.into()],
+    )
+    .await;
+    let start = pending_os_toasts(&f.db, carol, None).await.expect("start");
+    let hidden = notify(&f.db, carol, "wo_assigned", "OT assigné").await;
+    assert_eq!(email_status(&f.db, hidden).await, None, "not emailed");
+    let batch = pending_os_toasts(&f.db, carol, Some(start.watermark))
+        .await
+        .expect("pending");
+    assert!(batch.items.is_empty(), "not toasted");
 }

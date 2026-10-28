@@ -49,7 +49,7 @@
     "exposureSchedule": "Operating schedule",
     "exposureLastWo": "Last completed WO close",
     "exposureFallback": "Fallback reason",
-    "ramsScheduleField": "Operating schedule (Classe Horaire)",
+    "ramsScheduleField": "Operating schedule (schedule class)",
     "ramsKuField": "Utilization factor (K_u)",
     "noSnapshot": "No KPI snapshot for this filter. Run an analysis from Asset foundation or refresh snapshots.",
     "weibullTitle": "Weibull reliability curve R(t)",

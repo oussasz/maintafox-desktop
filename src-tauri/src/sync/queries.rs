@@ -2051,7 +2051,7 @@ pub async fn resolve_sync_conflict(
         .map(str::to_string);
     if reason.is_none() {
         errors.push(format!(
-            "Give the reason for this choice (at least {min_reason} characters)."
+            "GATE_SYNC_RESOLUTION_REASON:min={min_reason}: Give the reason for this choice (at least {min_reason} characters)."
         ));
     }
     if input.conflict_id <= 0 {

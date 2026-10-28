@@ -124,11 +124,17 @@ pub async fn build_due_digests<Tz: TimeZone>(
         let Some(user_sync) = user_sync else {
             continue;
         };
+        // Only what the inbox would show the reader (AU-112).
+        let user = i32::try_from(user_id).map_err(|e| AppError::Internal(anyhow::anyhow!("user id {user_id}: {e}")))?;
+        let vis = crate::notifications::inbox::visible_to(conn, user).await?;
+        let mut values: Vec<sea_orm::Value> = vec![user_id.into(), DIGEST_CATEGORY.into()];
+        let visible = crate::notifications::inbox::channel_condition(&vis, &mut values);
         let rows = conn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                concat!(
-                    "SELECT n.created_at, e.category_code, COALESCE(c.label, e.category_code) AS category_label \
+                format!(
+                    concat!(
+                        "SELECT n.created_at, e.category_code, COALESCE(c.label, e.category_code) AS category_label \
                      FROM notifications n \
                      JOIN notification_events e ON e.id = n.notification_event_id \
                      JOIN notification_preferences p \
@@ -136,11 +142,13 @@ pub async fn build_due_digests<Tz: TimeZone>(
                      LEFT JOIN notification_categories c ON c.code = e.category_code \
                      WHERE n.recipient_user_id = ? AND p.digest_mode = 'daily_digest' \
                        AND e.category_code <> ? AND e.category_code NOT IN ",
-                    crate::safety_notice_categories_sql!(),
-                    " AND n.delivery_state IN ('pending', 'delivered', 'escalated') \
-                       AND n.read_at IS NULL AND n.archived_at IS NULL AND n.resolved_at IS NULL"
+                        crate::safety_notice_categories_sql!(),
+                        " AND n.delivery_state IN ('pending', 'delivered', 'escalated') \
+                       AND n.read_at IS NULL AND n.archived_at IS NULL AND n.resolved_at IS NULL AND {}"
+                    ),
+                    visible
                 ),
-                [user_id.into(), DIGEST_CATEGORY.into()],
+                values,
             ))
             .await?;
         let mut by_day: BTreeMap<NaiveDate, Vec<Pending>> = BTreeMap::new();

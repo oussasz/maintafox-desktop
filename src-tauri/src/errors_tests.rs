@@ -54,6 +54,21 @@ mod errors_tests {
     }
 
     #[test]
+    fn account_locked_sends_the_end_of_the_lockout_as_a_param() {
+        let err = AppError::AccountLocked {
+            until: "2026-10-22T09:15:00Z".into(),
+        };
+        let json = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(json["code"], "ACCOUNT_LOCKED");
+        assert_eq!(json["message"], "Account locked until 2026-10-22T09:15:00Z");
+        let details = json["details"].as_array().expect("details");
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0]["code"], "ACCOUNT_LOCKED");
+        assert_eq!(details[0]["params"]["until"], "2026-10-22T09:15:00Z");
+        assert_eq!(details[0]["message"], "Account locked until 2026-10-22T09:15:00Z");
+    }
+
+    #[test]
     fn permission_denied_includes_action_and_resource() {
         let err = AppError::Permission {
             action: "delete".into(),
@@ -149,6 +164,10 @@ mod errors_tests {
             (
                 AppError::PasswordNotReceived("no password here".into()),
                 "PASSWORD_NOT_RECEIVED",
+            ),
+            (
+                AppError::UpdateInProgress("installing".into()),
+                "AUTH_UPDATE_IN_PROGRESS",
             ),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];

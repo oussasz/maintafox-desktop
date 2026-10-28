@@ -25,7 +25,7 @@ import { ListAccessNote } from "@/components/ui/list-access-note";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
@@ -377,7 +377,7 @@ export function PersonnelCreateDialog() {
         });
       } catch (err) {
         // Said, not swallowed: the form still works, the requirements are added by hand.
-        setLocalError(t("create.positionSeedFailed", { msg: describeAppError(err).title }));
+        setLocalError(t("create.positionSeedFailed", { msg: appErrorReason(err) }));
       }
     },
     [t],
@@ -545,7 +545,7 @@ export function PersonnelCreateDialog() {
         try {
           await persistRateCard(editingPersonnel.id);
         } catch (rateErr) {
-          setLocalError(t("create.rateCardFailed", { msg: describeAppError(rateErr).title }));
+          setLocalError(t("create.rateCardFailed", { msg: appErrorReason(rateErr) }));
           return;
         }
         // A photo chosen while editing replaces the current one (the edit form starts empty).
@@ -555,9 +555,7 @@ export function PersonnelCreateDialog() {
           try {
             await uploadPersonnelPhoto(editingPersonnel.id, editPhoto.path);
           } catch (photoErr) {
-            setLocalError(
-              t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }),
-            );
+            setLocalError(t("create.photoUploadWarning", { msg: appErrorReason(photoErr) }));
             return;
           } finally {
             setPhotoUploading(false);
@@ -574,7 +572,7 @@ export function PersonnelCreateDialog() {
       } catch (rateErr) {
         await usePersonnelStore.getState().openPersonnel(created.id);
         usePersonnelStore.setState({
-          error: t("create.rateCardFailed", { msg: describeAppError(rateErr).title }),
+          error: t("create.rateCardFailed", { msg: appErrorReason(rateErr) }),
         });
         return;
       }
@@ -587,7 +585,7 @@ export function PersonnelCreateDialog() {
           await uploadPersonnelPhoto(created.id, stagedPhoto.path);
         } catch (photoErr) {
           // Non-fatal — show warning but don't block
-          setLocalError(t("create.photoUploadWarning", { msg: describeAppError(photoErr).title }));
+          setLocalError(t("create.photoUploadWarning", { msg: appErrorReason(photoErr) }));
         } finally {
           setPhotoUploading(false);
         }

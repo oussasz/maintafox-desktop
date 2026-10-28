@@ -7,7 +7,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -96,7 +96,11 @@ pub async fn search_unassigned_equipment(
 }
 
 /// Set `installed_at_node_id` on the equipment row.
-pub async fn assign_equipment_to_node(db: &DatabaseConnection, payload: AssignEquipmentPayload) -> AppResult<()> {
+pub async fn assign_equipment_to_node(
+    db: &DatabaseConnection,
+    payload: AssignEquipmentPayload,
+    actor_id: i32,
+) -> AppResult<()> {
     crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
     // Only units whose level hosts assets can receive equipment.
@@ -148,22 +152,26 @@ pub async fn assign_equipment_to_node(db: &DatabaseConnection, payload: AssignEq
         ));
     }
 
-    // Bump updated_at / row_version like every other equipment write (sync and edit conflicts).
-    let now = Utc::now().to_rfc3339();
-    let affected = db
-        .execute(Statement::from_sql_and_values(
+    // A move like every other one (D19): MOVED lifecycle event + audit with the move, in one
+    // transaction; the version is the one read here (this screen shows none).
+    let equipment_id = i64::from(payload.equipment_id);
+    let txn = db.begin().await?;
+    let row_version: i64 = txn
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment SET installed_at_node_id = ?, updated_at = ?, \
-             row_version = row_version + 1 WHERE id = ? AND deleted_at IS NULL",
-            [payload.node_id.into(), now.into(), payload.equipment_id.into()],
+            "SELECT row_version FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            [equipment_id.into()],
         ))
-        .await?;
-    if affected.rows_affected() == 0 {
-        return Err(AppError::NotFound {
+        .await?
+        .ok_or_else(|| AppError::NotFound {
             entity: "equipment".to_string(),
             id: payload.equipment_id.to_string(),
-        });
-    }
+        })?
+        .try_get("", "row_version")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?;
+    crate::assets::lifecycle::move_asset_recorded_in(&txn, equipment_id, payload.node_id, row_version, actor_id)
+        .await?;
+    txn.commit().await?;
     tracing::info!(
         equipment_id = payload.equipment_id,
         node_id = payload.node_id,

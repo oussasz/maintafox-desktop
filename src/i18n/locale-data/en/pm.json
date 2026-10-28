@@ -461,7 +461,8 @@
     "meterTypeRequired": "Choose the meter type counted on each asset.",
     "scopeRequired": "Choose what the plan covers.",
     "readingRequired": "Enter a reading of 0 or more for a meter.",
-    "readingLower": "The reading is lower than the last one: say whether the counter rolled over or the meter was replaced."
+    "readingLower": "The reading is lower than the last one: say whether the counter rolled over or the meter was replaced.",
+    "PM_CODE_NOT_IN_LIST": "“{{code}}” is not an active value of the reference list concerned."
   },
   "tolerance": {
     "title": "Tolerance window",

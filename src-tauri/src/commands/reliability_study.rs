@@ -195,7 +195,9 @@ use crate::reliability::study::system_model::{
 use crate::reliability::study::{advanced, data_quality, fmeca, rcm, scales, system_model};
 
 fn tool_disabled() -> crate::errors::AppError {
-    crate::errors::AppError::ValidationFailed(vec!["ADVANCED_TOOL_DISABLED".into()])
+    crate::errors::AppError::ValidationFailed(vec![
+        "GATE_REL_ADVANCED_TOOL_DISABLED: Advanced reliability tools are disabled.".into(),
+    ])
 }
 
 /// Step 3: FMECA worksheet with occurrence proposals and the criticality matrix (no write).

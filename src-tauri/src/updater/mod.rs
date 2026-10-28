@@ -635,6 +635,25 @@ pub fn refuse_while_installing() -> AppResult<()> {
     refuse_while_installing_on(&UPDATE_WRITE_BARRIER)
 }
 
+/// The process-wide barrier, for the commands that check it through a seam taking the flag
+/// (sign-in and unlock: [`refuse_sign_in_while_installing_on`]).
+pub(crate) fn update_write_barrier() -> &'static std::sync::atomic::AtomicBool {
+    &UPDATE_WRITE_BARRIER
+}
+
+/// The refusal of a sign-in or an unlock while the barrier is up (AU-109).
+pub const SIGN_IN_UPDATE_IN_PROGRESS_MESSAGE: &str =
+    "AUTH_UPDATE_IN_PROGRESS: Mise à jour en cours — reconnectez-vous après le redémarrage.";
+
+/// Refuses a sign-in or an unlock while an update is being installed (AU-109): the same check as
+/// every command behind a session and the forced password change ([`refuse_while_installing`]),
+/// coded (`AUTH_UPDATE_IN_PROGRESS`) so the sign-in and lock screens show it translated. Called
+/// first, before any lockout count, audit row or session is written. Signing out stays allowed.
+pub(crate) fn refuse_sign_in_while_installing_on(flag: &std::sync::atomic::AtomicBool) -> AppResult<()> {
+    refuse_while_installing_on(flag)
+        .map_err(|_| AppError::UpdateInProgress(SIGN_IN_UPDATE_IN_PROGRESS_MESSAGE.to_string()))
+}
+
 fn refuse_while_installing_on(flag: &std::sync::atomic::AtomicBool) -> AppResult<()> {
     if flag.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(AppError::ValidationFailed(vec![UPDATE_IN_PROGRESS_MESSAGE.to_string()]));

@@ -2290,6 +2290,8 @@ export interface UpdateAssetIdentityPayload {
   rams_utilization_factor?: number;
   commissioned_at?: string | null;
   decommissioned_at?: string | null;
+  /** New location, moved in the same save and recorded as a "Déplacé" event. */
+  org_node_id?: number;
 }
 
 export interface LinkAssetPayload {
@@ -10955,6 +10957,12 @@ export interface DataIntegrityFindingRow {
   status: string;
   waiver_reason: string | null;
   waiver_approver_id: number | null;
+}
+
+/** A person who may approve a waiver: holds `integrity.repair` plant-wide (permanent role) or is an administrator (AU-116). */
+export interface IntegrityWaiverApproverOption {
+  user_id: number;
+  display_name: string;
 }
 
 export interface WaiveDataIntegrityFindingInput {

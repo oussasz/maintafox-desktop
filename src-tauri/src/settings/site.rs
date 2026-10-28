@@ -341,6 +341,26 @@ async fn holds_settings_right<C: ConnectionTrait>(conn: &C, user_id: i64) -> App
     holds_tenant_right(conn, user_id, crate::rbac::permissions::ADM_SETTINGS).await
 }
 
+/// The single rule of a plant-wide right holder, over `user_accounts ua`: an active, not deleted
+/// account that is an administrator or holds the permission (bound last) through a tenant-scope
+/// assignment in force that is not an emergency grant
+/// ([`crate::rbac::resolver::PERMANENT_ASSIGNMENT_IN_FORCE_SQL`]). Shared by
+/// [`holds_tenant_right`] and [`tenant_right_holders`] so the check and the list never differ.
+fn tenant_right_holder_condition(permission: &str) -> (String, Vec<sea_orm::Value>) {
+    use crate::rbac::resolver::{assignment_clock, permanent_binds, PERMANENT_ASSIGNMENT_IN_FORCE_SQL};
+    let sql = format!(
+        "ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
+           SELECT 1 FROM user_scope_assignments usa \
+             JOIN role_permissions rp ON rp.role_id = usa.role_id \
+             JOIN permissions p ON p.id = rp.permission_id \
+            WHERE usa.user_id = ua.id AND usa.scope_type = 'tenant' \
+              AND {PERMANENT_ASSIGNMENT_IN_FORCE_SQL} AND p.name = ?))"
+    );
+    let mut values: Vec<sea_orm::Value> = permanent_binds(&assignment_clock()).into();
+    values.push(permission.into());
+    (sql, values)
+}
+
 /// Whether `user_id` (active account) holds `permission` tenant-wide now, through a role in force
 /// that is not an emergency grant, or is an administrator. Used to re-check, on arrival, the right
 /// of the person named by a received row.
@@ -349,24 +369,37 @@ pub(crate) async fn holds_tenant_right<C: ConnectionTrait>(
     user_id: i64,
     permission: &str,
 ) -> AppResult<bool> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let (condition, mut values) = tenant_right_holder_condition(permission);
+    values.push(user_id.into());
     Ok(conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS ok FROM user_accounts ua \
-              WHERE ua.id = ? AND ua.is_active = 1 AND ua.deleted_at IS NULL AND (ua.is_admin = 1 OR EXISTS ( \
-                SELECT 1 FROM user_scope_assignments usa \
-                  JOIN role_permissions rp ON rp.role_id = usa.role_id \
-                  JOIN permissions p ON p.id = rp.permission_id \
-                 WHERE usa.user_id = ua.id AND usa.deleted_at IS NULL AND usa.scope_type = 'tenant' \
-                   AND usa.is_emergency = 0 \
-                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
-                   AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
-                   AND p.name = ?))",
-            [user_id.into(), now.clone().into(), now.into(), permission.into()],
+            format!("SELECT 1 AS ok FROM user_accounts ua WHERE {condition} AND ua.id = ?"),
+            values,
         ))
         .await?
         .is_some())
+}
+
+/// Every account that [`holds_tenant_right`] accepts for `permission` now, as (id, display name or
+/// user name), ordered by name: the people a screen may offer where that check will be made.
+pub(crate) async fn tenant_right_holders<C: ConnectionTrait>(
+    conn: &C,
+    permission: &str,
+) -> AppResult<Vec<(i64, String)>> {
+    let (condition, values) = tenant_right_holder_condition(permission);
+    conn.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT ua.id, COALESCE(ua.display_name, ua.username) AS name FROM user_accounts ua \
+             WHERE {condition} ORDER BY name COLLATE NOCASE, ua.id"
+        ),
+        values,
+    ))
+    .await?
+    .iter()
+    .map(|r| Ok((get::<i64>(r, "id")?, get::<String>(r, "name")?)))
+    .collect()
 }
 
 /// Clock difference tolerated between devices for a received change of a site rule. Desktop

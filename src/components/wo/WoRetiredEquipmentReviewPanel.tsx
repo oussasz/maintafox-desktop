@@ -7,6 +7,9 @@
  * are read on mount and again whenever the work-order list reloads (after an action on the page).
  * A closed item keeps who, when and how: the history (bounded on the backend) is read only when it
  * is opened. With nothing open the card is hidden; a small link keeps the history reachable.
+ *
+ * On the Requests page (`requestsOnly`, AU-112) it lists the requests alone, needs only di.view,
+ * opens a request in place and reads again when that page's list reloads (`reloadSignal`).
  */
 
 import type { TFunction } from "i18next";
@@ -58,11 +61,24 @@ function History({ items }: { items: RetiredEquipmentReview[] }) {
   );
 }
 
-export function WoRetiredEquipmentReviewPanel() {
+interface WoRetiredEquipmentReviewPanelProps {
+  /** The Requests page: requests only (di.view), opened with `onOpenRequest`. */
+  requestsOnly?: boolean;
+  onOpenRequest?: (diId: number) => void;
+  /** Changes when the host page's list reloads; defaults to the work-order list. */
+  reloadSignal?: unknown;
+}
+
+export function WoRetiredEquipmentReviewPanel({
+  requestsOnly = false,
+  onOpenRequest,
+  reloadSignal: hostReloadSignal,
+}: WoRetiredEquipmentReviewPanelProps = {}) {
   const { t } = useTranslation("ot");
   const openWo = useWoStore((s) => s.openWo);
   // The work-order list reloads after every action on the page: read the open items again then.
-  const reloadSignal = useWoStore((s) => s.items);
+  const woItems = useWoStore((s) => s.items);
+  const reloadSignal = requestsOnly ? hostReloadSignal : woItems;
   const [open, setOpen] = useState<RetiredEquipmentReview[]>([]);
   const [closedCount, setClosedCount] = useState(0);
   const [history, setHistory] = useState<RetiredEquipmentReview[] | null>(null);
@@ -77,7 +93,7 @@ export function WoRetiredEquipmentReviewPanel() {
   const load = useCallback(async () => {
     try {
       const withHistory = historyShown.current;
-      const list = await listRetiredEquipmentReviews(withHistory);
+      const list = await listRetiredEquipmentReviews(withHistory, requestsOnly);
       setOpen(list.items.filter((i) => i.status === "open"));
       setClosedCount(list.closed_count);
       setHistory(withHistory ? list.items.filter((i) => i.status === "closed") : null);
@@ -85,7 +101,7 @@ export function WoRetiredEquipmentReviewPanel() {
     } catch {
       setFailed(true);
     }
-  }, []);
+  }, [requestsOnly]);
 
   useEffect(() => {
     void load();
@@ -99,12 +115,12 @@ export function WoRetiredEquipmentReviewPanel() {
     setShowHistory(true);
     if (history !== null) return;
     try {
-      const list = await listRetiredEquipmentReviews(true);
+      const list = await listRetiredEquipmentReviews(true, requestsOnly);
       setHistory(list.items.filter((i) => i.status === "closed"));
     } catch {
       setFailed(true);
     }
-  }, [history, showHistory]);
+  }, [history, showHistory, requestsOnly]);
 
   if (failed) {
     return (
@@ -194,6 +210,15 @@ export function WoRetiredEquipmentReviewPanel() {
                       aria-label={t("retiredEquipment.open")}
                     >
                       <Eye className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  ) : onOpenRequest ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 shrink-0 px-2 text-tone-warning-fg"
+                      onClick={() => onOpenRequest(item.record_id as number)}
+                    >
+                      {t("retiredEquipment.open")}
                     </Button>
                   ) : (
                     <Link

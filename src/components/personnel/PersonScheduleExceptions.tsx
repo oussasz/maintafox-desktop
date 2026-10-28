@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { mfTone } from "@/design-system/tone";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type PersonnelScheduleException,
@@ -37,7 +38,6 @@ import {
   listScheduleClassVersions,
   upsertPersonnelScheduleException,
 } from "@/services/workforce-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
 const TEAM_CLASS = "__team__";
@@ -132,7 +132,7 @@ export function PersonScheduleExceptions({ personnelId }: { personnelId: number 
       setDraft(null);
       await load();
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }
@@ -145,7 +145,7 @@ export function PersonScheduleExceptions({ personnelId }: { personnelId: number 
       await deletePersonnelScheduleException(id);
       await load();
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }

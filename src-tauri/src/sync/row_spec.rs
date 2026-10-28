@@ -961,6 +961,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The site before and after a site given to an old record (`org::site_assignment`).
             json_ref_hist("details_json", "$.site_before", "org_nodes"),
             json_ref_hist("details_json", "$.site_after", "org_nodes"),
+            // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
+            json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
+            json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
             // The work order of a qualification requirement before and after its change
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
@@ -1027,6 +1030,10 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("schedule_commitment", "schedule_commitments"),
                         // A reopened-week conflict closed by its decision (`planning::sync_check`).
                         ("weekly_schedule", "weekly_schedules"),
+                        // A break-in conflict closed once judged valid, and a crew site change
+                        // conflict closed once it crosses no frozen week (`planning::sync_check`).
+                        ("schedule_break_in", "schedule_break_ins"),
+                        ("team", "teams"),
                         // A work-order type given its maintenance nature (`wo::types`): the target
                         // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
                         // so the audit is unchanged when the value is deleted later (a discarded
@@ -1067,6 +1074,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("inventory_transactions", NOT_A_ROW),
                         ("inventory_mutation_audit_links", NOT_A_ROW),
                         ("inventory_count_sessions", NOT_A_ROW),
+                        // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
+                        // the equipment, sent as its sync id (equipment rows are never hard-deleted).
+                        ("equipment", "equipment"),
                     ],
                 ),
             ],

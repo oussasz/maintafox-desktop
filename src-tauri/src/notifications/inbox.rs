@@ -3,7 +3,8 @@
 //! **Visibility (checked at read time).** A notification is listed and counted only when the
 //! reader may view its module (`notifications::catalog::MODULES`) where its record is: a view
 //! permission granted plant-wide shows the module, one granted on org nodes shows the records on
-//! those nodes and below (and the records without a node); a category without a known module is
+//! those nodes and below (and the records without a node, except work orders and requests: those
+//! are plant-wide records, `SITE_ANCHORED_MODULES`); a category without a known module is
 //! never shown. The bell, the inbox views and "mark all read" use the same conditions,
 //! so their numbers always agree.
 //!
@@ -53,12 +54,34 @@ const SEVERITY_SQL: &str = "CASE WHEN e.severity IN ('critical', 'error') THEN '
 
 /// What a reader may see, module by module, from the view permission of each module
 /// (`catalog::MODULES`) as their roles grant it now.
+/// Modules whose records without an org node are plant-wide only (work orders and requests:
+/// their lists and panels never show such a record to a site user, `auth::scope::scope_filter_sql`).
+/// A site user is not shown their notifications either: they would open a record the user cannot
+/// see (AU-112).
+pub const SITE_ANCHORED_MODULES: &[&str] = &["di", "ot"];
+
+/// The org node of a notification event's record as it is now: a work order's site
+/// (`work_orders.entity_id`) or a request's (`intervention_requests.org_node_id`), read when the
+/// inbox is read, so a notice follows its record when the record gets a site or changes site (a
+/// site cleared since reads as none: never COALESCE with the stored node); the node stored with
+/// the event for any other record, or for a WO/DI no longer on this PC. The record is the event's
+/// source (`e.source_module`), whatever the category's module: a category of another module whose
+/// events come from a work order follows that work order's site too.
+const EVENT_ANCHOR_SQL: &str = "(CASE \
+     WHEN e.source_module IN ('wo', 'work_orders') AND EXISTS \
+       (SELECT 1 FROM work_orders wo WHERE wo.id = CAST(e.source_record_id AS INTEGER)) THEN \
+       (SELECT wo.entity_id FROM work_orders wo WHERE wo.id = CAST(e.source_record_id AS INTEGER)) \
+     WHEN e.source_module IN ('di', 'intervention_requests') AND EXISTS \
+       (SELECT 1 FROM intervention_requests ir WHERE ir.id = CAST(e.source_record_id AS INTEGER)) THEN \
+       (SELECT ir.org_node_id FROM intervention_requests ir WHERE ir.id = CAST(e.source_record_id AS INTEGER)) \
+     ELSE e.org_node_id END)";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Visibility {
     /// Modules seen plant-wide (a tenant-wide grant, elevated admin, or no permission needed).
     pub everywhere: Vec<String>,
     /// Modules granted on some org nodes only: the notifications of records on those nodes or
-    /// below them, and of records that belong to no node.
+    /// below them, and of records that belong to no node (except [`SITE_ANCHORED_MODULES`]).
     pub on_nodes: Vec<(String, Vec<i64>)>,
 }
 
@@ -86,13 +109,23 @@ impl Visibility {
             ));
         }
         for (module, nodes) in &self.on_nodes {
+            // Work orders and requests without a site are plant-wide records, as in their lists.
+            let no_node_shown = !SITE_ANCHORED_MODULES.contains(&module.as_str());
+            if nodes.is_empty() && !no_node_shown {
+                continue;
+            }
             values.push(module.clone().into());
             if nodes.is_empty() {
-                parts.push("(c.module_code = ? AND e.org_node_id IS NULL)".to_string());
+                parts.push(format!("(c.module_code = ? AND {EVENT_ANCHOR_SQL} IS NULL)"));
             } else {
                 values.extend(nodes.iter().map(|n| (*n).into()));
+                let no_node = if no_node_shown {
+                    format!("{EVENT_ANCHOR_SQL} IS NULL OR ")
+                } else {
+                    String::new()
+                };
                 parts.push(format!(
-                    "(c.module_code = ? AND (e.org_node_id IS NULL OR e.org_node_id IN ({})))",
+                    "(c.module_code = ? AND ({no_node}{EVENT_ANCHOR_SQL} IN ({})))",
                     vec!["?"; nodes.len()].join(",")
                 ));
             }
@@ -107,8 +140,9 @@ impl Visibility {
 
 /// What `user_id` may see now. A role granted plant-wide shows the whole module; a role granted on
 /// org nodes (site, area…) shows the notifications of records on those nodes and below, plus those
-/// of records without a node. Users with elevated admin access see everything, as in every module.
-pub async fn visible_to(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Visibility> {
+/// of records without a node outside [`SITE_ANCHORED_MODULES`]. Users with elevated admin access
+/// see everything, as in every module.
+pub async fn visible_to(db: &impl ConnectionTrait, user_id: i32) -> AppResult<Visibility> {
     if crate::auth::rbac::user_has_elevated_admin_access(db, user_id).await? {
         return Ok(Visibility::all());
     }
@@ -127,6 +161,9 @@ pub async fn visible_to(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppRe
                  JOIN role_permissions rp ON rp.role_id = usa.role_id
                  JOIN permissions p ON p.id = rp.permission_id
                  WHERE usa.user_id = ? AND p.name = ? AND usa.deleted_at IS NULL
+                   AND (usa.scope_type NOT IN ('org_node', 'site', 'entity') OR EXISTS (
+                        SELECT 1 FROM org_nodes n
+                        WHERE n.id = CAST(TRIM(usa.scope_reference) AS INTEGER) AND n.deleted_at IS NULL))
                    AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
                    AND (usa.valid_to IS NULL OR usa.valid_to >= ?)
                    AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)",
@@ -276,6 +313,46 @@ fn view_sql(view: &str) -> AppResult<String> {
         "all" => "1 = 1".to_string(),
         other => return Err(invalid(format!("unknown view '{other}'"))),
     })
+}
+
+/// The inbox condition for the other channels (Windows toast, daily digest, email), so they never
+/// carry a notification its reader may not see (AU-112): SQL on the event `e` and the category `c`
+/// (the caller joins `notification_categories c ON c.code = e.category_code`); its values are
+/// appended to `values` in placeholder order.
+pub(crate) fn channel_condition(vis: &Visibility, values: &mut Vec<Value>) -> String {
+    vis.sql(values)
+}
+
+/// Whether the recipient of `notification_id` may see it now (the inbox condition). A
+/// notification without a recipient is not checked here.
+pub(crate) async fn recipient_may_see(conn: &impl ConnectionTrait, notification_id: i64) -> AppResult<bool> {
+    let recipient = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT recipient_user_id FROM notifications WHERE id = ?",
+            [notification_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<i64>>("", "recipient_user_id"))
+        .transpose()
+        .map_err(|e| decode("recipient_user_id", e))?
+        .flatten();
+    let Some(user_id) = recipient else {
+        return Ok(true);
+    };
+    let user = i32::try_from(user_id).map_err(|e| AppError::Internal(anyhow::anyhow!("user id {user_id}: {e}")))?;
+    let vis = visible_to(conn, user).await?;
+    let mut values = Vec::new();
+    let from = base(user_id, &vis, &mut values);
+    values.push(notification_id.into());
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT n.id {from} AND n.id = ?"),
+            values,
+        ))
+        .await?
+        .is_some())
 }
 
 /// `FROM … WHERE` shared by every inbox query: the reader's notifications they may see.

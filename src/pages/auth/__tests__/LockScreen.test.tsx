@@ -93,4 +93,46 @@ describe("LockScreen error text", () => {
       expect(container.querySelector('input[type="password"]')).toBeNull();
     });
   });
+
+  describe("while an update installs (server code AUTH_UPDATE_IN_PROGRESS, AU-109)", () => {
+    const refusal = {
+      code: "AUTH_UPDATE_IN_PROGRESS",
+      message: "AUTH_UPDATE_IN_PROGRESS: Mise à jour en cours (serveur)",
+    };
+
+    it("says so in the screen's language for a password unlock", async () => {
+      const onUnlock = vi.fn().mockRejectedValue(refusal);
+      const { input, form } = renderLock(onUnlock);
+      fireEvent.change(input, { target: { value: "s3cret!" } });
+      fireEvent.submit(form);
+
+      expect(
+        await screen.findByText("Update in progress — sign in again after the restart."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/AUTH_UPDATE_IN_PROGRESS/)).not.toBeInTheDocument();
+    });
+
+    it("says so for a PIN unlock without using up a PIN attempt", async () => {
+      const onUnlockWithPin = vi.fn().mockRejectedValue(refusal);
+      const { container } = render(
+        <LockScreen
+          displayName="Amina"
+          onUnlock={vi.fn()}
+          onUnlockWithPin={onUnlockWithPin}
+          onLogout={vi.fn()}
+          pinConfigured
+        />,
+      );
+      const pin = () =>
+        container.querySelector('input[inputmode="numeric"]') as HTMLInputElement | null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        fireEvent.change(pin() as HTMLInputElement, { target: { value: "123456" } });
+        await waitFor(() => expect(onUnlockWithPin).toHaveBeenCalledTimes(attempt));
+      }
+      expect(
+        await screen.findByText(String(i18n.t("auth:login.updateInProgress"))),
+      ).toBeInTheDocument();
+      expect(pin()).not.toBeNull();
+    });
+  });
 });

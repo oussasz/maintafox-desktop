@@ -12,11 +12,13 @@
  *  - a response that fails schema validation (ZodError) gets a plain message; the technical
  *    detail goes to the console, never on screen.
  */
-import type { TOptions } from "i18next";
+import type { TFunction, TOptions } from "i18next";
 import { ZodError } from "zod";
 
 import { i18n } from "@/i18n/config";
-import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { ACCOUNT_LOCKED, accountLockedErrorText } from "@/lib/account-lockout";
+import { displayParams, formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { permissionLabel } from "@/lib/permission-labels";
 import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import {
   extractIpcErrorCode,
@@ -24,6 +26,7 @@ import {
   formatOrgIpcError,
   toErrorMessage,
 } from "@/utils/errors";
+import { PERMISSION_CATALOG } from "@shared/rbac/permissions.generated";
 
 export interface AppErrorDescription {
   title: string;
@@ -37,6 +40,16 @@ export interface AppErrorDescription {
 export function appErrorText(err: unknown): string {
   const { title, description } = describeAppError(err);
   return description ?? title;
+}
+
+/** The readable name of the right a "permission denied" sentence names; null when it names none. */
+function missingRight(message: string): string | null {
+  const names = message.match(/[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g) ?? [];
+  const known = names.find((n) => PERMISSION_CATALOG.some((p) => p.name === n));
+  // Before the rights' names are loaded the label would be the English catalogue text: the
+  // generic reason stands in instead.
+  if (!i18n.hasLoadedNamespace("admin")) return null;
+  return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
 }
 
 export function describeAppError(err: unknown): AppErrorDescription {
@@ -60,12 +73,27 @@ export function describeAppError(err: unknown): AppErrorDescription {
     };
   }
 
+  // The account lockout: one sentence with its end in local time (`account-lockout.ts`), the
+  // same on every screen; the server's English sentence only in "Détails techniques".
+  if (code === ACCOUNT_LOCKED) {
+    return {
+      title: accountLockedErrorText(err),
+      description: null,
+      code,
+      technical: rawMsg.trim() || null,
+    };
+  }
+
   // A refused right: the translated refusal, never the server's own (English, technical) text.
-  // The rights have no readable names in the locale data, so the generic reason is given.
+  // The server's sentence names the missing right ("Permission requise : ot.close"); it is shown
+  // by its readable name (`permission-labels.ts`), the generic reason when no right can be read.
   if (code === "PERMISSION_DENIED") {
+    const right = missingRight(rawMsg);
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
-      description: String(i18n.t("errors:generic.forbidden")),
+      description: right
+        ? String(i18n.t("errors:generic.rightRequired", { right }))
+        : String(i18n.t("errors:generic.forbidden")),
       code,
       // The server's text names the missing right: kept for "Détails techniques" and support.
       technical: rawMsg.trim() || null,
@@ -82,7 +110,7 @@ export function describeAppError(err: unknown): AppErrorDescription {
   const codeTitle = i18nKey && i18n.exists(i18nKey) ? String(i18n.t(i18nKey)) : "";
   const details = extractIpcValidationDetails(err);
   // The parameters the backend sent with the GATE code fill its text ("de {{from}} à {{to}}").
-  const gateParams = details.find((d) => d.code === gateCode)?.params ?? {};
+  const gateParams = displayParams(details.find((d) => d.code === gateCode)?.params);
   const title =
     gateI18nKey && i18n.exists(gateI18nKey)
       ? String(i18n.t(gateI18nKey, gateParams as TOptions))
@@ -111,11 +139,46 @@ export function describeAppError(err: unknown): AppErrorDescription {
  * The translated text of the GATE code found in a backend sentence; the generic text when the
  * code has no translation (a GATE code never reaches the user); null when there is no GATE code.
  */
-function gateText(message: string): string | null {
+function gateText(message: string, params?: Record<string, string> | null): string | null {
   const code = message.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/)?.[1];
   if (!code) return null;
   const key = `errors:gateError.${code}`;
-  return i18n.exists(key) ? String(i18n.t(key)) : String(i18n.t("errors:generic.unexpected"));
+  return i18n.exists(key)
+    ? String(i18n.t(key, displayParams(params) as TOptions))
+    : String(i18n.t("errors:generic.unexpected"));
+}
+
+/** The `key=value` parameters a backend sentence carries after its GATE code (`GATE_X:a=1,b=2`). */
+function gateSentenceParams(rest: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const afterColon = rest.startsWith(":") ? rest.slice(1) : "";
+  const segment = afterColon.split(/[:\s]/)[0] ?? "";
+  if (!segment.includes("=")) return params;
+  for (const pair of segment.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq > 0) params[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return params;
+}
+
+/**
+ * The text of a backend sentence that carries a GATE code (`GATE_X:k=v: sentence`), in the user's
+ * language, for the screens that print backend strings as they are (import problem lists). The
+ * parameters after the code fill the text, as for a refusal. Text before the code is kept; a
+ * sentence without a GATE code is returned as it is; a code with no translation gives the generic
+ * text, never the code.
+ */
+export function gateSentenceText(sentence: string): string {
+  // Several refusals joined with a space (`errs.join(" ")`) are said one by one.
+  const parts = sentence.split(/\s+(?=GATE_[A-Z0-9_]+)/);
+  if (parts.length > 1) return parts.map(gateSentenceText).join(" ");
+  const match = sentence.match(/GATE_[A-Z0-9_]+(?::[A-Za-z0-9_=,\-./]+)?/);
+  if (!match || match.index === undefined) return sentence;
+  const code = /^GATE_[A-Z0-9_]+/.exec(match[0])?.[0] ?? "";
+  const params = gateSentenceParams(match[0].slice(code.length));
+  const text = gateText(code, params) ?? sentence;
+  const prefix = sentence.slice(0, match.index).trim();
+  return prefix ? `${prefix} ${text}` : text;
 }
 
 /**
@@ -129,7 +192,7 @@ export function appErrorLines(err: unknown): string[] {
   if (details.length === 0) return [appErrorReason(err)];
   const lines = details.map((d) => {
     if (d.code) return formatOrgIssuesWithI18n([d]);
-    return gateText(d.message) ?? d.message.replace(/^Validation failed:\s*/i, "");
+    return gateText(d.message, d.params) ?? d.message.replace(/^Validation failed:\s*/i, "");
   });
   return lines.filter((l) => l.trim() !== "");
 }

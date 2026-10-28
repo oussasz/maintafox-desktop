@@ -56,11 +56,15 @@ export type RetiredEquipmentReviewList = z.infer<typeof RetiredEquipmentReviewLi
 
 /**
  * Open items, then (when asked: the history) the latest closed ones; ot.view, requests only where
- * di.view.
+ * di.view. `requestsOnly` (the Requests page): the requests alone, with di.view (AU-112).
  */
 export async function listRetiredEquipmentReviews(
   includeClosed: boolean,
+  requestsOnly = false,
 ): Promise<RetiredEquipmentReviewList> {
-  const raw = await invoke<unknown>("list_retired_equipment_reviews", { includeClosed });
+  const raw = await invoke<unknown>("list_retired_equipment_reviews", {
+    includeClosed,
+    requestsOnly,
+  });
   return RetiredEquipmentReviewListSchema.parse(raw);
 }

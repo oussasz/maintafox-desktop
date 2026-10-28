@@ -145,6 +145,12 @@ pub enum AppError {
     #[error("{0}")]
     PasswordNotReceived(String),
 
+    /// Sign-in or unlock while an update is being installed (from the pre-update backup until the
+    /// restart, `updater::refuse_sign_in_while_installing_on`, AU-109). The sign-in and lock
+    /// screens show it from the code.
+    #[error("{0}")]
+    UpdateInProgress(String),
+
     /// Encrypted database cannot be opened: key missing from the OS credential store or wrong.
     /// The UI offers recovery-key entry (`DATABASE_KEY_UNAVAILABLE`).
     #[error("Database key unavailable: {0}")]
@@ -198,6 +204,7 @@ impl Serialize for AppError {
             Self::PinDisabled => "PIN_DISABLED",
             Self::PasswordChangeRequired(_) => "PASSWORD_CHANGE_REQUIRED",
             Self::PasswordNotReceived(_) => "PASSWORD_NOT_RECEIVED",
+            Self::UpdateInProgress(_) => "AUTH_UPDATE_IN_PROGRESS",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;
@@ -226,6 +233,13 @@ impl Serialize for AppError {
                 msgs.iter().map(|m| validation_detail(m)).collect(),
             )),
             Self::OrgValidationFailed(issues) => Some(serde_json::to_value(issues).unwrap_or(serde_json::Value::Null)),
+            // The end of the lockout as data, so the screen says it in the user's language and
+            // local time; the message stays the technical text.
+            Self::AccountLocked { until } => Some(serde_json::json!([{
+                "code": "ACCOUNT_LOCKED",
+                "message": self.to_string(),
+                "params": { "until": until },
+            }])),
             _ => None,
         };
         state.serialize_field("details", &details)?;

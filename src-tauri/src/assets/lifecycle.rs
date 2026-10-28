@@ -62,7 +62,7 @@ pub struct AssetLifecycleEvent {
 /// Payload for recording a lifecycle event. The caller supplies event-type
 /// and the relevant context fields; the service validates required
 /// combinations per event type.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct RecordLifecycleEventPayload {
     pub asset_id: i64,
     pub event_type: String,
@@ -478,6 +478,7 @@ pub(crate) async fn record_lifecycle_event_in(
             })?;
             if let Some(to_node_id) = payload.to_org_node_id {
                 crate::assets::hierarchy::move_asset_org_node_in(txn, payload.asset_id, to_node_id, expected).await?;
+                audit_move_in(txn, payload.asset_id, payload.from_org_node_id, to_node_id, actor_id).await?;
             }
         }
         _ => {}
@@ -528,4 +529,65 @@ pub(crate) async fn record_lifecycle_event_in(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("lifecycle event created but not found after insert")))?;
     map_lifecycle_event(&row)
+}
+
+/// Audit action of an equipment move (D19).
+pub(crate) const ASSET_MOVED_EVENT: &str = "asset.moved";
+
+/// Moves an asset in the caller's transaction and records it (D19): a `MOVED` lifecycle event
+/// (the person, from, to, now) and an audit entry, committed or rolled back with the move. A move
+/// to the node the asset is already on changes nothing. An asset with no location yet is placed
+/// without a lifecycle event (a move has an origin), and the placement is still audited.
+pub(crate) async fn move_asset_recorded_in(
+    txn: &DatabaseTransaction,
+    asset_id: i64,
+    to_node_id: i64,
+    expected_row_version: i64,
+    actor_id: i32,
+) -> AppResult<()> {
+    let (_, current_node_id, _) = assert_asset_exists(txn, asset_id).await?;
+    match current_node_id {
+        Some(from) if from == to_node_id => Ok(()),
+        Some(_) => {
+            let payload = RecordLifecycleEventPayload {
+                asset_id,
+                event_type: "MOVED".into(),
+                to_org_node_id: Some(to_node_id),
+                expected_row_version: Some(expected_row_version),
+                ..Default::default()
+            };
+            record_lifecycle_event_in(txn, payload, actor_id).await?;
+            Ok(())
+        }
+        None => {
+            crate::assets::hierarchy::move_asset_org_node_in(txn, asset_id, to_node_id, expected_row_version).await?;
+            audit_move_in(txn, asset_id, None, to_node_id, actor_id).await
+        }
+    }
+}
+
+async fn audit_move_in(
+    conn: &impl ConnectionTrait,
+    asset_id: i64,
+    from_node_id: Option<i64>,
+    to_node_id: i64,
+    actor_id: i32,
+) -> AppResult<()> {
+    let target = asset_id.to_string();
+    crate::audit::emit_in(
+        conn,
+        crate::audit::AuditEvent {
+            event_type: ASSET_MOVED_EVENT,
+            actor_id: Some(actor_id),
+            entity_type: Some("equipment"),
+            entity_id: Some(&target),
+            summary: "Equipment moved",
+            detail_json: Some(
+                serde_json::json!({ "from_org_node_id": from_node_id, "to_org_node_id": to_node_id }).to_string(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(())
 }

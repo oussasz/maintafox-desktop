@@ -24,6 +24,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { mfTone } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   type ScheduleClassVersion,
@@ -35,7 +36,6 @@ import {
   listTeamSchedule,
   setTeamSchedule,
 } from "@/services/workforce-service";
-import { formatOrgIpcError } from "@/utils/errors";
 import { P } from "@shared/rbac/permissions.generated";
 
 const NONE = "__none__";
@@ -148,7 +148,7 @@ export function TeamTimetablePanel({
       await load();
       onChanged?.();
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }
@@ -160,7 +160,7 @@ export function TeamTimetablePanel({
     try {
       setLinks(await confirmTeamScheduleReview(teamId));
     } catch (e) {
-      setSaveError(formatOrgIpcError(e));
+      setSaveError(appErrorReason(e));
     } finally {
       setSaving(false);
     }

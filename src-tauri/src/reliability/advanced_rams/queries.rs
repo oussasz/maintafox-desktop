@@ -179,7 +179,7 @@ fn opt_i64_value(v: Option<i64>) -> sea_orm::Value {
 }
 
 /// Fit a right-censored Weibull on exposure-hour times between eligible unplanned failures.
-/// Refused (`READINESS_DENY:*`) when the StrictRam readiness gate denies the equipment.
+/// Refused (`GATE_REL_READINESS_*`) when the StrictRam readiness gate denies the equipment.
 pub async fn run_and_store_weibull_fit(
     db: &DatabaseConnection,
     user_id: Option<i32>,
@@ -199,9 +199,11 @@ pub async fn run_and_store_weibull_fit(
     if !gate.allowed() {
         return Err(gate.deny_error());
     }
-    let basis = load_exposure_basis(db, input.equipment_id)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["READINESS_DENY:MISSING_EXPOSURE".into()]))?;
+    let basis = load_exposure_basis(db, input.equipment_id).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_REL_READINESS_NO_EXPOSURE: no runtime exposure for this equipment.".into(),
+        ])
+    })?;
 
     let events = load_weibull_source_events(
         db,

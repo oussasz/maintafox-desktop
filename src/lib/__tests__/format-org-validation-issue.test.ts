@@ -156,3 +156,73 @@ describe("coded refusals with times", () => {
     expect(text).not.toBe("The work order's planned end (someday) ...");
   });
 });
+
+describe("coded refusals with quantities", () => {
+  let before = "";
+  beforeAll(() => {
+    initI18n();
+    before = i18n.language;
+  });
+  afterAll(async () => {
+    await i18n.changeLanguage(before);
+  });
+
+  const issue = {
+    code: "GATE_INV_LOT_INSUFFICIENT",
+    message: "Lot L1 holds 12.500 at this location, less than 20.000.",
+    params: { available: "12.500", quantity: "20.000" },
+  };
+
+  it("shows them with the French decimal comma, no decimals lost", async () => {
+    await i18n.changeLanguage("fr");
+    const text = formatOrgIssueWithI18n(issue);
+    expect(text).toContain("12,5");
+    expect(text).toContain("20");
+    expect(text).not.toContain("12.500");
+    expect(text).not.toContain("20.000");
+    expect(
+      formatOrgIssueWithI18n({ ...issue, params: { available: "0.125", quantity: "2" } }),
+    ).toContain("0,125");
+  });
+
+  it("shows them with the English decimal point", async () => {
+    await i18n.changeLanguage("en");
+    const text = formatOrgIssueWithI18n(issue);
+    expect(text).toContain("12.5");
+    expect(text).not.toContain("12.500");
+  });
+
+  it("keeps a value that is not a number as sent", async () => {
+    await i18n.changeLanguage("fr");
+    expect(
+      formatOrgIssueWithI18n({ ...issue, params: { available: "n/a", quantity: "2" } }),
+    ).toContain("n/a");
+  });
+});
+
+describe("the permit-clearing refusal by origin", () => {
+  let before = "";
+  beforeAll(() => {
+    initI18n();
+    before = i18n.language;
+  });
+  afterAll(async () => {
+    await i18n.changeLanguage(before);
+  });
+
+  it.each(["fr", "en"])("names the origin and the work order's site in %s", async (language) => {
+    await i18n.changeLanguage(language);
+    await i18n.loadNamespaces("training");
+    const code = "WO_PERMIT_RULE_CLEAR_RIGHT_REQUIRED";
+    const rule = formatOrgIssueWithI18n({ code, message: "x", params: { origin: "rule" } });
+    const safety = formatOrgIssueWithI18n({
+      code,
+      message: "x",
+      params: { origin: "safety_request" },
+    });
+    expect(rule).toBe(String(i18n.t(`training:errors.${code}_rule`)));
+    expect(safety).toBe(String(i18n.t(`training:errors.${code}_safety_request`)));
+    expect(rule).not.toBe(safety);
+    expect(rule).not.toContain("$t(");
+  });
+});

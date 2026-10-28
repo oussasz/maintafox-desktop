@@ -38,16 +38,16 @@ pub async fn submit_wo(db: &DatabaseConnection, input: WoSubmitInput) -> AppResu
     let mut errors = Vec::new();
     let title: String = row.try_get("", "title").unwrap_or_default();
     if title.trim().is_empty() {
-        errors.push("Titre obligatoire pour soumettre l'OT.".into());
+        errors.push("GATE_WO_SUBMIT_TITLE_REQUIRED: Titre obligatoire pour soumettre l'OT.".into());
     }
     let type_id: i64 = row.try_get("", "type_id").unwrap_or(0);
     if type_id <= 0 {
-        errors.push("Type d'OT obligatoire pour soumettre.".into());
+        errors.push("GATE_WO_SUBMIT_TYPE_REQUIRED: Type d'OT obligatoire pour soumettre.".into());
     }
     let equipment_id: Option<i64> = row.try_get("", "equipment_id").ok().flatten();
     let entity_id: Option<i64> = row.try_get("", "entity_id").ok().flatten();
     if equipment_id.is_none() && entity_id.is_none() {
-        errors.push("Équipement ou entité obligatoire pour soumettre.".into());
+        errors.push("GATE_WO_SUBMIT_ASSET_REQUIRED: Équipement ou entité obligatoire pour soumettre.".into());
     }
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));

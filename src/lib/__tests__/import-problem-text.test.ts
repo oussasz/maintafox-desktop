@@ -5,6 +5,7 @@
 import i18next from "i18next";
 import { describe, expect, it } from "vitest";
 
+import { i18n as appI18n, initI18n } from "@/i18n/config";
 import enPersonnel from "@/i18n/locale-data/en/personnel.json";
 import frReference from "@/i18n/locale-data/fr/reference.json";
 import { importProblemText } from "@/lib/import-problem-text";
@@ -50,5 +51,32 @@ describe("importProblemText", () => {
     expect(
       importProblemText({ code: "REF_IMPORT_NEW_THING", params: {}, message: "x" }, t),
     ).toBeNull();
+  });
+});
+
+describe("importProblemText with a refused-unit detail", () => {
+  it("translates the GATE code carried by the detail, never showing it", async () => {
+    initI18n();
+    await appI18n.changeLanguage("en");
+    const t = (key: string, opts?: Record<string, unknown>): string =>
+      key === "import.problem.REF_IMPORT_INVALID_UNIT"
+        ? `Row ${String(opts?.["row"])}: unit refused. ${String(opts?.["detail"])}`
+        : key;
+    const text = importProblemText(
+      {
+        code: "REF_IMPORT_INVALID_UNIT",
+        params: {
+          row: "7",
+          detail: "GATE_UNIT_IMPORT_REVIEW_FLAG: le statut « à revoir » ne s'importe pas.",
+        },
+        message: "Ligne 7",
+      },
+      t,
+    );
+    expect(text).toContain("Row 7: unit refused.");
+    expect(text).not.toContain("GATE_");
+    expect(text).toBe(
+      `Row 7: unit refused. ${String(appI18n.t("errors:gateError.GATE_UNIT_IMPORT_REVIEW_FLAG"))}`,
+    );
   });
 });

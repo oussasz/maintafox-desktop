@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -58,7 +58,7 @@ export function SupplierComparisonCard({
       const rows = await listSupplierArticleSources(null, articleId);
       setSources(rows.filter((row) => row.is_active === 1));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     }
   }, [articleId]);
 
@@ -89,7 +89,7 @@ export function SupplierComparisonCard({
       await load();
       onPreferredChanged?.();
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }

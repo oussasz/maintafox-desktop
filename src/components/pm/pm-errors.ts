@@ -1,4 +1,4 @@
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { isReportedPmError } from "@/services/pm-service";
 
 /**
@@ -8,5 +8,5 @@ import { isReportedPmError } from "@/services/pm-service";
  */
 export function pmUnreportedErrorText(err: unknown): string | null {
   if (isReportedPmError(err)) return null;
-  return describeAppError(err).title;
+  return appErrorReason(err);
 }

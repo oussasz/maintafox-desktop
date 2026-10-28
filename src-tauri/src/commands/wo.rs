@@ -133,14 +133,34 @@ pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) 
 
 /// Work orders and requests open on retired equipment, crossed in sync ("équipement déclassé — à
 /// revoir", AU-73b, `wo::retired_equipment_review`): requires ot.view; the work orders where the
-/// user holds ot.view, the requests where they hold di.view (none without it). Read only: they are
-/// settled by the existing actions (cancel, reject, return to service).
+/// user holds ot.view, the requests where they hold di.view (none without it). With
+/// `requests_only` (the Requests page, AU-112) it requires di.view instead and lists the requests
+/// only, so a reviewer without ot.view reaches them. Read only: they are settled by the existing
+/// actions (cancel, reject, return to service).
 #[tauri::command]
 pub async fn list_retired_equipment_reviews(
     include_closed: bool,
+    requests_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::retired_equipment_review::RetiredEquipmentReviewList> {
     let user = require_session!(state);
+    if requests_only.unwrap_or(false) {
+        let di_scope = crate::di::access::require_anywhere(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            crate::rbac::permissions::DI_VIEW,
+        )
+        .await?;
+        let no_work_orders = AccessScope::Subtrees(Default::default());
+        return crate::wo::retired_equipment_review::list_reviews(
+            &state.db,
+            &no_work_orders,
+            &di_scope,
+            include_closed,
+        )
+        .await;
+    }
     let wo_scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::OT_VIEW).await?;
     let di_scope = if access::holds_anywhere(
         &state.db,
@@ -236,7 +256,7 @@ pub async fn create_wo(
     let mut errors: Vec<String> = Vec::new();
 
     if input.title.trim().is_empty() {
-        errors.push("Le titre est obligatoire.".into());
+        errors.push("GATE_WO_TITLE_REQUIRED: Le titre est obligatoire.".into());
     }
 
     // Validate type_code resolves
@@ -258,7 +278,9 @@ pub async fn create_wo(
             ))
             .await?;
         match di_row {
-            None => errors.push(format!("DI introuvable (source_di_id={di_id}).")),
+            None => errors.push(format!(
+                "GATE_WO_SOURCE_DI_NOT_FOUND:source_di_id={di_id}: DI introuvable (source_di_id={di_id})."
+            )),
             Some(row) => {
                 let di_node: Option<i64> = row.try_get("", "org_node_id")?;
                 crate::auth::scope::require_at(
