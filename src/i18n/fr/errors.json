@@ -1070,7 +1070,13 @@
     "GATE_ACT_ROTATE_REASON_REQUIRED": "Rotation du secret d'activation refusée : indiquez le motif.",
     "GATE_ACT_REBIND_REASON_REQUIRED": "Réassociation du poste refusée : indiquez le motif.",
     "GATE_AUTH_PIN_DIGITS_ONLY": "Le PIN doit contenir uniquement des chiffres.",
-    "GATE_AUTH_PIN_LENGTH": "Le PIN doit contenir entre 4 et 6 chiffres."
+    "GATE_AUTH_PIN_LENGTH": "Le PIN doit contenir entre 4 et 6 chiffres.",
+    "GATE_PASSWORD_MIN_LENGTH": "Mot de passe refusé : il doit contenir au moins {{min}} caractères.",
+    "GATE_PASSWORD_UPPERCASE": "Mot de passe refusé : il doit contenir au moins une lettre majuscule.",
+    "GATE_PASSWORD_LOWERCASE": "Mot de passe refusé : il doit contenir au moins une lettre minuscule.",
+    "GATE_PASSWORD_DIGIT": "Mot de passe refusé : il doit contenir au moins un chiffre.",
+    "GATE_PASSWORD_SPECIAL": "Mot de passe refusé : il doit contenir au moins un caractère spécial (par exemple ! @ # $).",
+    "GATE_SYNC_RESOLUTION_REASON": "Choix refusé : donnez la raison de ce choix (au moins {{min}} caractères)."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",
