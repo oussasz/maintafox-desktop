@@ -255,10 +255,13 @@ async fn write_retirement(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let deleted = profile.deletes_superseded_builtin_admin();
     // A deleted account keeps its deletion instant; a disabled one leaves `deleted_at` as it is.
+    // Retired by this rule, not by a person: no author (`status_changed_by_id`; a disable is never
+    // author-checked on arrival, `sync::credential_check`).
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE user_accounts
-            SET is_active = 0, updated_at = ?, deleted_at = CASE WHEN ? = 1 THEN ? ELSE deleted_at END
+            SET is_active = 0, status_changed_by_id = NULL, updated_at = ?,
+                deleted_at = CASE WHEN ? = 1 THEN ? ELSE deleted_at END
           WHERE id = ?",
         [
             now.clone().into(),
@@ -309,7 +312,7 @@ pub async fn builtin_admin_retired_here(conn: &impl ConnectionTrait) -> AppResul
 /// the rule itself and a PC whose only administrator is that account never loses it because
 /// another PC has one. The audit entry is written once the change is committed.
 pub async fn retire_builtin_admin_if_superseded(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     profile: BuildProfile,
     origin: RetireOrigin,
 ) -> AppResult<Option<RetiredBuiltinAdmin>> {
@@ -429,7 +432,7 @@ pub(crate) async fn after_inbound_user_account(
 pub async fn record_first_administrator_in(conn: &impl ConnectionTrait, admin_entity_sync_id: &str) -> AppResult<()> {
     if admin_entity_sync_id.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "The first administrator has no synchronisation identity.".into(),
+            "GATE_AUTH_ADMIN_SYNC_IDENTITY_MISSING: The first administrator has no synchronisation identity.".into(),
         ]));
     }
     let now = Utc::now().to_rfc3339();
@@ -484,7 +487,10 @@ pub async fn backfill_first_admin_marker(conn: &impl ConnectionTrait) -> AppResu
 
 /// At every start (`seeder::seed_system_data`): marker of PCs administered before it existed, then
 /// retirement of a superseded built-in account.
-pub async fn reconcile_at_startup(db: &DatabaseConnection, profile: BuildProfile) -> AppResult<()> {
+pub async fn reconcile_at_startup(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    profile: BuildProfile,
+) -> AppResult<()> {
     backfill_first_admin_marker(db).await?;
     retire_builtin_admin_if_superseded(db, profile, RetireOrigin::Startup).await?;
     Ok(())

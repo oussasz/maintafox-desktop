@@ -53,3 +53,5 @@ export {
   TableRow,
 } from "./table";
 export { FormField } from "./FormField";
+export { DecimalField } from "./decimal-field";
+export type { DecimalFieldProps } from "./decimal-field";

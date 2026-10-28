@@ -37,15 +37,15 @@ pub fn validate_signed_timestamp_window(signed_at: &str, now: chrono::DateTime<U
     let skew_secs = (signed - now).num_seconds();
     if skew_secs > MAX_CLOCK_SKEW_SECS {
         return Err(AppError::ValidationFailed(vec![format!(
-            "signed_at exceeds forward clock skew tolerance ({}s > {}s).",
-            skew_secs, MAX_CLOCK_SKEW_SECS
+            "GATE_LIC_SIGNED_AT_FUTURE:skew={skew_secs},max={}: signed_at exceeds forward clock skew tolerance ({skew_secs}s > {}s).",
+            MAX_CLOCK_SKEW_SECS, MAX_CLOCK_SKEW_SECS
         )]));
     }
     let age_secs = (now - signed).num_seconds();
     if age_secs > API_EXCHANGE_MAX_AGE_SECS {
         return Err(AppError::ValidationFailed(vec![format!(
-            "signed_at is stale for anti-replay window ({}s > {}s).",
-            age_secs, API_EXCHANGE_MAX_AGE_SECS
+            "GATE_LIC_SIGNED_AT_STALE:age={age_secs},max={}: signed_at is stale for anti-replay window ({age_secs}s > {}s).",
+            API_EXCHANGE_MAX_AGE_SECS, API_EXCHANGE_MAX_AGE_SECS
         )]));
     }
     Ok(())
@@ -63,7 +63,7 @@ pub async fn verify_trust_key(db: &impl ConnectionTrait, issuer: &str, key_id: &
         .await?;
     let Some(row) = row else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Untrusted signing key '{}:{}' for purpose '{}'.",
+            "GATE_LIC_KEY_UNTRUSTED: Untrusted signing key '{}:{}' for purpose '{}'.",
             issuer, key_id, purpose
         )]));
     };
@@ -74,7 +74,7 @@ pub async fn verify_trust_key(db: &impl ConnectionTrait, issuer: &str, key_id: &
     let row_purpose: String = row.try_get("", "purpose").map_err(|e| decode_err("purpose", e))?;
     if row_purpose != purpose {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Signing key '{}:{}' has purpose '{}' but '{}' was required.",
+            "GATE_LIC_KEY_PURPOSE_MISMATCH: Signing key '{}:{}' has purpose '{}' but '{}' was required.",
             issuer, key_id, row_purpose, purpose
         )]));
     }
@@ -86,7 +86,7 @@ pub async fn verify_trust_key(db: &impl ConnectionTrait, issuer: &str, key_id: &
     }
     if is_active != 1 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Signing key '{}:{}' is inactive.",
+            "GATE_LIC_KEY_INACTIVE: Signing key '{}:{}' is inactive.",
             issuer, key_id
         )]));
     }
@@ -247,7 +247,7 @@ pub async fn mark_key_compromised(
 ) -> AppResult<()> {
     if reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "compromise reason is required.".to_string()
+            "GATE_LIC_COMPROMISE_REASON_REQUIRED: compromise reason is required.".to_string(),
         ]));
     }
     db.execute(Statement::from_sql_and_values(

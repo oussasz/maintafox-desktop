@@ -31,6 +31,7 @@ import {
   overridableCodes,
   isAssigneeOverridableError,
   msToLocalIsoDate,
+  overrideRetryInput,
   parseLaborCostRange,
   parseMs,
   previewLaborCost,
@@ -101,8 +102,6 @@ type CommitDialogProps = {
   visibleEnd: number;
   saving: boolean;
   onSubmit: (input: CreateScheduleCommitmentInput) => Promise<void>;
-  /** Who may approve a break-in (frozen week); same list as the break-in dialog. */
-  approvers: { id: number; label: string }[];
 };
 
 export function CommitDialog({
@@ -122,11 +121,10 @@ export function CommitDialog({
   visibleEnd,
   saving,
   onSubmit,
-  approvers,
 }: CommitDialogProps) {
   const { t } = useTranslation("planning");
   const absenceType = useAbsenceTypeLookup();
-  const { formatCurrency } = useFormatters();
+  const { formatCurrency, formatDecimal } = useFormatters();
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [targetCrewId, setTargetCrewId] = useState<number | null>(null);
@@ -249,10 +247,10 @@ export function CommitDialog({
         const cap = assigneeCapacity.get(m.personnel_id);
         return {
           id: m.personnel_id,
-          label: cap ? `${name} — ${assigneeOptionSuffix(cap, t)}` : name,
+          label: cap ? `${name} — ${assigneeOptionSuffix(cap, t, formatDecimal)}` : name,
         };
       }),
-    [roster, assigneeCapacity, t],
+    [roster, assigneeCapacity, t, formatDecimal],
   );
   const selectedCapacity = personnelId != null ? assigneeCapacity.get(personnelId) : undefined;
 
@@ -559,8 +557,8 @@ export function CommitDialog({
       setFieldError(
         t("commitment.errors.capacityExceededDay", {
           day: check.overloaded.day,
-          share: check.overloaded.shareHours.toFixed(1),
-          remaining: check.overloaded.remainingHours.toFixed(1),
+          share: formatDecimal(check.overloaded.shareHours, 1),
+          remaining: formatDecimal(check.overloaded.remainingHours, 1),
         }),
       );
       return null;
@@ -604,8 +602,8 @@ export function CommitDialog({
           overloaded
             ? t("commitment.errors.capacityExceededDay", {
                 day: overloaded.day,
-                share: overloaded.shareHours.toFixed(1),
-                remaining: overloaded.remainingHours.toFixed(1),
+                share: formatDecimal(overloaded.shareHours, 1),
+                remaining: formatDecimal(overloaded.remainingHours, 1),
               })
             : message,
         );
@@ -618,7 +616,9 @@ export function CommitDialog({
         setPendingFrozenInput(input);
       }
       if (isAssigneeOverridableError(codes)) {
-        setPendingOverrideInput(input);
+        // The approver's password is never kept for a later submit: a break-in into a frozen
+        // week is signed again after the override (the server then asks for it).
+        setPendingOverrideInput(overrideRetryInput(input));
         setPendingOverrideCodes(overridableCodes(codes));
       }
     }
@@ -667,7 +667,7 @@ export function CommitDialog({
               {candidate ? (
                 <div className="flex flex-wrap gap-1.5">
                   <Badge variant="secondary" className="text-[10px]">
-                    {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
+                    {t("backlog.readinessScore")}: {formatDecimal(candidate.readiness_score, 1)}
                   </Badge>
                   {candidate.priority_label ? (
                     <Badge variant="outline" className="text-[10px]">
@@ -723,8 +723,11 @@ export function CommitDialog({
                 ) : labourHours != null ? (
                   <p className="text-[11px] text-text-muted">
                     {t("commitment.labourHours", {
-                      hours: labourHours.toFixed(1),
-                      duration: candidate?.estimated_duration_hours?.toFixed(1),
+                      hours: formatDecimal(labourHours, 1),
+                      duration:
+                        candidate?.estimated_duration_hours != null
+                          ? formatDecimal(candidate.estimated_duration_hours, 1)
+                          : undefined,
                       crew: candidate?.planned_crew_size,
                     })}
                   </p>
@@ -742,9 +745,9 @@ export function CommitDialog({
                       >
                         {t("commitment.capacityByDay", {
                           day: d.day,
-                          share: d.shareHours.toFixed(1),
-                          remaining: d.remainingHours.toFixed(1),
-                          available: (d.availableHours + d.overtimeHours).toFixed(1),
+                          share: formatDecimal(d.shareHours, 1),
+                          remaining: formatDecimal(d.remainingHours, 1),
+                          available: formatDecimal(d.availableHours + d.overtimeHours, 1),
                         })}
                         {d.basis && d.basis !== "roster"
                           ? ` · ${t(`commitment.capacityBasis.${d.basis}`, { defaultValue: d.basis })}`
@@ -767,8 +770,8 @@ export function CommitDialog({
                 {shiftTimeShort ? (
                   <p className="text-[11px] text-tone-attention-fg" role="status">
                     {t("commitment.shiftTimeShort", {
-                      duration: shiftTimeShort.duration.toFixed(1),
-                      shift: shiftTimeShort.shiftHours.toFixed(1),
+                      duration: formatDecimal(shiftTimeShort.duration, 1),
+                      shift: formatDecimal(shiftTimeShort.shiftHours, 1),
                     })}
                   </p>
                 ) : null}
@@ -776,8 +779,8 @@ export function CommitDialog({
                   <p className="text-[11px] text-tone-attention-fg" role="alert">
                     {t("commitment.errors.capacityExceededDay", {
                       day: slotCapacity.overloaded.day,
-                      share: slotCapacity.overloaded.shareHours.toFixed(1),
-                      remaining: slotCapacity.overloaded.remainingHours.toFixed(1),
+                      share: formatDecimal(slotCapacity.overloaded.shareHours, 1),
+                      remaining: formatDecimal(slotCapacity.overloaded.remainingHours, 1),
                     })}
                   </p>
                 ) : null}
@@ -876,7 +879,7 @@ export function CommitDialog({
                   </p>
                   {durationHours != null ? (
                     <p className="mt-0.5 text-[11px] text-text-muted">
-                      {t("commitment.durationHours", { hours: durationHours.toFixed(2) })}
+                      {t("commitment.durationHours", { hours: formatDecimal(durationHours, 2) })}
                     </p>
                   ) : null}
                   <p className="mt-0.5 text-[11px] text-text-muted">
@@ -992,7 +995,7 @@ export function CommitDialog({
           if (!next) setPendingFrozenInput(null);
         }}
         weekStart={frozenWeekStart}
-        approvers={approvers}
+        teamId={pendingFrozenInput?.assigned_team_id ?? null}
         onConfirm={(breakIn) => {
           const pending = pendingFrozenInput;
           if (!pending) return;

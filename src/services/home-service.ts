@@ -43,6 +43,20 @@ const MyWorkSchema = z.object({
           overdue: z.boolean(),
         }),
       ),
+      deisolation_pending: z.number(),
+      deisolation_items: z.array(
+        z.object({
+          id: z.number(),
+          code: z.string(),
+          title: z.string(),
+          status_code: z.string(),
+          urgency_code: nullableString,
+          planned_start: nullableString,
+          planned_end: nullableString,
+          asset_label: nullableString,
+          overdue: z.boolean(),
+        }),
+      ),
     })
     .nullable(),
   requests: z.object({ open: z.number(), awaiting_my_answer: z.number() }).nullable(),

@@ -9,6 +9,42 @@ fn xlsx_e(e: rust_xlsxwriter::XlsxError) -> AppError {
     AppError::Internal(anyhow!("xlsx: {e}"))
 }
 
+/// What the reader of a generated report may see, read from their rights when the report is
+/// built (on demand: the session user; scheduled: the subscriber at run time), so a report never
+/// shows figures its reader cannot open on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportAudience {
+    /// Work-order figures (`ot.view`).
+    pub can_ot: bool,
+    /// Preventive-maintenance figures (`pm.view`).
+    pub can_pm: bool,
+    /// Cost figures (`fin.view`).
+    pub can_fin: bool,
+}
+
+impl ReportAudience {
+    /// The plant-wide view rights of `user_id`, with the rules of a session (elevated admins hold
+    /// every right): through the session's permission cache, or a fresh one for a scheduled run.
+    pub async fn of_user(
+        db: &DatabaseConnection,
+        cache: &tokio::sync::RwLock<crate::rbac::cache::PermissionCache>,
+        user_id: i32,
+    ) -> AppResult<Self> {
+        use crate::auth::rbac::{check_permission_cached, PermissionScope};
+        use crate::rbac::permissions::{FIN_VIEW, OT_VIEW, PM_VIEW};
+        let scope = PermissionScope::Global;
+        let mut held = [false; 3];
+        for (slot, perm) in held.iter_mut().zip([OT_VIEW, PM_VIEW, FIN_VIEW]) {
+            *slot = check_permission_cached(db, cache, user_id, perm, &scope).await?;
+        }
+        Ok(Self {
+            can_ot: held[0],
+            can_pm: held[1],
+            can_fin: held[2],
+        })
+    }
+}
+
 /// Language of a generated report (titles, column headers, labels, number format).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportLocale {
@@ -29,7 +65,8 @@ impl ReportLocale {
     }
 
     /// The app language when the caller does not pass one (scheduled runs): user preference,
-    /// then tenant default, then OS (`crate::locale::resolve_locale_preference`).
+    /// then tenant default, then French; the OS language only when the user chose to follow it
+    /// (`crate::locale::resolve_locale_preference`).
     pub async fn resolve(db: &DatabaseConnection, requested: Option<&str>) -> Self {
         if let Some(code) = requested.filter(|c| !c.trim().is_empty()) {
             return Self::from_code(code);
@@ -172,11 +209,12 @@ pub async fn export_report_document(
     template_code: &str,
     export_format: &str,
     locale: ReportLocale,
+    audience: ReportAudience,
 ) -> AppResult<ExportedBinaryDocument> {
     let fmt = export_format.to_ascii_lowercase();
     if fmt != "pdf" && fmt != "xlsx" {
         return Err(AppError::ValidationFailed(vec![
-            "export_format must be pdf or xlsx.".into()
+            "GATE_REPORT_FORMAT_INVALID: export_format must be pdf or xlsx.".into(),
         ]));
     }
 
@@ -184,10 +222,10 @@ pub async fn export_report_document(
         "dashboard_summary" => export_dashboard_summary(db, &fmt, locale).await,
         "open_work_orders" => export_open_work_orders(db, &fmt, locale).await,
         crate::reports::monthly::TEMPLATE_CODE => {
-            crate::reports::monthly::export_monthly_management(db, &fmt, locale).await
+            crate::reports::monthly::export_monthly_management(db, &fmt, locale, audience).await
         }
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Unknown template: {template_code}"
+            "GATE_REPORTS_TEMPLATE_UNKNOWN: Unknown template: {template_code}"
         )])),
     }
 }

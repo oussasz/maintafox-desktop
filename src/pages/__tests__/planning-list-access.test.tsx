@@ -1,8 +1,9 @@
 /**
  * A planner without the user administration right keeps the planning page: crews and people
- * load, the approvers list is not requested, and the break-in approver says which right is missing
- * (the three lists used to be read together, so one refusal cost the whole page). While the rights
- * load, the saved crew choice is left alone: it is only replaced once the crews were really read.
+ * load, and the user list is never requested (the lists used to be read together, so one refusal
+ * cost the whole page). Break-in approvers come from the planning list of plan.confirm holders at
+ * the crew's site, which needs no user administration right. While the rights load, the saved
+ * crew choice is left alone: it is only replaced once the crews were really read.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -32,7 +33,13 @@ const personnel = vi.hoisted(() => ({
 vi.mock("@/services/personnel-service", () => personnel);
 const rbac = vi.hoisted(() => ({ listUsers: vi.fn() }));
 vi.mock("@/services/rbac-service", () => rbac);
+const planningService = vi.hoisted(() => ({
+  listBreakInApprovers: vi
+    .fn()
+    .mockResolvedValue([{ user_id: 58, display_name: "K. Benali", personnel_id: 7 }]),
+}));
 vi.mock("@/services/planning-service", () => ({
+  listBreakInApprovers: planningService.listBreakInApprovers,
   cancelScheduleCommitment: vi.fn(),
   releaseScheduleCommitment: vi.fn(),
   approveWeeklySchedule: vi.fn(),
@@ -112,7 +119,7 @@ describe("Planning without the user administration right", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("the break-in approver names the missing right", () => {
+  it("the break-in dialog lists the approvers of the crew's site without the user list", async () => {
     render(
       <PermissionContext.Provider value={withoutUserAdmin}>
         <BreakInDialog
@@ -120,16 +127,17 @@ describe("Planning without the user administration right", () => {
           onOpenChange={vi.fn()}
           commitments={[]}
           breakIns={[]}
-          teamId={null}
+          teamId={3}
           initialCommitmentId={null}
-          approvers={[]}
           personnel={[]}
           saving={false}
           onSubmit={vi.fn()}
         />
       </PermissionContext.Provider>,
     );
-    expect(screen.getByTestId("list-access-users")).toBeInTheDocument();
+    await waitFor(() => expect(planningService.listBreakInApprovers).toHaveBeenCalledWith(3, null));
+    expect(rbac.listUsers).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("list-access-users")).not.toBeInTheDocument();
   });
 
   it("the weekly schedule names the organisation right instead of 'no planning site'", () => {

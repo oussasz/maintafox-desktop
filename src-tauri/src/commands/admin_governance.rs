@@ -233,30 +233,54 @@ pub(crate) async fn record_blocked_admin_action<T>(
     if message.chars().count() > 500 {
         message = message.chars().take(500).collect();
     }
-    // The admin ledger is for administrators' actions. A refusal of someone holding no
-    // administration permission at all goes to the security journal instead (no ledger spam).
-    if !holds_any_admin_permission(db, actor_id).await {
-        let target = target_user_id.map(|id| id.to_string());
-        crate::audit::emit(
-            db,
-            crate::audit::AuditEvent {
-                event_type: crate::audit::event_type::PERMISSION_DENIED,
-                actor_id: i32::try_from(actor_id).ok(),
-                entity_type: target.as_ref().map(|_| "user_account"),
-                entity_id: target.as_deref(),
-                summary: "Administration action refused (no administration permission)",
-                detail_json: Some(serde_json::json!({ "action": action, "error": message }).to_string()),
-                ..Default::default()
+    // What the administration journal stores: a code for the kind of refusal. The screen writes the
+    // sentence in the user's language; the backend's own text (which can name values and rules)
+    // stays out of the ledger. The security journal below keeps the full text in its detail.
+    let refusal_code = match err {
+        AppError::PermissionDenied(_) | AppError::Permission { .. } => "permission_denied",
+        AppError::NotFound { .. } => "not_found",
+        _ => "validation_failed",
+    };
+    // Every refusal keeps the backend's own text in the security journal (who was refused which
+    // action and why); the administration ledger below keeps only the code of the refusal.
+    let target = target_user_id.map(|id| id.to_string());
+    let admin = holds_any_admin_permission(db, actor_id).await;
+    crate::audit::emit(
+        db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::PERMISSION_DENIED,
+            actor_id: i32::try_from(actor_id).ok(),
+            entity_type: target.as_ref().map(|_| "user_account"),
+            entity_id: target.as_deref(),
+            summary: if admin {
+                "Administration action refused"
+            } else {
+                "Administration action refused (no administration permission)"
             },
-        )
-        .await;
+            // `refusal` tells a refused right from bad input or a stale id, as the ledger code does.
+            detail_json: Some(
+                serde_json::json!({
+                    "action": action,
+                    "refusal": refusal_code,
+                    "target_role_id": target_role_id,
+                    "error": message,
+                })
+                .to_string(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await;
+    // The admin ledger is for administrators' actions. A refusal of someone holding no
+    // administration permission at all stays out of it (no ledger spam).
+    if !admin {
         return;
     }
     let record = AdminEventRecord {
         action,
         target_user_id,
         target_role_id,
-        summary: Some(message),
+        summary: Some(refusal_code.to_string()),
         ..Default::default()
     };
     if let Err(e) = write_admin_event(db, actor_id, &record, APPLY_RESULT_BLOCKED).await {
@@ -441,7 +465,7 @@ pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> A
 
     if session_id == current_session_id {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot revoke your own current session".into(),
+            "GATE_ADMIN_SELF_REVOKE: Cannot revoke your own current session".into(),
         ]));
     }
 
@@ -580,7 +604,7 @@ pub async fn create_delegation_policy(
     // ── Validate allowed_domains against known categories ────────────────
     if input.allowed_domains.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one allowed domain is required".into(),
+            "GATE_ADMIN_DOMAINS_REQUIRED: At least one allowed domain is required".into(),
         ]));
     }
 
@@ -593,7 +617,7 @@ pub async fn create_delegation_policy(
     }
     if !invalid_domains.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unknown permission domains: {}",
+            "GATE_ADMIN_DOMAINS_UNKNOWN: Unknown permission domains: {}",
             invalid_domains.join(", ")
         )]));
     }
@@ -620,8 +644,8 @@ pub async fn create_delegation_policy(
             DbBackend::Sqlite,
             "INSERT INTO delegated_admin_policies \
              (admin_role_id, managed_scope_type, managed_scope_reference, \
-              allowed_domains_json, requires_step_up_for_publish) \
-             VALUES (?, ?, ?, ?, ?)",
+              allowed_domains_json, requires_step_up_for_publish, changed_by_id) \
+             VALUES (?, ?, ?, ?, ?, ?)",
             [
                 input.admin_role_id.into(),
                 input.managed_scope_type.clone().into(),
@@ -632,6 +656,8 @@ pub async fn create_delegation_policy(
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
                 domains_json.into(),
                 i32::from(input.requires_step_up_for_publish).into(),
+                // Checked on the other PCs (`sync::grant_check`, migration 262).
+                i64::from(caller.user_id).into(),
             ],
         ))
         .await?;
@@ -718,7 +744,7 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
         }
         if !invalid.is_empty() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown permission domains: {}",
+                "GATE_ADMIN_DOMAINS_UNKNOWN: Unknown permission domains: {}",
                 invalid.join(", ")
             )]));
         }
@@ -728,9 +754,13 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
             .db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE delegated_admin_policies SET allowed_domains_json = ?, \
+                "UPDATE delegated_admin_policies SET allowed_domains_json = ?, changed_by_id = ?, \
                  updated_at = datetime('now') WHERE id = ?",
-                [new_json.into(), input.policy_id.into()],
+                [
+                    new_json.into(),
+                    i64::from(caller.user_id).into(),
+                    input.policy_id.into(),
+                ],
             ))
             .await?;
         diff.insert(
@@ -747,9 +777,13 @@ pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State
             .db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE delegated_admin_policies SET requires_step_up_for_publish = ?, \
+                "UPDATE delegated_admin_policies SET requires_step_up_for_publish = ?, changed_by_id = ?, \
                  updated_at = datetime('now') WHERE id = ?",
-                [i32::from(step_up).into(), input.policy_id.into()],
+                [
+                    i32::from(step_up).into(),
+                    i64::from(caller.user_id).into(),
+                    input.policy_id.into(),
+                ],
             ))
             .await?;
         diff.insert(
@@ -927,7 +961,7 @@ pub async fn export_role_model(role_ids: Vec<i64>, state: State<'_, AppState>) -
 
     if role_ids.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one role must be selected for export".into(),
+            "GATE_ADMIN_EXPORT_ROLE_REQUIRED: At least one role must be selected for export".into(),
         ]));
     }
 
@@ -1022,7 +1056,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
 
     if input.roles.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Import payload contains no roles".into()
+            "GATE_ADMIN_IMPORT_EMPTY: Import payload contains no roles".into(),
         ]));
     }
 
@@ -1049,7 +1083,7 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
                 .collect();
             let unknown: Vec<&String> = names.iter().filter(|n| !known.contains(*n)).collect();
             for u in &unknown {
-                errors.push(format!("Unknown permission: {u}"));
+                errors.push(super::admin_users::unknown_permission_refusal(u));
             }
         }
 
@@ -1058,14 +1092,18 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
         for dep in &deps {
             if dep.dependency_type == "hard" && !names.contains(&dep.required_permission_name) {
                 errors.push(format!(
-                    "{} requires {} (hard dependency)",
+                    "GATE_ADMIN_PERMISSION_DEPENDENCY:permission={0},required={1}: {} requires {} (hard dependency)",
                     dep.permission_name, dep.required_permission_name
                 ));
             }
         }
         // An imported role carries no permission the importing administrator lacks.
-        if let Err(e) = crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
-            errors.push(e.to_string());
+        match crate::commands::admin_users::ensure_caller_holds(&state.db, &caller, &names).await {
+            Ok(()) => {}
+            Err(AppError::PermissionDenied(message)) => {
+                errors.push(format!("GATE_ADMIN_IMPORT_PERMISSION_NOT_HELD: {message}"));
+            }
+            Err(e) => return Err(e),
         }
 
         if !errors.is_empty() {

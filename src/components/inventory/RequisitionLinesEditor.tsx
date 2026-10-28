@@ -6,7 +6,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -193,28 +193,31 @@ export function RequisitionLinesEditor({
             </div>
             <div className="space-y-1">
               <Label htmlFor={id("qty")}>{t("procurement.requisitionForm.quantity")}</Label>
-              <Input
+              <DecimalField
                 id={id("qty")}
-                type="number"
+                decimals={3}
                 min={0}
-                step="0.01"
                 className="h-11"
                 value={line.qty}
                 disabled={disabled}
-                onChange={(e) => update(line.key, { qty: Number(e.target.value || 0) })}
+                onValueChange={(v) => update(line.key, { qty: v ?? 0 })}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor={id("cost")}>
                 {t("procurement.requisitionForm.estimatedCost", { currency: currencyCode })}
               </Label>
-              <Input
+              <DecimalField
                 id={id("cost")}
-                inputMode="decimal"
-                className="h-11 tabular-nums"
-                value={line.estimatedCost}
+                decimals={2}
+                fixed
+                min={0}
+                className="h-11"
+                value={cost !== null && !Number.isNaN(cost) ? cost : null}
                 disabled={disabled}
-                onChange={(e) => update(line.key, { estimatedCost: e.target.value })}
+                onValueChange={(v) =>
+                  update(line.key, { estimatedCost: v == null ? "" : String(v) })
+                }
               />
               {cost !== null && !Number.isNaN(cost) && line.qty > 0 ? (
                 <p className="text-xs tabular-nums text-text-muted">

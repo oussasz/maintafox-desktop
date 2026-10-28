@@ -187,7 +187,17 @@
     "wo_overdue": "Work order overdue",
     "safety_rule_received": "Safety rule changed on another PC",
     "loto_forced_removal": "Lock taken off by a forced removal",
-    "stock_to_reconcile": "Stock to reconcile after sync"
+    "pm_concurrent_versions": "Concurrent PM plan versions",
+    "permit_suspended_work_held": "Work order put on hold by its permit’s suspension",
+    "permit_ended_under_work": "Permit ended on another PC during or before the work",
+    "wo_permit_rule_missing": "Work order received started without its plant permit rule",
+    "insp_anomaly_origin_cancelled": "Originating inspection anomaly cancelled",
+    "rel_decision_refused_wo_kept": "Reliability decision refused at synchronisation, work order or plan version kept",
+    "stock_to_reconcile": "Stock to reconcile after sync",
+    "stock_count_recount": "Count to do again",
+    "stock_count_second_approval": "Stock count held for a second approval",
+    "retired_equipment_work": "Work order on retired equipment",
+    "retired_equipment_request": "Request on retired equipment"
   },
   "messages": {
     "wo_assigned": {
@@ -301,6 +311,66 @@
       "title": "Forced lock removal: {{point}} (permit {{permit}})",
       "body": "{{authorised_by}} authorised {{removed_by}} to take off the lock of {{worker}}, who was absent, on {{removed_at}} — reason: {{reason}}. The worker must be told (Work permits › forced removals to follow up)."
     },
+    "insp_anomaly_origin_cancelled": {
+      "title": "Originating anomaly cancelled: {{code}}",
+      "body": "The inspection anomaly {{code}} was raised from was cancelled: its condition is no longer detected ({{anomaly}}). {{code}} is not changed: check whether it is still needed. A required permit review stays in place."
+    },
+    "rel_decision_refused_wo_kept": {
+      "title": "Reliability decision refused: {{code}} kept",
+      "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Work order {{code}} created from it is kept: check whether it is still needed."
+    },
+    "rel_decision_refused_pm_kept": {
+      "title": "Reliability decision refused: plan {{plan}} v{{version}} published, to review",
+      "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Version {{version}} of plan {{plan}}, published from it, stays in force: review it and publish another version if it does not fit."
+    },
+    "wo_permit_rule_type_changed": {
+      "title": "Work order {{code}}: required permit changed from {{previous_permit_type}} to {{permit_type}}",
+      "body": "The plant's permit rules applied here give work order {{code}} rule {{rule}} ({{permit_type}} permit) instead of {{previous_rule}} ({{previous_permit_type}} permit). Check the permit planned for this work."
+    },
+    "wo_permit_rule_other_on_arrival": {
+      "title": "Work order {{code}} received started with rule {{received_rule}} ({{received_permit_type}} permit) instead of {{rule}} ({{permit_type}} permit)",
+      "body": "Work order {{code}} was received started with rule {{received_rule}} ({{received_permit_type}} permit), while the plant applies rule {{rule}} ({{permit_type}} permit) here for its equipment and work. Check how this work was protected."
+    },
+    "wo_permit_rule_missing_on_arrival": {
+      "title": "Work order {{code}} received started without permit rule {{rule}}",
+      "body": "Work order {{code}} was received started without plant rule {{rule}} that applies here: a {{permit_type}} permit for its equipment and work. Check how this work was protected."
+    },
+    "pm_concurrent_versions": {
+      "title": "Two concurrent versions of plan {{plan}} — check the version in force",
+      "body": "{{title}}: v{{version}} ({{version_status}}, created {{version_created_at}}) and v{{other_version}} ({{other_status}}, created {{other_created_at}}) were created on two PCs before they synchronised, both numbered {{stored_number}}. Every PC shows them as v{{version}} and v{{other_version}}; the version in force is the published one (PM › plan)."
+    },
+    "permit_suspended_work_held": {
+      "title": "Work order {{work_order}} on hold: permit {{permit}} suspended",
+      "body": "Permit {{permit}} was suspended (reason: {{reason}}). Work on {{work_order}} is stopped: it can resume only once the permit is reinstated."
+    },
+    "permit_ended_before_start": {
+      "title": "Work started under an ended permit: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was closed, cancelled or suspended on another PC on {{end_at}}, before work on {{work_order}} started here on {{start_at}}. Stop the work and review the sync conflict."
+    },
+    "permit_ended_during_work": {
+      "title": "Permit ended during the work: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was closed, cancelled or suspended on another PC (on {{end_at}}) while work on {{work_order}} runs here since {{start_at}}. Stop the work and review the sync conflict."
+    },
+    "permit_ended_before_start_untimed": {
+      "title": "Permit ended on another PC, work started here: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was cancelled on another PC, at a time sync does not give; work on {{work_order}} started here on {{start_at}}. The order cannot be established: make sure the work is stopped and review the sync conflict."
+    },
+    "permit_ended_during_work_untimed": {
+      "title": "Permit ended during the work: {{permit}} (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was cancelled on another PC (time not known) while work on {{work_order}} runs here since {{start_at}}. Stop the work and review the sync conflict."
+    },
+    "permit_suspended_during_work": {
+      "title": "Work running while permit {{permit}} was suspended (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was suspended on another PC from {{end_at}} to {{reinstated_at}}, while work on {{work_order}} was running here (since {{start_at}}). The permit is in force again: review the sync conflict."
+    },
+    "permit_suspended_around_start": {
+      "title": "Work started while permit {{permit}} was suspended (work order {{work_order}})",
+      "body": "Received by sync: permit {{permit}} was suspended on another PC from {{end_at}} to {{reinstated_at}}, and work on {{work_order}} started here on {{start_at}}, during that suspension. The permit is in force again: review the sync conflict."
+    },
+    "pm_duplicate_occurrence": {
+      "title": "Two concurrent versions of plan {{plan}} — due date planned twice",
+      "body": "{{title}}: versions v{{version}} and v{{other_version}} each have an occurrence due {{due_at}} ({{due_basis}}), work orders {{work_order}} and {{other_work_order}}. Nothing was cancelled: keep one and cancel the other yourself."
+    },
     "stock_negative": {
       "title": "{{code}} below zero at {{location}}",
       "body": "{{title}}: {{on_hand}} on hand, below zero since {{opened_at}}. Record a count to reconcile it."
@@ -308,6 +378,46 @@
     "stock_double_count": {
       "title": "{{code}} counted twice at {{location}}",
       "body": "{{title}}: {{count}} counts recorded on different PCs. Check the stock and record a new count."
+    },
+    "stock_count_recount": {
+      "title": "Count {{code}} at {{location}} again",
+      "body": "{{title}}: the approval of your count {{session}} was refused, the stock moved since (from {{system_qty}} to {{on_hand}}). Count the location again from the stock to reconcile."
+    },
+    "stock_count_second_approval": {
+      "title": "Count {{session}} held here — {{code}} at {{location}}",
+      "body": "{{title}}: counted and approved by {{counter}} above the four-eyes tolerance, it is held here (the stock does not move). To settle on the PC where it is applied: a second approval by another person, or the count's cancellation."
+    },
+    "stock_count_recount_reversed": {
+      "title": "Count {{code}} at {{location}} again",
+      "body": "{{title}}: your count {{session}} was cancelled for want of a second approval. Count the location again from the stock to reconcile."
+    },
+    "admin_grants_to_review": {
+      "title": "Administration rights removed: grants to review",
+      "body": "{{people}} no longer holds {{rights}} (removed on {{since}}). {{count}} grant(s) made by this person since then are present on this PC: {{grants}}. Nothing was withdrawn automatically; please check them."
+    },
+    "password_change_refused": {
+      "title": "Password change received without the right: not applied",
+      "body": "{{account}}: password changed on {{changed_at}} by {{author}}, who did not (or no longer) hold user management here. This PC kept the current password (an account that arrived this way has no password on this PC). If the change was intended, an administrator makes it again; that also corrects the other PCs."
+    },
+    "password_change_from_older_version": {
+      "title": "Password change received from an older version: not applied",
+      "body": "{{account}}: password change sent by a PC with an older Maintafox version (it does not say who made it): not applied. Update that PC, then change the password again."
+    },
+    "account_reenable_refused": {
+      "title": "Account re-enable received without the right: not applied",
+      "body": "{{account}}: account re-enabled on {{changed_at}} by {{author}}, who did not (or no longer) hold user management here. The account stays disabled on this PC. If it was intended, an administrator enables it again; that also corrects the other PCs."
+    },
+    "grants_from_former_authors": {
+      "title": "Rights received from someone who no longer holds the right",
+      "body": "{{count}} grant(s) received from another PC were applied, but their author no longer has the right to grant them and this PC does not know since when: {{grants}}. Please check them."
+    },
+    "retired_equipment_wo": {
+      "title": "Work order {{code}} on retired equipment {{asset}}",
+      "body": "{{title}}: work order open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Cancel the work order with a reason, or return the equipment to service."
+    },
+    "retired_equipment_di": {
+      "title": "Request {{code}} on retired equipment {{asset}}",
+      "body": "{{title}}: request open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Reject the request with a reason, or return the equipment to service."
     }
   },
   "audience": {
@@ -366,7 +476,13 @@
       "budget_control_alert": "Recipient chosen in the budget alert settings.",
       "daily_digest": "Sent to each person who chose the daily digest.",
       "safety_rule_received": "Always the plant-wide settings administrators.",
-      "loto_forced_removal": "Always the people holding the permit close right at the permit's site."
+      "loto_forced_removal": "Always the people holding the permit close right at the permit's site.",
+      "pm_concurrent_versions": "Always the people holding the PM planning right (pm.edit) plant-wide, and those holding it at the site of the plan's equipment.",
+      "permit_suspended_work_held": "Always the responsible of the permit’s work order; when it has none, the people holding the permit close right at the permit’s site.",
+      "permit_ended_under_work": "Always the responsible of the permit’s work order and the people holding the permit close right at the permit’s site.",
+      "wo_permit_rule_missing": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators.",
+      "insp_anomaly_origin_cancelled": "Always the responsible of the work order raised from the anomaly (or from its request); when there is none, the work order’s planner and the request’s reviewer (else the responsibles of its node).",
+      "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision (else its responsible), or the holders of the PM planning right (pm.edit) for a published plan version, and the person who proposed the decision; when nobody is active here, the holders of the right to approve reliability decisions (ram.manage)."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",
@@ -387,7 +503,7 @@
   "safetyNotice": {
     "acknowledge": "Acknowledge",
     "hint": "This notice stays after each sign-in until you acknowledge it; your acknowledgement is recorded.",
-    "inboxHint": "Safety notice: acknowledge it; it cannot be snoozed or archived before.",
+    "inboxHint": "Notice to acknowledge: it cannot be snoozed or archived before.",
     "loadError": "The safety notices could not be loaded. They are kept; sign in again or reload to see them."
   }
 }

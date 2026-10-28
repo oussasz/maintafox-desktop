@@ -119,7 +119,7 @@ pub async fn create_import_batch(
     let source_kind = input.source_kind.trim().to_lowercase();
     if source_kind != "csv" && source_kind != "xlsx" {
         return Err(AppError::ValidationFailed(vec![
-            "source_kind must be csv or xlsx.".to_string()
+            "GATE_PERS_IMPORT_SOURCE_KIND: source_kind must be csv or xlsx.".to_string(),
         ]));
     }
 
@@ -127,7 +127,7 @@ pub async fn create_import_batch(
     let rows = parse_file_rows(&source_kind, &input.file_content)?;
     if rows.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Import file does not contain any data rows.".to_string(),
+            "GATE_PERS_IMPORT_EMPTY: Import file does not contain any data rows.".to_string(),
         ]));
     }
 
@@ -232,7 +232,7 @@ pub async fn apply_import_batch(
     let batch = get_batch_summary(db, batch_id).await?;
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Batch status must be validated before apply (current={}).",
+            "GATE_PERS_IMPORT_BATCH_NOT_VALIDATED:status={0}: Batch status must be validated before apply (current={0}).",
             batch.status
         )]));
     }
@@ -285,7 +285,8 @@ pub async fn apply_import_batch(
                 };
                 let full_name = normalized.full_name.clone().ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "full_name is required when creating a personnel record.".to_string()
+                        "GATE_PERS_IMPORT_FULL_NAME_REQUIRED: full_name is required when creating a personnel record."
+                            .to_string(),
                     ])
                 })?;
                 let employment_type = normalized
@@ -335,10 +336,16 @@ pub async fn apply_import_batch(
             }
             Some("update") => {
                 let personnel_id = target_personnel_id.ok_or_else(|| {
-                    AppError::ValidationFailed(vec!["Missing target_personnel_id for update action.".to_string()])
+                    AppError::ValidationFailed(vec![
+                        "GATE_PERS_IMPORT_TARGET_ID_MISSING: Missing target_personnel_id for update action."
+                            .to_string(),
+                    ])
                 })?;
                 let expected_version = target_row_version.ok_or_else(|| {
-                    AppError::ValidationFailed(vec!["Missing target_row_version for update action.".to_string()])
+                    AppError::ValidationFailed(vec![
+                        "GATE_PERS_IMPORT_TARGET_VERSION_MISSING: Missing target_row_version for update action."
+                            .to_string(),
+                    ])
                 })?;
 
                 let result = txn
@@ -379,7 +386,7 @@ pub async fn apply_import_batch(
                     .await?;
                 if result.rows_affected() == 0 {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
+                        "GATE_RECORD_CHANGED_ELSEWHERE: Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
                     )]));
                 }
                 if let Some(team_id) = mapped.team_id {
@@ -802,7 +809,9 @@ fn parse_file_rows(source_kind: &str, file_content: &[u8]) -> AppResult<Vec<Hash
     match source_kind {
         "csv" => parse_csv_rows(file_content),
         "xlsx" => parse_xlsx_rows(file_content),
-        _ => Err(AppError::ValidationFailed(vec!["Unsupported source_kind.".to_string()])),
+        _ => Err(AppError::ValidationFailed(vec![
+            "GATE_PERS_IMPORT_SOURCE_KIND: Unsupported source_kind.".to_string(),
+        ])),
     }
 }
 
@@ -814,14 +823,20 @@ fn parse_csv_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>
 
     let headers: Vec<String> = reader
         .headers()
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot read CSV headers: {e}")]))?
+        .map_err(|e| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERS_IMPORT_CSV_HEADERS: Cannot read CSV headers: {e}"
+            )])
+        })?
         .iter()
         .map(|h| h.trim().to_string())
         .collect();
 
     let mut rows = Vec::new();
     for record in reader.records() {
-        let record = record.map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse CSV row: {e}")]))?;
+        let record = record.map_err(|e| {
+            AppError::ValidationFailed(vec![format!("GATE_PERS_IMPORT_CSV_ROW: Cannot parse CSV row: {e}")])
+        })?;
         let mut map = HashMap::new();
         for (index, value) in record.iter().enumerate() {
             if let Some(header) = headers.get(index) {
@@ -838,12 +853,23 @@ fn parse_csv_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>
 
 fn parse_xlsx_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>> {
     let cursor = Cursor::new(file_content.to_vec());
-    let mut workbook =
-        Xlsx::new(cursor).map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse XLSX file: {e}")]))?;
+    let mut workbook = Xlsx::new(cursor).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_PERS_IMPORT_XLSX_UNREADABLE: Cannot parse XLSX file: {e}"
+        )])
+    })?;
     let range = workbook
         .worksheet_range_at(0)
-        .ok_or_else(|| AppError::ValidationFailed(vec!["XLSX file has no worksheet.".to_string()]))?
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot read XLSX worksheet: {e}")]))?;
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "GATE_PERS_IMPORT_XLSX_NO_SHEET: XLSX file has no worksheet.".to_string()
+            ])
+        })?
+        .map_err(|e| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_PERS_IMPORT_XLSX_SHEET_UNREADABLE: Cannot read XLSX worksheet: {e}"
+            )])
+        })?;
 
     let mut rows_iter = range.rows();
     let Some(header_row) = rows_iter.next() else {
@@ -871,7 +897,7 @@ fn normalize_mode(mode: &str) -> AppResult<String> {
         "create_and_update" | "createandupdate" => Ok("create_and_update".to_string()),
         "create_only" | "createonly" => Ok("create_only".to_string()),
         _ => Err(AppError::ValidationFailed(vec![
-            "mode must be CreateAndUpdate or CreateOnly.".to_string(),
+            "GATE_PERS_IMPORT_MODE: mode must be CreateAndUpdate or CreateOnly.".to_string(),
         ])),
     }
 }

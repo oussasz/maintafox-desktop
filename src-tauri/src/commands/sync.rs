@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
@@ -61,6 +61,23 @@ pub async fn list_inbox_items(
     queries::list_inbox_items(&state.db, apply_status, limit).await
 }
 
+/// The received rows that wait, each with what it waits for, and every waiting row counted by
+/// that (`sync::waiting`).
+#[tauri::command]
+pub async fn list_waiting_inbox_rows(
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::sync::waiting::WaitingInboxReport> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_VIEW,
+        PermissionScope::Global
+    );
+    crate::sync::waiting::list_waiting_inbox_rows(&state.db, limit).await
+}
+
 #[tauri::command]
 pub async fn get_sync_state_summary(state: State<'_, AppState>) -> AppResult<SyncStateSummary> {
     let user = require_session!(state);
@@ -91,6 +108,7 @@ pub async fn list_sync_conflicts(
 #[tauri::command]
 pub async fn resolve_sync_conflict(
     input: ResolveSyncConflictInput,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<SyncConflictRecord> {
     let user = require_session!(state);
@@ -100,7 +118,13 @@ pub async fn resolve_sync_conflict(
         crate::rbac::permissions::SYNC_RESOLVE,
         PermissionScope::Global
     );
-    queries::resolve_sync_conflict(&state.db, i64::from(user.user_id), input).await
+    let action = input.action.clone();
+    let resolved = queries::resolve_sync_conflict(&state.db, i64::from(user.user_id), input).await?;
+    // The server version of a rights row is now applied here: rights refreshed at once (AU-107).
+    if crate::sync::materialize::resolution_changes_rights(&resolved.entity_type, &action) {
+        crate::rbac::cache::invalidate_all_and_notify(&app, &state.permission_cache, "sync_conflict_resolved").await;
+    }
+    Ok(resolved)
 }
 
 #[tauri::command]
@@ -318,7 +342,7 @@ pub async fn get_media_file_states(
     let _user = require_session!(state);
     if relative_paths.len() > MAX_MEDIA_FILE_STATES {
         return Err(crate::errors::AppError::ValidationFailed(vec![format!(
-            "At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
+            "GATE_CMD_SYNC_MEDIA_BATCH_LARGE:max={MAX_MEDIA_FILE_STATES}: At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
         )]));
     }
     crate::sync::media::media_file_states(&state.db, &media_root(&app)?, &relative_paths).await

@@ -66,6 +66,7 @@
       "loadError": "The dashboard figures could not be loaded",
       "trend": {
         "stable": "Stable vs previous period",
+        "points": "{{change}} pts vs previous period",
         "vsPrevious": "{{change}} vs previous period"
       },
       "context": {
@@ -240,6 +241,8 @@
     "formula": "Formula",
     "period": "Period",
     "unit": "Unit",
+    "stableBand": "Stable when the change is within ±{{points}} pt",
+    "stableBandPercent": "Stable when the change is within ±{{percent}} % of the previous value",
     "open": "Open the list",
     "periodValue": "Last {{days}} days ({{from}} – {{to}})",
     "hoursValue": "{{value}} h",

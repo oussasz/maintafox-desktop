@@ -284,6 +284,25 @@ pub struct SyncConflictRecord {
     /// Version of the server/inbound row involved, when known.
     #[serde(default)]
     pub inbound_row_version: Option<i64>,
+    /// The error or rule text recorded when the conflict was found (technical details).
+    #[serde(default)]
+    pub detail_message: Option<String>,
+    /// That text as a plain, coded reason, for a row the database refused (`sync::apply_reason`).
+    #[serde(default)]
+    pub reason: Option<crate::sync::apply_reason::ConflictReason>,
+    /// A stock count held back here for a second approval (`COUNT_SELF_APPROVAL`): its reference,
+    /// counter and posting time, read from what this PC holds (CMMS Advisor Q12).
+    #[serde(default)]
+    pub count_hold: Option<crate::inventory::count_four_eyes::CountHoldContext>,
+    /// Work entering a week frozen here (`PLANNING_WEEK_FROZEN`): the other PC's change time and the
+    /// freeze time here, shown side by side on the card (CMMS Advisor decision 4).
+    #[serde(default)]
+    pub planning_times: Option<crate::planning::sync_check::PlanningConflictTimes>,
+    /// A `COUNT_APPROVAL_RECORD_INVALID` conflict on an append-only history row (a count's stock
+    /// movement or its audit link): whether that row is held here (`false`: only "dismiss" and
+    /// "escalate" are accepted). `None` for any other conflict.
+    #[serde(default)]
+    pub history_row_held: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { saveBlobWithDialog } from "@/export/download";
 import { isExportCancelled } from "@/export/types";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { exportWorkforceReportCsv } from "@/services/personnel-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { P } from "@shared/rbac/permissions.generated";
@@ -42,7 +42,7 @@ export function PersonnelExportMenu() {
         if (isExportCancelled(err)) return;
         pushAppToast({
           title: t("reports.export.failed"),
-          description: describeAppError(err).title,
+          description: appErrorReason(err),
           variant: "destructive",
         });
       }

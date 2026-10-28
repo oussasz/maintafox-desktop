@@ -1,6 +1,7 @@
 import { z, ZodError } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   ApproveInventoryCountLineInput,
   CreateInventoryCountSessionInput,
@@ -19,6 +20,7 @@ import type {
   InventoryIssueInput,
   InventoryCountLine,
   InventoryCountSession,
+  InventoryCountTolerance,
   InventoryReconciliationFinding,
   InventoryReconciliationRun,
   InventoryStateEvent,
@@ -46,6 +48,7 @@ import type {
   RepairableOrderDetail,
   RepairVsReplaceResult,
   ReverseInventoryCountSessionInput,
+  SecondApproveInventoryCountLineInput,
   RunInventoryReconciliationInput,
   StockImpactProjection,
   StockLocation,
@@ -981,7 +984,7 @@ const InventoryCountSessionSchema = z.object({
   warehouse_id: z.number(),
   location_id: z.number().nullable(),
   status: z.string(),
-  critical_abs_threshold: z.number(),
+  critical_abs_threshold: z.number().nullable(),
   submitted_by_id: z.number().nullable(),
   submitted_at: z.string().nullable(),
   posted_by_id: z.number().nullable(),
@@ -1013,11 +1016,24 @@ const InventoryCountLineSchema = z.object({
   approved_by_name: z.string().nullable(),
   approved_at: z.string().nullable(),
   approval_note: z.string().nullable(),
+  counted_by_id: z.number().nullable(),
+  counted_by_name: z.string().nullable(),
+  self_approved: z.number(),
+  second_approved_by_id: z.number().nullable(),
+  second_approved_by_name: z.string().nullable(),
+  second_approved_at: z.string().nullable(),
+  second_approval_note: z.string().nullable(),
   posted_transaction_id: z.number().nullable(),
   reversed_transaction_id: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const InventoryCountToleranceSchema = z.object({
+  value_threshold: z.number().nullable(),
+  percent_threshold: z.number().nullable(),
+  self_approval_allowed: z.boolean(),
 });
 
 /** Count line with the display name of the reviewer who approved its variance. */
@@ -1063,16 +1079,18 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class InventoryIpcError extends Error {
   readonly code: string;
-
-  constructor(code: string, message: string) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, details: unknown = null) {
     super(message);
     this.name = "InventoryIpcError";
     this.code = code;
+    this.details = details;
   }
 }
 
 function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new InventoryIpcError(err.code, err.message);
+  if (isIpcError(err)) throw new InventoryIpcError(err.code, err.message, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }
@@ -1539,10 +1557,22 @@ export function upsertInventoryCountLine(
   return invokeParsed("upsert_inventory_count_line", { input }, InventoryCountLineSchema);
 }
 
+/** The plant's four-eyes tolerance of a count variance (blank thresholds are null). */
+export function getInventoryCountTolerance(): Promise<InventoryCountTolerance> {
+  return invokeParsed("get_inventory_count_tolerance", {}, InventoryCountToleranceSchema);
+}
+
 export function approveInventoryCountLine(
   input: ApproveInventoryCountLineInput,
 ): Promise<InventoryCountLine> {
   return invokeParsed("approve_inventory_count_line", { input }, InventoryCountLineSchema);
+}
+
+/** Second approval of a self-approved count line, by someone other than its counter. */
+export function secondApproveInventoryCountLine(
+  input: SecondApproveInventoryCountLineInput,
+): Promise<InventoryCountLine> {
+  return invokeParsed("second_approve_inventory_count_line", { input }, InventoryCountLineSchema);
 }
 
 export function postInventoryCountSession(

@@ -268,15 +268,35 @@ pub async fn evaluate_wo_readiness(db: &DatabaseConnection, wo_id: i64) -> AppRe
     })
 }
 
+/// The refusal code of a failed blocking rule, so the screen says the rule in the user's language
+/// (the sentence after the code stays the technical fallback).
+fn blocked_rule_code(rule: &str) -> &'static str {
+    match rule {
+        "approval_required" => "GATE_WO_READY_APPROVAL_REQUIRED",
+        "assignment_completed" => "GATE_WO_READY_ASSIGNMENT_COMPLETED",
+        "equipment_assigned" => "GATE_WO_READY_EQUIPMENT_ASSIGNED",
+        "material_readiness" => "GATE_WO_READY_MATERIAL_READINESS",
+        "permit_approved" => "GATE_WO_READY_PERMIT_APPROVED",
+        "planning_completed" => "GATE_WO_READY_PLANNING_COMPLETED",
+        "crew_qualified" => "GATE_WO_READY_CREW_QUALIFIED",
+        "schedule_defined" => "GATE_WO_READY_SCHEDULE_DEFINED",
+        _ => "GATE_WO_READY_CHECK_FAILED",
+    }
+}
+
 pub async fn assert_ready_to_mark(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
     let report = evaluate_wo_readiness(db, wo_id).await?;
     if report.can_mark_ready {
         return Ok(());
     }
-    let mut errors: Vec<String> = vec!["Impossible de marquer prêt : des contrôles bloquants ont échoué.".into()];
+    let mut errors: Vec<String> = vec![format!(
+        "GATE_WO_MARK_READY_BLOCKED:count={}: Impossible de marquer prêt : des contrôles bloquants ont échoué.",
+        report.blocking_failed
+    )];
     for c in report.checks {
         if c.blocking && c.outcome == "fail" {
-            errors.push(format!("[{}] {}", c.code, c.message.unwrap_or_else(|| "échec".into())));
+            let code = blocked_rule_code(&c.code);
+            errors.push(format!("{code}: {}", c.message.unwrap_or_else(|| "échec".into())));
         }
     }
     Err(AppError::ValidationFailed(errors))

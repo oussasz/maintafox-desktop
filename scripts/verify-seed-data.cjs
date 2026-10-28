@@ -9,7 +9,7 @@ const dbPath = path.join(
   os.homedir(),
   "AppData",
   "Roaming",
-  "systems.maintafox.desktop",
+  "systems.maintafox.desktop.dev",
   "maintafox.db"
 );
 

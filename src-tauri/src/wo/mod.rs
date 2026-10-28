@@ -5,6 +5,7 @@ pub mod audit;
 pub mod backlog;
 pub mod closeout;
 pub mod closeout_reference_catalog;
+pub(crate) mod closeout_sync;
 pub mod costs;
 pub mod delay;
 pub mod domain;
@@ -16,6 +17,7 @@ pub mod parts;
 pub mod permissions;
 pub mod plan_adherence;
 pub mod queries;
+pub mod retired_equipment_review;
 pub mod shifts;
 pub mod stats;
 pub mod statuses;
@@ -34,6 +36,10 @@ mod audit_tests;
 #[cfg(test)]
 mod backlog_tests;
 #[cfg(test)]
+mod closeout_gates_tests;
+#[cfg(test)]
+mod closeout_sync_tests;
+#[cfg(test)]
 mod closeout_tests;
 #[cfg(test)]
 mod execution_tests;
@@ -43,6 +49,10 @@ mod gap06_regression_tests;
 mod migration_tests;
 #[cfg(test)]
 mod part_lines_tests;
+#[cfg(test)]
+mod retired_equipment_review_tests;
+#[cfg(test)]
+mod retired_equipment_tests;
 #[cfg(test)]
 mod shift_tests;
 #[cfg(test)]

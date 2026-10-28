@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import enOt from "@/i18n/locale-data/en/ot.json";
 import type { WoListFilter, WorkOrder } from "@shared/ipc-types";
 
-import { WoKanbanView } from "../WoKanbanView";
+import { WoKanbanView, filtersArchiveOnly, woLanes } from "../WoKanbanView";
 import { WoPermitRequirementField } from "../WoPermitRequirementField";
 import { WoShutdownBadge, WoShutdownRequirementField } from "../WoShutdownRequirementField";
 import { mergeWoPersonOptions, toWoPersonOptions, woPersonLabel } from "../use-wo-people";
@@ -120,6 +120,41 @@ describe("WO people options (personnel register)", () => {
 });
 
 describe("WoKanbanView", () => {
+  it("has no lane for closed or cancelled work orders: they live in the archive", () => {
+    const statuses = woLanes(null).flatMap((l) => l.statuses);
+    expect(statuses).not.toContain("closed");
+    expect(statuses).not.toContain("cancelled");
+    expect(woLanes(null).map((l) => l.id)).toEqual([
+      "draft",
+      "planning",
+      "ready",
+      "executing",
+      "completed",
+    ]);
+  });
+
+  it("points to the archive when the status filter is only closed or cancelled", async () => {
+    expect(filtersArchiveOnly(["closed"])).toBe(true);
+    expect(filtersArchiveOnly(["closed", "cancelled"])).toBe(true);
+    expect(filtersArchiveOnly(["closed", "ready"])).toBe(false);
+    expect(filtersArchiveOnly(null)).toBe(false);
+    woSvc.listWos.mockClear();
+    render(
+      <MemoryRouter>
+        <WoKanbanView
+          filter={{ ...BOARD_FILTER, status_codes: ["closed"] }}
+          onCardClick={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("wo-kanban-archive-pointer")).toHaveTextContent(
+      enOt.kanban.archiveOnlyNotice,
+    );
+    expect(woSvc.listWos).not.toHaveBeenCalled();
+    // A mixed filter still loads the active lanes it asks for, and none of the archived ones.
+    expect(woLanes(["closed", "ready"]).flatMap((l) => l.statuses)).toEqual(["ready"]);
+  });
+
   it("does not offer drag-and-drop and says where status changes happen", async () => {
     const wo = {
       id: 1,

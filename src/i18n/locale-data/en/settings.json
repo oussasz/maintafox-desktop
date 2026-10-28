@@ -55,6 +55,7 @@
     "device": "Device"
   },
   "keys": {
+    "notifications.expiry_days": "Notification retention period",
     "locale.primary_language": "Primary Language",
     "locale.fallback_language": "Fallback Language",
     "locale.date_format": "Date Format",
@@ -73,7 +74,8 @@
     "ram.fmeca_rpn_critical_threshold": "FMECA RPN critical threshold",
     "documents.default_header": "Default document header",
     "wo.reopen_window_days": "Reopen window after closure (days)",
-    "inventory.count_critical_variance": "Critical variance of a stock count",
+    "inventory.count_four_eyes_value_threshold": "Four-eyes tolerance of a count: value of the variance",
+    "inventory.count_four_eyes_percent_threshold": "Four-eyes tolerance of a count: share of the system quantity",
     "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
     "locale.fiscal_year_start_month": "Fiscal year starts in"
   },
@@ -115,6 +117,8 @@
     }
   },
   "auditLog": {
+    "technicalSetting": "Technical setting",
+    "changed": "Value changed",
     "title": "Change Log",
     "empty": "No changes recorded",
     "summary": "Summary",
@@ -252,14 +256,16 @@
     "profile": "My Profile",
     "notifications": "Notifications",
     "general": "General",
-    "security": "Security & Logs",
+    "security": "Security",
     "backup": "Backup & Ops",
     "integrations": "System & Sync",
+    "activity": "Activity log",
     "profileHint": "Account details, password, PIN, trusted devices, and session history.",
     "notificationsHint": "Inbox, acknowledgements, snoozes, and per-category preferences.",
     "generalHint": "Language, currency and fiscal year, work orders, reliability, printed document header. Each setting shows its shipped value, who may change it and its history.",
-    "securityHint": "Password policy, session policy, activity feed, and audit log.",
-    "integrationsHint": "Sync status, license, connections, and diagnostics."
+    "securityHint": "Password and session policy.",
+    "integrationsHint": "Sync status, license, connections, and diagnostics.",
+    "activityHint": "What was done in the application, by whom and when, and the audit log."
   },
   "backupOps": {
     "title": "Backup operations",
@@ -340,6 +346,7 @@
   },
   "catalog": {
     "shipped": "Shipped value",
+    "notSet": "Not set",
     "changed": "Changed",
     "lastChange": "Changed by {{who}} on {{when}}",
     "restoreShipped": "Restore the shipped value",
@@ -360,7 +367,8 @@
       "locale.currency_code": "Currency in which stock, purchases and costs are valued (ISO 4217 code).",
       "locale.fiscal_year_start_month": "First month of the fiscal year: budget periods, postings, period close.",
       "wo.reopen_window_days": "Days after closure during which a closed work order can be reopened (0 = never).",
-      "inventory.count_critical_variance": "A counted line whose variance reaches this quantity (in the article's unit) is critical and needs approval. Each count session keeps the value it was opened with.",
+      "inventory.count_four_eyes_value_threshold": "A counted variance whose value (variance × unit cost at the location, plant currency) is above this amount is “critical”: someone other than the counter approves it. Leave blank to judge by the share only. Both blank: every variance needs a second person.",
+      "inventory.count_four_eyes_percent_threshold": "A counted variance above this share of the system quantity (%) is “critical”: someone other than the counter approves it. A system quantity of zero or less is always critical. Leave blank to judge by the value only; blank is never zero.",
       "inventory.reconciliation_drift_break": "A gap between the movement ledger and the stock balance that reaches this quantity (in the article's unit) is a break. Must be above zero.",
       "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
       "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
@@ -370,7 +378,8 @@
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
       "wo.reopen_window_days_other": "{{count}} days",
-      "inventory.count_critical_variance": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
+      "inventory.count_four_eyes_value_threshold": "{{value, number(maximumFractionDigits: 6)}} (plant currency)",
+      "inventory.count_four_eyes_percent_threshold": "{{value, number(maximumFractionDigits: 6)}} %",
       "inventory.reconciliation_drift_break": "{{value, number(maximumFractionDigits: 6)}} (article's unit)",
       "ram.fmeca_rpn_critical_threshold": "{{count}}",
       "backup.retention_daily_one": "{{count}} backup",
@@ -401,6 +410,25 @@
     "edition": "Edition {{edition}}",
     "pendingWrites": "Changes waiting to be sent:",
     "lastAction": "Last administrator action:",
+    "traceEvent": {
+      "activation_applied": "Activation applied",
+      "activation_contract_applied": "Activation contract applied",
+      "activation_revocation_applied": "Activation revocation applied",
+      "activation_secret_rotated": "Binding secret renewed",
+      "activation_rebind_requested": "New binding requested",
+      "entitlement_envelope_applied": "Licence rights received",
+      "license_admin_action_applied": "Licence administration action applied",
+      "license_admin_action_reconciled": "Licence administration action reconciled",
+      "license_compromise_response_applied": "Compromise response applied",
+      "other": "Licence event"
+    },
+    "traceOutcome": {
+      "accepted": "accepted",
+      "applied": "applied",
+      "requested": "requested",
+      "rejected": "rejected",
+      "other": "outcome recorded"
+    },
     "traces_one": "{{count}} recent licence event (technical details)",
     "traces_other": "{{count}} recent licence events (technical details)",
     "reason": "Reason",
@@ -519,11 +547,13 @@
     "SITE_SETTING_NOT_A_SITE": "This organisation node is not a planning site (its type cannot own work).",
     "SITE_SETTING_UNKNOWN": "Unknown site rule.",
     "FIRST_ADMIN_ALREADY_EXISTS": "An administrator already exists for this organisation: sign in with that account.",
+    "FIRST_ADMIN_PLANT_JOIN_REQUIRED": "This PC has not joined your plant yet: it must synchronise once to check whether your organisation already has accounts. Connect it to the network, then retry.",
     "LICENSE_RECONCILE_ADMIN_REQUIRED": "This licence change needs an administrator: sign in as an administrator; the licence screen then asks you to confirm your identity and applies the change.",
     "LICENSE_EXTENSION_ADMIN_REQUIRED": "This licence update extends the licence terms or lifts a denial (expiry, devices, edition, entitlements): sign in as an administrator; the licence screen then asks you to confirm your identity and applies the update.",
     "LICENSE_CLAIM_INVALID": "The licence data received is incomplete or malformed (organisation, licence, machine or activation token): nothing was changed.",
     "LICENSE_FIRST_ADMIN_RETRY": "The first administrator could not be saved because another one is being created at the same time: wait a moment, then retry.",
     "LICENSE_RESET_BUILTIN_ADMIN_PENDING": "This PC holds a licence and is still reached through its built-in administrator account: create the first administrator, then sign in with that account to reset local data.",
+    "LICENSE_RESET_REQUIRES_ADMIN_SIGNIN": "This PC already has an administrator: sign in as an administrator (you will be asked to confirm your password) to change the key, or use a vendor recovery code.",
     "LAST_ADMINISTRATOR_REQUIRED": "This change would leave the plant without an active administrator: create or enable a second administrator first.",
     "ADMIN_RECOVERY_CODE_MALFORMED": "This is not a valid recovery code: copy the whole code, starting with MFXREC1.",
     "ADMIN_RECOVERY_CODE_NON_CANONICAL": "This recovery code has been altered: ask the vendor for a new one.",

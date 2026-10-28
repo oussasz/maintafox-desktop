@@ -13,10 +13,9 @@
 //!   - `remove_labor_entry` is only allowed while the WO is in draft, planned, or assigned.
 
 use crate::errors::{AppError, AppResult};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-
-use super::domain::WoStatus;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -172,6 +171,83 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
     Some(diff.num_seconds() as f64 / 3600.0)
 }
 
+/// Stable codes of the labour refusals (texts in `errors:gateError`).
+pub mod labor_codes {
+    pub const WRONG_STATUS: &str = "GATE_LABOR_WRONG_STATUS";
+}
+
+/// Labour is booked and closed only while the WO is in progress or on hold (as task results and
+/// tool use, `wo::tasks::TASK_RECORDING_STATUSES`).
+fn require_labor_recording_status(status_code: &str) -> AppResult<()> {
+    if crate::wo::tasks::TASK_RECORDING_STATUSES.contains(&status_code) {
+        return Ok(());
+    }
+    Err(AppError::ValidationFailed(vec![format!(
+        "{}:status={status_code}: La main-d'œuvre ne se saisit ou ne se clôture que pendant l'exécution (en cours ou \
+         en attente), pas au statut '{status_code}'. (Labour is recorded only while the work order is in progress or \
+         on hold.)",
+        labor_codes::WRONG_STATUS
+    )]))
+}
+
+/// Labour entries still open when their WO is cancelled or closed are closed at that moment, in the
+/// same transaction (lead decision, AU-99 review N3): no entry stays open on a WO where labour can
+/// no longer be closed. Hours not entered are counted from the start to `at`; the note says why, and
+/// the WO's audit trail records how many were closed. Returns that number.
+pub(crate) async fn close_open_labor_at_end(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    at: &str,
+    actor_id: i64,
+    end: LaborEnd,
+) -> AppResult<u64> {
+    let (note, action) = match end {
+        LaborEnd::Cancelled => ("Clôturée par l'annulation de l'OT", "labor_closed_by_cancellation"),
+        LaborEnd::Closed => ("Clôturée par la clôture de l'OT", "labor_closed_by_closeout"),
+    };
+    let closed = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_order_interveners SET \
+                ended_at = ?, \
+                hours_worked = CASE \
+                    WHEN COALESCE(hours_worked, 0) > 0 THEN hours_worked \
+                    WHEN started_at IS NOT NULL AND julianday(?) > julianday(started_at) \
+                        THEN ROUND((julianday(?) - julianday(started_at)) * 24, 2) \
+                    ELSE hours_worked END, \
+                notes = CASE WHEN notes IS NULL OR trim(notes) = '' THEN ? ELSE notes || ' — ' || ? END \
+             WHERE work_order_id = ? AND ended_at IS NULL",
+            [at.into(), at.into(), at.into(), note.into(), note.into(), wo_id.into()],
+        ))
+        .await?
+        .rows_affected();
+    if closed > 0 {
+        crate::wo::audit::insert_wo_change_event(
+            conn,
+            &crate::wo::audit::WoAuditInput {
+                wo_id: Some(wo_id),
+                action: action.into(),
+                actor_id: Some(actor_id),
+                summary: Some(format!(
+                    "{closed} entrée(s) de main-d'œuvre ouverte(s) clôturée(s) : {note}"
+                )),
+                details_json: Some(serde_json::json!({ "closed": closed, "at": at }).to_string()),
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await?;
+    }
+    Ok(closed)
+}
+
+/// Why open labour is closed by the WO's end ([`close_open_labor_at_end`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LaborEnd {
+    Cancelled,
+    Closed,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) add_labor_entry
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -282,12 +358,7 @@ struct LaborBooking {
 async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<WoIntervener> {
     let txn = db.begin().await?;
     let status_code = load_wo_status_code(&txn, input.wo_id).await?;
-    let status = WoStatus::try_from_str(&status_code).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-    if status.is_terminal() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible d'ajouter une entrée de main-d'œuvre à un OT {status_code}."
-        )]));
-    }
+    require_labor_recording_status(&status_code)?;
 
     // Labour is recorded after the fact: a start or end later than now (5 min clock tolerance)
     // would book hours that have not been worked.
@@ -297,7 +368,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
             let at = crate::wo::time::parse_utc_timestamp(raw, field)?;
             if at > latest_allowed {
                 return Err(AppError::ValidationFailed(vec![
-                    "Les heures de main-d'œuvre ne peuvent pas être dans le futur.".to_string(),
+                    "GATE_WO_LABOR_FUTURE: Les heures de main-d'œuvre ne peuvent pas être dans le futur.".to_string(),
                 ]));
             }
         }
@@ -407,10 +478,11 @@ pub async fn close_labor_entry(
         })?;
 
     let entry = map_intervener(&row)?;
+    require_labor_recording_status(&load_wo_status_code(&txn, entry.work_order_id).await?)?;
 
     if entry.ended_at.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Cette entrée de main-d'œuvre est déjà clôturée.".to_string(),
+            "GATE_WO_LABOR_ALREADY_CLOSED: Cette entrée de main-d'œuvre est déjà clôturée.".to_string(),
         ]));
     }
 
@@ -605,8 +677,9 @@ pub async fn remove_labor_entry(db: &DatabaseConnection, intervener_id: i64, _ac
     let status_code = load_wo_status_code(db, wo_id).await?;
     let allowed = matches!(status_code.as_str(), "draft" | "planning" | "ready");
     if !allowed {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "La suppression d'une entrée de main-d'œuvre n'est pas autorisée au statut '{status_code}'."
+            "GATE_WO_LABOR_DELETE_STATUS:status={status_key}: La suppression d'une entrée de main-d'œuvre n'est pas autorisée au statut '{status_code}'."
         )]));
     }
 

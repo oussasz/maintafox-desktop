@@ -484,26 +484,29 @@ async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
         &format!("SELECT id FROM personnel_availability_blocks WHERE personnel_id = {person}"),
     )
     .await;
-    let edit = |is_critical: bool| crate::personnel::availability::AvailabilityBlockUpdateInput {
-        id: block_id,
-        // A caller who may not read the type and reason keeps them.
-        block_type: None,
-        start_at: "2026-09-05T08:00:00Z".to_string(),
-        end_at: "2026-09-05T16:00:00Z".to_string(),
-        reason_note: None,
-        keep_reason_note: true,
-        is_critical: Some(is_critical),
-        confirm_overlap: None,
-    };
+    // Each saved edit raises the block's version: the next one sends the version it read.
+    let edit =
+        |is_critical: bool, expected_row_version: i64| crate::personnel::availability::AvailabilityBlockUpdateInput {
+            id: block_id,
+            // A caller who may not read the type and reason keeps them.
+            block_type: None,
+            start_at: "2026-09-05T08:00:00Z".to_string(),
+            end_at: "2026-09-05T16:00:00Z".to_string(),
+            reason_note: None,
+            keep_reason_note: true,
+            is_critical: Some(is_critical),
+            confirm_overlap: None,
+            expected_row_version,
+        };
 
     // Same flag: nothing to audit.
-    crate::personnel::availability::update_availability_block(&db, edit(false), actor, &AbsenceAccess::neutral())
+    crate::personnel::availability::update_availability_block(&db, edit(false, 1), actor, &AbsenceAccess::neutral())
         .await
         .expect("edit");
     assert!(critical_audits(&db).await.is_empty());
 
     let block =
-        crate::personnel::availability::update_availability_block(&db, edit(true), actor, &AbsenceAccess::neutral())
+        crate::personnel::availability::update_availability_block(&db, edit(true, 2), actor, &AbsenceAccess::neutral())
             .await
             .expect("set critical");
     assert!(block.is_critical);
@@ -513,10 +516,23 @@ async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
         Some(SECRET_REASON),
         "the hidden reason is kept"
     );
-    crate::personnel::availability::update_availability_block(&db, edit(false), actor, &AbsenceAccess::neutral())
+    crate::personnel::availability::update_availability_block(&db, edit(false, 3), actor, &AbsenceAccess::neutral())
         .await
         .expect("clear critical");
 
+    // The block and the person are named by their sync ids (the audit travels, and outlives a block
+    // deleted later); a database without capture keeps a device-marked key.
+    let sync_ref = |table: &'static str, id: i64| {
+        let db = &db;
+        async move {
+            crate::sync::identity::optional_entity_sync_id(db, table, id)
+                .await
+                .expect("sync id")
+                .unwrap_or_else(|| format!("local-{id}"))
+        }
+    };
+    let block_ref = sync_ref("personnel_availability_blocks", block_id).await;
+    let person_ref = sync_ref("personnel", person).await;
     let rows = critical_audits(&db).await;
     assert_eq!(rows.len(), 2);
     let mut details: Vec<Value> = Vec::new();
@@ -524,14 +540,14 @@ async fn changing_a_blocks_critical_flag_is_audited_without_type_or_reason() {
         assert_eq!(r.try_get::<Option<i64>>("", "actor_id").expect("actor"), Some(actor));
         assert_eq!(
             r.try_get::<Option<String>>("", "target_id").expect("target"),
-            Some(block_id.to_string())
+            Some(block_ref.clone())
         );
         let raw: String = r.try_get("", "details_json").expect("details");
         assert!(!raw.contains("leave") && !raw.contains(SECRET_REASON), "{raw}");
         details.push(serde_json::from_str(&raw).expect("json"));
     }
-    assert_eq!(details[0]["personnel_id"], person);
-    assert_eq!(details[0]["block_id"], block_id);
+    assert_eq!(details[0]["personnel_sync_id"], person_ref.as_str());
+    assert_eq!(details[0]["block_sync_id"], block_ref.as_str());
     assert_eq!(
         (
             details[0]["is_critical_before"].as_bool(),
@@ -582,6 +598,7 @@ async fn a_forged_edit_cannot_change_a_hidden_type_or_erase_a_hidden_reason() {
         keep_reason_note: false,
         is_critical: None,
         confirm_overlap: None,
+        expected_row_version: 1,
     };
 
     for guess in ["training", "medical"] {

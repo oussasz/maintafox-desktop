@@ -9,7 +9,6 @@ use crate::errors::{AppError, AppResult};
 use super::domain::{
     AddInspectionEvidenceInput, InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionEvidence,
     InspectionEvidenceFilter, InspectionResult, InspectionResultsFilter, InspectionRound, RecordInspectionResultInput,
-    UpdateInspectionAnomalyInput,
 };
 use super::queries::{
     get_inspection_checkpoint_by_id, get_inspection_round_by_id, get_inspection_template_version_by_id,
@@ -33,11 +32,6 @@ pub(crate) const ANOMALY_MISSING_PHOTO: &str = "missing_mandatory_photo";
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("inspection_results decode '{field}': {err}"))
-}
-
-fn opt_i64(v: Option<i64>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>))
 }
 
 fn opt_string(v: Option<String>) -> sea_orm::Value {
@@ -78,11 +72,14 @@ pub(crate) fn parse_escalation(raw: Option<&str>) -> AppResult<EscalationRules> 
     let Some(raw) = raw.map(str::trim).filter(|r| !r.is_empty()) else {
         return Ok(EscalationRules::default());
     };
-    let rules: EscalationRules = serde_json::from_str(raw)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("escalation_rules_json is invalid: {e}")]))?;
+    let rules: EscalationRules = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_INSP_ESCALATION_RULES_INVALID: escalation_rules_json is invalid: {e}"
+        )])
+    })?;
     if let Some(bad) = rules.anomaly_on.iter().find(|s| !RESULT_STATUSES.contains(&s.as_str())) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "escalation_rules_json: unknown result status '{bad}'."
+            "GATE_INSP_ESCALATION_RULES_INVALID: escalation_rules_json: unknown result status '{bad}'."
         )]));
     }
     Ok(rules)
@@ -97,7 +94,7 @@ fn validate_result_status(s: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
-            "result_status must be one of {:?}",
+            "GATE_INSP_RESULT_STATUS_INVALID: result_status must be one of {:?}",
             RESULT_STATUSES
         )]))
     }
@@ -266,7 +263,7 @@ async fn count_evidence(db: &impl ConnectionTrait, result_id: i64) -> AppResult<
 async fn open_round_for_results(db: &impl ConnectionTrait, round: &InspectionRound) -> AppResult<()> {
     if !ROUND_OPEN_STATUSES.contains(&round.status.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The round is '{}': results can no longer be recorded.",
+            "GATE_INSP_ROUND_CLOSED:status={0}: The round is '{}': results can no longer be recorded.",
             round.status
         )]));
     }
@@ -287,7 +284,7 @@ async fn open_round_for_results(db: &impl ConnectionTrait, round: &InspectionRou
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on inspection_rounds.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on inspection_rounds.".into(),
         ]));
     }
     Ok(())
@@ -302,18 +299,20 @@ fn resolve_status(cp: &InspectionCheckpoint, input: &RecordInspectionResultInput
         "numeric" => {
             let Some(v) = input.numeric_value else {
                 return Err(AppError::ValidationFailed(vec![
-                    "numeric_value required for numeric checkpoints when result_status omitted.".into(),
+                    "GATE_INSP_NUMERIC_REQUIRED: numeric_value required for numeric checkpoints when result_status omitted.".into(),
                 ]));
             };
             Ok(eval_numeric_status(v, cp).to_string())
         }
         "pass_fail" | "observation" => Err(AppError::ValidationFailed(vec![
-            "result_status is required for this checkpoint type.".into(),
+            "GATE_INSP_RESULT_STATUS_REQUIRED: result_status is required for this checkpoint type.".into(),
         ])),
         "boolean" => Err(AppError::ValidationFailed(vec![
-            "Use boolean_value without result_status for boolean checkpoints.".into(),
+            "GATE_INSP_BOOLEAN_USE_VALUE: Use boolean_value without result_status for boolean checkpoints.".into(),
         ])),
-        _ => Err(AppError::ValidationFailed(vec!["Unknown check_type.".into()])),
+        _ => Err(AppError::ValidationFailed(vec![
+            "GATE_INSP_RESULT_CHECK_TYPE_UNKNOWN: Unknown check_type.".into(),
+        ])),
     }
 }
 
@@ -322,7 +321,9 @@ pub async fn list_inspection_results(
     filter: InspectionResultsFilter,
 ) -> AppResult<Vec<InspectionResult>> {
     let rid = filter.round_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec!["round_id is required for listing inspection results.".into()])
+        AppError::ValidationFailed(vec![
+            "GATE_INSP_LIST_FILTER_REQUIRED: round_id is required for listing inspection results.".into(),
+        ])
     })?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -344,7 +345,9 @@ pub async fn list_inspection_evidence(
     filter: InspectionEvidenceFilter,
 ) -> AppResult<Vec<InspectionEvidence>> {
     let rid = filter.result_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec!["result_id is required for listing inspection evidence.".into()])
+        AppError::ValidationFailed(vec![
+            "GATE_INSP_LIST_FILTER_REQUIRED: result_id is required for listing inspection evidence.".into(),
+        ])
     })?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -366,7 +369,9 @@ pub async fn list_inspection_anomalies(
     filter: InspectionAnomaliesFilter,
 ) -> AppResult<Vec<InspectionAnomaly>> {
     let rid = filter.round_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec!["round_id is required for listing inspection anomalies.".into()])
+        AppError::ValidationFailed(vec![
+            "GATE_INSP_LIST_FILTER_REQUIRED: round_id is required for listing inspection anomalies.".into(),
+        ])
     })?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -404,7 +409,7 @@ pub async fn record_inspection_result(
         })?;
     if cp.template_version_id != round.template_version_id {
         return Err(AppError::ValidationFailed(vec![
-            "checkpoint does not belong to this round's template version.".into(),
+            "GATE_INSP_CHECKPOINT_MISMATCH: checkpoint does not belong to this round's template version.".into(),
         ]));
     }
     open_round_for_results(&txn, &round).await?;
@@ -415,7 +420,9 @@ pub async fn record_inspection_result(
             s.clone()
         } else {
             let b = input.boolean_value.ok_or_else(|| {
-                AppError::ValidationFailed(vec!["boolean_value required for boolean checkpoints.".into()])
+                AppError::ValidationFailed(vec![
+                    "GATE_INSP_BOOLEAN_REQUIRED: boolean_value required for boolean checkpoints.".into(),
+                ])
             })?;
             if b {
                 "pass".into()
@@ -448,14 +455,14 @@ pub async fn record_inspection_result(
     let comment_given = input.comment.as_deref().is_some_and(|c| !c.trim().is_empty());
     if NOT_PERFORMED_STATUSES.contains(&status.as_str()) && !comment_given {
         return Err(AppError::ValidationFailed(vec![
-            "A reason (comment) is required when a checkpoint is not accessible or not done.".into(),
+            "GATE_INSP_REASON_REQUIRED: A reason (comment) is required when a checkpoint is not accessible or not done.".into(),
         ]));
     }
     if cp.requires_comment_on_exception && status != "pass" {
         let c = input.comment.as_ref().map(|s| s.trim()).unwrap_or("");
         if c.is_empty() && ev_before == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "comment or evidence required when requires_comment_on_exception and status is not pass.".into(),
+                "GATE_INSP_EXCEPTION_COMMENT_REQUIRED: comment or evidence required when requires_comment_on_exception and status is not pass.".into(),
             ]));
         }
     }
@@ -487,7 +494,7 @@ pub async fn record_inspection_result(
         if let Some(exp) = input.expected_row_version {
             if cur_rv != exp {
                 return Err(AppError::ValidationFailed(vec![
-                    "row_version mismatch on inspection_results.".into(),
+                    "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_results.".into(),
                 ]));
             }
         }
@@ -591,10 +598,16 @@ pub async fn record_inspection_result(
     Ok(out)
 }
 
-/// Keeps the automatic anomaly of one kind in line with the latest reading of a result, without
-/// ever touching an anomaly someone already acted on (routed to a DI/WO, deferred, resolved):
-/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending;
-/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly.
+/// Keeps the automatic anomaly of one kind in line with the latest reading of a result:
+/// - condition present: refresh the open, unrouted anomaly, or create one if none is pending (an
+///   anomaly someone acted on, routed or deferred, covers it; a cancelled one does not, so a
+///   condition back after a correction opens a new anomaly);
+/// - condition gone (reading corrected, photo added): cancel the open, unrouted anomaly; an anomaly
+///   already routed to a request or a work order is cancelled too, its decision and link kept and its
+///   follow-up left as it is (a "revue permis requise" on the work order stays, cleared only through
+///   its own path), and the follow-up's responsible is told (`settings::received_notice::
+///   announce_anomaly_origin_cancelled`, CMMS Advisor decision on AU-72, option B). A deferred
+///   anomaly is left as it is.
 pub(crate) async fn sync_auto_anomaly(
     db: &impl ConnectionTrait,
     round_id: i64,
@@ -613,6 +626,7 @@ pub(crate) async fn sync_auto_anomaly(
         ))
         .await?;
     let mut open_unrouted: Vec<i64> = Vec::new();
+    let mut routed: Vec<i64> = Vec::new();
     let mut acted_on = false;
     for r in &rows {
         let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
@@ -632,6 +646,9 @@ pub(crate) async fn sync_auto_anomaly(
             open_unrouted.push(id);
         } else if status != "cancelled" {
             acted_on = true;
+            if status == "triaged" && (di.is_some() || wo.is_some()) {
+                routed.push(id);
+            }
         }
     }
     if active {
@@ -676,6 +693,19 @@ pub(crate) async fn sync_auto_anomaly(
             ))
             .await?;
         }
+        for id in routed {
+            let cancelled = db
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE inspection_anomalies SET resolution_status = 'cancelled', row_version = row_version + 1 \
+                     WHERE id = ? AND resolution_status = 'triaged'",
+                    [id.into()],
+                ))
+                .await?;
+            if cancelled.rows_affected() > 0 {
+                crate::settings::received_notice::announce_anomaly_origin_cancelled(db, id).await;
+            }
+        }
     }
     Ok(())
 }
@@ -699,7 +729,7 @@ pub async fn add_inspection_evidence(
 ) -> AppResult<InspectionEvidence> {
     if input.evidence_type.trim().is_empty() || input.file_path_or_value.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "evidence_type and file_path_or_value required.".into(),
+            "GATE_INSP_EVIDENCE_FIELDS_REQUIRED: evidence_type and file_path_or_value required.".into(),
         ]));
     }
     let res = get_inspection_result_by_id(db, input.result_id)
@@ -711,7 +741,7 @@ pub async fn add_inspection_evidence(
     if let Some(exp) = input.expected_row_version {
         if res.row_version != exp {
             return Err(AppError::ValidationFailed(vec![
-                "row_version mismatch on inspection_results.".into(),
+                "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_results.".into(),
             ]));
         }
     }
@@ -757,63 +787,4 @@ pub async fn add_inspection_evidence(
 
     txn.commit().await?;
     Ok(ev)
-}
-
-pub async fn update_inspection_anomaly(
-    db: &DatabaseConnection,
-    input: UpdateInspectionAnomalyInput,
-) -> AppResult<InspectionAnomaly> {
-    if !ANOMALY_STATUSES.contains(&input.resolution_status.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "resolution_status must be one of {ANOMALY_STATUSES:?}"
-        )]));
-    }
-    let txn = db.begin().await?;
-    let cur = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "InspectionAnomaly".into(),
-            id: input.id.to_string(),
-        })?;
-    let rv: i64 = cur
-        .try_get("", "row_version")
-        .map_err(|e| decode_err("row_version", e))?;
-    if rv != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_anomalies.".into(),
-        ]));
-    }
-    let new_rv = rv + 1;
-    let rpr = input.requires_permit_review.unwrap_or(false);
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE inspection_anomalies SET resolution_status = ?, linked_di_id = ?, linked_work_order_id = ?, \
-         requires_permit_review = ?, row_version = ? WHERE id = ?",
-        [
-            input.resolution_status.into(),
-            opt_i64(input.linked_di_id),
-            opt_i64(input.linked_work_order_id),
-            (if rpr { 1 } else { 0 }).into(),
-            new_rv.into(),
-            input.id.into(),
-        ],
-    ))
-    .await?;
-    let row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, round_id, result_id, anomaly_type, severity, description, linked_di_id, linked_work_order_id, \
-             requires_permit_review, resolution_status, routing_decision, entity_sync_id, row_version FROM inspection_anomalies WHERE id = ?",
-            [input.id.into()],
-        ))
-        .await?
-        .expect("row");
-    let an = map_anomaly(&row)?;
-    txn.commit().await?;
-    Ok(an)
 }

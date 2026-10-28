@@ -24,6 +24,8 @@ import {
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { gateSentenceText } from "@/lib/app-error";
+import { usePermissionText } from "@/lib/permission-labels";
 import {
   exportRoleModel,
   importRoleModel,
@@ -49,6 +51,7 @@ interface ImportPreviewRow {
 
 export function RoleImportExportPanel() {
   const { t } = useTranslation("admin");
+  const permissionText = usePermissionText();
   const { can } = usePermissions();
   // The global toast host shows them (a local useToast list was never rendered here).
   const toast = pushAppToast;
@@ -357,8 +360,13 @@ export function RoleImportExportPanel() {
                                   className="flex items-center gap-1 text-xs text-destructive"
                                 >
                                   <AlertTriangle className="h-3 w-3" />
-                                  <strong>{d.permission_name}</strong> →{" "}
-                                  {d.required_permission_name}
+                                  <strong title={d.permission_name}>
+                                    {permissionText.label(d.permission_name)}
+                                  </strong>{" "}
+                                  →{" "}
+                                  <span title={d.required_permission_name}>
+                                    {permissionText.label(d.required_permission_name)}
+                                  </span>
                                 </div>
                               ))}
                               {row.validation?.unknown_permissions.map((p) => (
@@ -379,8 +387,13 @@ export function RoleImportExportPanel() {
                                   className="flex items-center gap-1 text-xs text-tone-attention-fg"
                                 >
                                   <AlertTriangle className="h-3 w-3" />
-                                  <strong>{d.permission_name}</strong> →{" "}
-                                  {d.required_permission_name}
+                                  <strong title={d.permission_name}>
+                                    {permissionText.label(d.permission_name)}
+                                  </strong>{" "}
+                                  →{" "}
+                                  <span title={d.required_permission_name}>
+                                    {permissionText.label(d.required_permission_name)}
+                                  </span>
                                 </div>
                               ))}
                             </div>
@@ -464,7 +477,7 @@ export function RoleImportExportPanel() {
                         <strong>{s.name}</strong>
                         <ul className="mt-0.5 list-inside list-disc text-destructive">
                           {s.errors.map((e, i) => (
-                            <li key={i}>{e}</li>
+                            <li key={i}>{gateSentenceText(e)}</li>
                           ))}
                         </ul>
                       </div>

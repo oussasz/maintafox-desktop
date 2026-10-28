@@ -1,13 +1,15 @@
 /**
  * New work into a frozen week (planning step D): the commit is refused with PLANNING_WEEK_FROZEN
  * unless it enters as a recorded break-in — a reason from the plant's list
- * (PLANNING.BREAK_IN_REASONS) and, for an urgent reason, an approver or a dangerous-override
- * reason. The backend checks all of it again; this dialog only collects it.
+ * (PLANNING.BREAK_IN_REASONS) and, for an urgent reason, the signature of a second planner holding
+ * plan.confirm at the crew's site (their password, typed here). The backend checks all of it
+ * again; this dialog only collects it.
  */
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BreakInSignerFields, signatureMissing } from "@/components/planning/BreakInSignerFields";
 import {
   breakInReasonLabel,
   isUrgentBreakInReason,
@@ -22,7 +24,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
   SelectContent,
@@ -31,17 +32,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useCanReadList } from "@/lib/list-access";
 import type { CommitBreakIn } from "@shared/ipc-types";
-
-type ApproverOption = { id: number; label: string };
 
 type FrozenWeekBreakInDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** First day of the frozen week (`YYYY-MM-DD`), from the refusal. */
   weekStart: string | null;
-  approvers: ApproverOption[];
+  /** The crew the work is committed to: the approver holds plan.confirm at its site. */
+  teamId: number | null;
   onConfirm: (breakIn: CommitBreakIn) => void;
 };
 
@@ -49,27 +48,28 @@ export function FrozenWeekBreakInDialog({
   open,
   onOpenChange,
   weekStart,
-  approvers,
+  teamId,
   onConfirm,
 }: FrozenWeekBreakInDialogProps) {
   const { t, i18n } = useTranslation("planning");
-  // Approvers are user accounts: listed only with the user administration right.
-  const canReadUsers = useCanReadList("users");
   const reasons = useBreakInReasons(open);
   const [reason, setReason] = useState("");
   const [approverUserId, setApproverUserId] = useState<number | null>(null);
+  const [approverPassword, setApproverPassword] = useState("");
   const [dangerousOverrideReason, setDangerousOverrideReason] = useState("");
 
+  // Closed (confirmed or cancelled): nothing is kept, the password least of all.
   useEffect(() => {
     if (!open) {
       setReason("");
       setApproverUserId(null);
+      setApproverPassword("");
       setDangerousOverrideReason("");
     }
   }, [open]);
 
   const urgent = isUrgentBreakInReason(reasons.find((r) => r.code === reason));
-  const evidenceMissing = urgent && approverUserId == null && dangerousOverrideReason.trim() === "";
+  const evidenceMissing = signatureMissing(urgent, approverUserId, approverPassword);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -99,27 +99,16 @@ export function FrozenWeekBreakInDialog({
               <p className="mt-1 text-xs text-text-warning">{t("breakIns.urgentHint")}</p>
             ) : null}
           </div>
-          <div>
-            <Label>{t("breakIns.approver")}</Label>
-            <Select
-              disabled={!canReadUsers}
-              value={approverUserId != null ? String(approverUserId) : "__none__"}
-              onValueChange={(v) => setApproverUserId(v === "__none__" ? null : Number(v))}
-            >
-              <SelectTrigger className="h-8 text-sm" aria-label={t("breakIns.approver")}>
-                <SelectValue placeholder={t("breakIns.selectApprover")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t("breakIns.selectApprover")}</SelectItem>
-                {approvers.map((user) => (
-                  <SelectItem key={user.id} value={String(user.id)}>
-                    {user.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {!canReadUsers ? <ListAccessNote list="users" className="mt-1" /> : null}
-          </div>
+          <BreakInSignerFields
+            open={open}
+            teamId={teamId}
+            approverUserId={approverUserId}
+            onApproverChange={setApproverUserId}
+            password={approverPassword}
+            onPasswordChange={setApproverPassword}
+            required={urgent}
+            idPrefix="frozen-week"
+          />
           <div>
             <Label htmlFor="frozen-week-dangerous-reason">
               {t("breakIns.dangerousOverrideReason")}
@@ -144,6 +133,7 @@ export function FrozenWeekBreakInDialog({
               onConfirm({
                 reason,
                 approved_by_user_id: approverUserId,
+                approver_password: approverUserId != null ? approverPassword : null,
                 dangerous_override_reason: dangerousOverrideReason.trim() || null,
               })
             }

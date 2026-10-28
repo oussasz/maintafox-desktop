@@ -398,7 +398,8 @@ pub async fn list_rcm_decision_logic(
     crate::reliability::rcm_loop::list_rcm_decision_logic(&state.db, study_id).await
 }
 
-/// Draft PM plan version from an FMECA item or an RCM decision, linked both ways.
+/// Draft PM plan version from an FMECA item or an RCM decision, linked both ways. A reliability
+/// study decision is refused here: it is applied from the decision log once approved.
 #[tauri::command]
 pub async fn create_pm_revision_from_rams_source(
     input: crate::reliability::rcm_loop::PmRevisionFromSourceInput,
@@ -411,6 +412,8 @@ pub async fn create_pm_revision_from_rams_source(
         crate::rbac::permissions::RAM_MANAGE,
         PermissionScope::Global
     );
+    // Writes a PM plan version: the PM right, as when a decision is applied (audit finding AU-69).
+    require_permission!(state, &user, crate::rbac::permissions::PM_EDIT, PermissionScope::Global);
     crate::reliability::rcm_loop::create_pm_revision_from_source(&state.db, input).await
 }
 
@@ -446,7 +449,8 @@ pub async fn compute_fmeca_criticality(
     crate::reliability::rcm_loop::compute_fmeca_criticality(&state.db, input).await
 }
 
-/// Work order from an FMECA item or an RCM decision (redesign, corrective action), linked back.
+/// Work order from an FMECA item or an RCM decision (redesign, corrective action), linked back. A
+/// reliability study decision is refused here: it is applied from the decision log once approved.
 #[tauri::command]
 pub async fn create_wo_from_rams_source(
     input: crate::reliability::rcm_loop::WoFromSourceInput,

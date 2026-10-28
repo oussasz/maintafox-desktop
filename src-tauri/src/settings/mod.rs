@@ -116,6 +116,17 @@ pub async fn get_setting<C: ConnectionTrait>(db: &C, key: &str, scope: &str) -> 
     row.map(map_app_setting).transpose()
 }
 
+/// Rows the settings listings (`list_all_settings`, `list_settings_by_category`) leave out: device
+/// state that holds secrets (the licence onboarding row keeps the licence key and the activation
+/// token). Each is read only through its own module's commands, which never return the secrets;
+/// `get_setting` refuses them too (not plant parameters).
+pub const UNLISTED_SETTING_KEYS: &[&str] = &["product.license_onboarding"];
+
+/// Whether a settings listing may return this row (see [`UNLISTED_SETTING_KEYS`]).
+fn listed(setting: &AppSetting) -> bool {
+    !UNLISTED_SETTING_KEYS.contains(&setting.setting_key.as_str())
+}
+
 pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSetting>> {
     let rows = db
         .query_all(Statement::from_string(
@@ -137,7 +148,8 @@ pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSett
         ))
         .await?;
 
-    rows.into_iter().map(map_app_setting).collect()
+    let settings: Vec<AppSetting> = rows.into_iter().map(map_app_setting).collect::<AppResult<_>>()?;
+    Ok(settings.into_iter().filter(listed).collect())
 }
 
 pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) -> AppResult<Vec<AppSetting>> {
@@ -162,7 +174,8 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
         ))
         .await?;
 
-    rows.into_iter().map(map_app_setting).collect()
+    let settings: Vec<AppSetting> = rows.into_iter().map(map_app_setting).collect::<AppResult<_>>()?;
+    Ok(settings.into_iter().filter(listed).collect())
 }
 
 pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<String>> {
@@ -181,7 +194,7 @@ pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<
         .collect()
 }
 
-pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {
+pub async fn get_active_policy(db: &impl ConnectionTrait, domain: &str) -> AppResult<Option<PolicySnapshot>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -252,13 +265,17 @@ pub async fn set_setting_recorded(
 ) -> AppResult<()> {
     if value_json.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "setting_value_json for '{}' must not be empty",
-            key
+            "GATE_SET_VALUE_EMPTY:key={}: setting_value_json for '{}' must not be empty",
+            key, key
         )]));
     }
 
-    let _: serde_json::Value = serde_json::from_str(value_json)
-        .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
+    let _: serde_json::Value = serde_json::from_str(value_json).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_SET_VALUE_JSON_INVALID:key={}: setting_value_json for '{}' is not valid JSON",
+            key, key
+        )])
+    })?;
     let tx = db.begin().await?;
     // Per-key checks: the fiscal-year start month and the tenant currency (stored postings
     // depend on them).
@@ -271,6 +288,37 @@ pub async fn set_setting_recorded(
     let new_hash = sha256_hex(value_json);
     let now = chrono::Utc::now().to_rfc3339();
     let (category, risk) = catalog::definition(key).map_or(("general", "low"), |d| (d.category, d.risk));
+    // An optional setting set blank (`null`) has no row: blank is never stored as a value.
+    let blank = value_json.trim() == "null"
+        && catalog::definition(key).is_some_and(|d| matches!(d.kind, catalog::SettingKind::OptionalDecimal { .. }));
+    if blank {
+        if old_value.is_none() {
+            // Already blank: nothing changes, nothing to record.
+            return Ok(());
+        }
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+            [key.into(), scope.into()],
+        ))
+        .await?;
+        insert_change_event(
+            &tx,
+            key,
+            change_summary,
+            old_value.as_deref(),
+            None,
+            old_hash,
+            None,
+            changed_by_id.map(i64::from),
+            &now,
+            required_step_up,
+        )
+        .await?;
+        tx.commit().await?;
+        tracing::info!(setting_key = key, scope = scope, actor = ?changed_by_id, "setting cleared");
+        return Ok(());
+    }
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -420,6 +468,7 @@ pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u6
         .filter(|k| catalog::is_plant_parameter(k))
         .collect();
     allowed.extend_from_slice(catalog::POLICY_DOMAINS_WITH_VALUE_HISTORY);
+    allowed.extend_from_slice(catalog::RETIRED_PLANT_PARAMETERS);
     let placeholders = vec!["?"; allowed.len()].join(",");
     let sql = format!(
         "UPDATE settings_change_events SET old_value_json = NULL, new_value_json = NULL \
@@ -435,6 +484,10 @@ pub async fn scrub_hash_only_history<C: ConnectionTrait>(db: &C) -> AppResult<u6
 }
 
 /// Most recent settings changes, optionally for one key or policy domain only.
+///
+/// Without a key, the history leaves out the machine-written rows of the licence checks
+/// (`product.*`) and of the first-start tenant set-up (`tenant.initial_bootstrap`): they are
+/// recorded for the audit trail and would push people's own changes out of the list.
 pub async fn list_change_events(
     db: &DatabaseConnection,
     limit: i64,
@@ -461,9 +514,13 @@ pub async fn list_change_events(
                FROM settings_change_events e
                LEFT JOIN user_accounts u ON u.id = e.changed_by_id
                WHERE (? IS NULL OR e.setting_key_or_domain = ?)
+                 AND (? IS NOT NULL
+                      OR (e.setting_key_or_domain NOT LIKE 'product.%'
+                          AND e.setting_key_or_domain <> 'tenant.initial_bootstrap'))
                ORDER BY e.changed_at DESC, e.id DESC
                LIMIT ?",
             [
+                key.map(str::to_string).into(),
                 key.map(str::to_string).into(),
                 key.map(str::to_string).into(),
                 safe_limit.into(),
@@ -754,11 +811,14 @@ pub async fn save_policy_draft(
 ) -> AppResult<PolicySnapshot> {
     if domain.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "policy domain must not be empty".to_string()
+            "GATE_SET_POLICY_DOMAIN_REQUIRED: policy domain must not be empty".to_string(),
         ]));
     }
-    let _: serde_json::Value = serde_json::from_str(snapshot_json)
-        .map_err(|_| AppError::ValidationFailed(vec!["snapshot_json is not valid JSON".to_string()]))?;
+    let _: serde_json::Value = serde_json::from_str(snapshot_json).map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "GATE_SET_POLICY_JSON_INVALID: snapshot_json is not valid JSON".to_string()
+        ])
+    })?;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -822,9 +882,11 @@ pub async fn save_policy_draft(
 
 /// Validate the current draft for a domain.
 pub async fn test_policy_draft(db: &DatabaseConnection, domain: &str) -> AppResult<Vec<PolicyTestResult>> {
-    let draft = get_draft_policy(db, domain)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec![format!("no draft exists for domain '{domain}'")]))?;
+    let draft = get_draft_policy(db, domain).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_SET_POLICY_NO_DRAFT:domain={domain}: no draft exists for domain '{domain}'"
+        )])
+    })?;
 
     Ok(validate_policy_json(domain, &draft.snapshot_json))
 }
@@ -993,7 +1055,10 @@ pub async fn activate_policy(
         .collect();
     if !failures.is_empty() {
         return Err(AppError::ValidationFailed(
-            failures.into_iter().map(|f| f.message).collect(),
+            failures
+                .into_iter()
+                .map(|f| format!("GATE_SET_POLICY_RULE_FAILED:rule={}: {}", f.rule_name, f.message))
+                .collect(),
         ));
     }
 
@@ -1068,7 +1133,7 @@ pub async fn discard_policy_draft(db: &DatabaseConnection, domain: &str, actor_i
 }
 
 /// Ensure active session/backup policy snapshots exist (idempotent).
-pub async fn ensure_default_policies(db: &DatabaseConnection) -> AppResult<()> {
+pub async fn ensure_default_policies(db: &impl ConnectionTrait) -> AppResult<()> {
     if get_active_policy(db, "session").await?.is_none() {
         let json = serde_json::to_string(&SessionPolicy::default())?;
         db.execute(Statement::from_sql_and_values(
@@ -1235,7 +1300,9 @@ mod tests {
         let audit_count = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM settings_change_events;".to_string(),
+                // Migrations write their own history rows (the retired count tolerance, migration 259).
+                "SELECT COUNT(*) AS cnt FROM settings_change_events WHERE setting_key_or_domain = 'appearance.color_mode';"
+                    .to_string(),
             ))
             .await
             .expect("audit count query should succeed")
@@ -1328,6 +1395,66 @@ mod tests {
             .all(|e| e.new_value_json.is_none() && e.old_value_json.is_none()));
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 1);
         assert_eq!(scrub_hash_only_history(&db).await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn the_settings_listings_leave_out_the_licence_row_and_its_secrets() {
+        let db = crate::db::test_db::seeded().await;
+        let secret_value = r#"{"license_key_plaintext":"MFX-KEY-LISTED-0001","activation_claim":{"activation_token":"tok-listed-9a1"}}"#;
+        set_setting(
+            &db,
+            "product.license_onboarding",
+            "device",
+            secret_value,
+            Some(1),
+            "licence",
+        )
+        .await
+        .expect("set");
+        let row = get_setting(&db, "product.license_onboarding", "device")
+            .await
+            .unwrap()
+            .expect("licence row stored");
+        let all = list_all_settings(&db).await.unwrap();
+        assert!(!all.is_empty(), "other settings are still listed");
+        let by_category = list_settings_by_category(&db, &row.category).await.unwrap();
+        for listing in [&all, &by_category] {
+            assert!(listing.iter().all(|s| s.setting_key != "product.license_onboarding"));
+            let text = serde_json::to_string(listing).unwrap();
+            assert!(
+                !text.contains("MFX-KEY-LISTED-0001") && !text.contains("tok-listed-9a1"),
+                "{text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_history_leaves_out_machine_written_rows_unless_asked_for_by_key() {
+        let db = crate::db::test_db::seeded().await;
+        set_setting_recorded(&db, "wo.reopen_window_days", "tenant", "40", Some(1), "x", false)
+            .await
+            .unwrap();
+        for key in ["product.license_onboarding", "tenant.initial_bootstrap"] {
+            db.execute(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "INSERT INTO settings_change_events                      (setting_key_or_domain, change_summary, changed_at, required_step_up, apply_result)                      VALUES ('{key}', 'machine', '2026-10-16T00:00:00Z', 0, 'applied')"
+                ),
+            ))
+            .await
+            .unwrap();
+        }
+        let all = list_change_events(&db, 50, None).await.unwrap();
+        assert!(all.iter().any(|e| e.setting_key_or_domain == "wo.reopen_window_days"));
+        assert!(
+            all.iter().all(|e| !e.setting_key_or_domain.starts_with("product.")
+                && e.setting_key_or_domain != "tenant.initial_bootstrap"),
+            "licence checks and first-start set-up do not push people's changes out of the list"
+        );
+        let by_key = list_change_events(&db, 50, Some("product.license_onboarding"))
+            .await
+            .unwrap();
+        assert!(!by_key.is_empty(), "a key asked for by name is still listed");
     }
 
     #[tokio::test]

@@ -48,6 +48,29 @@ export const MODULE_NAMESPACES = {
   vendorConsole: "vendorConsole", // Phase 4 vendor control-plane console
 } as const;
 
+/**
+ * Module namespaces that hold the texts of coded backend refusals (`<ns>:errors.<CODE>`).
+ * A refusal can surface on any screen, not only on its own module's, so these are loaded at
+ * start-up (see `initI18n`) and the central translator (`format-org-validation-issue.ts`)
+ * searches exactly this list. A module that gets coded refusals is added here.
+ */
+export const ISSUE_NAMESPACES = [
+  "org",
+  "ot",
+  "equipment",
+  "di",
+  "reference",
+  "training",
+  "reliability",
+  "settings",
+  "inventory",
+  "inspections",
+  "pm",
+  "budget",
+  // Not coded refusals: the readable names of the rights a refused action needs (app-error.ts).
+  "admin",
+] as const;
+
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];
 export type ModuleNamespace = (typeof MODULE_NAMESPACES)[keyof typeof MODULE_NAMESPACES];
 export type AppNamespace = EagerNamespace | ModuleNamespace;

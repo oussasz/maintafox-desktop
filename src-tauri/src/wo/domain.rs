@@ -170,6 +170,10 @@ pub struct WorkOrder {
     pub permit_rule_cleared_at: Option<String>,
     #[serde(default)]
     pub permit_rule_clear_reason: Option<String>,
+    /// The permit requirement came from the request it was converted from, flagged "sécurité"
+    /// (migration 255): cleared like a rule flag, never by the general edit.
+    #[serde(default)]
+    pub permit_from_safety_di: bool,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -184,6 +188,14 @@ pub struct WorkOrder {
     /// PRD §6.5 lifecycle state derived from the WO's facts (`wo::lifecycle`); not stored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle_state: Option<String>,
+    /// "Déconsignation à faire": mechanically complete with a lock still fitted under one of its
+    /// permits (`permit::wo_gate::deisolation_pending_sql`); derived on read, not stored.
+    pub deisolation_pending: bool,
+    /// The permit types of every plant rule that matches this work order now, when they differ
+    /// ("plusieurs règles de permis"): display only, filled by the detail read (`commands::wo::
+    /// get_wo`, `permit::requirement_rules::matching_permit_types`); empty elsewhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permit_rule_matching_types: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -558,6 +570,10 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         permit_rule_clear_reason: row
             .try_get::<Option<String>>("", "permit_rule_clear_reason")
             .map_err(|e| decode_err("permit_rule_clear_reason", e))?,
+        permit_from_safety_di: row
+            .try_get::<i64>("", "permit_from_safety_di")
+            .map_err(|e| decode_err("permit_from_safety_di", e))?
+            != 0,
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
@@ -589,6 +605,11 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         lifecycle_state: row
             .try_get::<Option<String>>("", "lifecycle_state")
             .map_err(|e| decode_err("lifecycle_state", e))?,
+        deisolation_pending: row
+            .try_get::<i64>("", "deisolation_pending")
+            .map_err(|e| decode_err("deisolation_pending", e))?
+            != 0,
+        permit_rule_matching_types: Vec::new(),
         status_label: row.try_get::<Option<String>>("", "status_label").unwrap_or(None),
         status_color: row.try_get::<Option<String>>("", "status_color").unwrap_or(None),
         type_code: row.try_get::<Option<String>>("", "type_code").unwrap_or(None),

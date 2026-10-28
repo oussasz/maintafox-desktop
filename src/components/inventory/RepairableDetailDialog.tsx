@@ -16,6 +16,8 @@ import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +37,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { REPAIRABLE_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import {
   getInventoryRepairableOrderDetail,
@@ -215,7 +217,7 @@ export function RepairableDetailDialog({
       setCloseWarrantyUntil(orderDetail.order.warranty_until?.slice(0, 10) ?? "");
       setCloseWarrantyActive(orderDetail.order.warranty_active === 1);
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       setDetail(null);
     } finally {
       setLoading(false);
@@ -249,7 +251,7 @@ export function RepairableDetailDialog({
       await load();
       onTransitioned?.();
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }
@@ -314,7 +316,7 @@ export function RepairableDetailDialog({
       const docs = await listInventoryDocumentLinks("REPAIRABLE_ORDER", detail.order.id);
       setDocuments(docs);
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }
@@ -574,20 +576,19 @@ export function RepairableDetailDialog({
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
                         <Label>{t("procurement.repairableDetail.fields.repairCost")}</Label>
-                        <Input
-                          type="number"
+                        <DecimalField
+                          decimals={2}
+                          fixed
                           min={0}
-                          step="0.01"
-                          value={closeRepairCost}
-                          onChange={(e) => setCloseRepairCost(e.target.value)}
+                          value={closeRepairCost.trim() === "" ? null : Number(closeRepairCost)}
+                          onValueChange={(v) => setCloseRepairCost(v == null ? "" : String(v))}
                         />
                       </div>
                       <div className="space-y-1">
                         <Label>{t("procurement.repairableDetail.fields.warrantyUntil")}</Label>
-                        <Input
-                          type="date"
+                        <DateField
                           value={closeWarrantyUntil}
-                          onChange={(e) => setCloseWarrantyUntil(e.target.value)}
+                          onChange={(v) => setCloseWarrantyUntil(v)}
                         />
                       </div>
                       <div className="flex items-center gap-2 sm:col-span-2">

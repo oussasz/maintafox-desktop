@@ -18,7 +18,7 @@ import {
   ShieldCheck,
   WrenchIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -26,6 +26,7 @@ import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -54,6 +55,8 @@ import {
   type WoAnalyticsSnapshot,
   closeWo,
   getWoAnalyticsSnapshot,
+  getWoForCloseOut,
+  isRecordChangedElsewhere,
   reopenWo,
   saveFailureDetail,
   saveVerification,
@@ -65,6 +68,15 @@ import { useWoStore } from "@/stores/wo-store";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import {
+  type CloseOutForm,
+  type RepairType,
+  type StoredCloseOut,
+  formFromStored,
+  sameStored,
+  storedOf,
+  toSave,
+} from "./closeout-form";
 import { mergeWoPersonOptions, useWoPeopleOptions } from "./use-wo-people";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -76,8 +88,6 @@ interface WoCloseOutPanelProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-type RepairType = "temporary" | "permanent" | "na";
 
 /** Option B: verification and closure available from completed */
 const VERIFIABLE_STATUSES = new Set(["completed"]);
@@ -120,6 +130,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { info } = useSession();
   // Reopen is offered from the user's rights at this work order's site.
   const { can } = useWoAccess(wo);
+  // Closing needs its own right (`ot.close`), on top of the edit right.
+  const canClose = canEdit && can(P.OT_CLOSE);
   // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
@@ -144,6 +156,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [rootCauseSummary, setRootCauseSummary] = useState("");
   const [serviceCost, setServiceCost] = useState("");
 
+  // Version of the work order the S1-S3 form was loaded at: sent with each save so a change
+  // made meanwhile (another person, another PC) is refused instead of silently overwritten.
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+  // The close-out as stored when the form was loaded (moved along by this form's own saves): a
+  // refused save compares it with the database to tell a close-out change made elsewhere from
+  // another change of the work order (a header transition, an execution entry).
+  const loadedCloseOut = useRef<StoredCloseOut | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailSuccess, setDetailSuccess] = useState(false);
@@ -200,9 +219,39 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     [people.options, info?.user_id, info?.display_name, info?.username],
   );
 
-  // ── Pre-populate from existing failure data (GA-049) ────────────────
+  const applyForm = useCallback((form: CloseOutForm) => {
+    setSymptomId(form.symptomId);
+    setFailureModeId(form.failureModeId);
+    setFailureCauseId(form.failureCauseId);
+    setFailureEffectId(form.failureEffectId);
+    setFailureMechanismId(form.failureMechanismId);
+    setDetectionMethodId(form.detectionMethodId);
+    setCauseNotDetermined(form.causeNotDetermined);
+    setRepairType(form.repairType);
+    setNarrative(form.narrative);
+    setRootCauseSummary(form.rootCauseSummary);
+    setCorrectiveAction(form.correctiveAction);
+    setServiceCost(form.serviceCost);
+  }, []);
+
+  // ── Pre-populate from the stored close-out (GA-049) ─────────────────
+  // The work order and its failure coding are read together, whatever the status: the form is
+  // loaded at that version, and anything saved after the read makes the next save refuse.
   useEffect(() => {
     let cancelled = false;
+    setLoadedVersion(null);
+    void getWoForCloseOut(wo.id)
+      .then(({ wo: fresh, failure_detail }) => {
+        if (cancelled) return;
+        applyForm(formFromStored(fresh, failure_detail));
+        loadedCloseOut.current = storedOf(fresh, failure_detail);
+        setLoadedVersion(fresh.row_version);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setDetailError(describeAppError(err).title);
+      });
+    // Links (PM plan, permits) come from the analytics snapshot, which exists only once the work
+    // order is verified or closed: before that there are simply no links to show.
     void getWoAnalyticsSnapshot(wo.id)
       .then((snap) => {
         if (cancelled) return;
@@ -212,30 +261,14 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           pm_due_at: snap.pm_due_at,
           permits: snap.permits,
         });
-        const fd = snap.failure_details[0];
-        if (fd) {
-          setSymptomId(fd.symptom_id);
-          setFailureModeId(fd.failure_mode_id);
-          setFailureCauseId(fd.failure_cause_id);
-          setFailureEffectId(fd.failure_effect_id);
-          setFailureMechanismId(fd.failure_mechanism_id ?? null);
-          setDetectionMethodId(fd.detection_method_id ?? null);
-          setCauseNotDetermined(fd.cause_not_determined);
-          if (fd.is_temporary_repair) setRepairType("temporary");
-          else if (fd.is_permanent_repair) setRepairType("permanent");
-          if (fd.notes) setNarrative(fd.notes);
-        }
-        if (snap.root_cause_summary) setRootCauseSummary(snap.root_cause_summary);
-        if (snap.corrective_action_summary) setCorrectiveAction(snap.corrective_action_summary);
-        if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setDetailError(describeAppError(err).title);
+      .catch(() => {
+        /* no links before verification */
       });
     return () => {
       cancelled = true;
     };
-  }, [wo.id]);
+  }, [wo.id, applyForm]);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,35 +296,82 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     setCurrentWo(wo);
   }, [wo]);
 
+  // A write of this panel (verification, reopen) made at the version the form was loaded at
+  // moves the form's version along; one made at another version leaves it, so the next save of
+  // the form is still refused and reloads.
+  const followOwnWrite = useCallback((sentVersion: number, newVersion: number) => {
+    setLoadedVersion((v) => (v === sentVersion ? newVersion : v));
+  }, []);
+
   // ── Save S1-S3 details ─────────────────────────────────────────────────
 
   const handleSaveDetails = useCallback(async () => {
-    if (!canEdit) return;
+    const base = loadedCloseOut.current;
+    if (!canEdit || loadedVersion == null || base == null) return;
     setSavingDetails(true);
     setDetailError(null);
     setDetailSuccess(false);
+    const mine = toSave({
+      symptomId,
+      failureModeId,
+      failureCauseId,
+      failureEffectId,
+      failureMechanismId,
+      detectionMethodId,
+      causeNotDetermined,
+      repairType,
+      narrative,
+      rootCauseSummary,
+      correctiveAction,
+      serviceCost,
+    });
+    // The version and the stored close-out move with each step that succeeds (three calls): a
+    // later step that fails never makes the next save look changed by someone else.
+    let version = loadedVersion;
+    let stored = base;
+    const persist = async () => {
+      const saved = await saveFailureDetail({
+        wo_id: currentWo.id,
+        expected_row_version: version,
+        ...mine.coding,
+      });
+      version = saved.wo_row_version;
+      stored = { ...stored, coding: mine.coding };
+      version = await updateWoRca({
+        wo_id: currentWo.id,
+        root_cause_summary: mine.rootCause,
+        corrective_action_summary: mine.correctiveAction,
+        expected_row_version: version,
+      });
+      // An empty field keeps the stored text (the backend keeps it).
+      stored = {
+        ...stored,
+        rootCause: mine.rootCause ?? stored.rootCause,
+        correctiveAction: mine.correctiveAction ?? stored.correctiveAction,
+      };
+      if (mine.serviceCost != null) {
+        version = await updateServiceCost(currentWo.id, mine.serviceCost, version);
+        stored = { ...stored, serviceCost: mine.serviceCost };
+      }
+    };
     try {
-      await saveFailureDetail({
-        wo_id: currentWo.id,
-        symptom_id: symptomId,
-        failure_mode_id: causeNotDetermined ? null : failureModeId,
-        failure_cause_id: causeNotDetermined ? null : failureCauseId,
-        failure_effect_id: causeNotDetermined ? null : failureEffectId,
-        failure_mechanism_id: causeNotDetermined ? null : failureMechanismId,
-        detection_method_id: detectionMethodId,
-        is_temporary_repair: repairType === "temporary",
-        is_permanent_repair: repairType === "permanent",
-        cause_not_determined: causeNotDetermined,
-        notes: narrative.trim() || null,
-      });
-      await updateWoRca({
-        wo_id: currentWo.id,
-        root_cause_summary: rootCauseSummary.trim() || null,
-        corrective_action_summary: correctiveAction.trim() || null,
-      });
-      const costNum = Number.parseFloat(serviceCost);
-      if (!isNaN(costNum) && costNum >= 0) {
-        await updateServiceCost(currentWo.id, costNum);
+      try {
+        await persist();
+      } catch (err) {
+        if (!isRecordChangedElsewhere(err)) throw err;
+        const fresh = await getWoForCloseOut(currentWo.id);
+        const theirs = storedOf(fresh.wo, fresh.failure_detail);
+        version = fresh.wo.row_version;
+        if (!sameStored(theirs, stored)) {
+          // A close-out field was changed elsewhere: its values replace the screen, with the
+          // conflict message; nothing typed here is saved over them.
+          stored = theirs;
+          applyForm(formFromStored(fresh.wo, fresh.failure_detail));
+          throw err;
+        }
+        // Only other fields of the work order moved (a header action, an execution entry):
+        // the close-out typed here is saved on the new version.
+        await persist();
       }
       setDetailSuccess(true);
       await refreshActiveWo();
@@ -302,11 +382,15 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       }
     } catch (err) {
       setDetailError(describeAppError(err).title);
+      if (isRecordChangedElsewhere(err)) await refreshActiveWo();
     } finally {
+      loadedCloseOut.current = stored;
+      setLoadedVersion(version);
       setSavingDetails(false);
     }
   }, [
     canEdit,
+    loadedVersion,
     currentWo,
     symptomId,
     causeNotDetermined,
@@ -321,6 +405,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     correctiveAction,
     serviceCost,
     refreshActiveWo,
+    applyForm,
   ]);
 
   // ── Submit verification ────────────────────────────────────────────────
@@ -341,6 +426,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     })
       .then(async ([, updatedWo]) => {
         setCurrentWo(updatedWo);
+        followOwnWrite(currentWo.row_version, updatedWo.row_version);
         setVerificationResult("");
         setReturnToServiceConfirmed(false);
         setVerificationNotes("");
@@ -356,13 +442,14 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     returnToServiceConfirmed,
     verificationNotes,
     refreshActiveWo,
+    followOwnWrite,
   ]);
 
   // ── Close WO ───────────────────────────────────────────────────────────
 
   const handleClose = useCallback(() => {
     const actorId = info?.user_id;
-    if (!canEdit || !actorId) return;
+    if (!canClose || !actorId) return;
     setClosing(true);
     setBlockingErrors([]);
     setCloseError(null);
@@ -391,7 +478,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       })
       .finally(() => setClosing(false));
   }, [
-    canEdit,
+    canClose,
     currentWo,
     info,
     onClosed,
@@ -429,6 +516,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     )
       .then(async (updated) => {
         setCurrentWo(updated);
+        followOwnWrite(currentWo.row_version, updated.row_version);
         setReopenReason("");
         setReopenRemaining("");
         await refreshActiveWo();
@@ -445,6 +533,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     currentWo.id,
     currentWo.row_version,
     refreshActiveWo,
+    followOwnWrite,
     withStepUp,
     t,
   ]);
@@ -734,14 +823,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
         <div className="space-y-2">
           <Label htmlFor="wo-service-cost">{t("closeout.serviceCost")}</Label>
-          <Input
+          <DecimalField
             id="wo-service-cost"
-            type="number"
+            decimals={2}
             min={0}
-            step={0.01}
             placeholder="0.00"
-            value={serviceCost}
-            onChange={(e) => setServiceCost(e.target.value)}
+            value={serviceCost.trim() === "" ? null : Number(serviceCost)}
+            onValueChange={(v) => setServiceCost(v == null ? "" : String(v))}
             disabled={!isDetailEditable}
             className="w-40"
           />
@@ -752,7 +840,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           <div className="space-y-2">
             {detailError && <ErrorBanner message={detailError} />}
             {detailSuccess && <SuccessBanner message={t("closeout.detailsSaved")} />}
-            <Button onClick={() => void handleSaveDetails()} disabled={savingDetails}>
+            <Button
+              onClick={() => void handleSaveDetails()}
+              disabled={savingDetails || loadedVersion == null}
+            >
               {savingDetails ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -854,7 +945,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         )}
 
         {/* 4c — Closure */}
-        {CLOSEABLE_STATUSES.has(statusCode) && (
+        {CLOSEABLE_STATUSES.has(statusCode) && canClose && (
           <div className="space-y-4 rounded-md border border-surface-border p-4">
             <h4 className="text-sm font-medium text-text-primary">{t("closeout.closureTitle")}</h4>
             <p className="text-sm text-muted-foreground">{t("closeout.closureWarning")}</p>

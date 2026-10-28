@@ -267,6 +267,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             &[
                 r("role_id", "roles"),
                 catalog("permission_id", "permissions", "name"),
+                // Hard: a natural-key table cannot hold soft references. A permission whose author
+                // never arrives waits as any row with a missing parent (`sync::grant_check`).
                 r("granted_by_id", USER),
             ],
         )
@@ -287,20 +289,40 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
         // Users exist before the personnel records they are later linked to (and personnel
         // reference org data that references users): the link is completed when it arrives.
-        ..spec("user_accounts", &[soft("personnel_id", "personnel")])
+        // Who wrote the password and who last enabled or disabled the account (migration 261,
+        // checked on arrival by `sync::credential_check`): soft, because a change of one's own
+        // password names the row itself, and an author not applied yet never holds the account
+        // back as a parent (the check makes the row wait for that author instead).
+        ..spec(
+            "user_accounts",
+            &[
+                soft("personnel_id", "personnel"),
+                soft("password_changed_by_id", USER),
+                soft("password_set_by_id", USER),
+                soft("status_changed_by_id", USER),
+            ],
+        )
     },
     spec(
         "user_scope_assignments",
         &[
             r("user_id", USER),
             r("role_id", "roles"),
-            r("assigned_by_id", USER),
+            // Soft: an assignment whose author a complete pull did not bring is applied for review
+            // (`sync::grant_check`, which makes it wait for the author until then); the link is
+            // completed if the author arrives later.
+            soft("assigned_by_id", USER),
             poly("scope_reference", "scope_type", SCOPE_TARGETS),
         ],
     ),
     spec(
         "delegated_admin_policies",
-        &[poly("managed_scope_reference", "managed_scope_type", SCOPE_TARGETS)],
+        &[
+            poly("managed_scope_reference", "managed_scope_type", SCOPE_TARGETS),
+            // Who created or last changed the policy (migration 262), checked on arrival by
+            // `sync::grant_check`; soft, as `assigned_by_id` above.
+            soft("changed_by_id", USER),
+        ],
     ),
     spec("org_structure_models", &[r("activated_by_id", USER)]),
     spec("org_node_types", &[r("structure_model_id", "org_structure_models")]),
@@ -639,6 +661,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("details_json", "$.personnel_id", "personnel"),
             json_ref_hist("details_json", "$.break_in_id", "schedule_break_ins"),
             json_ref_hist("details_json", "$.approved_by_user_id", USER),
+            json_ref_hist("details_json", "$.requested_by_user_id", USER),
             json_ref_hist("details_json", "$.approved_by_personnel_id", "personnel"),
             json_ref_hist("details_json", "$.schedule_candidate_id", "schedule_candidates"),
             json_ref_hist("details_json", "$.team_id", "teams"),
@@ -938,6 +961,24 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The site before and after a site given to an old record (`org::site_assignment`).
             json_ref_hist("details_json", "$.site_before", "org_nodes"),
             json_ref_hist("details_json", "$.site_after", "org_nodes"),
+            // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
+            json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
+            json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
+            // The work order of a qualification requirement before and after its change
+            // (`qualification::requirements::audit_view`).
+            json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
+            json_ref_hist("details_json", "$.after.work_order_id", "work_orders"),
+            // The person given a qualification override (`qualification::gate`): its personnel
+            // record or its login (the override itself is named by its sync id, sent as it is).
+            // Rule: personnel records and logins named here are never hard-deleted (deactivated
+            // only): their sync ids are in the sealed hash, and a deleted row would be encoded
+            // empty, breaking the chain of the PC that sealed the event.
+            json_ref_hist(
+                "details_json",
+                "$.qualification_override.personnel_id",
+                "personnel",
+            ),
+            json_ref_hist("details_json", "$.qualification_override.user_id", USER),
         ],
         // Audits kept on the device on purpose (never staged, so never a stage error): the
         // acknowledgement of a safety rule notice (`settings::received_notice`, the notice itself
@@ -946,9 +987,26 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // when and why), while these details hold local ids that mean nothing on another PC. The
         // choice made on a sync conflict (`sync::queries::resolve_sync_conflict`, its reason) stays
         // on the PC with the conflict, which is local-only; the data it changed travels on its row.
+        // The audits of stock to reconcile (`inventory::negative_stock`, `inventory::controls`,
+        // `inventory::queries`: target `stock_location_article`) name the article, location, count
+        // and movement by local ids: kept too; the stock state they describe travels on its rows.
+        // Likewise the audits of a reservation released at work-order close or cancel, or released
+        // on two PCs (`inventory::reservations`, target `stock_reservation`): local ids of the
+        // reservation, article, location, movement and work order; the release itself travels on
+        // the reservation row and its release movement.
+        // An event already sealed in its local form (`audit::chain`, hash `L1:` / `L2:`: kept on
+        // this device when written, its stub travels) never starts travelling later, even when a
+        // newer version can encode it: its hash covers its local form, which another PC cannot
+        // recompute. At sealing `chain_hash` is still empty, so a new event is judged by the rest of
+        // this filter and sealed in the matching form.
+        // The audits of a session of this PC (`auth::session_manager`, target `app_session`: a
+        // session closed by the stored-state check, a clock anomaly) stay on it too: the session
+        // record is local to the device (`app_sessions`) and its id means nothing on another PC; the
+        // actor is recorded in the event, on this PC.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type')",
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session') \
+             AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
             "audit_events",
@@ -964,6 +1022,40 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),
+                        // A reliability study decision withdrawn or refused (`reliability::study::decisions`):
+                        // the target is already the decision's sync id, the same on every PC, sent as it is.
+                        ("reliability_study_decisions", NOT_A_ROW),
+                        // A break-in signed by a second planner, and a frozen-week conflict closed
+                        // by its break-in (`planning::break_in_approval`, `planning::sync_check`).
+                        ("schedule_commitment", "schedule_commitments"),
+                        // A reopened-week conflict closed by its decision (`planning::sync_check`).
+                        ("weekly_schedule", "weekly_schedules"),
+                        // A break-in conflict closed once judged valid, and a crew site change
+                        // conflict closed once it crosses no frozen week (`planning::sync_check`).
+                        ("schedule_break_in", "schedule_break_ins"),
+                        ("team", "teams"),
+                        // A work-order type given its maintenance nature (`wo::types`): the target
+                        // is already the type's sync id (a WORK.ORDER_TYPES value), sent as it is,
+                        // so the audit is unchanged when the value is deleted later (a discarded
+                        // draft set, a retired domain).
+                        ("work_order_type", NOT_A_ROW),
+                        // A qualification requirement created or changed
+                        // (`qualification::requirements`; requirements are never deleted).
+                        ("qualification_requirement", "qualification_requirements"),
+                        // A person let into a permit role without the qualifications it requires
+                        // (`qualification::gate`, override in a permit role): the target is the
+                        // permit, sent as its sync id; the role is in the details (`$.role`).
+                        // Events of this type sealed before this mapping existed were sealed in
+                        // their local form (`L1:` / `L2:`): the row filter keeps them on their PC
+                        // (only their stub travels) and their hash never depends on this mapping.
+                        // Rule: a permit named by a sealed audit is never hard-deleted (no code
+                        // deletes `work_permits` rows): its sync id is in the sealed hash, and a
+                        // deleted target would be encoded empty, breaking that PC's chain.
+                        ("permit_role", "work_permits"),
+                        // A block's critical flag changed (`personnel::availability`): the target
+                        // is already the block's sync id, the same on every PC, sent as it is, so
+                        // the audit is unchanged when the block is deleted later.
+                        ("personnel_availability_block", NOT_A_ROW),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),
@@ -977,6 +1069,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // A refused vendor recovery code: the target is the vendor's code id
                         // (`auth::recovery_code`), sent as it is.
                         ("admin_recovery_code", NOT_A_ROW),
+                        // A stock count posted on two PCs (`inventory::count_sync`): the target is
+                        // already the row's sync id, the same on every PC, sent as it is.
+                        ("inventory_transactions", NOT_A_ROW),
+                        ("inventory_mutation_audit_links", NOT_A_ROW),
+                        ("inventory_count_sessions", NOT_A_ROW),
+                        // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
+                        // the equipment, sent as its sync id (equipment rows are never hard-deleted).
+                        ("equipment", "equipment"),
                     ],
                 ),
             ],
@@ -1226,7 +1326,20 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("reversed_by_id", USER),
         ],
     ),
-    spec("inventory_count_lines", &[r("approved_by_id", USER)]),
+    RowSpec {
+        // The row version at which this PC raised the line's "above the tolerance" flag from a
+        // received "within" (`inventory::count_four_eyes::store_judged_critique`): it describes this
+        // PC's own judgement, so it never travels.
+        device_local: &["critique_raised_version"],
+        ..spec(
+            "inventory_count_lines",
+            &[
+                r("approved_by_id", USER),
+                r("counted_by_id", USER),
+                r("second_approved_by_id", USER),
+            ],
+        )
+    },
     spec(
         "inventory_document_links",
         &[

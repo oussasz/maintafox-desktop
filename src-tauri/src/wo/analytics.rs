@@ -8,6 +8,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::closeout::{self, WoFailureDetail, WoVerification};
+use crate::wo::workflow::state_machine::status_i18n_key;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -233,8 +234,9 @@ pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) ->
             .unwrap_or(false);
 
     if status_code != "closed" && !is_technically_verified {
+        let status_key = status_i18n_key(&status_code);
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le snapshot analytique n'est disponible que pour les OT clotures ou verifies \
+            "GATE_WO_ANALYTICS_STATUS:status={status_key}: Le snapshot analytique n'est disponible que pour les OT clotures ou verifies \
              techniquement. Statut actuel : '{status_code}'."
         )]));
     }

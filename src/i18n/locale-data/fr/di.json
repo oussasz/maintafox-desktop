@@ -283,6 +283,7 @@
     "title": "Règles SLA",
     "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
     "scaleHint": "Les délais d'un niveau pour toutes les demandes se règlent dans l'échelle d'urgence (Données de référence). Les règles ci-dessous sont les exceptions par origine ou criticité d'équipement.",
+    "invalidHours": "Indiquez des heures entières (0 ou plus) dans les trois champs.",
     "loading": "Chargement des règles…",
     "empty": "Aucune règle SLA configurée.",
     "columns": {
@@ -308,6 +309,8 @@
     "pausedDeferred": "En pause — reportée"
   },
   "reviewTimeline": {
+    "title": "Historique de la revue",
+    "slaDetails": "Détails du SLA",
     "empty": "Aucun événement de revue enregistré.",
     "slaTarget": "Cible SLA",
     "slaDeadline": "Échéance SLA",
@@ -318,7 +321,7 @@
     "actor": "Par",
     "systemActor": "Système",
     "eventType": {
-      "sla_initialized": "SLA initialized",
+      "sla_initialized": "SLA initialisé",
       "screened": "Trié",
       "advanced_to_approval": "Transmis pour approbation",
       "returned_for_clarification": "Renvoyé pour clarification",
@@ -516,6 +519,8 @@
     "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
   },
   "review": {
+    "conversionSuccess": "Demande convertie en ordre de travail.",
+    "conversionFailed": "La conversion en ordre de travail a échoué.",
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
     "approvalTitle": "Approuver & Convertir en OT",

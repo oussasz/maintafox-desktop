@@ -21,5 +21,26 @@ pub mod permissions {
     pub use super::permissions_generated::*;
 }
 
+/// Whether a permission appears on the plant's role screens (catalogue, role editor, their
+/// dependency lists). Permissions unused in this version, and the legacy alias names kept from
+/// older catalogues, stay in the catalogue table and on the roles that hold them; they are only
+/// left off these screens.
+pub fn shown_in_plant_role_screens(name: &str, category: &str) -> bool {
+    // A legacy alias row (e.g. `eq.edit`, renamed to its canonical permission) grants nothing.
+    !permissions::ALIAS_MAP.iter().any(|(alias, _)| *alias == name)
+        && !permissions::HIDDEN_FROM_PLANT_SCREENS.contains(&name)
+        && !permissions::HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.contains(&category)
+}
+
+/// [`shown_in_plant_role_screens`] for a bare name (a dependency row): the category comes from
+/// the canonical catalogue; a custom permission is always shown.
+pub fn name_shown_in_plant_role_screens(name: &str) -> bool {
+    let category = permissions::CATALOG
+        .iter()
+        .find(|m| m.name == name)
+        .map_or("", |m| m.category);
+    shown_in_plant_role_screens(name, category)
+}
+
 #[cfg(test)]
 mod tests;

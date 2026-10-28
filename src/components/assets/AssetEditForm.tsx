@@ -10,8 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  EquipmentSearchSelect,
   type EquipmentSearchOption,
+  EquipmentSearchSelect,
 } from "@/components/assets/EquipmentSearchSelect";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
@@ -20,16 +20,18 @@ import {
   EntityFormFieldGroup,
   EntityFormFooter,
   EntityFormHint,
+  type EntityFormImageItem,
   EntityFormImageUploader,
   EntityFormSection,
   pickEntityFormImages,
-  type EntityFormImageItem,
 } from "@/components/entity-form";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -370,15 +372,12 @@ export function AssetEditForm() {
       ...(values.decommissioned_at !== undefined
         ? { decommissioned_at: values.decommissioned_at }
         : {}),
+      // A new location is saved with the edit, in one transaction (D19).
+      ...(values.org_node_id !== asset.org_node_id ? { org_node_id: values.org_node_id } : {}),
     };
 
     try {
-      const updated = await submitUpdate(asset.id, payload, asset.row_version);
-      if (values.org_node_id && values.org_node_id !== asset.org_node_id) {
-        await useAssetStore
-          .getState()
-          .moveAssetOrgNode(asset.id, values.org_node_id, updated.row_version);
-      }
+      await submitUpdate(asset.id, payload, asset.row_version);
       closeForm();
     } catch (err) {
       setSubmitError(appErrorReason(err));
@@ -593,7 +592,16 @@ export function AssetEditForm() {
               </p>
             </FormField>
             <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
-              <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
+              <DateField
+                id="commissioned_at"
+                value={watch("commissioned_at") ?? ""}
+                onChange={(v) =>
+                  setValue("commissioned_at", v || null, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              />
             </FormField>
             {asset.decommissioned_at ? (
               <FormField name="decommissioned_at" label={t("detail.fields.endOfLifeDate")}>
@@ -661,13 +669,22 @@ export function AssetEditForm() {
               label={t("rams.utilization")}
               error={fieldError(errors.rams_utilization_factor?.message)}
             >
-              <Input
+              <DecimalField
                 id="rams_utilization_factor"
-                type="number"
+                decimals={2}
                 min={0.01}
                 max={1.5}
-                step={0.01}
-                {...register("rams_utilization_factor", { valueAsNumber: true })}
+                value={
+                  Number.isFinite(watch("rams_utilization_factor"))
+                    ? (watch("rams_utilization_factor") ?? null)
+                    : null
+                }
+                onValueChange={(v) =>
+                  setValue("rams_utilization_factor", v ?? Number.NaN, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  })
+                }
               />
               <p className="mt-1 text-[11px] text-text-muted">
                 {t("createForm.fields.utilizationHint")}

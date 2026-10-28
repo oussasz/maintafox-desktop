@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SmrpIndicatorsSection, pointsTrend } from "@/components/analytics/SmrpIndicatorsSection";
 import type { SmrpKpis } from "@/services/analytics-dashboard-service";
+import { SMRP_KPI_KEYS, SMRP_KPI_REGISTRY_BY_KEY } from "@shared/overview-kpi-registry";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -70,13 +71,56 @@ function renderSection(smrp: SmrpKpis | null = SMRP) {
   );
 }
 
+describe("pointsTrend thresholds", () => {
+  it("reads a small move stable under the band it is given but shows it when the indicator has a finer threshold", () => {
+    expect(pointsTrend(1.23, 1.2, "up-bad", 0.5)).toEqual({ points: 0, tone: null });
+    expect(pointsTrend(1.23, 1.2, "up-bad", 0.01)).toMatchObject({ tone: "danger" });
+  });
+});
+
+describe("the stable band comes from the KPI registry", () => {
+  const ravWith = (previous: number, current: number): SmrpKpis => ({
+    ...SMRP,
+    cost_to_rav: {
+      ...(SMRP.cost_to_rav as NonNullable<SmrpKpis["cost_to_rav"]>),
+      value_pct: current,
+      previous_value_pct: previous,
+    },
+  });
+  const ravTile = () => within(screen.getByTestId("smrp-rav"));
+
+  it("reads the cost-to-RAV band (0.05 pt) from the registry entry", () => {
+    expect(SMRP_KPI_REGISTRY_BY_KEY.get(SMRP_KPI_KEYS.COST_TO_RAV)?.stableBelow).toBe(0.05);
+    renderSection(ravWith(1, 1.03));
+    expect(ravTile().getByText("smrp.trendStable")).toBeInTheDocument();
+  });
+
+  it("follows the registry value, not a copy in the screen", () => {
+    const entry = SMRP_KPI_REGISTRY_BY_KEY.get(SMRP_KPI_KEYS.COST_TO_RAV);
+    if (!entry) throw new Error("cost-to-RAV entry missing from the registry");
+    const original = entry.stableBelow;
+    try {
+      entry.stableBelow = 0.01;
+      const first = renderSection(ravWith(1, 1.03));
+      expect(ravTile().queryByText("smrp.trendStable")).not.toBeInTheDocument();
+      expect(ravTile().getByText(/smrp\.trendPoints/)).toBeInTheDocument();
+      first.unmount();
+      entry.stableBelow = 5;
+      renderSection(ravWith(1, 3));
+      expect(ravTile().getByText("smrp.trendStable")).toBeInTheDocument();
+    } finally {
+      entry.stableBelow = original;
+    }
+  });
+});
+
 describe("pointsTrend", () => {
   it("compares percentages in points and colours by direction", () => {
-    expect(pointsTrend(44.4, 60, "up-good")).toMatchObject({ tone: "danger" });
-    expect(pointsTrend(58.3, 0, "up-bad")).toMatchObject({ tone: "danger" });
-    expect(pointsTrend(41.7, 100, "up-bad")).toMatchObject({ tone: "success" });
-    expect(pointsTrend(50.2, 50, "up-good")).toEqual({ points: 0, tone: null });
-    expect(pointsTrend(33.3, null, "up-good")).toBeNull();
+    expect(pointsTrend(44.4, 60, "up-good", 0.5)).toMatchObject({ tone: "danger" });
+    expect(pointsTrend(58.3, 0, "up-bad", 0.5)).toMatchObject({ tone: "danger" });
+    expect(pointsTrend(41.7, 100, "up-bad", 0.5)).toMatchObject({ tone: "success" });
+    expect(pointsTrend(50.2, 50, "up-good", 0.5)).toEqual({ points: 0, tone: null });
+    expect(pointsTrend(33.3, null, "up-good", 0.5)).toBeNull();
   });
 });
 
@@ -114,6 +158,10 @@ describe("SmrpIndicatorsSection", () => {
     );
     expect(screen.getByText("smrp.schedule.formula")).toBeInTheDocument();
     expect(screen.getByText("smrp.unitPercent")).toBeInTheDocument();
+    // The "stable" band, from the registry, is part of the definition.
+    expect(screen.getByTestId("smrp-schedule-stable-band")).toHaveTextContent(
+      /smrp\.stableBand\[points=0[.,]5\]/,
+    );
   });
 
   it("names the backlog's open-OT rule and opens the list on that rule", () => {

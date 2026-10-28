@@ -2,6 +2,9 @@
   "toast": {
     "dismiss": "Fermer le message"
   },
+  "decimalField": {
+    "dotHint": "Le point sert de séparateur décimal (1.250 = 1,25)."
+  },
   "partNecessity": {
     "legend": "Pièce obligatoire ou optionnelle",
     "legendFor": "{{part}} : obligatoire ou optionnelle",
@@ -36,7 +39,12 @@
     "costCentres": "Lire les centres de coût demande le droit de consultation des finances.",
     "orgNodes": "Lire l'organisation (sites, zones) demande le droit de consultation de l'organisation.",
     "users": "Lire les comptes utilisateurs demande le droit d'administration des utilisateurs.",
-    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation ou de création des OT, ou de consultation des données de référence."
+    "woTypes": "Lire les types d'ordre de travail demande le droit de consultation ou de création des OT, ou de consultation des données de référence.",
+    "workOrders": "Lire les ordres de travail demande le droit de consultation des OT.",
+    "requests": "Lire les demandes d'intervention demande le droit de consultation des DI.",
+    "certificationTypes": "Lire les habilitations et certifications demande le droit de consultation de la formation.",
+    "stockCatalogs": "Lire les familles d'articles et les catégories de TVA demande le droit de consultation du stock.",
+    "fmecaScales": "Lire les échelles AMDEC demande le droit de consultation de la fiabilité."
   },
   "app": {
     "name": "Maintafox",
@@ -176,6 +184,10 @@
     "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {
+    "all": "Tous les équipements",
+    "register": "Équipements",
+    "emptyRegister": "Aucun équipement enregistré",
+    "typeToSearch": "Saisissez pour rechercher parmi {{total}} équipements",
     "searchFailed": "La recherche a échoué :",
     "retry": "Réessayer",
     "legacyLabel": "Étiquette à réimprimer : cet ancien format ne permet pas d'identifier l'équipement sûrement. Saisissez le code de l'actif imprimé sur l'étiquette, puis réimprimez-la depuis la fiche de l'actif.",
@@ -189,6 +201,15 @@
     "scan": "Scanner QR",
     "scanHint": "Focalisez ici, scannez avec un lecteur USB, puis Entrée",
     "clear": "Effacer la sélection"
+  },
+  "dateField": {
+    "pickDate": "Choisir une date",
+    "prevMonth": "Mois précédent",
+    "nextMonth": "Mois suivant",
+    "invalid": "Date non valide",
+    "invalidTime": "Heure non valide (hh:mm, 24 h)",
+    "timeLabel": "Heure",
+    "timePlaceholder": "hh:mm"
   },
   "kanban": {
     "emptyColumn": "—",

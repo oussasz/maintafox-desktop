@@ -13,11 +13,11 @@
 //! is checked when a decision arrives by synchronisation (`inbound_self_approval_check`).
 
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::rcm_loop::{
-    create_pm_revision_from_source, create_wo_from_source, PmRevisionFromSourceInput, WoFromSourceInput,
+    create_pm_revision_from_source_in, create_wo_from_source_in, PmRevisionFromSourceInput, WoFromSourceInput,
     SOURCE_RELIABILITY_DECISION,
 };
 use crate::reliability::study::analysis::{life_analysis, meter_counts_hours, operating_ratios};
@@ -163,7 +163,7 @@ async fn self_approval_refusal(db: &DatabaseConnection, rule: SelfApprovalRule, 
 }
 
 const DECISION_SELECT: &str = "SELECT d.*, e.asset_id_code AS asset_code, p.code AS plan_code,
-        v.version_no AS linked_version_no, wo.code AS linked_wo_code,
+        (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS linked_version_no, wo.code AS linked_wo_code,
         COALESCE(ap.display_name, ap.username) AS approver_name,
         COALESCE(pb.display_name, pb.username) AS proposed_by_name,
         COALESCE(db.display_name, db.username) AS decided_by_name
@@ -230,6 +230,8 @@ fn map_decision(r: &QueryResult, effect: DecisionEffect) -> AppResult<StudyDecis
         linked_work_order_id: get(r, "linked_work_order_id")?,
         linked_work_order_code: get(r, "linked_wo_code")?,
         effect,
+        sync_refused_at: get(r, "sync_refused_at")?,
+        sync_refused_reason: get(r, "sync_refused_reason")?,
         row_version: get(r, "row_version")?,
     })
 }
@@ -413,7 +415,7 @@ pub async fn create_decision(
                     DbBackend::Sqlite,
                     "SELECT p.strategy_type, COALESCE(cv.trigger_definition_json,
                         (SELECT v.trigger_definition_json FROM pm_plan_versions v WHERE v.pm_plan_id = p.id
-                         ORDER BY v.version_no DESC LIMIT 1)) AS trig
+                         ORDER BY v.version_no DESC, v.entity_sync_id DESC LIMIT 1)) AS trig
                      FROM pm_plans p LEFT JOIN pm_plan_versions cv ON cv.id = p.current_version_id WHERE p.id = ?",
                     [plan_id.into()],
                 ))
@@ -611,7 +613,8 @@ async fn set_status(
             DbBackend::Sqlite,
             "UPDATE reliability_study_decisions SET status = ?, decided_by_id = ?, decided_at = ?, decision_note = ?,
                 row_version = row_version + 1, updated_at = ?
-             WHERE id = ? AND status = ? AND row_version = ?",
+             WHERE id = ? AND status = ? AND row_version = ?
+               AND (? <> 'approved' OR sync_refused_at IS NULL)",
             [
                 to.into(),
                 actor_id.into(),
@@ -628,6 +631,8 @@ async fn set_status(
                 input.decision_id.into(),
                 from.into(),
                 input.expected_row_version.into(),
+                // Never approved once refused at synchronisation (AU-76b, review N1).
+                to.into(),
             ],
         ))
         .await?;
@@ -637,17 +642,13 @@ async fn set_status(
     Ok(())
 }
 
-/// Refuses anyone but the designated approver (when one is set); returns who proposed the decision
-/// and where it applies.
-async fn designated_approver_check(
-    db: &DatabaseConnection,
-    decision_id: i64,
-    actor_id: i64,
-) -> AppResult<DecisionParties> {
+/// Who proposed a decision, who is designated to decide it, and where it applies.
+async fn decision_parties<C: ConnectionTrait>(db: &C, decision_id: i64) -> AppResult<DecisionParties> {
     let r = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT approver_id, proposed_by_id, study_id, equipment_id, site_node_id, site_recorded \
+            "SELECT entity_sync_id, title, status, approver_id, proposed_by_id, study_id, equipment_id, \
+                    site_node_id, site_recorded \
              FROM reliability_study_decisions WHERE id = ?",
             [decision_id.into()],
         ))
@@ -656,11 +657,11 @@ async fn designated_approver_check(
             entity: "reliability_study_decision".into(),
             id: decision_id.to_string(),
         })?;
-    let approver: Option<i64> = get(&r, "approver_id")?;
-    if approver.is_some_and(|a| a != actor_id) {
-        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
-    }
     Ok(DecisionParties {
+        sync_id: get(&r, "entity_sync_id")?,
+        title: get(&r, "title")?,
+        status: get(&r, "status")?,
+        approver: get(&r, "approver_id")?,
         proposer: get(&r, "proposed_by_id")?,
         study_id: get(&r, "study_id")?,
         equipment_id: get(&r, "equipment_id")?,
@@ -669,8 +670,27 @@ async fn designated_approver_check(
     })
 }
 
+/// Refuses anyone but the designated approver (when one is set); returns who proposed the decision
+/// and where it applies.
+async fn designated_approver_check(
+    db: &DatabaseConnection,
+    decision_id: i64,
+    actor_id: i64,
+) -> AppResult<DecisionParties> {
+    let parties = decision_parties(db, decision_id).await?;
+    if parties.approver.is_some_and(|a| a != actor_id) {
+        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
+    }
+    Ok(parties)
+}
+
 /// Who proposed a decision, and where it applies (for the site's four-eyes rule).
 struct DecisionParties {
+    sync_id: Option<String>,
+    title: String,
+    status: String,
+    /// The person designated to decide it, when one was named.
+    approver: Option<i64>,
     proposer: Option<i64>,
     study_id: i64,
     equipment_id: Option<i64>,
@@ -700,86 +720,302 @@ pub async fn approve_decision(
             return Err(self_approval_refusal(db, rule, actor_id).await?);
         }
     }
-    set_status(db, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
+    // The approval, its seal and its audit event: one transaction (AU-76b, CMMS Advisor Q7); a
+    // decision refused at synchronisation is checked inside it, and the update is guarded too.
+    let txn = db.begin().await?;
+    refuse_if_refused_at_sync(&txn, input.decision_id).await?;
+    set_status(&txn, &input, STATUS_PROPOSED, STATUS_APPROVED, actor_id).await?;
+    let seal = crate::reliability::study::decision_sync::local_approval_seal(&txn, input.decision_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: input.decision_id.to_string(),
+        })?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reliability_study_decisions SET approval_seal = ? WHERE id = ?",
+        [seal.clone().into(), input.decision_id.into()],
+    ))
+    .await?;
+    let mut details = audit_refs(&txn, input.decision_id).await?;
+    details.insert("summary".into(), "Reliability decision approved".into());
+    details.insert("title".into(), parties.title.clone().into());
+    details.insert("approval_seal".into(), seal.into());
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: APPROVED_EVENT.to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(audit_target(&parties, input.decision_id)),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::Value::Object(details)),
+        },
+    )
+    .await?;
+    txn.commit().await?;
     get_decision(db, input.decision_id).await
 }
 
+/// Audit action of an approval; its details carry the approval seal (CMMS Advisor Q7).
+pub const APPROVED_EVENT: &str = "reliability.decision.approved";
+
+/// The target of a decision's audit event: its sync id, the same on every PC.
+fn audit_target(parties: &DecisionParties, decision_id: i64) -> String {
+    parties
+        .sync_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| decision_id.to_string())
+}
+
+/// The decision, its study, its proposer and its designated approver named by sync id in an audit
+/// event's details: the event travels, and local ids mean nothing on another PC (review of #179).
+async fn audit_refs<C: ConnectionTrait>(
+    db: &C,
+    decision_id: i64,
+) -> AppResult<serde_json::Map<String, serde_json::Value>> {
+    let r = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT d.entity_sync_id AS decision_sync_id, s.entity_sync_id AS study_sync_id, \
+                    pb.entity_sync_id AS proposed_by_sync_id, ap.entity_sync_id AS designated_approver_sync_id \
+               FROM reliability_study_decisions d \
+               LEFT JOIN reliability_studies s ON s.id = d.study_id \
+               LEFT JOIN user_accounts pb ON pb.id = d.proposed_by_id \
+               LEFT JOIN user_accounts ap ON ap.id = d.approver_id \
+              WHERE d.id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: decision_id.to_string(),
+        })?;
+    let mut out = serde_json::Map::new();
+    for key in [
+        "decision_sync_id",
+        "study_sync_id",
+        "proposed_by_sync_id",
+        "designated_approver_sync_id",
+    ] {
+        let v: Option<String> = get(&r, key)?;
+        out.insert(key.into(), v.map_or(serde_json::Value::Null, serde_json::Value::String));
+    }
+    Ok(out)
+}
+
+/// A decision refused at synchronisation (here, or on another PC and received with its mark) is
+/// never approved or applied, on any PC (AU-76b, CMMS Advisor Q5).
+async fn refuse_if_refused_at_sync<C: ConnectionTrait>(db: &C, decision_id: i64) -> AppResult<()> {
+    let refused = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS r FROM reliability_study_decisions WHERE id = ? AND sync_refused_at IS NOT NULL",
+            [decision_id.into()],
+        ))
+        .await?
+        .is_some();
+    if refused {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_SYNC_REFUSED: This decision was refused at synchronisation (its approval is not valid on a PC): it can no longer be approved or applied. Propose and approve a new decision."
+                .into(),
+        ]));
+    }
+    Ok(())
+}
+
+/// The right checked to reject a decision: anyone else needs `ram.manage`; its proposer withdraws
+/// with `ram.analyze` (the right they proposed with) or, without it, with `ram.manage` (D10).
+pub fn reject_right(is_proposer: bool, holds_analyze: bool) -> &'static str {
+    if is_proposer && holds_analyze {
+        crate::rbac::permissions::RAM_ANALYZE
+    } else {
+        crate::rbac::permissions::RAM_MANAGE
+    }
+}
+
+/// Whether `actor_id` proposed the decision: their rejection is a withdrawal (owner decision D10).
+pub async fn is_proposer(db: &DatabaseConnection, decision_id: i64, actor_id: i64) -> AppResult<bool> {
+    Ok(decision_parties(db, decision_id).await?.proposer == Some(actor_id))
+}
+
+/// Rejects a proposed decision, or withdraws it when the actor proposed it.
+///
+/// Owner decision D10: the proposer may withdraw their own proposal at any time before it is
+/// decided, even when another person was designated to approve it (a withdrawal approves nothing).
+/// Anyone else rejects only as the designated approver, when one is named. Once approved, rejected
+/// or applied, the decision can no longer be withdrawn or rejected. Both are audited with the
+/// reason, in the same transaction.
 pub async fn reject_decision(
     db: &DatabaseConnection,
     input: DecideDecisionInput,
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
-    if input.note.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+    let note = input.note.as_deref().map(str::trim).unwrap_or_default().to_string();
+    if note.is_empty() {
         return Err(invalid("DECISION_REJECT_REASON_REQUIRED"));
     }
-    designated_approver_check(db, input.decision_id, actor_id).await?;
-    set_status(db, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await?;
+    let parties = decision_parties(db, input.decision_id).await?;
+    let withdrawal = parties.proposer == Some(actor_id);
+    if !withdrawal && parties.approver.is_some_and(|a| a != actor_id) {
+        return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
+    }
+    let txn = db.begin().await?;
+    if let Err(e) = set_status(&txn, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await {
+        let status = decision_parties(&txn, input.decision_id).await?.status;
+        return Err(if status == STATUS_PROPOSED {
+            e
+        } else {
+            AppError::ValidationFailed(vec![
+                "GATE_REL_DECISION_ALREADY_DECIDED: The decision has already been approved, rejected or applied: it can no longer be withdrawn or rejected."
+                    .into(),
+            ])
+        });
+    }
+    // Sync ids, not local ids: the event travels (review of #179).
+    let mut details = audit_refs(&txn, input.decision_id).await?;
+    details.insert(
+        "summary".into(),
+        if withdrawal {
+            "Reliability decision withdrawn by its proposer"
+        } else {
+            "Reliability decision rejected"
+        }
+        .into(),
+    );
+    details.insert("title".into(), parties.title.clone().into());
+    details.insert("reason".into(), note.clone().into());
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: if withdrawal {
+                "reliability.decision.withdrawn"
+            } else {
+                "reliability.decision.rejected"
+            }
+            .to_string(),
+            target_type: Some("reliability_study_decisions".to_string()),
+            target_id: Some(audit_target(&parties, input.decision_id)),
+            actor_id: Some(actor_id),
+            auth_context: "session".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::Value::Object(details)),
+        },
+    )
+    .await?;
+    txn.commit().await?;
     get_decision(db, input.decision_id).await
 }
 
 /// Carry out an approved decision in maintenance: a draft PM plan version with the proposed
 /// trigger, or a work order on the decision's equipment. Both stay linked to the decision.
+///
+/// One transaction: the decision is claimed first (`approved` → `applied`, guarded by its status and
+/// the row version the caller saw), then the PM version or work order is created and linked. A
+/// second apply of the same decision (double click, two screens, two people) finds nothing to claim
+/// and is refused; a failure leaves the decision approved with nothing created (audit finding AU-76).
 pub async fn apply_decision(
     db: &DatabaseConnection,
     input: DecideDecisionInput,
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
-    let d = get_decision(db, input.decision_id).await?;
-    if d.status != STATUS_APPROVED {
-        return Err(invalid("DECISION_NOT_APPROVED"));
+    let txn = db.begin().await?;
+    refuse_if_refused_at_sync(&txn, input.decision_id).await?;
+    let ts = Utc::now().to_rfc3339();
+    let claimed = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reliability_study_decisions SET status = ?, applied_by_id = ?, applied_at = ?,
+                row_version = row_version + 1, updated_at = ?
+             WHERE id = ? AND status = ? AND row_version = ? AND sync_refused_at IS NULL",
+            [
+                STATUS_APPLIED.into(),
+                actor_id.into(),
+                ts.clone().into(),
+                ts.into(),
+                input.decision_id.into(),
+                STATUS_APPROVED.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if claimed.rows_affected() == 0 {
+        let status = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT status FROM reliability_study_decisions WHERE id = ?",
+                [input.decision_id.into()],
+            ))
+            .await?
+            .map(|r| get::<String>(&r, "status"))
+            .transpose()?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "reliability_study_decision".into(),
+                id: input.decision_id.to_string(),
+            })?;
+        // Not approved (or already applied by someone else): nothing to apply. Approved, but at
+        // another version than the one shown: reload first.
+        return Err(invalid(if status == STATUS_APPROVED {
+            "DECISION_STALE"
+        } else {
+            "DECISION_NOT_APPROVED"
+        }));
     }
-    if d.row_version != input.expected_row_version {
-        return Err(invalid("DECISION_STALE"));
-    }
-    let trig = db
+    // The claimed row: the version the caller saw (its row version matched).
+    let r = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT proposed_trigger_definition_json FROM reliability_study_decisions WHERE id = ?",
-            [d.id.into()],
+            "SELECT action_kind, title, pm_plan_id, wo_type_code, proposed_trigger_definition_json \
+             FROM reliability_study_decisions WHERE id = ?",
+            [input.decision_id.into()],
         ))
         .await?
-        .map(|r| get::<Option<String>>(&r, "proposed_trigger_definition_json"))
-        .transpose()?
-        .flatten();
-    if d.action_kind == DECISION_PM_INTERVAL {
-        let plan_id = d.pm_plan_id.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
-        let note = d.title.clone();
-        create_pm_revision_from_source(
-            db,
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: input.decision_id.to_string(),
+        })?;
+    let action_kind: String = get(&r, "action_kind")?;
+    let title: String = get(&r, "title")?;
+    if action_kind == DECISION_PM_INTERVAL {
+        let plan_id = get::<Option<i64>>(&r, "pm_plan_id")?.ok_or_else(|| invalid("DECISION_PM_PLAN_REQUIRED"))?;
+        let trig = get::<Option<String>>(&r, "proposed_trigger_definition_json")?
+            .ok_or_else(|| invalid("DECISION_TRIGGER_MISSING"))?;
+        create_pm_revision_from_source_in(
+            &txn,
             PmRevisionFromSourceInput {
                 source_type: SOURCE_RELIABILITY_DECISION.into(),
-                source_id: d.id,
+                source_id: input.decision_id,
                 pm_plan_id: plan_id,
-                trigger_definition_json: Some(trig.ok_or_else(|| invalid("DECISION_TRIGGER_MISSING"))?),
-                change_note: note,
+                trigger_definition_json: Some(trig),
+                change_note: title,
             },
         )
         .await?;
     } else {
-        create_wo_from_source(
-            db,
+        let type_code =
+            get::<Option<String>>(&r, "wo_type_code")?.ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?;
+        create_wo_from_source_in(
+            &txn,
             WoFromSourceInput {
                 source_type: SOURCE_RELIABILITY_DECISION.into(),
-                source_id: d.id,
-                type_code: d
-                    .wo_type_code
-                    .clone()
-                    .ok_or_else(|| invalid("DECISION_WO_TYPE_REQUIRED"))?,
-                title: Some(d.title.clone()),
+                source_id: input.decision_id,
+                type_code,
+                title: Some(title),
             },
             actor_id,
         )
         .await?;
     }
-    let ts = Utc::now().to_rfc3339();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE reliability_study_decisions SET status = 'applied', applied_by_id = ?, applied_at = ?,
-            row_version = row_version + 1, updated_at = ? WHERE id = ?",
-        [actor_id.into(), ts.clone().into(), ts.into(), d.id.into()],
-    ))
-    .await?;
-    get_decision(db, d.id).await
+    txn.commit().await?;
+    get_decision(db, input.decision_id).await
 }
 
 /// What to do with a decision received by synchronisation.
@@ -789,7 +1025,17 @@ pub(crate) enum InboundDecisionVerdict {
     Defer(String),
     /// Refused: a sync conflict for a person to decide.
     Conflict(String),
+    /// Refused: the decision is not approved (proposed or rejected) yet names a work order or a PM
+    /// version created from it — only an approved decision is carried out (audit finding AU-69).
+    LinkedWhileUnapproved(String),
 }
+
+/// Columns of a decision that point to what was created from it.
+const DECISION_LINK_KEYS: [&str; 3] = [
+    "linked_work_order_sync_id",
+    "linked_pm_plan_version_sync_id",
+    "linked_pm_plan_sync_id",
+];
 
 /// Local id of a row referenced by its sync id in a payload (`Err(())`: named but not here).
 async fn payload_ref<C: ConnectionTrait>(
@@ -910,6 +1156,20 @@ pub(crate) async fn inbound_self_approval_check<C: ConnectionTrait>(
         .get("title")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    // A work order or PM version is created only from an approved decision (applying it). A received
+    // decision still proposed, or rejected, that names one was carried out without approval (a
+    // crafted call on an older version): refused, never applied here.
+    if status == STATUS_PROPOSED || status == STATUS_REJECTED {
+        let linked = DECISION_LINK_KEYS
+            .iter()
+            .any(|k| payload.get(*k).is_some_and(|v| !v.is_null()));
+        if linked {
+            return Ok(Some(InboundDecisionVerdict::LinkedWhileUnapproved(format!(
+                "decision '{title}' is {status} but names a work order or preventive plan version created \
+                 from it; only an approved decision is carried out"
+            ))));
+        }
+    }
     let decided = status == STATUS_APPROVED || status == STATUS_APPLIED;
     if decided && decider.is_none() {
         return Ok(Some(InboundDecisionVerdict::Conflict(format!(

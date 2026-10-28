@@ -674,3 +674,267 @@ async fn editing_a_version_shows_the_work_orders_planned_on_it() {
         .expect("impact");
     assert_eq!(none.work_orders, 0);
 }
+
+// ── AU-111: a reassignment never moves a job into another crew's frozen week ───────────────
+
+/// A planning site (a node whose type can own work) and a crew attached to it. The site's week
+/// follows the seeded all-sites weekend (Friday-Saturday): Sunday to Saturday.
+async fn planning_crew(db: &DatabaseConnection, code: &str) -> (i64, i64) {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO org_node_types (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, \
+             can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at) \
+             SELECT 'au111-type-{code}', structure_model_id, 'AU111{code}', 'Site', 1, 1, 0, 1, 0, 0, 1, \
+                    datetime('now'), datetime('now') FROM org_nodes ORDER BY id LIMIT 1"
+        ),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO org_nodes (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
+             created_at, updated_at, row_version, structure_model_id) \
+             SELECT 'au111-node-{code}', 'AU111-{code}', 'Site {code}', t.id, NULL, '/', 0, 'active', \
+                    datetime('now'), datetime('now'), 1, t.structure_model_id \
+               FROM org_node_types t WHERE t.entity_sync_id = 'au111-type-{code}'"
+        ),
+    )
+    .await;
+    let site = scalar_i64(
+        db,
+        &format!("SELECT id FROM org_nodes WHERE entity_sync_id = 'au111-node-{code}'"),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+             VALUES ('au111-team-{code}', 'AU111-CREW-{code}', 'Equipe {code}', 'maintenance', {site}, 'active', \
+                     datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let team = scalar_i64(
+        db,
+        &format!("SELECT id FROM teams WHERE entity_sync_id = 'au111-team-{code}'"),
+    )
+    .await;
+    (site, team)
+}
+
+/// `days` days from today (local), `hour`:00 to `hour + 1`:00, as stored (RFC 3339 UTC).
+fn local_slot(days: i64, hour: u32) -> (String, String) {
+    use chrono::TimeZone;
+    let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
+    let at = |h: u32| {
+        chrono::Local
+            .from_local_datetime(&day.and_hms_opt(h, 0, 0).expect("time"))
+            .earliest()
+            .expect("local instant")
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    };
+    (at(hour), at(hour + 1))
+}
+
+/// The work order's commitment on `team`, over `slot` (committed, not frozen itself).
+async fn commit_wo(db: &DatabaseConnection, wo: &WorkOrder, team: i64, slot: &(String, String)) -> i64 {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO schedule_candidates (source_type, source_id, readiness_status, readiness_score, permit_status, \
+             prerequisite_status, estimated_duration_hours, planned_crew_size) \
+             VALUES ('work_order', {}, 'ready', 100.0, 'not_required', 'ready', 1.0, 1)",
+            wo.id
+        ),
+    )
+    .await;
+    let candidate = scalar_i64(
+        db,
+        &format!(
+            "SELECT id FROM schedule_candidates WHERE source_type = 'work_order' AND source_id = {}",
+            wo.id
+        ),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO schedule_commitments (schedule_candidate_id, source_type, source_id, schedule_period_start, \
+             schedule_period_end, committed_start, committed_end, assigned_team_id) \
+             VALUES ({candidate}, 'work_order', {wo_id}, substr('{s}', 1, 10), substr('{e}', 1, 10), '{s}', '{e}', {team})",
+            wo_id = wo.id,
+            s = slot.0,
+            e = slot.1
+        ),
+    )
+    .await;
+    scalar_i64(
+        db,
+        &format!(
+            "SELECT id FROM schedule_commitments WHERE source_type = 'work_order' AND source_id = {}",
+            wo.id
+        ),
+    )
+    .await
+}
+
+/// Freezes the week of `site` holding the day `days` from today.
+async fn freeze_week(db: &DatabaseConnection, site: i64, days: i64) {
+    let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
+    crate::planning::weekly_schedule::freeze_weekly_schedule(
+        db,
+        admin(db).await,
+        crate::planning::weekly_schedule::WeeklyScheduleRef {
+            site_id: site,
+            day: day.to_string(),
+            expected_row_version: None,
+        },
+    )
+    .await
+    .expect("week frozen");
+}
+
+/// Nothing of the refused reassignment was written: work order, commitment, change log.
+async fn assert_untouched(db: &DatabaseConnection, wo: &WorkOrder, commitment: i64, team: i64) {
+    let now = reload(db, wo.id).await;
+    assert_eq!(now.assigned_team_id, Some(team));
+    assert_eq!(now.row_version, wo.row_version);
+    let commitment_row = |column: &str| format!("SELECT {column} FROM schedule_commitments WHERE id = {commitment}");
+    assert_eq!(scalar_i64(db, &commitment_row("assigned_team_id")).await, team);
+    assert_eq!(scalar_i64(db, &commitment_row("row_version")).await, 1);
+    assert_eq!(
+        scalar_i64(
+            db,
+            &format!("SELECT COUNT(*) FROM schedule_change_log WHERE commitment_id = {commitment}")
+        )
+        .await,
+        0
+    );
+}
+
+/// A job on an open site three weeks out, and a crew of a site whose week of that job is frozen.
+struct FrozenTarget {
+    db: DatabaseConnection,
+    wo: WorkOrder,
+    commitment: i64,
+    open_crew: i64,
+    frozen_crew: i64,
+}
+
+async fn frozen_target() -> FrozenTarget {
+    let f = setup().await;
+    let (_, open_crew) = planning_crew(&f.db, "OPEN").await;
+    let (frozen_site, frozen_crew) = planning_crew(&f.db, "FROZEN").await;
+    let wo = work_order(&f.db, Some(open_crew)).await;
+    let commitment = commit_wo(&f.db, &wo, open_crew, &local_slot(21, 8)).await;
+    freeze_week(&f.db, frozen_site, 21).await;
+    FrozenTarget {
+        db: f.db,
+        wo,
+        commitment,
+        open_crew,
+        frozen_crew,
+    }
+}
+
+fn assert_week_frozen(e: &crate::errors::AppError) {
+    match e {
+        crate::errors::AppError::OrgValidationFailed(issues) => {
+            assert_eq!(issues.len(), 1, "{e:?}");
+            assert_eq!(issues[0].code, "PLANNING_WEEK_FROZEN", "{e:?}");
+            assert!(issues[0].params.contains_key("week_start"), "{e:?}");
+        }
+        other => panic!("expected PLANNING_WEEK_FROZEN, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_reassignment_into_a_crew_whose_site_week_is_frozen_is_refused() {
+    let t = frozen_target().await;
+    let refused = assign(&t.db, &t.wo, t.frozen_crew)
+        .await
+        .expect_err("the week is frozen on the new crew's site: a break-in");
+    assert_week_frozen(&refused);
+    assert_untouched(&t.db, &t.wo, t.commitment, t.open_crew).await;
+}
+
+#[tokio::test]
+async fn an_emergency_reassignment_never_skips_the_frozen_week() {
+    let t = frozen_target().await;
+    let refused = reassign(&t.db, &t.wo, t.frozen_crew, None, false)
+        .await
+        .expect_err("an emergency skips capacity, not the frozen week");
+    assert_week_frozen(&refused);
+    assert_untouched(&t.db, &t.wo, t.commitment, t.open_crew).await;
+}
+
+/// The week's freeze fell due and the automatic freeze has not run on this PC: frozen all the same,
+/// as every other PC judges it.
+#[tokio::test]
+async fn a_week_due_to_freeze_is_refused_like_a_frozen_one() {
+    let f = setup().await;
+    let (_, open_crew) = planning_crew(&f.db, "OPEN").await;
+    let (_, due_crew) = planning_crew(&f.db, "DUE").await;
+    let wo = work_order(&f.db, Some(open_crew)).await;
+    // The current week: its freeze fell due before it started; nothing froze it here.
+    let commitment = commit_wo(&f.db, &wo, open_crew, &local_slot(0, 10)).await;
+    let refused = reassign(&f.db, &wo, due_crew, None, false)
+        .await
+        .expect_err("due to freeze");
+    assert_week_frozen(&refused);
+    assert_untouched(&f.db, &wo, commitment, open_crew).await;
+}
+
+/// The same crew is no move; a crew of a site whose week is open takes the job.
+#[tokio::test]
+async fn the_same_crew_or_a_crew_on_an_open_week_still_works() {
+    let t = frozen_target().await;
+    let (_, other_crew) = planning_crew(&t.db, "OTHER").await;
+    let same = assign(&t.db, &t.wo, t.open_crew).await.expect("same crew");
+    assert_eq!(same.assigned_team_id, Some(t.open_crew));
+    let moved = reassign(&t.db, &same, other_crew, None, false)
+        .await
+        .expect("the other site's week is open");
+    assert_eq!(moved.assigned_team_id, Some(other_crew));
+    assert_eq!(
+        scalar_i64(
+            &t.db,
+            &format!(
+                "SELECT assigned_team_id FROM schedule_commitments WHERE id = {}",
+                t.commitment
+            )
+        )
+        .await,
+        other_crew
+    );
+}
+
+/// A commitment frozen itself still refuses any reassignment, with its own code.
+#[tokio::test]
+async fn a_frozen_commitment_still_refuses_the_reassignment() {
+    let f = setup().await;
+    let (_, open_crew) = planning_crew(&f.db, "OPEN").await;
+    let (_, other_crew) = planning_crew(&f.db, "OTHER").await;
+    let wo = work_order(&f.db, Some(open_crew)).await;
+    let commitment = commit_wo(&f.db, &wo, open_crew, &local_slot(21, 8)).await;
+    exec(
+        &f.db,
+        &format!("UPDATE schedule_commitments SET frozen_at = '2026-01-01T00:00:00Z' WHERE id = {commitment}"),
+    )
+    .await;
+    for emergency in [false, true] {
+        let refused = if emergency {
+            reassign(&f.db, &wo, other_crew, None, false).await
+        } else {
+            assign(&f.db, &wo, other_crew).await
+        }
+        .expect_err("frozen commitment");
+        assert!(
+            format!("{refused:?}").contains("GATE_WO_REASSIGN_SCHEDULE_FROZEN"),
+            "{refused:?}"
+        );
+        assert_untouched(&f.db, &wo, commitment, open_crew).await;
+    }
+}

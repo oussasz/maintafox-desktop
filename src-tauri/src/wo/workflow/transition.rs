@@ -94,6 +94,61 @@ pub async fn log_transition_with_remaining(
     acted_at: &str,
     estimated_remaining_hours: Option<f64>,
 ) -> AppResult<()> {
+    insert_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        Some(actor_id),
+        reason_code,
+        notes,
+        acted_at,
+        estimated_remaining_hours,
+    )
+    .await
+}
+
+/// [`log_transition`] of a change the application makes by itself, no person acting (its
+/// `actor_id` is empty): a running work order put on hold because its permit ended on another PC
+/// (`wo::execution::hold_for_permit_ended_elsewhere`).
+pub async fn log_system_transition(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    from_status: &str,
+    to_status: &str,
+    action: &str,
+    reason_code: Option<&str>,
+    notes: Option<&str>,
+    acted_at: &str,
+) -> AppResult<()> {
+    insert_transition(
+        txn,
+        wo_id,
+        from_status,
+        to_status,
+        action,
+        None,
+        reason_code,
+        notes,
+        acted_at,
+        None,
+    )
+    .await
+}
+
+async fn insert_transition(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    from_status: &str,
+    to_status: &str,
+    action: &str,
+    actor_id: Option<i64>,
+    reason_code: Option<&str>,
+    notes: Option<&str>,
+    acted_at: &str,
+    estimated_remaining_hours: Option<f64>,
+) -> AppResult<()> {
     if to_status == WoStatus::Planning.as_str() {
         let required = crate::wo::workflow::readiness::load_approval_policy(txn).await?;
         txn.execute(Statement::from_sql_and_values(
@@ -134,7 +189,7 @@ pub async fn log_transition_with_remaining(
 pub fn check_concurrency(rows_affected: u64) -> AppResult<()> {
     if rows_affected == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .to_string(),
         ]));

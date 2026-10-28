@@ -9,7 +9,7 @@
 //!      verification evidence; refused once the window has passed.
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     use crate::errors::AppError;
@@ -29,11 +29,11 @@ mod tests {
     // Setup
     // ═══════════════════════════════════════════════════════════════════════
 
-    async fn setup() -> sea_orm::DatabaseConnection {
+    pub(crate) async fn setup() -> sea_orm::DatabaseConnection {
         crate::db::test_db::seeded().await
     }
 
-    async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
+    pub(crate) async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
         let row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -45,7 +45,7 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
-    async fn create_second_user(db: &sea_orm::DatabaseConnection) -> i64 {
+    pub(crate) async fn create_second_user(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -71,7 +71,7 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
-    async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
+    pub(crate) async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
         // Ensure org scaffolding for installed_at_node_id FK
         let _ = db
             .execute(Statement::from_string(
@@ -127,7 +127,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    pub(crate) async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -137,6 +137,9 @@ mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -154,16 +157,19 @@ mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
-    async fn clear_rams_for_close_gate(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    pub(crate) async fn clear_rams_for_close_gate(db: &sea_orm::DatabaseConnection, wo_id: i64) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM work_order_failure_details WHERE work_order_id = ?",
@@ -181,7 +187,7 @@ mod tests {
     }
 
     /// Create a corrective WO and advance it to in_progress via Option B lifecycle.
-    async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+    pub(crate) async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
         seed_test_equipment(db).await;
         let actor = admin_id(db).await;
 
@@ -297,7 +303,7 @@ mod tests {
     /// Advance a WO from in_progress to completed+verified with all quality gates satisfied.
     /// In Option B, save_verification does NOT change WO status — stays completed.
     /// Returns the updated row_version.
-    async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
+    pub(crate) async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_second_user(db).await;
 
@@ -321,7 +327,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(db, wo_id).await;
+        let rv = seed_rams_for_complete(db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             db,
@@ -378,7 +384,7 @@ mod tests {
             .await
             .expect("confirm_no_parts for mech complete");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         // Complete mechanically: in_progress → completed
         let wo = execution::complete_wo_mechanically(
@@ -466,7 +472,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -580,11 +586,19 @@ mod tests {
             .await
             .expect("record actual usage");
 
-        costs::update_service_cost(&db, wo_id, 50.0, actor)
-            .await
-            .expect("update_service_cost");
+        costs::update_service_cost(
+            &db,
+            wo_id,
+            50.0,
+            crate::wo::closeout::wo_row_version(&db, wo_id)
+                .await
+                .expect("wo row_version"),
+            actor,
+        )
+        .await
+        .expect("update_service_cost");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -701,7 +715,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let wo = execution::complete_wo_mechanically(
             &db,
@@ -831,5 +845,668 @@ mod tests {
         .await
         .expect("drop setting");
         assert!(closeout::reopen_window_days(&db).await.is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Override signer password: counted toward the signer's account lockout
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const SIGNER_PASSWORD: &str = "Signer-Pass-2026!";
+
+    async fn scalar(db: &sea_orm::DatabaseConnection, sql: &str, id: i64) -> i64 {
+        db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [id.into()]))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode")
+    }
+
+    /// A completed, verified corrective WO whose failure mode has a critical FMECA item with a
+    /// suggested part that was not used: closing it needs the supervisor override (reason +
+    /// signer password). Returns (wo id, row version, signer id).
+    async fn wo_needing_signer_override(db: &sea_orm::DatabaseConnection) -> (i64, i64, i64) {
+        let (wo_id, rv) = create_wo_in_progress(db).await;
+        let rv = advance_to_completed_verified(db, wo_id, rv).await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let hash = crate::auth::password::hash_password(SIGNER_PASSWORD).expect("hash");
+        // The failure mode and the suggested article are plain ids here (no catalogue rows).
+        db.execute_unprepared("PRAGMA foreign_keys = OFF")
+            .await
+            .expect("fk off");
+        for sql in [
+            "UPDATE closeout_validation_policies SET require_fmeca_parts_for_critical = 1, \
+             fmeca_parts_override_allowed_roles_json = '[\"Administrator\"]'"
+                .to_string(),
+            format!("UPDATE work_order_failure_details SET failure_mode_id = 9101 WHERE work_order_id = {wo_id}"),
+            "INSERT INTO fmeca_analyses (entity_sync_id, equipment_id, title, created_at, updated_at) \
+             VALUES ('fa-signer-test', 1, 'Pompe', datetime('now'), datetime('now'))"
+                .to_string(),
+            "INSERT INTO fmeca_items (entity_sync_id, analysis_id, failure_mode_id, severity, occurrence, \
+             detectability, rpn, review_required, updated_at) \
+             SELECT 'fi-signer-test', id, 9101, 10, 10, 10, 1000, 0, datetime('now') FROM fmeca_analyses \
+             WHERE entity_sync_id = 'fa-signer-test'"
+                .to_string(),
+            "INSERT INTO fmeca_item_parts (fmeca_item_id, article_id) \
+             SELECT id, 9202 FROM fmeca_items WHERE entity_sync_id = 'fi-signer-test'"
+                .to_string(),
+        ] {
+            db.execute_unprepared(&sql).await.expect("fixture");
+        }
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_accounts \
+             (entity_sync_id, username, identity_mode, password_hash, is_active, is_admin, \
+              force_password_change, password_changed_at, failed_login_attempts, created_at, updated_at, row_version) \
+             VALUES ('signer-sync', 'chef_equipe', 'local', ?, 1, 0, 0, ?, 0, ?, ?, 1)",
+            [hash.into(), now.clone().into(), now.clone().into(), now.clone().into()],
+        ))
+        .await
+        .expect("signer");
+        let signer = scalar(
+            db,
+            "SELECT id AS v FROM user_accounts WHERE username = 'chef_equipe' AND id > ?",
+            0,
+        )
+        .await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO user_scope_assignments \
+             (entity_sync_id, user_id, role_id, scope_type, scope_reference, created_at, updated_at, row_version) \
+             SELECT 'signer-assignment', ?, id, 'tenant', NULL, ?, ?, 1 FROM roles WHERE name = 'Administrator'",
+            [signer.into(), now.clone().into(), now.into()],
+        ))
+        .await
+        .expect("signer role");
+        (wo_id, rv, signer)
+    }
+
+    async fn close_with_signer(
+        db: &sea_orm::DatabaseConnection,
+        wo_id: i64,
+        rv: i64,
+        actor: i64,
+        signer: i64,
+        password: &str,
+    ) -> Result<(), Vec<String>> {
+        match closeout::close_wo(
+            db,
+            WoCloseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+                fmeca_parts_override_signed_by_id: Some(signer),
+                fmeca_parts_override_signer_password: Some(password.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Ok(_) => Ok(()),
+            Err(AppError::ValidationFailed(errors)) => Err(errors),
+            Err(other) => panic!("unexpected close-out error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wrong_override_signer_passwords_lock_the_signer_account() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, signer) = wo_needing_signer_override(&db).await;
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let failed = "SELECT failed_login_attempts AS v FROM user_accounts WHERE id = ?";
+        let locked = "SELECT COUNT(*) AS v FROM user_accounts WHERE id = ? AND locked_until IS NOT NULL";
+
+        for attempt in 1..=max {
+            let errors = close_with_signer(&db, wo_id, rv, actor, signer, "mauvais")
+                .await
+                .unwrap_err();
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e == "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED"),
+                "attempt {attempt}: {errors:?}"
+            );
+        }
+        assert_eq!(
+            scalar(&db, locked, signer).await,
+            1,
+            "the signer's account is locked out"
+        );
+        assert_eq!(scalar(&db, failed, actor).await, 0, "the user closing is not counted");
+        // Each wrong signer password is audited: actor = the user closing, target = the signer.
+        let audited = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS v FROM audit_events WHERE action_code = ? AND actor_id = ? \
+                 AND target_type = 'user_account' AND target_id = ?",
+                [
+                    crate::audit::event_type::STEP_UP_FAILURE.into(),
+                    actor.into(),
+                    signer.to_string().into(),
+                ],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get::<i64>("", "v")
+            .expect("decode");
+        assert_eq!(audited, max);
+
+        // Locked out: even the right password is refused, without being checked or counted.
+        let attempts_before = scalar(&db, failed, signer).await;
+        let errors = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD)
+            .await
+            .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e == "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_LOCKED"),
+            "{errors:?}"
+        );
+        assert_eq!(scalar(&db, failed, signer).await, attempts_before);
+
+        // Once the lockout ends, the right password signs and the count starts afresh.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET locked_until = '2000-01-01T00:00:00Z' WHERE id = ?",
+            [signer.into()],
+        ))
+        .await
+        .expect("lockout over");
+        if let Err(errors) = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await {
+            assert!(
+                // No code of the FMECA-parts gate (a prefix here, not a code: the frontend
+                // gate-code scan reads quoted `GATE_…` literals).
+                !errors.iter().any(|e| e.contains("CLOSEOUT_FMECA_PARTS")),
+                "the override is accepted: {errors:?}"
+            );
+        }
+        assert_eq!(scalar(&db, failed, signer).await, 0);
+        assert_eq!(scalar(&db, locked, signer).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_committed_close_stays_closed_when_the_signer_outcome_cannot_be_recorded() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, signer) = wo_needing_signer_override(&db).await;
+        // Earlier failures to reset, and a database that refuses the reset after the commit.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET failed_login_attempts = 2 WHERE id = ?",
+            [signer.into()],
+        ))
+        .await
+        .expect("failures");
+        db.execute_unprepared(
+            "CREATE TRIGGER block_signer_reset BEFORE UPDATE OF failed_login_attempts ON user_accounts \
+             BEGIN SELECT RAISE(ABORT, 'blocked for the test'); END",
+        )
+        .await
+        .expect("trigger");
+
+        let closed = close_with_signer(&db, wo_id, rv, actor, signer, SIGNER_PASSWORD).await;
+        assert!(
+            closed.is_ok(),
+            "the close is committed and reported as such: {closed:?}"
+        );
+        let wo = queries::get_work_order(&db, wo_id).await.expect("read").expect("wo");
+        assert_eq!(wo.status_code.as_deref(), Some("closed"));
+    }
+
+    /// Self-signing allowed by the policy: the closer's own password is checked, so a lockout it
+    /// causes ends the closer's session (ACCOUNT_LOCKED → sign-in), as every password check in a
+    /// session does.
+    #[tokio::test]
+    async fn a_self_signed_override_locks_out_like_any_password_check_in_the_session() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        let close = |password: &'static str| self_signed_close(wo_id, rv, actor, password);
+        for attempt in 1..max {
+            let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(refused, AppError::ValidationFailed(_)),
+                "attempt {attempt}: {refused:?}"
+            );
+            assert!(state.session.read().await.current.is_some());
+        }
+        let refused = crate::commands::wo::close_wo_impl(&state, close("mauvais"))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, AppError::AccountLocked { .. }), "{refused:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    /// The signer password is checked and counted even when matched parts make the override
+    /// unnecessary, so the close goes through: a lockout it causes still ends the session, and
+    /// the committed close is still reported.
+    #[tokio::test]
+    async fn a_self_signed_lockout_ends_the_session_even_when_the_close_goes_through() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv, _signer) = wo_needing_signer_override(&db).await;
+        let (state, session_id) = self_signing_session(&db, actor).await;
+        let max = i64::from(crate::auth::lockout::LockoutPolicy::load(&db).await.max_attempts);
+        for sql in [
+            format!(
+                "INSERT INTO work_order_parts (work_order_id, article_id, quantity_planned, quantity_used, \
+                 unit_cost, is_required) VALUES ({wo_id}, 9202, 1.0, 1.0, 0, 1)"
+            ),
+            format!(
+                "UPDATE user_accounts SET failed_login_attempts = {} WHERE id = {actor}",
+                max - 1
+            ),
+        ] {
+            db.execute_unprepared(&sql).await.expect("fixture");
+        }
+
+        let closed = crate::commands::wo::close_wo_impl(&state, self_signed_close(wo_id, rv, actor, "mauvais")).await;
+        assert!(closed.is_ok(), "matched parts: the close goes through: {closed:?}");
+        assert!(
+            state.session.read().await.current.is_none(),
+            "the closer's account is locked: the session ended"
+        );
+        assert_eq!(session_revoked(&db, &session_id).await, 1);
+    }
+
+    fn self_signed_close(wo_id: i64, rv: i64, actor: i64, password: &str) -> WoCloseInput {
+        WoCloseInput {
+            wo_id,
+            actor_id: actor,
+            expected_row_version: rv,
+            fmeca_parts_override_reason: Some("Piece suggeree indisponible, montage equivalent".into()),
+            fmeca_parts_override_signed_by_id: Some(actor),
+            fmeca_parts_override_signer_password: Some(password.into()),
+            ..Default::default()
+        }
+    }
+
+    async fn session_revoked(db: &sea_orm::DatabaseConnection, session_id: &str) -> i64 {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            [session_id.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "v")
+        .expect("decode")
+    }
+
+    /// Self-signing allowed by the policy, and `actor` signed in with a stored session.
+    async fn self_signing_session(db: &sea_orm::DatabaseConnection, actor: i64) -> (crate::state::AppState, String) {
+        db.execute_unprepared(
+            "UPDATE closeout_validation_policies SET fmeca_parts_override_require_distinct_signer = 0",
+        )
+        .await
+        .expect("self-signing allowed");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET force_password_change = 0 WHERE id = ?",
+            [actor.into()],
+        ))
+        .await
+        .expect("password chosen");
+
+        let state = crate::state::AppState::new(db.clone());
+        let session_id = {
+            let mut guard = state.session.write().await;
+            guard.create_session(crate::auth::session_manager::AuthenticatedUser {
+                user_id: i32::try_from(actor).expect("fits"),
+                username: "admin".into(),
+                display_name: None,
+                is_admin: true,
+                force_password_change: false,
+                tenant_id: "tenant-test".into(),
+                token_tenant_id: "tenant-test".into(),
+            });
+            let current = guard.current.as_ref().expect("session");
+            (current.session_db_id.clone(), current.expires_at.to_rfc3339())
+        };
+        crate::auth::session_manager::create_session_record(
+            db,
+            &session_id.0,
+            i32::try_from(actor).expect("fits"),
+            &session_id.1,
+        )
+        .await
+        .expect("stored session");
+        (state, session_id.0)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AU-18 — close-out coding, root cause and service cost are version-checked
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn assert_changed_elsewhere(err: AppError) {
+        match err {
+            AppError::ValidationFailed(lines) => assert!(
+                lines.iter().any(|l| l.starts_with("GATE_RECORD_CHANGED_ELSEWHERE")),
+                "expected the stale-version refusal, got {lines:?}"
+            ),
+            other => panic!("expected the stale-version refusal, got {other:?}"),
+        }
+    }
+
+    fn failure_input(wo_id: i64, expected_row_version: i64, notes: &str) -> SaveFailureDetailInput {
+        SaveFailureDetailInput {
+            wo_id,
+            expected_row_version,
+            symptom_id: None,
+            failure_mode_id: None,
+            failure_cause_id: None,
+            failure_effect_id: None,
+            is_temporary_repair: false,
+            is_permanent_repair: true,
+            cause_not_determined: true,
+            notes: Some(notes.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn au18_failure_detail_saved_on_a_stale_version_is_refused_and_writes_nothing() {
+        let db = setup().await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        // First person saves at the version both screens loaded.
+        let saved = closeout::save_failure_detail(&db, failure_input(wo_id, rv, "first"))
+            .await
+            .expect("first save");
+        assert_eq!(saved.wo_row_version, rv + 1);
+        assert_eq!(closeout::wo_row_version(&db, wo_id).await.expect("rv"), rv + 1);
+
+        // Second person still holds the old version: refused, the first coding is kept.
+        let err = closeout::save_failure_detail(&db, failure_input(wo_id, rv, "second"))
+            .await
+            .expect_err("stale save must be refused");
+        assert_changed_elsewhere(err);
+        let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].notes.as_deref(), Some("first"));
+        assert_eq!(closeout::wo_row_version(&db, wo_id).await.expect("rv"), rv + 1);
+
+        // The coding path (mechanism / detection) is refused the same way, in one transaction.
+        let err = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: failure_input(wo_id, rv, "third"),
+                failure_mechanism_id: None,
+                detection_method_id: None,
+            },
+        )
+        .await
+        .expect_err("stale coding must be refused");
+        assert_changed_elsewhere(err);
+        let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+        assert_eq!(details[0].notes.as_deref(), Some("first"));
+
+        // Reloaded version: accepted and bumped again.
+        let saved = closeout::save_failure_coding(
+            &db,
+            closeout::SaveFailureCodingInput {
+                base: failure_input(wo_id, rv + 1, "after reload"),
+                failure_mechanism_id: None,
+                detection_method_id: None,
+            },
+        )
+        .await
+        .expect("save after reload");
+        assert_eq!(saved.wo_row_version, rv + 2);
+        assert_eq!(saved.detail.notes.as_deref(), Some("after reload"));
+    }
+
+    #[tokio::test]
+    async fn au18_root_cause_saved_on_a_stale_version_is_refused() {
+        let db = setup().await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        let new_rv = closeout::update_wo_rca(
+            &db,
+            UpdateWoRcaInput {
+                wo_id,
+                expected_row_version: rv,
+                root_cause_summary: Some("first cause".into()),
+                corrective_action_summary: Some("first action".into()),
+            },
+        )
+        .await
+        .expect("first rca");
+        assert_eq!(new_rv, rv + 1);
+
+        let err = closeout::update_wo_rca(
+            &db,
+            UpdateWoRcaInput {
+                wo_id,
+                expected_row_version: rv,
+                root_cause_summary: Some("second cause".into()),
+                corrective_action_summary: None,
+            },
+        )
+        .await
+        .expect_err("stale rca must be refused");
+        assert_changed_elsewhere(err);
+
+        let wo = queries::get_work_order(&db, wo_id).await.expect("get").expect("wo");
+        assert_eq!(wo.root_cause_summary.as_deref(), Some("first cause"));
+        assert_eq!(wo.row_version, rv + 1);
+    }
+
+    #[tokio::test]
+    async fn au18_service_cost_saved_on_a_stale_version_is_refused() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv) = create_wo_in_progress(&db).await;
+
+        let new_rv = costs::update_service_cost(&db, wo_id, 120.0, rv, actor)
+            .await
+            .expect("first cost");
+        assert_eq!(new_rv, rv + 1);
+
+        let err = costs::update_service_cost(&db, wo_id, 999.0, rv, actor)
+            .await
+            .expect_err("stale cost must be refused");
+        assert_changed_elsewhere(err);
+
+        let cost = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT service_cost_input, row_version FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        assert_eq!(cost.try_get::<f64>("", "service_cost_input").expect("cost"), 120.0);
+        assert_eq!(cost.try_get::<i64>("", "row_version").expect("rv"), rv + 1);
+    }
+
+    /// #185 N-R2-2 interim (CMMS Advisor 2026-10-27): a work order coded on two PCs before they
+    /// synced holds two failure-coding rows. Whatever order they were inserted in, every reader
+    /// uses the same one (`closeout::failure_detail_of_wo_sql`): the close-out form and gate, the
+    /// reliability "missing failure mode" list, and the save that edits it. Nothing is merged.
+    #[tokio::test]
+    async fn two_failure_coding_rows_are_read_as_the_same_one_whatever_their_order() {
+        let mut seen = Vec::new();
+        for a_first in [true, false] {
+            let db = setup().await;
+            let (wo_id, _) = create_wo_in_progress(&db).await;
+            clear_rams_for_close_gate(&db, wo_id).await;
+            let (mode_id, cause_id) =
+                crate::wo::gap06_regression_tests::tests::ensure_failure_mode_and_cause_ids(&db).await;
+            let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+                .await
+                .expect("lookup symptom")
+                .expect("seeded symptom");
+            // Row "fd-n-r2-2-a" is fully coded (symptom, mode, cause, mechanism: any reference
+            // value), row "fd-n-r2-2-b" only has a mechanism.
+            let a = (
+                "fd-n-r2-2-a",
+                Some(symptom_id),
+                Some(mode_id),
+                Some(cause_id),
+                Some(mode_id),
+                "A",
+            );
+            let b = ("fd-n-r2-2-b", None::<i64>, None::<i64>, None::<i64>, Some(mode_id), "B");
+            let rows = if a_first { [a, b] } else { [b, a] };
+            for (sync_id, symptom, mode, cause, mechanism, notes) in rows {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO work_order_failure_details (work_order_id, symptom_id, failure_mode_id, \
+                     failure_cause_id, failure_mechanism_id, notes, entity_sync_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        wo_id.into(),
+                        symptom.into(),
+                        mode.into(),
+                        cause.into(),
+                        mechanism.into(),
+                        notes.into(),
+                        sync_id.into(),
+                    ],
+                ))
+                .await
+                .expect("coding row");
+            }
+
+            // The completion gate (`wo::execution`) reads the coded row.
+            let gates = crate::wo::execution::evaluate_completion_gates(&db, wo_id)
+                .await
+                .expect("completion gates");
+            for code in ["FAILURE_MODE", "SYMPTOM"] {
+                assert!(
+                    gates.iter().any(|g| g.code == code && g.passed),
+                    "a_first: {a_first}: {code}: {gates:?}"
+                );
+            }
+
+            // The close-out form shows the chosen row first.
+            let details = closeout::get_failure_details(&db, wo_id).await.expect("details");
+            assert_eq!(details.len(), 2, "nothing merged or deleted");
+            assert_eq!(details[0].notes.as_deref(), Some("A"), "a_first: {a_first}");
+
+            // The close-out gate reads the coded row: no "failure mode required".
+            let evidence = crate::wo::closeout::CloseEvidence {
+                closer_user_id: Some(admin_id(&db).await),
+                no_downtime_attestation: None,
+                no_downtime_attestation_reason: None,
+                fmeca_override_reason: None,
+                fmeca_override_signer_id: None,
+                fmeca_override_signer_password: crate::wo::closeout::SignerPassword::Given(None),
+            };
+            let rpn = crate::reliability::advanced_rams::queries::fmeca_rpn_critical_threshold_i64_in(&db)
+                .await
+                .expect("rpn");
+            let refusals = closeout::close_preflight(&db, wo_id, &evidence, rpn)
+                .await
+                .expect("preflight")
+                .0;
+            assert!(
+                !refusals
+                    .iter()
+                    .any(|m| m.starts_with("GATE_CLOSEOUT_FAILURE_MODE_REQUIRED")),
+                "a_first: {a_first}: {refusals:?}"
+            );
+
+            // The reliability list of closed corrective work orders without a failure mode.
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET closed_at = '2026-10-27T00:00:00Z' WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("closed at");
+            let missing = crate::reliability::queries::list_wos_missing_failure_mode(&db, None, None)
+                .await
+                .expect("missing failure mode");
+            assert!(
+                missing.iter().all(|r| r.work_order_id != wo_id),
+                "a_first: {a_first}: {missing:?}"
+            );
+            // The failure event recorded at the close carries the coded row's failure mode.
+            let event =
+                crate::reliability::queries::ingest_failure_event_from_closed_wo(&db, wo_id, admin_id(&db).await)
+                    .await
+                    .expect("ingest")
+                    .expect("failure event");
+            assert_eq!(event.failure_mode_id, Some(mode_id), "a_first: {a_first}");
+            // A study query (data quality) reads the coded row's cause and mechanism: no gap.
+            let quality = crate::reliability::study::data_quality::data_quality(&db, 1200, admin_id(&db).await as i32)
+                .await
+                .expect("data quality");
+            assert!(
+                quality.coding_gaps.iter().all(|g| g.work_order_id != wo_id),
+                "a_first: {a_first}: {:?}",
+                quality.coding_gaps.iter().map(|g| &g.gap).collect::<Vec<_>>()
+            );
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE work_orders SET closed_at = NULL WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await
+            .expect("reopen");
+
+            // A save edits the chosen row, never the other one.
+            let rv = closeout::wo_row_version(&db, wo_id).await.expect("rv");
+            closeout::save_failure_coding(
+                &db,
+                closeout::SaveFailureCodingInput {
+                    base: SaveFailureDetailInput {
+                        wo_id,
+                        expected_row_version: rv,
+                        symptom_id: None,
+                        failure_mode_id: Some(mode_id),
+                        failure_cause_id: None,
+                        failure_effect_id: None,
+                        is_temporary_repair: false,
+                        is_permanent_repair: true,
+                        cause_not_determined: false,
+                        notes: Some("A edited".into()),
+                    },
+                    failure_mechanism_id: None,
+                    detection_method_id: None,
+                },
+            )
+            .await
+            .expect("save");
+            let by_sync: Vec<(String, Option<String>, Option<i64>)> = db
+                .query_all(Statement::from_string(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT entity_sync_id, notes, failure_mechanism_id FROM work_order_failure_details \
+                         WHERE work_order_id = {wo_id} ORDER BY entity_sync_id"
+                    ),
+                ))
+                .await
+                .expect("rows")
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get_by_index(0).expect("sync"),
+                        r.try_get_by_index(1).expect("notes"),
+                        r.try_get_by_index(2).expect("mechanism"),
+                    )
+                })
+                .collect();
+            seen.push(by_sync);
+        }
+        assert_eq!(seen[0], seen[1], "the same row edited in both orders");
+        assert_eq!(seen[0][0].1.as_deref(), Some("A edited"));
+        assert_eq!(seen[0][0].2, None, "the coding save wrote the chosen row");
+        assert_eq!(seen[0][1].1.as_deref(), Some("B"));
+        assert!(seen[0][1].2.is_some(), "the other PC's row is not rewritten");
     }
 }

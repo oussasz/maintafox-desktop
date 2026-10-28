@@ -62,7 +62,7 @@ pub struct AssetLifecycleEvent {
 /// Payload for recording a lifecycle event. The caller supplies event-type
 /// and the relevant context fields; the service validates required
 /// combinations per event type.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct RecordLifecycleEventPayload {
     pub asset_id: i64,
     pub event_type: String,
@@ -178,7 +178,7 @@ async fn validate_event_type(db: &impl ConnectionTrait, code: &str) -> AppResult
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type d'evenement '{code}' introuvable dans le domaine \
+            "GATE_ASSET_LIFECYCLE_EVENT_UNKNOWN: Type d'evenement '{code}' introuvable dans le domaine \
              'equipment.lifecycle_event_type'."
         )]));
     }
@@ -240,23 +240,27 @@ fn validate_payload_for_event_type(payload: &RecordLifecycleEventPayload) -> App
     match et {
         "MOVED" => {
             if payload.from_org_node_id.is_none() {
-                errors.push("Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into());
+                errors.push(
+                    "GATE_ASSET_LIFECYCLE_MOVED_FROM: Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into(),
+                );
             }
             if payload.to_org_node_id.is_none() {
-                errors.push("Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into());
+                errors.push(
+                    "GATE_ASSET_LIFECYCLE_MOVED_TO: Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into(),
+                );
             }
         }
         "REPLACED" => {
             if payload.related_asset_id.is_none() {
-                errors.push("Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_REPLACED_RELATED: Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into());
             }
         }
         "RECLASSIFIED" => {
             if payload.from_class_code.is_none() {
-                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_RECLASSIFIED_FROM: Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into());
             }
             if payload.to_class_code.is_none() {
-                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into());
+                errors.push("GATE_ASSET_LIFECYCLE_RECLASSIFIED_TO: Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into());
             }
         }
         // Other event types have no mandatory extra fields beyond the base set.
@@ -325,6 +329,8 @@ pub async fn list_asset_lifecycle_events(
 ///     `equipment_status_ref_id`
 ///   - `RECOMMISSIONED` → sets `equipment.lifecycle_status` to
 ///     `payload.to_status_code` (required) and clears `decommissioned_at`
+///   - `MOVED` → moves the asset through `hierarchy::move_asset_org_node_in` (version required,
+///     retired asset refused, target node validated)
 pub async fn record_lifecycle_event(
     db: &DatabaseConnection,
     payload: RecordLifecycleEventPayload,
@@ -361,9 +367,10 @@ pub(crate) async fn record_lifecycle_event_in(
     let (current_status, current_node_id, _current_class_id) = assert_asset_exists(txn, payload.asset_id).await?;
 
     // ── 2b. Auto-enrich payload from current asset state ─────────────────
-    // For MOVED events, capture the current org node as from_org_node_id
-    // if the caller did not supply it explicitly.
-    if payload.event_type == "MOVED" && payload.from_org_node_id.is_none() {
+    // For MOVED events, the origin is the asset's current org node, read in this transaction
+    // (the move below is checked against the version the person saw): a value sent by the caller
+    // is never recorded in its place, so the history never shows a move from elsewhere.
+    if payload.event_type == "MOVED" {
         payload.from_org_node_id = current_node_id;
     }
     // For status-changing events, capture the current status as from_status.
@@ -391,7 +398,7 @@ pub(crate) async fn record_lifecycle_event_in(
                 Some("SCRAPPED") => "SCRAPPED".to_string(),
                 Some(other) => {
                     return Err(AppError::ValidationFailed(vec![format!(
-                        "Statut terminal invalide '{other}' pour un événement DECOMMISSIONED. \
+                        "GATE_ASSET_DECOMMISSION_TARGET_INVALID: Statut terminal invalide '{other}' pour un événement DECOMMISSIONED. \
                          Valeurs autorisées: DECOMMISSIONED, SCRAPPED."
                     )]));
                 }
@@ -460,16 +467,18 @@ pub(crate) async fn record_lifecycle_event_in(
             }
         }
         "MOVED" => {
-            // Update installed_at_node_id to reflect the move.
+            // A move recorded as an event goes through the move action's own checks (version the
+            // person saw, asset not retired, target node active) and write: never around them.
+            let expected = payload.expected_row_version.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_ASSET_LIFECYCLE_MOVED_VERSION: Un evenement de type 'MOVED' requiert la version \
+                     de l'equipement vue a l'ecran ('expected_row_version')."
+                        .into(),
+                ])
+            })?;
             if let Some(to_node_id) = payload.to_org_node_id {
-                txn.execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "UPDATE equipment SET installed_at_node_id = ?, \
-                     updated_at = ?, row_version = row_version + 1 \
-                     WHERE id = ?",
-                    [to_node_id.into(), now.clone().into(), payload.asset_id.into()],
-                ))
-                .await?;
+                crate::assets::hierarchy::move_asset_org_node_in(txn, payload.asset_id, to_node_id, expected).await?;
+                audit_move_in(txn, payload.asset_id, payload.from_org_node_id, to_node_id, actor_id).await?;
             }
         }
         _ => {}
@@ -520,4 +529,65 @@ pub(crate) async fn record_lifecycle_event_in(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("lifecycle event created but not found after insert")))?;
     map_lifecycle_event(&row)
+}
+
+/// Audit action of an equipment move (D19).
+pub(crate) const ASSET_MOVED_EVENT: &str = "asset.moved";
+
+/// Moves an asset in the caller's transaction and records it (D19): a `MOVED` lifecycle event
+/// (the person, from, to, now) and an audit entry, committed or rolled back with the move. A move
+/// to the node the asset is already on changes nothing. An asset with no location yet is placed
+/// without a lifecycle event (a move has an origin), and the placement is still audited.
+pub(crate) async fn move_asset_recorded_in(
+    txn: &DatabaseTransaction,
+    asset_id: i64,
+    to_node_id: i64,
+    expected_row_version: i64,
+    actor_id: i32,
+) -> AppResult<()> {
+    let (_, current_node_id, _) = assert_asset_exists(txn, asset_id).await?;
+    match current_node_id {
+        Some(from) if from == to_node_id => Ok(()),
+        Some(_) => {
+            let payload = RecordLifecycleEventPayload {
+                asset_id,
+                event_type: "MOVED".into(),
+                to_org_node_id: Some(to_node_id),
+                expected_row_version: Some(expected_row_version),
+                ..Default::default()
+            };
+            record_lifecycle_event_in(txn, payload, actor_id).await?;
+            Ok(())
+        }
+        None => {
+            crate::assets::hierarchy::move_asset_org_node_in(txn, asset_id, to_node_id, expected_row_version).await?;
+            audit_move_in(txn, asset_id, None, to_node_id, actor_id).await
+        }
+    }
+}
+
+async fn audit_move_in(
+    conn: &impl ConnectionTrait,
+    asset_id: i64,
+    from_node_id: Option<i64>,
+    to_node_id: i64,
+    actor_id: i32,
+) -> AppResult<()> {
+    let target = asset_id.to_string();
+    crate::audit::emit_in(
+        conn,
+        crate::audit::AuditEvent {
+            event_type: ASSET_MOVED_EVENT,
+            actor_id: Some(actor_id),
+            entity_type: Some("equipment"),
+            entity_id: Some(&target),
+            summary: "Equipment moved",
+            detail_json: Some(
+                serde_json::json!({ "from_org_node_id": from_node_id, "to_org_node_id": to_node_id }).to_string(),
+            ),
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(())
 }

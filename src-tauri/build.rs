@@ -1,6 +1,7 @@
 use std::path::Path;
 
-/// Same variable the webview uses (`controlPlaneApiBase()` in product-license-service.ts).
+/// The control API URL of every call to it (sync, updates, licence activation), all sent from Rust;
+/// read from Vite's `.env` files, hence the `VITE_` name.
 const API_BASE_ENV: &str = "VITE_ADMIN_API_BASE_URL";
 
 /// `KEY=value` from a dotenv file (comments, `export` and surrounding quotes handled like Vite).

@@ -24,10 +24,16 @@ static CHAIN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Writes and chains an audit event in its own transaction. Persistence failures are returned
 /// (and logged) so callers can decide whether to block.
-pub async fn write_audit_event(pool: &sea_orm::DatabaseConnection, input: AuditEventInput) -> AppResult<i64> {
-    let _guard = CHAIN_LOCK.lock().await;
+/// Lock order: the connection (the transaction) first, then [`CHAIN_LOCK`]. `pool` may itself be a
+/// transaction holding the only pool connection (the seed repair, `commands::diagnostics`): taking
+/// the lock first would let a task hold the lock while waiting for that connection.
+pub async fn write_audit_event(
+    pool: &(impl ConnectionTrait + TransactionTrait),
+    input: AuditEventInput,
+) -> AppResult<i64> {
     let result = async {
         let txn = pool.begin().await?;
+        let _guard = CHAIN_LOCK.lock().await;
         let id = write_audit_event_in(&txn, input).await?;
         txn.commit().await?;
         Ok(id)

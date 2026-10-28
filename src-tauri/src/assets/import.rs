@@ -317,7 +317,7 @@ pub async fn parse_and_stage_csv(
     let batch = get_batch_by_id(db, batch_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
+            "GATE_ASSET_IMPORT_STATUS_LOAD:status={0}: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet le chargement.",
             batch.status
         )]));
     }
@@ -331,7 +331,11 @@ pub async fn parse_and_stage_csv(
 
     let raw_headers: Vec<String> = reader
         .headers()
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire les en-tetes CSV: {e}")]))?
+        .map_err(|e| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_IMPORT_CSV_HEADERS: Impossible de lire les en-tetes CSV: {e}"
+            )])
+        })?
         .iter()
         .map(|h| h.to_string())
         .collect();
@@ -345,7 +349,7 @@ pub async fn parse_and_stage_csv(
         .any(|h| matches!(h, Some("asset_code") | Some("external_key")));
     if !has_identity {
         return Err(AppError::ValidationFailed(vec![
-            "Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents)."
+            "GATE_ASSET_IMPORT_CSV_COLUMNS: Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents)."
                 .into(),
         ]));
     }
@@ -354,8 +358,12 @@ pub async fn parse_and_stage_csv(
 
     let mut row_no: i64 = 0;
     for result in reader.records() {
-        let record =
-            result.map_err(|e| AppError::ValidationFailed(vec![format!("Erreur CSV ligne {}: {e}", row_no + 2)]))?;
+        let record = result.map_err(|e| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_ASSET_IMPORT_CSV_ROW:line={0}: Erreur CSV ligne {}: {e}",
+                row_no + 2
+            )])
+        })?;
         row_no += 1;
 
         // Build normalized field map
@@ -417,14 +425,14 @@ pub async fn validate_import_batch(
     let batch = get_batch_by_id(db, batch_id).await?;
     if batch.status != "uploaded" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
+            "GATE_ASSET_IMPORT_STATUS_VALIDATE:status={0}: Le lot d'import est en statut '{}'; seul le statut 'uploaded' permet la validation.",
             batch.status
         )]));
     }
 
     if batch.total_rows == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le lot d'import ne contient aucune ligne.".into(),
+            "GATE_ASSET_IMPORT_EMPTY: Le lot d'import ne contient aucune ligne.".into(),
         ]));
     }
 
@@ -717,12 +725,12 @@ pub async fn apply_import_batch(
     // ── Idempotency guard ────────────────────────────────────────────────
     if batch.status == "applied" {
         return Err(AppError::ValidationFailed(vec![
-            "Ce lot d'import a déjà été appliqué.".into()
+            "GATE_ASSET_IMPORT_ALREADY_APPLIED: Ce lot d'import a déjà été appliqué.".into(),
         ]));
     }
     if batch.status != "validated" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
+            "GATE_ASSET_IMPORT_STATUS_APPLY:status={0}: Le lot d'import est en statut '{}'; seul le statut 'validated' permet l'application.",
             batch.status
         )]));
     }
@@ -893,20 +901,20 @@ async fn apply_single_row(
     ext_system: &str,
 ) -> AppResult<RowOutcome> {
     // ── Resolve classification references ────────────────────────────────
-    let class_code = normalized
-        .class_code
-        .as_deref()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["class_code requis.".into()]))?;
+    let class_code = normalized.class_code.as_deref().ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_ASSET_IMPORT_CLASS_REQUIRED: class_code requis.".into()])
+    })?;
     let (class_id, class_parent_id) = identity::resolve_class_code(txn, class_code).await?;
 
     if let Some(ref fc) = normalized.family_code {
         identity::validate_family_code(txn, fc, class_id, class_parent_id).await?;
     }
 
-    let criticality_code = normalized
-        .criticality_code
-        .as_deref()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["criticality_code requis.".into()]))?;
+    let criticality_code = normalized.criticality_code.as_deref().ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_ASSET_IMPORT_CRITICALITY_REQUIRED: criticality_code requis.".into()
+        ])
+    })?;
     let criticality_value_id = identity::resolve_criticality_code(txn, criticality_code).await?;
 
     let status_code = normalized.status_code.as_deref().unwrap_or("IN_SERVICE");
@@ -954,8 +962,11 @@ async fn apply_single_row(
         }
         None => {
             // Validate and ensure uniqueness of asset_code for new rows
-            let code = asset_code
-                .ok_or_else(|| AppError::ValidationFailed(vec!["asset_code requis pour la création.".into()]))?;
+            let code = asset_code.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "GATE_ASSET_IMPORT_CODE_REQUIRED: asset_code requis pour la création.".into(),
+                ])
+            })?;
             let validated_code = identity::validate_asset_code(code)?;
             identity::assert_asset_code_unique(txn, &validated_code, None).await?;
 

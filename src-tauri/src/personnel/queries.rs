@@ -169,7 +169,7 @@ pub async fn assert_no_supervisor_cycle(
 ) -> AppResult<()> {
     if supervisor_id == personnel_id {
         return Err(AppError::ValidationFailed(vec![
-            "Un collaborateur ne peut pas être son propre superviseur.".into(),
+            "GATE_PERS_SUPERVISOR_SELF: Un collaborateur ne peut pas être son propre superviseur.".into(),
         ]));
     }
     // Walk the supervisor chain from `supervisor_id` up; if we encounter `personnel_id`, there is a cycle.
@@ -188,7 +188,7 @@ pub async fn assert_no_supervisor_cycle(
             None => break,
             Some(sup) if sup == personnel_id => {
                 return Err(AppError::ValidationFailed(vec![
-                    "La relation de supervision crée un cycle.".into(),
+                    "GATE_PERS_SUPERVISOR_CYCLE: La relation de supervision crée un cycle.".into(),
                 ]));
             }
             Some(sup) => {
@@ -326,7 +326,7 @@ pub async fn assert_position_exists(db: &DatabaseConnection, id: i64) -> AppResu
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Poste (position_id={id}) introuvable."
+            "GATE_PERS_POSITION_UNKNOWN:position_id={id}: Poste (position_id={id}) introuvable."
         )]));
     }
     Ok(())
@@ -337,10 +337,10 @@ pub async fn assert_org_node_exists(db: &DatabaseConnection, id: i64) -> AppResu
         .await
         .map_err(|e| match e {
             AppError::NotFound { .. } => {
-                AppError::ValidationFailed(vec![format!("Nœud d'organisation (id={id}) introuvable.")])
+                AppError::ValidationFailed(vec![format!("GATE_PERS_ORG_NODE_UNKNOWN:node_id={id}: Nœud d'organisation (id={id}) introuvable.")])
             }
             AppError::ValidationFailed(_) => AppError::ValidationFailed(vec![format!(
-                "Nœud d'organisation (id={id}) introuvable ou non publié."
+                "GATE_PERS_ORG_NODE_NOT_PUBLISHED:node_id={id}: Nœud d'organisation (id={id}) introuvable ou non publié."
             )]),
             other => other,
         })
@@ -568,14 +568,14 @@ pub async fn create_personnel(
 
     if input.employment_origin == "external" && input.external_company_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "external_company_id est requis pour un collaborateur externe.".into(),
+            "GATE_PERS_EXTERNAL_COMPANY_REQUIRED: external_company_id est requis pour un collaborateur externe.".into(),
         ]));
     }
 
     if let (Some(ref start), Some(ref end)) = (&input.contract_start_date, &input.contract_end_date) {
         if start > end {
             return Err(AppError::ValidationFailed(vec![
-                "contract_start_date ne peut pas être après contract_end_date.".into(),
+                "GATE_PERS_CONTRACT_DATES_ORDER: contract_start_date ne peut pas être après contract_end_date.".into(),
             ]));
         }
     }
@@ -586,7 +586,7 @@ pub async fn create_personnel(
         let trimmed = input.employee_code.trim();
         if trimmed.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Le code employé ne peut pas être vide.".into(),
+                "GATE_PERS_EMPLOYEE_CODE_REQUIRED: Le code employé ne peut pas être vide.".into(),
             ]));
         }
         let dup = txn
@@ -598,7 +598,7 @@ pub async fn create_personnel(
             .await?;
         if dup.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Le code employé « {trimmed} » est déjà utilisé."
+                "GATE_PERS_EMPLOYEE_CODE_DUPLICATE: Le code employé « {trimmed} » est déjà utilisé."
             )]));
         }
         trimmed.to_string()
@@ -621,7 +621,7 @@ pub async fn create_personnel(
             .await?;
         if exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Superviseur introuvable (id={sup_id})."
+                "GATE_PERS_SUPERVISOR_UNKNOWN:supervisor_id={sup_id}: Superviseur introuvable (id={sup_id})."
             )]));
         }
     }
@@ -668,9 +668,11 @@ pub async fn create_personnel(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec!["Code employé en doublon.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_PERS_EMPLOYEE_CODE_DUPLICATE: Code employé en doublon.".into()
+            ])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec!["Référence invalide (FK).".into()])
+            AppError::ValidationFailed(vec!["GATE_PERS_REFERENCE_INVALID: Référence invalide (FK).".into()])
         } else {
             AppError::Database(e)
         }
@@ -741,7 +743,8 @@ pub async fn update_personnel(
     // Gate: terminated personnel cannot be edited
     if current.employment_status == "terminated" {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible de modifier un collaborateur dont le statut est terminé.".into(),
+            "GATE_PERS_PERSON_TERMINATED_LOCKED: Impossible de modifier un collaborateur dont le statut est terminé."
+                .into(),
         ]));
     }
     // Gate: inactive requires reactivation first
@@ -749,7 +752,7 @@ pub async fn update_personnel(
         let reactivates = input.employment_status.as_deref().is_some_and(|s| s != "inactive");
         if !reactivates {
             return Err(AppError::ValidationFailed(vec![
-                "Impossible de modifier un collaborateur inactif sans le réactiver (employment_status).".into(),
+                "GATE_PERS_PERSON_INACTIVE_LOCKED: Impossible de modifier un collaborateur inactif sans le réactiver (employment_status).".into(),
             ]));
         }
     }
@@ -804,7 +807,7 @@ pub async fn update_personnel(
     };
     if eff_origin == "external" && eff_company.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "external_company_id est requis pour un collaborateur externe.".into(),
+            "GATE_PERS_EXTERNAL_COMPANY_REQUIRED: external_company_id est requis pour un collaborateur externe.".into(),
         ]));
     }
 
@@ -820,7 +823,7 @@ pub async fn update_personnel(
     if let (Some(start), Some(end)) = (eff_start, eff_end) {
         if start > end {
             return Err(AppError::ValidationFailed(vec![
-                "contract_start_date ne peut pas être après contract_end_date.".into(),
+                "GATE_PERS_CONTRACT_DATES_ORDER: contract_start_date ne peut pas être après contract_end_date.".into(),
             ]));
         }
     }
@@ -974,7 +977,7 @@ pub async fn update_personnel(
                 .await?;
             if dup.is_some() {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Le code employé « {trimmed} » est déjà utilisé."
+                    "GATE_PERS_EMPLOYEE_CODE_DUPLICATE: Le code employé « {trimmed} » est déjà utilisé."
                 )]));
             }
             sets.push("employee_code = ?".into());
@@ -1003,7 +1006,7 @@ pub async fn update_personnel(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -1058,7 +1061,7 @@ pub async fn deactivate_personnel(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+            "GATE_RECORD_CHANGED_ELSEWHERE: Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
              Veuillez recharger et réessayer."
                 .into(),
         ]));
@@ -1207,7 +1210,7 @@ pub async fn upsert_position(
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code et le nom du poste sont obligatoires.".into(),
+            "GATE_PERS_POSITION_FIELDS_REQUIRED: Le code et le nom du poste sont obligatoires.".into(),
         ]));
     }
 
@@ -1240,7 +1243,7 @@ pub async fn upsert_position(
             .await?;
         if dup.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Le code position « {} » est déjà utilisé.",
+                "GATE_PERS_POSITION_CODE_DUPLICATE: Le code position « {} » est déjà utilisé.",
                 input.code
             )]));
         }
@@ -1271,7 +1274,7 @@ pub async fn upsert_position(
             .await?;
         if dup.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Le code position « {} » est déjà utilisé.",
+                "GATE_PERS_POSITION_CODE_DUPLICATE: Le code position « {} » est déjà utilisé.",
                 input.code
             )]));
         }
@@ -2288,7 +2291,7 @@ pub async fn set_team_lead(
 
     if open.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Cette personne n'est pas membre actif de cette équipe.".into(),
+            "GATE_PERS_NOT_TEAM_MEMBER: Cette personne n'est pas membre actif de cette équipe.".into(),
         ]));
     }
 
@@ -2356,7 +2359,9 @@ pub async fn set_team_lead(
         .into_iter()
         .find(|m| m.personnel_id == input.personnel_id)
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["Cette personne n'est pas membre actif de cette équipe.".into()])
+            AppError::ValidationFailed(vec![
+                "GATE_PERS_NOT_TEAM_MEMBER: Cette personne n'est pas membre actif de cette équipe.".into(),
+            ])
         })
 }
 
@@ -2379,7 +2384,8 @@ pub async fn list_personnel_availability_blocks(
                 b.is_critical,
                 b.created_by_id,
                 COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS created_by_label,
-                b.created_at
+                b.created_at,
+                b.row_version
              FROM personnel_availability_blocks b
              LEFT JOIN user_accounts ua ON ua.id = b.created_by_id
              WHERE b.personnel_id = ?
@@ -2402,6 +2408,7 @@ pub async fn list_personnel_availability_blocks(
             created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
             created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
+            row_version: row.try_get("", "row_version").unwrap_or_default(),
             reason_masked: false,
             type_masked: false,
             critical_for_planning: false,

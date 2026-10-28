@@ -76,7 +76,9 @@ fn normalize_email(raw: &str) -> AppResult<Option<String>> {
         && !normalized.ends_with('@')
         && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
     if !is_valid {
-        return Err(AppError::ValidationFailed(vec!["Adresse e-mail invalide.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PROFILE_EMAIL_INVALID: Adresse e-mail invalide.".into(),
+        ]));
     }
     Ok(Some(normalized))
 }
@@ -92,7 +94,9 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
             if idx == 0 {
                 out.push(ch);
             } else {
-                return Err(AppError::ValidationFailed(vec!["Numéro de téléphone invalide.".into()]));
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_PROFILE_PHONE_INVALID: Numéro de téléphone invalide.".into(),
+                ]));
             }
         } else if ch.is_ascii_digit() {
             out.push(ch);
@@ -106,7 +110,7 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
     let digits = out.chars().filter(|c| c.is_ascii_digit()).count();
     if !(8..=15).contains(&digits) {
         return Err(AppError::ValidationFailed(vec![
-            "Numéro de téléphone invalide (format E.164 attendu).".into(),
+            "GATE_PROFILE_PHONE_FORMAT: Numéro de téléphone invalide (format E.164 attendu).".into(),
         ]));
     }
     Ok(Some(out))
@@ -183,7 +187,7 @@ pub async fn update_my_profile(payload: UpdateProfilePayload, state: State<'_, A
         let trimmed = dn.trim();
         if trimmed.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Le nom d'affichage ne peut pas être vide.".into(),
+                "GATE_PROFILE_DISPLAY_NAME_EMPTY: Le nom d'affichage ne peut pas être vide.".into(),
             ]));
         }
         set_parts.push("display_name = ?".into());
@@ -204,7 +208,7 @@ pub async fn update_my_profile(payload: UpdateProfilePayload, state: State<'_, A
                 .await?;
             if dup.is_some() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Adresse e-mail déjà utilisée par un autre compte.".into(),
+                    "GATE_PROFILE_EMAIL_TAKEN: Adresse e-mail déjà utilisée par un autre compte.".into(),
                 ]));
             }
         }
@@ -274,19 +278,22 @@ pub(crate) async fn change_password_impl(state: &AppState, payload: ChangePasswo
         .5
         .ok_or_else(|| AppError::Auth("Aucun mot de passe local configuré.".into()))?;
 
-    // Verify current password
-    let ok = password::verify_password(&payload.current_password, &stored_hash)?;
+    // Verify current password, under the sign-in lockout (too many wrong ones end the session).
+    let session_db_id = crate::commands::auth::current_session_db_id(state).await?;
+    let audit = crate::commands::auth::WrongPasswordAudit {
+        event_type: "user.password_change_failed",
+        summary: "Password change failed — wrong current password",
+    };
+    let ok = crate::commands::auth::check_session_password(
+        state,
+        &user,
+        &session_db_id,
+        &payload.current_password,
+        &stored_hash,
+        audit,
+    )
+    .await?;
     if !ok {
-        crate::audit::emit(
-            &state.db,
-            crate::audit::AuditEvent {
-                event_type: "user.password_change_failed",
-                actor_id: Some(user.user_id),
-                summary: "Password change failed — wrong current password",
-                ..Default::default()
-            },
-        )
-        .await;
         return Err(AppError::Auth("Le mot de passe actuel est incorrect.".into()));
     }
 

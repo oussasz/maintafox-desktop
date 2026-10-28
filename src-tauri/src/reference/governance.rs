@@ -314,7 +314,7 @@ pub fn metadata_marks_system_origin(metadata_json: Option<&str>) -> bool {
 pub fn assert_system_value_mutable(domain: &ReferenceDomain, value_metadata_json: Option<&str>) -> AppResult<()> {
     if system_values_locked(domain) && metadata_marks_system_origin(value_metadata_json) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Cette valeur est fournie par le produit pour le domaine '{}' et ne peut pas être modifiée              ni désactivée. Ajoutez un alias pour un libellé local, ou créez votre propre valeur.",
+            "GATE_REF_PRODUCT_VALUE_LOCKED: Cette valeur est fournie par le produit pour le domaine '{}' et ne peut pas être modifiée              ni désactivée. Ajoutez un alias pour un libellé local, ou créez votre propre valeur.",
             domain.code
         )]));
     }
@@ -325,7 +325,7 @@ pub fn assert_system_value_mutable(domain: &ReferenceDomain, value_metadata_json
 pub fn assert_not_claiming_system_origin(metadata_json: Option<&str>) -> AppResult<()> {
     if metadata_marks_system_origin(metadata_json) {
         return Err(AppError::ValidationFailed(vec![
-            "L'origine « system » est réservée aux valeurs fournies par le produit.".into(),
+            "GATE_REF_ORIGIN_RESERVED: L'origine « system » est réservée aux valeurs fournies par le produit.".into(),
         ]));
     }
     Ok(())
@@ -411,7 +411,7 @@ pub fn assert_allows_operational_create(domain: &ReferenceDomain) -> AppResult<(
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' n'autorise pas la création opérationnelle \
+        "GATE_REF_DOMAIN_NO_OPERATIONAL_CREATE: Le domaine '{}' n'autorise pas la création opérationnelle \
          (catégorie={}).",
         domain.code,
         cat.as_str()
@@ -425,20 +425,20 @@ pub fn assert_allows_value_mutation(domain: &ReferenceDomain, set: &ReferenceSet
     }
     if matches!(cat, GovernanceCategory::SystemCatalog) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le domaine '{}' est un catalogue système (lecture seule).",
+            "GATE_REF_DOMAIN_SYSTEM_READONLY: Le domaine '{}' est un catalogue système (lecture seule).",
             domain.code
         )]));
     }
     if !set_is_draft(set) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons ('draft') peuvent être modifiés.",
             set.status
         )]));
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' (catégorie={}) n'autorise pas cette mutation \
-         sur un jeu en statut '{}'.",
+        "GATE_REF_DOMAIN_NO_MUTATION_IN_SET:status={2}: Le domaine '{0}' (catégorie={1}) n'autorise pas cette mutation \
+         sur un jeu en statut '{2}'.",
         domain.code,
         cat.as_str(),
         set.status
@@ -451,7 +451,7 @@ pub fn assert_allows_create_draft_set(domain: &ReferenceDomain) -> AppResult<()>
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' (catégorie={}) n'autorise pas la création de brouillons.",
+        "GATE_REF_DOMAIN_NO_DRAFT: Le domaine '{}' (catégorie={}) n'autorise pas la création de brouillons.",
         domain.code,
         cat.as_str()
     )]))
@@ -463,7 +463,7 @@ pub fn assert_allows_publish(domain: &ReferenceDomain) -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Le domaine '{}' (catégorie={}) n'autorise pas la publication de jeux.",
+        "GATE_REF_DOMAIN_NO_PUBLISH: Le domaine '{}' (catégorie={}) n'autorise pas la publication de jeux.",
         domain.code,
         cat.as_str()
     )]))

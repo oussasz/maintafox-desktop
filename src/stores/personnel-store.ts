@@ -4,7 +4,8 @@
 
 import { create } from "zustand";
 
-import { appErrorText } from "@/lib/app-error";
+import { appErrorReason, appErrorText } from "@/lib/app-error";
+import { isStepUpCancelledError } from "@/lib/step-up-bridge";
 import {
   createPersonnel,
   deactivatePersonnel,
@@ -12,7 +13,7 @@ import {
   listPersonnel,
   updatePersonnel,
 } from "@/services/personnel-service";
-import { toErrorMessage } from "@/utils/errors";
+import { isStepUpRequiredError } from "@/utils/errors";
 import type {
   Personnel,
   PersonnelCreateInput,
@@ -79,7 +80,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       const page = await listPersonnel({ ...get().filter, offset: 0 });
       set({ items: page.items, total: page.total });
     } catch (err) {
-      set({ error: toErrorMessage(err), loadError: err });
+      set({ error: appErrorReason(err), loadError: err });
     } finally {
       set({ loading: false });
     }
@@ -111,7 +112,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       const detail = await getPersonnel(id);
       set({ activePersonnel: detail });
     } catch (err) {
-      set({ error: toErrorMessage(err), detailError: err });
+      set({ error: appErrorReason(err), detailError: err });
     }
   },
 
@@ -127,7 +128,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       set({ showCreateForm: false, editingPersonnel: null });
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -145,7 +146,8 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       }
       await get().loadPersonnel();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      if (!isStepUpRequiredError(err) && !isStepUpCancelledError(err))
+        set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -164,7 +166,8 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       }
     } catch (err) {
       // A refusal (open work orders) is coded: shown in the user's language.
-      set({ error: appErrorText(err) });
+      if (!isStepUpRequiredError(err) && !isStepUpCancelledError(err))
+        set({ error: appErrorText(err) });
       throw err;
     } finally {
       set({ saving: false });

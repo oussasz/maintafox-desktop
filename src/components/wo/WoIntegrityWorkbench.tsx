@@ -17,12 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSession } from "@/hooks/use-session";
+import { useFormatters } from "@/hooks/use-formatters";
 import { describeAppError } from "@/lib/app-error";
 import { listAnalyticsContractVersions } from "@/services/analytics-contract-service";
 import {
   applyDataIntegrityRepair,
   listDataIntegrityFindings,
+  listIntegrityWaiverApprovers,
   runDataIntegrityDetectors,
   waiveDataIntegrityFinding,
 } from "@/services/data-integrity-service";
@@ -44,10 +45,80 @@ function repairOptionsForCode(code: string): { value: string; labelKey: string }
   }
 }
 
-export function WoIntegrityWorkbench() {
+const DETAIL_KEYS = [
+  "work_order_id",
+  "linked_work_order_id",
+  "permit_code",
+  "status",
+  "equipment_code",
+  "failure_mode_id",
+  "segment_id",
+  "segment_id_a",
+  "segment_id_b",
+  "segment_sum_hours",
+  "window_hours",
+] as const;
+
+/** The finding's JSON details as readable "label : value" pairs (known fields only). */
+function findingDetails(
+  json: string,
+  label: (key: string, fallback: string) => string,
+  formatNumber: (n: number) => string,
+): { label: string; value: string }[] {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const out: { label: string; value: string }[] = [];
+  for (const key of DETAIL_KEYS) {
+    const v = parsed[key];
+    if (v === null || v === undefined || v === "") continue;
+    out.push({
+      label: label(`integrity.detail.${key}`, key),
+      value: typeof v === "number" ? formatNumber(v) : String(v),
+    });
+  }
+  return out;
+}
+
+/** A person the waiver may name as second person (`user_accounts.id` as a Select value). */
+interface ApproverOption {
+  value: string;
+  label: string;
+}
+
+export function WoIntegrityWorkbench({ reloadSignal = 0 }: { reloadSignal?: number }) {
   const { t } = useTranslation("ot");
-  const { info } = useSession();
-  const userId = info?.user_id ?? null;
+  // Read for every finding row from the backend's own waiver rule (AU-116): only people the waiver
+  // check accepts, the current user already left out.
+  const [approvers, setApprovers] = useState<ApproverOption[]>([]);
+  const [approversLoading, setApproversLoading] = useState(true);
+  const [approversFailed, setApproversFailed] = useState(false);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reloadSignal` is the page Refresh button.
+  useEffect(() => {
+    let cancelled = false;
+    setApproversLoading(true);
+    listIntegrityWaiverApprovers()
+      .then((list) => {
+        if (cancelled) return;
+        setApprovers(list.map((p) => ({ value: String(p.user_id), label: p.display_name })));
+        setApproversFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setApprovers([]);
+        setApproversFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setApproversLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadSignal]);
 
   const [rows, setRows] = useState<DataIntegrityFindingRow[]>([]);
   const [contracts, setContracts] = useState<AnalyticsContractVersionRow[]>([]);
@@ -72,9 +143,10 @@ export function WoIntegrityWorkbench() {
     }
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reloadSignal` is the page Refresh button.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadSignal]);
 
   const onRunDetectors = useCallback(async () => {
     setRunning(true);
@@ -126,12 +198,19 @@ export function WoIntegrityWorkbench() {
             })}
           </p>
         )}
-        <div className="mt-3 space-y-2 max-h-[220px] overflow-auto">
+        <div className="mt-3 space-y-2 max-h-[60vh] overflow-auto">
           {rows.length === 0 && !loading && (
             <p className="text-xs text-text-muted">{t("integrity.empty")}</p>
           )}
           {rows.map((r) => (
-            <FindingRow key={r.id} row={r} currentUserId={userId} onRefresh={() => void load()} />
+            <FindingRow
+              key={r.id}
+              row={r}
+              approvers={approvers}
+              approversFailed={approversFailed}
+              approversLoading={approversLoading}
+              onRefresh={() => void load()}
+            />
           ))}
         </div>
       </div>
@@ -141,11 +220,15 @@ export function WoIntegrityWorkbench() {
 
 function FindingRow({
   row,
-  currentUserId,
+  approvers,
+  approversFailed,
+  approversLoading,
   onRefresh,
 }: {
   row: DataIntegrityFindingRow;
-  currentUserId: number | null;
+  approvers: ApproverOption[];
+  approversFailed: boolean;
+  approversLoading: boolean;
   onRefresh: () => void;
 }) {
   const { t } = useTranslation("ot");
@@ -153,6 +236,15 @@ function FindingRow({
   const [reason, setReason] = useState("");
   const [approverId, setApproverId] = useState("");
   const [busy, setBusy] = useState(false);
+  const { formatNumber } = useFormatters();
+  const tText = useCallback(
+    (key: string, fallback: string) => t(key, { defaultValue: fallback }) as string,
+    [t],
+  );
+  const details = useMemo(
+    () => findingDetails(row.details_json, tText, formatNumber),
+    [row.details_json, tText, formatNumber],
+  );
 
   const opts = useMemo(() => repairOptionsForCode(row.finding_code), [row.finding_code]);
 
@@ -202,36 +294,54 @@ function FindingRow({
     <div className="rounded-md border border-surface-border p-2 text-xs space-y-2 bg-background">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className={`text-[10px] border-0 ${severityClass}`}>
-          {row.severity}
+          {tText(`integrity.severity.${row.severity}`, row.severity)}
         </Badge>
-        <span className="font-mono text-[10px] text-text-muted">{row.finding_code}</span>
+        <span className="font-medium text-text-primary" title={row.finding_code}>
+          {tText(`integrity.code.${row.finding_code}`, t("integrity.unknownCode"))}
+        </span>
         <span className="text-text-muted">
           {t("integrity.diagnosticTarget", {
-            domain: row.domain,
-            recordClass: row.record_class,
+            domain: tText(`integrity.domain.${row.domain}`, row.domain),
+            recordClass: tText(`integrity.recordClass.${row.record_class}`, row.record_class),
           })}
         </span>
       </div>
-      <pre className="text-[10px] bg-surface-2/50 p-2 rounded overflow-x-auto max-h-32">
-        {row.details_json}
-      </pre>
+      {details.length > 0 && (
+        <p className="text-[11px] text-text-muted">
+          {details.map((d) => `${d.label} : ${d.value}`).join(" · ")}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 items-end">
         {row.severity === "error" && (
           <div className="flex flex-col gap-0.5">
-            <label className="text-[10px] text-text-muted">{t("integrity.approverId")}</label>
-            <Input
-              className="h-7 w-28 text-xs"
-              inputMode="numeric"
-              value={approverId}
-              onChange={(e) => setApproverId(e.target.value)}
-              placeholder={t("integrity.approverPlaceholder")}
-            />
+            <label className="text-[10px] text-text-muted">{t("integrity.approverPick")}</label>
+            <Select
+              value={approverId || "__none"}
+              onValueChange={(v) => setApproverId(v === "__none" ? "" : v)}
+            >
+              <SelectTrigger className="h-10 w-48 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">{t("integrity.approverNone")}</SelectItem>
+                {approvers.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!approversLoading && (approversFailed || approvers.length === 0) ? (
+              <span className="text-[10px] text-destructive">
+                {t("integrity.approverNoneAvailable")}
+              </span>
+            ) : null}
           </div>
         )}
         <div className="flex flex-col gap-0.5 flex-1 min-w-[160px]">
           <label className="text-[10px] text-text-muted">{t("integrity.waiverReason")}</label>
           <Input
-            className="h-7 text-xs"
+            className="h-10 text-xs"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder={t("integrity.waiverReasonPlaceholder")}
@@ -240,13 +350,8 @@ function FindingRow({
         <Button
           size="sm"
           variant="secondary"
-          className="h-7"
-          disabled={
-            busy ||
-            (row.severity === "error" &&
-              currentUserId != null &&
-              Number(approverId) === currentUserId)
-          }
+          className="h-10"
+          disabled={busy || (row.severity === "error" && !approverId)}
           onClick={() => void onWaive()}
         >
           {t("integrity.waive")}
@@ -257,7 +362,7 @@ function FindingRow({
           <div className="flex flex-col gap-0.5">
             <label className="text-[10px] text-text-muted">{t(P.INTEGRITY_REPAIR)}</label>
             <Select value={repairKind} onValueChange={setRepairKind}>
-              <SelectTrigger className="h-7 w-[200px] text-xs">
+              <SelectTrigger className="h-10 w-[200px] text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -271,7 +376,7 @@ function FindingRow({
           </div>
           <Button
             size="sm"
-            className="h-7"
+            className="h-10"
             disabled={busy || !repairKind}
             onClick={() => void onApply()}
           >

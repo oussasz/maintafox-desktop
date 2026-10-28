@@ -467,9 +467,17 @@ async fn add_costs(db: &DatabaseConnection, wo_id: i64) {
     )
     .await;
 
-    crate::wo::costs::update_service_cost(db, wo_id, 50.0, actor)
-        .await
-        .expect("other cost");
+    crate::wo::costs::update_service_cost(
+        db,
+        wo_id,
+        50.0,
+        crate::wo::closeout::wo_row_version(db, wo_id)
+            .await
+            .expect("wo row_version"),
+        actor,
+    )
+    .await
+    .expect("other cost");
 }
 
 async fn complete_and_close(db: &DatabaseConnection, wo_id: i64) {
@@ -493,6 +501,9 @@ async fn complete_and_close(db: &DatabaseConnection, wo_id: i64) {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -509,6 +520,9 @@ async fn complete_and_close(db: &DatabaseConnection, wo_id: i64) {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Usure".into()),
                 corrective_action_summary: Some("Remplacement garniture".into()),
             },

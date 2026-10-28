@@ -468,6 +468,69 @@ async fn work_mix_by_labour_hours() {
     assert_eq!(m.emergency.current.numerator, 2.0);
     assert_eq!(m.planned.previous.value_pct, Some(100.0));
     assert_eq!(m.without_nature, 0);
+
+    // The OT list's "completed in the period" filter lists exactly the work orders the mix counted
+    // (the link of the work-mix tiles).
+    let window = SmrpWindow::last_days(now, 30);
+    let listed = crate::wo::queries::list_work_orders(
+        &db,
+        crate::wo::queries::WoListFilter {
+            completed_from: Some(crate::analytics::as_of::instant(window.from)),
+            completed_to: Some(crate::analytics::as_of::instant(window.to)),
+            limit: 200,
+            offset: 0,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("completed list");
+    assert_eq!(listed.total, m.work_orders, "same population as the tile");
+}
+
+/// Choosing a site or any parent node counts the work of every node below it, as the equipment
+/// list and the reliability fleet filter do for the same choice (audit AU-78).
+#[tokio::test]
+async fn the_organisation_filter_includes_the_sub_nodes() {
+    let db = setup().await;
+    let now = fixed_now();
+    let parent = crate::auth::scope_tests::node(&db, "SMRP-PARENT", None).await;
+    let child = crate::auth::scope_tests::node(&db, "SMRP-CHILD", Some(parent)).await;
+    // The fixture helper leaves every path at "/": give the two nodes their real ancestry.
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET ancestor_path = '/{parent}/' WHERE id = {parent}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE org_nodes SET ancestor_path = '/{parent}/{child}/' WHERE id = {child}"),
+    )
+    .await;
+    let wo = insert_wo(
+        &db,
+        "SUB1",
+        "corrective",
+        "closed",
+        &ts(now, -6, 0),
+        "closed_at",
+        &ts(now, -5, 0),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE work_orders SET entity_id = {child} WHERE id = {wo}"),
+    )
+    .await;
+    let window = SmrpWindow::last_days(now, 30);
+    let at_child = smrp::work_mix(&db, window, Some(child)).await.unwrap();
+    let at_parent = smrp::work_mix(&db, window, Some(parent)).await.unwrap();
+    assert_eq!(at_child.work_orders, 1);
+    assert_eq!(
+        at_parent.work_orders, 1,
+        "the parent node counts its sub-node's work order"
+    );
+    let elsewhere = smrp::work_mix(&db, window, Some(child + 1000)).await.unwrap();
+    assert_eq!(elsewhere.work_orders, 0);
 }
 
 /// A plant's own OT type without a maintenance nature (as migration 198 carried it over): its
@@ -903,7 +966,8 @@ async fn a_nature_written_meanwhile_is_never_overwritten_and_nothing_is_recorded
         id_of(
             &db,
             &format!(
-                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{raced}'"
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' AND target_id = '{}'",
+                crate::wo::types::audit_type_ref(&db, raced).await.expect("type ref")
             )
         )
         .await,
@@ -995,7 +1059,8 @@ async fn the_reference_manage_right_sets_a_nature_and_an_unknown_type_is_refused
             &db,
             &format!(
                 "SELECT COUNT(*) FROM audit_events WHERE action_code = 'wo_type.nature.set' \
-                 AND target_id = '{own}' AND actor_id = {manager}"
+                 AND target_id = '{}' AND actor_id = {manager}",
+                crate::wo::types::audit_type_ref(&db, own).await.expect("type ref")
             )
         )
         .await,

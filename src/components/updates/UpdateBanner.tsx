@@ -1,13 +1,16 @@
 import { AlertTriangle, Download, Info, X } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SafeMarkdown } from "@/components/ui/safe-markdown";
+import { PermissionContext } from "@/contexts/PermissionContext";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { useUpdater } from "@/hooks/use-updater";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { UpdateInstallDialog } from "./UpdateInstallDialog";
 import { UpdateInstallLock } from "./UpdateInstallLock";
@@ -86,6 +89,13 @@ export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) 
   const u = useUpdater();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Installing is for the administrator of this PC (`install_authority`: adm.settings). In the app
+  // a user without it gets the explanation instead of a button the server refuses. On the licence
+  // screen there is no permission context (nobody signed in to the app yet): the button stays and
+  // the server decides, its refusal is explained below.
+  const permissions = useContext(PermissionContext);
+  const mayInstall = permissions == null || permissions.can(P.ADM_SETTINGS);
+  const installRefused = permissions != null && !permissions.isLoading && !mayInstall;
 
   const result = u.result;
   const currentVersion = result?.current_version ?? appVersion;
@@ -203,15 +213,24 @@ export function UpdateBanner({ embedded = false }: { embedded?: boolean } = {}) 
             <p className="whitespace-pre-line text-text-secondary">{result.mandatory_message}</p>
           ) : null}
           {notes ? (
-            <div>
-              <p className="text-xs font-medium text-text-secondary">{t("updates.banner.notes")}</p>
-              <p className="whitespace-pre-line text-text-secondary">{notes}</p>
-            </div>
+            <details className="rounded-md border border-surface-border bg-surface-0/60 px-2 py-1">
+              <summary className="cursor-pointer select-none text-xs font-medium text-text-secondary hover:text-text-primary">
+                {t("updates.banner.notes")}
+              </summary>
+              <SafeMarkdown source={notes} skipLeadingHeading className="mt-1.5" />
+            </details>
+          ) : null}
+          {installRefused ? (
+            <p className="text-text-secondary" data-testid="update-admin-required">
+              {t("updates.error.adminRequired")}
+            </p>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => setConfirmOpen(true)}>
-              {t("updates.banner.installNow")}
-            </Button>
+            {mayInstall ? (
+              <Button size="sm" onClick={() => setConfirmOpen(true)}>
+                {t("updates.banner.installNow")}
+              </Button>
+            ) : null}
             {!u.mandatory ? (
               <Button size="sm" variant="ghost" onClick={u.dismiss}>
                 {t("updates.banner.dismiss")}

@@ -24,6 +24,13 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
   "removed_at",
   // When a location's current shortage began (stock to reconcile, notifications).
   "opened_at",
+  // When two concurrent versions of a PM plan were created (notifications).
+  "version_created_at",
+  "other_created_at",
+  // When an administrator lost rights received from another PC (notifications; may be absent).
+  "since",
+  // When a suspension made on another PC was lifted (permit suspended around a start, notices).
+  "reinstated_at",
 ]);
 
 /**
@@ -31,6 +38,26 @@ export const DATE_TIME_PARAMS: ReadonlySet<string> = new Set([
  * at most two decimals): shown in the reader's language ("2,5" in French).
  */
 export const DECIMAL_PARAMS: ReadonlySet<string> = new Set(["hours"]);
+
+/**
+ * Parameters holding a quantity or an amount of the stock and planning refusals ("12.500"
+ * available, "20.000" asked): shown in the reader's language with the decimals the backend sent
+ * (none lost to rounding, trailing zeros dropped: "12,5" in French).
+ */
+export const NUMBER_PARAMS: ReadonlySet<string> = new Set([
+  // GATE_INV_LOT_INSUFFICIENT, GATE_INV_RECEIPT_LOTS_TOTAL, GATE_INV_INSUFFICIENT_STOCK, GATE_INV_ISSUE_OVER_RESERVED.
+  "available",
+  "quantity",
+  "total",
+  "accepted",
+  "reserved",
+  // Hours of a crew member's day (planning capacity refusals).
+  "share",
+  "remaining",
+  // Stock below its threshold (notifications).
+  "reorder_point",
+  "threshold_qty",
+]);
 
 /** A decimal number as the backend sends it. */
 const PLAIN_DECIMAL = /^-?\d+(?:\.\d+)?$/;
@@ -52,8 +79,9 @@ export function storedInstant(value: string): Date | null {
 
 /**
  * The params with each instant ({@link DATE_TIME_PARAMS}) shown as local date and time in `locale`
- * ("fr" | "en"), and each number of hours ({@link DECIMAL_PARAMS}) with the locale's decimal
- * separator (at most two decimals). A value that is not a readable time or number is kept as sent,
+ * ("fr" | "en"), each number of hours ({@link DECIMAL_PARAMS}) with the locale's decimal
+ * separator (at most two decimals), and each quantity ({@link NUMBER_PARAMS}) with it too (all the
+ * decimals sent). A value that is not a readable time or number is kept as sent,
  * never replaced.
  */
 export function localizeDateTimeParams(
@@ -65,6 +93,14 @@ export function localizeDateTimeParams(
     if (typeof value !== "string") continue;
     if (DECIMAL_PARAMS.has(name)) {
       if (PLAIN_DECIMAL.test(value.trim())) out[name] = formatNumber(Number(value), locale);
+      continue;
+    }
+    if (NUMBER_PARAMS.has(name)) {
+      const text = value.trim();
+      if (PLAIN_DECIMAL.test(text)) {
+        const sent = text.split(".")[1]?.length ?? 0;
+        out[name] = formatNumber(Number(text), locale, { maximumFractionDigits: sent });
+      }
       continue;
     }
     if (!DATE_TIME_PARAMS.has(name)) continue;

@@ -12,7 +12,7 @@ use crate::wo::domain::WorkOrder;
 use crate::wo::queries;
 use crate::wo::time::now_utc_z;
 use crate::wo::workflow::events::emit_action_event;
-use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction, WoStatus};
+use crate::wo::workflow::state_machine::{assert_action_allowed, status_i18n_key, WoAction, WoStatus};
 use crate::wo::workflow::transition::{check_concurrency, load_wo_status};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -47,6 +47,9 @@ pub struct WoEmergencyReassignInput {
 struct LatestCommitment {
     id: i64,
     frozen_at: Option<String>,
+    status: String,
+    committed_start: String,
+    committed_end: String,
     assigned_team_id: i64,
     assigned_personnel_id: Option<i64>,
 }
@@ -55,7 +58,7 @@ async fn load_latest_commitment(db: &impl ConnectionTrait, wo_id: i64) -> AppRes
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, frozen_at, assigned_team_id, assigned_personnel_id
+            "SELECT id, frozen_at, status, committed_start, committed_end, assigned_team_id, assigned_personnel_id
              FROM schedule_commitments
              WHERE source_type = 'work_order' AND source_id = ?
              ORDER BY id DESC
@@ -71,6 +74,15 @@ async fn load_latest_commitment(db: &impl ConnectionTrait, wo_id: i64) -> AppRes
             .try_get("", "id")
             .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.id: {e}")))?,
         frozen_at: row.try_get("", "frozen_at").ok().flatten(),
+        status: row
+            .try_get("", "status")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.status: {e}")))?,
+        committed_start: row
+            .try_get("", "committed_start")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.committed_start: {e}")))?,
+        committed_end: row
+            .try_get("", "committed_end")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.committed_end: {e}")))?,
         assigned_team_id: row
             .try_get("", "assigned_team_id")
             .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.assigned_team_id: {e}")))?,
@@ -142,29 +154,58 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
     let reason = input.override_reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "override_reason is required for emergency reassign.".to_string(),
+            "GATE_WO_REASSIGN_REASON_REQUIRED: override_reason is required for emergency reassign.".to_string(),
         ]));
     }
     if input.assigned_team_id.is_none() && input.primary_responsible_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "At least one of assigned_team_id or primary_responsible_id is required.".to_string(),
+            "GATE_WO_REASSIGN_TARGET_REQUIRED: At least one of assigned_team_id or primary_responsible_id is required."
+                .to_string(),
         ]));
     }
     if let Some(team_id) = input.assigned_team_id {
         crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
     }
 
-    let commitment = load_latest_commitment(db, input.wo_id).await?;
+    let txn = db.begin().await?;
+    // Read inside the transaction: the freeze checked is the one the write below lands on.
+    let commitment = load_latest_commitment(&txn, input.wo_id).await?;
     if let Some(ref cmt) = commitment {
         if cmt.frozen_at.is_some() {
             return Err(AppError::ValidationFailed(vec![
-                "Schedule is frozen for this work order. Use Planning break-in — emergency reassign is blocked."
+                "GATE_WO_REASSIGN_SCHEDULE_FROZEN: Schedule is frozen for this work order. Use Planning break-in — emergency reassign is blocked."
                     .to_string(),
             ]));
         }
+        // A new crew moves the job onto that crew's site schedule: entering a week frozen there
+        // (or due to freeze) is a Planning break-in, never a reassignment. An emergency skips
+        // capacity and double-booking, not the frozen week's four-eyes. Same verdict as a PC
+        // receiving the row (`planning::sync_check`): a crew change of a committed slot is a move,
+        // an assignee change alone is not, and a released or cancelled slot enters no week.
+        if let Some(next_team) = input.assigned_team_id {
+            if next_team != cmt.assigned_team_id && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED {
+                if let Some(week) = crate::planning::weekly_schedule::frozen_week_for_slot(
+                    &txn,
+                    next_team,
+                    &cmt.committed_start,
+                    &cmt.committed_end,
+                    chrono::Utc::now(),
+                )
+                .await?
+                {
+                    return Err(crate::errors::org_validation_failed(
+                        "PLANNING_WEEK_FROZEN",
+                        format!(
+                            "The week of {} is frozen: move work into it with a break-in, with its reason.",
+                            week.week_start
+                        ),
+                        std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
+                    ));
+                }
+            }
+        }
     }
 
-    let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
 
     let action = match status {
@@ -172,7 +213,8 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         WoStatus::Ready => WoAction::Reassign,
         _ => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Emergency reassign is only allowed in status planning or ready (current: {}).",
+                "GATE_WO_REASSIGN_STATUS:status={0}: Emergency reassign is only allowed in status planning or ready (current: {1}).",
+                status_i18n_key(status.as_str()),
                 status.as_str()
             )]));
         }

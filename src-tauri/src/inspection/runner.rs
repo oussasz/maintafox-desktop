@@ -169,7 +169,11 @@ const DEFAULT_ROUND_PAGE: i64 = 200;
 fn parse_instant(raw: &str, field: &str) -> AppResult<String> {
     chrono::DateTime::parse_from_rfc3339(raw.trim())
         .map(|d| d.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "GATE_INSP_DATE_INVALID: {field} must be an RFC 3339 timestamp."
+            )])
+        })
 }
 
 /// `WHERE` clause and binds of a round filter (shared by the page and its count).
@@ -179,7 +183,7 @@ fn round_filter_sql(filter: &InspectionRoundSummaryFilter) -> AppResult<(String,
     if let Some(statuses) = filter.statuses.as_ref().filter(|s| !s.is_empty()) {
         if let Some(bad) = statuses.iter().find(|s| !ROUND_STATUSES.contains(&s.as_str())) {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Unknown round status '{bad}'."
+                "GATE_INSP_ROUND_STATUS_INVALID: Unknown round status '{bad}'."
             )]));
         }
         clauses.push(format!("ir.status IN ({})", vec!["?"; statuses.len()].join(", ")));
@@ -483,7 +487,7 @@ async fn load_round_checked(
         })?;
     if round.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "row_version mismatch on inspection_rounds.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: row_version mismatch on inspection_rounds.".into(),
         ]));
     }
     Ok(round)
@@ -509,7 +513,7 @@ async fn write_round(
         .await?;
     if aff.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Concurrent update on inspection_rounds.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Concurrent update on inspection_rounds.".into(),
         ]));
     }
     Ok(())
@@ -524,12 +528,12 @@ pub async fn start_inspection_round(
     let round = load_round_checked(&txn, &input).await?;
     if round.status == "in_progress" {
         return Err(AppError::ValidationFailed(vec![
-            "The round is already in progress.".into()
+            "GATE_INSP_ROUND_ALREADY_STARTED: The round is already in progress.".into(),
         ]));
     }
     if !ROUND_OPEN_STATUSES.contains(&round.status.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A round in status '{}' cannot be started.",
+            "GATE_INSP_ROUND_NOT_STARTABLE:status={0}: A round in status '{}' cannot be started.",
             round.status
         )]));
     }
@@ -557,7 +561,7 @@ pub async fn complete_inspection_round(
     let round = load_round_checked(&txn, &input).await?;
     if round.status != "in_progress" {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Only a round in progress can be completed (status '{}').",
+            "GATE_INSP_ROUND_NOT_IN_PROGRESS:status={0}: Only a round in progress can be completed (status '{}').",
             round.status
         )]));
     }
@@ -569,9 +573,12 @@ pub async fn complete_inspection_round(
         .collect();
     if !incomplete.is_empty() {
         return Err(AppError::ValidationFailed(
-            std::iter::once("The round still has unanswered checkpoints or missing evidence.".to_string())
-                .chain(incomplete)
-                .collect(),
+            std::iter::once(
+                "GATE_INSP_ROUND_INCOMPLETE: The round still has unanswered checkpoints or missing evidence."
+                    .to_string(),
+            )
+            .chain(incomplete)
+            .collect(),
         ));
     }
     let total = runner.checkpoints.len();
@@ -637,7 +644,7 @@ pub async fn review_inspection_round(
     let reviewable = round.status == "completed_with_findings" || (round.status == "completed" && requires_review != 0);
     if !reviewable {
         return Err(AppError::ValidationFailed(vec![format!(
-            "A round in status '{}' has nothing to review.",
+            "GATE_INSP_ROUND_NOTHING_TO_REVIEW:status={0}: A round in status '{}' has nothing to review.",
             round.status
         )]));
     }
@@ -653,7 +660,7 @@ pub async fn review_inspection_round(
         .map_err(|e| decode_err("c", e))?;
     if open > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{open} anomaly(ies) still need a decision (request, work order or deferral) before the review."
+            "GATE_INSP_ROUND_OPEN_ANOMALIES:count={open}: {open} anomaly(ies) still need a decision (request, work order or deferral) before the review."
         )]));
     }
     let note = input
@@ -688,15 +695,17 @@ pub async fn add_inspection_photo_evidence(
     let mime = input.mime_type.trim().to_ascii_lowercase();
     if !PHOTO_MIME_TYPES.contains(&mime.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported photo type '{mime}' (JPEG, PNG, WebP or HEIC)."
+            "GATE_INSP_PHOTO_TYPE:mime={mime}: Unsupported photo type '{mime}' (JPEG, PNG, WebP or HEIC)."
         )]));
     }
     if input.file_bytes.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["The photo is empty.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INSP_PHOTO_EMPTY: The photo is empty.".into(),
+        ]));
     }
     if input.file_bytes.len() > MAX_PHOTO_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The photo is larger than {} MB.",
+            "GATE_INSP_PHOTO_TOO_LARGE:mb={0}: The photo is larger than {} MB.",
             MAX_PHOTO_BYTES / (1024 * 1024)
         )]));
     }
@@ -704,7 +713,7 @@ pub async fn add_inspection_photo_evidence(
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty() && !n.contains(".."))
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Invalid file name.".into()]))?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INSP_FILE_NAME_INVALID: Invalid file name.".into()]))?
         .to_string();
 
     let env = crate::sync::media::resolve_media_deployment_env();
@@ -727,7 +736,7 @@ pub async fn add_inspection_photo_evidence(
     let status: String = row.try_get("", "status").map_err(|e| decode_err("status", e))?;
     if !ROUND_OPEN_STATUSES.contains(&status.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "The round is '{status}': evidence can no longer be added."
+            "GATE_INSP_ROUND_EVIDENCE_CLOSED:status={status}: The round is '{status}': evidence can no longer be added."
         )]));
     }
 

@@ -48,13 +48,13 @@ pub fn verify_pin(pin: &str, hash: &str) -> AppResult<bool> {
 pub fn validate_pin_format(pin: &str) -> AppResult<()> {
     if !pin.chars().all(|c| c.is_ascii_digit()) {
         return Err(AppError::ValidationFailed(vec![
-            "Le PIN doit contenir uniquement des chiffres.".into(),
+            "GATE_AUTH_PIN_DIGITS_ONLY: Le PIN doit contenir uniquement des chiffres.".into(),
         ]));
     }
 
     if pin.len() < 4 || pin.len() > 6 {
         return Err(AppError::ValidationFailed(vec![
-            "Le PIN doit contenir entre 4 et 6 chiffres.".into(),
+            "GATE_AUTH_PIN_LENGTH: Le PIN doit contenir entre 4 et 6 chiffres.".into(),
         ]));
     }
 

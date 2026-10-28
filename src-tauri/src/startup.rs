@@ -384,6 +384,43 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => warn!("startup: retiring superseded reference lists failed (non-fatal): {e}"),
     }
 
+    // Phase 4a'': stock reservations, with capture on so what is written reaches the other devices:
+    // reserved stock recomputed from the reservations and their movements
+    // (`inventory::reservations`), then the D13 catch-up — reservations still open on
+    // closed or cancelled work orders released (audited, system actor). Never blocks the startup;
+    // what could not be done is logged and retried at the next start.
+    let (upkeep, upkeep_errors) = crate::inventory::reservations::startup_reservation_upkeep(&app_state.db).await;
+    info!(
+        pairs_recomputed = upkeep.pairs_recomputed,
+        recompute_ms = upkeep.recompute_ms,
+        work_orders = upkeep.sweep.work_orders,
+        reservations_released = upkeep.sweep.reservations,
+        "startup: stock reservations upkeep"
+    );
+    for (wo_id, error) in &upkeep.sweep.failures {
+        warn!(wo_id = *wo_id, error = %error, "startup: reservations of an ended work order not released (retried next start)");
+    }
+    for error in &upkeep_errors {
+        warn!("startup: stock reservations upkeep (non-fatal): {error}");
+    }
+
+    // Phase 4a (permits): local consequences of received permit ends and lock removals not written
+    // before the last stop (`permit::ended_hold::sweep`: running work held, downtime ended), with
+    // capture on. Never blocks the startup; a failure is logged and retried by the next sync pass.
+    let permit_sweep = crate::permit::ended_hold::sweep(&app_state.db).await;
+    info!(
+        held = permit_sweep.work_orders_held,
+        downtimes_ended = permit_sweep.downtimes_ended,
+        failures = permit_sweep.failures,
+        "startup: permit-end catch-up"
+    );
+    // Phase 4a (permit rules): the plant's permit rules on the work orders not started yet that one
+    // matches now and that missed it before the last stop (`permit::requirement_rules::catch_up`,
+    // audit finding AU-04 R2-S2). Never blocks the startup; a failure is logged and retried by the
+    // next sync pass.
+    let rules_flagged = crate::permit::requirement_rules::catch_up(&app_state.db).await;
+    info!(flagged = rules_flagged, "startup: permit rules catch-up");
+
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.
     start_sync_worker(&app, &app_state).await;
@@ -591,7 +628,7 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
         config,
         std::sync::Arc::new(LicenseSyncAccess),
     ) {
-        Ok(worker) => worker,
+        Ok(worker) => worker.on_rights_changed(rights_changed_hook(app, state)),
         Err(message) => {
             error!("startup: sync worker not started: {message}");
             handle.publish_not_configured(&message);
@@ -607,6 +644,21 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
         .spawn(SYNC_TASK_ID, move |cancel| worker.run(commands, cancel))
         .await;
     info!("startup: sync worker started");
+}
+
+/// After a sync run that may have written a row the rights are read from (AU-107): every cached
+/// permission is dropped and the window reloads its own (`rbac::cache::invalidate_all_and_notify`).
+fn rights_changed_hook(
+    app: &AppHandle,
+    state: &crate::state::AppState,
+) -> crate::sync::transport::worker::RightsChangedHook {
+    let app = app.clone();
+    let cache = state.permission_cache.clone();
+    std::sync::Arc::new(move || {
+        let app = app.clone();
+        let cache = cache.clone();
+        Box::pin(async move { crate::rbac::cache::invalidate_all_and_notify(&app, &cache, "sync_applied").await })
+    })
 }
 
 fn emit_event(app: &AppHandle, event: StartupEvent) {

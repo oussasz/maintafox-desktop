@@ -833,10 +833,10 @@ pub(crate) fn import_row_problems(parent_code: Option<&str>, metadata_json: Opti
     let mut problems = Vec::new();
     let meta = meta_of(metadata_json);
     if metadata_json.is_some_and(|m| !m.trim().is_empty()) && !meta.is_object() {
-        problems.push("metadata_json n'est pas un objet JSON.".to_string());
+        problems.push("GATE_UNIT_IMPORT_METADATA_INVALID: metadata_json n'est pas un objet JSON.".to_string());
     }
     if meta.get("review_required").and_then(serde_json::Value::as_bool) == Some(true) {
-        problems.push("le statut « à revoir » ne s'importe pas.".to_string());
+        problems.push("GATE_UNIT_IMPORT_REVIEW_FLAG: le statut « à revoir » ne s'importe pas.".to_string());
     }
     if parent_code.map(str::trim).filter(|c| !c.is_empty()).is_none() {
         problems.push(format!(

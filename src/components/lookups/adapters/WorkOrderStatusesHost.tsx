@@ -155,7 +155,7 @@ export function WorkOrderStatusesHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 text-sm"
+                      className="h-10 text-sm"
                       value={editingDraft.label}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, label: e.target.value }))}
                       disabled={!capabilities.canUpdate}
@@ -167,7 +167,7 @@ export function WorkOrderStatusesHost() {
                 <ReferenceValueTableCell>
                   {isEditing ? (
                     <Input
-                      className="h-7 font-mono text-sm"
+                      className="h-10 font-mono text-sm"
                       value={editingDraft.color}
                       onChange={(e) => setEditingDraft((s) => ({ ...s, color: e.target.value }))}
                       disabled={!capabilities.canUpdate}

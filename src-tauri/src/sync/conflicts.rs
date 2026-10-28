@@ -67,7 +67,7 @@ pub(crate) async fn keep_local_version(conn: &impl ConnectionTrait, conflict: &S
     crate::sync::capture::drain_capture_journal(conn).await?;
     if !def.has_stager {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Keeping the local version is not available for '{}': this entity is not synchronised yet.",
+            "GATE_SYNC_KEEP_LOCAL_UNAVAILABLE:entity={0}: Keeping the local version is not available for '{0}': this entity is not synchronised yet.",
             conflict.entity_type
         )]));
     }
@@ -102,18 +102,28 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
     crate::sync::capture::drain_capture_journal(conn).await?;
     if !def.has_materializer {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Taking the server version is not available for '{}' yet: this version cannot apply it.",
+            "GATE_SYNC_TAKE_SERVER_UNAVAILABLE:entity={0}: Taking the server version is not available for '{0}' yet: this version cannot apply it.",
             conflict.entity_type
         )]));
     }
     let (Some(payload_json), Some(server_version)) = (&conflict.inbound_payload_json, conflict.inbound_row_version)
     else {
         return Err(AppError::ValidationFailed(vec![
-            "This conflict carries no server version, so it cannot be taken. Keep the local version or dismiss it."
+            "GATE_SYNC_NO_SERVER_VERSION: This conflict carries no server version, so it cannot be taken. Keep the local version or dismiss it."
                 .to_string(),
         ]));
     };
     supersede_local_changes(conn, &conflict.entity_type, &conflict.entity_sync_id).await?;
+    // A count line refers to the count movement it names, held with it in the inbox: that movement
+    // is applied first, through every check, or nothing is taken
+    // (`inventory::count_four_eyes::apply_held_movement_of_taken_line`).
+    crate::inventory::count_four_eyes::apply_held_movement_of_taken_line(
+        conn,
+        &conflict.entity_type,
+        conflict.linked_inbox_id,
+        payload_json,
+    )
+    .await?;
     match apply_inbound_payload(
         conn,
         &conflict.entity_type,
@@ -127,7 +137,7 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
         ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
         ApplyOutcome::Deferred { message, .. } | ApplyOutcome::Conflict { message, .. } => {
             return Err(AppError::ValidationFailed(vec![format!(
-                "The server version cannot be applied yet: {message}"
+                "GATE_SYNC_SERVER_VERSION_NOT_APPLIED: The server version cannot be applied yet: {message}"
             )]));
         }
     }
@@ -140,5 +150,8 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
         "conflict_take_remote",
     )
     .await?;
+    // A reservation row or movement taken from the server changes reserved stock: recomputed in
+    // this transaction (`inventory::reservations`).
+    crate::inventory::reservations::recompute_dirty_reserved_in(conn).await?;
     set_linked_inbox_status(conn, conflict, "applied").await
 }

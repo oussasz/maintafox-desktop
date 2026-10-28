@@ -305,7 +305,8 @@ async fn usual_coding(
             "SELECT rv.id, rv.code, rv.label, COUNT(*) AS n FROM failure_events fe
              LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id
              LEFT JOIN work_order_failure_details wfd ON wfd.id = (
-                  SELECT MAX(x.id) FROM work_order_failure_details x WHERE x.work_order_id = wo.id)
+                  SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = wo.id
+                  ORDER BY x.entity_sync_id, x.id LIMIT 1)
              JOIN reference_values rv ON rv.id = COALESCE(fe.{col}, wfd.{col})
              WHERE fe.equipment_id IN ({}) AND fe.failure_mode_id = ?
              GROUP BY rv.id ORDER BY n DESC, rv.code ASC LIMIT 1",

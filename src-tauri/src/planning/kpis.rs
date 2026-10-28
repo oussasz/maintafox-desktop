@@ -245,7 +245,7 @@ async fn break_ins(
             format!(
                 "SELECT COUNT(*) AS jobs, TOTAL(COALESCE(sc.planned_labor_hours, {SLOT_HOURS_SQL})) AS hours \
                    FROM schedule_break_ins sb JOIN schedule_commitments sc ON sc.id = sb.schedule_commitment_id \
-                  WHERE sb.kind = 'insert' AND sc.assigned_team_id IN ({marks}) \
+                  WHERE sb.kind = 'insert' AND sb.sync_refused_at IS NULL AND sc.assigned_team_id IN ({marks}) \
                     AND julianday(sb.new_slot_start) >= julianday(?) AND julianday(sb.new_slot_start) < julianday(?)"
             ),
             inserted_values,
@@ -271,7 +271,7 @@ async fn break_ins(
             format!(
                 "SELECT COUNT(DISTINCT sb.schedule_commitment_id) AS jobs \
                    FROM schedule_break_ins sb JOIN schedule_commitments sc ON sc.id = sb.schedule_commitment_id \
-                  WHERE sb.kind = 'move' AND sc.assigned_team_id IN ({marks}) \
+                  WHERE sb.kind = 'move' AND sb.sync_refused_at IS NULL AND sc.assigned_team_id IN ({marks}) \
                     AND ((julianday(sb.new_slot_start) >= julianday(?) AND julianday(sb.new_slot_start) < julianday(?)) \
                       OR (julianday(sb.old_slot_start) >= julianday(?) AND julianday(sb.old_slot_start) < julianday(?))) \
                     AND julianday(sb.created_at) >= julianday(?) AND julianday(sb.created_at) < julianday(?)"

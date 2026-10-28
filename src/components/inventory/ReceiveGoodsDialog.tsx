@@ -25,6 +25,8 @@ import {
 import { MeasureUnitSelect, useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -492,12 +494,11 @@ export function ReceiveGoodsDialog({
             </div>
             <div className="space-y-1">
               <Label htmlFor="gr-posting-date">{t("procurement.receive.postingDate")}</Label>
-              <Input
+              <DateField
                 id="gr-posting-date"
-                type="date"
                 max={todayIso()}
                 value={postingDate}
-                onChange={(e) => setPostingDate(e.target.value)}
+                onChange={(v) => setPostingDate(v)}
                 aria-describedby="gr-posting-date-hint"
               />
               <p id="gr-posting-date-hint" className="text-xs text-text-muted">
@@ -607,15 +608,14 @@ export function ReceiveGoodsDialog({
                         <Label htmlFor={`gr-received-${line.id}`} className="text-xs">
                           {t("procurement.receive.columns.receivedQty")}
                         </Label>
-                        <Input
+                        <DecimalField
                           id={`gr-received-${line.id}`}
-                          type="number"
+                          decimals={3}
                           min={0}
-                          max={converted ? undefined : line.remaining_qty}
-                          step="0.01"
-                          value={draft.receivedQty}
-                          onChange={(e) => {
-                            const value = e.target.value;
+                          {...(converted ? {} : { max: line.remaining_qty })}
+                          value={draft.receivedQty.trim() === "" ? null : Number(draft.receivedQty)}
+                          onValueChange={(v) => {
+                            const value = v == null ? "" : String(v);
                             // A tracked line starts with one lot holding the whole quantity.
                             const lots =
                               tracking.tracked && draft.lots.length === 0 && toQty(value) > 0
@@ -639,13 +639,14 @@ export function ReceiveGoodsDialog({
                         <Label htmlFor={`gr-rejected-${line.id}`} className="text-xs">
                           {t("procurement.receive.columns.rejectedQty")}
                         </Label>
-                        <Input
+                        <DecimalField
                           id={`gr-rejected-${line.id}`}
-                          type="number"
+                          decimals={3}
                           min={0}
-                          step="0.01"
-                          value={draft.rejectedQty}
-                          onChange={(e) => patchDraft(line.id, { rejectedQty: e.target.value })}
+                          value={draft.rejectedQty.trim() === "" ? null : Number(draft.rejectedQty)}
+                          onValueChange={(v) =>
+                            patchDraft(line.id, { rejectedQty: v == null ? "" : String(v) })
+                          }
                         />
                       </div>
                       <div className="space-y-1">
@@ -725,25 +726,25 @@ export function ReceiveGoodsDialog({
                                   ? t("procurement.receive.lots.expiry")
                                   : t("procurement.receive.lots.expiryOptional")}
                               </Label>
-                              <Input
+                              <DateField
                                 id={`gr-lot-exp-${lot.key}`}
-                                type="date"
                                 value={lot.expiryDate}
-                                onChange={(e) => patchLot(lot.key, { expiryDate: e.target.value })}
+                                onChange={(v) => patchLot(lot.key, { expiryDate: v })}
                               />
                             </div>
                             <div className="space-y-1">
                               <Label htmlFor={`gr-lot-qty-${lot.key}`} className="text-xs">
                                 {t("procurement.receive.lots.quantity")}
                               </Label>
-                              <Input
+                              <DecimalField
                                 id={`gr-lot-qty-${lot.key}`}
-                                type="number"
+                                decimals={3}
                                 min={0}
-                                step="0.01"
-                                value={lot.quantity}
+                                value={lot.quantity.trim() === "" ? null : Number(lot.quantity)}
                                 disabled={tracking.serial}
-                                onChange={(e) => patchLot(lot.key, { quantity: e.target.value })}
+                                onValueChange={(v) =>
+                                  patchLot(lot.key, { quantity: v == null ? "" : String(v) })
+                                }
                               />
                             </div>
                             <Button

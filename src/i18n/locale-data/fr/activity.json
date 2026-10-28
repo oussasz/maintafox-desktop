@@ -105,6 +105,8 @@
       "session__unlocked_with_pin": "Session déverrouillée par code PIN",
       "session__idle_locked": "Session verrouillée après inactivité",
       "session__expired": "Session expirée",
+      "session__closed": "Session fermée (état de session invalide)",
+      "session__clock_anomaly": "Horloge du poste en retard sur la date du mot de passe",
       "step_up__success": "Confirmation par mot de passe réussie",
       "step_up__failure": "Échec de la confirmation par mot de passe",
       "device__trust_registered": "Poste reconnu comme fiable",

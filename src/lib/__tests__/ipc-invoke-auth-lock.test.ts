@@ -1,12 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { i18n, initI18n } from "@/i18n";
 import { invoke } from "@/lib/ipc-invoke";
+import { useAppToastStore } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { useSessionStore } from "@/store/session-store";
 import { fixtures, mockInvoke } from "@/test/mocks/tauri";
 
 describe("ipc-invoke auth lock gating", () => {
+  beforeAll(async () => {
+    initI18n();
+    await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
+  });
+
   beforeEach(() => {
+    useAppToastStore.setState({ items: [] });
     mockInvoke.mockReset();
     useSessionStore.getState().resetForTests();
     useAuthInterceptorStore.getState().clear();
@@ -104,5 +113,94 @@ describe("ipc-invoke auth lock gating", () => {
       expect(useSessionStore.getState().info?.is_authenticated).toBe(true);
     });
     expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+  });
+
+  // AU-35: a refused right is one toast with the translated reason; the app stays usable.
+  const refused = {
+    code: "PERMISSION_DENIED",
+    message: "Permission denied: Permission requise : adm.users",
+  };
+
+  it("shows one translated toast for a refused right and never opens the lock", async () => {
+    mockInvoke.mockRejectedValueOnce(refused);
+
+    await expect(invoke("get_admin_stats")).rejects.toEqual(refused);
+
+    expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+    const toasts = useAppToastStore.getState().items;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({
+      title: "Permission refusée.",
+      description: "Droit requis : Gérer les comptes utilisateurs",
+      variant: "destructive",
+    });
+    // The server's technical English text is never shown.
+    expect(JSON.stringify(toasts[0])).not.toContain("Permission requise");
+    // No session re-read either: a refused right is not a session problem.
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a refused right only to the caller with notifyOnError:false (no toast, no lock)", async () => {
+    mockInvoke.mockRejectedValueOnce(refused);
+
+    await expect(invoke("get_admin_stats", undefined, { notifyOnError: false })).rejects.toEqual(
+      refused,
+    );
+
+    expect(useAppToastStore.getState().items).toHaveLength(0);
+    expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+  });
+
+  // A password check inside the session (here: setting the PIN) locked the account; the server
+  // ended the session. Sign-in shows the lockout message; no lock dialog, no toast, no re-read.
+  it("sends the user to sign-in with the lockout message on ACCOUNT_LOCKED", async () => {
+    useSessionStore.setState({
+      info: {
+        ...fixtures.authenticatedSession,
+        password_expires_in_days: null,
+        pin_configured: null,
+      },
+      hasBootstrapped: true,
+    });
+    const lockout = {
+      code: "ACCOUNT_LOCKED",
+      message: "Account locked until 2026-10-22T09:15:00Z",
+      details: [
+        {
+          code: "ACCOUNT_LOCKED",
+          message: "Account locked until 2026-10-22T09:15:00Z",
+          params: { until: "2026-10-22T09:15:00Z" },
+        },
+      ],
+    };
+    mockInvoke.mockRejectedValueOnce(lockout);
+
+    await expect(invoke("set_pin")).rejects.toEqual(lockout);
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().errorCode).toBe("ACCOUNT_LOCKED");
+    });
+    const state = useSessionStore.getState();
+    expect(state.info?.is_authenticated).toBe(false);
+    // The session keeps the end of the lockout, not the server's English sentence.
+    expect(state.lockedUntil).toBe("2026-10-22T09:15:00Z");
+    expect(state.error).toBeNull();
+    expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
+    expect(useAppToastStore.getState().items).toHaveLength(0);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("still opens the lock, without a toast, for a lost session", async () => {
+    mockInvoke
+      .mockRejectedValueOnce({ code: "SESSION_CLAIM_INVALID", message: "Session claim invalid" })
+      .mockResolvedValueOnce(fixtures.noSession);
+
+    await expect(invoke("list_work_orders")).rejects.toBeTruthy();
+
+    await vi.waitFor(() => {
+      expect(useAuthInterceptorStore.getState().isLockOpen).toBe(true);
+    });
+    expect(useAuthInterceptorStore.getState().mode).toBe("session");
+    expect(useAppToastStore.getState().items).toHaveLength(0);
   });
 });

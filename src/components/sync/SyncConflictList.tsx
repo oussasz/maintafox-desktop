@@ -5,8 +5,10 @@
  * from the payload — never the uuid), the two versions, and the choices. Every choice, "retry
  * later" and "escalate" (diagnostics only) included, opens a dialog that says what it does and
  * asks why (at least `CONFLICT_REASON_MIN` characters): the reason is stored on the conflict and
- * written to the audit trail with the choice. A failed inbox load is an error with retry, never
- * "nothing to review".
+ * written to the audit trail with the choice. In diagnostics, a conflict that holds an outgoing
+ * change of this device and accepts "retry later" can also be sent again (`SyncReplayButton`,
+ * sync.replay; the server applies the same rules). A failed inbox load is an error with retry,
+ * never "nothing to review".
  */
 import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,15 +20,22 @@ import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
+import { SyncReplayButton } from "./SyncReplayButton";
 import {
   CONFLICT_REASON_MIN,
+  KNOWN_APPLY_REASONS,
   KNOWN_CONFLICT_KINDS,
   KNOWN_SYNC_ENTITY_TYPES,
+  SETTLED_AT_ORIGIN_CONFLICT_KINDS,
   clashingNumber,
+  clashingUsername,
+  conflictActions,
   conflictRecordIdentity,
 } from "./sync-conflict-display";
 
@@ -43,7 +52,7 @@ const KNOWN_ACTIONS = new Set<string>([
 ]);
 
 export interface SyncConflictListProps {
-  /** Also offer "retry later" and "escalate" (Settings → sync diagnostics). */
+  /** Also offer "retry later", "escalate" and "send again" (Settings → sync diagnostics). */
   showTriageActions?: boolean;
   /** Load the inbox when the list mounts (default true). */
   loadOnMount?: boolean;
@@ -56,6 +65,11 @@ export function SyncConflictList({
   const { t } = useTranslation("shell");
   const reasonId = useId();
   const { formatDateTime } = useFormatters();
+  // Choosing a version is `resolve_sync_conflict` (sync.resolve): without it the list is read-only.
+  const permissions = usePermissions();
+  const canResolve = permissions.can(P.SYNC_RESOLVE);
+  // Sending a refused change again is `replay_sync_failures` (sync.replay).
+  const canReplay = permissions.can(P.SYNC_REPLAY);
   const conflictInbox = useSyncOrchestratorStore((s) => s.conflictInbox);
   const refreshInbox = useSyncOrchestratorStore((s) => s.refreshInbox);
   const resolveConflictAction = useSyncOrchestratorStore((s) => s.resolveConflictAction);
@@ -151,22 +165,25 @@ export function SyncConflictList({
         {conflictInbox.map((c) => {
           const id = conflictRecordIdentity(c);
           const recommended = c.recommended_action;
-          const primary: ConflictAction[] =
-            c.conflict_type === "CODE_CLASH"
-              ? ["renumber_local"]
-              : ["accept_local", "accept_remote"];
-          const actions: ConflictAction[] = [
-            ...primary,
-            ...(showTriageActions ? (["retry_later", "escalate"] as ConflictAction[]) : []),
-            "dismiss",
-          ];
+          const record = id.code ?? id.name ?? entityOf(c);
+          const actions = conflictActions(
+            c.conflict_type,
+            showTriageActions,
+            c.entity_type,
+            c.history_row_held,
+          );
           return (
             <li
               key={c.id}
               className="rounded-md border border-surface-border bg-surface-1 p-3 text-sm text-text-primary"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-medium">{kindOf(c)}</p>
+                <p className="font-medium">
+                  {kindOf(c)}
+                  <span className="ms-2 text-xs font-normal text-text-muted">
+                    {t("sync.conflictNumber", { id: c.id })}
+                  </span>
+                </p>
                 {c.status === "escalated" ? (
                   <StatusChip label={t("sync.status.escalated")} tone="attention" />
                 ) : null}
@@ -192,6 +209,56 @@ export function SyncConflictList({
                   {t("sync.codeClash", { number: clashingNumber(c) ?? t("sync.versionUnknown") })}
                 </p>
               ) : null}
+              {c.reason ? (
+                <p className="mt-1 text-xs text-text-primary">
+                  {t(
+                    `sync.applyReason.${KNOWN_APPLY_REASONS.has(c.reason.code) ? c.reason.code : "TECHNICAL"}`,
+                    { record: entityOf(c), fields: c.reason.columns.join(", ") },
+                  )}
+                  {c.reason.rule ? (
+                    <span className="block text-text-secondary">
+                      {t("sync.applyReason.rule", { rule: c.reason.rule })}
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
+              {SETTLED_AT_ORIGIN_CONFLICT_KINDS.has(c.conflict_type) ? (
+                <p className="mt-1 text-xs text-text-primary">{t("sync.countSettledAtOrigin")}</p>
+              ) : null}
+              {c.count_hold ? (
+                <p className="mt-1 text-xs text-text-secondary">
+                  {t("sync.countHeldRecord", {
+                    session: c.count_hold.session_code ?? "?",
+                    counter: c.count_hold.counter ?? "?",
+                    postedAt: c.count_hold.posted_at ? formatDateTime(c.count_hold.posted_at) : "?",
+                  })}
+                </p>
+              ) : null}
+              {c.planning_times ? (
+                // Work entering a week frozen here (CMMS Advisor decision 4): the other PC's change
+                // time next to the freeze time here, on the card itself.
+                <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-xs text-text-secondary">
+                  <dt>{t("sync.planningTimes.changedAt")}</dt>
+                  <dd className="text-text-primary">
+                    {c.planning_times.changed_at
+                      ? formatDateTime(c.planning_times.changed_at)
+                      : t("sync.planningTimes.notRecorded")}
+                  </dd>
+                  <dt>{t("sync.planningTimes.frozenAt")}</dt>
+                  <dd className="text-text-primary">
+                    {c.planning_times.frozen_at
+                      ? formatDateTime(c.planning_times.frozen_at)
+                      : t("sync.planningTimes.notRecorded")}
+                  </dd>
+                </dl>
+              ) : null}
+              {c.conflict_type === "USERNAME_CLASH" ? (
+                <p className="mt-1 text-xs text-text-primary">
+                  {t("sync.usernameClash", {
+                    username: clashingUsername(c) ?? t("sync.versionUnknown"),
+                  })}
+                </p>
+              ) : null}
               <details className="mt-1 text-xs text-text-muted">
                 <summary className="cursor-pointer select-none">
                   {t("sync.technicalDetails")}
@@ -199,43 +266,70 @@ export function SyncConflictList({
                 <p className="mt-1 break-all font-mono">
                   {c.entity_type} · {c.entity_sync_id} · {c.conflict_type}
                 </p>
+                {c.detail_message ? (
+                  <p className="mt-1 break-all font-mono">
+                    {t("sync.applyReason.recordedText", { message: c.detail_message })}
+                  </p>
+                ) : null}
               </details>
               {errorById[c.id] ? (
                 <p className="mt-2 text-xs text-tone-danger-fg" role="alert">
                   {t("sync.resolveFailed", { message: errorById[c.id] })}
                 </p>
               ) : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {actions.map((action) => {
-                  const isRecommended = action === recommended;
-                  const disabled =
-                    busyId === c.id ||
-                    (action === "accept_remote" && c.inbound_payload_json === null);
-                  return (
-                    <Button
-                      key={action}
-                      type="button"
-                      variant={
-                        isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
-                      }
-                      className="h-10"
-                      disabled={disabled}
-                      title={
-                        action === "accept_remote" && c.inbound_payload_json === null
-                          ? t("sync.noRemoteVersion")
-                          : undefined
-                      }
-                      onClick={() => choose(c, action)}
-                    >
-                      {actionLabel(action)}
-                      {isRecommended ? (
-                        <span className="sr-only"> — {t("sync.recommendedShort")}</span>
-                      ) : null}
-                    </Button>
-                  );
-                })}
-              </div>
-              {KNOWN_ACTIONS.has(recommended) ? (
+              {canResolve ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {actions.map((action) => {
+                    const isRecommended = action === recommended;
+                    const disabled =
+                      busyId === c.id ||
+                      (action === "accept_remote" && c.inbound_payload_json === null);
+                    return (
+                      <Button
+                        key={action}
+                        type="button"
+                        variant={
+                          isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
+                        }
+                        className="h-10"
+                        disabled={disabled}
+                        title={
+                          action === "accept_remote" && c.inbound_payload_json === null
+                            ? t("sync.noRemoteVersion")
+                            : undefined
+                        }
+                        onClick={() => choose(c, action)}
+                      >
+                        {actionLabel(action)}
+                        {isRecommended ? (
+                          <span className="sr-only"> — {t("sync.recommendedShort")}</span>
+                        ) : null}
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-text-muted" role="note">
+                  {t("sync.resolveNeedsRight")}
+                </p>
+              )}
+              {showTriageActions &&
+              canReplay &&
+              c.linked_outbox_id !== null &&
+              actions.includes("retry_later") ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <SyncReplayButton
+                    target={{
+                      kind: "conflict",
+                      conflictId: c.id,
+                      outboxId: c.linked_outbox_id,
+                    }}
+                    record={record}
+                    disabled={busyId === c.id}
+                  />
+                </div>
+              ) : null}
+              {canResolve && KNOWN_ACTIONS.has(recommended) ? (
                 <p className="mt-1 text-xs text-text-muted">
                   {t("sync.panel.recommended", { action: actionLabel(recommended) })}
                 </p>

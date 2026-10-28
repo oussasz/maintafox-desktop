@@ -22,6 +22,7 @@ use super::worker::{
 };
 use crate::errors::AppResult;
 use crate::sync::domain::{StageOutboxItemInput, SyncOutboxItem};
+use crate::sync::plant_join::PlantJoinState;
 use crate::sync::queries::{self, hash_payload, OUTBOX_MAX_DELIVERY_ATTEMPTS};
 
 // ── Stub control API ────────────────────────────────────────────────────────────────────────
@@ -1393,4 +1394,264 @@ async fn support_bundle_upload_reports_a_refused_verification() {
         .json()
         .get("ticket")
         .is_none());
+}
+
+// ── Joining the plant before the first administrator (`sync::plant_join`) ────────────────────
+
+const PLANT: &str = "tenant-plant-join";
+
+/// A new PC just activated for `PLANT`: the system seed, the claim, no pull yet.
+async fn newly_activated_pc() -> DatabaseConnection {
+    let db = crate::db::test_db::seeded().await;
+    crate::commands::product_license::record_activation_claim_for_tests(&db, PLANT, "fp-join", TOKEN)
+        .await
+        .expect("claim");
+    db
+}
+
+async fn create_first_admin(db: &DatabaseConnection, username: &str) -> AppResult<()> {
+    crate::commands::product_license::bootstrap_initial_tenant_admin_in(
+        db,
+        crate::commands::product_license::BootstrapInitialAdminInput {
+            username: username.into(),
+            email: format!("{username}@plant.example"),
+            password: "Chef-Usine-2026!Sur".into(),
+            display_name: None,
+        },
+    )
+    .await
+}
+
+fn error_code(err: &crate::errors::AppError) -> Option<&str> {
+    match err {
+        crate::errors::AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.as_str()),
+        _ => None,
+    }
+}
+
+async fn join_state(db: &DatabaseConnection, handle: &SyncWorkerHandle) -> PlantJoinState {
+    crate::commands::product_license::get_activation_bootstrap_state_in(db, &handle.status())
+        .await
+        .expect("bootstrap state")
+        .plant_join
+        .expect("activated")
+}
+
+async fn confirmed_empty(db: &DatabaseConnection) -> bool {
+    crate::sync::plant_join::server_confirmed_no_accounts(db, PLANT)
+        .await
+        .expect("fact")
+}
+
+/// A user account as another PC of the plant sent it.
+fn inbound_account(entity_sync_id: &str, username: &str, seq: i64) -> Value {
+    let payload = json!({ "entity_sync_id": entity_sync_id, "username": username, "is_active": 1 }).to_string();
+    json!({
+        "server_seq": seq,
+        "entity_type": "user_accounts",
+        "entity_sync_id": entity_sync_id,
+        "operation": "create",
+        "row_version": 1,
+        "payload_json": payload,
+        "payload_hash": hash_payload(&payload),
+        "owner_user_sync_id": null,
+        "deleted": false,
+    })
+}
+
+/// The second PC of a plant whose server holds an administrator: the pull brings the account, the
+/// first-start screen sends to sign-in and the creation is refused.
+#[tokio::test]
+async fn a_pc_joining_a_plant_with_accounts_goes_to_sign_in() {
+    let db = newly_activated_pc().await;
+    let stub = start_stub(|req| match req.path.as_str() {
+        "/api/v1/sync/snapshot" => ok(snapshot_page(
+            vec![inbound_account("acct-chef", "chef", 1)],
+            None,
+            Some("v2.cp1.sig"),
+        )),
+        "/api/v1/sync/exchange" => ok(exchange_answer("v2.cp2.sig", acks_for(req, 2), vec![], false)),
+        _ => status(404, json!({ "error": "not_found" })),
+    })
+    .await;
+    let (worker, handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+    assert_eq!(
+        join_state(&db, &handle).await,
+        PlantJoinState::Joining,
+        "before the pull"
+    );
+
+    let (outcome, _) = worker.cycle_once().await;
+    assert_eq!(outcome, CycleOutcome::Synced { more_work: false });
+    assert!(!confirmed_empty(&db).await);
+    assert_eq!(join_state(&db, &handle).await, PlantJoinState::SignIn);
+    let err = create_first_admin(&db, "chef2").await.expect_err("accounts exist");
+    assert_eq!(error_code(&err), Some("FIRST_ADMIN_PLANT_JOIN_REQUIRED"), "{err:?}");
+}
+
+/// A truly empty plant: once the pull has reached the server head with no account, the first
+/// administrator may be created; the creation consumes the fact.
+#[tokio::test]
+async fn a_complete_pull_of_an_empty_plant_allows_the_first_administrator() {
+    let db = newly_activated_pc().await;
+    let exchanges = Arc::new(Mutex::new(0_u32));
+    let counter = exchanges.clone();
+    let stub = start_stub(move |req| match req.path.as_str() {
+        "/api/v1/sync/snapshot" => ok(snapshot_page(vec![], None, Some("v2.cp1.sig"))),
+        "/api/v1/sync/exchange" => {
+            let mut n = counter.lock().expect("counter");
+            *n += 1;
+            // The first answer is not the server head yet.
+            ok(exchange_answer(
+                &format!("v2.cp{}.sig", *n + 1),
+                acks_for(req, 1),
+                vec![],
+                *n == 1,
+            ))
+        }
+        _ => status(404, json!({ "error": "not_found" })),
+    })
+    .await;
+    let (worker, handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+
+    let (outcome, _) = worker.cycle_once().await;
+    assert_eq!(outcome, CycleOutcome::Synced { more_work: false });
+    assert_eq!(
+        *exchanges.lock().expect("counter"),
+        2,
+        "exchanged until has_more was false"
+    );
+    assert_eq!(join_state(&db, &handle).await, PlantJoinState::CreateFirstAdmin);
+    create_first_admin(&db, "chef").await.expect("first administrator");
+    assert!(!confirmed_empty(&db).await, "consumed by the creation");
+    assert_eq!(join_state(&db, &handle).await, PlantJoinState::SignIn);
+}
+
+/// Offline, or a pull that fails or stops before the server head: no fact, no first administrator,
+/// and the screen asks for a connection.
+#[tokio::test]
+async fn without_a_complete_pull_the_first_administrator_is_refused() {
+    // Offline: a port with nothing listening.
+    let db = newly_activated_pc().await;
+    let addr = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
+        probe.local_addr().expect("addr")
+    };
+    let (worker, handle) = make_worker(&db, &format!("http://{addr}"), FixedAccess::new(TOKEN), test_timing());
+    let (outcome, _) = worker.cycle_once().await;
+    assert!(matches!(outcome, CycleOutcome::Offline { .. }), "{outcome:?}");
+    assert_eq!(join_state(&db, &handle).await, PlantJoinState::ConnectionNeeded);
+    let err = create_first_admin(&db, "chef").await.expect_err("offline");
+    assert_eq!(error_code(&err), Some("FIRST_ADMIN_PLANT_JOIN_REQUIRED"), "{err:?}");
+
+    // The snapshot succeeds but the exchange fails: the pull is not complete.
+    let db = newly_activated_pc().await;
+    let stub = start_stub(|req| match req.path.as_str() {
+        "/api/v1/sync/snapshot" => ok(snapshot_page(vec![], None, Some("v2.cp1.sig"))),
+        _ => status(503, json!({ "error": "sync_exchange_failed" })),
+    })
+    .await;
+    let (worker, handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+    let (outcome, _) = worker.cycle_once().await;
+    assert!(matches!(outcome, CycleOutcome::Retry { .. }), "{outcome:?}");
+    assert_eq!(join_state(&db, &handle).await, PlantJoinState::ConnectionNeeded);
+    let err = create_first_admin(&db, "chef").await.expect_err("pull failed");
+    assert_eq!(error_code(&err), Some("FIRST_ADMIN_PLANT_JOIN_REQUIRED"), "{err:?}");
+
+    // The cycle stops at its exchange limit while the server still has more: not the head yet.
+    let db = newly_activated_pc().await;
+    let stub = start_stub(|req| match req.path.as_str() {
+        "/api/v1/sync/snapshot" => ok(snapshot_page(vec![], None, Some("v2.cp1.sig"))),
+        _ => ok(exchange_answer("v2.more.sig", acks_for(req, 1), vec![], true)),
+    })
+    .await;
+    let (worker, _handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+    let (outcome, _) = worker.cycle_once().await;
+    assert_eq!(outcome, CycleOutcome::Synced { more_work: true });
+    assert!(!confirmed_empty(&db).await);
+}
+
+/// The first-start screen's join requests (`SyncCommand::JoinPlant`): repeated requests while
+/// offline coalesce into one early cycle and keep the failure count (unlike `RunNow`).
+#[tokio::test]
+async fn join_requests_coalesce_and_keep_the_backoff_count() {
+    let db = setup_db().await;
+    seed_checkpoint(&db, "v2.start").await;
+    let addr = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
+        probe.local_addr().expect("addr")
+    };
+    let timing = SyncTiming {
+        retry_base: Duration::from_secs(60),
+        retry_max: Duration::from_secs(60),
+        ..test_timing()
+    };
+    let (worker, handle) = make_worker(&db, &format!("http://{addr}"), FixedAccess::new(TOKEN), timing);
+    let commands = handle.take_receiver().expect("receiver");
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(worker.run(commands, cancel.clone()));
+    let mut status = handle.subscribe();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.state == SyncWorkerState::Offline),
+    )
+    .await
+    .expect("offline")
+    .expect("status channel");
+
+    for _ in 0..3 {
+        handle.send(SyncCommand::JoinPlant);
+    }
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.consecutive_failures == 2),
+    )
+    .await
+    .expect("one early cycle, failure count kept")
+    .expect("status channel");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        handle.status().consecutive_failures,
+        2,
+        "the three requests made one cycle"
+    );
+
+    cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+}
+
+/// A join request never runs a cycle before the server's `Retry-After`.
+#[tokio::test]
+async fn a_join_request_waits_for_retry_after() {
+    let db = setup_db().await;
+    seed_checkpoint(&db, "v2.start").await;
+    let stub = start_stub(|_| Reply::Json {
+        status: 429,
+        body: json!({ "error": "rate_limited" }),
+        headers: vec![("Retry-After", "30".to_string())],
+    })
+    .await;
+    let (worker, handle) = make_worker(&db, &stub.base_url, FixedAccess::new(TOKEN), test_timing());
+    let commands = handle.take_receiver().expect("receiver");
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(worker.run(commands, cancel.clone()));
+    let mut status = handle.subscribe();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        status.wait_for(|s| s.state == SyncWorkerState::Retrying),
+    )
+    .await
+    .expect("rate limited")
+    .expect("status channel");
+
+    handle.send(SyncCommand::JoinPlant);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        stub.requests_to("/api/v1/sync/exchange").len(),
+        1,
+        "Retry-After honoured"
+    );
+
+    cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
 }

@@ -55,7 +55,9 @@
 //!   started, resumed or was reopened: a permit when it requires one (of the type a plant rule named,
 //!   when a rule flagged it), every permit live at that time active, not suspended, not expired, not
 //!   expiring before the end of the work (the planned end; without one, that time plus the
-//!   expected duration), with its isolations ready;
+//!   expected duration), with its isolations ready; the same gate judges a work order arriving
+//!   `completed` or `closed` that this PC never held in execution (new here, or draft, planning or
+//!   ready here: its start was made elsewhere), except plant history received by a snapshot;
 //! - a permit type whose three-person lock-removal setting changes (or a new type with it on), or
 //!   whose energy-isolation rule is switched off, or whose record of such a change changes, says who
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
@@ -116,7 +118,7 @@ const JUDGED_STATUSES: &[&str] = &["active", "closed", "handed_back", "suspended
 tokio::task_local! {
     /// While the children counted for a permit's change are applied with it (`apply_group`): that
     /// permit and its status before the change (`None`: new here).
-    static GROUP_PARENT: (String, Option<String>);
+    static GROUP_PARENT: (String, Option<String>, bool);
 }
 
 /// A non-empty text field of a payload.
@@ -482,20 +484,91 @@ pub(crate) struct GroupRow {
     inbox_id: i64,
 }
 
+impl GroupRow {
+    /// The waiting inbox row `inbox_id` of `entity_type`, applied in a group (a count's reversal
+    /// applied with its held adjustment, `inventory::count_four_eyes::count_movement_group`).
+    pub(crate) fn new(entity_type: &'static str, inbox_id: i64) -> Self {
+        Self { entity_type, inbox_id }
+    }
+
+    /// The inbox row applied in the group.
+    pub(crate) fn inbox_id(&self) -> i64 {
+        self.inbox_id
+    }
+}
+
 /// Rows applied in the same transaction as a received permit or work order (`apply_group`).
 #[derive(Debug, Clone)]
 pub(crate) struct Group {
     parent_sync_id: String,
     previous_status: Option<String>,
     rows: Vec<GroupRow>,
+    /// The parent's received change is judged (`false`: a work order new here received by the
+    /// snapshot of this PC's first join, the plant's history; its children are applied with it, not
+    /// judged again).
+    judged: bool,
+    /// A received work-order status change (or a work order new here): its close-out children are
+    /// in the group, and a completion or close is judged on the written state after it
+    /// (`wo::closeout_sync::judge_closeout`). `None` for permit and start-only groups.
+    pub(crate) closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
+}
+
+impl Group {
+    /// A group of waiting rows applied with `parent_sync_id`, judged against `previous_status`
+    /// (the parent's status here before the change; `None`: new here).
+    pub(crate) fn new(
+        parent_sync_id: String,
+        previous_status: Option<String>,
+        rows: Vec<GroupRow>,
+        judged: bool,
+        closeout: Option<crate::wo::closeout_sync::CloseoutEntry>,
+    ) -> Self {
+        Self {
+            parent_sync_id,
+            previous_status,
+            rows,
+            judged,
+            closeout,
+        }
+    }
+
+    /// The rows of a work-order start group followed by those of its close-out group (the same
+    /// received work order): one group, judged against the close-out group's previous status.
+    pub(crate) fn followed_by(self, closeout: Group) -> Group {
+        let mut rows = self.rows;
+        for row in closeout.rows {
+            if !rows.iter().any(|r| r.inbox_id == row.inbox_id) {
+                rows.push(row);
+            }
+        }
+        Group { rows, ..closeout }
+    }
+}
+
+/// While the children of a group are applied (`apply_group`): the status `parent_sync_id` had here
+/// before the change (`Some(None)`: new here); `None` outside that parent's group.
+pub(crate) fn group_previous_status(parent_sync_id: &str) -> Option<Option<String>> {
+    GROUP_PARENT
+        .try_with(|(parent, previous, _)| (parent == parent_sync_id).then(|| previous.clone()))
+        .ok()
+        .flatten()
+}
+
+/// While the children of a group are applied: whether `parent_sync_id`'s received change is judged
+/// (`Some(false)`: snapshot history); `None` outside that parent's group.
+pub(crate) fn group_parent_judged(parent_sync_id: &str) -> Option<bool> {
+    GROUP_PARENT
+        .try_with(|(parent, _, judged)| (parent == parent_sync_id).then_some(*judged))
+        .ok()
+        .flatten()
 }
 
 /// The rows of one table naming a parent: the local ones with the counted waiting versions laid over
 /// them, the counted waiting rows themselves, and why a waiting row cannot be counted yet.
-struct Children {
-    rows: Vec<(String, Payload)>,
-    counted: Vec<GroupRow>,
-    blocked: Option<String>,
+pub(crate) struct Children {
+    pub(crate) rows: Vec<(String, Payload)>,
+    pub(crate) counted: Vec<GroupRow>,
+    pub(crate) blocked: Option<String>,
 }
 
 /// Rows of `table` naming the parent `parent_sync_id` (a row of `parent_table`; local column
@@ -506,13 +579,27 @@ struct Children {
 /// for an isolation or a handover log, when it keeps the isolation or hand-over rules (otherwise it
 /// is left to be refused on its own). A row moved to another parent by its waiting version no longer
 /// counts.
-async fn children(
+pub(crate) async fn children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     parent_table: &str,
     parent_col: &str,
     parent_key: &str,
     parent_sync_id: &str,
+) -> AppResult<Children> {
+    children_with(conn, table, parent_table, parent_col, parent_key, parent_sync_id, &[]).await
+}
+
+/// [`children`], where a reference to one of `applied_with` (rows counted in the same group,
+/// applied before these) does not block a waiting row.
+async fn children_with(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    parent_table: &str,
+    parent_col: &str,
+    parent_key: &str,
+    parent_sync_id: &str,
+    applied_with: &[(&str, String)],
 ) -> AppResult<Children> {
     let three_person = table == "permit_isolations" && permit_three_person(conn, parent_sync_id).await?;
     let mut rows: BTreeMap<String, Payload> = BTreeMap::new();
@@ -572,6 +659,7 @@ async fn children(
             .await?
             .into_iter()
             .filter(|(entity, id)| !(*entity == parent_table && id == parent_sync_id))
+            .filter(|(entity, id)| !applied_with.iter().any(|(e, i)| e == entity && i == id))
             .collect();
         if let Some((entity, id)) = missing.first() {
             blocked = Some(format!("{table} {sid} waits for {entity} {id}"));
@@ -600,7 +688,7 @@ async fn children(
     })
 }
 
-async fn permit_children(
+pub(crate) async fn permit_children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     permit_sync_id: &str,
@@ -616,7 +704,7 @@ async fn permit_children(
     .await
 }
 
-fn payloads(c: &Children) -> Vec<&Payload> {
+pub(crate) fn payloads(c: &Children) -> Vec<&Payload> {
     c.rows.iter().map(|(_, p)| p).collect()
 }
 
@@ -757,7 +845,7 @@ async fn permit_transition(
 }
 
 /// The local id of a row of `table` (fixed names, never received text) found by its sync identity.
-async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn local_id(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> AppResult<Option<i64>> {
     conn.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         format!("SELECT id FROM \"{table}\" WHERE entity_sync_id = ?"),
@@ -1043,7 +1131,11 @@ fn approval_recorded(p: &Payload) -> bool {
 /// `relaxing` a rule switching it on (`value_json` true), else one switching it off. A self-approval
 /// waits for the opt-out it was made under (four-eyes meanwhile), and one accepted under the opt-out
 /// held here waits while a return to four-eyes is on its way; nothing is written meanwhile.
-async fn site_rule_change_waiting(conn: &impl ConnectionTrait, site_id: i64, relaxing: bool) -> AppResult<bool> {
+pub(crate) async fn site_rule_change_waiting(
+    conn: &impl ConnectionTrait,
+    site_id: i64,
+    relaxing: bool,
+) -> AppResult<bool> {
     let Some(site_sync) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1393,7 +1485,9 @@ pub(crate) async fn permit_group(
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: from,
+        judged: true,
         rows,
+        closeout: None,
     }))
 }
 
@@ -1425,7 +1519,11 @@ pub(crate) async fn apply_group(
         }
         let outcome = GROUP_PARENT
             .scope(
-                (group.parent_sync_id.clone(), group.previous_status.clone()),
+                (
+                    group.parent_sync_id.clone(),
+                    group.previous_status.clone(),
+                    group.judged,
+                ),
                 Box::pin(crate::sync::materialize::apply_inbox_row_in(conn, &item)),
             )
             .await?;
@@ -1433,13 +1531,18 @@ pub(crate) async fn apply_group(
             ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
             // A child that waits (a row it needs has not arrived) makes the whole group wait: rolled
             // back, retried with the next rows applied.
-            ApplyOutcome::Deferred { code, message } => {
+            ApplyOutcome::Deferred {
+                code,
+                message,
+                waits_for,
+            } => {
                 return Ok(Some(ApplyOutcome::Deferred {
                     code: crate::sync::materialize::DEFER_MISSING_PARENT.into(),
                     message: format!(
                         "{} {} received with it waits ({code}: {message})",
                         row.entity_type, item.entity_sync_id
                     ),
+                    waits_for,
                 }));
             }
             ApplyOutcome::Conflict { code, message } => {
@@ -1543,7 +1646,7 @@ async fn cancellation_check(
     };
     let current = field(&permit, "status").unwrap_or_default().to_string();
     let held = GROUP_PARENT
-        .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+        .try_with(|(parent, previous, _)| (parent == permit_sync).then(|| previous.clone()))
         .ok()
         .flatten()
         .map_or(current, |previous| previous.unwrap_or_else(|| "draft".into()));
@@ -1611,7 +1714,7 @@ pub(crate) async fn inbound_isolation_check(
         current.clone()
     } else {
         GROUP_PARENT
-            .try_with(|(parent, previous)| (parent == permit_sync).then(|| previous.clone()))
+            .try_with(|(parent, previous, _)| (parent == permit_sync).then(|| previous.clone()))
             .ok()
             .flatten()
             .map_or_else(
@@ -1704,7 +1807,7 @@ fn lock_record_kept(local: Option<&Payload>, iso: &Payload) -> Option<InboundVer
 }
 
 /// The local id of the user with this sync id.
-async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<Option<i64>> {
+pub(crate) async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) -> AppResult<Option<i64>> {
     local_id(conn, "user_accounts", user_sync_id).await
 }
 
@@ -2258,7 +2361,7 @@ pub(crate) async fn inbound_delete_check(
 }
 
 /// Code of a work-order status named by its sync id; `None` when not here.
-async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppResult<Option<String>> {
+pub(crate) async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppResult<Option<String>> {
     conn.query_one(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "SELECT code FROM work_order_statuses WHERE entity_sync_id = ?",
@@ -2269,7 +2372,13 @@ async fn status_code(conn: &impl ConnectionTrait, status_sync_id: &str) -> AppRe
     .transpose()
 }
 
-/// The received work order, when it enters `in_progress` here (otherwise `None`), with its local copy.
+/// The received work order, when its start is judged here (otherwise `None`), with its local copy
+/// overlaid: when it enters `in_progress` here; or when it arrives `completed` or `closed` while
+/// this PC never held it in execution (new here, or draft / planning / ready here), so the start
+/// made elsewhere on the way is judged too (AU-99 review N4) — except plant history received as a
+/// work order new here by the snapshot of this PC's first join (`sync::plant_join::
+/// first_join_snapshot_row`: activated, no complete pull yet, nothing of it held here). A snapshot
+/// received once this PC has joined, or on a PC with no activation, is judged.
 async fn work_order_start(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2283,18 +2392,25 @@ async fn work_order_start(
     let Some(to) = status_code(conn, status_sync).await? else {
         return Ok(Err(format!("work-order status {status_sync} is not applied yet")));
     };
-    if to != "in_progress" {
-        return Ok(Ok(None));
-    }
-    if let Some(from_sync) = local.as_ref().and_then(|l| field(l, "status_sync_id")) {
-        if status_code(conn, from_sync).await?.as_deref() == Some("in_progress") {
-            return Ok(Ok(None));
+    let from = match local.as_ref().and_then(|l| field(l, "status_sync_id")) {
+        Some(from_sync) => status_code(conn, from_sync).await?,
+        None => None,
+    };
+    let judged = match to.as_str() {
+        "in_progress" => from.as_deref() != Some("in_progress"),
+        "completed" | "closed" => {
+            !matches!(
+                from.as_deref(),
+                Some("in_progress" | "on_hold" | "completed" | "closed")
+            ) && (local.is_some()
+                || !crate::sync::plant_join::first_join_snapshot_row(conn, "work_orders", entity_sync_id).await?)
         }
-    }
-    Ok(Ok(Some(wo)))
+        _ => false,
+    };
+    Ok(Ok(judged.then_some(wo)))
 }
 
-async fn wo_children(
+pub(crate) async fn wo_children(
     conn: &impl ConnectionTrait,
     table: &'static str,
     key: &str,
@@ -2304,23 +2420,73 @@ async fn wo_children(
     children(conn, table, "work_orders", col, key, wo_sync).await
 }
 
-/// Re-check of the permit flag a plant rule set on a work order (`wo::workflow::actions::
-/// permit_requirement`): a received work order whose rule-set flag is cleared (`requires_permit` 0,
-/// `permit_rule_code` set) says who cleared it, when and why (10 characters or more), before its
-/// execution started, and that person holds the permit-issue right here. A person not applied here
-/// yet makes it wait. A state already held here (same clearing) passes. A different complete clearing
-/// received over one recorded here is judged the same way; a removed or partial one is refused.
+/// [`wo_children`], where a reference to one of `applied_with` (rows of the same group applied
+/// before these) does not block a waiting row.
+pub(crate) async fn wo_children_with(
+    conn: &impl ConnectionTrait,
+    table: &'static str,
+    key: &str,
+    col: &str,
+    wo_sync: &str,
+    applied_with: &[(&str, String)],
+) -> AppResult<Children> {
+    children_with(conn, table, "work_orders", col, key, wo_sync, applied_with).await
+}
+
+/// Re-check of a protected permit requirement of a work order (`wo::workflow::actions::
+/// permit_requirement`): the flag a plant rule set (`permit_rule_code`), or the requirement carried
+/// from a request flagged "sécurité" (`permit_from_safety_di`, migration 255). A received work order
+/// whose protected requirement is cleared (`requires_permit` 0) says who cleared it, when and why (10
+/// characters or more), before its execution started, and that person holds the permit-issue right
+/// here (plant-wide for a rule, at the work order's site for a safety request:
+/// `permit_requirement::may_clear_protected_requirement`). A person not applied here yet makes it
+/// wait. A state already held here (same clearing) passes. A different complete clearing received
+/// over one recorded here is judged the same way; a removed or partial one is refused.
+///
+/// A plant rule is recorded when the work order is created, or later on a work order not started yet
+/// that a rule matches (`permit::requirement_rules::stamp_matching_rule`: each PC derives the same
+/// from the same work order and rule list). A received row that carries no rule does not speak for
+/// the rule (audit finding AU-04 R2-B1):
+/// - with no rule held here (its sender has not applied the rule list that matches it here yet, owner
+///   decision D2 (a), audit finding AU-04 B2), it is applied: a work order not started gets the rule
+///   after the apply, and one already started is recorded as a safety finding
+///   (`sync::apply_hooks::after_received_work_order`);
+/// - over a rule held here, it is judged with that rule: a clearing it carries is judged as a
+///   clearing of that rule (the permit-issue right plant-wide, who, when and why), and one without a
+///   clearing (a PC that never had the rule) is applied with the rule, its permit type, the
+///   requirement and a clearing held here kept ([`keep_held_rule_trace`]), a started work order
+///   recorded once as a safety finding.
+///
+/// A received row that names another rule, or another permit type for the rule, is refused once the
+/// work order has started, here or in the row; before (two PCs that derived different rules), it
+/// is applied and each PC keeps the rule its own list gives (`requirement_rules::
+/// converge_received_rule`, audit findings AU-04 R2-S1, R3-B1).
+/// The safety origin is never turned off by a received row. A work order new here sent by a PC
+/// without migration 255 (no `permit_from_safety_di` in the row) is judged with the safety flag of
+/// its source request here, and gets that origin when it is applied (`sync::apply_hooks::
+/// after_upsert`).
 pub(crate) async fn inbound_permit_rule_check(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     received: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
+    use crate::wo::workflow::actions::permit_requirement::{self as requirement, ProtectedOrigin};
     let local = local_wire(conn, "work_orders", entity_sync_id).await?;
-    let wo = overlay(local.as_ref(), received);
+    let mut wo = overlay(local.as_ref(), received);
     let code = field(&wo, "code").unwrap_or(entity_sync_id).to_string();
-    // The rule trace is written once, at conversion, and never changes (`di::conversion`): a received
-    // row that blanks or changes it is refused, and the local trace is the one judged.
-    if let Some(l) = local.as_ref().filter(|l| field(l, "permit_rule_code").is_some()) {
+    // A row without a rule over a rule held here is judged with the rule held here (R2-B1).
+    let held_rule = local.as_ref().filter(|l| field(l, "permit_rule_code").is_some());
+    let blank_over_held = held_rule.is_some() && field(&wo, "permit_rule_code").is_none();
+    if let Some(l) = held_rule.filter(|_| blank_over_held) {
+        for key in RULE_TRACE_KEYS {
+            wo.insert(key.to_string(), l.get(key).cloned().unwrap_or(Value::Null));
+        }
+    }
+    // The rule trace is written once (`wo::queries::create_work_order_in`, `di::conversion`,
+    // `requirement_rules::stamp_matching_rule`): a received row that names another rule or permit
+    // type is refused once the work order has started. Before, it comes from a PC that derived its
+    // rule from another version of the list: applied, and both PCs keep the same rule (see above).
+    if let Some(l) = held_rule {
         let trace = |p: &Payload| {
             (
                 field(p, "permit_rule_code").map(str::to_string),
@@ -2328,15 +2494,98 @@ pub(crate) async fn inbound_permit_rule_check(
             )
         };
         if trace(l) != trace(&wo) {
-            return conflict(
-                "WO_PERMIT_RULE_CHANGED",
-                format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
-            );
+            let changed = || {
+                conflict(
+                    "WO_PERMIT_RULE_CHANGED",
+                    format!("work order {code}: the plant rule that requires its permit cannot be removed or changed"),
+                )
+            };
+            // Started on either side (here, or in the row): refused. A row that moves the status
+            // back to "ready" does not make a started work order not started (R3-B1).
+            for side in [l, &wo] {
+                let Some(status_sync) = field(side, "status_sync_id") else {
+                    return changed();
+                };
+                let Some(status) = status_code(conn, status_sync).await? else {
+                    return wait(format!("work-order status {status_sync} is not applied yet"));
+                };
+                if !requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str()) {
+                    return changed();
+                }
+            }
         }
     }
-    if field(&wo, "permit_rule_code").is_none() {
+    // A request flagged "sécurité" here protects its work orders that have not started: each PC
+    // derives that protection itself from the request (`permit_requirement::
+    // raise_work_orders_of_safety_request`, after the apply here). A received row without that origin
+    // for such a work order comes from a PC that has not received the flag yet: it is applied and
+    // protected here in the same transaction, never stored unprotected, and that PC raises it too
+    // when the request reaches it. Except over a clearing recorded here (it is not replaced by a row
+    // that never saw it), and a row that turns the origin off without a flagged request (the origin
+    // is written once, at conversion or create). A work order stored here with origin 0 while its
+    // request is flagged here (received started, as sent) is judged with that origin on every later
+    // row too, so a later untick still needs who, when and why.
+    let local_origin = local.as_ref().is_some_and(|l| flag(l, SAFETY_ORIGIN));
+    let mut safety_origin = flag(&wo, SAFETY_ORIGIN);
+    if !safety_origin {
+        let request_flagged = match source_request_is_safety(conn, &wo).await? {
+            Some(flagged) => flagged,
+            None if local.is_none() => {
+                return wait(format!(
+                    "work order {code}: the request it was converted from is not applied yet"
+                ))
+            }
+            None => false,
+        };
+        let origin_off = || {
+            conflict(
+                "WO_PERMIT_SAFETY_ORIGIN_CHANGED",
+                format!(
+                    "work order {code}: the safety request its permit requirement comes from cannot be removed by \
+                     synchronisation"
+                ),
+            )
+        };
+        if request_flagged {
+            let Some(status_sync) = field(&wo, "status_sync_id") else {
+                return origin_off();
+            };
+            let Some(status) = status_code(conn, status_sync).await? else {
+                return wait(format!("work-order status {status_sync} is not applied yet"));
+            };
+            let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES
+                .contains(&status.as_str())
+                && time(&wo, "actual_start").is_none();
+            let cleared_here = local
+                .as_ref()
+                .is_some_and(|l| field(l, "permit_rule_cleared_at").is_some());
+            if not_started && !cleared_here {
+                return Ok(None);
+            }
+            if local_origin {
+                return origin_off();
+            }
+            // New here and started: judged with that origin (a clearing says who, when and why).
+            safety_origin = true;
+        } else if local_origin {
+            return origin_off();
+        }
+    }
+    // Over a rule held here, a row without a rule and without a clearing comes from a PC that never
+    // had the rule: applied, the rule's trace, requirement and clearing held here kept
+    // ([`keep_held_rule_trace`]).
+    if blank_over_held && CLEARING_KEYS.iter().all(|k| field(received, k).is_none()) {
         return Ok(None);
     }
+    let origin = match field(&wo, "permit_rule_code") {
+        Some(rule) => ProtectedOrigin::Rule(rule.to_string()),
+        None if safety_origin => ProtectedOrigin::SafetyRequest,
+        None => return Ok(None),
+    };
+    let required_by = match origin {
+        ProtectedOrigin::Rule(_) => "a plant rule",
+        ProtectedOrigin::SafetyRequest => "a request flagged as a safety concern",
+    };
     let clearing = |p: &Payload| {
         [
             field(p, "permit_rule_cleared_by_sync_id").map(str::to_string),
@@ -2352,6 +2601,32 @@ pub(crate) async fn inbound_permit_rule_check(
     // A clearing recorded here is never removed nor partly rewritten (who, when or why missing). A
     // different complete clearing (another PC that cleared the same order offline) is judged in full
     // below, like a new one, so both PCs converge on it when it is valid.
+    // A clearing withdrawn as a whole with the requirement in force again (no who, when or why): what
+    // a PC does when the requirement is required again (`permit_requirement::
+    // withdraw_clearing_on_retick`) or when a safety requirement changes site
+    // (`void_clearing_on_site_change`): the protected state, accepted. Removing a clearing without
+    // requiring the permit, or a part of it, is refused below.
+    if clearing_changed && clearing(&wo) == none && flag(&wo, "requires_permit") {
+        return Ok(None);
+    }
+    // A safety requirement cleared at one site does not stay cleared at another: a received move of
+    // a work order whose clearing is kept is refused (the PC that moved it withdraws the clearing in
+    // the same change). A work order that had no site here was cleared with the plant-wide right,
+    // which holds at any site.
+    if origin == ProtectedOrigin::SafetyRequest && field(&wo, "permit_rule_cleared_at").is_some() {
+        if let Some(l) = local.as_ref() {
+            let (held_site, new_site) = (field(l, "entity_sync_id"), field(&wo, "entity_sync_id"));
+            if held_site.is_some() && held_site != new_site && clearing(l) == clearing(&wo) {
+                return conflict(
+                    "WO_PERMIT_RULE_CLEAR_INVALID",
+                    format!(
+                        "work order {code}: its permit requirement from a safety request was cleared at its site \
+                         here and the received work order moves it to another site with that clearing kept"
+                    ),
+                );
+            }
+        }
+    }
     if clearing_changed
         && local
             .as_ref()
@@ -2360,11 +2635,14 @@ pub(crate) async fn inbound_permit_rule_check(
     {
         return conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
-            format!("work order {code}: the clearing of its rule permit flag recorded here cannot be removed or partly rewritten"),
+            format!(
+                "work order {code}: the clearing of its permit requirement (required by {required_by}) recorded \
+                 here cannot be removed or partly rewritten"
+            ),
         );
     }
     if !clearing_changed {
-        // Still flagged: the flag is in force (the start gate judges it).
+        // Still required: the requirement is in force (the start gate judges it).
         if flag(&wo, "requires_permit") {
             return Ok(None);
         }
@@ -2378,7 +2656,7 @@ pub(crate) async fn inbound_permit_rule_check(
                 return conflict(
                     "WO_PERMIT_RULE_CLEAR_INVALID",
                     format!(
-                        "work order {code}: the permit required by a plant rule was cleared after its execution \
+                        "work order {code}: the permit required by {required_by} was cleared after its execution \
                          started (the received start is before the clearing recorded here)"
                     ),
                 );
@@ -2389,11 +2667,11 @@ pub(crate) async fn inbound_permit_rule_check(
     let invalid = |why: &str| {
         conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
-            format!("work order {code}: the permit required by a plant rule was cleared {why}"),
+            format!("work order {code}: the permit required by {required_by} was cleared {why}"),
         )
     };
     let reason_ok = field(&wo, "permit_rule_clear_reason")
-        .is_some_and(|r| r.chars().count() >= crate::wo::workflow::actions::permit_requirement::MIN_CLEAR_REASON_CHARS);
+        .is_some_and(|r| r.chars().count() >= requirement::MIN_CLEAR_REASON_CHARS);
     let Some(cleared_at) = time(&wo, "permit_rule_cleared_at") else {
         return invalid("without the time it was cleared");
     };
@@ -2423,35 +2701,157 @@ pub(crate) async fn inbound_permit_rule_check(
     let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
         return invalid("without saying who cleared it");
     };
-    let Some(clearer) = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE entity_sync_id = ?",
-            [clearer_sync.into()],
-        ))
-        .await?
-        .map(|r| r.try_get::<i64>("", "id").map_err(sync_err))
-        .transpose()?
-    else {
+    let Some(clearer) = local_user(conn, clearer_sync).await? else {
         return wait(format!(
-            "work order {code}: the person who cleared its permit flag is not applied yet"
+            "work order {code}: the person who cleared its permit requirement is not applied yet"
         ));
     };
-    if !crate::settings::site::holds_tenant_right(conn, clearer, crate::rbac::permissions::PTW_ISSUE).await? {
+    // The work order's site here (its org node, `entity_id`, sent as `entity_sync_id`).
+    let site_sync = field(&wo, "entity_sync_id");
+    let site = match site_sync {
+        Some(node) => local_id(conn, "org_nodes", node).await?,
+        None => None,
+    };
+    if !requirement::may_clear_protected_requirement(conn, clearer, &origin, site).await? {
+        if origin == ProtectedOrigin::SafetyRequest && site.is_none() {
+            if let Some(node) = site_sync {
+                return wait(format!("work order {code}: its site {node} is not applied yet"));
+            }
+        }
         // The right is held on the PC that cleared it before the clearing, so its rows come before
         // this one: while some are still waiting here, wait; otherwise refuse (never applied without
         // the right).
         if rights_may_still_arrive(conn, clearer_sync, crate::rbac::permissions::PTW_ISSUE).await? {
             return wait(format!(
-                "work order {code}: the rights of the person who cleared its permit flag are still arriving"
+                "work order {code}: the rights of the person who cleared its permit requirement are still arriving"
             ));
         }
+        let right_where = match origin {
+            ProtectedOrigin::Rule(_) => "the permit-issue right here",
+            ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
+        };
         return conflict(
             "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
-            format!("work order {code}: the permit required by a plant rule was cleared by someone without the permit-issue right here"),
+            format!(
+                "work order {code}: the permit required by {required_by} was cleared by someone without {right_where}"
+            ),
         );
     }
     Ok(None)
+}
+
+/// The column that records a permit requirement carried from a request flagged "sécurité".
+pub(crate) const SAFETY_ORIGIN: &str = "permit_from_safety_di";
+
+/// The keys of a work order's plant rule trace (the rule and the permit type it calls for).
+const RULE_TRACE_KEYS: [&str; 2] = ["permit_rule_code", "permit_rule_permit_type"];
+
+/// The keys of the clearing of a protected permit requirement (who, when, why).
+const CLEARING_KEYS: [&str; 3] = [
+    "permit_rule_cleared_by_sync_id",
+    "permit_rule_cleared_at",
+    "permit_rule_clear_reason",
+];
+
+/// What the apply of a received work order does with the plant rule held here, decided before its
+/// row is written ([`keep_held_rule_trace`]) and finished after (`sync::apply_hooks::
+/// after_received_work_order`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HeldRule {
+    /// The row carried no rule over the rule held here: the rule, its permit type and, when the row
+    /// carries no clearing, the requirement and the clearing held here are kept. `received_requires`:
+    /// whether the row required the permit (recorded in the finding of a started work order).
+    Kept { received_requires: bool },
+    /// The row named another rule (or permit type) on a work order not started: applied, then each
+    /// PC keeps the rule its own list gives (`requirement_rules::converge_received_rule`). `held`:
+    /// the rule and the clearing held here before the write.
+    Differs {
+        held: crate::permit::requirement_rules::HeldTrace,
+    },
+    /// The row named a rule while none is held here (a work order new here, or not stamped yet):
+    /// judged the same way after the write, never adopted as sent when the list here asks for
+    /// another rule or permit type (audit finding AU-04 R4-B1).
+    Received,
+}
+
+/// Before a received work order is written (it passed [`inbound_permit_rule_check`]), audit
+/// findings AU-04 R2-B1 / R2-S1. A row that carries no rule (the key sent empty) over a rule held
+/// here does not speak for the rule: the rule and its permit type held here are written instead of
+/// the empty ones; when the row carries no clearing either (a PC that never had the rule), the
+/// clearing held here is kept too and the permit stays required if either side requires it (a
+/// clearing held here then withdrawn as a re-tick, `permit_requirement::
+/// withdraw_received_clearing_of_required`, recorded). A row with a clearing, judged as a clearing of
+/// the rule held here, writes that clearing. The apply runs with capture suppressed: nothing of this
+/// is sent, and every PC keeps its rule the same way. A row that names another rule is noted, to
+/// converge after the write. A row without the rule keys (an older sender) leaves them as they are.
+pub(crate) async fn keep_held_rule_trace(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+) -> AppResult<Option<HeldRule>> {
+    if !payload.contains_key("permit_rule_code") {
+        return Ok(None);
+    }
+    let local = local_wire(conn, "work_orders", entity_sync_id).await?;
+    let held = local
+        .as_ref()
+        .and_then(|l| field(l, "permit_rule_code").map(str::to_string));
+    let (Some(local), Some(held)) = (local, held) else {
+        // Nothing held here: a row that names a rule is judged after the write (R4-B1).
+        return Ok(field(payload, "permit_rule_code").map(|_| HeldRule::Received));
+    };
+    let held_type = field(&local, "permit_rule_permit_type").map(str::to_string);
+    match field(payload, "permit_rule_code").map(str::to_string) {
+        Some(received) => {
+            let received_type = match payload.get("permit_rule_permit_type") {
+                Some(_) => field(payload, "permit_rule_permit_type").map(str::to_string),
+                None => held_type.clone(),
+            };
+            if received == held && received_type == held_type {
+                return Ok(None);
+            }
+            let text = |k: &str| field(&local, k).map(str::to_string);
+            Ok(Some(HeldRule::Differs {
+                held: crate::permit::requirement_rules::HeldTrace {
+                    code: held,
+                    permit_type: held_type,
+                    cleared_by_sync_id: text("permit_rule_cleared_by_sync_id"),
+                    cleared_at: text("permit_rule_cleared_at"),
+                    clear_reason: text("permit_rule_clear_reason"),
+                },
+            }))
+        }
+        None => {
+            let received_requires = flag(payload, "requires_permit");
+            for key in RULE_TRACE_KEYS {
+                payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+            }
+            if CLEARING_KEYS.iter().all(|k| field(payload, k).is_none()) {
+                for key in CLEARING_KEYS {
+                    payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+                }
+                let requires = received_requires || flag(&local, "requires_permit");
+                payload.insert("requires_permit".into(), Value::from(i64::from(requires)));
+            }
+            Ok(Some(HeldRule::Kept { received_requires }))
+        }
+    }
+}
+
+/// Whether the source request of a received work order (`source_di_sync_id`) is flagged "sécurité"
+/// here: `Some(false)` when it has none, `None` when it is not applied here yet.
+async fn source_request_is_safety(conn: &impl ConnectionTrait, wo: &Payload) -> AppResult<Option<bool>> {
+    let Some(di_sync) = field(wo, "source_di_sync_id") else {
+        return Ok(Some(false));
+    };
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT safety_flag FROM intervention_requests WHERE entity_sync_id = ?",
+        [di_sync.into()],
+    ))
+    .await?
+    .map(|r| r.try_get::<i64>("", "safety_flag").map(|f| f != 0).map_err(sync_err))
+    .transpose()
 }
 
 /// Whether rows that could give `user_sync_id` the right `permission` are still waiting in the inbox
@@ -2872,6 +3272,8 @@ pub(crate) async fn work_order_group(
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),
         previous_status: None,
+        judged: true,
         rows,
+        closeout: None,
     }))
 }

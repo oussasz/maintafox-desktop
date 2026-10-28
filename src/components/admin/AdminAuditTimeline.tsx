@@ -25,11 +25,12 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { describeAdminEvent } from "@/components/admin/admin-event-text";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/data-state";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -104,6 +105,8 @@ function formatDiffJson(raw: string): string {
     return raw;
   }
 }
+
+type AdminTranslate = (key: string, options?: Record<string, unknown>) => string;
 
 function targetLabel(evt: AdminChangeEventDetail): string | null {
   const parts: string[] = [];
@@ -270,7 +273,7 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
           id: String(evt.id),
           title: actionLabel(evt.action),
           subtitle: subtitleParts.length ? subtitleParts.join(" · ") : undefined,
-          description: evt.summary ?? undefined,
+          description: describeAdminEvent(evt, target, t as unknown as AdminTranslate),
           timestamp: evt.acted_at,
           actor: evt.actor_username
             ? evt.actor_username
@@ -387,24 +390,22 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
               <Label htmlFor="audit-from" className="text-xs text-text-secondary">
                 {t("console.audit.from")}
               </Label>
-              <Input
+              <DateField
                 id="audit-from"
-                type="date"
                 className="h-9"
                 value={filter.dateFrom}
-                onChange={(e) => set({ dateFrom: e.target.value })}
+                onChange={(v) => set({ dateFrom: v })}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="audit-to" className="text-xs text-text-secondary">
                 {t("console.audit.to")}
               </Label>
-              <Input
+              <DateField
                 id="audit-to"
-                type="date"
                 className="h-9"
                 value={filter.dateTo}
-                onChange={(e) => set({ dateTo: e.target.value })}
+                onChange={(v) => set({ dateTo: v })}
               />
             </div>
             <div className="ml-auto flex gap-2">

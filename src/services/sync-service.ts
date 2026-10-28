@@ -1,17 +1,18 @@
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   ExecuteSyncRepairInput,
   ListOutboxFilter,
+  MediaFileState,
   ReplaySyncFailuresInput,
   ReplaySyncFailuresResult,
   ResolveSyncConflictInput,
   StageOutboxItemInput,
   SyncConflictFilter,
   SyncConflictRecord,
-  SyncObservabilityReport,
   SyncInboxItem,
+  SyncObservabilityReport,
   SyncOutboxItem,
   SyncRepairActionRecord,
   SyncRepairExecutionResult,
@@ -19,8 +20,8 @@ import type {
   SyncRepairPreviewInput,
   SyncReplayRun,
   SyncStateSummary,
+  SyncWaitingInboxReport,
   SyncWorkerStatus,
-  MediaFileState,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -117,8 +118,68 @@ const SyncConflictRecordSchema = z.object({
   row_version: z.number(),
   local_row_version: z.number().nullable(),
   inbound_row_version: z.number().nullable(),
+  detail_message: z.string().nullable().optional().default(null),
+  reason: z
+    .object({
+      code: z.string(),
+      table: z.string().nullable(),
+      columns: z.array(z.string()),
+      rule: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
+  /** A count held back here for a second approval (CMMS Advisor Q12): its reference, counter and posting time. */
+  count_hold: z
+    .object({
+      session_code: z.string().nullable(),
+      counter: z.string().nullable(),
+      posted_at: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
+  /** Work entering a week frozen here (CMMS Advisor decision 4): the other PC's change time and the freeze time here. */
+  planning_times: z
+    .object({
+      changed_at: z.string().nullable(),
+      frozen_at: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
+  /** A refused count movement or audit link (COUNT_APPROVAL_RECORD_INVALID): whether it is held here. */
+  history_row_held: z.boolean().nullable().optional().default(null),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const SyncWaitTargetSchema = z.object({
+  state: z.string(),
+  conflict_id: z.number().nullable(),
+  entity_type: z.string().nullable(),
+  entity_sync_id: z.string().nullable(),
+  reason_code: z.string().nullable(),
+});
+
+const SyncWaitingInboxReportSchema = z.object({
+  total: z.number(),
+  groups: z.array(z.object({ target: SyncWaitTargetSchema, count: z.number() })),
+  rows: z.array(
+    z.object({
+      inbox_id: z.number(),
+      entity_type: z.string(),
+      entity_sync_id: z.string(),
+      payload_json: z.string(),
+      reason_code: z.string().nullable(),
+      detail_message: z.string().nullable(),
+      waits_for_entity_type: z.string().nullable(),
+      waits_for_sync_id: z.string().nullable(),
+      target: SyncWaitTargetSchema,
+      attempt_count: z.number(),
+      last_attempt_at: z.string().nullable(),
+    }),
+  ),
 });
 
 const SyncReplayRunSchema = z.object({
@@ -252,6 +313,16 @@ export async function listInboxItems(
   }
 }
 
+/** The received rows that wait, each with what it waits for, counted by it (`sync::waiting`). */
+export async function listWaitingInboxRows(limit?: number): Promise<SyncWaitingInboxReport> {
+  try {
+    const result = await invoke<unknown>("list_waiting_inbox_rows", { limit: limit ?? null });
+    return SyncWaitingInboxReportSchema.parse(result) as SyncWaitingInboxReport;
+  } catch (err) {
+    throw formatDecodeError("list_waiting_inbox_rows", err);
+  }
+}
+
 export async function getSyncStateSummary(): Promise<SyncStateSummary> {
   try {
     const result = await invoke<unknown>("get_sync_state_summary");
@@ -365,6 +436,7 @@ export async function getSyncObservabilityReport(): Promise<SyncObservabilityRep
 
 const SyncWorkerErrorSchema = z.object({
   code: z.string(),
+  kind: z.string(),
   message: z.string(),
   http_status: z.number().nullable(),
   at: z.string(),

@@ -5,8 +5,12 @@
  * Phase 2 â€“ Sub-phase 05 â€“ File 03 â€“ Sprint S3.
  */
 
+import { z } from "zod";
+
+import { appErrorLines } from "@/lib/app-error";
 import { invoke } from "@/lib/ipc-invoke";
 import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
+import { extractIpcValidationDetails, toErrorMessage } from "@/utils/errors";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -27,6 +31,8 @@ export interface SaveFailureDetailInput {
   failure_mechanism_id?: number | null;
   /** ISO 14224 B.4 detection method (WORK.DETECTION_METHODS). */
   detection_method_id?: number | null;
+  /** Version of the work order the screen loaded; refused when changed since (bumped on save). */
+  expected_row_version: number;
 }
 
 export interface WoFailureDetail {
@@ -99,6 +105,8 @@ export interface UpdateWoRcaInput {
   wo_id: number;
   root_cause_summary?: string | null;
   corrective_action_summary?: string | null;
+  /** Version of the work order the screen loaded; refused when changed since (bumped on save). */
+  expected_row_version: number;
 }
 
 // -- Costs --
@@ -227,19 +235,9 @@ export class CloseoutBlockingError extends Error {
   }
 }
 
+/** The reasons of a refused close-out, one translated line each (read from the error's `details`). */
 function extractBlockingErrors(error: unknown): string[] {
-  if (typeof error === "string") return [error];
-  if (error && typeof error === "object") {
-    const obj = error as Record<string, unknown>;
-    if (Array.isArray(obj["errors"])) {
-      return obj["errors"].filter((x): x is string => typeof x === "string");
-    }
-    if (Array.isArray(obj["blockingErrors"])) {
-      return obj["blockingErrors"].filter((x): x is string => typeof x === "string");
-    }
-    if (typeof obj["message"] === "string") return [obj["message"]];
-  }
-  return ["Unknown error."];
+  return appErrorLines(error);
 }
 
 function maybeWrapBlockingError(error: unknown): never {
@@ -255,8 +253,58 @@ function maybeWrapBlockingError(error: unknown): never {
 
 // -- Failure detail --
 
-export async function saveFailureDetail(input: SaveFailureDetailInput): Promise<WoFailureDetail> {
-  return invoke<WoFailureDetail>("save_failure_detail", { input });
+const WoFailureDetailSchema = z.object({
+  id: z.number(),
+  work_order_id: z.number(),
+  symptom_id: z.number().nullable(),
+  failure_mode_id: z.number().nullable(),
+  failure_cause_id: z.number().nullable(),
+  failure_effect_id: z.number().nullable(),
+  is_temporary_repair: z.boolean(),
+  is_permanent_repair: z.boolean(),
+  cause_not_determined: z.boolean(),
+  notes: z.string().nullable(),
+  failure_mode_label: z.string().nullable().optional(),
+  failure_cause_label: z.string().nullable().optional(),
+  failure_effect_label: z.string().nullable().optional(),
+  failure_mechanism_id: z.number().nullable().optional(),
+  failure_mechanism_label: z.string().nullable().optional(),
+  detection_method_id: z.number().nullable().optional(),
+  detection_method_label: z.string().nullable().optional(),
+});
+
+const WoForCloseOutSchema = z.object({
+  // Lazy: read when a response is parsed, not when this module loads.
+  wo: z.lazy(() => WorkOrderSchema),
+  failure_detail: WoFailureDetailSchema.nullable(),
+});
+
+/** The work order with its stored failure coding, read together for the close-out form. */
+export interface WoForCloseOut {
+  wo: WorkOrder;
+  failure_detail: WoFailureDetail | null;
+}
+
+/**
+ * The work order and its failure coding (`get_wo`), whatever its status: the close-out form is
+ * loaded from it, at the version it carries (AU-18).
+ */
+export async function getWoForCloseOut(woId: number): Promise<WoForCloseOut> {
+  const raw = await invoke<unknown>("get_wo", { id: woId });
+  const parsed = WoForCloseOutSchema.parse(raw);
+  return {
+    wo: parsed.wo as WorkOrder,
+    failure_detail: parsed.failure_detail as WoFailureDetail | null,
+  };
+}
+
+/** A saved failure detail with the work order's new version (for the next chained save). */
+export type WoFailureDetailSaved = WoFailureDetail & { wo_row_version: number };
+
+export async function saveFailureDetail(
+  input: SaveFailureDetailInput,
+): Promise<WoFailureDetailSaved> {
+  return invoke<WoFailureDetailSaved>("save_failure_detail", { input });
 }
 
 // -- Verification --
@@ -286,8 +334,9 @@ export async function reopenWo(input: WoReopenInput): Promise<WorkOrder> {
   return invoke<WorkOrder>("reopen_wo", { input });
 }
 
-export async function updateWoRca(input: UpdateWoRcaInput): Promise<void> {
-  await invoke<void>("update_wo_rca", { input });
+/** Saves the root cause / corrective action; returns the work order's new version. */
+export async function updateWoRca(input: UpdateWoRcaInput): Promise<number> {
+  return invoke<number>("update_wo_rca", { input });
 }
 
 // -- Attachments --
@@ -313,8 +362,22 @@ export async function deleteWoAttachment(attachmentId: number): Promise<void> {
 
 // -- Costs --
 
-export async function updateServiceCost(woId: number, serviceCost: number): Promise<void> {
-  await invoke<void>("update_service_cost", { woId, serviceCost });
+/** Saves the service cost at the version the screen loaded; returns the new version. */
+export async function updateServiceCost(
+  woId: number,
+  serviceCost: number,
+  expectedRowVersion: number,
+): Promise<number> {
+  return invoke<number>("update_service_cost", { woId, serviceCost, expectedRowVersion });
+}
+
+/** True when the backend refused a save because the record changed since it was loaded. */
+export function isRecordChangedElsewhere(error: unknown): boolean {
+  const code = "GATE_RECORD_CHANGED_ELSEWHERE";
+  return (
+    toErrorMessage(error).includes(code) ||
+    extractIpcValidationDetails(error).some((d) => d.code === code || d.message.includes(code))
+  );
 }
 
 // -- Analytics --

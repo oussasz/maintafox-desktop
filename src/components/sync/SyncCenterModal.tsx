@@ -1,12 +1,14 @@
 /**
- * Sync centre (top bar): worker status, rejected / deferred counts, stock left below zero by
- * received movements (to reconcile in Inventory) and the conflicts to review.
+ * Sync centre (top bar): worker status, rejected count, the received changes that wait with what
+ * each waits for, stock left below zero by received movements (to reconcile in Inventory) and the
+ * conflicts to review.
  */
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { NegativeStockSyncNotice } from "@/components/sync/NegativeStockSyncNotice";
 import { SyncConflictList } from "@/components/sync/SyncConflictList";
+import { SyncWaitingList } from "@/components/sync/SyncWaitingList";
 import { SyncWorkerStatusCard } from "@/components/sync/SyncWorkerStatusCard";
 import {
   Dialog,
@@ -52,11 +54,7 @@ export function SyncCenterModal({ open, onOpenChange }: SyncCenterModalProps) {
           </p>
         ) : null}
 
-        {deferredInboxCount > 0 ? (
-          <p className="rounded-md border border-surface-border bg-surface-2/60 px-3 py-2 text-xs text-text-muted">
-            {t("sync.deferredInbox", { count: deferredInboxCount })}
-          </p>
-        ) : null}
+        {open ? <SyncWaitingList count={deferredInboxCount} /> : null}
 
         {open ? (
           <PermissionGate permission={P.INV_VIEW}>

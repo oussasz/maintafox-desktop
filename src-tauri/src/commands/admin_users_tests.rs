@@ -467,6 +467,35 @@ async fn refused_admin_actions_are_ledgered_as_blocked() {
         1,
         "a missing step-up is a prompt, not a refusal"
     );
+    // The ledger keeps a code for the kind of refusal, never the backend's own sentence.
+    let summary: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT summary FROM admin_change_events WHERE action = 'user_deactivated' AND apply_result = 'blocked'",
+            [],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "summary")
+        .unwrap();
+    assert_eq!(summary, "validation_failed");
+    // An administrator's refusal is also written to the security journal, with the text.
+    let journal: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [actor.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row for the administrator's refusal")
+        .try_get("", "v")
+        .unwrap();
+    let journal: serde_json::Value = serde_json::from_str(&journal).unwrap();
+    let journal = &journal["detail"];
+    assert_eq!(journal["refusal"], "validation_failed");
+    assert!(journal["error"].as_str().is_some_and(|e| e.contains("nope")));
 }
 
 #[tokio::test]
@@ -593,6 +622,95 @@ async fn roles_are_cloned_updated_and_retired_with_a_diff() {
         retire_role_impl(&state, &caller, readonly).await.is_err(),
         "system roles cannot be retired"
     );
+}
+
+/// The role editor never shows the permissions unused in this version, and its save sends only
+/// what changed: a role holding one keeps it after an update, and nothing new is granted.
+#[tokio::test]
+async fn a_role_keeps_a_hidden_permission_it_holds_after_an_update() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let readonly = role_id(&db, "Readonly").await;
+    let copy = clone_role_impl(
+        &state,
+        &caller,
+        CloneRoleInput {
+            source_role_id: readonly,
+            name: "Readonly (hidden kept)".into(),
+            description: None,
+        },
+    )
+    .await
+    .expect("clone")
+    .id;
+
+    // The role holds a permission that is hidden from the plant role screens (the read-only
+    // defaults may already include it).
+    let hidden = crate::rbac::permissions::HIDDEN_FROM_PLANT_SCREENS[0];
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), hidden.into()],
+    ))
+    .await
+    .expect("grant hidden permission");
+    // ...and a legacy alias row still in the catalogue table (also left off the role screens).
+    let alias: String = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT name AS v FROM permissions WHERE name IN ({}) ORDER BY name LIMIT 1",
+                crate::rbac::permissions::ALIAS_MAP
+                    .iter()
+                    .map(|(a, _)| format!("'{a}'"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ))
+        .await
+        .expect("query alias row")
+        .expect("a legacy alias row exists")
+        .try_get("", "v")
+        .expect("decode");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at) \
+         SELECT ?, id, datetime('now') FROM permissions WHERE name = ?",
+        [copy.into(), alias.clone().into()],
+    ))
+    .await
+    .expect("grant alias row");
+    let before = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(before.iter().any(|p| p == hidden));
+    assert!(before.contains(&alias));
+
+    let added = crate::rbac::permissions::REP_EXPORT.to_string();
+    assert!(!before.contains(&added));
+    let changed = update_role_impl(
+        &state,
+        &caller,
+        UpdateRoleInput {
+            role_id: copy,
+            description: Some("Viewers who export reports".into()),
+            add_permissions: Some(vec![added.clone()]),
+            remove_permissions: Some(vec![]),
+        },
+    )
+    .await
+    .expect("update");
+    assert!(changed);
+
+    let after = load_role_permission_names(&db, copy).await.unwrap();
+    assert!(after.iter().any(|p| p == hidden), "the hidden permission is kept");
+    assert!(after.contains(&alias), "the legacy alias row is kept");
+    let mut expected = before.clone();
+    expected.push(added);
+    expected.sort();
+    let mut sorted_after = after.clone();
+    sorted_after.sort();
+    assert_eq!(sorted_after, expected, "only the requested permission was added");
 }
 
 async fn admin_assignment(db: &DatabaseConnection) -> i64 {
@@ -782,6 +900,25 @@ async fn refusals_of_non_administrators_go_to_the_security_journal() {
         0,
         "no ledger row for someone without administration rights"
     );
+    // The refusal and the backend's own text stay recoverable from the security journal.
+    let detail: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT details_json AS v FROM audit_events WHERE action_code = 'permission.denied' AND actor_id = ?",
+            [outsider.into()],
+        ))
+        .await
+        .unwrap()
+        .expect("a security journal row")
+        .try_get("", "v")
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
+    let detail = &detail["detail"];
+    assert_eq!(detail["action"], "user_deactivated");
+    assert_eq!(detail["refusal"], "permission_denied");
+    assert!(detail["error"]
+        .as_str()
+        .is_some_and(|e| e.contains(crate::rbac::permissions::ADM_USERS)));
 }
 
 // ── Anti-escalation, session revocation, forced password change ────────────────────────────
@@ -1016,6 +1153,43 @@ async fn a_revoked_session_row_ends_the_live_session() {
     .await;
     assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
     assert!(state.session.read().await.current.is_none());
+}
+
+/// AU-36: an administrator never resets their own password here (it would close their session
+/// before the temporary password is shown); the profile changes it, with the current one.
+#[tokio::test]
+async fn an_administrator_cannot_reset_their_own_password() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let version = || async {
+        scalar_i64(
+            &db,
+            "SELECT row_version AS v FROM user_accounts WHERE id = ?",
+            vec![i64::from(admin.user_id).into()],
+        )
+        .await
+    };
+    let before = version().await;
+    let refused = admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: i64::from(admin.user_id),
+            temporary_password: None,
+        },
+    )
+    .await;
+    match refused {
+        Err(AppError::ValidationFailed(issues)) => {
+            assert!(
+                issues.iter().any(|i| i.starts_with("GATE_ADMIN_RESET_SELF:")),
+                "{issues:?}"
+            );
+        }
+        other => panic!("expected the self-reset refusal, got {other:?}"),
+    }
+    assert_eq!(version().await, before, "the account is left as it was");
 }
 
 #[tokio::test]
@@ -1425,25 +1599,29 @@ async fn sessions_older_than_the_password_end_even_when_it_changed_on_another_de
     let state = AppState::new(db.clone());
     let worker = insert_user(&db, "roaming_worker").await;
     let user = caller_for(worker, "roaming_worker");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = '2026-01-05T08:00:00Z' WHERE id = ?",
+        [worker.into()],
+    ))
+    .await
+    .unwrap();
     let session_id = open_session(&state, &db, worker, "roaming_worker").await;
     enforce_stored_session(&db, &state.session, &user, Some(&session_id))
         .await
         .expect("open session passes");
 
-    // A change within the clock tolerance of the session start does not end it.
+    // The same date received again with another precision and offset does not end it.
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
-        [
-            (chrono::Utc::now() + chrono::Duration::seconds(60)).to_rfc3339().into(),
-            worker.into(),
-        ],
+        "UPDATE user_accounts SET password_changed_at = '2026-01-05T09:00:00.000+01:00' WHERE id = ?",
+        [worker.into()],
     ))
     .await
     .unwrap();
     enforce_stored_session(&db, &state.session, &user, Some(&session_id))
         .await
-        .expect("within the tolerance");
+        .expect("the same date");
 
     // An administrator reset on another device arrives by sync, ten minutes after the session
     // started: new password, change required.
@@ -1596,6 +1774,56 @@ async fn the_forced_change_follows_the_policy_and_leaves_one_live_session() {
             .user
             .force_password_change
     );
+}
+
+/// AU-109: an idle-locked session cannot change the password (whoever finds the PC unlocked
+/// first, as for every protected command); the password and the lock are left as they were.
+#[tokio::test]
+async fn the_forced_change_refuses_an_idle_locked_session() {
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let admin = admin_caller(&db).await;
+    let worker = insert_user(&db, "locked_worker").await;
+    admin_set_user_password_impl(
+        &state,
+        &admin,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    let session_id = open_session(&state, &db, worker, "locked_worker").await;
+    let password_hash = || async {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT password_hash FROM user_accounts WHERE id = ?",
+            [worker.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<Option<String>>("", "password_hash")
+        .expect("decode")
+    };
+    let hash_before = password_hash().await;
+    {
+        let mut sm = state.session.write().await;
+        let session = sm.current.as_mut().unwrap();
+        session.last_activity_at = chrono::Utc::now() - chrono::Duration::minutes(session.idle_timeout_minutes + 1);
+    }
+
+    let change = crate::commands::auth::ForceChangePasswordRequest {
+        new_password: "NewPassword12".into(),
+    };
+    let refused = crate::commands::auth::force_change_password_impl(&state, change).await;
+    assert!(matches!(refused, Err(AppError::SessionLocked(_))), "{refused:?}");
+    assert_eq!(password_hash().await, hash_before, "the password is unchanged");
+    let sm = state.session.read().await;
+    let session = sm.current.as_ref().expect("the session is kept, locked");
+    assert!(session.is_locked, "the lock holds until an unlock");
+    assert_eq!(session.session_db_id, session_id);
 }
 
 #[tokio::test]
@@ -2016,4 +2244,400 @@ async fn a_user_created_on_a_site_gets_only_that_site_and_administrators_stay_pl
         format!("{emergency:?}").contains("SCOPE_ADMIN_ROLE_PLANT_WIDE"),
         "{emergency:?}"
     );
+}
+
+/// Audit rows of a session-check event for a session (`action_code`, `details_json`).
+async fn session_audit(db: &DatabaseConnection, action: &str, session_id: &str) -> Vec<String> {
+    db.query_all(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT details_json FROM audit_events WHERE action_code = ? AND target_id = ? ORDER BY id",
+        [action.into(), session_id.into()],
+    ))
+    .await
+    .expect("audit rows")
+    .iter()
+    .map(|r| {
+        r.try_get::<Option<String>>("", "details_json")
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    })
+    .collect()
+}
+
+/// F1 (owner test of 0.9.1): a password date later than this device's clock (written while a
+/// clock ran ahead) closed every new session at once, so signing in again never helped. It is now
+/// a clock anomaly, recorded once; a real change after sign-in still ends the session.
+#[tokio::test]
+async fn a_password_date_ahead_of_the_clock_keeps_new_sessions_and_a_real_change_still_ends_them() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "clock_worker").await;
+    let user = caller_for(worker, "clock_worker");
+    let ahead = (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [ahead.into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+
+    let session_id = open_session(&state, &db, worker, "clock_worker").await;
+    for _ in 0..3 {
+        enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+            .await
+            .expect("a fresh session survives a password date ahead of the clock");
+    }
+    let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
+    assert_eq!(anomalies.len(), 1, "recorded once per session: {anomalies:?}");
+
+    // A real change arrives (on another device, by sync): the stored value changes.
+    let changed = (chrono::Utc::now() + chrono::Duration::days(3) + chrono::Duration::hours(1)).to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [changed.into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    assert!(state.session.read().await.current.is_none());
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_revoked AS v FROM app_sessions WHERE id = ?",
+            vec![session_id.clone().into()],
+        )
+        .await,
+        1
+    );
+    let closed = session_audit(&db, crate::audit::event_type::SESSION_CLOSED, &session_id).await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert!(closed[0].contains("password_changed"), "{closed:?}");
+}
+
+/// A change made soon after sign-in (within the clock tolerance of the session start) ends the
+/// session once the session has read the account's date: the value changed, whatever the clocks.
+#[tokio::test]
+async fn a_password_change_soon_after_sign_in_ends_the_session() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "quick_change").await;
+    let user = caller_for(worker, "quick_change");
+    let session_id = open_session(&state, &db, worker, "quick_change").await;
+    enforce_stored_session(&db, &state.session, &user, Some(&session_id))
+        .await
+        .expect("open session passes");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [chrono::Utc::now().to_rfc3339().into(), worker.into()],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+/// Every end of a session by the stored-state check is audited with its reason.
+#[tokio::test]
+async fn a_closed_session_is_audited_with_its_reason() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "revoked_reason").await;
+    let user = caller_for(worker, "revoked_reason");
+    let session_id = open_session(&state, &db, worker, "revoked_reason").await;
+    crate::auth::session_manager::revoke_user_sessions(&db, worker)
+        .await
+        .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+    let closed = session_audit(&db, crate::audit::event_type::SESSION_CLOSED, &session_id).await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert!(closed[0].contains("\"revoked\""), "{closed:?}");
+}
+
+/// Sign-in records the session's reference password date: a change made elsewhere right after
+/// sign-in (before any command) ends the session even when that date is ahead of this clock.
+#[tokio::test]
+async fn sign_in_records_the_password_date_so_an_early_change_still_ends_the_session() {
+    use crate::auth::session_manager::{enforce_stored_session, store_session_or_clear};
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "early_change").await;
+    let user = caller_for(worker, "early_change");
+    let session_id = {
+        let mut sm = state.session.write().await;
+        let id = sm
+            .create_session(caller_for(worker, "early_change"))
+            .session_db_id
+            .clone();
+        store_session_or_clear(
+            &db,
+            &mut sm,
+            i32::try_from(worker).unwrap(),
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339(),
+        )
+        .await
+        .expect("sign-in stored");
+        id
+    };
+    // Changed on a device whose clock runs an hour ahead, before this session's first command.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let refused = enforce_stored_session(&db, &state.session, &user, Some(&session_id)).await;
+    assert!(matches!(refused, Err(AppError::Auth(_))), "{refused:?}");
+}
+
+/// Commands run at once at a session's first check (the dashboard): one reference, one audit row.
+#[tokio::test]
+async fn simultaneous_first_checks_record_one_clock_anomaly() {
+    use crate::auth::session_manager::enforce_stored_session;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let worker = insert_user(&db, "busy_dashboard").await;
+    let user = caller_for(worker, "busy_dashboard");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_accounts SET password_changed_at = ? WHERE id = ?",
+        [
+            (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339().into(),
+            worker.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let session_id = open_session(&state, &db, worker, "busy_dashboard").await;
+    let check = || enforce_stored_session(&db, &state.session, &user, Some(&session_id));
+    let (a, b, c, d, e, f) = tokio::join!(check(), check(), check(), check(), check(), check());
+    for result in [a, b, c, d, e, f] {
+        result.expect("kept");
+    }
+    let anomalies = session_audit(&db, crate::audit::event_type::SESSION_CLOCK_ANOMALY, &session_id).await;
+    assert_eq!(anomalies.len(), 1, "{anomalies:?}");
+}
+
+/// Every local password and status write names its author (migration 261, checked on the other PCs
+/// by `sync::credential_check`), and the account row sent to them carries it.
+#[tokio::test]
+async fn every_local_password_and_status_write_names_its_author() {
+    use crate::auth::session_manager::change_password_and_rotate;
+    let db = crate::db::test_db::seeded().await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let admin_id = i64::from(caller.user_id);
+    let authors = |user: i64| {
+        let db = db.clone();
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT password_changed_by_id, status_changed_by_id, password_changed_at \
+                       FROM user_accounts WHERE id = ?",
+                    [user.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("row");
+            (
+                row.try_get::<Option<i64>>("", "password_changed_by_id").expect("pw"),
+                row.try_get::<Option<i64>>("", "status_changed_by_id").expect("status"),
+                row.try_get::<Option<String>>("", "password_changed_at").expect("at"),
+            )
+        }
+    };
+
+    // Created with a password: dated (O5), the creator named for both.
+    let readonly = role_id(&db, "Readonly").await;
+    let created = create_user_impl(
+        &state,
+        &caller,
+        CreateUserInput {
+            username: "authored.user".into(),
+            identity_mode: "local".into(),
+            role_id: readonly,
+            scope_node_id: None,
+            personnel_id: None,
+            initial_password: Some("ValidPass1".into()),
+            force_password_change: None,
+        },
+    )
+    .await
+    .expect("created");
+    let (pw, status, at) = authors(created.id).await;
+    assert_eq!((pw, status), (Some(admin_id), Some(admin_id)));
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT COUNT(*) AS v FROM user_accounts WHERE id = ? AND password_set_by_id = ? AND password_set_at = password_changed_at",
+            vec![created.id.into(), admin_id.into()],
+        )
+        .await,
+        1,
+        "the creator set it"
+    );
+    assert!(at.is_some(), "a password set at creation is dated");
+
+    // Reset by the administrator.
+    let worker = insert_user(&db, "authored_worker").await;
+    admin_set_user_password_impl(
+        &state,
+        &caller,
+        AdminSetUserPasswordInput {
+            user_id: worker,
+            temporary_password: None,
+        },
+    )
+    .await
+    .expect("reset");
+    assert_eq!(authors(worker).await.0, Some(admin_id));
+    let admin_sync: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM user_accounts WHERE id = ?",
+            [admin_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "entity_sync_id")
+        .unwrap();
+    let sent = crate::sync::test_support::current_payload(
+        &db,
+        "user_accounts",
+        "authored_worker-sync",
+        &serde_json::Map::default(),
+    )
+    .await
+    .expect("payload")
+    .expect("row");
+    assert_eq!(
+        sent.get("password_changed_by_sync_id")
+            .and_then(serde_json::Value::as_str),
+        Some(admin_sync.as_str()),
+        "the author travels with the account"
+    );
+
+    // Who set it: the administrator, at the reset; sent with the account.
+    let root = || {
+        let db = db.clone();
+        async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT password_set_by_id, password_set_at, password_changed_at FROM user_accounts WHERE id = ?",
+                    [worker.into()],
+                ))
+                .await
+                .expect("query")
+                .expect("row");
+            (
+                row.try_get::<Option<i64>>("", "password_set_by_id").expect("by"),
+                row.try_get::<Option<String>>("", "password_set_at").expect("at"),
+                row.try_get::<Option<String>>("", "password_changed_at")
+                    .expect("changed"),
+            )
+        }
+    };
+    let (set_by, set_at, changed_at) = root().await;
+    assert_eq!(set_by, Some(admin_id));
+    assert!(set_at.is_some() && set_at == changed_at, "set when reset");
+    assert_eq!(
+        sent.get("password_set_by_sync_id").and_then(serde_json::Value::as_str),
+        Some(admin_sync.as_str())
+    );
+
+    // Changed by the account itself (forced first change, then a change in the profile): it is the
+    // author, and who set the password it replaced is kept (review BLOCKING).
+    let uid = i32::try_from(worker).unwrap();
+    for forced in [true, false] {
+        open_session(&state, &db, worker, "authored_worker").await;
+        change_password_and_rotate(&db, &state.session, uid, "own-hash", forced)
+            .await
+            .expect("own change");
+        assert_eq!(authors(worker).await.0, Some(worker), "forced: {forced}");
+        let (by, at, _) = root().await;
+        assert_eq!((by, at), (Some(admin_id), set_at.clone()), "forced: {forced}");
+    }
+
+    // Disabled, then enabled again: who did it is named each time.
+    for active in [false, true] {
+        set_user_active_impl(
+            &state,
+            &caller,
+            SetUserActiveInput {
+                user_id: worker,
+                reason: "Shift change".into(),
+            },
+            active,
+        )
+        .await
+        .expect("status");
+        assert_eq!(authors(worker).await.1, Some(admin_id), "active: {active}");
+    }
+
+    // `update_user` never switches an account on or off (review SHOULD-FIX: no write of
+    // `is_active` without its author): refused, nothing changes.
+    set_user_active_impl(
+        &state,
+        &caller,
+        SetUserActiveInput {
+            user_id: worker,
+            reason: "Leave".into(),
+        },
+        false,
+    )
+    .await
+    .expect("disabled");
+    let refused = update_user_impl(
+        &state,
+        &caller,
+        UpdateUserInput {
+            user_id: worker,
+            username: None,
+            display_name: None,
+            email: None,
+            phone: None,
+            personnel_id: None,
+            force_password_change: None,
+            is_active: Some(true),
+        },
+    )
+    .await;
+    assert!(matches!(refused, Err(AppError::ValidationFailed(_))), "{refused:?}");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            "SELECT is_active AS v FROM user_accounts WHERE id = ?",
+            vec![worker.into()]
+        )
+        .await,
+        0
+    );
+    assert_eq!(authors(worker).await.1, Some(admin_id));
+}
+
+#[test]
+fn an_unknown_permission_is_named_only_when_the_name_fits_a_parameter() {
+    assert_eq!(
+        unknown_permission_refusal("cst.x"),
+        "GATE_ADMIN_PERMISSION_UNKNOWN:permission=cst.x: Permission 'cst.x' does not exist"
+    );
+    let unnamed = unknown_permission_refusal("a b,c=d");
+    assert!(unnamed.starts_with("GATE_ADMIN_PERMISSION_UNKNOWN_UNNAMED: "));
+    assert!(!unnamed.contains("permission="));
 }

@@ -24,6 +24,14 @@ async fn setup() -> Fixture {
     let mut factory = RowFactory::for_device(1);
     let alice = factory.create(&db, "user_accounts").await.expect("alice").rowid;
     let bob = factory.create(&db, "user_accounts").await.expect("bob").rowid;
+    // Administrators: every module is theirs to see, so the channels here test delivery only
+    // (what a user may see is `inbox::visible_to`, tested on its own).
+    exec(
+        &db,
+        "UPDATE user_accounts SET is_admin = 1 WHERE id IN (?, ?)",
+        vec![alice.into(), bob.into()],
+    )
+    .await;
     set_mode(&db, alice, "wo_assigned", "daily_digest").await;
     Fixture { db, alice, bob }
 }

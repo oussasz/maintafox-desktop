@@ -76,7 +76,12 @@ interface PlanningStoreState {
   createBreakIn: (input: CreateScheduleBreakInInput) => Promise<ScheduleBreakIn>;
   freezeSchedule: (input: FreezeSchedulePeriodInput) => Promise<number>;
   notifyTeams: (input: NotifyTeamsInput) => Promise<NotifyTeamsResult>;
-  exportGanttPdf: (periodStart: string, periodEnd: string, teamId?: number | null) => Promise<void>;
+  exportGanttPdf: (
+    periodStart: string,
+    periodEnd: string,
+    teamId?: number | null,
+    paperSize?: "A4" | "A3",
+  ) => Promise<void>;
 }
 
 function downloadBinary(fileName: string, mimeType: string, bytes: number[]) {
@@ -318,14 +323,14 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
     }
   },
 
-  exportGanttPdf: async (periodStart, periodEnd, teamId) => {
+  exportGanttPdf: async (periodStart, periodEnd, teamId, paperSize = "A4") => {
     set({ saving: true, error: null });
     try {
       const doc = await exportPlanningGanttPdf({
         period_start: periodStart,
         period_end: periodEnd,
         team_id: teamId ?? null,
-        paper_size: "A3",
+        paper_size: paperSize,
       });
       downloadBinary(doc.file_name, doc.mime_type, doc.bytes);
     } catch (err) {

@@ -23,6 +23,7 @@ pub mod audit;
 pub mod auth;
 pub mod background;
 pub mod backup;
+pub mod build_identity;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;
@@ -70,6 +71,8 @@ mod background_tests;
 #[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
+mod gate_codes_tests;
+#[cfg(test)]
 pub mod observability;
 #[cfg(test)]
 mod startup_tests;
@@ -89,6 +92,8 @@ pub fn run() {
 
     // The updater plugin exists only in builds with the owner's updater public key (Phase 5.1).
     let mut context = tauri::generate_context!();
+    // Development builds get their own identifier, so their data never mixes with an installed version.
+    build_identity::apply(&mut context);
     updater::add_plugin_config(&mut context);
     updater::register_plugin(
         tauri::Builder::default()
@@ -162,6 +167,7 @@ pub fn run() {
         commands::auth::clear_pin,
         commands::auth::unlock_session_with_pin,
         commands::auth::force_change_password,
+        commands::auth::get_password_requirements,
         commands::auth::get_password_recovery_contacts,
         // Ã¢â€â‚¬Ã¢â€â‚¬ Profile Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::profile::get_my_profile,
@@ -232,6 +238,7 @@ pub fn run() {
         commands::admin_permissions::get_role_editor_catalog,
         // Ã¢â€â‚¬Ã¢â€â‚¬ Locale Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::locale::get_locale_preference,
+        window::set_window_mode,
         commands::locale::set_locale_preference,
         // Ã¢â€â‚¬Ã¢â€â‚¬ Settings Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::settings::list_all_settings,
@@ -270,9 +277,14 @@ pub fn run() {
         commands::product_license::check_product_license_key_entry,
         commands::product_license::apply_product_license_reconciliation,
         commands::product_license::get_product_license_diagnostics,
-        commands::product_license::get_product_activation_token,
+        commands::product_license::refresh_product_activation_policy,
+        commands::product_license::preview_product_activation,
+        commands::product_license::claim_product_activation,
+        commands::product_license::mark_activation_tenant_initialized,
+        commands::product_license::reclaim_product_activation,
         commands::product_license::get_activation_bootstrap_state,
         commands::product_license::bootstrap_initial_tenant_admin,
+        commands::product_license::request_plant_join,
         auth::builtin_admin::get_builtin_admin_warning,
         auth::last_admin::get_single_administrator_warning,
         auth::recovery_code::redeem_admin_recovery_code,
@@ -369,6 +381,7 @@ pub fn run() {
         commands::sync::list_inbox_items,
         commands::sync::get_sync_state_summary,
         commands::sync::list_sync_conflicts,
+        commands::sync::list_waiting_inbox_rows,
         commands::sync::resolve_sync_conflict,
         commands::sync::replay_sync_failures,
         commands::sync::list_sync_replay_runs,
@@ -525,6 +538,7 @@ pub fn run() {
         commands::planning::create_schedule_commitment,
         commands::planning::reschedule_schedule_commitment,
         commands::planning::create_schedule_break_in,
+        commands::planning::list_break_in_approvers,
         commands::planning::freeze_schedule_period,
         commands::planning::get_weekly_schedule,
         commands::planning::get_planning_kpis,
@@ -611,6 +625,7 @@ pub fn run() {
         commands::inventory_negative_stock::list_negative_stock_reviews,
         commands::inventory_negative_stock::get_negative_stock_summary,
         commands::inventory_negative_stock::resolve_negative_stock_by_count,
+        commands::inventory_negative_stock::approve_negative_stock_count,
         commands::inventory::reserve_inventory_stock,
         commands::inventory::issue_inventory_stock,
         commands::inventory::return_inventory_stock,
@@ -643,7 +658,9 @@ pub fn run() {
         commands::inventory::create_inventory_count_session,
         commands::inventory::transition_inventory_count_session,
         commands::inventory::upsert_inventory_count_line,
+        commands::inventory::get_inventory_count_tolerance,
         commands::inventory::approve_inventory_count_line,
+        commands::inventory::second_approve_inventory_count_line,
         commands::inventory::post_inventory_count_session,
         commands::inventory::reverse_inventory_count_session,
         commands::inventory::list_inventory_count_sessions,
@@ -845,6 +862,7 @@ pub fn run() {
         commands::wo::list_work_order_statuses,
         commands::wo::update_work_order_status,
         commands::wo::list_wo,
+        commands::wo::list_retired_equipment_reviews,
         commands::wo::get_wo,
         commands::wo::create_wo,
         commands::wo::update_wo_draft,
@@ -884,6 +902,7 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Tasks Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::add_task,
         commands::wo::complete_task,
+        commands::wo::reopen_task,
         commands::wo::list_tasks,
         commands::wo::get_wo_plan_adherence,
         commands::wo::list_wo_execution_events,
@@ -919,6 +938,7 @@ pub fn run() {
         commands::wo::list_wo_change_events,
         commands::wo::list_all_wo_change_events,
         commands::data_integrity::list_data_integrity_findings,
+        commands::data_integrity::list_integrity_waiver_approvers,
         commands::data_integrity::run_data_integrity_detectors_cmd,
         commands::data_integrity::waive_data_integrity_finding_cmd,
         commands::data_integrity::apply_data_integrity_repair_cmd,
@@ -1120,7 +1140,6 @@ pub fn run() {
         commands::inspection::list_inspection_anomalies,
         commands::inspection::record_inspection_result,
         commands::inspection::add_inspection_evidence,
-        commands::inspection::update_inspection_anomaly,
         commands::inspection::list_inspection_round_summaries,
         commands::inspection::get_inspection_round_runner,
         commands::inspection::start_inspection_round,

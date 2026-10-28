@@ -5,7 +5,7 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 
-DEFAULT_DB = r"C:\Users\LENOVO\AppData\Roaming\systems.maintafox.desktop\maintafox.db"
+DEFAULT_DB = r"C:\Users\LENOVO\AppData\Roaming\systems.maintafox.desktop.dev\maintafox.db"
 args = sys.argv[1:]
 if args and args[0].lower().endswith(".db"):
     DB = args[0]

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { PartNecessityChoice } from "@/components/common/PartNecessityChoice";
 import { Button } from "@/components/ui/button";
+import { DecimalField } from "@/components/ui/decimal-field";
 import {
   Dialog,
   DialogContent,
@@ -368,13 +369,12 @@ export function WoAddExecutionPartDialog({
               {t("execution.parts.add.qty")}
               {mode === "stock" && selectedArticle ? ` (${selectedArticle.unit_label})` : ""}
             </Label>
-            <Input
+            <DecimalField
               id="wo-exec-part-qty"
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
+              decimals={3}
+              min={0.001}
+              value={qty.trim() === "" ? null : Number(qty)}
+              onValueChange={(v) => setQty(v == null ? "" : String(v))}
             />
           </div>
 

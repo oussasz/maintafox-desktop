@@ -520,10 +520,11 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
     )
     .await?;
 
-    closeout::save_failure_detail(
+    let saved = closeout::save_failure_detail(
         db,
         SaveFailureDetailInput {
             wo_id: wo.id,
+            expected_row_version: wo.row_version,
             symptom_id: None,
             failure_mode_id: Some(ctx.failure_mode_id),
             failure_cause_id: Some(ctx.failure_cause_id),
@@ -536,10 +537,11 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
     )
     .await?;
 
-    closeout::update_wo_rca(
+    let rv = closeout::update_wo_rca(
         db,
         UpdateWoRcaInput {
             wo_id: wo.id,
+            expected_row_version: saved.wo_row_version,
             root_cause_summary: Some("Progressive mechanical degradation identified during governed close-out.".into()),
             corrective_action_summary: Some("Component replaced and alignment verified.".into()),
         },
@@ -555,7 +557,7 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             return_to_service_confirmed: true,
             recurrence_risk_level: Some("low".into()),
             notes: Some("Presentation seed verification.".into()),
-            expected_row_version: wo.row_version,
+            expected_row_version: rv,
         },
     )
     .await?;
@@ -639,6 +641,7 @@ async fn assign_rams_schedule_class(db: &DatabaseConnection, equipment_id: i64, 
             maintainable_boundary: None,
             commissioned_at: None,
             decommissioned_at: None,
+            org_node_id: None,
         },
         rv,
         actor_id,

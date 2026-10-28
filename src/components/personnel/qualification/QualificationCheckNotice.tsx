@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { cn } from "@/lib/utils";
@@ -31,10 +32,14 @@ import { GAP_STATUS_TONE } from "./qualification-tones";
 export const MIN_OVERRIDE_REASON_CHARS = 10;
 
 /** One translated sentence for a gap ("expired on 2026-09-30", "level 2 held, 3 required"…). */
-export function describeGap(t: TFunction<"training">, gap: QualificationGap): string {
+export function describeGap(
+  t: TFunction<"training">,
+  gap: QualificationGap,
+  formatDate: (value: string) => string,
+): string {
   return t(`gap.${gap.status}`, {
     qualification: gap.label,
-    expiresAt: gap.expires_at?.slice(0, 10) ?? "",
+    expiresAt: gap.expires_at ? formatDate(gap.expires_at) : "",
     held: gap.held_level ?? "",
     required: gap.required_level ?? "",
   });
@@ -56,6 +61,7 @@ export function QualificationCheckNotice({
   className,
 }: QualificationCheckNoticeProps) {
   const { t } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [askReason, setAskReason] = useState(false);
@@ -105,7 +111,7 @@ export function QualificationCheckNotice({
                     tone={GAP_STATUS_TONE[g.status]}
                     dot
                   />
-                  <span>{describeGap(t, g)}</span>
+                  <span>{describeGap(t, g, formatDate)}</span>
                 </li>
               ))}
             </ul>
@@ -116,7 +122,7 @@ export function QualificationCheckNotice({
                 <li key={w.requirement_key} className={mfTone.attention.text}>
                   {t("check.expiresSoon", {
                     qualification: w.label,
-                    expiresAt: w.expires_at.slice(0, 10),
+                    expiresAt: formatDate(w.expires_at),
                   })}
                 </li>
               ))}
@@ -126,7 +132,7 @@ export function QualificationCheckNotice({
             <p className="text-text-muted">
               {t("check.overrideBy", {
                 name: check.override_info.approved_by_name ?? "—",
-                date: check.override_info.approved_at.slice(0, 10),
+                date: formatDate(check.override_info.approved_at),
                 reason: check.override_info.reason,
               })}
             </p>

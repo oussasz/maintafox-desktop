@@ -1536,10 +1536,23 @@ async fn a_rule_flag_is_never_dropped_or_forged_by_a_received_row() {
     .expect("wo sync id");
     let flagged = wire(&db, "work_orders", &wo_sync).await;
 
-    // Rule removed, or its permit type changed, with the flag dropped and no clearing: refused.
+    // Another rule, or another permit type for the rule, once the work order has started: refused
+    // (before, the PCs converge: `two_rules_derived_on_two_lists_converge_without_a_conflict`).
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("status sync id");
     for changes in [
-        vec![("permit_rule_code", Value::Null), ("requires_permit", json!(0))],
-        vec![("permit_rule_permit_type", json!("hot_work"))],
+        vec![
+            ("permit_rule_code", json!("rule-other")),
+            ("status_sync_id", json!(on_hold)),
+        ],
+        vec![
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("status_sync_id", json!(on_hold)),
+        ],
     ] {
         let outcome = apply(&db, "work_orders", &wo_sync, &with(flagged.clone(), &changes)).await;
         assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
@@ -1568,6 +1581,30 @@ async fn a_rule_flag_is_never_dropped_or_forged_by_a_received_row() {
     let after_start = with(clear(now()), &[("actual_start", json!("2026-01-01T00:00:00Z"))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &after_start).await;
     assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    // No rule at all, from a PC that has not applied the rule list (AU-04 B2): applied, never
+    // refused, and the rule held here is kept with its permit type and requirement (R2-B1).
+    let without = with(
+        flagged.clone(),
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+            ("requires_permit", json!(0)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &without).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT permit_rule_code || '/' || permit_rule_permit_type || '/' || requires_permit \
+                 FROM work_orders WHERE id = {wo_id}"
+            )
+        )
+        .await
+        .as_deref(),
+        Some("rule-elec/loto/1")
+    );
 }
 
 /// A clearer whose rights are still waiting in the inbox: the work order waits (never applied
@@ -2153,7 +2190,34 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
     let reflagged = with(cleared.clone(), &[("requires_permit", json!(1))]);
     let outcome = apply(&db, "work_orders", &wo_sync, &reflagged).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "re-flag: {outcome:?}");
-    // No local action removes a recorded clearing or a part of it: a received row doing so is refused.
+    // That re-tick (an older build keeps the clearing) ends protected here: the clearing is withdrawn
+    // and recorded.
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_permit AS TEXT) || '|' || COALESCE(permit_rule_cleared_at, '') \
+                 FROM work_orders WHERE id = {wo_id}"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1|")
+    );
+    assert!(
+        text(
+            &db,
+            &format!(
+                "SELECT payload_json FROM wo_action_events WHERE wo_id = {wo_id} \
+                 AND action_code = 'permit_clearing_withdrawn'"
+            ),
+        )
+        .await
+        .is_some_and(|p| p.contains("received_retick")),
+        "recorded"
+    );
+    // No local action removes a part of a recorded clearing, or removes it without requiring the
+    // permit again: a received row doing so is refused.
     for (what, changes) in [
         ("reason removed", vec![("permit_rule_clear_reason", json!(null))]),
         ("clearer removed", vec![("permit_rule_cleared_by_sync_id", json!(null))]),
@@ -2166,8 +2230,9 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
             ],
         ),
         (
-            "removed",
+            "removed, not required",
             vec![
+                ("requires_permit", json!(0)),
                 ("permit_rule_cleared_by_sync_id", json!(null)),
                 ("permit_rule_cleared_at", json!(null)),
                 ("permit_rule_clear_reason", json!(null)),
@@ -2197,6 +2262,43 @@ async fn the_clearing_of_a_rule_permit_flag_is_never_removed_or_partly_rewritten
         .await
         .as_deref(),
         Some("0")
+    );
+    // Required again on a PC that withdraws the clearing (`withdraw_clearing_on_retick`): the received
+    // re-tick, the whole clearing removed, is applied and the flag is protected again here.
+    let reticked = with(
+        cleared.clone(),
+        &[
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!(null)),
+            ("permit_rule_cleared_at", json!(null)),
+            ("permit_rule_clear_reason", json!(null)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &reticked).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "re-tick: {outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(requires_permit AS TEXT) || '|' || COALESCE(permit_rule_cleared_at, '') \
+                 FROM work_orders WHERE id = {wo_id}"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1|")
+    );
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(reticked, &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(
+        code(&outcome),
+        Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+        "unticked again without a clearing: {outcome:?}"
     );
 }
 
@@ -5761,4 +5863,3242 @@ async fn a_removal_verified_before_the_update_is_held_for_review_and_the_lock_st
     assert_eq!(locks_after, locks_before, "still a lock in place");
     let err = set_status(&db, &wp, "closed").await.expect_err("lock still fitted");
     assert!(format!("{err:?}").contains("PERMIT_REMOVAL_PENDING"), "{err:?}");
+}
+
+// ── A permit requirement carried from a request flagged "sécurité" (migration 255, AU-01, D1) ──
+
+/// An account holding `ptw.issue` on the org node `site` only (a permanent role); its sync id.
+async fn site_permit_issuer(db: &DatabaseConnection, username: &str, site: i64) -> String {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+             force_password_change, created_at, updated_at) VALUES ('{username}-sync', '{username}', '{username}', \
+             'local', 1, 0, 0, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let user: i64 = text(
+        db,
+        &format!("SELECT CAST(id AS TEXT) FROM user_accounts WHERE username = '{username}'"),
+    )
+    .await
+    .expect("user")
+    .parse()
+    .expect("id");
+    let role =
+        crate::auth::scope_tests::role(db, &format!("SO {username}"), &[crate::rbac::permissions::PTW_ISSUE]).await;
+    crate::auth::scope_tests::assign(db, i32::try_from(user).expect("id"), role, "org_node", Some(site)).await;
+    format!("{username}-sync")
+}
+
+/// A work order whose permit requirement comes from a safety request, as this PC holds it, and its
+/// sync id.
+async fn safety_origin_wo(db: &DatabaseConnection, equipment_code: &str) -> (i64, String) {
+    let asset = insert_equipment(db, equipment_code).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    exec(
+        db,
+        &format!("UPDATE work_orders SET permit_from_safety_di = 1, requires_permit = 1 WHERE id = {wo_id}"),
+    )
+    .await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    (wo_id, wo_sync)
+}
+
+async fn requires_permit(db: &DatabaseConnection, wo_id: i64) -> Option<String> {
+    text(
+        db,
+        &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+}
+
+/// A received work order that clears a requirement carried from a safety request says who cleared
+/// it (with the permit-issue right at its site here), when and why — as a plant rule's flag.
+#[tokio::test]
+async fn a_cleared_safety_request_requirement_is_rechecked() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-1").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    assert_eq!(
+        held.get("permit_from_safety_di"),
+        Some(&json!(1)),
+        "the origin travels with the row"
+    );
+    let cleared = |by: Value, at: Value, reason: Value| {
+        with(
+            held.clone(),
+            &[
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", by),
+                ("permit_rule_cleared_at", at),
+                ("permit_rule_clear_reason", reason),
+            ],
+        )
+    };
+    let reason = json!("Inspection visuelle seulement");
+    let admin = json!(user_sync(&db, APPLIER).await);
+
+    // Cleared by the general edit of another PC: no who, when or why.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(held.clone(), &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    for (what, payload) in [
+        ("no reason", cleared(admin.clone(), json!(now()), Value::Null)),
+        ("short reason", cleared(admin.clone(), json!(now()), json!("court"))),
+        ("no time", cleared(admin.clone(), Value::Null, reason.clone())),
+        ("no person", cleared(Value::Null, json!(now()), reason.clone())),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(
+            code(&outcome),
+            Some("WO_PERMIT_RULE_CLEAR_INVALID"),
+            "{what}: {outcome:?}"
+        );
+    }
+    // Someone without the permit-issue right; someone holding it at another site only.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(user_sync(&db, VERIFIER).await), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    let elsewhere = site_permit_issuer(&db, "so_issuer_2", 2).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(elsewhere), json!(now()), reason.clone()),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    // A person not applied here yet: waits.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!("user-not-here"), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "nothing applied"
+    );
+
+    // The permit-issue right at the work order's site, who / when / why: applied.
+    let issuer = site_permit_issuer(&db, "so_issuer_1", 1).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &cleared(json!(issuer), json!(now()), reason.clone()),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("0"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the origin stays on record"
+    );
+}
+
+/// The safety origin is never turned off by a received row; a row without the column (a PC without
+/// migration 255) keeps the value held here, so its general-edit clearing is refused too.
+#[tokio::test]
+async fn the_safety_origin_is_never_removed_by_sync() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-2").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    for payload in [
+        with(held.clone(), &[("permit_from_safety_di", json!(0))]),
+        with(
+            held.clone(),
+            &[("permit_from_safety_di", json!(0)), ("requires_permit", json!(0))],
+        ),
+        with(held.clone(), &[("permit_from_safety_di", Value::Null)]),
+    ] {
+        let outcome = apply(&db, "work_orders", &wo_sync, &payload).await;
+        assert_eq!(code(&outcome), Some("WO_PERMIT_SAFETY_ORIGIN_CHANGED"), "{outcome:?}");
+    }
+
+    let mut old_pc = with(held.clone(), &[("requires_permit", json!(0))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("1"));
+
+    // A row of that PC that leaves the requirement alone is applied, and the origin is kept.
+    let mut old_pc = with(held, &[("title", json!("Replace breaker (updated)"))]);
+    old_pc.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", &wo_sync, &old_pc).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// A request on the equipment of site 1, flagged "sécurité"; its sync id.
+async fn request_flagged_safety(db: &DatabaseConnection) -> String {
+    let asset = insert_equipment(db, "EQ-SYNC-SO-DI").await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: true,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
+/// A work order new here, converted from a safety request on a PC without migration 255, judged with
+/// the safety flag of its request here: not started, it is applied protected (origin, permit
+/// required); past "ready" and unticked without who, when or why, it is refused; required, it is
+/// applied with that origin.
+#[tokio::test]
+async fn a_new_work_order_from_an_older_pc_takes_the_safety_origin_of_its_request() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-3").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("on hold status");
+    let di = request_flagged_safety(&db).await;
+    let new_row = |code: &str, requires: i64| {
+        let mut p = with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("source_di_sync_id", json!(di.clone())),
+                ("requires_permit", json!(requires)),
+            ],
+        );
+        p.remove("permit_from_safety_di");
+        p
+    };
+
+    // Not started, unticked there by the general edit: applied, and protected here.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-unticked", &new_row("OT-OLD-PC-0", 0)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+             FROM work_orders WHERE entity_sync_id = 'wo-older-pc-unticked'"
+        )
+        .await
+        .as_deref(),
+        Some("1|1")
+    );
+
+    // Past "ready", unticked without who, when or why: refused, never applied silently.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-older-pc-cleared",
+        &with(new_row("OT-OLD-PC-1", 0), &[("status_sync_id", json!(on_hold))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    // Still required: applied, and protected here.
+    let outcome = apply(&db, "work_orders", "wo-older-pc-flagged", &new_row("OT-OLD-PC-2", 1)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) FROM work_orders WHERE entity_sync_id = 'wo-older-pc-flagged'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+// ── Review of AU-01: explicit origin 0, waits, site move ──────────────────────────────────────
+
+/// A request on a new equipment of site 1 (flagged "sécurité" when `safety`); its sync id.
+async fn request_on_site_1(db: &DatabaseConnection, equipment_code: &str, safety: bool) -> String {
+    let asset = insert_equipment(db, equipment_code).await;
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    let di = crate::di::queries::create_intervention_request(
+        db,
+        crate::di::queries::DiCreateInput {
+            equipment_id: asset,
+            org_node_id: 1,
+            title: "Fuite".into(),
+            description: "Fuite sur la pompe".into(),
+            origin_type: "operator".into(),
+            request_type: "repair".into(),
+            symptom_code_id: Some(symptom),
+            impact_level: "unknown".into(),
+            production_impact: false,
+            safety_flag: safety,
+            environmental_flag: false,
+            quality_flag: false,
+            reported_urgency: "normal".into(),
+            observed_at: None,
+            source_inspection_anomaly_id: None,
+            submitter_id: APPLIER,
+        },
+    )
+    .await
+    .expect("request");
+    text(
+        db,
+        &format!("SELECT entity_sync_id FROM intervention_requests WHERE id = {}", di.id),
+    )
+    .await
+    .expect("request sync id")
+}
+
+fn deferred_message(outcome: &ApplyOutcome) -> Option<&str> {
+    match outcome {
+        ApplyOutcome::Deferred { message, .. } => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+/// A received work order past "ready" (its permit requirement frozen) that says origin 0 with a request
+/// flagged here is stored as sent while it requires a permit: the start was judged where it started.
+/// With a request not flagged, 0 is applied as sent, and so are its later rows.
+#[tokio::test]
+async fn an_explicit_origin_0_is_judged_the_same_on_every_row() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-4").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("on hold status");
+    let row = |code: &str, di: &str, title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("status_sync_id", json!(on_hold.clone())),
+                ("source_di_sync_id", json!(di)),
+                ("requires_permit", json!(1)),
+                ("permit_from_safety_di", json!(0)),
+                ("title", json!(title)),
+            ],
+        )
+    };
+    let stored = |sync: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+                     FROM work_orders WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+
+    let flagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-4", true).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-flagged",
+            &row("OT-X0-1", &flagged, title),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{title}: {outcome:?}");
+        assert_eq!(
+            stored("wo-explicit-0-flagged").await.as_deref(),
+            Some("0|1"),
+            "as sent, required"
+        );
+    }
+    // Its later row unticking it without who, when or why: refused, although its stored origin is 0
+    // (the request is flagged here, so it is judged as a safety work order on every row).
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-explicit-0-flagged",
+        &with(
+            row("OT-X0-1", &flagged, "Fuite pompe"),
+            &[("requires_permit", json!(0))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        stored("wo-explicit-0-flagged").await.as_deref(),
+        Some("0|1"),
+        "still required"
+    );
+    // Past "ready", unticked without who, when or why: refused.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-explicit-0-flagged-2",
+        &with(row("OT-X0-3", &flagged, "Fuite"), &[("requires_permit", json!(0))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+
+    let plain = request_on_site_1(&db, "EQ-SYNC-SO-DI-5", false).await;
+    for title in ["Fuite pompe", "Fuite pompe (mise à jour)"] {
+        let outcome = apply(
+            &db,
+            "work_orders",
+            "wo-explicit-0-plain",
+            &row("OT-X0-2", &plain, title),
+        )
+        .await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{title}: {outcome:?}");
+        assert_eq!(stored("wo-explicit-0-plain").await.as_deref(), Some("0|1"), "as sent");
+    }
+}
+
+/// Two PCs offline: PC B flags the request while PC A links a work order to it (not flagged on A).
+/// On B, A's work order (origin 0, no permit) and its later rows are applied and protected; A
+/// protects its own copy when the request reaches it. Both end with the origin and a permit required.
+#[tokio::test]
+async fn a_request_flagged_on_one_pc_and_linked_on_another_converges_protected() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-8").await;
+    let planning = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'planning'",
+    )
+    .await
+    .expect("planning status");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let state = |sync: &'static str| {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!(
+                    "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) \
+                     FROM work_orders WHERE entity_sync_id = '{sync}'"
+                ),
+            )
+            .await
+        }
+    };
+
+    // On B: the request is flagged here; A's planning work order arrives without the origin.
+    let flagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-8", true).await;
+    let from_a = |title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!("OT-A-1")),
+                ("source_di_sync_id", json!(flagged.clone())),
+                ("status_sync_id", json!(planning.clone())),
+                ("actual_start", Value::Null),
+                ("requires_permit", json!(0)),
+                ("permit_from_safety_di", json!(0)),
+                ("title", json!(title)),
+            ],
+        )
+    };
+    let outcome = apply(&db, "work_orders", "wo-from-pc-a", &from_a("Fuite pompe")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"), "protected here");
+    // A edits it again before the request reaches it: applied, still protected here.
+    let outcome = apply(&db, "work_orders", "wo-from-pc-a", &from_a("Fuite pompe (mise à jour)")).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"));
+    // Once A received the request it sends the protected row: applied.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-from-pc-a",
+        &with(
+            from_a("Fuite pompe"),
+            &[("permit_from_safety_di", json!(1)), ("requires_permit", json!(1))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-from-pc-a").await.as_deref(), Some("1|1"));
+
+    // On A: its own work order linked to the request while not flagged, then the flagged request
+    // arrives: A protects it in the same apply, recorded.
+    let unflagged = request_on_site_1(&db, "EQ-SYNC-SO-DI-9", false).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-on-pc-a",
+        &with(
+            template.clone(),
+            &[
+                ("code", json!("OT-A-2")),
+                ("source_di_sync_id", json!(unflagged.clone())),
+                ("status_sync_id", json!(planning.clone())),
+                ("actual_start", Value::Null),
+                ("requires_permit", json!(0)),
+                ("permit_from_safety_di", json!(0)),
+            ],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(state("wo-on-pc-a").await.as_deref(), Some("0|0"), "not flagged yet");
+    let request = with(
+        wire(&db, "intervention_requests", &unflagged).await,
+        &[("safety_flag", json!(1))],
+    );
+    let outcome = apply(&db, "intervention_requests", &unflagged, &request).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        state("wo-on-pc-a").await.as_deref(),
+        Some("1|1"),
+        "protected when the flag arrives"
+    );
+    assert!(
+        text(
+            &db,
+            "SELECT payload_json FROM wo_action_events e JOIN work_orders w ON w.id = e.wo_id \
+             WHERE w.entity_sync_id = 'wo-on-pc-a' AND e.action_code = 'permit_safety_origin_raised'",
+        )
+        .await
+        .is_some_and(|p| p.contains("safety_request_flagged")),
+        "recorded"
+    );
+}
+
+/// A new work order from an older PC waits for its request; a clearing judged at a site not applied
+/// here yet waits for that site.
+#[tokio::test]
+async fn a_safety_check_waits_for_its_request_and_its_site() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-6").await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+
+    let mut older = with(
+        held.clone(),
+        &[
+            ("code", json!("OT-WAIT-1")),
+            ("source_di_sync_id", json!("di-not-here")),
+        ],
+    );
+    older.remove("permit_from_safety_di");
+    let outcome = apply(&db, "work_orders", "wo-waits-for-request", &older).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("request it was converted from"), "{message}");
+
+    let moved_and_cleared = with(
+        held,
+        &[
+            ("entity_sync_id", json!("node-not-here")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_and_cleared).await;
+    let message = deferred_message(&outcome).unwrap_or_else(|| panic!("waits: {outcome:?}"));
+    assert!(message.contains("its site node-not-here"), "{message}");
+}
+
+/// A cleared safety requirement moved to another site by a received row keeping the clearing is
+/// refused; the same move with the clearing withdrawn (as the moving PC does) is applied.
+#[tokio::test]
+async fn a_received_site_move_does_not_carry_a_safety_clearing() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-SO-7").await;
+    let issuer = site_permit_issuer(&db, "so_issuer_7", 1).await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    let cleared = with(
+        held,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(issuer)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'so-node-2', 'SO-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+
+    let moved_kept = with(cleared.clone(), &[("entity_sync_id", json!("so-node-2"))]);
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_kept).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("0"),
+        "nothing applied"
+    );
+
+    let moved_withdrawn = with(
+        cleared,
+        &[
+            ("entity_sync_id", json!("so-node-2")),
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", Value::Null),
+            ("permit_rule_cleared_at", Value::Null),
+            ("permit_rule_clear_reason", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_withdrawn).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        requires_permit(&db, wo_id).await.as_deref(),
+        Some("1"),
+        "in force again"
+    );
+}
+
+/// N4 (AU-99 review): a work order this PC holds ready, received completed (its start made on
+/// another PC on the way), is judged by the permit gate at its recorded start, as a received start
+/// is; with a valid permit chain it is applied (the completion checks then pass on the state held
+/// here).
+#[tokio::test]
+async fn a_completion_received_from_ready_passes_the_permit_gate() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-N4").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let completed = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'completed'",
+    )
+    .await
+    .expect("status sync id");
+    let status_sql = format!(
+        "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id WHERE w.id = {wo_id}"
+    );
+    let status_of = || text(&db, &status_sql);
+    let ready = status_of().await;
+    // What the completion checks read here (corrective work): failure coding and no parts used.
+    let symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+        .await
+        .expect("symptom")
+        .expect("seeded symptom");
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_failure_details (work_order_id, symptom_id, cause_not_determined, notes, \
+             is_temporary_repair, is_permanent_repair) VALUES ({wo_id}, {symptom}, 1, 'Cause not found on site', 0, 1)"
+        ),
+    )
+    .await;
+    let base = wire(&db, "work_orders", &wo_sync).await;
+    let received = |start: String| {
+        let row = with(
+            base.clone(),
+            &[
+                ("status_sync_id", json!(completed)),
+                ("actual_start", json!(start)),
+                ("mechanically_completed_at", json!(now())),
+                ("parts_actuals_confirmed", json!(1)),
+                ("root_cause_summary", json!("Breaker contacts worn")),
+            ],
+        );
+        async move { row }
+    };
+
+    // No permit received yet: waits (it may still be coming), nothing written.
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    // A linked permit never active: refused with the start gate's code, nothing written.
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-N4 breaker").await).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert_eq!(code(&outcome), Some("PERMIT_NOT_ACTIVE"), "{outcome:?}");
+    assert_eq!(status_of().await, ready);
+
+    // Active with its isolation verified, started after the activation: applied.
+    set_status(&db, &wp, "active").await.expect("activate");
+    let outcome = apply(&db, "work_orders", &wo_sync, &received(now()).await).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(status_of().await.as_deref(), Some("completed"));
+}
+
+/// N4: a completed work order that never was here, as another PC sends it (removed here with what
+/// refers to it); returns its sync id and the row.
+async fn n4_completed_wo_new_here(db: &DatabaseConnection) -> (String, Payload) {
+    let asset = insert_equipment(db, "EQ-SYNC-N4S").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let completed = text(
+        db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'completed'",
+    )
+    .await
+    .expect("status sync id");
+    let row = with(
+        wire(db, "work_orders", &wo_sync).await,
+        &[
+            ("status_sync_id", json!(completed)),
+            ("actual_start", json!(now())),
+            ("mechanically_completed_at", json!(now())),
+        ],
+    );
+    // This PC never held it: removed here with what refers to it.
+    exec(db, "PRAGMA foreign_keys = OFF").await;
+    for table in ["wo_state_transition_log WHERE wo_id", "wo_change_events WHERE wo_id"] {
+        exec(db, &format!("DELETE FROM {table} = {wo_id}")).await;
+    }
+    exec(db, &format!("DELETE FROM work_orders WHERE id = {wo_id}")).await;
+    exec(db, "PRAGMA foreign_keys = ON").await;
+    (wo_sync, row)
+}
+
+/// A received work order waiting in `db`'s inbox under `batch` (`snapshot-…` for a snapshot).
+async fn inbox_wo(db: &DatabaseConnection, batch: &str, wo_sync: &str, version: i64, row: &Payload) {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+             row_version, payload_json, payload_hash, apply_status) VALUES ('{batch}', 'c1', 'work_orders', '{wo_sync}', \
+             'upsert', {version}, '{}', 'h-{batch}', 'pending')",
+            serde_json::to_string(row).expect("json").replace('\'', "''")
+        ),
+    )
+    .await;
+}
+
+async fn wo_status_by_sync(db: &DatabaseConnection, wo_sync: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT s.code FROM work_orders w JOIN work_order_statuses s ON s.id = w.status_id \
+             WHERE w.entity_sync_id = '{wo_sync}'"
+        ),
+    )
+    .await
+}
+
+/// N4: a completed work order new here received by the snapshot of this PC's first join (plant
+/// history) is not judged by the permit gate; the same row received as a change waits for its
+/// permit.
+#[tokio::test]
+async fn a_snapshot_completed_work_order_new_here_is_not_judged_by_the_permit_gate() {
+    let db = setup().await;
+    let (wo_sync, row) = n4_completed_wo_new_here(&db).await;
+
+    // As a change: waits for its permit, not written.
+    inbox_wo(&db, "b-n4-delta", &wo_sync, 5, &row).await;
+    let (_, conflicts) = inbox_pass(&db).await;
+    assert_eq!(conflicts, 0);
+    assert_eq!(wo_status_by_sync(&db, &wo_sync).await, None, "waits for its permit");
+    exec(&db, "DELETE FROM sync_inbox WHERE server_batch_id = 'b-n4-delta'").await;
+
+    // By the snapshot of this PC's first join (activated, no complete pull yet): applied as the
+    // plant holds it.
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
+    inbox_wo(&db, "snapshot-all-n4", &wo_sync, 6, &row).await;
+    let (_, conflicts) = inbox_pass(&db).await;
+    assert_eq!(conflicts, 0);
+    assert_eq!(wo_status_by_sync(&db, &wo_sync).await.as_deref(), Some("completed"));
+}
+
+/// The permit start gate skips a snapshot only on a PC's first join: a snapshot received once this
+/// PC completed a full pull of its organisation (a re-bootstrap after the server refused its
+/// checkpoint), or on a PC with no activation, is judged as a change (waits for its permit).
+#[tokio::test]
+async fn the_permit_start_gate_judges_a_snapshot_after_the_first_join() {
+    for case in ["rebootstrap", "unactivated"] {
+        let db = setup().await;
+        let (wo_sync, row) = n4_completed_wo_new_here(&db).await;
+        if case == "rebootstrap" {
+            crate::commands::product_license::record_activation_claim_for_tests(
+                &db,
+                "tenant-plant-a",
+                "fp-a",
+                "token-a",
+            )
+            .await
+            .expect("activation");
+            crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+                .await
+                .expect("complete pull");
+        }
+        inbox_wo(&db, &format!("snapshot-all-{case}"), &wo_sync, 6, &row).await;
+        inbox_pass(&db).await;
+        assert_eq!(
+            wo_status_by_sync(&db, &wo_sync).await,
+            None,
+            "{case}: judged, not written"
+        );
+        assert_ne!(
+            text(
+                &db,
+                &format!("SELECT apply_status FROM sync_inbox WHERE entity_sync_id = '{wo_sync}'")
+            )
+            .await
+            .as_deref(),
+            Some("applied"),
+            "{case}"
+        );
+    }
+}
+
+// ── AU-04: plant permit rules on every work-order origin ──────────────────────────────────────
+
+async fn wo_text(db: &DatabaseConnection, sync_id: &str, column: &str) -> Option<String> {
+    text(
+        db,
+        &format!("SELECT CAST({column} AS TEXT) FROM work_orders WHERE entity_sync_id = '{sync_id}'"),
+    )
+    .await
+}
+
+async fn wo_events(db: &DatabaseConnection, sync_id: &str, action: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = '{sync_id}' AND e.action_code = '{action}'"
+        ),
+    )
+    .await
+}
+
+/// Owner decision D2 (a), audit finding AU-04 B2/S2/S3: a received work order without the rule that
+/// matches it here (its sender has not applied that rule list) is applied, never refused. Not started
+/// (by its status), it gets the rule here; the later rows of its sender, still without the rule, are
+/// applied and the rule stays; a received change of its work type is judged the same way. Already
+/// started, it is applied as received and recorded once as a safety finding.
+#[tokio::test]
+async fn a_received_work_order_without_the_rule_held_here_converges() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    // The rule is held here; the PC that created the work orders below did not hold it.
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let mut statuses = std::collections::HashMap::new();
+    for status in ["draft", "planning", "on_hold"] {
+        let sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM work_order_statuses WHERE code = '{status}'"),
+        )
+        .await
+        .expect("status sync id");
+        statuses.insert(status, sync);
+    }
+    let row = |code: &str, status: &str, requires: i64, changes: &[(&str, Value)]| {
+        let p = with(
+            template.clone(),
+            &[
+                ("code", json!(code)),
+                ("status_sync_id", json!(statuses[status])),
+                ("requires_permit", json!(requires)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", Value::Null),
+            ],
+        );
+        with(p, changes)
+    };
+
+    // Not started, without the permit: applied, and the rule recorded here.
+    let outcome = apply(&db, "work_orders", "wo-rule-1", &row("OT-RM-1", "planning", 0, &[])).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-rule-1", "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+    assert_eq!(wo_text(&db, "wo-rule-1", "requires_permit").await.as_deref(), Some("1"));
+    assert_eq!(
+        wo_events(&db, "wo-rule-1", "permit_rule_applied").await.as_deref(),
+        Some("1")
+    );
+    // A later row of its sender, still without the rule: applied, never WO_PERMIT_RULE_CHANGED, and
+    // the rule stays.
+    let later = row("OT-RM-1", "planning", 0, &[("title", json!("Replace breaker (2)"))]);
+    let outcome = apply(&db, "work_orders", "wo-rule-1", &later).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-rule-1", "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+    assert_eq!(wo_text(&db, "wo-rule-1", "requires_permit").await.as_deref(), Some("1"));
+    // The sender then sends it with the rule (it applied the list): the same trace, applied.
+    let same = row(
+        "OT-RM-1",
+        "planning",
+        1,
+        &[
+            ("permit_rule_code", json!("CORRECTIVE_LOTO")),
+            ("permit_rule_permit_type", json!("loto")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-rule-1", &same).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{outcome:?}"
+    );
+    // Another rule over the one held here, not started: applied, the rule of the list here kept
+    // (R2-S1; a started one is refused, `a_started_row_without_the_rule_keeps_the_rule_held_here`).
+    let other = with(same, &[("permit_rule_code", json!("OTHER_RULE"))]);
+    let outcome = apply(&db, "work_orders", "wo-rule-1", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-rule-1", "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+
+    // S3: received with another work type (no rule), then changed to the ruled one.
+    let preventive = template_type_other(&db).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-2",
+        &row("OT-RM-2", "planning", 0, &[("type_sync_id", preventive.clone())]),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(wo_text(&db, "wo-rule-2", "permit_rule_code").await, None);
+    let outcome = apply(&db, "work_orders", "wo-rule-2", &row("OT-RM-2", "planning", 0, &[])).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-rule-2", "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+
+    // S2: a draft with a start time is judged by its status (not started): it gets the rule.
+    let outcome = apply(
+        &db,
+        "work_orders",
+        "wo-rule-3",
+        &row(
+            "OT-RM-3",
+            "draft",
+            1,
+            &[("actual_start", json!("2026-10-01T08:00:00Z"))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-rule-3", "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+
+    // Started without the permit: applied as received (its history kept), recorded once as a finding.
+    let started = row(
+        "OT-RM-4",
+        "on_hold",
+        0,
+        &[("actual_start", json!("2026-10-01T08:00:00Z"))],
+    );
+    let outcome = apply(&db, "work_orders", "wo-rule-4", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(wo_text(&db, "wo-rule-4", "permit_rule_code").await, None);
+    assert_eq!(
+        wo_events(&db, "wo-rule-4", "permit_rule_missing_on_arrival")
+            .await
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-rule-4'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the permit issuers of its site are told"
+    );
+    let again = with(started, &[("title", json!("Replace breaker (bis)"))]);
+    let outcome = apply(&db, "work_orders", "wo-rule-4", &again).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_events(&db, "wo-rule-4", "permit_rule_missing_on_arrival")
+            .await
+            .as_deref(),
+        Some("1"),
+        "once"
+    );
+}
+
+/// A work order started without the rule held here, new here by a snapshot: no finding on this PC's
+/// first join (plant history); a finding once this PC completed a full pull of its organisation (a
+/// re-bootstrap after the server refused its checkpoint), or on a PC with no activation.
+#[tokio::test]
+async fn the_started_without_rule_finding_skips_a_snapshot_only_on_a_first_join() {
+    for (case, expected) in [("firstjoin", "0"), ("rebootstrap", "1"), ("unactivated", "1")] {
+        let db = setup().await;
+        let asset = insert_equipment(&db, "EQ-SYNC-RULE-FJ").await;
+        let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+        let wo_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+        )
+        .await
+        .expect("wo sync id");
+        let template = wire(&db, "work_orders", &wo_sync).await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "CORRECTIVE_LOTO",
+            json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+        )
+        .await;
+        let on_hold = text(
+            &db,
+            "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+        )
+        .await
+        .expect("status sync id");
+        let started = with(
+            template,
+            &[
+                ("code", json!("OT-RM-FJ")),
+                ("status_sync_id", json!(on_hold)),
+                ("requires_permit", json!(0)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        );
+        if case != "unactivated" {
+            crate::commands::product_license::record_activation_claim_for_tests(
+                &db,
+                "tenant-plant-a",
+                "fp-a",
+                "token-a",
+            )
+            .await
+            .expect("activation");
+        }
+        if case == "rebootstrap" {
+            crate::sync::plant_join::record_complete_pull(&db, "tenant-plant-a")
+                .await
+                .expect("complete pull");
+        }
+        inbox_wo(&db, &format!("snapshot-all-{case}"), "wo-rule-fj", 5, &started).await;
+        let (_, conflicts) = inbox_pass(&db).await;
+        assert_eq!(conflicts, 0, "{case}");
+        assert_eq!(
+            wo_status_by_sync(&db, "wo-rule-fj").await.as_deref(),
+            Some("on_hold"),
+            "{case}: applied as received"
+        );
+        assert_eq!(
+            wo_events(&db, "wo-rule-fj", "permit_rule_missing_on_arrival")
+                .await
+                .as_deref(),
+            Some(expected),
+            "{case}"
+        );
+    }
+}
+
+/// Review S1: a work order held here, started without the rule held here, received again by a
+/// snapshot is judged (not new here): exactly one finding, and a later snapshot adds none.
+#[tokio::test]
+async fn a_held_work_order_received_by_a_snapshot_gets_the_finding_once() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-S1").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let on_hold = text(
+        &db,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'on_hold'",
+    )
+    .await
+    .expect("status sync id");
+    let started = |title: &str| {
+        with(
+            template.clone(),
+            &[
+                ("code", json!("OT-RM-S1")),
+                ("title", json!(title)),
+                ("status_sync_id", json!(on_hold)),
+                ("requires_permit", json!(0)),
+                ("permit_rule_code", Value::Null),
+                ("permit_rule_permit_type", Value::Null),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        )
+    };
+    crate::commands::product_license::record_activation_claim_for_tests(&db, "tenant-plant-a", "fp-a", "token-a")
+        .await
+        .expect("activation");
+    let findings = || wo_events(&db, "wo-rule-s1", "permit_rule_missing_on_arrival");
+
+    // New here by the first join's snapshot: the plant's history, no finding; now held here.
+    inbox_wo(&db, "snapshot-all-s1-a", "wo-rule-s1", 5, &started("Replace breaker")).await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("0"), "new here: history");
+
+    // Held here, received again by a snapshot: judged, one finding.
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-b",
+        "wo-rule-s1",
+        6,
+        &started("Replace breaker (2)"),
+    )
+    .await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "held here: judged");
+
+    // A later snapshot: still one.
+    inbox_wo(
+        &db,
+        "snapshot-all-s1-c",
+        "wo-rule-s1",
+        7,
+        &started("Replace breaker (3)"),
+    )
+    .await;
+    assert_eq!(inbox_pass(&db).await.1, 0);
+    assert_eq!(findings().await.as_deref(), Some("1"), "once");
+    assert_eq!(wo_status_by_sync(&db, "wo-rule-s1").await.as_deref(), Some("on_hold"));
+}
+
+/// AU-04 B2: the rule list received here flags this PC's work orders not started yet that a rule
+/// of it matches, as the PC that published it did; started ones are left as they are.
+#[tokio::test]
+async fn a_received_rule_list_flags_the_open_work_orders_here() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-RULE-2").await;
+    let actor = super::tests::admin_id(&db).await;
+    let draft = crate::wo::queries::create_work_order(
+        &db,
+        crate::wo::domain::WoCreateInput {
+            type_code: "corrective".into(),
+            equipment_id: Some(asset),
+            location_id: None,
+            source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
+            entity_id: Some(1),
+            planner_id: None,
+            urgency_code: Some("normal".into()),
+            subtype_code: None,
+            title: "Pump seal".into(),
+            description: None,
+            notes: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            creator_id: actor,
+            requires_permit: None,
+        },
+    )
+    .await
+    .expect("draft");
+    assert_eq!(draft.permit_rule_code, None);
+    // A rule of the list as another PC sends it (here from a rule that matches nothing).
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "TEMPLATE",
+        json!({ "work_type_code": "preventive", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_values SET entity_sync_id = 'rv-template' WHERE code = 'TEMPLATE'",
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_sets SET entity_sync_id = 'rs-permit-rules' \
+         WHERE entity_sync_id IS NULL AND id = (SELECT set_id FROM reference_values WHERE code = 'TEMPLATE')",
+    )
+    .await;
+    let received = with(
+        wire(&db, "reference_values", "rv-template").await,
+        &[
+            ("code", json!("CORRECTIVE_LOTO")),
+            ("label", json!("CORRECTIVE_LOTO")),
+            (
+                "metadata_json",
+                json!(json!({ "work_type_code": "corrective", "permit_type_code": "loto" }).to_string()),
+            ),
+        ],
+    );
+    let outcome = apply(&db, "reference_values", "rv-received-rule", &received).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let draft = crate::wo::queries::get_work_order(&db, draft.id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(draft.requires_permit);
+    assert_eq!(draft.permit_rule_code.as_deref(), Some("CORRECTIVE_LOTO"));
+    let cause = text(
+        &db,
+        &format!(
+            "SELECT json_extract(payload_json, '$.cause') FROM wo_action_events WHERE wo_id = {} \
+             AND action_code = 'permit_rule_applied'",
+            draft.id
+        ),
+    )
+    .await;
+    assert_eq!(cause.as_deref(), Some("rules_received"));
+}
+
+/// The sync id of a work type other than "corrective".
+async fn template_type_other(db: &DatabaseConnection) -> Value {
+    json!(text(
+        db,
+        "SELECT v.entity_sync_id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id \
+         WHERE d.code = 'WORK.ORDER_TYPES' AND s.status = 'published' AND v.code = 'preventive'"
+    )
+    .await
+    .expect("preventive type"))
+}
+
+// ── AU-04 round 2: a row without the rule never strips the rule held here (R2-B1), two derived
+// rules converge (R2-S1), the finding reaches the permit issuers of the site (R2-S3) ──────────────
+
+/// A received work-order row built from `template`, with these changes.
+fn wo_row(template: &Payload, changes: &[(&str, Value)]) -> Payload {
+    with(template.clone(), changes)
+}
+
+/// Applies a received row through the inbound path (`apply_inbound_payload`: capture suppressed,
+/// as the inbox pass applies it), in a transaction kept only when the row is applied.
+async fn apply_received(db: &DatabaseConnection, entity_type: &str, sync_id: &str, payload: &Payload) -> ApplyOutcome {
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::materialize::apply_inbound_payload(
+        &tx,
+        entity_type,
+        sync_id,
+        "upsert",
+        1,
+        &serde_json::to_string(payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
+}
+
+/// The sync id of a work-order status.
+async fn status_sync(db: &DatabaseConnection, status: &str) -> Value {
+    json!(text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_order_statuses WHERE code = '{status}'")
+    )
+    .await
+    .expect("status sync id"))
+}
+
+/// A work order not started (planning) received here, its rule `CORRECTIVE_LOTO` derived here: the
+/// row as its sender sends it (without the rule), the template of later rows.
+async fn ruled_work_order(db: &DatabaseConnection, equipment: &str, wo_sync: &str) -> Payload {
+    let asset = insert_equipment(db, equipment).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let template_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    if text(db, "SELECT code FROM reference_values WHERE code = 'CORRECTIVE_LOTO'")
+        .await
+        .is_none()
+    {
+        crate::permit::requirement_rules::add_published_rule(
+            db,
+            "CORRECTIVE_LOTO",
+            json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+        )
+        .await;
+    }
+    let row = wo_row(
+        &wire(db, "work_orders", &template_sync).await,
+        &[
+            ("code", json!(format!("OT-{wo_sync}"))),
+            ("status_sync_id", status_sync(db, "planning").await),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+            ("actual_start", Value::Null),
+        ],
+    );
+    let outcome = apply(db, "work_orders", wo_sync, &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(db, wo_sync, "permit_rule_code").await.as_deref(),
+        Some("CORRECTIVE_LOTO")
+    );
+    row
+}
+
+type RuleState = (Option<String>, Option<String>, Option<String>, Option<String>);
+
+/// The rule, its permit type, the requirement and the time of a clearing of a work order here.
+async fn rule_state(db: &DatabaseConnection, wo_sync: &str) -> RuleState {
+    (
+        wo_text(db, wo_sync, "permit_rule_code").await,
+        wo_text(db, wo_sync, "permit_rule_permit_type").await,
+        wo_text(db, wo_sync, "requires_permit").await,
+        wo_text(db, wo_sync, "permit_rule_cleared_at").await,
+    )
+}
+
+fn ruled(rule: &str, permit_type: &str) -> RuleState {
+    (Some(rule.into()), Some(permit_type.into()), Some("1".into()), None)
+}
+
+/// R2-B1, started: a row without the rule (and without the permit) over a rule held here is applied
+/// (its history is kept), the rule, its permit type and the requirement are kept here, the finding
+/// is recorded once and told to the permit issuers of its site, and the resume gate still asks for
+/// the permit. A row naming another rule on it is refused.
+#[tokio::test]
+async fn a_started_row_without_the_rule_keeps_the_rule_held_here() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R2B1-1", "wo-r2-1").await;
+    let started = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r2-1", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-r2-1", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "its history is applied"
+    );
+    assert_eq!(rule_state(&db, "wo-r2-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_events(&db, "wo-r2-1", "permit_rule_missing_on_arrival")
+            .await
+            .as_deref(),
+        Some("1")
+    );
+    let finding = text(
+        &db,
+        "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+         WHERE wo.entity_sync_id = 'wo-r2-1' AND e.action_code = 'permit_rule_missing_on_arrival'",
+    )
+    .await
+    .expect("finding");
+    let finding: Value = serde_json::from_str(&finding).expect("json");
+    assert_eq!(finding["rule_code"], json!("CORRECTIVE_LOTO"));
+    assert_eq!(finding["requires_permit"], json!(false), "what the row said");
+    assert_eq!(finding["rule_held_here"], json!(true));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r2-1'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+    // The resume gate asks for the permit of the rule.
+    let wo_id: i64 = text(
+        &db,
+        "SELECT CAST(id AS TEXT) FROM work_orders WHERE entity_sync_id = 'wo-r2-1'",
+    )
+    .await
+    .expect("id")
+    .parse()
+    .expect("id");
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(
+        format!("{gate:?}").contains("PERMIT_REQUIRED_TO_START"),
+        "the permit is still required: {gate:?}"
+    );
+    // Again: still kept, the finding once.
+    let again = wo_row(&started, &[("title", json!("Replace breaker (bis)"))]);
+    let outcome = apply(&db, "work_orders", "wo-r2-1", &again).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_events(&db, "wo-r2-1", "permit_rule_missing_on_arrival")
+            .await
+            .as_deref(),
+        Some("1"),
+        "once"
+    );
+    // A row that names another rule on the started work order: refused.
+    let other = wo_row(
+        &started,
+        &[
+            ("permit_rule_code", json!("OTHER_RULE")),
+            ("permit_rule_permit_type", json!("loto")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r2-1", &other).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
+}
+
+/// R2-B1, not started: a row without the rule that also moves the work order to a work type no rule
+/// matches, or that arrives after the rule was retired here, keeps the rule held here (a rule only
+/// adds). Nothing of this is sent (derived in the apply).
+#[tokio::test]
+async fn a_not_started_row_without_the_rule_keeps_the_rule_held_here() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R2B1-2", "wo-r2-2").await;
+    // Capture on, as on a PC that synchronises: only what the apply derives could be captured.
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    exec(&db, "DELETE FROM sync_capture_journal").await;
+    let unruled = wo_row(&planning, &[("type_sync_id", template_type_other(&db).await)]);
+    let outcome = apply_received(&db, "work_orders", "wo-r2-2", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    // The rule retired here since: kept.
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'CORRECTIVE_LOTO'",
+    )
+    .await;
+    let later = wo_row(&planning, &[("title", json!("Replace breaker (2)"))]);
+    let outcome = apply_received(&db, "work_orders", "wo-r2-2", &later).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_events(&db, "wo-r2-2", "permit_rule_missing_on_arrival")
+            .await
+            .as_deref(),
+        Some("0"),
+        "not started: no finding"
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM sync_capture_journal WHERE entity_type = 'work_orders' \
+             AND entity_sync_id = 'wo-r2-2'"
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "derived in the apply: never sent"
+    );
+}
+
+/// R2-B1, clearings: a clearing received with a row without the rule is judged as a clearing of the
+/// rule held here (refused from someone without the permit-issue right, accepted from a plant-wide
+/// holder, the rule kept); a clearing held here is kept by a row that carries neither the rule nor
+/// a clearing, and withdrawn when that row requires the permit.
+#[tokio::test]
+async fn a_clearing_with_a_row_without_the_rule_is_judged_against_the_rule_held_here() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R2B1-3", "wo-r2-3").await;
+    let cleared_at = now();
+    let cleared_by = |who: Value| {
+        wo_row(
+            &planning,
+            &[
+                ("permit_rule_cleared_by_sync_id", who),
+                ("permit_rule_cleared_at", json!(cleared_at)),
+                ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+            ],
+        )
+    };
+    // From someone without the right: refused, nothing changes here.
+    let verifier = json!(user_sync(&db, VERIFIER).await);
+    let outcome = apply(&db, "work_orders", "wo-r2-3", &cleared_by(verifier)).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    // From the plant-wide permit issuer: accepted, the rule kept with the clearing.
+    let admin = json!(user_sync(&db, APPLIER).await);
+    let outcome = apply(&db, "work_orders", "wo-r2-3", &cleared_by(admin)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let (rule, permit_type, requires, at) = rule_state(&db, "wo-r2-3").await;
+    assert_eq!(
+        (rule.as_deref(), permit_type.as_deref(), requires.as_deref()),
+        (Some("CORRECTIVE_LOTO"), Some("loto"), Some("0"))
+    );
+    assert!(at.is_some(), "the clearing is recorded");
+    // A row of a PC that never had the rule nor the clearing: the clearing held here is kept.
+    let stale = wo_row(&planning, &[("title", json!("Replace breaker (3)"))]);
+    let outcome = apply(&db, "work_orders", "wo-r2-3", &stale).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        rule_state(&db, "wo-r2-3").await,
+        (rule.clone(), permit_type.clone(), Some("0".into()), at)
+    );
+    assert_eq!(
+        wo_text(&db, "wo-r2-3", "permit_rule_clear_reason").await.as_deref(),
+        Some("Consignation faite par l'exploitant")
+    );
+    // The same PC requiring the permit: required, the clearing withdrawn.
+    let required = wo_row(&planning, &[("requires_permit", json!(1))]);
+    let outcome = apply(&db, "work_orders", "wo-r2-3", &required).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+}
+
+/// R2-B1, safety origin: a work order from a request flagged "sécurité" that also holds a plant rule
+/// here is not downgraded by a row without the rule: a clearing by a holder of the permit-issue right
+/// at its site only (enough for a safety request) is refused, the rule needs it plant-wide.
+#[tokio::test]
+async fn a_row_without_the_rule_never_downgrades_a_ruled_safety_work_order() {
+    use crate::auth::scope_tests::{assign, role, user};
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R2B1-4", "wo-r2-4").await;
+    exec(
+        &db,
+        "UPDATE work_orders SET permit_from_safety_di = 1 WHERE entity_sync_id = 'wo-r2-4'",
+    )
+    .await;
+    let issuer_role = role(&db, "r2 site issuer", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let site_issuer = user(&db, "r2_site_issuer").await;
+    assign(&db, site_issuer, issuer_role, "org_node", Some(1)).await;
+    let site_cleared = wo_row(
+        &planning,
+        &[
+            (super::sync_check::SAFETY_ORIGIN, json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!("scope-user-r2_site_issuer")),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r2-4", &site_cleared).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r2-4").await, ruled("CORRECTIVE_LOTO", "loto"));
+}
+
+/// R2-S1: two PCs that derived different rules for a work order not started (two versions of the
+/// list) converge with no conflict: each keeps the rule that comes first in its list (a rule it
+/// does not hold comes after its own); once the lists agree, both keep the same. Nothing is sent.
+#[tokio::test]
+async fn two_rules_derived_on_two_lists_converge_without_a_conflict() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R2S1-1", "wo-s1-1").await;
+    // Capture on, as on a PC that synchronises: only what the apply derives could be captured.
+    crate::sync::capture::install_capture(&db).await.expect("capture");
+    exec(&db, "DELETE FROM sync_capture_journal").await;
+    // The other PC derived A_FIRST from its list (v2), not held here yet: this PC keeps its own.
+    let from_v2 = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("A_FIRST")),
+            ("permit_rule_permit_type", json!("loto")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply_received(&db, "work_orders", "wo-s1-1", &from_v2).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    // The list here gets A_FIRST, first in its order: the next row converges on it.
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "A_FIRST",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_FIRST'").await;
+    let outcome = apply_received(&db, "work_orders", "wo-s1-1", &from_v2).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{outcome:?}"
+    );
+    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "loto"));
+    // A late row of a PC still on the old list (CORRECTIVE_LOTO): A_FIRST stays.
+    let from_v1 = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("CORRECTIVE_LOTO")),
+            ("permit_rule_permit_type", json!("loto")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply_received(&db, "work_orders", "wo-s1-1", &from_v1).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-s1-1").await, ruled("A_FIRST", "loto"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-s1-1' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged'"
+        )
+        .await
+        .as_deref(),
+        Some("3"),
+        "each row overwritten and the change of the rule held here are recorded (check 6, C6-S1)"
+    );
+    let change: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-s1-1' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged' \
+               AND json_extract(e.payload_json, '$.previous_rule_code') = 'CORRECTIVE_LOTO' \
+               AND json_extract(e.payload_json, '$.rule_code') = 'A_FIRST'",
+        )
+        .await
+        .expect("change"),
+    )
+    .expect("json");
+    assert_eq!(
+        (
+            &change["previous_rule_code"],
+            &change["previous_permit_type_code"],
+            &change["rule_code"],
+            &change["permit_type_code"],
+        ),
+        (
+            &json!("CORRECTIVE_LOTO"),
+            &json!("loto"),
+            &json!("A_FIRST"),
+            &json!("loto")
+        )
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+             WHERE wo.entity_sync_id = 'wo-s1-1' AND c.action = 'permit_rule_applied' \
+               AND json_extract(c.details_json, '$.cause') = 'rules_converged'"
+        )
+        .await
+        .as_deref(),
+        Some("3"),
+        "audited"
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM sync_capture_journal WHERE entity_type = 'work_orders' \
+             AND entity_sync_id = 'wo-s1-1'"
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "derived in the apply: never sent"
+    );
+}
+
+/// R2-S3: the finding notice reaches the permit-issue right holders of the work order's site (and
+/// the plant-wide ones), not those of another site; with nobody holding the right, the settings
+/// administrators.
+#[tokio::test]
+async fn the_finding_notice_reaches_the_permit_issuers_of_the_site() {
+    use crate::auth::scope_tests::{assign, node, role, user};
+    let db = setup().await;
+    let issuers = role(&db, "r2s3 issuer", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let here = user(&db, "r2s3_here").await;
+    let elsewhere = user(&db, "r2s3_elsewhere").await;
+    let without = user(&db, "r2s3_without").await;
+    let site = node(&db, "R2S3-SITE", None).await;
+    let other_site = node(&db, "R2S3-OTHER", None).await;
+    assert_ne!(site, other_site);
+    assign(&db, here, issuers, "org_node", Some(site)).await;
+    assign(&db, elsewhere, issuers, "org_node", Some(other_site)).await;
+    async fn notices_to(db: &DatabaseConnection, user: i32, wo: &str) -> Option<String> {
+        text(
+            db,
+            &format!(
+                "SELECT CAST(COUNT(*) AS TEXT) FROM notifications n \
+                   JOIN notification_events e ON e.id = n.notification_event_id \
+                  WHERE e.category_code = 'wo_permit_rule_missing' AND n.recipient_user_id = {user} \
+                    AND json_extract(e.payload_json, '$.entity_sync_id') = '{wo}'"
+            ),
+        )
+        .await
+    }
+    let on_hold = status_sync(&db, "on_hold").await;
+    let started = |planning: &Payload| {
+        wo_row(
+            planning,
+            &[
+                ("status_sync_id", on_hold.clone()),
+                ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ],
+        )
+    };
+    // Its site here: the work order and the rows its sender sends name it.
+    let at_site = |wo: &'static str, planning: Payload| {
+        let db = &db;
+        async move {
+            exec(
+                db,
+                &format!("UPDATE work_orders SET entity_id = {site} WHERE entity_sync_id = '{wo}'"),
+            )
+            .await;
+            wo_row(&planning, &[("entity_sync_id", json!("scope-R2S3-SITE"))])
+        }
+    };
+    let planning = at_site("wo-s3-1", ruled_work_order(&db, "EQ-R2S3-1", "wo-s3-1").await).await;
+    let outcome = apply(&db, "work_orders", "wo-s3-1", &started(&planning)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(notices_to(&db, here, "wo-s3-1").await.as_deref(), Some("1"));
+    assert_eq!(notices_to(&db, elsewhere, "wo-s3-1").await.as_deref(), Some("0"));
+    assert_eq!(notices_to(&db, without, "wo-s3-1").await.as_deref(), Some("0"));
+    // Nobody holds the right here (no role carries it, no elevated administrator is active): the
+    // settings administrators.
+    let planning = ruled_work_order(&db, "EQ-R2S3-2", "wo-s3-2").await;
+    let settings = role(&db, "r2s3 settings", &[crate::rbac::permissions::ADM_SETTINGS]).await;
+    let settings_admin = user(&db, "r2s3_settings").await;
+    assign(&db, settings_admin, settings, "tenant", None).await;
+    exec(
+        &db,
+        &format!(
+            "DELETE FROM role_permissions WHERE permission_id = (SELECT id FROM permissions WHERE name = '{}')",
+            crate::rbac::permissions::PTW_ISSUE
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE user_accounts SET is_active = 0 WHERE id = {APPLIER}"),
+    )
+    .await;
+    let outcome = apply(&db, "work_orders", "wo-s3-2", &started(&planning)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        notices_to(&db, settings_admin, "wo-s3-2").await.as_deref(),
+        Some("1"),
+        "fallback"
+    );
+    assert_eq!(notices_to(&db, here, "wo-s3-2").await.as_deref(), Some("0"));
+}
+
+// ── AU-04 round 3: the received row never chooses the rule (R3-B1) ─────────────────────────────
+
+/// The local id of a work order.
+async fn wo_id_of(db: &DatabaseConnection, wo_sync: &str) -> i64 {
+    text(
+        db,
+        &format!("SELECT CAST(id AS TEXT) FROM work_orders WHERE entity_sync_id = '{wo_sync}'"),
+    )
+    .await
+    .expect("id")
+    .parse()
+    .expect("id")
+}
+
+/// R3-B1: a received rule listed here that sorts first but does not match the work order here never
+/// replaces the rule held here: LOTO stays, nothing is recorded, and a live hot-work permit does not
+/// satisfy the start gate.
+#[tokio::test]
+async fn a_received_rule_that_does_not_match_here_never_wins() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-1", "wo-r3-1").await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "R0_WELD",
+        json!({ "work_type_code": "preventive", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'R0_WELD'").await;
+    let swap = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("R0_WELD")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r3-1", &swap).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r3-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r3-1' AND json_extract(e.payload_json, '$.cause') = 'rules_converged'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the rule held here is kept; the row it overwrote is recorded (check 6, C6-S1)"
+    );
+    // A live hot-work permit: the start gate still asks for a LOTO permit.
+    let wo_id = wo_id_of(&db, "wo-r3-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(
+        format!("{gate:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {gate:?}"
+    );
+}
+
+/// R3-B1: with the rule held here retired (nothing matches here), a received made-up code, or the
+/// same code with a made-up permit type, never wins: the rule held here and its type are kept.
+#[tokio::test]
+async fn a_made_up_rule_or_type_never_replaces_a_retired_rule_held_here() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-2", "wo-r3-2").await;
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'CORRECTIVE_LOTO'",
+    )
+    .await;
+    for (code, permit_type) in [("AAA", "a_forged"), ("CORRECTIVE_LOTO", "a_forged")] {
+        let forged = wo_row(
+            &planning,
+            &[
+                ("permit_rule_code", json!(code)),
+                ("permit_rule_permit_type", json!(permit_type)),
+                ("requires_permit", json!(1)),
+            ],
+        );
+        let outcome = apply(&db, "work_orders", "wo-r3-2", &forged).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{code}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-r3-2").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{code} / {permit_type}"
+        );
+    }
+}
+
+/// R3-B1: a row that names another rule and moves a work order started here back to a status not
+/// started is refused: started on either side counts.
+#[tokio::test]
+async fn a_status_moved_back_does_not_let_another_rule_through() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R3B1-3", "wo-r3-3").await;
+    exec(
+        &db,
+        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'in_progress'), \
+         actual_start = '2026-10-01T08:00:00Z' WHERE entity_sync_id = 'wo-r3-3'",
+    )
+    .await;
+    let back = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("A_OTHER")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r3-3", &back).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CHANGED"), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r3-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+}
+
+/// R3-N4: a row that says origin 0 for a work order not started whose request is flagged here, and
+/// carries a clearing by someone without the right, is applied (the origin is derived here), then
+/// protected in the same apply: origin 1, the permit required, the clearing withdrawn. Never stored
+/// cleared.
+#[tokio::test]
+async fn an_origin_0_row_with_an_unauthorised_clearing_ends_protected() {
+    let db = setup().await;
+    let (_, wo_sync) = safety_origin_wo(&db, "EQ-SYNC-N4-1").await;
+    let template = wire(&db, "work_orders", &wo_sync).await;
+    let flagged = request_on_site_1(&db, "EQ-SYNC-N4-DI", true).await;
+    let row = with(
+        template,
+        &[
+            ("code", json!("OT-N4-1")),
+            ("source_di_sync_id", json!(flagged)),
+            ("status_sync_id", status_sync(&db, "planning").await),
+            ("actual_start", Value::Null),
+            ("permit_from_safety_di", json!(0)),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, VERIFIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-n4-origin-0", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(permit_from_safety_di AS TEXT) || '|' || CAST(requires_permit AS TEXT) || '|' || \
+             COALESCE(permit_rule_cleared_at, 'none') FROM work_orders WHERE entity_sync_id = 'wo-n4-origin-0'"
+        )
+        .await
+        .as_deref(),
+        Some("1|1|none"),
+        "protected, the clearing withdrawn"
+    );
+}
+
+// ── AU-04 round 4: a row naming a rule while none is held here never chooses it (R4-B1); a
+// clearing withdrawn by the convergence is recorded (R4-S1) ─────────────────────────────────────
+
+/// A work order new here as its sender sends it: not started (planning), naming `rule` / `permit_type`
+/// and requiring the permit. The list here may hold `CORRECTIVE_LOTO` (`with_rule`).
+async fn new_row_naming(
+    db: &DatabaseConnection,
+    equipment: &str,
+    wo_sync: &str,
+    rule: &str,
+    permit_type: &str,
+    with_rule: bool,
+) -> Payload {
+    let asset = insert_equipment(db, equipment).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let template_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
+    if with_rule
+        && text(db, "SELECT code FROM reference_values WHERE code = 'CORRECTIVE_LOTO'")
+            .await
+            .is_none()
+    {
+        crate::permit::requirement_rules::add_published_rule(
+            db,
+            "CORRECTIVE_LOTO",
+            json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+        )
+        .await;
+    }
+    wo_row(
+        &wire(db, "work_orders", &template_sync).await,
+        &[
+            ("code", json!(format!("OT-{wo_sync}"))),
+            ("status_sync_id", status_sync(db, "planning").await),
+            ("requires_permit", json!(1)),
+            ("permit_rule_code", json!(rule)),
+            ("permit_rule_permit_type", json!(permit_type)),
+            ("actual_start", Value::Null),
+        ],
+    )
+}
+
+/// The `rules_converged` events of a work order, as JSON.
+async fn converged_events(db: &DatabaseConnection, wo_sync: &str) -> Vec<Value> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = '{wo_sync}' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = 'rules_converged' ORDER BY e.id"
+        ),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+    .collect()
+}
+
+/// R4-B1: a work order new here naming the rule that matches here with a weaker permit type gets
+/// the rule's own type here, recorded; a live hot-work permit does not satisfy the start gate.
+#[tokio::test]
+async fn a_new_work_order_naming_a_weaker_permit_type_gets_the_rule_type_here() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-1", "wo-r4-1", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-1", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r4-1").await;
+    assert_eq!(events.len(), 1, "recorded");
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    let wo_id = wo_id_of(&db, "wo-r4-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(
+        format!("{gate:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {gate:?}"
+    );
+}
+
+/// R4-B1: a work order new here naming a rule that does not match it here gets the rule that does;
+/// naming a rule while nothing matches here, it keeps the rule as sent (it only adds).
+#[tokio::test]
+async fn a_new_work_order_naming_a_rule_gets_this_pcs_rule_or_keeps_its_own_when_none_matches() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-2", "wo-r4-2", "R0_WELD", "hot_work", true).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(converged_events(&db, "wo-r4-2").await.len(), 1, "recorded");
+
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-3", "wo-r4-3", "SOME_RULE", "loto", false).await;
+    let outcome = apply(&db, "work_orders", "wo-r4-3", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4-3").await, ruled("SOME_RULE", "loto"));
+    assert!(converged_events(&db, "wo-r4-3").await.is_empty(), "nothing changed");
+}
+
+/// R4-B1: a work order new here received started, naming the rule here with a weaker permit type, is
+/// applied as received (its history) and recorded once as a finding naming both, the permit issuers
+/// of its site told.
+#[tokio::test]
+async fn a_started_new_work_order_naming_a_weaker_type_raises_the_finding() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R4B1-4", "wo-r4-4", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &row,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r4-4", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        rule_state(&db, "wo-r4-4").await,
+        ruled("CORRECTIVE_LOTO", "hot_work"),
+        "applied as received"
+    );
+    let finding: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r4-4' AND e.action_code = 'permit_rule_missing_on_arrival'",
+        )
+        .await
+        .expect("finding"),
+    )
+    .expect("json");
+    assert_eq!(
+        (
+            &finding["rule_code"],
+            &finding["permit_type_code"],
+            &finding["received_permit_type_code"]
+        ),
+        (&json!("CORRECTIVE_LOTO"), &json!("loto"), &json!("hot_work"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+    // R5-S2: the notice and the audit name both rules and both types, never "without the rule".
+    let (key, params) = (
+        text(
+            &db,
+            "SELECT message_key FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'",
+        )
+        .await,
+        text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-r4-4'",
+        )
+        .await
+        .expect("params"),
+    );
+    assert_eq!(key.as_deref(), Some("wo_permit_rule_other_on_arrival"));
+    let params: Value = serde_json::from_str(&params).expect("json");
+    assert_eq!(
+        (
+            &params["rule"],
+            &params["permit_type"],
+            &params["received_rule"],
+            &params["received_permit_type"]
+        ),
+        (
+            &json!("CORRECTIVE_LOTO"),
+            &json!("loto"),
+            &json!("CORRECTIVE_LOTO"),
+            &json!("hot_work")
+        )
+    );
+    let stored = text(
+        &db,
+        "SELECT n.title || ' ' || COALESCE(n.body, '') FROM notifications n \
+           JOIN notification_events e ON e.id = n.notification_event_id \
+          WHERE e.category_code = 'wo_permit_rule_missing' \
+            AND json_extract(e.payload_json, '$.entity_sync_id') = 'wo-r4-4' LIMIT 1",
+    )
+    .await
+    .expect("notice");
+    assert!(
+        stored.contains("hot_work") && stored.contains("loto") && !stored.contains("without permit rule"),
+        "{stored}"
+    );
+    let summary = text(
+        &db,
+        "SELECT c.summary FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+         WHERE wo.entity_sync_id = 'wo-r4-4' AND c.action = 'permit_rule_missing_on_arrival'",
+    )
+    .await
+    .expect("audit");
+    assert!(
+        summary.contains("hot_work") && summary.contains("loto") && summary.contains("avec la règle"),
+        "{summary}"
+    );
+}
+
+/// R4-S1: a clearing held here, withdrawn by a row naming another rule while the convergence keeps
+/// the rule held here, is recorded with who cleared it, when and why.
+#[tokio::test]
+async fn a_clearing_withdrawn_by_the_convergence_is_recorded() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-R4S1-1", "wo-r4s1").await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 0, permit_rule_cleared_by_id = {APPLIER}, \
+             permit_rule_cleared_at = '2026-10-01T07:00:00Z', permit_rule_clear_reason = 'Consignation faite par l''exploitant' \
+             WHERE entity_sync_id = 'wo-r4s1'"
+        ),
+    )
+    .await;
+    let other = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("OTHER_RULE")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r4s1", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r4s1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r4s1").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(
+        (
+            &events[0]["withdrawn_cleared_at"],
+            &events[0]["withdrawn_cleared_by_sync_id"],
+            &events[0]["withdrawn_clear_reason"],
+        ),
+        (
+            &json!("2026-10-01T07:00:00Z"),
+            &json!(user_sync(&db, APPLIER).await),
+            &json!("Consignation faite par l'exploitant")
+        )
+    );
+}
+
+// ── AU-04 round 5: a rule kept as received is recorded and re-checked (R5-S1); test gaps ────────
+
+/// Events of a work order with this cause, as JSON.
+async fn rule_events_with_cause(db: &DatabaseConnection, wo_sync: &str, cause: &str) -> Vec<Value> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = '{wo_sync}' AND e.action_code = 'permit_rule_applied' \
+               AND json_extract(e.payload_json, '$.cause') = '{cause}' ORDER BY e.id"
+        ),
+    ))
+    .await
+    .expect("events")
+    .iter()
+    .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+    .collect()
+}
+
+/// R5-S1: a rule kept as received because nothing here matched is recorded (once); when the list
+/// here later matches the work order, the catch-up gives it this PC's rule and type, recorded.
+#[tokio::test]
+async fn a_rule_kept_as_received_is_recorded_and_rechecked_when_the_list_matches() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R5S1-1", "wo-r5-1", "CORRECTIVE_LOTO", "hot_work", false).await;
+    for _ in 0..2 {
+        let outcome = apply(&db, "work_orders", "wo-r5-1", &row).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(rule_state(&db, "wo-r5-1").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5-1", "rule_received_unmatched")
+            .await
+            .len(),
+        1,
+        "recorded once"
+    );
+    // The list arrives here: the catch-up applies this PC's type.
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    // This one, and the template work order of the fixture (planned here with no rule).
+    assert_eq!(crate::permit::requirement_rules::catch_up(&db).await, 2);
+    assert_eq!(rule_state(&db, "wo-r5-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = rule_events_with_cause(&db, "wo-r5-1", "catch_up").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(crate::permit::requirement_rules::catch_up(&db).await, 0, "once");
+}
+
+/// R5-S1: a work order received started with a weaker type (a finding), then received back in a
+/// status not started, gets this PC's rule and type.
+#[tokio::test]
+async fn a_started_arrival_back_to_planning_gets_this_pcs_rule() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-R5S1-2", "wo-r5-2", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5-2", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5-2").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    let outcome = apply(&db, "work_orders", "wo-r5-2", &planning).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5-2", "work_order_received")
+            .await
+            .len(),
+        1,
+        "recorded"
+    );
+}
+
+/// R5-N5: a work order that exists here with no rule yet, received naming the rule here with a
+/// weaker type, gets the rule's type here.
+#[tokio::test]
+async fn an_unstamped_work_order_here_naming_a_weaker_type_gets_the_rule_type_here() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N5-1", "wo-r5n5-1", "CORRECTIVE_LOTO", "hot_work", false).await;
+    let unruled = wo_row(
+        &named,
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n5-1", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-r5n5-1", "permit_rule_code").await,
+        None,
+        "nothing here yet"
+    );
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let outcome = apply(&db, "work_orders", "wo-r5n5-1", &named).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n5-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+}
+
+/// R5-N5: a made-up permit type kept as received (nothing matches here) is recorded, asks for its
+/// permit at the start, and a permit issuer can lift it before the start.
+#[tokio::test]
+async fn a_made_up_type_kept_as_received_is_recorded_and_can_be_lifted() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-R5N5-2", "wo-r5n5-2", "SOME_RULE", "made_up", false).await;
+    let outcome = apply(&db, "work_orders", "wo-r5n5-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n5-2").await, ruled("SOME_RULE", "made_up"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-r5n5-2", "rule_received_unmatched")
+            .await
+            .len(),
+        1
+    );
+    let wo_id = wo_id_of(&db, "wo-r5n5-2").await;
+    let gate = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await;
+    assert!(gate.is_err(), "its permit is asked for: {gate:?}");
+    let row_version: i64 = text(
+        &db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    let cleared = crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(
+        &db,
+        crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput {
+            wo_id,
+            expected_row_version: row_version,
+            reason: "Type de permis inconnu ici, travail sans risque".into(),
+        },
+        APPLIER,
+    )
+    .await
+    .expect("lifted by a permit issuer");
+    assert!(!cleared.requires_permit);
+}
+
+/// R5-N3: a clearing held here, replaced by a row naming the rule this PC's list now gives (kept as
+/// received, no rewrite), is recorded; a clearing a new row carried for a rule this PC replaces is
+/// recorded too.
+#[tokio::test]
+async fn both_clearing_withdrawals_of_the_convergence_are_recorded() {
+    let db = setup().await;
+    // Held clearing, the received rule kept (it is this PC's first match).
+    let planning = ruled_work_order(&db, "EQ-R5N3-1", "wo-r5n3-1").await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 0, permit_rule_cleared_by_id = {APPLIER}, \
+             permit_rule_cleared_at = '2026-10-01T07:00:00Z', permit_rule_clear_reason = 'Consignation faite par l''exploitant' \
+             WHERE entity_sync_id = 'wo-r5n3-1'"
+        ),
+    )
+    .await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "A_FIRST",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(&db, "UPDATE reference_values SET sort_order = 0 WHERE code = 'A_FIRST'").await;
+    let first = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("A_FIRST")),
+            ("permit_rule_permit_type", json!("loto")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n3-1", &first).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n3-1").await, ruled("A_FIRST", "loto"));
+    let events = converged_events(&db, "wo-r5n3-1").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["withdrawn_cleared_at"], json!("2026-10-01T07:00:00Z"));
+
+    // A new row with a valid clearing for a weaker type: this PC's type, the clearing withdrawn.
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N3-2", "wo-r5n3-2", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let cleared_at = now();
+    let cleared = wo_row(
+        &named,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+            ("permit_rule_cleared_at", json!(cleared_at)),
+            ("permit_rule_clear_reason", json!("Consignation faite par l'exploitant")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n3-2", &cleared).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-r5n3-2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = converged_events(&db, "wo-r5n3-2").await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["received_withdrawn_cleared_at"], json!(cleared_at));
+}
+
+// ── CMMS Advisor decision on AU-04 R5-S3 (option A): permit types ranked by energy isolation ──
+
+/// A held LOTO rule is never replaced by a hot-work rule the list here now gives first: kept, no
+/// type-change notice.
+#[tokio::test]
+async fn a_recheck_never_replaces_a_held_isolation_type() {
+    let db = setup().await;
+    let planning = ruled_work_order(&db, "EQ-OPTA-1", "wo-opta-1").await;
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0 WHERE code = 'CORRECTIVE_LOTO'",
+    )
+    .await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_FIRST",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let other = wo_row(
+        &planning,
+        &[
+            ("permit_rule_code", json!("OTHER_RULE")),
+            ("permit_rule_permit_type", json!("hot_work")),
+            ("requires_permit", json!(1)),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-opta-1", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-1").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("0")
+    );
+}
+
+/// The notices of category `wo_permit_rule_missing` about the work order `wo` written to `user`.
+async fn rule_notices_to(db: &DatabaseConnection, user: i32, wo: &str) -> Option<String> {
+    text(
+        db,
+        &format!(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notifications n \
+               JOIN notification_events e ON e.id = n.notification_event_id \
+              WHERE e.category_code = 'wo_permit_rule_missing' AND n.recipient_user_id = {user} \
+                AND json_extract(e.payload_json, '$.entity_sync_id') = '{wo}'"
+        ),
+    )
+    .await
+}
+
+/// A held hot-work rule replaced by the LOTO rule the list here now gives: the type change is
+/// recorded and the permit issuers of the work order's site are told, not those of another site
+/// (check 6, C6-N3).
+#[tokio::test]
+async fn a_held_rule_type_change_notifies_the_permit_issuers() {
+    use crate::auth::scope_tests::{assign, node, role, user};
+    let db = setup().await;
+    let issuers = role(&db, "opta2 issuer", &[crate::rbac::permissions::PTW_ISSUE]).await;
+    let here = user(&db, "opta2_here").await;
+    let elsewhere = user(&db, "opta2_elsewhere").await;
+    let site = node(&db, "OPTA2-SITE", None).await;
+    let other_site = node(&db, "OPTA2-OTHER", None).await;
+    assign(&db, here, issuers, "org_node", Some(site)).await;
+    assign(&db, elsewhere, issuers, "org_node", Some(other_site)).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let row = new_row_naming(&db, "EQ-OPTA-2", "wo-opta-2", "H_RULE", "hot_work", false).await;
+    let row = wo_row(&row, &[("entity_sync_id", json!("scope-OPTA2-SITE"))]);
+    let outcome = apply(&db, "work_orders", "wo-opta-2", &row).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("H_RULE", "hot_work"));
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "L_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let other = wo_row(&row, &[("permit_rule_code", json!("OTHER_RULE"))]);
+    let outcome = apply(&db, "work_orders", "wo-opta-2", &other).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-opta-2").await, ruled("L_RULE", "loto"));
+    let params: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed' \
+             AND category_code = 'wo_permit_rule_missing'",
+        )
+        .await
+        .expect("notice"),
+    )
+    .expect("json");
+    assert_eq!(
+        (&params["previous_permit_type"], &params["permit_type"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(rule_notices_to(&db, here, "wo-opta-2").await.as_deref(), Some("1"));
+    assert_eq!(
+        rule_notices_to(&db, elsewhere, "wo-opta-2").await.as_deref(),
+        Some("0"),
+        "a permit issuer of another site is not told"
+    );
+}
+
+/// Check 7, C7-N2 (and C6-N3 b, isolation to another isolation type): two PCs whose lists give no
+/// isolation rule for a work order (only a hot-work rule matches) hold two different isolation
+/// rules, received from two other PCs; each then receives the other's. Both end on the same rule
+/// (the smallest code), never on the hot-work rule, whichever they held.
+#[tokio::test]
+async fn two_isolation_rules_held_on_two_pcs_converge() {
+    let a = ("A_LOTO", "loto");
+    let b = ("B_ELEC", "electrical_lv");
+    for (held, received) in [(a, b), (b, a)] {
+        let db = setup().await;
+        // A second permit type requiring an energy isolation here.
+        exec(
+            &db,
+            "UPDATE permit_types SET requires_energy_isolation = 1 WHERE code = 'electrical_lv'",
+        )
+        .await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "H_RULE",
+            json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        )
+        .await;
+        let row = new_row_naming(&db, "EQ-C7N2", "wo-c7n2", held.0, held.1, false).await;
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &row).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(rule_state(&db, "wo-c7n2").await, ruled(held.0, held.1), "{held:?}");
+        let other = wo_row(
+            &row,
+            &[
+                ("permit_rule_code", json!(received.0)),
+                ("permit_rule_permit_type", json!(received.1)),
+            ],
+        );
+        let outcome = apply(&db, "work_orders", "wo-c7n2", &other).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held:?}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}, received {received:?}: the same rule on both PCs"
+        );
+        crate::permit::requirement_rules::catch_up(&db).await;
+        assert_eq!(
+            rule_state(&db, "wo-c7n2").await,
+            ruled("A_LOTO", "loto"),
+            "held {held:?}: kept by the catch-up"
+        );
+    }
+}
+
+/// Round 5, R5-N4: a work order received started without a rule (a first finding), then received
+/// naming a weaker type of the rule here: a second finding naming the received rule and type, which
+/// marks it for the re-check of its received rule (a reopening to execution is refused); the same
+/// row received again records nothing more.
+#[tokio::test]
+async fn a_second_different_finding_is_recorded_and_marks_the_work_order() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-R5N4", "wo-r5n4", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let unruled = wo_row(
+        &started,
+        &[
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r5n4", &unruled).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    async fn findings(db: &DatabaseConnection) -> Vec<Value> {
+        db.query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT e.payload_json FROM wo_action_events e JOIN work_orders wo ON wo.id = e.wo_id \
+             WHERE wo.entity_sync_id = 'wo-r5n4' AND e.action_code = 'permit_rule_missing_on_arrival' ORDER BY e.id"
+                .to_string(),
+        ))
+        .await
+        .expect("events")
+        .iter()
+        .map(|r| serde_json::from_str(&r.try_get_by_index::<String>(0).expect("json")).expect("json"))
+        .collect()
+    }
+    assert_eq!(findings(&db).await.len(), 1, "first finding: no rule received");
+    for _ in 0..2 {
+        let outcome = apply(&db, "work_orders", "wo-r5n4", &started).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+    }
+    let found = findings(&db).await;
+    assert_eq!(found.len(), 2, "a second, different finding; not repeated: {found:?}");
+    assert_eq!(
+        (&found[1]["received_rule_code"], &found[1]["received_permit_type_code"]),
+        (&json!("CORRECTIVE_LOTO"), &json!("hot_work"))
+    );
+    let wo_id = wo_id_of(&db, "wo-r5n4").await;
+    assert_eq!(
+        crate::permit::requirement_rules::received_rule_differs_here(&db, wo_id)
+            .await
+            .expect("differs"),
+        Some(("CORRECTIVE_LOTO".to_string(), Some("loto".to_string()))),
+        "marked: re-checked before any restart"
+    );
+}
+
+/// Check 6, C6-N5: a work order received started naming a rule with no permit type, while the list
+/// here gives another rule: the finding notice's received permit type is "?", as in its title,
+/// never empty.
+#[tokio::test]
+async fn a_finding_on_a_received_rule_without_a_type_shows_a_question_mark() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-C6N5", "wo-c6n5", "SOME_RULE", "hot_work", true).await;
+    let started = wo_row(
+        &row,
+        &[
+            ("permit_rule_permit_type", Value::Null),
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c6n5", &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let params: Value = serde_json::from_str(
+        &text(
+            &db,
+            "SELECT message_params_json FROM notification_events WHERE category_code = 'wo_permit_rule_missing' \
+             AND json_extract(payload_json, '$.entity_sync_id') = 'wo-c6n5'",
+        )
+        .await
+        .expect("notice"),
+    )
+    .expect("json");
+    assert_eq!(
+        (&params["received_rule"], &params["received_permit_type"]),
+        (&json!("SOME_RULE"), &json!("?"))
+    );
+}
+
+// ── Check 6: the received type is ranked too (C6-S1); a restart never runs under a received weaker
+// type (C6-S2); the local re-checks (C6-S3) ─────────────────────────────────────────────────────
+
+/// C6-S1, the v2/v3 lists: PC B creates the work order under a list with a LOTO rule, PC A holds a
+/// list where only a hot-work rule matches. A row naming LOTO is kept on A (new there, or over the
+/// hot-work rule A held), recorded, so both PCs end on LOTO; the catch-up never takes it back.
+#[tokio::test]
+async fn a_received_isolation_type_is_kept_over_a_weaker_rule_here() {
+    for held_first in [false, true] {
+        let db = setup().await;
+        crate::permit::requirement_rules::add_published_rule(
+            &db,
+            "H_RULE",
+            json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+        )
+        .await;
+        let named = new_row_naming(&db, "EQ-C6S1", "wo-c6s1", "CORRECTIVE_LOTO", "loto", false).await;
+        if held_first {
+            // A held the hot-work rule its list gave.
+            let own = wo_row(
+                &named,
+                &[
+                    ("permit_rule_code", json!("H_RULE")),
+                    ("permit_rule_permit_type", json!("hot_work")),
+                ],
+            );
+            let outcome = apply(&db, "work_orders", "wo-c6s1", &own).await;
+            assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+            assert_eq!(rule_state(&db, "wo-c6s1").await, ruled("H_RULE", "hot_work"));
+        }
+        let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{held_first}: {outcome:?}");
+        assert_eq!(
+            rule_state(&db, "wo-c6s1").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{held_first}"
+        );
+        let cause = if held_first {
+            "rules_converged"
+        } else {
+            "rule_received_unmatched"
+        };
+        assert_eq!(
+            rule_events_with_cause(&db, "wo-c6s1", cause).await.len(),
+            1,
+            "{held_first}: recorded"
+        );
+        // Held here or new here (CMMS Advisor decision C7-N1, option a): the permit issuers are told,
+        // once, and the work order shows both permit types so the hot-work permit is added.
+        let params: Value = serde_json::from_str(
+            &text(
+                &db,
+                "SELECT message_params_json FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed' AND category_code = 'wo_permit_rule_missing'",
+            )
+            .await
+            .expect("the permit issuers are told of the type change"),
+        )
+        .expect("json");
+        assert_eq!(
+            (&params["previous_permit_type"], &params["permit_type"]),
+            (&json!("hot_work"), &json!("loto")),
+            "{held_first}"
+        );
+        let wo = crate::wo::queries::get_work_order(&db, wo_id_of(&db, "wo-c6s1").await)
+            .await
+            .expect("q")
+            .expect("wo");
+        assert_eq!(
+            crate::permit::requirement_rules::matching_permit_types(
+                &db,
+                wo.equipment_id,
+                wo.type_id,
+                wo.permit_rule_permit_type.as_deref()
+            )
+            .await
+            .expect("types"),
+            vec!["loto".to_string(), "hot_work".to_string()],
+            "{held_first}: plusieurs règles de permis : loto, hot_work"
+        );
+        // Received again: told once.
+        let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            text(
+                &db,
+                "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events \
+                 WHERE message_key = 'wo_permit_rule_type_changed'"
+            )
+            .await
+            .as_deref(),
+            Some("1"),
+            "{held_first}: told once"
+        );
+        crate::permit::requirement_rules::catch_up(&db).await;
+        assert_eq!(
+            rule_state(&db, "wo-c6s1").await,
+            ruled("CORRECTIVE_LOTO", "loto"),
+            "{held_first}: kept"
+        );
+    }
+}
+
+/// A work order received started naming the rule here with a weaker type (a finding), then
+/// completed here; its id.
+async fn received_started_with_weaker_type(db: &DatabaseConnection, wo_sync: &str) -> i64 {
+    let planning = new_row_naming(db, "EQ-C6S2", wo_sync, "CORRECTIVE_LOTO", "hot_work", true).await;
+    let started = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(db, "work_orders", wo_sync, &started).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(db, wo_sync).await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    exec(
+        db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'completed') \
+             WHERE entity_sync_id = '{wo_sync}'"
+        ),
+    )
+    .await;
+    wo_id_of(db, wo_sync).await
+}
+
+async fn reopen(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    target: &str,
+) -> Result<crate::wo::domain::WorkOrder, crate::errors::AppError> {
+    let row_version: i64 = text(
+        db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    crate::wo::closeout::reopen_wo(
+        db,
+        crate::wo::closeout::WoReopenInput {
+            wo_id,
+            actor_id: APPLIER,
+            expected_row_version: row_version,
+            reason: "Reprise du travail sur la pompe".into(),
+            target_status: Some(target.into()),
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+}
+
+/// C6-S2 and C6-S3: a work order whose rule came from another PC with a weaker type than the list
+/// here gives is never reopened straight to execution (GATE_REOPEN_RULE_RECHECK); reopened to
+/// planning, it gets this PC's rule and type, recorded (cause reopened), the permit issuers told.
+#[tokio::test]
+async fn a_received_weaker_type_is_never_reopened_to_execution_and_is_rechecked_in_planning() {
+    let db = setup().await;
+    let wo_id = received_started_with_weaker_type(&db, "wo-c6s2").await;
+    let refused = reopen(&db, wo_id, "in_progress").await;
+    assert!(
+        format!("{refused:?}").contains("GATE_REOPEN_RULE_RECHECK"),
+        "{refused:?}"
+    );
+    // Both parameters reach the screen (the refusal's coded form, `errors::split_coded_refusal`).
+    let message = match &refused {
+        Err(crate::errors::AppError::ValidationFailed(issues)) => issues[0].clone(),
+        other => panic!("expected a validation refusal, got {other:?}"),
+    };
+    let (code, params) = crate::errors::split_coded_refusal(&message).expect("coded refusal");
+    assert_eq!(code, "GATE_REOPEN_RULE_RECHECK");
+    assert_eq!(params.get("rule").map(String::as_str), Some("CORRECTIVE_LOTO"));
+    assert_eq!(params.get("permit_type").map(String::as_str), Some("loto"));
+    assert_eq!(
+        rule_state(&db, "wo-c6s2").await,
+        ruled("CORRECTIVE_LOTO", "hot_work"),
+        "unchanged"
+    );
+    let reopened = reopen(&db, wo_id, "planning").await.expect("reopened to planning");
+    assert_eq!(reopened.status_code.as_deref(), Some("planning"));
+    assert_eq!(rule_state(&db, "wo-c6s2").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let events = rule_events_with_cause(&db, "wo-c6s2", "reopened").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+async fn resume(db: &DatabaseConnection, wo_id: i64) -> Result<crate::wo::domain::WorkOrder, crate::errors::AppError> {
+    let row_version: i64 = text(
+        db,
+        &format!("SELECT CAST(row_version AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("version")
+    .parse()
+    .expect("version");
+    crate::wo::execution::resume_wo(
+        db,
+        crate::wo::execution::WoResumeInput {
+            wo_id,
+            actor_id: APPLIER,
+            expected_row_version: row_version,
+            estimated_remaining_hours: None,
+        },
+    )
+    .await
+}
+
+/// CMMS Advisor decision C7-N4 (option b): a work order received on hold whose rule came from
+/// another PC with a weaker type (hot work) than the LOTO rule the list here gives is re-stamped to
+/// LOTO when it is resumed, recorded (cause resumed_received) and told to the permit issuers; the
+/// permit gate then refuses the resume (a live hot-work permit is not a LOTO), and it stays on hold,
+/// re-stamped. A received LOTO rule over this PC's hot-work rule is never re-stamped weaker.
+#[tokio::test]
+async fn a_received_work_order_on_hold_resumes_only_under_the_isolation_rule_here() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-1", "wo-c7n4-1", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-1", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-c7n4-1").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    let wo_id = wo_id_of(&db, "wo-c7n4-1").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("permit")).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        format!("{refused:?}").contains("PERMIT_TYPE_REQUIRED_TO_START"),
+        "a hot-work permit is not a LOTO: {refused:?}"
+    );
+    assert_eq!(
+        rule_state(&db, "wo-c7n4-1").await,
+        ruled("CORRECTIVE_LOTO", "loto"),
+        "re-stamped, kept though the resume is refused"
+    );
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-1", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
+        (&json!("hot_work"), &json!("loto"))
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM wo_change_events c JOIN work_orders wo ON wo.id = c.wo_id \
+             WHERE wo.entity_sync_id = 'wo-c7n4-1' AND c.action = 'permit_rule_applied' \
+               AND json_extract(c.details_json, '$.cause') = 'resumed_received'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "audited"
+    );
+    assert_eq!(
+        text(
+            &db,
+            "SELECT CAST(COUNT(*) AS TEXT) FROM notification_events WHERE message_key = 'wo_permit_rule_type_changed'"
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "the permit issuers are told"
+    );
+    // Tried again: nothing more to re-stamp, still refused.
+    assert!(resume(&db, wo_id).await.is_err());
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-1", "resumed_received").await.len(),
+        1
+    );
+
+    // Never weaker: a received LOTO rule over the hot-work rule this PC's list gives stays LOTO.
+    let db = setup().await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "H_RULE",
+        json!({ "work_type_code": "corrective", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let planning = new_row_naming(&db, "EQ-C7N4-2", "wo-c7n4-2", "L_RECEIVED", "loto", false).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-2", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-2").await;
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, "wo-c7n4-2").await, ruled("L_RECEIVED", "loto"));
+    assert!(rule_events_with_cause(&db, "wo-c7n4-2", "resumed_received")
+        .await
+        .is_empty());
+}
+
+/// C7-N4, review N1: a work order received on hold without any rule, while the list here gives the
+/// LOTO rule (its arrival finding names no received rule), gets the LOTO rule when it is resumed,
+/// recorded; the gate then refuses the resume (no LOTO permit) and it stays on hold.
+#[tokio::test]
+async fn a_work_order_received_on_hold_without_a_rule_gets_the_isolation_rule_at_resume() {
+    let db = setup().await;
+    let named = new_row_naming(&db, "EQ-C7N4-3", "wo-c7n4-3", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &named,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+            ("requires_permit", json!(0)),
+            ("permit_rule_code", Value::Null),
+            ("permit_rule_permit_type", Value::Null),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-3", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "permit_rule_code").await,
+        None,
+        "applied as received"
+    );
+    let wo_id = wo_id_of(&db, "wo-c7n4-3").await;
+    assert!(resume(&db, wo_id).await.is_err(), "no LOTO permit: refused");
+    assert_eq!(rule_state(&db, "wo-c7n4-3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        wo_text(&db, "wo-c7n4-3", "status_id").await,
+        text(
+            &db,
+            "SELECT CAST(id AS TEXT) FROM work_order_statuses WHERE code = 'on_hold'"
+        )
+        .await,
+        "stays on hold"
+    );
+    let events = rule_events_with_cause(&db, "wo-c7n4-3", "resumed_received").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (&events[0]["previous_rule_code"], &events[0]["permit_type_code"]),
+        (&Value::Null, &json!("loto"))
+    );
+}
+
+/// C7-N4, review N2: a work order created here (its rule derived here, no received mark) is never
+/// re-stamped at its resume, even when the list here now gives a rule with an isolation.
+#[tokio::test]
+async fn a_work_order_created_here_is_never_re_stamped_at_resume() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-C7N4-4").await;
+    let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE work_orders SET permit_rule_code = 'H_LOCAL', permit_rule_permit_type = 'hot_work', \
+             requires_permit = 1, actual_start = '2026-10-01T08:00:00Z', \
+             status_id = (SELECT id FROM work_order_statuses WHERE code = 'on_hold') WHERE id = {wo_id}"
+        ),
+    )
+    .await;
+    let wo_sync = text(
+        &db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("sync id");
+    let _ = resume(&db, wo_id).await;
+    assert_eq!(rule_state(&db, &wo_sync).await, ruled("H_LOCAL", "hot_work"));
+    assert!(rule_events_with_cause(&db, &wo_sync, "resumed_received")
+        .await
+        .is_empty());
+}
+
+/// C7-N4, review N2: re-stamped at the resume while a valid LOTO permit (isolation applied and
+/// verified, active) is already linked: the same call re-stamps and resumes.
+#[tokio::test]
+async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-C7N4-5", "wo-c7n4-5", "CORRECTIVE_LOTO", "hot_work", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-c7n4-5", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-c7n4-5").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-C7N4 breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    // Its hold, received with it (the open delay segment of the PC that held it).
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO work_order_delay_segments (entity_sync_id, work_order_id, started_at, ended_at, hold_kind, \
+             delay_reason_id) VALUES ('seg-sync-c7n4', {wo_id}, '2026-10-01T09:00:00Z', NULL, 'pause', \
+             (SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+              JOIN reference_domains d ON d.id = rs.domain_id WHERE UPPER(d.code) = 'WORK.DELAY_REASONS' LIMIT 1))"
+        ),
+    )
+    .await;
+    let resumed = resume(&db, wo_id).await.expect("re-stamped and resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(
+        rule_events_with_cause(&db, "wo-c7n4-5", "resumed_received").await.len(),
+        1
+    );
+}
+
+/// A work order received on hold with no hold segment here (its segment not received) is resumed:
+/// the permit gate judges it as usual (refused without its permit, not an internal error), and with
+/// a valid permit it resumes with no waiting time.
+#[tokio::test]
+async fn a_work_order_received_on_hold_with_no_hold_segment_here_resumes() {
+    let db = setup().await;
+    let planning = new_row_naming(&db, "EQ-NOSEG", "wo-noseg", "CORRECTIVE_LOTO", "loto", true).await;
+    let on_hold = wo_row(
+        &planning,
+        &[
+            ("status_sync_id", status_sync(&db, "on_hold").await),
+            ("actual_start", json!("2026-10-01T08:00:00Z")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-noseg", &on_hold).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let wo_id = wo_id_of(&db, "wo-noseg").await;
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(COUNT(*) AS TEXT) FROM work_order_delay_segments WHERE work_order_id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "no hold segment here"
+    );
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        matches!(&refused, Err(e) if !matches!(e, crate::errors::AppError::Internal(_))),
+        "the permit gate refuses it: {refused:?}"
+    );
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-NOSEG breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let resumed = resume(&db, wo_id).await.expect("resumed");
+    assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(total_waiting_hours AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("0.0")
+    );
+}
+
+/// C6-S3: a draft whose rule was kept as received (nothing here matched) gets this PC's rule on
+/// its next draft edit once the list here matches it (cause draft_edit).
+#[tokio::test]
+async fn a_draft_edit_rechecks_a_rule_kept_as_received() {
+    let db = setup().await;
+    let row = new_row_naming(&db, "EQ-C6S3", "wo-c6s3", "CORRECTIVE_LOTO", "hot_work", false).await;
+    let draft = wo_row(&row, &[("status_sync_id", status_sync(&db, "draft").await)]);
+    let outcome = apply(&db, "work_orders", "wo-c6s3", &draft).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "hot_work"));
+    crate::permit::requirement_rules::add_published_rule(
+        &db,
+        "CORRECTIVE_LOTO",
+        json!({ "work_type_code": "corrective", "permit_type_code": "loto" }),
+    )
+    .await;
+    let wo_id = wo_id_of(&db, "wo-c6s3").await;
+    let wo = crate::wo::queries::get_work_order(&db, wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: wo.row_version,
+            title: Some("Replace breaker (draft edit)".into()),
+            type_code: None,
+            equipment_id: None,
+            location_id: None,
+            description: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        },
+        Some(APPLIER),
+    )
+    .await
+    .expect("draft edit");
+    assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "loto"));
+    assert_eq!(rule_events_with_cause(&db, "wo-c6s3", "draft_edit").await.len(), 1);
 }

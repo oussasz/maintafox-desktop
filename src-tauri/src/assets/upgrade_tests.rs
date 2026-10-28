@@ -875,6 +875,7 @@ async fn search_and_picker_mark_a_criticality_to_review() {
             query: Some("PMP-202".into()),
             include_decommissioned: None,
             limit: None,
+            full_list_max: None,
         },
     )
     .await

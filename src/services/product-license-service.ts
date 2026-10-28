@@ -1,29 +1,45 @@
 import { z } from "zod";
 
+import { i18n } from "@/i18n/config";
 import { invoke } from "@/lib/ipc-invoke";
-import controlPlaneConfig from "@shared/control-plane.json";
+import { toErrorMessage } from "@/utils/errors";
+
+/** The activation calls show their failure inline in the licence gate: no global toast as well. */
+const INLINE_ERROR = { notifyOnError: false } as const;
 
 /** Session flag: show one-time login notice after activation (LoginPage reads and clears). */
 export const POST_ACTIVATION_LOGIN_HINT_KEY = "maintafox:post-activation-login-hint:v1";
 
-export const PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY = "maintafox:product-license:key-cache:v1";
+/**
+ * Where earlier versions kept the licence key in the webview, to claim again with it. The key now
+ * stays in Rust (`reclaim_product_activation`); a value left by an earlier version is removed
+ * ({@link removeLegacyProductLicenseKeyCache}), never read.
+ */
+export const LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY =
+  "maintafox:product-license:key-cache:v1";
+/**
+ * IMPORTANT: never cleared on activation reset or logout-from-tenant: this ID must stay stable for
+ * the lifetime of this app install so the control plane does not treat each reset as a new machine
+ * and burn through slot_limit.
+ */
 export const PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY =
   "maintafox:product-license:device-fingerprint:v1";
 
 /**
- * Keys cleared on activation reset / logout-from-tenant.
- * IMPORTANT: Do not include {@link PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY} here â€” that ID must stay
- * stable for the lifetime of this app install so the control plane does not treat each reset as a new
- * machine and burn through slot_limit.
+ * Removes the licence key an earlier version cached in the webview. Never throws: storage that
+ * cannot be reached holds nothing to remove.
  */
-export const PRODUCT_LICENSE_LOCAL_STORAGE_KEYS = [PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY] as const;
-
-/** Removes browser-side license cache (localStorage + post-activation hint). Call after `resetProductLicenseActivation`. */
-export function clearProductLicenseBrowserState(): void {
-  if (typeof localStorage === "undefined") return;
-  for (const k of PRODUCT_LICENSE_LOCAL_STORAGE_KEYS) {
-    localStorage.removeItem(k);
+export function removeLegacyProductLicenseKeyCache(): void {
+  try {
+    localStorage.removeItem(LEGACY_PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY);
+  } catch {
+    // No reachable storage (private mode, no window): nothing cached there.
   }
+}
+
+/** Removes browser-side licence state (legacy key cache + post-activation hint). Call after `resetProductLicenseActivation`. */
+export function clearProductLicenseBrowserState(): void {
+  removeLegacyProductLicenseKeyCache();
   if (typeof sessionStorage !== "undefined") {
     sessionStorage.removeItem(POST_ACTIVATION_LOGIN_HINT_KEY);
   }
@@ -76,9 +92,10 @@ export function requestLicenseRecheck(reason: string): void {
 }
 
 /**
- * Policy-refresh failures after which re-claiming with the cached licence key is allowed: the
- * device token is merely unusable (expired, malformed, or replaced by a newer claim). Revocations
- * and other denials must never fall back to a claim.
+ * Policy-refresh failures after which claiming again with the licence key stored in Rust
+ * (`reclaimProductActivation`) is allowed: the device token is merely unusable (expired,
+ * malformed, or replaced by a newer claim). Revocations and other denials must never fall back to
+ * a claim.
  */
 export const CLAIM_FALLBACK_TOKEN_ERRORS: ReadonlySet<string> = new Set([
   "missing_token",
@@ -187,13 +204,11 @@ const ActivationPreviewSchema = z.object({
   ...ActivationOrgFieldsSchema,
 });
 
-const ActivationClaimSchema = z.object({
-  tenant_id: z.string(),
-  license_id: z.string(),
-  machine_fingerprint: z.string(),
-  activation_token: z.string(),
-  ...ActivationOrgFieldsSchema,
-});
+/**
+ * A claim as the webview sees it: the organisation and licence terms of the answer. Its activation
+ * token stays in Rust (`claim_product_activation`), held there for the key entry.
+ */
+const ActivationClaimSchema = ActivationPreviewSchema;
 
 export type ProductActivationPreview = z.infer<typeof ActivationPreviewSchema>;
 export type ProductActivationClaim = z.infer<typeof ActivationClaimSchema>;
@@ -239,6 +254,10 @@ function readNestedString(obj: Record<string, unknown>, path: string[]): string 
   return typeof cur === "string" ? cur : undefined;
 }
 
+/**
+ * The field spellings servers send for a claim or preview. The policy refresh answer is read in
+ * Rust with the same rules (`policy_refresh_claim` in product_license.rs): change both together.
+ */
 function normalizeActivationPayload(raw: Record<string, unknown>): Record<string, unknown> {
   return {
     ...raw,
@@ -299,50 +318,34 @@ function normalizeActivationPayload(raw: Record<string, unknown>): Record<string
   };
 }
 
-function throwActivationHttpError(
-  res: Response,
+type ActivationHttpError = Error & {
+  status?: number;
+  code?: string;
+  technicalDetails?: string;
+};
+
+/**
+ * The error an activation call throws for an HTTP error answer: the server's `code` and
+ * `message` (a 409 is a slot limit unless the server says otherwise), and the body as details.
+ */
+function activationHttpError(
+  status: number,
   scope: string,
+  fromBody: { code: string | undefined; message: string | undefined },
   bodyText: string | undefined,
-): never {
-  let code: string | undefined;
-  let message: string | undefined;
-  if (bodyText?.trim()) {
-    try {
-      const body = JSON.parse(bodyText) as Record<string, unknown>;
-      const nestedError =
-        typeof body["error"] === "object" && body["error"] !== null
-          ? (body["error"] as Record<string, unknown>)
-          : null;
-      code =
-        (typeof body["code"] === "string" ? body["code"] : undefined) ??
-        (typeof body["error"] === "string" ? body["error"] : undefined) ??
-        (nestedError && typeof nestedError["code"] === "string" ? nestedError["code"] : undefined);
-      message =
-        (typeof body["message"] === "string" ? body["message"] : undefined) ??
-        (typeof body["detail"] === "string" ? body["detail"] : undefined) ??
-        (typeof body["error_description"] === "string" ? body["error_description"] : undefined) ??
-        (nestedError && typeof nestedError["message"] === "string"
-          ? nestedError["message"]
-          : undefined);
-    } catch {
-      message = bodyText.trim();
-    }
-  }
-  if (res.status === 409) {
+): ActivationHttpError {
+  let { code, message } = fromBody;
+  if (status === 409) {
     code = code ?? "slot_limit_reached";
     message =
       message ??
       "No device slot is available for this license. Ask your administrator to free a seat, then try again.";
   }
-  const err = new Error(message ?? `${scope} failed (${res.status})`) as Error & {
-    status?: number;
-    code?: string;
-    technicalDetails?: string;
-  };
-  err.status = res.status;
+  const err = new Error(message ?? `${scope} failed (${status})`) as ActivationHttpError;
+  err.status = status;
   if (code !== undefined) err.code = code;
-  err.technicalDetails = bodyText?.trim() || `${scope} HTTP ${res.status}`;
-  throw err;
+  err.technicalDetails = bodyText?.trim() || `${scope} HTTP ${status}`;
+  return err;
 }
 
 /** Map raw activation/control-plane errors to user-facing copy (never show raw backend text as primary). */
@@ -441,6 +444,19 @@ export function toUserFacingActivationError(err: unknown): UserFacingActivationE
       code,
     };
   }
+  // A refusal of this PC's licence rule (`GATE_…` in the message, e.g. no claim waiting for this
+  // key): its translated text, the GATE code as reference.
+  const gateCode = toErrorMessage(err).match(/GATE_[A-Z0-9_]+/)?.[0];
+  if (gateCode && i18n.exists(`errors:gateError.${gateCode}`)) {
+    return {
+      title: "Activation could not be completed",
+      message: String(i18n.t(`errors:gateError.${gateCode}`)),
+      referenceCode: gateCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      ...(code ? { code } : {}),
+    };
+  }
   if (
     code === "VALIDATION_FAILED" ||
     (typeof e.message === "string" &&
@@ -490,121 +506,178 @@ export async function getProductLicenseOnboardingState(): Promise<ProductLicense
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
+const ActivationCallFailureSchemas = [
+  z.object({
+    kind: z.literal("http_error"),
+    status: z.number().int(),
+    code: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+    details: z.string().nullable().optional(),
+  }),
+  z.object({ kind: z.literal("invalid_response"), message: z.string() }),
+  z.object({ kind: z.literal("network_error"), message: z.string() }),
+] as const;
+
+type ActivationCallFailure = z.infer<(typeof ActivationCallFailureSchemas)[number]>;
+
 /**
- * Control-plane API origin for activation and licence calls. The Rust sync worker resolves the
- * same value at build time (`src-tauri/build.rs`): `VITE_ADMIN_API_BASE_URL`, else the shared
- * default in `shared/control-plane.json`.
+ * What an activation call sent from Rust returns (`ActivationCallResult` in product_license.rs):
+ * the answer, nothing sent (`not_activated`), or why there is no answer.
  */
-export function controlPlaneApiBase(): string {
-  const fromEnv = (import.meta.env["VITE_ADMIN_API_BASE_URL"] as string | undefined)?.trim();
-  return (fromEnv && fromEnv.length > 0 ? fromEnv : controlPlaneConfig.defaultApiBaseUrl).replace(
-    /\/$/,
-    "",
+function activationCallResultSchema<T extends z.ZodTypeAny>(
+  answer: T,
+): z.ZodDiscriminatedUnion<
+  "kind",
+  [
+    z.ZodObject<{ kind: z.ZodLiteral<"answered">; answer: T }>,
+    z.ZodObject<{ kind: z.ZodLiteral<"not_activated"> }>,
+    ...typeof ActivationCallFailureSchemas,
+  ]
+> {
+  return z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("answered"), answer }),
+    z.object({ kind: z.literal("not_activated") }),
+    ...ActivationCallFailureSchemas,
+  ]);
+}
+
+/**
+ * Throws an activation call's failure as every activation call throws it: the server's error
+ * answer (`status`, `code`, `technicalDetails`), else a plain error (no usable answer).
+ */
+function throwActivationCallFailure(failure: ActivationCallFailure, scope: string): never {
+  if (failure.kind === "http_error") {
+    throw activationHttpError(
+      failure.status,
+      scope,
+      { code: failure.code ?? undefined, message: failure.message ?? undefined },
+      failure.details ?? undefined,
+    );
+  }
+  throw new Error(failure.message);
+}
+
+const ActivationAnswerResultSchema = activationCallResultSchema(z.record(z.unknown()));
+
+type ActivationRequest = {
+  license_key: string;
+  machine_fingerprint: string;
+  machine_label?: string;
+  app_version?: string;
+};
+
+/** The answer of a preview or claim sent from Rust, or its failure thrown. */
+function activationAnswer(raw: unknown, scope: string): Record<string, unknown> {
+  const result = ActivationAnswerResultSchema.parse(raw);
+  switch (result.kind) {
+    case "answered":
+      return result.answer;
+    case "not_activated":
+      // A preview or claim always sends the key it is given: Rust never answers this for them.
+      throw new Error(`${scope}: nothing was sent.`);
+    default:
+      throwActivationCallFailure(result, scope);
+  }
+}
+
+/** Validate license + return org summary without consuming a device slot (sent from Rust). */
+export async function previewProductActivation(
+  input: ActivationRequest,
+): Promise<ProductActivationPreview> {
+  const raw = await invoke<unknown>(
+    "preview_product_activation",
+    {
+      licenseKey: input.license_key,
+      machineFingerprint: input.machine_fingerprint,
+      machineLabel: input.machine_label ?? null,
+      appVersion: input.app_version ?? null,
+    },
+    INLINE_ERROR,
+  );
+  return ActivationPreviewSchema.parse(
+    normalizeActivationPayload(activationAnswer(raw, "License validation")),
   );
 }
 
-async function postActivationEndpoint(
-  path: "/api/v1/activation/preview" | "/api/v1/activation/claim",
-  input: {
-    license_key: string;
-    machine_fingerprint: string;
-    machine_label?: string;
-    app_version?: string;
-  },
-): Promise<Record<string, unknown>> {
-  const res = await fetch(`${controlPlaneApiBase()}${path}`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
+/**
+ * Takes a device slot for the key (sent from Rust). Rust keeps the claim and its activation token
+ * for {@link submitProductLicenseKey}; this returns the organisation and licence terms only.
+ */
+export async function claimProductActivation(
+  input: ActivationRequest,
+): Promise<ProductActivationClaim> {
+  const raw = await invoke<unknown>(
+    "claim_product_activation",
+    {
+      licenseKey: input.license_key,
+      machineFingerprint: input.machine_fingerprint,
+      machineLabel: input.machine_label ?? null,
+      appVersion: input.app_version ?? null,
     },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => undefined);
-    throwActivationHttpError(
-      res,
-      path.includes("preview") ? "License validation" : "Activation",
-      text,
-    );
+    INLINE_ERROR,
+  );
+  return ActivationClaimSchema.parse(
+    normalizeActivationPayload(activationAnswer(raw, "Activation")),
+  );
+}
+
+const TenantInitializeResultSchema = activationCallResultSchema(ActivationTenantStatusSchema);
+
+/**
+ * Marks the activated organisation as initialised on the control API, sent from Rust with the
+ * stored activation's token (call it after {@link submitProductLicenseKey} recorded the claim).
+ * Throws with code `tenant_init_unavailable` (404) or `tenant_init_failed` (also when nothing was
+ * sent: no activation stored, or one already stored as initialised).
+ */
+export async function markActivationTenantInitialized(): Promise<ActivationTenantStatus> {
+  const result = TenantInitializeResultSchema.parse(
+    await invoke<unknown>("mark_activation_tenant_initialized", undefined, INLINE_ERROR),
+  );
+  switch (result.kind) {
+    case "answered":
+      return result.answer;
+    case "not_activated": {
+      const err = new Error(
+        "This device holds no activation to initialize.",
+      ) as ActivationHttpError;
+      err.code = "tenant_init_failed";
+      throw err;
+    }
+    case "http_error": {
+      const details = result.details?.trim();
+      const err = new Error(
+        details || `Tenant initialization failed (${result.status})`,
+      ) as ActivationHttpError;
+      err.status = result.status;
+      err.code = result.status === 404 ? "tenant_init_unavailable" : "tenant_init_failed";
+      err.technicalDetails =
+        details || `POST /api/v1/activation/tenant-status/initialize → ${result.status}`;
+      throw err;
+    }
+    default:
+      throwActivationCallFailure(result, "Tenant initialization");
   }
-  return (await res.json()) as Record<string, unknown>;
 }
 
-/** Validate license + return org summary without consuming a device slot. */
-export async function previewProductActivation(input: {
-  license_key: string;
-  machine_fingerprint: string;
-  machine_label?: string;
-  app_version?: string;
-}): Promise<ProductActivationPreview> {
-  const raw = await postActivationEndpoint("/api/v1/activation/preview", input);
-  return ActivationPreviewSchema.parse(normalizeActivationPayload(raw));
-}
-
-export async function claimProductActivation(input: {
-  license_key: string;
-  machine_fingerprint: string;
-  machine_label?: string;
-  app_version?: string;
-}): Promise<ProductActivationClaim> {
-  const raw = await postActivationEndpoint("/api/v1/activation/claim", input);
-  return ActivationClaimSchema.parse(normalizeActivationPayload(raw));
-}
-
-export async function getActivationTenantStatus(
-  activationToken: string,
-): Promise<ActivationTenantStatus> {
-  const token = activationToken.trim();
-  if (!token) throw new Error("Activation token is required.");
-  const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/tenant-status`, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => undefined);
-    throwActivationHttpError(res, "Tenant status", text);
-  }
-  const raw = (await res.json()) as unknown;
-  return ActivationTenantStatusSchema.parse(raw);
-}
-
-export async function markActivationTenantInitialized(
-  activationToken: string,
-): Promise<ActivationTenantStatus> {
-  const token = activationToken.trim();
-  if (!token) throw new Error("Activation token is required.");
-  const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/tenant-status/initialize`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: "{}",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => undefined);
-    const err = new Error(
-      text?.trim() || `Tenant initialization failed (${res.status})`,
-    ) as Error & { status?: number; code?: string; technicalDetails?: string };
-    err.status = res.status;
-    err.code = res.status === 404 ? "tenant_init_unavailable" : "tenant_init_failed";
-    err.technicalDetails =
-      text?.trim() || `POST /api/v1/activation/tenant-status/initialize → ${res.status}`;
-    throw err;
-  }
-  const raw = (await res.json()) as unknown;
-  return ActivationTenantStatusSchema.parse(raw);
-}
+/**
+ * What the first-start screen of an activated PC shows (`sync::plant_join`): sign in, create the
+ * first administrator (a complete pull confirmed the organisation has no account), joining the
+ * plant (the pull is running), or a connection is needed (the pull cannot run or failed).
+ */
+export const PlantJoinStateSchema = z.enum([
+  "sign_in",
+  "create_first_admin",
+  "joining",
+  "connection_needed",
+]);
+export type PlantJoinState = z.infer<typeof PlantJoinStateSchema>;
 
 const ActivationBootstrapStateSchema = z.object({
   tenant_id: z.string().nullable().optional(),
   company_display_name: z.string().nullable().optional(),
   has_tenant_admin: z.boolean(),
+  /** `null` when this PC is not activated. */
+  plant_join: PlantJoinStateSchema.nullable(),
 });
 
 const ActivationLicenseMetadataSchema = z.object({
@@ -641,89 +714,11 @@ export async function bootstrapInitialTenantAdmin(input: {
 }
 
 /**
- * Canonical claim fields for desktop Rust `ProductActivationClaimRecord`.
- * Omits serde aliases and FE-only fields so submit/reconcile never hit duplicate-field errors.
+ * The first-start screen joins the plant: the sync worker runs now (and again on "Retry") instead
+ * of waiting for its next check. Refused once this PC has an administrator.
  */
-export function toDesktopActivationClaimRecord(
-  claim: ProductActivationClaim,
-): Record<string, unknown> {
-  const edition = claim.edition ?? claim.license_tier ?? claim.license_plan ?? null;
-  return {
-    tenant_id: claim.tenant_id,
-    license_id: claim.license_id,
-    machine_fingerprint: claim.machine_fingerprint,
-    activation_token: claim.activation_token,
-    expires_at: claim.expires_at ?? null,
-    force_min_app_version: claim.force_min_app_version ?? null,
-    force_update_required: claim.force_update_required ?? null,
-    update_channel: claim.update_channel ?? null,
-    offline_grace_hours: claim.offline_grace_hours ?? null,
-    trust_revocation_disconnects_immediately:
-      claim.trust_revocation_disconnects_immediately ?? null,
-    reconnect_requires_fresh_heartbeat: claim.reconnect_requires_fresh_heartbeat ?? null,
-    tenant_display_name: claim.tenant_display_name ?? null,
-    tenant_slug: claim.tenant_slug ?? null,
-    device_limit: claim.device_limit ?? null,
-    license_tier: edition,
-    license_plan: edition,
-    license_status: claim.license_status ?? null,
-    activated_device_count: claim.activated_device_count ?? null,
-    has_demo_data: claim.has_demo_data ?? null,
-    is_initialized: claim.is_initialized ?? null,
-  };
-}
-
-/** claimJson for `submit_product_license_key` — record + optional entitlement_envelope. */
-export function serializeClaimJsonForDesktop(claim: ProductActivationClaim): string {
-  const record = toDesktopActivationClaimRecord(claim);
-  if (claim.entitlement_envelope) {
-    return JSON.stringify({
-      ...record,
-      entitlement_envelope: claim.entitlement_envelope,
-    });
-  }
-  return JSON.stringify(record);
-}
-
-/** Preflight: ensure claim can be persisted before destructive local tenant reset. */
-export function assertClaimSerializableForDesktop(claim: ProductActivationClaim): void {
-  const json = serializeClaimJsonForDesktop(claim);
-  if (!json.trim().startsWith("{")) {
-    throw new Error("Activation claim serialization produced invalid JSON.");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    throw new Error(`Activation claim serialization produced invalid JSON: ${detail}`);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("Activation claim serialization must produce a JSON object.");
-  }
-  const obj = parsed as Record<string, unknown>;
-  for (const key of [
-    "tenant_id",
-    "license_id",
-    "machine_fingerprint",
-    "activation_token",
-  ] as const) {
-    if (typeof obj[key] !== "string" || !(obj[key] as string).trim()) {
-      throw new Error(`Activation claim is missing required field: ${key}`);
-    }
-  }
-  // Guard against alias co-presence that Rust serde rejects.
-  if ("edition" in obj) {
-    throw new Error("Desktop claim payload must not include alias field: edition");
-  }
-  if ("slot_limit" in obj || "seat_limit" in obj) {
-    throw new Error("Desktop claim payload must not include alias fields: slot_limit/seat_limit");
-  }
-  if ("company_display_name" in obj || "company_name" in obj || "tenant_name" in obj) {
-    throw new Error(
-      "Desktop claim payload must not include alias fields: company_display_name/company_name/tenant_name",
-    );
-  }
+export async function requestPlantJoin(): Promise<void> {
+  await invoke<void>("request_plant_join");
 }
 
 /**
@@ -741,7 +736,7 @@ export async function checkProductLicenseKeyEntry(
       machine_fingerprint: preview.machine_fingerprint,
       has_demo_data: preview.has_demo_data ?? null,
       is_initialized: preview.is_initialized ?? null,
-      // The licence terms, mapped as `toDesktopActivationClaimRecord` maps the claim's.
+      // The licence terms, mapped as Rust maps the claim's (`policy_refresh_claim`).
       expires_at: preview.expires_at ?? null,
       device_limit: preview.device_limit ?? null,
       license_tier: preview.edition ?? preview.license_tier ?? preview.license_plan ?? null,
@@ -757,21 +752,25 @@ export async function checkProductLicenseKeyEntry(
   });
 }
 
+/**
+ * Records the key entry of the claim {@link claimProductActivation} just took: Rust records the
+ * claim it holds for this key and organisation (`tenant_id`, the one shown and checked for the
+ * local data reset); the webview never passes the claim or its token.
+ */
 export async function submitProductLicenseKey(input: {
   key: string;
-  claim?: ProductActivationClaim | null;
-  machine_fingerprint?: string;
+  tenant_id: string;
   app_version?: string;
 }): Promise<void> {
-  await invoke<void>("submit_product_license_key", {
-    key: input.key,
-    // Tauri command arg mapping is camelCase on the JS side.
-    // Must use desktop-canonical claim JSON — raw claim includes serde aliases
-    // (edition + license_tier, etc.) that Rust rejects as duplicate fields.
-    claimJson: input.claim ? serializeClaimJsonForDesktop(input.claim) : null,
-    machineFingerprint: input.machine_fingerprint ?? null,
-    appVersion: input.app_version ?? null,
-  });
+  await invoke<void>(
+    "submit_product_license_key",
+    {
+      key: input.key,
+      tenantId: input.tenant_id,
+      appVersion: input.app_version ?? null,
+    },
+    INLINE_ERROR,
+  );
 }
 
 /**
@@ -789,10 +788,12 @@ export const LICENCE_DENIAL_CODES: ReadonlySet<string> = new Set([
   "force_update_required",
 ]);
 
+/**
+ * A licence check that got no licence answer. A success is never recorded from here: Rust records
+ * the claims it receives (policy refresh, re-claim, key entry) and refuses one from the webview.
+ */
 const ReconciliationOutcomeInputSchema = z.object({
-  kind: z.enum(["success", "network_error", "http_error", "denied"]),
-  claim: ActivationClaimSchema.optional(),
-  entitlement_envelope: EntitlementEnvelopeInputSchema.optional(),
+  kind: z.enum(["network_error", "http_error", "denied"]),
   error_code: z.string().optional(),
   error_message: z.string().optional(),
   app_version: z.string().optional(),
@@ -802,74 +803,90 @@ export async function applyProductLicenseReconciliation(
   outcome: z.input<typeof ReconciliationOutcomeInputSchema>,
 ): Promise<ProductLicenseOnboardingState> {
   const payload = ReconciliationOutcomeInputSchema.parse(outcome);
-  const envelope = payload.entitlement_envelope ?? payload.claim?.entitlement_envelope ?? undefined;
-  // Same canonical claim shape as submit_product_license_key (no serde aliases).
-  const claimForRust = payload.claim ? toDesktopActivationClaimRecord(payload.claim) : undefined;
-  const forRust = {
-    kind: payload.kind,
-    claim: claimForRust,
-    entitlement_envelope: envelope,
-    error_code: payload.error_code,
-    error_message: payload.error_message,
-    app_version: payload.app_version,
-  };
   const raw = await invoke<unknown>("apply_product_license_reconciliation", {
-    outcomeJson: JSON.stringify(forRust),
+    outcomeJson: JSON.stringify(payload),
   });
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-/**
- * A version the licence server compares against a forced-update minimum: MAJOR.MINOR.PATCH with an
- * optional pre-release ("0.4.0-dev" is below "0.4.0"), at most 32 characters as the server accepts.
- */
-const STRICT_APP_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const PolicyRefreshResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("no_token") }),
+  z.object({ kind: z.literal("refreshed"), state: ProductLicenseOnboardingStateSchema }),
+  ...ActivationCallFailureSchemas,
+]);
+
+/** A licence policy refresh that got an answer it could use. */
+export type PolicyRefreshOutcome =
+  | { kind: "no_token" }
+  | { kind: "refreshed"; state: ProductLicenseOnboardingState };
 
 /**
- * Refresh edition capabilities without consuming a new device slot.
+ * Refresh the licence without consuming a new device slot (`refresh_product_activation_policy`).
+ * The request is sent from Rust with the activation token stored there, which never reaches the
+ * webview; Rust also records a renewed licence as a successful reconciliation.
  *
  * `appVersion` is the version this PC is running, so a forced update releases a PC that is
  * already up to date. It is sent only when well formed; without it the server applies the forced
  * update as if the PC were out of date.
+ *
+ * Resolves `no_token` when this PC holds no activation (nothing was sent), or `refreshed` with the
+ * recorded state. Throws, as the other activation calls do: the server's error answer (`status`,
+ * `code`, `technicalDetails`), a plain error when no usable answer came, or this PC's refusal of
+ * the licence change (an administrator or a step-up needed).
  */
 export async function refreshProductActivationPolicy(
-  activationToken: string,
   appVersion?: string,
-): Promise<ProductActivationClaim> {
-  const token = activationToken.trim();
-  if (!token) throw new Error("Activation token is required.");
-  const version = appVersion?.trim();
-  const sentVersion =
-    version && version.length <= 32 && STRICT_APP_VERSION.test(version) ? version : undefined;
-  const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/policy-refresh`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(sentVersion ? { app_version: sentVersion } : {}),
+): Promise<PolicyRefreshOutcome> {
+  const raw = await invoke<unknown>("refresh_product_activation_policy", {
+    appVersion: appVersion ?? null,
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => undefined);
-    throwActivationHttpError(res, "Policy refresh", text);
+  const result = PolicyRefreshResultSchema.parse(raw);
+  switch (result.kind) {
+    case "no_token":
+      return { kind: "no_token" };
+    case "refreshed":
+      return { kind: "refreshed", state: result.state };
+    default:
+      throwActivationCallFailure(result, "Policy refresh");
   }
-  const raw = (await res.json()) as Record<string, unknown>;
-  const normalized = normalizeActivationPayload(raw);
-  // Control plane may omit activation_token on refresh; reuse the bearer we already hold.
-  if (
-    typeof normalized["activation_token"] !== "string" ||
-    !String(normalized["activation_token"]).trim()
-  ) {
-    normalized["activation_token"] = token;
-  }
-  return ActivationClaimSchema.parse(normalized);
 }
 
-/** Local activation bearer token (no session required — device-scoped onboarding state). */
-export async function getProductActivationToken(): Promise<string | null> {
-  const raw = await invoke<unknown>("get_product_activation_token");
-  return typeof raw === "string" && raw.trim() ? raw : null;
+const ReclaimResultSchema = activationCallResultSchema(ProductLicenseOnboardingStateSchema);
+
+/** A re-claim that got an answer it could use. */
+export type ReclaimOutcome =
+  | { kind: "not_activated" }
+  | { kind: "reclaimed"; state: ProductLicenseOnboardingState };
+
+/**
+ * Claims this PC's activation again when its activation token is unusable or absent
+ * (`reclaim_product_activation`): sent from Rust with the licence key stored at the key entry and
+ * the stored machine fingerprint (neither reaches the webview); Rust records the new claim as a
+ * successful reconciliation. Resolves `not_activated` when no key is stored here (nothing sent).
+ * Throws as {@link refreshProductActivationPolicy} does.
+ */
+export async function reclaimProductActivation(input: {
+  machine_label?: string;
+  app_version?: string;
+}): Promise<ReclaimOutcome> {
+  const result = ReclaimResultSchema.parse(
+    await invoke<unknown>(
+      "reclaim_product_activation",
+      {
+        machineLabel: input.machine_label ?? null,
+        appVersion: input.app_version ?? null,
+      },
+      INLINE_ERROR,
+    ),
+  );
+  switch (result.kind) {
+    case "answered":
+      return { kind: "reclaimed", state: result.answer };
+    case "not_activated":
+      return { kind: "not_activated" };
+    default:
+      throwActivationCallFailure(result, "Activation");
+  }
 }
 
 export async function getProductLicenseDiagnostics(): Promise<ProductLicenseDiagnostics | null> {

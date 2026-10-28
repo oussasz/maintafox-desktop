@@ -25,6 +25,35 @@ pub struct MaterializeInboxResult {
     /// Waiting for a parent row or a materializer; retried on the next run.
     pub deferred: i64,
     pub errors: Vec<String>,
+    /// A row of a table the effective rights are computed from ([`RIGHTS_ENTITY_TYPES`]) was
+    /// written: the permission cache and the window's permissions must be refreshed (AU-107).
+    #[serde(default)]
+    pub rights_changed: bool,
+}
+
+/// Entity types whose rows the effective rights are read from (`auth::rbac`, `auth::scope`): the
+/// accounts (active, admin), roles, their permissions, the user's assignments, and the org nodes a
+/// node assignment grants on (a node deleted or moved changes what it grants). Delegated admin
+/// policies are read live (`rbac::delegation`), never cached, so they are not listed.
+pub const RIGHTS_ENTITY_TYPES: &[&str] = &[
+    "user_accounts",
+    "roles",
+    "role_permissions",
+    "user_scope_assignments",
+    "org_nodes",
+];
+
+/// Whether the rights must be refreshed after a materialization run: when it wrote a rights row,
+/// and whenever it failed part-way, since every pass commits on its own (the rows of a pass
+/// committed before the error are `applied` and never flag again). A refresh is cheap.
+pub fn rights_refresh_needed(run: &AppResult<MaterializeInboxResult>) -> bool {
+    run.as_ref().map_or(true, |r| r.rights_changed)
+}
+
+/// Whether resolving a sync conflict with `action` wrote a rights row: taking the server version
+/// (`accept_remote`) writes the received row here, outside any materialization run.
+pub fn resolution_changes_rights(entity_type: &str, action: &str) -> bool {
+    action == "accept_remote" && RIGHTS_ENTITY_TYPES.contains(&entity_type)
 }
 
 /// Deferral code for a row whose parent has not been applied yet.
@@ -33,8 +62,15 @@ pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
 pub(crate) const DEFER_NO_MATERIALIZER: &str = "NO_MATERIALIZER";
 /// Deferral code for a row without a field this version requires (sent by an older app version).
 pub(crate) const DEFER_MISSING_FIELD: &str = "MISSING_FIELD";
+/// Deferral code for a row the sending PC's app version could not complete (a reliability decision
+/// approved without an approval seal, AU-76b): shown in the sync centre as waiting for the update of
+/// the sending PC (CMMS Advisor Q2: nothing waits unseen).
+pub(crate) const DEFER_SENDER_OUTDATED: &str = "SENDER_OUTDATED";
 /// Deferral code for an entity type this version of the app does not know.
 pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
+/// Code kept on an inbox row marked applied without being written: a version of a history row
+/// older than the one applied here.
+pub(crate) const SKIPPED_OLDER_VERSION: &str = "OLDER_VERSION_SKIPPED";
 
 #[derive(Debug, Clone)]
 pub(crate) struct InboxRow {
@@ -120,9 +156,44 @@ pub(crate) async fn apply_inbox_row_in(tx: &impl ConnectionTrait, item: &InboxRo
 }
 
 async fn record_applied(tx: &impl ConnectionTrait, item: &InboxRow) -> AppResult<()> {
-    mark_inbox(tx, item.id, "applied", None, None).await?;
+    // A version older than the one applied here (a history row, skipped by `concurrency_check`) was
+    // not written: the inbox row keeps the received record and says so, as evidence (a stale
+    // version of a count movement may be the only trace left of a forged one).
+    let history = registry::entity(&item.entity_type).is_some_and(|d| d.conflict_policy == ConflictPolicy::AppendOnly);
+    match synced_row_version(tx, &item.entity_type, &item.entity_sync_id).await? {
+        Some((applied, _)) if history && item.row_version < applied => {
+            let message = format!(
+                "v{} is older than v{applied} applied here: not written (a history row keeps its newer version)",
+                item.row_version
+            );
+            tracing::warn!(
+                target: "maintafox::sync",
+                "{} {}: {message}",
+                item.entity_type,
+                item.entity_sync_id
+            );
+            mark_inbox(tx, item.id, "applied", Some(SKIPPED_OLDER_VERSION), Some(&message)).await?;
+        }
+        _ => mark_inbox(tx, item.id, "applied", None, None).await?,
+    }
     crate::sync::code_clash::close_outdated_clashes(tx, &item.entity_type, &item.entity_sync_id, item.row_version)
         .await?;
+    crate::sync::username_clash::close_outdated_username_clashes(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+    )
+    .await?;
+    // A count held for a second approval: its conflict closes once a version passing four-eyes is
+    // applied (`inventory::count_four_eyes`).
+    crate::inventory::count_four_eyes::after_count_line_applied(
+        tx,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+    )
+    .await?;
     record_synced_state(
         tx,
         &item.entity_type,
@@ -152,7 +223,9 @@ enum Selection<'a> {
 /// Apply pending inbox rows, plus deferred rows whose entity type can now be applied (one pass of
 /// at most `limit` rows, pending rows first).
 pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
-    materialize_selection(db, Selection::Any, limit.unwrap_or(200)).await
+    // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
+    crate::sync::grant_check::with_review_collection(materialize_selection(db, Selection::Any, limit.unwrap_or(200)))
+        .await
 }
 
 /// Apply every pending inbox row (passes of `batch` rows, parents first). With `retry_deferred`,
@@ -164,6 +237,15 @@ pub async fn materialize_inbox(
     batch: i64,
     retry_deferred: bool,
 ) -> AppResult<MaterializeInboxResult> {
+    // Grants applied for review are listed in one notice for the run (`sync::grant_check`).
+    crate::sync::grant_check::with_review_collection(materialize_inbox_run(db, batch, retry_deferred)).await
+}
+
+async fn materialize_inbox_run(
+    db: &DatabaseConnection,
+    batch: i64,
+    retry_deferred: bool,
+) -> AppResult<MaterializeInboxResult> {
     let mut total = MaterializeInboxResult {
         processed: 0,
         applied: 0,
@@ -171,6 +253,7 @@ pub async fn materialize_inbox(
         skipped: 0,
         deferred: 0,
         errors: Vec::new(),
+        rights_changed: false,
     };
     let add = |total: &mut MaterializeInboxResult, r: MaterializeInboxResult| {
         total.processed += r.processed;
@@ -178,7 +261,19 @@ pub async fn materialize_inbox(
         total.conflicts += r.conflicts;
         total.skipped += r.skipped;
         total.errors.extend(r.errors);
+        total.rights_changed |= r.rights_changed;
     };
+    // PM plan versions refused before two versions could share a number are applied again first,
+    // so the rows waiting for them follow in this run (`pm::version_clash`).
+    total.applied += crate::pm::version_clash::retry_refused_number_clashes(db).await?;
+    // Every planning four-eyes conflict is judged again (weeks, then break-ins, then the
+    // commitments they let in) and closes, audited, once this PC's rules let it in; break-ins
+    // received after their job's plan was kept are refused with that decision
+    // (`planning::sync_check`, reviews S4, R3-S4, R3-S5).
+    total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
+    // Reliability decisions refused for the rights of their approver or applier close, audited,
+    // once those rights are here (`reliability::study::decision_sync`, AU-76b).
+    total.applied += crate::reliability::study::decision_sync::retry_decision_conflicts(db).await?;
     // Rows arriving while this runs are taken by the next round; every round moves its rows out
     // of `pending`, so this ends.
     let started = std::time::Instant::now();
@@ -233,6 +328,10 @@ pub async fn materialize_inbox(
             }
         }
     }
+    // A week reopened, or a break-in applied, by this run: the planning conflicts it settles close
+    // in this run, not at the next synchronisation (`planning::sync_check`, review R2-S2).
+    total.applied += crate::planning::sync_check::retry_planning_conflicts(db).await?;
+    total.applied += crate::reliability::study::decision_sync::retry_decision_conflicts(db).await?;
     total.deferred = db
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,
@@ -281,9 +380,15 @@ async fn materialize_selection(
     selection: Selection<'_>,
     limit: i64,
 ) -> AppResult<MaterializeInboxResult> {
-    crate::sync::row_codec::REF_CACHE
+    let result = crate::sync::row_codec::REF_CACHE
         .scope(Default::default(), materialize_pass(db, selection, limit))
-        .await
+        .await;
+    // Safety net: marks the pass could not take (`inventory::reservations`); nothing is written when
+    // there is none. A failure keeps the marks for the next pass, cycle or start.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(db).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute after apply failed: {e}");
+    }
+    result
 }
 
 async fn materialize_pass(
@@ -356,6 +461,7 @@ async fn materialize_pass(
         skipped: 0,
         deferred: 0,
         errors: Vec::new(),
+        rights_changed: false,
     };
 
     // One transaction per pass (one disk commit for up to `limit` rows instead of one per row);
@@ -374,6 +480,9 @@ async fn materialize_pass(
                 ApplyOutcome::Applied => {
                     result.applied += 1;
                     progressed = true;
+                    if RIGHTS_ENTITY_TYPES.contains(&item.entity_type.as_str()) {
+                        result.rights_changed = true;
+                    }
                     if crate::finance::settlement::LATE_COST_SYNC_TYPES.contains(&item.entity_type.as_str()) {
                         late_cost_rows.push((item.entity_type.clone(), item.entity_sync_id.clone()));
                     }
@@ -405,14 +514,34 @@ async fn materialize_pass(
         }
         queue = waiting_for_parent;
     }
+    // Reserved stock of the pairs this pass wrote, once per pair, committed with the pass
+    // (`inventory::reservations`). A failure keeps the marks for the safety net below.
+    if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved_in(&pass).await {
+        tracing::warn!(target: "maintafox::sync", "reserved stock recompute in the pass failed: {e}");
+    }
     pass.commit().await?;
 
     // After the commit, with capture active: late-cost deltas are local writes, pushed like any other.
     if !late_cost_rows.is_empty() {
         crate::finance::settlement::post_late_costs_after_sync(db, &late_cost_rows).await;
     }
+    // After the commit, from the stored state, in their own transactions: the local consequences
+    // of received permit ends and lock removals (`permit::ended_hold::sweep`); a failure never
+    // refuses the received rows and is retried by the next pass (and at start-up).
+    crate::permit::ended_hold::sweep(db).await;
+    // The plant's permit rules on the work orders not started yet that one matches now, derived
+    // here like a stamp made during the apply (`permit::requirement_rules::catch_up`, audit finding
+    // AU-04 R2-S2); a failure is logged and retried by the next pass.
+    crate::permit::requirement_rules::catch_up(db).await;
 
     Ok(result)
+}
+
+/// The received row a deferred row waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaitsFor {
+    pub(crate) entity_type: String,
+    pub(crate) sync_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -421,8 +550,13 @@ pub(crate) enum ApplyOutcome {
     Applied,
     /// Already current locally; nothing to write.
     Unchanged,
-    /// Cannot be applied yet; kept for a later run.
-    Deferred { code: String, message: String },
+    /// Cannot be applied yet; kept for a later run. `waits_for`: the one row it waits for, when
+    /// known (a parent not applied here yet), shown in the sync centre with the row.
+    Deferred {
+        code: String,
+        message: String,
+        waits_for: Option<WaitsFor>,
+    },
     /// Needs a person.
     Conflict { code: String, message: String },
 }
@@ -477,16 +611,27 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
     // Nothing from the attempt is kept; record why the row was not applied.
     let tx = db.begin().await?;
     match &outcome {
-        ApplyOutcome::Deferred { code, message } => {
+        ApplyOutcome::Deferred {
+            code,
+            message,
+            waits_for,
+        } => {
             tx.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "UPDATE sync_inbox
                  SET apply_status = 'deferred', rejection_code = ?, rejection_message = ?,
+                     waits_for_entity_type = ?, waits_for_sync_id = ?,
                      attempt_count = attempt_count + 1,
                      last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
                      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                  WHERE id = ?",
-                [code.as_str().into(), message.as_str().into(), item.id.into()],
+                [
+                    code.as_str().into(),
+                    message.as_str().into(),
+                    waits_for.as_ref().map(|w| w.entity_type.clone()).into(),
+                    waits_for.as_ref().map(|w| w.sync_id.clone()).into(),
+                    item.id.into(),
+                ],
             ))
             .await?;
         }
@@ -509,7 +654,19 @@ async fn apply_inbox_row<C: ConnectionTrait + TransactionTrait>(db: &C, item: &I
                     checkpoint_token: Some(item.checkpoint_token.clone()),
                     local_row_version: local.as_ref().map(|l| l.row_version),
                     inbound_row_version: Some(item.row_version),
+                    detail_message: Some(message.clone()),
                 },
+            )
+            .await?;
+            // A reservation released on two PCs is settled without a person (`inventory::reservations`).
+            crate::inventory::reservations::settle_double_release(&tx, &item.entity_type, &item.entity_sync_id).await?;
+            // A count held for a second approval: the count-approval holders are told once.
+            crate::inventory::count_four_eyes::after_count_conflict_recorded(
+                &tx,
+                &item.entity_type,
+                &item.entity_sync_id,
+                code,
+                &item.payload_json,
             )
             .await?;
         }
@@ -564,18 +721,100 @@ async fn latest_local_change(
 }
 
 /// Decide whether an inbound row may be applied, then apply it.
+/// Prefix of the inbox batch id of a snapshot this PC asked for (`sync::transport::worker` names
+/// its snapshots `snapshot-<scope>-<uuid>`).
+pub(crate) const SNAPSHOT_BATCH_PREFIX: &str = "snapshot-";
+
+/// The inbox batch id an exchange answer is stored under: the server's id, never one that reads as
+/// a snapshot of this PC (`snapshot-…` becomes `delta-snapshot-…`).
+pub(crate) fn exchange_batch_id(server_batch_id: &str) -> String {
+    if server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX) {
+        format!("delta-{server_batch_id}")
+    } else {
+        server_batch_id.to_string()
+    }
+}
+
+tokio::task_local! {
+    /// While an inbox row is applied: whether it came with a snapshot this PC asked for.
+    static APPLYING_SNAPSHOT_ROW: bool;
+}
+
+/// Whether the inbox row being applied came with a snapshot this PC asked for (`false` outside an
+/// inbox apply: a "take theirs", a test applying a payload directly).
+pub(crate) fn applying_snapshot_row() -> bool {
+    APPLYING_SNAPSHOT_ROW.try_with(|s| *s).unwrap_or(false)
+}
+
+/// Runs `judge` as if the inbox row of `server_batch_id` were being applied
+/// ([`applying_snapshot_row`]): a received row judged on behalf of another (a count line judged
+/// for its stock movement, `inventory::count_four_eyes`) is judged in its own context — a version
+/// from an exchange is never judged as a snapshot row because the row it is judged for is one.
+pub(crate) async fn judged_as_row_of_batch<F: std::future::Future>(server_batch_id: &str, judge: F) -> F::Output {
+    APPLYING_SNAPSHOT_ROW
+        .scope(server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX), judge)
+        .await
+}
+
 async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    APPLYING_SNAPSHOT_ROW
+        .scope(
+            item.server_batch_id.starts_with(SNAPSHOT_BATCH_PREFIX),
+            Box::pin(evaluate_and_apply_row(conn, item)),
+        )
+        .await
+}
+
+async fn evaluate_and_apply_row(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
     let Some(def) = registry::entity(&item.entity_type) else {
         return Ok(ApplyOutcome::Deferred {
             code: DEFER_UNKNOWN_ENTITY_TYPE.into(),
             message: format!("entity type '{}' is not known by this version", item.entity_type),
+            waits_for: None,
         });
     };
     if !def.has_materializer {
         return Ok(ApplyOutcome::Deferred {
             code: DEFER_NO_MATERIALIZER.into(),
             message: format!("'{}' rows are not applied by this version yet", item.entity_type),
+            waits_for: None,
         });
+    }
+    // The same stock count posted on two PCs: when the received session or line is the same posting
+    // as this PC's unsent one, that one is closed and audited and the received version is applied
+    // (it reached the server first; `inventory::count_sync`). Done here, not in
+    // `concurrency_check`, which also serves a side-effect-free admissibility check.
+    crate::inventory::count_sync::settle_concurrent_posting(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+        &item.payload_json,
+    )
+    .await?;
+    // This PC's own hold of a work order for a permit ended elsewhere, crossed by the same hold
+    // from another PC (`permit::ended_hold`): closed, the received version is applied.
+    crate::permit::ended_hold::settle_crossed_hold_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        &item.payload_json,
+    )
+    .await?;
+    // A decision re-sent sealed by an upgraded PC while this PC has an unsent change of it: settled,
+    // that change staged again on top; the received version is not written over it
+    // (`reliability::study::decision_sync`, review R3-S9).
+    if let Some(outcome) = crate::reliability::study::decision_sync::settle_seal_resend_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        item.row_version,
+        &item.payload_hash,
+        &item.payload_json,
+    )
+    .await?
+    {
+        return Ok(outcome);
     }
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
         return Ok(outcome);
@@ -620,7 +859,16 @@ async fn concurrency_check(
         return Ok(Some(ApplyOutcome::Unchanged));
     }
     if def.conflict_policy == ConflictPolicy::AppendOnly {
-        // History rows are only inserted; the materializer skips rows that already exist.
+        // History rows are only inserted; the materializer skips rows that already exist. A version
+        // older than the one applied here is never written over it either: the same count posted
+        // on two PCs adopts the received content of a row it holds (`inventory::count_sync`), and
+        // an older version still waiting in the inbox (a count movement held, then released in a
+        // corrected version) must not replace the newer one.
+        if let Some((synced_version, _)) = synced_row_version(conn, &item.entity_type, &item.entity_sync_id).await? {
+            if item.row_version < synced_version {
+                return Ok(Some(ApplyOutcome::Unchanged));
+            }
+        }
         return Ok(None);
     }
     if let Some(local) = unsent.last() {
@@ -676,6 +924,8 @@ async fn mark_inbox(
          SET apply_status = ?,
              rejection_code = ?,
              rejection_message = ?,
+             waits_for_entity_type = NULL,
+             waits_for_sync_id = NULL,
              last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",

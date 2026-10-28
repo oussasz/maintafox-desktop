@@ -150,7 +150,7 @@ fn validate_factor(factor: f64) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![
-            "factor must be a positive number.".into()
+            "GATE_INV_CONVERSION_FACTOR_POSITIVE: factor must be a positive number.".into(),
         ]))
     }
 }
@@ -229,9 +229,9 @@ pub async fn create_unit_conversion<C: ConnectionTrait + TransactionTrait>(
 ) -> AppResult<UnitConversion> {
     validate_factor(input.factor)?;
     if input.from_unit_value_id == input.to_unit_value_id {
-        return Err(AppError::ValidationFailed(
-            vec!["from and to units must differ.".into()],
-        ));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_CONVERSION_SAME_UNIT: from and to units must differ.".into(),
+        ]));
     }
     let txn = db.begin().await?;
     ensure_convertible_units(&txn, input.from_unit_value_id, input.to_unit_value_id, input.article_id).await?;
@@ -256,7 +256,7 @@ pub async fn create_unit_conversion<C: ConnectionTrait + TransactionTrait>(
         .is_empty()
     {
         return Err(AppError::ValidationFailed(vec![
-            "A conversion between these units already exists for this scope (the inverse is derived).".into(),
+            "GATE_INV_CONVERSION_EXISTS: A conversion between these units already exists for this scope (the inverse is derived).".into(),
         ]));
     }
     let sync_id = crate::sync::identity::new_entity_sync_id();
@@ -318,7 +318,7 @@ async fn bump(
     if res.rows_affected() == 0 {
         get_unit_conversion(conn, id).await?;
         return Err(AppError::ValidationFailed(vec![
-            "The conversion was changed meanwhile; reload it.".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: The conversion was changed meanwhile; reload it.".into(),
         ]));
     }
     Ok(())
@@ -362,7 +362,9 @@ pub async fn convert_quantity(
 ) -> AppResult<ConvertedQuantity> {
     use crate::reference::units;
     if !quantity.is_finite() {
-        return Err(AppError::ValidationFailed(vec!["quantity must be a number.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_QUANTITY_INVALID: quantity must be a number.".into(),
+        ]));
     }
     if from_unit_value_id == to_unit_value_id {
         return Ok(ConvertedQuantity {
@@ -469,7 +471,7 @@ async fn row_factor(
         .any(|&(_, f, x)| (multiplier(f, x) - m).abs() > 1e-9 * m.abs().max(1.0))
     {
         return Err(AppError::ValidationFailed(vec![
-            "Several active conversions between these units disagree; deactivate the wrong one.".into(),
+            "GATE_INV_CONVERSION_CONFLICT: Several active conversions between these units disagree; deactivate the wrong one.".into(),
         ]));
     }
     let path = if from == from_unit_value_id {
@@ -532,7 +534,9 @@ pub async fn to_stock_quantity(
     quantity: f64,
 ) -> AppResult<StockQuantity> {
     if !quantity.is_finite() {
-        return Err(AppError::ValidationFailed(vec!["quantity must be a number.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_QUANTITY_INVALID: quantity must be a number.".into(),
+        ]));
     }
     let stock_unit: i64 = conn
         .query_one(Statement::from_sql_and_values(

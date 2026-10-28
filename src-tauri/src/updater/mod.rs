@@ -584,7 +584,9 @@ impl InstallSlot {
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| Self(flag))
             .map_err(|_| {
-                AppError::ValidationFailed(vec!["an update is already being installed on this computer".to_string()])
+                AppError::ValidationFailed(vec![
+                    "GATE_UPD_INSTALL_BUSY: an update is already being installed on this computer".to_string(),
+                ])
             })
     }
 }
@@ -631,6 +633,25 @@ pub fn writes_barred() -> bool {
 /// Refuses a command while an update is being installed (`require_session!` calls it first).
 pub fn refuse_while_installing() -> AppResult<()> {
     refuse_while_installing_on(&UPDATE_WRITE_BARRIER)
+}
+
+/// The process-wide barrier, for the commands that check it through a seam taking the flag
+/// (sign-in and unlock: [`refuse_sign_in_while_installing_on`]).
+pub(crate) fn update_write_barrier() -> &'static std::sync::atomic::AtomicBool {
+    &UPDATE_WRITE_BARRIER
+}
+
+/// The refusal of a sign-in or an unlock while the barrier is up (AU-109).
+pub const SIGN_IN_UPDATE_IN_PROGRESS_MESSAGE: &str =
+    "AUTH_UPDATE_IN_PROGRESS: Mise à jour en cours — reconnectez-vous après le redémarrage.";
+
+/// Refuses a sign-in or an unlock while an update is being installed (AU-109): the same check as
+/// every command behind a session and the forced password change ([`refuse_while_installing`]),
+/// coded (`AUTH_UPDATE_IN_PROGRESS`) so the sign-in and lock screens show it translated. Called
+/// first, before any lockout count, audit row or session is written. Signing out stays allowed.
+pub(crate) fn refuse_sign_in_while_installing_on(flag: &std::sync::atomic::AtomicBool) -> AppResult<()> {
+    refuse_while_installing_on(flag)
+        .map_err(|_| AppError::UpdateInProgress(SIGN_IN_UPDATE_IN_PROGRESS_MESSAGE.to_string()))
 }
 
 fn refuse_while_installing_on(flag: &std::sync::atomic::AtomicBool) -> AppResult<()> {
@@ -926,12 +947,12 @@ pub async fn install(
         ManifestAnswer::Offer(update, ext) => (*update, ext),
         ManifestAnswer::NotConfigured => {
             return Err(AppError::ValidationFailed(vec![
-                "this build has no in-app updates".to_string()
+                "GATE_UPD_NOT_CONFIGURED: this build has no in-app updates".to_string(),
             ]))
         }
         ManifestAnswer::NotActivated => {
             return Err(AppError::ValidationFailed(vec![
-                "this device is not activated".to_string()
+                "GATE_UPD_NOT_ACTIVATED: this device is not activated".to_string(),
             ]))
         }
         ManifestAnswer::None | ManifestAnswer::ServerRefused | ManifestAnswer::NotAcceptable(_) => {
@@ -1107,12 +1128,12 @@ pub enum ReinstallCheck {
 pub fn reinstall_check(journal: Option<UpdateJournal>, running: &str) -> AppResult<ReinstallCheck> {
     let Some(entry) = journal.filter(|j| j.state == JournalState::RollbackRequired) else {
         return Err(AppError::ValidationFailed(vec![
-            "no failed update to roll back".to_string()
+            "GATE_UPD_NO_FAILED_UPDATE: no failed update to roll back".to_string(),
         ]));
     };
     if entry.to_version != running {
         return Err(AppError::ValidationFailed(vec![format!(
-            "the failed update was to {}, this is version {running}: nothing to roll back here",
+            "GATE_UPD_ROLLBACK_WRONG_VERSION: the failed update was to {}, this is version {running}: nothing to roll back here",
             entry.to_version
         )]));
     }

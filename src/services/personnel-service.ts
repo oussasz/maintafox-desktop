@@ -6,7 +6,8 @@
 
 import { z, ZodError } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, type InvokeOptions } from "@/lib/ipc-invoke";
+import { ipcErrorDetails } from "@/utils/errors";
 import type {
   DeclareOwnSkillInput,
   AvailabilityBlockCreateInput,
@@ -252,6 +253,7 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   created_by_id: z.number().nullable(),
   created_by_label: z.string().nullable(),
   created_at: z.string(),
+  row_version: z.number(),
   /** `reason_note` withheld (no per.sensitiveview, not own record). */
   reason_masked: z.boolean().optional().default(false),
   type_masked: z.boolean(),
@@ -463,17 +465,19 @@ function isIpcError(err: unknown): err is IpcErrorShape {
 
 export class PersonnelIpcError extends Error {
   readonly code: string;
-
-  constructor(code: string, message: string) {
+  /** The backend refusal `details` (structured issues), `null` when none. */
+  readonly details: unknown;
+  constructor(code: string, message: string, details: unknown = null) {
     super(message);
     this.name = "PersonnelIpcError";
     this.code = code;
+    this.details = details;
   }
 }
 
 function mapInvokeError(err: unknown): never {
   if (isIpcError(err)) {
-    throw new PersonnelIpcError(err.code, err.message);
+    throw new PersonnelIpcError(err.code, err.message, ipcErrorDetails(err));
   }
   if (err instanceof Error) throw err;
   throw new Error(String(err));
@@ -483,9 +487,12 @@ async function invokeParsed<T>(
   command: string,
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
+  options?: InvokeOptions,
 ): Promise<T> {
   try {
-    const raw = await invoke<unknown>(command, args);
+    const raw = await (options
+      ? invoke<unknown>(command, args, options)
+      : invoke<unknown>(command, args));
     return schema.parse(raw);
   } catch (err) {
     if (err instanceof ZodError) {
@@ -842,6 +849,8 @@ export async function createAvailabilityBlock(
     "create_availability_block",
     { input },
     PersonnelAvailabilityBlockSchema,
+    // The overlap confirmation is a question the form asks, not a failure: no global toast.
+    { notifyOnError: false },
   );
   return row as PersonnelAvailabilityBlock;
 }
@@ -853,18 +862,25 @@ export async function updateAvailabilityBlock(
     "update_availability_block",
     { input },
     PersonnelAvailabilityBlockSchema,
+    { notifyOnError: false },
   );
   return row as PersonnelAvailabilityBlock;
 }
 
-export async function deleteAvailabilityBlock(id: number): Promise<void> {
-  await invoke("delete_availability_block", { id });
+export async function deleteAvailabilityBlock(
+  id: number,
+  expectedRowVersion: number,
+): Promise<void> {
+  await invoke("delete_availability_block", { id, expectedRowVersion });
 }
 
-export async function endAvailabilityBlock(id: number): Promise<PersonnelAvailabilityBlock> {
+export async function endAvailabilityBlock(
+  id: number,
+  expectedRowVersion: number,
+): Promise<PersonnelAvailabilityBlock> {
   const row = await invokeParsed(
     "end_availability_block",
-    { id },
+    { id, expectedRowVersion },
     PersonnelAvailabilityBlockSchema,
   );
   return row as PersonnelAvailabilityBlock;

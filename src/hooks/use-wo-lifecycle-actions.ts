@@ -6,6 +6,7 @@
 import { useCallback, useState } from "react";
 
 import { useSession } from "@/hooks/use-session";
+import { appErrorReason } from "@/lib/app-error";
 import {
   approvePlanning,
   evaluateWoReadiness,
@@ -16,7 +17,6 @@ import {
   submitWo,
 } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrder, WoReadinessCheck, WoReadinessResult } from "@shared/ipc-types";
 
 function blockingMessagesFromReport(result: WoReadinessResult): string[] {
@@ -55,7 +55,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
     } catch (e) {
       setReadinessReport(null);
       setReadinessBlocking([]);
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
       return null;
     }
   }, [wo]);
@@ -72,7 +72,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
       });
       await refreshActiveWo();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
     } finally {
       setBusy(false);
     }
@@ -102,7 +102,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
       await refreshActiveWo();
       return { ok: true };
     } catch (e) {
-      const message = toErrorMessage(e);
+      const message = appErrorReason(e);
       setError(message);
       return { ok: false, blocking: [message] };
     } finally {
@@ -123,7 +123,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
       await refreshActiveWo();
       await refreshReadiness();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
     } finally {
       setBusy(false);
     }
@@ -143,7 +143,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
         });
         await refreshActiveWo();
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(appErrorReason(e));
       } finally {
         setBusy(false);
       }
@@ -163,7 +163,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
       });
       await refreshActiveWo();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(appErrorReason(e));
     } finally {
       setBusy(false);
     }
@@ -184,7 +184,7 @@ export function useWoLifecycleActions(wo: WorkOrder | null) {
         });
         await refreshActiveWo();
       } catch (e) {
-        setError(toErrorMessage(e));
+        setError(appErrorReason(e));
       } finally {
         setBusy(false);
       }

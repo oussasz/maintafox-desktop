@@ -11,6 +11,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { ErrorState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusChip } from "@/components/ui/status-chip";
+import { useFormatters } from "@/hooks/use-formatters";
 import {
   type QualificationOverrideRow,
   listQualificationOverrides,
@@ -21,6 +22,7 @@ import { GAP_STATUS_TONE } from "./qualification-tones";
 
 export function OverrideLogPanel({ refreshKey = 0 }: { refreshKey?: number }) {
   const { t, i18n } = useTranslation("training");
+  const { formatDate } = useFormatters();
   const [rows, setRows] = useState<QualificationOverrideRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -80,7 +82,7 @@ export function OverrideLogPanel({ refreshKey = 0 }: { refreshKey?: number }) {
                   tone={GAP_STATUS_TONE[g.status]}
                   dot
                 />
-                <span className="text-xs">{describeGap(t, g)}</span>
+                <span className="text-xs">{describeGap(t, g, formatDate)}</span>
               </li>
             ))}
           </ul>
@@ -93,7 +95,7 @@ export function OverrideLogPanel({ refreshKey = 0 }: { refreshKey?: number }) {
         cell: ({ row }) => row.original.approved_by_name ?? "—",
       },
     ],
-    [t, fmt],
+    [t, fmt, formatDate],
   );
 
   if (error && rows.length === 0)

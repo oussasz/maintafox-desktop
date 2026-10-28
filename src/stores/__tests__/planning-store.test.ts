@@ -193,6 +193,12 @@ function makeBreakIn(overrides: Partial<ScheduleBreakIn> = {}): ScheduleBreakIn 
     approved_by_display_name: "Admin",
     old_assignee_name: null,
     new_assignee_name: null,
+    approver_signed_at: TS,
+    forced_checks: [],
+    old_team_id: 3,
+    new_team_id: 3,
+    sync_refused_at: null,
+    sync_refused_reason: null,
     ...overrides,
   };
 }
@@ -693,7 +699,7 @@ describe("planning-store", () => {
       vi.restoreAllMocks();
     });
 
-    it("requests an A3 PDF (team id null when omitted) and downloads it via a temporary link", async () => {
+    it("requests an A4 PDF by default (team id null when omitted) and downloads it via a temporary link", async () => {
       vi.mocked(exportPlanningGanttPdf).mockResolvedValueOnce({
         file_name: "gantt.pdf",
         mime_type: "application/pdf",
@@ -709,7 +715,7 @@ describe("planning-store", () => {
         period_start: "2026-10-01",
         period_end: "2026-10-07",
         team_id: null,
-        paper_size: "A3",
+        paper_size: "A4",
       });
       expect(createObjectURL).toHaveBeenCalledTimes(1);
       const blob = createObjectURL.mock.calls[0]?.[0];
@@ -738,7 +744,7 @@ describe("planning-store", () => {
       });
       vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-      await usePlanningStore.getState().exportGanttPdf("a", "b", 3);
+      await usePlanningStore.getState().exportGanttPdf("a", "b", 3, "A3");
 
       expect(exportPlanningGanttPdf).toHaveBeenCalledWith({
         period_start: "a",

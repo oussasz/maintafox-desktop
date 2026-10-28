@@ -260,7 +260,7 @@ async fn clone_published_values_into_draft(
             }
             None => {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "Impossible de cloner le jeu : parent_id={old_parent_id} \
+                    "GATE_REF_SET_ORPHAN_PARENT: Impossible de cloner le jeu : parent_id={old_parent_id} \
                      introuvable dans le jeu publié (hiérarchie orpheline)."
                 )]));
             }
@@ -360,7 +360,7 @@ async fn assert_no_active_draft(db: &DatabaseConnection, domain_id: i64) -> AppR
         .await?;
     if row.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Un brouillon existe déjà pour ce domaine. \
+            "GATE_REF_DRAFT_EXISTS: Un brouillon existe déjà pour ce domaine. \
              Finalisez ou supprimez le brouillon existant avant d'en créer un nouveau."
                 .into(),
         ]));
@@ -452,7 +452,7 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de supprimer un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_DELETABLE: Impossible de supprimer un jeu en statut '{}'. \
              Seul un brouillon ('draft') peut être abandonné.",
             set.status
         )]));
@@ -493,12 +493,54 @@ pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResul
 
     if deleted.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération).".into(),
+            "GATE_RECORD_CHANGED_ELSEWHERE: Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération).".into(),
         ]));
     }
 
     txn.commit().await?;
     Ok(())
+}
+
+/// One blocking issue of the validation engine as a refusal line: coded (`GATE_REF_ISSUE_*`, the
+/// value code as the `value` parameter) so the screen says it in the user's language; the
+/// backend sentence follows the code as its technical fallback. An issue without a code of its
+/// own, or a value code that does not fit the parameter alphabet, gets the generic
+/// `GATE_REF_ISSUE_BLOCKING` (the validation report names the value).
+fn blocking_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
+    let code = match issue.check.as_str() {
+        "duplicate_code" => "GATE_REF_ISSUE_DUPLICATE_CODE",
+        "missing_label" => "GATE_REF_ISSUE_MISSING_LABEL",
+        "hierarchy_cycle" => "GATE_REF_ISSUE_HIERARCHY_CYCLE",
+        "orphan_parent" => "GATE_REF_ISSUE_ORPHAN_PARENT",
+        "parent_required" => "GATE_REF_ISSUE_PARENT_REQUIRED",
+        "invalid_permit_rule" => "GATE_REF_ISSUE_PERMIT_RULE",
+        "work_order_type_without_nature" => "GATE_REF_ISSUE_OT_TYPE_NO_NATURE",
+        "invalid_color_hex" => "GATE_REF_ISSUE_COLOR_HEX",
+        "invalid_external_code_pattern" => "GATE_REF_ISSUE_EXTERNAL_PATTERN",
+        "invalid_external_code" => "GATE_REF_ISSUE_EXTERNAL_CODE",
+        "protected_deactivation_no_migration" => "GATE_REF_ISSUE_PROTECTED_NO_MIGRATION",
+        "invalid_unit" => "GATE_REF_ISSUE_INVALID_UNIT",
+        "invalid_nature_tag" => "GATE_REF_ISSUE_INVALID_NATURE_TAG",
+        _ => return unnamed_issue_line(issue),
+    };
+    match issue.value_code.as_deref() {
+        Some(value)
+            if !value.is_empty()
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/')) =>
+        {
+            format!("{code}:value={value}: {}", issue.message)
+        }
+        _ => unnamed_issue_line(issue),
+    }
+}
+
+fn unnamed_issue_line(issue: &super::validation::ReferenceValidationIssue) -> String {
+    match &issue.value_code {
+        Some(code) => format!("GATE_REF_ISSUE_BLOCKING: {code} : {}", issue.message),
+        None => format!("GATE_REF_ISSUE_BLOCKING: {}", issue.message),
+    }
 }
 
 /// Transitions a draft set to validated.
@@ -513,7 +555,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de valider un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_VALIDATABLE: Impossible de valider un jeu en statut '{}'. \
              Seul un brouillon ('draft') peut être validé.",
             set.status
         )]));
@@ -525,7 +567,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
     if result.blocking_count > 0 {
         // Name each problem (with the value code) so the user can fix it without a report id.
         let mut messages = vec![format!(
-            "Le jeu contient {} problème(s) bloquant(s). Corrigez-les avant de valider.",
+            "GATE_REF_SET_BLOCKING_ISSUES:count={0}: Le jeu contient {0} problème(s) bloquant(s). Corrigez-les avant de valider.",
             result.blocking_count
         )];
         messages.extend(
@@ -533,10 +575,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
                 .issues
                 .iter()
                 .filter(|i| i.severity == super::validation::IssueSeverity::Blocking)
-                .map(|i| match &i.value_code {
-                    Some(code) => format!("{code} : {}", i.message),
-                    None => i.message.clone(),
-                }),
+                .map(blocking_issue_line),
         );
         return Err(AppError::ValidationFailed(messages));
     }
@@ -558,7 +597,7 @@ pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -
 /// - Publishing automatically supersedes any previously published set in the
 ///   same domain (at most one published set per domain).
 /// - Sets `published_at` timestamp.
-pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -> AppResult<ReferenceSet> {
+pub async fn publish_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
     super::audience::assert_domain_editable(&domain)?;
@@ -566,7 +605,7 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
 
     if set.status != SET_STATUS_VALIDATED {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de publier un jeu en statut '{}'. \
+            "GATE_REF_SET_NOT_PUBLISHABLE: Impossible de publier un jeu en statut '{}'. \
              Seul un jeu validé ('validated') peut être publié.",
             set.status
         )]));
@@ -598,9 +637,11 @@ pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -
     if super::currencies::is_currency_domain(&domain.code) {
         super::currencies::mirror_into_lookup(&txn).await?;
     }
+    // A permit rule list published: the work orders not started yet that it matches get it, in the
+    // same transaction (`permit::requirement_rules::after_rule_list_change`; nothing for another list).
+    crate::permit::requirement_rules::after_rule_list_change(&txn, set_id, Some(actor_id)).await?;
 
     txn.commit().await?;
-
     get_set_by_id(db, set_id).await
 }
 
@@ -631,7 +672,7 @@ pub async fn supersede_previous_published(
 pub fn assert_set_is_draft(set: &ReferenceSet) -> AppResult<()> {
     if set.status != SET_STATUS_DRAFT {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons ('draft') peuvent être modifiés.",
             set.status
         )]));
@@ -645,7 +686,7 @@ pub fn assert_set_is_editable(set: &ReferenceSet) -> AppResult<()> {
     match set.status.as_str() {
         SET_STATUS_DRAFT | SET_STATUS_VALIDATED => Ok(()),
         _ => Err(AppError::ValidationFailed(vec![format!(
-            "Impossible de modifier un jeu en statut '{}'. \
+            "GATE_REF_SET_DRAFT_OR_VALIDATED_ONLY:status={0}: Impossible de modifier un jeu en statut '{0}'. \
              Seuls les brouillons et les jeux validés peuvent être modifiés.",
             set.status
         )])),
@@ -720,5 +761,39 @@ mod tests {
         };
         assert!(assert_set_is_draft(&set).is_err());
         assert!(assert_set_is_editable(&set).is_err());
+    }
+
+    fn issue(check: &str, value_code: Option<&str>) -> super::super::validation::ReferenceValidationIssue {
+        super::super::validation::ReferenceValidationIssue {
+            check: check.to_string(),
+            message: "message".to_string(),
+            severity: super::super::validation::IssueSeverity::Blocking,
+            value_id: Some(1),
+            value_code: value_code.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_blocking_issue_is_sent_with_its_code_and_value() {
+        assert_eq!(
+            blocking_issue_line(&issue("duplicate_code", Some("PUMP-1"))),
+            "GATE_REF_ISSUE_DUPLICATE_CODE:value=PUMP-1: message"
+        );
+        assert_eq!(
+            blocking_issue_line(&issue("invalid_unit", Some("KG"))),
+            "GATE_REF_ISSUE_INVALID_UNIT:value=KG: message"
+        );
+    }
+
+    #[test]
+    fn an_issue_without_a_usable_code_gets_the_generic_code() {
+        assert_eq!(
+            blocking_issue_line(&issue("duplicate_code", Some("a b"))),
+            "GATE_REF_ISSUE_BLOCKING: a b : message"
+        );
+        assert_eq!(
+            blocking_issue_line(&issue("unknown_check", None)),
+            "GATE_REF_ISSUE_BLOCKING: message"
+        );
     }
 }

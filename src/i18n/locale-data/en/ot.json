@@ -16,6 +16,7 @@
   "permitRule": {
     "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
     "requiredByNoType": "Permit required by rule {{rule}}.",
+    "severalTypes": "Several permit rules: {{types}}",
     "requiredShort": "Required (rule {{rule}})",
     "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
     "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",
@@ -26,6 +27,11 @@
     "reason": "Reason",
     "reasonHint": "At least {{min}} characters: why the rule does not apply to this job.",
     "cleared": "Requirement of rule {{rule}} cleared on {{date}}: {{reason}}"
+  },
+  "permitSafety": {
+    "clearBody": "{{code}} will be able to start without a permit although the originating request reported a safety risk. The reason, date and your name are kept on the work order and in its history.",
+    "reasonHint": "At least {{min}} characters: why this job needs no permit.",
+    "cleared": "Safety request requirement cleared on {{date}}: {{reason}}"
   },
   "shutdownRequirement": {
     "sectionTitle": "Equipment shutdown",
@@ -88,6 +94,44 @@
     "repair.swapDowntime": "Swap segment start/end (negative duration)",
     "repair.closeAtStart": "Close segment at start time",
     "repair.trimOverlap": "Trim first segment end to remove overlap",
+    "severity": { "error": "Error", "warning": "Warning" },
+    "code": {
+      "FK_ORPHAN_FAILURE_MODE": "Failure mode not found",
+      "WO_DOWNTIME_NEGATIVE_DURATION": "Downtime with negative duration",
+      "WO_DOWNTIME_UNCLOSED": "Downtime not closed",
+      "WO_DOWNTIME_SUM_EXCEEDS_WINDOW": "Downtime longer than the work order",
+      "WO_DOWNTIME_OVERLAP": "Overlapping downtime",
+      "PERMIT_SITE_NOT_EQUIPMENT_SITE": "Permit site differs from the equipment site"
+    },
+    "domain": {
+      "failure_coding": "Failure coding",
+      "downtime": "Downtime",
+      "wo_closeout": "Work order close-out",
+      "permit_site": "Permit site"
+    },
+    "recordClass": {
+      "wo_failure_details": "Failure detail",
+      "work_order_downtime_segments": "Downtime segment",
+      "work_orders": "Work order",
+      "work_permits": "Work permit"
+    },
+    "detail": {
+      "work_order_id": "WO no.",
+      "failure_mode_id": "Failure mode no.",
+      "segment_id": "Segment no.",
+      "segment_id_a": "Segment A no.",
+      "segment_id_b": "Segment B no.",
+      "segment_sum_hours": "Total downtime (h)",
+      "window_hours": "Work order duration (h)",
+      "permit_code": "Permit",
+      "status": "Permit status",
+      "equipment_code": "Equipment",
+      "linked_work_order_id": "Linked WO no."
+    },
+    "approverPick": "Approver (someone other than you)",
+    "approverNoneAvailable": "No approver available: active staff with an account, other than you.",
+    "approverNone": "Choose a person",
+    "unknownCode": "Unlisted finding",
     "diagnosticTarget": "Diagnostic · {{domain}} · {{recordClass}}"
   },
   "list": {
@@ -107,6 +151,8 @@
       "scopeNotClosed": "Not yet closed",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
+      "completed": "Completed in the period",
+      "completedValue": "{{from}} to {{to}}",
       "mixValue": {
         "planned": "Planned (preventive and improvement)",
         "reactive": "Reactive (corrective)",
@@ -185,6 +231,7 @@
     "completed": "Completed",
     "closed": "Closed",
     "cancelled": "Cancelled",
+    "unknown": "Unknown status",
     "awaitingApproval": "Awaiting approval",
     "planned": "Planned",
     "released": "Released",
@@ -245,10 +292,10 @@
     "shiftNone": "No shift",
     "shiftOption": "{{label}} · {{window}} · {{hours}} h · {{members}} pers.",
     "shiftCurrentNotOffered": "{{label}} {{window}} (the team does not work it on this day)",
-    "shiftLegacy": "Old shift: {{label}}. Choose a shift of the team's Classe horaire to re-plan.",
+    "shiftLegacy": "Old shift: {{label}}. Choose a shift of the team's schedule class to re-plan.",
     "shiftNoTeam": "Assign the team to choose one of its shifts.",
     "shiftNoDay": "Enter the planned start to see the team's shifts that day.",
-    "shiftNoShift": "Nobody of the team has a Classe horaire shift on this day.",
+    "shiftNoShift": "Nobody of the team has a schedule class shift on this day.",
     "shiftOpenTeam": "Open the team",
     "shiftLoadFailed": "The team's shifts could not be loaded.",
     "shiftForNewTeam": "Shifts of the team being assigned: the choice is saved with the assignment.",
@@ -454,6 +501,18 @@
     "reservations": "Stock reservations",
     "releaseReservation": "Release",
     "taskDone": "Done",
+    "taskMandatory": "Mandatory",
+    "taskFindingNote": "Finding",
+    "taskFindingNotePlaceholder": "What was found",
+    "taskFollowUp": "Follow-up WO",
+    "taskFollowUpPlaceholder": "Follow-up WO number (optional)",
+    "taskFollowUpNotFound": "No work order \"{{code}}\"",
+    "taskNokEvidenceHint": "Mandatory NOK task: enter the finding or the follow-up WO.",
+    "reopenTask": "Reopen task",
+    "reopenTaskComment": "Reason for reopening",
+    "reopenTaskCommentPlaceholder": "Why the task is reopened",
+    "reopenTaskConfirm": "Reopen",
+    "reopenTaskCancel": "Cancel",
     "downtimeType": "Type",
     "downtimeOpen": "Open",
     "validationHint": "When execution is complete, use Mark complete in the footer.",
@@ -512,6 +571,7 @@
     "reasonFallback": "Reason #{{id}}",
     "error": {
       "startWo": "Unable to start work order.",
+      "reopenTask": "Could not reopen the task.",
       "resumeWo": "Unable to resume work order.",
       "submitDelay": "Unable to submit delay action.",
       "intervenerId": "Intervener ID is required.",
@@ -663,6 +723,7 @@
       "taskAdded": "Task added: {{label}}",
       "taskCompleted": "Task completed: {{label}}",
       "taskCancelled": "Task cancelled: {{label}}",
+      "taskReopened": "Task reopened: {{label}} (previous result: {{previous_result}})",
       "downtimeOpened": "Downtime opened",
       "downtimeClosed": "Downtime closed",
       "toolAdded": "Tool added: {{label}}",
@@ -766,6 +827,9 @@
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
     "actions": {
+      "task_reopened": "Task reopened",
+      "labor_closed_by_cancellation": "Open labour closed by the cancellation",
+      "labor_closed_by_closeout": "Open labour closed by the close-out",
       "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
@@ -990,8 +1054,6 @@
     "columnOpen": "Open",
     "columnExecuting": "Executing",
     "columnCompleted": "Completed",
-    "columnClosed": "Closed",
-    "columnCancelled": "Cancelled",
     "emptyDraft": "No draft work orders",
     "emptyPlanning": "No work orders in planning",
     "emptyReady": "No work orders ready to start",
@@ -1003,6 +1065,7 @@
     "unassigned": "Unassigned",
     "loadMore": "Load more ({{count}} remaining)",
     "statusFromDetailHint": "Click a card to open the work order: status changes are made from its detail, where each step checks its conditions (permit, parts, reasons).",
+    "archiveOnlyNotice": "Closed and cancelled work orders have no lane: they are in the Archive section below the board.",
     "transitionNotAllowed": "Cannot move \"{{code}}\" from \"{{from}}\" to {{to}}. Transition not allowed."
   },
   "print": {
@@ -1066,6 +1129,10 @@
     "button": "Print",
     "title": "WO Print Sheet"
   },
+  "deisolation": {
+    "badge": "De-isolation to do",
+    "title": "Completed with a lock still fitted under its permits: the equipment stays down and its downtime runs until the removal of the last lock is verified."
+  },
   "lifecycle": {
     "title": "PRD lifecycle state (derived from the work order's facts)",
     "draft": "Draft",
@@ -1080,5 +1147,30 @@
     "technically_verified": "Technically verified",
     "closed": "Closed",
     "cancelled": "Cancelled"
+  },
+  "retiredEquipment": {
+    "title": "Retired equipment — to review",
+    "intro": "These work orders and requests are open while their equipment is retired (decommissioned or scrapped): the two crossed in synchronisation. Cancel the work order or reject the request with a reason, or return the equipment to service.",
+    "kind": {
+      "work_order": "WO",
+      "intervention_request": "Request"
+    },
+    "equipment": "Equipment {{code}} {{name}}",
+    "open": "Open",
+    "history": "History ({{count}})",
+    "historyLink": "Retired equipment: history ({{count}})",
+    "closure": {
+      "wo_closed": "Closed by the close of work order {{code}}",
+      "wo_cancelled": "Closed by the cancellation of work order {{code}}",
+      "di_rejected": "Closed by the rejection of request {{code}}",
+      "di_closed": "Closed by the closing of request {{code}}",
+      "di_converted": "Closed by the conversion of request {{code}} into work order {{wo}} (the work order has its own case)",
+      "recommissioned": "Closed by the return to service of equipment {{equipment}}",
+      "other": "Closed: {{code}} is no longer open on retired equipment"
+    },
+    "closedBy": "{{who}}, {{when}}",
+    "closedAt": "{{when}}",
+    "note": "Reason: {{note}}",
+    "loadFailed": "Could not load the work orders and requests on retired equipment."
   }
 }

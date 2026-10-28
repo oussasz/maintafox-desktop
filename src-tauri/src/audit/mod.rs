@@ -17,6 +17,10 @@ pub mod event_type {
     pub const LOGOUT: &str = "logout";
     pub const SESSION_EXPIRED: &str = "session.expired";
     pub const SESSION_IDLE_LOCKED: &str = "session.idle_locked";
+    /// A session ended by the stored-state check (`detail.reason`: why).
+    pub const SESSION_CLOSED: &str = "session.closed";
+    /// The account's password date is later than this device's clock; the session is kept.
+    pub const SESSION_CLOCK_ANOMALY: &str = "session.clock_anomaly";
     pub const DEVICE_TRUST_REGISTERED: &str = "device.trust_registered";
     pub const DEVICE_TRUST_REVOKED: &str = "device.trust_revoked";
     pub const STEP_UP_SUCCESS: &str = "step_up.success";
@@ -58,8 +62,25 @@ pub struct AuditEvent<'a> {
 /// Any DB error is logged at `error!` level but **never propagated** — the
 /// caller always succeeds regardless of audit write outcome.
 pub async fn emit(db: &sea_orm::DatabaseConnection, event: AuditEvent<'_>) {
-    let details_json = build_compat_details_json(&event);
-    let input = writer::AuditEventInput {
+    if let Err(err) = writer::write_audit_event(db, compat_input(&event)).await {
+        tracing::error!(
+            event_type = event.event_type,
+            error = %err,
+            "audit::emit compatibility writer failed"
+        );
+    }
+}
+
+/// The same event as [`emit`] (same action, target, result and details), written inside the
+/// caller's transaction: committed or rolled back with the change it records, and a failed write
+/// is returned to the caller.
+pub async fn emit_in(conn: &impl sea_orm::ConnectionTrait, event: AuditEvent<'_>) -> crate::errors::AppResult<i64> {
+    writer::write_audit_event_in(conn, compat_input(&event)).await
+}
+
+fn compat_input(event: &AuditEvent<'_>) -> writer::AuditEventInput {
+    let details_json = build_compat_details_json(event);
+    writer::AuditEventInput {
         action_code: event.event_type.to_string(),
         target_type: event.entity_type.map(ToOwned::to_owned),
         target_id: event.entity_id.map(ToOwned::to_owned),
@@ -70,14 +91,6 @@ pub async fn emit(db: &sea_orm::DatabaseConnection, event: AuditEvent<'_>) {
         after_hash: None,
         retention_class: "standard".to_string(),
         details_json: Some(details_json),
-    };
-
-    if let Err(err) = writer::write_audit_event(db, input).await {
-        tracing::error!(
-            event_type = event.event_type,
-            error = %err,
-            "audit::emit compatibility writer failed"
-        );
     }
 }
 

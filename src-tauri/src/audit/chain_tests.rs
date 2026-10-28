@@ -737,3 +737,101 @@ async fn other_text_own(db: &DatabaseConnection) -> Option<String> {
     .try_get_by_index::<Option<String>>(0)
     .expect("text")
 }
+
+/// Hash stored for an audit event.
+async fn stored_hash(db: &DatabaseConnection, id: i64) -> String {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT chain_hash FROM audit_events WHERE id = ?",
+        [id.into()],
+    ))
+    .await
+    .expect("query")
+    .expect("row")
+    .try_get_by_index::<String>(0)
+    .expect("hash")
+}
+
+/// The audits of a work-order type's nature, of a qualification requirement and of an absence
+/// block's critical flag travel (sealed over their sync payload); the audits of a session of this
+/// PC stay on it (local form). An absence block deleted after its audit, or a type value deleted
+/// with its discarded draft set, leaves the chain intact: the audit names it by its sync id, which
+/// does not depend on the row still existing.
+#[tokio::test]
+async fn audits_of_types_requirements_and_absence_blocks_travel_and_session_audits_stay() {
+    let db = started_db().await;
+    let mut factory = RowFactory::new();
+    let wo_type = factory.create(&db, "reference_values").await.expect("type");
+    let requirement = factory
+        .create(&db, "qualification_requirements")
+        .await
+        .expect("requirement");
+    let block = factory
+        .create(&db, "personnel_availability_blocks")
+        .await
+        .expect("block");
+    let audit = |target_type: &str, target_id: String| AuditEventInput {
+        target_type: Some(target_type.to_string()),
+        target_id: Some(target_id),
+        ..event("test.target", None, None)
+    };
+    let travelling = [
+        audit("work_order_type", wo_type.entity_sync_id.clone()),
+        audit("qualification_requirement", requirement.rowid.to_string()),
+        audit("personnel_availability_block", block.entity_sync_id.clone()),
+    ];
+    for input in travelling {
+        let what = input.target_type.clone();
+        let id = write_audit_event(&db, input).await.expect("write");
+        let hash = stored_hash(&db, id).await;
+        assert!(!hash.starts_with("L"), "{what:?} travels: {hash}");
+    }
+    let session = write_audit_event(&db, audit("app_session", "7".to_string()))
+        .await
+        .expect("write session audit");
+    let hash = stored_hash(&db, session).await;
+    assert!(
+        hash.starts_with(crate::audit::chain::LOCAL_FORM_PREFIX),
+        "a session audit stays on its PC: {hash}"
+    );
+
+    exec(
+        &db,
+        "DELETE FROM personnel_availability_blocks WHERE id = ?",
+        vec![block.rowid.into()],
+    )
+    .await;
+    // The type's value was in a draft set, discarded: the value is hard-deleted.
+    let set_id = scalar_i64(
+        &db,
+        "SELECT set_id FROM reference_values WHERE id = ?",
+        vec![wo_type.rowid.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "UPDATE reference_sets SET status = 'draft' WHERE id = ?",
+        vec![set_id.into()],
+    )
+    .await;
+    // A plant list that takes drafts, as WORK.ORDER_TYPES does.
+    exec(
+        &db,
+        "UPDATE reference_domains SET audience = 'company', governance_category = 'controlled_catalog' \
+         WHERE id = (SELECT domain_id FROM reference_sets WHERE id = ?)",
+        vec![set_id.into()],
+    )
+    .await;
+    crate::reference::sets::discard_draft_set(&db, set_id)
+        .await
+        .expect("discard the draft set");
+    let left = scalar_i64(
+        &db,
+        "SELECT COUNT(*) FROM reference_values WHERE id = ?",
+        vec![wo_type.rowid.into()],
+    )
+    .await;
+    assert_eq!(left, 0, "the type's value is deleted with its draft set");
+    let report = verify_audit_chain(&db).await.expect("verify");
+    assert!(report.intact, "{report:?}");
+}

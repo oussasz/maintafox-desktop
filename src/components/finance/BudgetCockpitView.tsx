@@ -44,11 +44,15 @@ export interface BudgetCockpitViewProps {
   onAnalyseVariance: (row: BudgetCockpitRow, cockpit: BudgetCockpit) => void;
 }
 
-/** CSV of the cockpit rows (semicolon separated, figures unformatted for spreadsheets). */
+/**
+ * CSV of the cockpit rows (semicolon separated). Figures use the app language's decimal
+ * separator without grouping (a French spreadsheet reads "200,00" as a number, "200.00" as text).
+ */
 export function cockpitCsv(
   cockpit: BudgetCockpit,
   header: string[],
   bucketLabel: (b: string) => string,
+  formatAmount: (value: number) => string,
 ): string {
   const esc = (v: string) => (/[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const lines = [header.map(esc).join(";")];
@@ -58,11 +62,11 @@ export function cockpitCsv(
         r.cost_center_code,
         r.cost_center_name,
         bucketLabel(r.bucket),
-        r.budget.toFixed(2),
-        r.committed.toFixed(2),
-        r.actual.toFixed(2),
-        r.forecast.toFixed(2),
-        r.variance.toFixed(2),
+        formatAmount(r.budget),
+        formatAmount(r.committed),
+        formatAmount(r.actual),
+        formatAmount(r.forecast),
+        formatAmount(r.variance),
       ]
         .map(esc)
         .join(";"),
@@ -82,7 +86,7 @@ export function BudgetCockpitView({
   onAnalyseVariance,
 }: BudgetCockpitViewProps) {
   const { t } = useTranslation("budget");
-  const { formatCurrency, formatPercent } = useFormatters();
+  const { formatCurrency, formatPercent, formatDecimalInput } = useFormatters();
   const { can } = usePermissions();
   const [cockpit, setCockpit] = useState<BudgetCockpit | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -217,7 +221,7 @@ export function BudgetCockpitView({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 text-xs"
+                  className="h-10 text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
                     analyseRef.current(r, cockpit);
@@ -251,6 +255,7 @@ export function BudgetCockpitView({
         t("cockpit.col.variance"),
       ],
       bucketLabel,
+      (n) => formatDecimalInput(n, { decimals: 2, fixed: true }),
     );
     try {
       const path = await saveBlobWithDialog(
@@ -319,7 +324,7 @@ export function BudgetCockpitView({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs"
+              className="h-10 text-xs"
               onClick={() => onNavigate("settlements")}
             >
               {t("cockpit.notice.openPending")}
@@ -489,6 +494,13 @@ function ConsumptionBar({
 function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: number) => string }) {
   const { t } = useTranslation("budget");
   const max = Math.max(1, ...cockpit.months.map((m) => Math.max(m.budget, m.actual)));
+  // Shown on hover and read by screen readers: the amounts behind the two bars of a month.
+  const monthText = (m: BudgetCockpit["months"][number]) =>
+    t("burn.monthAria", {
+      month: t(`month.${m.calendar_month}`),
+      budget: money(m.budget),
+      actual: money(m.actual),
+    });
   return (
     <section
       aria-labelledby="burn-title"
@@ -515,11 +527,8 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
             <li
               key={m.period_month}
               className="flex h-full flex-col justify-end"
-              aria-label={t("burn.monthAria", {
-                month: t(`month.${m.calendar_month}`),
-                budget: money(m.budget),
-                actual: money(m.actual),
-              })}
+              title={monthText(m)}
+              aria-label={monthText(m)}
             >
               <div className="flex flex-1 items-end justify-center gap-0.5">
                 <div

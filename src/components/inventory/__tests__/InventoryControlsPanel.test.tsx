@@ -8,6 +8,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
+import frInventory from "@/i18n/locale-data/fr/inventory.json";
 
 const mocks = vi.hoisted(() => ({
   approveInventoryCountLine: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   runInventoryReconciliation: vi.fn(),
   transitionInventoryCountSession: vi.fn(),
   upsertInventoryCountLine: vi.fn(),
+  getInventoryCountTolerance: vi.fn(),
 }));
 
 const lookupMocks = vi.hoisted(() => ({ getLookupValues: vi.fn() }));
@@ -84,6 +86,9 @@ function countLine(overrides: Record<string, unknown> = {}) {
     approved_by_name: null,
     approved_at: null,
     approval_note: null,
+    counted_by_id: 7,
+    counted_by_name: "Samir",
+    self_approved: 0,
     posted_transaction_id: null,
     reversed_transaction_id: null,
     row_version: 1,
@@ -157,6 +162,11 @@ describe("InventoryControlsPanel", () => {
     mocks.listInventoryTransactions.mockResolvedValue([]);
     mocks.createInventoryCountSession.mockResolvedValue(session());
     mocks.approveInventoryCountLine.mockResolvedValue(countLine());
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: null,
+      self_approval_allowed: false,
+    });
   });
 
   it("creates a count session with the chosen scope; the tolerance comes from the settings", async () => {
@@ -192,7 +202,7 @@ describe("InventoryControlsPanel", () => {
     await selectSession("CC-100 (Draft)");
     expect(await screen.findByTestId("inv-cc-session-threshold")).toHaveTextContent(
       // Number formatted in the plant's locale (the formatter's locale here is French).
-      /This session's critical variance: 2[.,]5$/,
+      /former rule \(a quantity\): 2[.,]5$/,
     );
   });
 
@@ -238,6 +248,35 @@ describe("InventoryControlsPanel", () => {
     expect(mocks.approveInventoryCountLine).toHaveBeenCalledTimes(1);
   });
 
+  it("approves the count only once every variance is approved", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine()]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    await screen.findByText("A-21");
+    expect(screen.getByRole("button", { name: "Approve count" })).toBeDisabled();
+  });
+
+  it("offers to approve the count once its variances are approved", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({
+        approved_by_id: 42,
+        approved_by_name: "Karim Benali",
+        approved_at: TS,
+        approval_note: "Recounted twice",
+      }),
+    ]);
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    await screen.findByText("A-21");
+    expect(screen.getByRole("button", { name: "Approve count" })).toBeEnabled();
+  });
+
   it("shows the reviewer's name, never a raw user id", async () => {
     mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "approved" })]);
     mocks.listInventoryCountLines.mockResolvedValue([
@@ -255,6 +294,189 @@ describe("InventoryControlsPanel", () => {
 
     expect(await screen.findByText(/Approved by Karim Benali/)).toBeInTheDocument();
     expect(screen.queryByText(/#42/)).not.toBeInTheDocument();
+  });
+
+  it("enters a line again against the version shown (AU-68)", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "counting" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine({ row_version: 4 })]);
+    mocks.upsertInventoryCountLine.mockResolvedValue(countLine({ row_version: 5 }));
+
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Counting)");
+    await screen.findByText("A-21");
+
+    fireEvent.click(screen.getByLabelText("Article"));
+    fireEvent.click(await screen.findByText("A-21 - Bearing"));
+    fireEvent.click(screen.getByLabelText("Location"));
+    fireEvent.click((await screen.findAllByText("MAIN/BIN")).at(-1) as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Record count" }));
+
+    await waitFor(() =>
+      expect(mocks.upsertInventoryCountLine).toHaveBeenCalledWith(
+        expect.objectContaining({ article_id: 21, location_id: 10, expected_row_version: 4 }),
+      ),
+    );
+  });
+
+  it("states the four-eyes tolerance: blank is 'not set', never zero", async () => {
+    renderPanel();
+    expect(await screen.findByTestId("inv-cc-four-eyes-tolerance")).toHaveTextContent(
+      "Four-eyes tolerance: not set — every variance needs a second person.",
+    );
+  });
+
+  it("states the thresholds that are set", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: 5,
+      self_approval_allowed: false,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("inv-cc-four-eyes-tolerance")).toHaveTextContent(
+        "a variance is critical when it is above 5 % of the system quantity.",
+      ),
+    );
+  });
+
+  it("states the value threshold in the plant currency and joins both thresholds", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: 1250,
+      percent_threshold: 5,
+      self_approval_allowed: false,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("inv-cc-four-eyes-tolerance").textContent ?? "").toMatch(
+        /its value is above .*1.?250.* or it is above 5 % of the system quantity\./,
+      ),
+    );
+    // French joins them with "ou" and agrees "non définie" with "tolérance".
+    expect(frInventory.controls.fourEyes.or).toBe(" ou ");
+    expect(frInventory.controls.fourEyes.notSet).toMatch(/: non définie —/);
+  });
+
+  it("never says 'approved by someone else' when the site lifted four-eyes", async () => {
+    mocks.getInventoryCountTolerance.mockResolvedValue({
+      value_threshold: null,
+      percent_threshold: null,
+      self_approval_allowed: true,
+    });
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "submitted" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([countLine({ id: 1 })]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Submitted)");
+    const row = (await screen.findByText("A-21")).closest("tr");
+    if (!row) throw new Error("expected the A-21 row");
+    await waitFor(() => expect(mocks.getInventoryCountTolerance).toHaveBeenCalled());
+    fireEvent.click(within(row).getByRole("button", { name: "Approve variance" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("the counter may approve it (self-approval)");
+    expect(dialog).not.toHaveTextContent("approved by someone else");
+    expect(frInventory.controls.approval.aboveToleranceOptOut).not.toMatch(/autre personne/);
+  });
+
+  it("names the counter and flags a self-approval", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "approved" })]);
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({
+        approved_by_id: 7,
+        approved_by_name: "Samir",
+        approved_at: TS,
+        approval_note: "Recounted twice",
+        self_approved: 1,
+      }),
+    ]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Approved)");
+    expect(await screen.findByText("Self-approval")).toBeInTheDocument();
+    expect(screen.getAllByText("Samir").length).toBeGreaterThan(0);
+  });
+
+  it("offers the second approval on a posted variance approved by its counter, optional within the tolerance", async () => {
+    mocks.listInventoryCountSessions.mockResolvedValue([session({ status: "posted" })]);
+    // Counted and approved by Karim (9); the signed-in user is 7.
+    const approvedByCounter = {
+      counted_by_id: 9,
+      counted_by_name: "Karim",
+      approved_by_id: 9,
+      approved_by_name: "Karim",
+      approved_at: TS,
+      approval_note: "Recounted twice",
+      self_approved: 1,
+      posted_transaction_id: 501,
+      second_approved_by_id: null,
+      second_approved_by_name: null,
+      second_approved_at: null,
+      second_approval_note: null,
+    };
+    mocks.listInventoryCountLines.mockResolvedValue([
+      countLine({ ...approvedByCounter, id: 1, is_critical: 1 }),
+      // Within the tolerance, approved by its counter: no auto-approbation, the second approval
+      // is optional (it settles the count on a PC with a stricter tolerance).
+      countLine({
+        ...approvedByCounter,
+        id: 2,
+        article_id: 22,
+        article_code: "A-22",
+        is_critical: 0,
+        self_approved: 0,
+        posted_transaction_id: 502,
+      }),
+      // Approved by someone other than its counter: nothing to approve a second time.
+      countLine({
+        ...approvedByCounter,
+        id: 3,
+        article_id: 23,
+        article_code: "A-23",
+        is_critical: 1,
+        self_approved: 0,
+        approved_by_id: 42,
+        approved_by_name: "Nadia",
+        posted_transaction_id: 503,
+      }),
+      // No variance.
+      countLine({
+        ...approvedByCounter,
+        id: 4,
+        article_id: 24,
+        article_code: "A-24",
+        is_critical: 0,
+        self_approved: 0,
+        counted_qty: 10,
+        variance_qty: 0,
+        posted_transaction_id: 504,
+      }),
+      // Counted and approved by the signed-in user: hidden from them.
+      countLine({
+        ...approvedByCounter,
+        id: 5,
+        article_id: 25,
+        article_code: "A-25",
+        is_critical: 0,
+        self_approved: 0,
+        counted_by_id: 7,
+        approved_by_id: 7,
+        posted_transaction_id: 505,
+      }),
+    ]);
+    renderPanel();
+    await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
+    await selectSession("CC-100 (Posted)");
+    expect(await screen.findAllByText("Self-approval")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Second approval" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Second approval (optional)" })).toHaveLength(1);
+    const withinRow = screen.getByText("A-22").closest("tr");
+    if (!withinRow) throw new Error("expected the A-22 row");
+    fireEvent.click(within(withinRow).getByRole("button", { name: "Second approval (optional)" }));
+    expect(
+      await screen.findByText(
+        /within this PC's four-eyes tolerance: this second approval is optional/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("asks for confirmation before reversing a posted count", async () => {

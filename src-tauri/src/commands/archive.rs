@@ -419,7 +419,7 @@ pub async fn restore_archive_item(
             )
             .await;
             return Err(AppError::ValidationFailed(vec![
-                "Restore blocked: restore_until_at is required for until_date policy".to_string(),
+                "GATE_ARCHIVE_RESTORE_UNTIL_REQUIRED: Restore blocked: restore_until_at is required for until_date policy".to_string(),
             ]));
         };
         let is_still_valid = state
@@ -848,12 +848,12 @@ pub async fn update_retention_policy(payload: UpdateRetentionInput, state: State
 
     if target_allow_purge && target_purge_mode == "never" {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot enable allow_purge when purge_mode is 'never'".to_string(),
+            "GATE_ARCHIVE_PURGE_NEVER_CONFLICT: Cannot enable allow_purge when purge_mode is 'never'".to_string(),
         ]));
     }
     if current_archive_class == "operational_history" && target_retention_years < current_retention_years {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot reduce retention_years for operational_history policies".to_string(),
+            "GATE_ARCHIVE_RETENTION_REDUCE: Cannot reduce retention_years for operational_history policies".to_string(),
         ]));
     }
 
@@ -863,7 +863,7 @@ pub async fn update_retention_policy(payload: UpdateRetentionInput, state: State
     if let Some(retention_years) = payload.retention_years {
         if retention_years < 0 {
             return Err(AppError::ValidationFailed(vec![
-                "retention_years must be >= 0".to_string()
+                "GATE_ARCHIVE_RETENTION_NEGATIVE: retention_years must be >= 0".to_string(),
             ]));
         }
         set_parts.push("retention_years = ?".to_string());
@@ -872,7 +872,8 @@ pub async fn update_retention_policy(payload: UpdateRetentionInput, state: State
     if let Some(purge_mode) = payload.purge_mode {
         if !matches!(purge_mode.as_str(), "manual_approval" | "scheduled" | "never") {
             return Err(AppError::ValidationFailed(vec![
-                "purge_mode must be one of: manual_approval, scheduled, never".to_string(),
+                "GATE_ARCHIVE_PURGE_MODE_INVALID: purge_mode must be one of: manual_approval, scheduled, never"
+                    .to_string(),
             ]));
         }
         set_parts.push("purge_mode = ?".to_string());

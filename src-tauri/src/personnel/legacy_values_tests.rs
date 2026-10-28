@@ -239,6 +239,7 @@ async fn a_record_with_a_retired_or_flagged_value_stays_editable() {
             keep_reason_note: false,
             is_critical: None,
             confirm_overlap: None,
+            expected_row_version: 1,
         },
         1,
         &crate::personnel::absence_access::AbsenceAccess::full_for_tests(),

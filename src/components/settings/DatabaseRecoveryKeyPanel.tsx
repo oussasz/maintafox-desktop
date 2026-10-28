@@ -3,8 +3,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { useStepUp, isStepUpCancelled } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import { getDatabaseRecoveryKey } from "@/services/database-security-service";
 
 interface DatabaseRecoveryKeyPanelProps {
@@ -31,9 +31,10 @@ export function DatabaseRecoveryKeyPanel({ onToast }: DatabaseRecoveryKeyPanelPr
       const key = await withStepUp(() => getDatabaseRecoveryKey());
       setRecoveryKey(key);
     } catch (err) {
+      if (isStepUpCancelled(err)) return;
       onToast({
         title: t("dbEncryption.revealError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
@@ -49,7 +50,7 @@ export function DatabaseRecoveryKeyPanel({ onToast }: DatabaseRecoveryKeyPanelPr
     } catch (err) {
       onToast({
         title: t("dbEncryption.copyError"),
-        description: describeAppError(err).title,
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }

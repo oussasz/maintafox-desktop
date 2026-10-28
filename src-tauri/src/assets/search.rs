@@ -56,6 +56,10 @@ pub struct AssetPickerSuggestFilters {
     pub query: Option<String>,
     pub include_decommissioned: Option<bool>,
     pub limit: Option<u64>,
+    /// With an empty query: when the plant has at most this many pickable assets, the whole
+    /// register is returned (recent and most-used first) so the picker can list everything.
+    /// Capped at [`PICKER_FULL_LIST_CAP`].
+    pub full_list_max: Option<u64>,
 }
 
 /// Enriched search result DTO for each matching asset.
@@ -104,12 +108,23 @@ pub struct AssetSuggestion {
     pub status_code: String,
 }
 
-/// Picker suggestion payload: recent-for-user or global frequent.
+/// Most suggestions returned for an empty query (typed searches have their own page size).
+const PICKER_SUGGEST_LIMIT_MAX: u64 = 20;
+/// Hard cap of the full-list mode, whatever the caller asks.
+pub const PICKER_FULL_LIST_CAP: u64 = 200;
+
+/// Picker suggestion payload. For an empty query the items are, in order: the user's recent
+/// assets, their most-used, the plant's most-used, then the register by code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetPickerSuggestions {
-    /// `"recent"` or `"frequent"`.
+    /// `"recent"` | `"frequent"` (what the list starts with), `"register"` (no usage yet) or
+    /// `"search"` (typed text).
     pub mode: String,
     pub items: Vec<AssetSearchResult>,
+    /// Pickable assets in the register (empty query only; 0 for a typed search).
+    pub total: i64,
+    /// True when `items` is the whole register (all `total` assets are listed).
+    pub complete: bool,
 }
 
 // ─── Accent / case fold ───────────────────────────────────────────────────────
@@ -326,7 +341,19 @@ async fn hydrate_assets_by_ids(
     Ok(results)
 }
 
-async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u64) -> AppResult<Vec<i64>> {
+/// Asset ids used on work orders and requests, most recent first (`by_count` = most used first).
+/// `user_id` limits it to that user's own work; `None` reads the whole plant.
+async fn usage_asset_ids(
+    db: &DatabaseConnection,
+    user_id: Option<i64>,
+    by_count: bool,
+    limit: u64,
+) -> AppResult<Vec<i64>> {
+    let order = if by_count {
+        "ORDER BY COUNT(*) DESC, MAX(used_at) DESC"
+    } else {
+        "ORDER BY MAX(used_at) DESC"
+    };
     let (sql, binds): (String, Vec<sea_orm::Value>) = if let Some(uid) = user_id {
         (
             format!(
@@ -342,7 +369,7 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
                  SELECT asset_id
                  FROM usage
                  GROUP BY asset_id
-                 ORDER BY MAX(used_at) DESC
+                 {order}
                  LIMIT {limit}"
             ),
             vec![uid.into(), uid.into()],
@@ -362,7 +389,7 @@ async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u
                  SELECT asset_id
                  FROM usage
                  GROUP BY asset_id
-                 ORDER BY COUNT(*) DESC, MAX(used_at) DESC
+                 {order}
                  LIMIT {limit}"
             ),
             vec![],
@@ -705,16 +732,61 @@ pub async fn search_assets_page(db: &DatabaseConnection, filters: AssetSearchFil
     Ok(AssetSearchPage { items, total })
 }
 
+/// Filters of the pickable register: live equipment, decommissioned ones only when asked.
+fn pickable_filters(include_decommissioned: bool) -> AssetSearchFilters {
+    AssetSearchFilters {
+        query: None,
+        class_codes: None,
+        family_codes: None,
+        status_codes: None,
+        org_node_ids: None,
+        include_decommissioned: Some(include_decommissioned),
+        limit: None,
+        registry_focus: None,
+        offset: None,
+        criticality_codes: None,
+        org_subtree: None,
+    }
+}
+
+/// How many assets the picker may offer (the same live / not-decommissioned rule as a search).
+async fn count_pickable_assets(db: &DatabaseConnection, include_decommissioned: bool) -> AppResult<i64> {
+    let (where_sql, binds) = build_asset_scope_where(&pickable_filters(include_decommissioned), None);
+    let sql = format!("SELECT COUNT(*) AS total {METRICS_FROM} WHERE {where_sql}");
+    db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset count query returned no row")))?
+        .try_get("", "total")
+        .map_err(|e| decode_err("total", e))
+}
+
+/// The register's first `limit` pickable asset ids by code.
+async fn register_asset_ids(db: &DatabaseConnection, include_decommissioned: bool, limit: u64) -> AppResult<Vec<i64>> {
+    let (where_sql, binds) = build_asset_scope_where(&pickable_filters(include_decommissioned), None);
+    let sql =
+        format!("SELECT e.id AS asset_id {METRICS_FROM} WHERE {where_sql} ORDER BY e.asset_id_code ASC LIMIT {limit}");
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
+        .await?;
+    rows.iter()
+        .map(|row| row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e)))
+        .collect()
+}
+
 /// Suggestions for the shared AssetPicker.
 ///
-/// - Non-empty query → accent-aware [`search_assets`].
-/// - Empty query → recent assets for `user_id`; if none, global frequent.
+/// - Non-empty query -> accent-aware [`search_assets`].
+/// - Empty query -> the user's recent assets, then their most-used, then the plant's most-used,
+///   then the equipment register by code, without duplicates. When the plant has at most
+///   `full_list_max` pickable assets, all of them are returned (`complete`); otherwise the first
+///   `limit`. Permissions are those of `search_assets` (the caller checks `eq.view`); retired
+///   equipment is left out unless asked for.
 pub async fn suggest_picker_assets(
     db: &DatabaseConnection,
     user_id: i64,
     filters: AssetPickerSuggestFilters,
 ) -> AppResult<AssetPickerSuggestions> {
-    let limit = filters.limit.unwrap_or(15).min(20);
+    let limit = filters.limit.unwrap_or(15).min(PICKER_SUGGEST_LIMIT_MAX);
     let include_decommissioned = filters.include_decommissioned.unwrap_or(false);
 
     let trimmed = filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
@@ -724,41 +796,53 @@ pub async fn suggest_picker_assets(
             db,
             AssetSearchFilters {
                 query: filters.query,
-                class_codes: None,
-                family_codes: None,
-                status_codes: None,
-                org_node_ids: None,
-                include_decommissioned: Some(include_decommissioned),
                 limit: Some(limit),
-                registry_focus: None,
-                offset: None,
-                criticality_codes: None,
-                org_subtree: None,
+                ..pickable_filters(include_decommissioned)
             },
         )
         .await?;
         return Ok(AssetPickerSuggestions {
             mode: "search".into(),
             items,
+            total: 0,
+            complete: false,
         });
     }
 
-    let recent_ids = usage_asset_ids(db, Some(user_id), limit).await?;
-    if !recent_ids.is_empty() {
-        let items = hydrate_assets_by_ids(db, &recent_ids, include_decommissioned).await?;
-        if !items.is_empty() {
-            return Ok(AssetPickerSuggestions {
-                mode: "recent".into(),
-                items,
-            });
+    let total = count_pickable_assets(db, include_decommissioned).await?;
+    let full_list_cap = i64::try_from(filters.full_list_max.unwrap_or(0).min(PICKER_FULL_LIST_CAP)).unwrap_or(0);
+    let show_all = total > 0 && total <= full_list_cap;
+    let want = if show_all {
+        u64::try_from(total).unwrap_or(limit)
+    } else {
+        limit
+    };
+
+    let recent = usage_asset_ids(db, Some(user_id), false, want).await?;
+    let mine = usage_asset_ids(db, Some(user_id), true, want).await?;
+    let plant = usage_asset_ids(db, None, true, want).await?;
+    let register = register_asset_ids(db, include_decommissioned, want).await?;
+
+    let mut ordered: Vec<i64> = Vec::new();
+    for id in recent.iter().chain(&mine).chain(&plant).chain(&register) {
+        if !ordered.contains(id) {
+            ordered.push(*id);
         }
     }
+    let mut items = hydrate_assets_by_ids(db, &ordered, include_decommissioned).await?;
+    items.truncate(usize::try_from(want).unwrap_or(usize::MAX));
 
-    let frequent_ids = usage_asset_ids(db, None, limit).await?;
-    let items = hydrate_assets_by_ids(db, &frequent_ids, include_decommissioned).await?;
+    let mode = match items.first() {
+        Some(first) if recent.contains(&first.id) => "recent",
+        Some(first) if mine.contains(&first.id) || plant.contains(&first.id) => "frequent",
+        _ => "register",
+    };
+    let complete = show_all && i64::try_from(items.len()).unwrap_or(-1) == total;
     Ok(AssetPickerSuggestions {
-        mode: "frequent".into(),
+        mode: mode.into(),
         items,
+        total,
+        complete,
     })
 }
 
@@ -831,5 +915,103 @@ mod fold_tests {
         assert_eq!(fold_search_text("Compresseùr"), "compresseur");
         assert_eq!(fold_search_text("Électricité"), "electricite");
         assert_eq!(fold_search_text("çà"), "ca");
+    }
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    async fn plant_with(codes: &[&str]) -> DatabaseConnection {
+        let db = crate::db::test_db::migrated().await;
+        for code in codes {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO equipment (entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+                 VALUES (?, ?, ?, 'active_in_service', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                [format!("sync_{code}").into(), (*code).into(), format!("Asset {code}").into()],
+            ))
+            .await
+            .expect("insert equipment");
+        }
+        db
+    }
+
+    fn empty_query(full_list_max: Option<u64>, limit: Option<u64>) -> AssetPickerSuggestFilters {
+        AssetPickerSuggestFilters {
+            query: None,
+            include_decommissioned: Some(false),
+            limit,
+            full_list_max,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_register_lists_nothing() {
+        let db = plant_with(&[]).await;
+        let res = suggest_picker_assets(&db, 1, empty_query(Some(50), None))
+            .await
+            .unwrap();
+        assert!(res.items.is_empty());
+        assert_eq!(res.total, 0);
+        assert!(!res.complete);
+    }
+
+    #[tokio::test]
+    async fn a_plant_without_usage_gets_its_register_by_code() {
+        let db = plant_with(&["EQ-B", "EQ-A", "EQ-C"]).await;
+        let res = suggest_picker_assets(&db, 1, empty_query(Some(50), Some(2)))
+            .await
+            .unwrap();
+        let codes: Vec<&str> = res.items.iter().map(|a| a.asset_code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["EQ-A", "EQ-B", "EQ-C"],
+            "small plant: the whole register is listed"
+        );
+        assert_eq!(res.total, 3);
+        assert!(res.complete);
+        assert_eq!(res.mode, "register");
+    }
+
+    #[tokio::test]
+    async fn a_large_plant_gets_only_the_first_suggestions_and_the_total() {
+        let db = plant_with(&["EQ-1", "EQ-2", "EQ-3"]).await;
+        let res = suggest_picker_assets(&db, 1, empty_query(Some(2), Some(2)))
+            .await
+            .unwrap();
+        assert_eq!(res.items.len(), 2);
+        assert_eq!(res.total, 3);
+        assert!(!res.complete);
+        let none = suggest_picker_assets(&db, 1, empty_query(None, Some(2))).await.unwrap();
+        assert!(!none.complete, "no threshold given: never the full list");
+    }
+
+    #[tokio::test]
+    async fn deleted_equipment_is_never_offered() {
+        let db = plant_with(&["EQ-A", "EQ-B"]).await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE asset_id_code = 'EQ-B'"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+        let res = suggest_picker_assets(&db, 1, empty_query(Some(50), None))
+            .await
+            .unwrap();
+        assert_eq!(res.total, 1);
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].asset_code, "EQ-A");
+    }
+
+    #[tokio::test]
+    async fn the_full_list_is_capped_whatever_the_caller_asks() {
+        let db = plant_with(&["EQ-A"]).await;
+        let res = suggest_picker_assets(&db, 1, empty_query(Some(10_000), None))
+            .await
+            .unwrap();
+        assert!(res.complete);
+        assert!(PICKER_FULL_LIST_CAP <= 200);
     }
 }

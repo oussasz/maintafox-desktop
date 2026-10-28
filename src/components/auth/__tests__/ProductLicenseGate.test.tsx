@@ -6,17 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { getAppInfo } from "@/services/app.service";
 import { forceChangePassword, getSessionInfo, login, unlockSession } from "@/services/auth-service";
-import { getEntitlementSummary } from "@/services/entitlement-service";
+import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
 import {
   applyProductLicenseReconciliation,
   checkProductLicenseKeyEntry,
   claimProductActivation,
   getActivationBootstrapState,
-  getProductActivationToken,
   getProductLicenseDiagnostics,
   getProductLicenseOnboardingState,
+  markActivationTenantInitialized,
   previewProductActivation,
+  reclaimProductActivation,
   refreshProductActivationPolicy,
+  removeLegacyProductLicenseKeyCache,
   resetLocalTenantRuntimeData,
   submitProductLicenseKey,
 } from "@/services/product-license-service";
@@ -84,6 +86,13 @@ vi.mock("@/services/auth-service", () => ({
   unlockSession: vi.fn(),
   unlockSessionWithPin: vi.fn(),
   forceChangePassword: vi.fn(),
+  getPasswordRequirements: vi.fn().mockResolvedValue({
+    min_length: 8,
+    require_uppercase: false,
+    require_lowercase: false,
+    require_digit: false,
+    require_special: false,
+  }),
 }));
 
 vi.mock("@/services/app.service", () => ({
@@ -107,15 +116,15 @@ vi.mock("@/services/product-license-service", async () => ({
     !bound?.trim() || bound.trim() !== claim.trim(),
   LICENSE_RECHECK_REQUESTED_EVENT: "maintafox:license-recheck-requested",
   POST_ACTIVATION_LOGIN_HINT_KEY: "maintafox:post-activation-login-hint:v1",
-  PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY: "maintafox:product-license:key-cache:v1",
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY: "maintafox:product-license:device-fingerprint:v1",
   applyProductLicenseReconciliation: vi.fn(),
   checkProductLicenseKeyEntry: vi.fn(),
   claimProductActivation: vi.fn(),
   previewProductActivation: vi.fn(),
   markActivationTenantInitialized: vi.fn(),
+  reclaimProductActivation: vi.fn(),
+  removeLegacyProductLicenseKeyCache: vi.fn(),
   resetLocalTenantRuntimeData: vi.fn(),
-  getProductActivationToken: vi.fn(),
   refreshProductActivationPolicy: vi.fn(),
   toUserFacingActivationError: (err: unknown) => ({
     title: "Activation failed",
@@ -134,10 +143,13 @@ const mockedGetProductLicenseOnboardingState = vi.mocked(getProductLicenseOnboar
 const mockedGetProductLicenseDiagnostics = vi.mocked(getProductLicenseDiagnostics);
 const mockedGetActivationBootstrapState = vi.mocked(getActivationBootstrapState);
 const mockedGetEntitlementSummary = vi.mocked(getEntitlementSummary);
-const mockedGetProductActivationToken = vi.mocked(getProductActivationToken);
+const mockedNotifyEntitlementsUpdated = vi.mocked(notifyEntitlementsUpdated);
 const mockedRefreshProductActivationPolicy = vi.mocked(refreshProductActivationPolicy);
 const mockedApplyProductLicenseReconciliation = vi.mocked(applyProductLicenseReconciliation);
 const mockedClaimProductActivation = vi.mocked(claimProductActivation);
+const mockedMarkActivationTenantInitialized = vi.mocked(markActivationTenantInitialized);
+const mockedReclaimProductActivation = vi.mocked(reclaimProductActivation);
+const mockedRemoveLegacyProductLicenseKeyCache = vi.mocked(removeLegacyProductLicenseKeyCache);
 const mockedCheckProductLicenseKeyEntry = vi.mocked(checkProductLicenseKeyEntry);
 const mockedPreviewProductActivation = vi.mocked(previewProductActivation);
 const mockedResetLocalTenantRuntimeData = vi.mocked(resetLocalTenantRuntimeData);
@@ -194,6 +206,7 @@ describe("ProductLicenseGate", () => {
     mockedGetActivationBootstrapState.mockResolvedValue({
       has_tenant_admin: true,
       tenant_id: "ten_test",
+      plant_join: "sign_in",
       company_display_name: null,
     });
     mockedGetEntitlementSummary.mockResolvedValue({
@@ -209,7 +222,9 @@ describe("ProductLicenseGate", () => {
       capability_map_json: "{}",
       feature_flag_map_json: "{}",
     });
-    mockedGetProductActivationToken.mockResolvedValue(null);
+    // No activation token, and no licence key stored in Rust, unless a test says otherwise.
+    mockedRefreshProductActivationPolicy.mockResolvedValue({ kind: "no_token" });
+    mockedReclaimProductActivation.mockResolvedValue({ kind: "not_activated" });
     useSessionStore.getState().resetForTests();
     mockedGetSessionInfo.mockResolvedValue(signedOutSession);
   });
@@ -463,13 +478,12 @@ describe("ProductLicenseGate", () => {
     // Allow microtasks / effect settle; must stay quiet (no loop).
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(mockedGetProductActivationToken).not.toHaveBeenCalled();
     expect(mockedRefreshProductActivationPolicy).not.toHaveBeenCalled();
     expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(mockedGetEntitlementSummary.mock.calls.length).toBeLessThan(5);
   });
 
-  /** Active device due for its scheduled re-validation (never reconciled), with a stored token. */
+  /** Active device due for its scheduled re-validation (never reconciled); the refresh is per test. */
   function setUpDueActiveDevice() {
     mockedGetAppInfo.mockResolvedValue(appInfo);
     mockedGetProductLicenseOnboardingState.mockResolvedValue({
@@ -485,9 +499,109 @@ describe("ProductLicenseGate", () => {
       diagnostics: [],
       has_activation_claim: true,
     });
-    mockedGetProductActivationToken.mockResolvedValue("device-token");
-    localStorage.setItem("maintafox:product-license:key-cache:v1", "MFX-TEST-KEY-0001");
   }
+
+  it("shows the licence Rust renewed without recording it again", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockResolvedValue({
+      kind: "refreshed",
+      state: {
+        complete: true,
+        status: "active",
+        pending_online_validation: false,
+        tenant_id: "ten_test",
+        last_reconciled_at: new Date().toISOString(),
+      },
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedNotifyEntitlementsUpdated).toHaveBeenCalled();
+    });
+    expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(appInfo.version);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+    expect(await screen.findByText("app content")).toBeInTheDocument();
+  });
+
+  it("removes the licence key an earlier version cached in the webview", async () => {
+    setUpDueActiveDevice();
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+    await waitFor(() => {
+      expect(mockedRemoveLegacyProductLicenseKeyCache).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("claims again through Rust, with the key stored there, when this PC holds no activation token", async () => {
+    setUpDueActiveDevice();
+    mockedReclaimProductActivation.mockResolvedValue({
+      kind: "reclaimed",
+      state: {
+        complete: true,
+        status: "active",
+        pending_online_validation: false,
+        tenant_id: "ten_test",
+      },
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedReclaimProductActivation).toHaveBeenCalledWith({
+        machine_label: expect.any(String),
+        app_version: appInfo.version,
+      });
+    });
+    await waitFor(() => {
+      expect(mockedNotifyEntitlementsUpdated).toHaveBeenCalled();
+    });
+    // Rust recorded the claim: nothing is recorded from here, and no key leaves the webview.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+  });
+
+  it("records a refresh that got no answer as a network error", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      new Error("Cannot reach the control API"),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "degraded_api_unavailable",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "network_error",
+          error_code: "network_unreachable",
+          error_message: "Cannot reach the control API",
+        }),
+      );
+    });
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+  });
 
   it("records a vendor revocation as a denial and never re-claims with the cached key", async () => {
     setUpDueActiveDevice();
@@ -563,13 +677,8 @@ describe("ProductLicenseGate", () => {
 
   it("never records a licence change this PC refused as a network failure", async () => {
     setUpDueActiveDevice();
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_other",
-      license_id: "lic_other",
-      machine_fingerprint: "fp",
-      activation_token: "device-token",
-    } as never);
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    // Rust refused to apply the renewed claim (another organisation, signed out).
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -588,14 +697,13 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "success" }),
-      );
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
-    // Only the refused success is sent (once per check): never a "network_error", "http_error" or
-    // "denial" recorded because of it.
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    await new Promise((r) => setTimeout(r, 150));
+    // Nothing is recorded: never a "network_error", "http_error" or "denial" because of the
+    // refusal, and no fresh claim.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
   });
 
   it("tells the licence server the version this PC runs when it refreshes the policy", async () => {
@@ -617,10 +725,7 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(
-        "device-token",
-        appInfo.version,
-      );
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledWith(appInfo.version);
     });
   });
 
@@ -647,18 +752,16 @@ describe("ProductLicenseGate", () => {
       expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
-      expect(call[1]).toBeUndefined();
+      expect(call[0]).toBeUndefined();
     }
   });
 
-  it("re-claims with the cached key when the device token was superseded", async () => {
+  it("claims again through Rust when the device token was superseded, and records its failure", async () => {
     setUpDueActiveDevice();
     mockedRefreshProductActivationPolicy.mockRejectedValue(
       Object.assign(new Error("Token superseded"), { code: "token_superseded", status: 401 }),
     );
-    mockedClaimProductActivation.mockRejectedValue(
-      Object.assign(new Error("offline"), { status: undefined }),
-    );
+    mockedReclaimProductActivation.mockRejectedValue(new Error("offline"));
     mockedApplyProductLicenseReconciliation.mockResolvedValue({
       complete: true,
       status: "degraded_api_unavailable",
@@ -673,10 +776,192 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedClaimProductActivation).toHaveBeenCalledWith(
-        expect.objectContaining({ license_key: "MFX-TEST-KEY-0001" }),
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "network_error", error_message: "offline" }),
       );
     });
+    expect(mockedReclaimProductActivation).toHaveBeenCalledTimes(1);
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+  });
+
+  it("records the token failure itself when no licence key is stored to claim again with", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Invalid token"), { code: "invalid_token", status: 401 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "active",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "http_error", error_code: "invalid_token" }),
+      );
+    });
+    expect(mockedReclaimProductActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it("activates through Rust: the claim's token never reaches the webview, and initialisation is retried without it", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "uninitialized",
+      pending_online_validation: false,
+      tenant_id: null,
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    const terms = { tenant_id: "ten_new", license_id: "lic_new", machine_fingerprint: "fp" };
+    mockedPreviewProductActivation.mockResolvedValue(terms);
+    mockedCheckProductLicenseKeyEntry.mockResolvedValue(undefined);
+    mockedClaimProductActivation.mockResolvedValue({ ...terms, is_initialized: false });
+    mockedResetLocalTenantRuntimeData.mockResolvedValue(0);
+    mockedSubmitProductLicenseKey.mockResolvedValue(undefined);
+    mockedMarkActivationTenantInitialized
+      .mockRejectedValueOnce(new Error("initialise later"))
+      .mockResolvedValueOnce({ tenant_id: "ten_new", is_initialized: true });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0003" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "activation.retryFinalize" }));
+    await waitFor(() => {
+      expect(mockedMarkActivationTenantInitialized).toHaveBeenCalledTimes(2);
+    });
+    expect(mockedResetLocalTenantRuntimeData).toHaveBeenCalledTimes(1);
+    expect(mockedSubmitProductLicenseKey).toHaveBeenCalledWith({
+      key: "MFX-TEST-KEY-0003",
+      tenant_id: "ten_new",
+      app_version: appInfo.version,
+    });
+    for (const call of mockedMarkActivationTenantInitialized.mock.calls) {
+      expect(call).toEqual([]);
+    }
+  });
+
+  it("wipes local data for another organisation before the key entry records its claim", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "uninitialized",
+      pending_online_validation: false,
+      tenant_id: null,
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    const terms = { tenant_id: "ten_new", license_id: "lic_new", machine_fingerprint: "fp" };
+    mockedPreviewProductActivation.mockResolvedValue(terms);
+    mockedCheckProductLicenseKeyEntry.mockResolvedValue(undefined);
+    mockedClaimProductActivation.mockResolvedValue({ ...terms, is_initialized: true });
+    mockedResetLocalTenantRuntimeData.mockResolvedValue(0);
+    mockedSubmitProductLicenseKey.mockResolvedValue(undefined);
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0004" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    await waitFor(() => {
+      expect(mockedSubmitProductLicenseKey).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedResetLocalTenantRuntimeData).toHaveBeenCalledTimes(1);
+    const resetOrder =
+      mockedResetLocalTenantRuntimeData.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY;
+    const submitOrder =
+      mockedSubmitProductLicenseKey.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY;
+    expect(resetOrder).toBeLessThan(submitOrder);
+    // Stored as initialised by the claim: nothing to initialise.
+    expect(mockedMarkActivationTenantInitialized).not.toHaveBeenCalled();
+  });
+
+  it("keeps local data when the key entry is for the organisation already bound here", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "pending_online_validation",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    const terms = { tenant_id: "ten_test", license_id: "lic_test", machine_fingerprint: "fp" };
+    mockedPreviewProductActivation.mockResolvedValue(terms);
+    mockedCheckProductLicenseKeyEntry.mockResolvedValue(undefined);
+    mockedClaimProductActivation.mockResolvedValue({ ...terms, is_initialized: true });
+    mockedSubmitProductLicenseKey.mockResolvedValue(undefined);
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0005" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate this device" }));
+
+    await waitFor(() => {
+      expect(mockedSubmitProductLicenseKey).toHaveBeenCalledWith({
+        key: "MFX-TEST-KEY-0005",
+        tenant_id: "ten_test",
+        app_version: appInfo.version,
+      });
+    });
+    expect(mockedResetLocalTenantRuntimeData).not.toHaveBeenCalled();
+  });
+
+  it("forgets the typed key when the user goes back from the licence shown for it", async () => {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: false,
+      status: "uninitialized",
+      pending_online_validation: false,
+      tenant_id: null,
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue(null);
+    mockedPreviewProductActivation.mockResolvedValue({
+      tenant_id: "ten_new",
+      license_id: "lic_new",
+      machine_fingerprint: "fp",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("License key"), {
+      target: { value: "MFX-TEST-KEY-0006" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate license" }));
+    fireEvent.click(await screen.findByRole("button", { name: "activation.changeKey" }));
+
+    expect(await screen.findByLabelText("License key")).toHaveValue("");
   });
 
   it("stops before taking a device slot or wiping local data when this PC would refuse the licence", async () => {
@@ -750,14 +1035,6 @@ describe("ProductLicenseGate", () => {
       diagnostics: [],
       has_activation_claim: true,
     });
-    mockedGetProductActivationToken.mockResolvedValue("device-token");
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_test",
-      license_id: "lic_test",
-      machine_fingerprint: "fp",
-      activation_token: "device-token",
-      expires_at: "2028-06-30T00:00:00Z",
-    } as never);
   }
 
   it("lets a signed-in administrator confirm their identity on the denied screen, then applies the renewal", async () => {
@@ -776,10 +1053,11 @@ describe("ProductLicenseGate", () => {
       tenant_id: "ten_test",
       last_reconciled_at: new Date().toISOString(),
     };
-    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+    // Rust refuses to apply the renewal until the identity is confirmed, then records it.
+    mockedRefreshProductActivationPolicy.mockImplementation(async () => {
       if (!verified) throw stepUpRequired;
       applied = true;
-      return activeState;
+      return { kind: "refreshed", state: activeState };
     });
     // What this PC reports once the renewal is stored.
     mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
@@ -809,27 +1087,22 @@ describe("ProductLicenseGate", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
 
-    // The dialog verifies and closes, then the gate applies the same change again.
+    // The dialog verifies and closes, then the gate runs the refresh again, which Rust applies.
     expect(await screen.findByText("app content")).toBeInTheDocument();
     expect(mockedVerifyStepUp).toHaveBeenCalledWith("not-a-real-password");
-    // The same renewal claim is applied again after the identity check (no new server call).
-    const successes = mockedApplyProductLicenseReconciliation.mock.calls.filter(
-      (c) => c[0].kind === "success",
-    );
-    expect(successes.length).toBeGreaterThanOrEqual(2);
-    expect(successes.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        kind: "success",
-        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
-      }),
-    );
-    expect(mockedRefreshProductActivationPolicy).toHaveBeenCalledTimes(1);
+    // Once refused, then again from the identity check (`withStepUp` tries before asking).
+    expect(mockedRefreshProductActivationPolicy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of mockedRefreshProductActivationPolicy.mock.calls) {
+      expect(call[0]).toBe(appInfo.version);
+    }
+    // Rust recorded the renewal: the webview records nothing itself.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(screen.queryByText("License expired")).not.toBeInTheDocument();
   });
 
   it("shows the coded refusal on the denied screen without an identity check when nobody may administer", async () => {
     setUpDeniedDeviceWithRenewal();
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -849,13 +1122,13 @@ describe("ProductLicenseGate", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Revalidate now" }));
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("License expired")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm identity" })).not.toBeInTheDocument();
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    // A refusal is never recorded as a failure or a denial.
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
   });
 
   /**
@@ -877,7 +1150,8 @@ describe("ProductLicenseGate", () => {
       verified = true;
       return { success: true, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() };
     });
-    mockedApplyProductLicenseReconciliation.mockImplementation(async () => {
+    // Rust answers the refresh as this PC would: refused, then applied.
+    mockedRefreshProductActivationPolicy.mockImplementation(async () => {
       if (!sessionUsable()) {
         throw {
           code: "ORG_VALIDATION_FAILED",
@@ -893,7 +1167,7 @@ describe("ProductLicenseGate", () => {
       }
       if (!verified) throw { code: "STEP_UP_REQUIRED", message: "Step-up required" };
       applied = true;
-      return activeState;
+      return { kind: "refreshed" as const, state: activeState };
     });
     mockedGetProductLicenseOnboardingState.mockImplementation(async () =>
       applied
@@ -916,12 +1190,9 @@ describe("ProductLicenseGate", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm identity" }));
     expect(await screen.findByText("app content")).toBeInTheDocument();
-    expect(mockedApplyProductLicenseReconciliation.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({
-        kind: "success",
-        claim: expect.objectContaining({ expires_at: "2028-06-30T00:00:00Z" }),
-      }),
-    );
+    // The renewal was applied by the refresh run again after the identity check, in Rust.
+    expect(mockedRefreshProductActivationPolicy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
   }
 
   it("lets an administrator whose password must change sign in, change it, confirm identity and apply the renewal while denied", async () => {
@@ -1003,13 +1274,7 @@ describe("ProductLicenseGate", () => {
     setUpDueActiveDevice();
     // Signed in, the session still usable: it is read again once after the refusal, not in a loop.
     mockedGetSessionInfo.mockResolvedValue(adminSession);
-    mockedRefreshProductActivationPolicy.mockResolvedValue({
-      tenant_id: "ten_test",
-      license_id: "lic_test",
-      machine_fingerprint: "fp",
-      activation_token: " ",
-    } as never);
-    mockedApplyProductLicenseReconciliation.mockRejectedValue({
+    mockedRefreshProductActivationPolicy.mockRejectedValue({
       code: "ORG_VALIDATION_FAILED",
       message: "Validation failed",
       details: [
@@ -1027,12 +1292,11 @@ describe("ProductLicenseGate", () => {
     );
 
     await waitFor(() => {
-      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalled();
+      expect(mockedRefreshProductActivationPolicy).toHaveBeenCalled();
     });
     expect(await screen.findByText("app content")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 150));
-    const kinds = mockedApplyProductLicenseReconciliation.mock.calls.map((c) => c[0].kind);
-    expect(kinds.every((k) => k === "success")).toBe(true);
+    expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(mockedGetSessionInfo.mock.calls.length).toBeLessThan(5);
   });
 });

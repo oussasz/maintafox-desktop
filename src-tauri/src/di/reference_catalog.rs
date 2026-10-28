@@ -30,7 +30,7 @@ pub async fn validate_di_origin_code(db: &impl ConnectionTrait, origin_type: &st
     let code = origin_type.trim().to_string();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le type d'origine est obligatoire.".into()
+            "GATE_DI_ORIGIN_REQUIRED: Le type d'origine est obligatoire.".into(),
         ]));
     }
 
@@ -48,7 +48,7 @@ pub async fn validate_di_origin_code(db: &impl ConnectionTrait, origin_type: &st
 
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Origine '{code}' introuvable dans le référentiel {DOMAIN_ORIGIN} (valeur publiée active requise)."
+            "GATE_DI_ORIGIN_NOT_PUBLISHED: Origine '{code}' introuvable dans le référentiel {DOMAIN_ORIGIN} (valeur publiée active requise)."
         )]));
     }
 
@@ -60,7 +60,7 @@ pub async fn validate_di_request_type(db: &impl ConnectionTrait, request_type: &
     let code = request_type.trim().to_string();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le type de demande est obligatoire.".into()
+            "GATE_DI_REQUEST_TYPE_REQUIRED: Le type de demande est obligatoire.".into(),
         ]));
     }
 
@@ -78,7 +78,7 @@ pub async fn validate_di_request_type(db: &impl ConnectionTrait, request_type: &
 
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Type de demande '{code}' introuvable dans le référentiel {DOMAIN_REQUEST_TYPE} (valeur publiée active requise)."
+            "GATE_DI_REQUEST_TYPE_NOT_PUBLISHED: Type de demande '{code}' introuvable dans le référentiel {DOMAIN_REQUEST_TYPE} (valeur publiée active requise)."
         )]));
     }
 
@@ -91,7 +91,7 @@ pub async fn validate_di_disposition(db: &impl ConnectionTrait, disposition_code
     let code = disposition_code.trim().to_string();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de disposition est obligatoire.".into(),
+            "GATE_DI_DISPOSITION_REQUIRED: Le code de disposition est obligatoire.".into(),
         ]));
     }
 
@@ -124,7 +124,7 @@ pub async fn validate_di_disposition(db: &impl ConnectionTrait, disposition_code
 
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Disposition '{code}' introuvable dans le référentiel {DOMAIN_DISPOSITION}."
+            "GATE_DI_DISPOSITION_NOT_PUBLISHED: Disposition '{code}' introuvable dans le référentiel {DOMAIN_DISPOSITION}."
         )]));
     }
 
@@ -140,7 +140,9 @@ pub async fn validate_di_decision_reason(
 ) -> AppResult<String> {
     let code = reason_code.trim().to_string();
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Le motif est obligatoire.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_REASON_REQUIRED: Le motif est obligatoire.".into(),
+        ]));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -156,7 +158,7 @@ pub async fn validate_di_decision_reason(
         .await?;
     let Some(row) = row else {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Motif '{code}' introuvable dans le référentiel {domain_code} (valeur publiée active requise)."
+            "GATE_DI_REASON_NOT_PUBLISHED: Motif '{code}' introuvable dans le référentiel {domain_code} (valeur publiée active requise)."
         )]));
     };
     // The code as the list stores it (a reason typed in another case is stored canonically).
@@ -182,7 +184,7 @@ pub async fn validate_di_symptom_id(db: &impl ConnectionTrait, symptom_id: i64) 
 
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Symptôme (id={symptom_id}) introuvable dans le référentiel {DOMAIN_SYMPTOM} (valeur publiée active requise)."
+            "GATE_DI_SYMPTOM_NOT_PUBLISHED:id={symptom_id}: Symptôme (id={symptom_id}) introuvable dans le référentiel {DOMAIN_SYMPTOM} (valeur publiée active requise)."
         )]));
     }
 
@@ -191,7 +193,9 @@ pub async fn validate_di_symptom_id(db: &impl ConnectionTrait, symptom_id: i64) 
 
 /// Require a non-null symptom and validate catalog membership (create path).
 pub async fn require_di_symptom_id(db: &impl ConnectionTrait, symptom_code_id: Option<i64>) -> AppResult<i64> {
-    let id = symptom_code_id.ok_or_else(|| AppError::ValidationFailed(vec!["Le symptôme est obligatoire.".into()]))?;
+    let id = symptom_code_id.ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into()])
+    })?;
     validate_di_symptom_id(db, id).await?;
     Ok(id)
 }
@@ -235,7 +239,7 @@ pub async fn resolve_system_di_symptom_id(db: &impl ConnectionTrait, preferred_c
         return Ok(id);
     }
     Err(AppError::ValidationFailed(vec![format!(
-        "Aucun symptôme publié actif dans {DOMAIN_SYMPTOM} pour l'intake système."
+        "GATE_DI_SYSTEM_SYMPTOM_MISSING: Aucun symptôme publié actif dans {DOMAIN_SYMPTOM} pour l'intake système."
     )]))
 }
 

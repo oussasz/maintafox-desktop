@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { appErrorReason } from "@/lib/app-error";
 import {
   type InventoryArticleRow,
   createInventoryArticle,
@@ -9,7 +10,6 @@ import {
   listInventoryWarehouses,
   updateInventoryArticle,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import type {
   ArticleFamily,
   InventoryArticleInput,
@@ -61,7 +61,7 @@ export const useInventoryStore = create<InventoryStoreState>()((set, get) => ({
       ]);
       set({ families, warehouses, locations, articles, loadError: null });
     } catch (err) {
-      set({ error: toErrorMessage(err), loadError: err });
+      set({ error: appErrorReason(err), loadError: err });
     } finally {
       set({ loading: false });
     }
@@ -78,7 +78,7 @@ export const useInventoryStore = create<InventoryStoreState>()((set, get) => ({
       await createInventoryArticle(input);
       await get().loadAll();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -91,7 +91,7 @@ export const useInventoryStore = create<InventoryStoreState>()((set, get) => ({
       await updateInventoryArticle(id, rowVersion, input);
       await get().loadAll();
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });

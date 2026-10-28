@@ -12,7 +12,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { accountLockedText, lockoutUntil } from "@/lib/account-lockout";
+import { describeAppError } from "@/lib/app-error";
 import { verifyStepUp } from "@/services/rbac-service";
+import { ACCOUNT_LOCKED, useSessionStore } from "@/store/session-store";
+import { extractIpcErrorCode } from "@/utils/errors";
 
 interface StepUpDialogProps {
   open: boolean;
@@ -21,9 +25,6 @@ interface StepUpDialogProps {
   title?: string;
   description?: string;
 }
-
-const MAX_ATTEMPTS = 3;
-const LOCKOUT_SECONDS = 30;
 
 /**
  * Reusable step-up re-authentication dialog.
@@ -40,8 +41,7 @@ export function StepUpDialog({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [attempts, setAttempts] = useState(0);
-  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [lockedOut, setLockedOut] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus on open
@@ -49,55 +49,44 @@ export function StepUpDialog({
     if (open) {
       setPassword("");
       setError(null);
+      setLockedOut(false);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
 
-  // Lockout timer
-  useEffect(() => {
-    if (lockedUntil === null) return;
-    const remaining = lockedUntil - Date.now();
-    if (remaining <= 0) {
-      setLockedUntil(null);
-      return;
-    }
-    const timer = setTimeout(() => setLockedUntil(null), remaining);
-    return () => clearTimeout(timer);
-  }, [lockedUntil]);
-
-  const isLocked = lockedUntil !== null && lockedUntil > Date.now();
-
+  // The attempt limit is the server's (the sign-in account lockout): no count of its own here.
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
-      if (isLocked || loading) return;
+      if (lockedOut || loading) return;
 
       setError(null);
       setLoading(true);
       try {
         await verifyStepUp(password);
-        setAttempts(0);
-        onVerified();
-      } catch {
-        const newAttempts = attempts + 1;
-        setAttempts(newAttempts);
         setPassword("");
-
-        if (newAttempts >= MAX_ATTEMPTS) {
-          setLockedUntil(Date.now() + LOCKOUT_SECONDS * 1000);
-          setError(
-            t("stepUp.locked", {
-              count: LOCKOUT_SECONDS,
-            }),
-          );
-        } else {
+        onVerified();
+      } catch (err) {
+        setPassword("");
+        const code = extractIpcErrorCode(err);
+        if (code === ACCOUNT_LOCKED) {
+          // Too many wrong passwords: the account is locked and the server ended the session.
+          // The lockout and its end, in the user's words, show here and on sign-in.
+          const until = lockoutUntil(err);
+          setLockedOut(true);
+          setError(accountLockedText(until));
+          useSessionStore.getState().applyAccountLockout(until);
+          onCancel();
+        } else if (code === "AUTH_ERROR") {
           setError(t("stepUp.error"));
+        } else {
+          setError(describeAppError(err).title);
         }
       } finally {
         setLoading(false);
       }
     },
-    [password, isLocked, loading, attempts, onVerified, t],
+    [password, lockedOut, loading, onVerified, onCancel, t],
   );
 
   return (
@@ -139,7 +128,7 @@ export function StepUpDialog({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder={t("stepUp.passwordLabel")}
-              disabled={isLocked || loading}
+              disabled={lockedOut || loading}
               required
             />
           </div>
@@ -159,7 +148,7 @@ export function StepUpDialog({
             <Button type="button" variant="outline" size="sm" onClick={onCancel}>
               {t("stepUp.cancel")}
             </Button>
-            <Button type="submit" size="sm" disabled={isLocked || loading}>
+            <Button type="submit" size="sm" disabled={lockedOut || loading}>
               {loading ? t("stepUp.submitting") : t("stepUp.submit")}
             </Button>
           </DialogFooter>

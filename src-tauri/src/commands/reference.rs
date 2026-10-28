@@ -77,7 +77,7 @@ pub async fn get_reference_governance_capabilities(
         let s = sets::get_reference_set(&state.db, sid).await?;
         if s.domain_id != domain_id {
             return Err(crate::errors::AppError::ValidationFailed(vec![
-                "Le jeu sélectionné n'appartient pas à ce domaine.".into(),
+                "GATE_REF_SET_DOMAIN_MISMATCH: Le jeu sélectionné n'appartient pas à ce domaine.".into(),
             ]));
         }
         Some(s)
@@ -106,7 +106,7 @@ pub async fn get_reference_governance_capabilities_by_code(
         let s = sets::get_reference_set(&state.db, sid).await?;
         if s.domain_id != domain.id {
             return Err(crate::errors::AppError::ValidationFailed(vec![
-                "Le jeu sélectionné n'appartient pas à ce domaine.".into(),
+                "GATE_REF_SET_DOMAIN_MISMATCH: Le jeu sélectionné n'appartient pas à ce domaine.".into(),
             ]));
         }
         Some(s)

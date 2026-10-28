@@ -68,17 +68,58 @@ pub const RECEIVED_RULE_CATEGORY: &str = "safety_rule_received";
 /// that applies it ([`announce_forced_removal`], [`notify_received_rule_change`]).
 pub const FORCED_REMOVAL_CATEGORY: &str = "loto_forced_removal";
 
+/// Notification category of two concurrent versions of a PM plan, or of two occurrences of a plan
+/// for the same due date from two such versions (`pm::version_clash`): told to the users holding
+/// the PM planning right (`pm.edit`) plant-wide or at the site of the plan's equipment, on each PC
+/// that receives the second one, kept until each acknowledges it, like the other locked notices.
+pub const PM_CONCURRENT_VERSIONS_CATEGORY: &str = "pm_concurrent_versions";
+
+/// Notification category of a running work order put on hold by the suspension of its permit
+/// (owner decision D5): told to the work order's responsible, on the PC where the permit was
+/// suspended and on each PC that applies the suspension while holding the work order on hold
+/// ([`announce_work_held_by_suspension_of`]).
+pub const PERMIT_SUSPENDED_WORK_HELD_CATEGORY: &str = "permit_suspended_work_held";
+
+/// Notification category of a permit closed, cancelled or suspended on another PC before, or while,
+/// its work order ran here (owner decision D9, AU-101; `permit::ended_under_work`): told to the work
+/// order's responsible and to the permit close-right holders of the permit's site, on each PC that
+/// applies it ([`announce_permit_ended_under_work`]).
+pub const PERMIT_ENDED_UNDER_WORK_CATEGORY: &str = "permit_ended_under_work";
+
+/// Notification category of a work order received already started without the plant permit rule
+/// that concerns it here (owner decision D2 (a), audit finding AU-04 R2-S3;
+/// `permit::requirement_rules::finding_for_started_without_rule`): told to the permit-issue right
+/// holders (`ptw.issue`) of the work order's site, plant-wide ones included; nobody there: the
+/// settings administrators (`notifications::catalog::ALWAYS_DELIVERED_FALLBACK`), on each PC that
+/// applies it ([`notify_work_order_without_rule`]).
+pub const WO_PERMIT_RULE_MISSING_CATEGORY: &str = "wo_permit_rule_missing";
+
+/// Notification category of an inspection anomaly cancelled after it was routed to a request or a
+/// work order (its reading corrected; CMMS Advisor decision on AU-72, option B): told to the
+/// follow-up's responsible, on the PC that cancelled it and on each PC that applies the cancel
+/// ([`announce_anomaly_origin_cancelled`]).
+pub const ANOMALY_ORIGIN_CANCELLED_CATEGORY: &str = "insp_anomaly_origin_cancelled";
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
-pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[RECEIVED_RULE_CATEGORY, FORCED_REMOVAL_CATEGORY];
+pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
+    RECEIVED_RULE_CATEGORY,
+    FORCED_REMOVAL_CATEGORY,
+    PM_CONCURRENT_VERSIONS_CATEGORY,
+    PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+    PERMIT_ENDED_UNDER_WORK_CATEGORY,
+    WO_PERMIT_RULE_MISSING_CATEGORY,
+    ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
 /// (`concat!`); a test keeps both the same.
 #[macro_export]
 macro_rules! safety_notice_categories_sql {
     () => {
-        "('safety_rule_received', 'loto_forced_removal')"
+        "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held', \
+         'permit_ended_under_work', 'wo_permit_rule_missing', 'insp_anomaly_origin_cancelled')"
     };
 }
 
@@ -136,6 +177,7 @@ pub(crate) async fn notify_received_rule_change(
         "site_settings" => site_rule(conn, entity_sync_id, received).await,
         "permit_types" => three_person(conn, entity_sync_id, received).await,
         "permit_isolations" => received_forced_removal(conn, entity_sync_id, received).await,
+        "inspection_anomalies" => received_anomaly_cancel(conn, entity_sync_id, received).await,
         _ => Ok(()),
     }
 }
@@ -361,6 +403,23 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
     for (category, label) in [
         (RECEIVED_RULE_CATEGORY, "Safety rule changed on another PC"),
         (FORCED_REMOVAL_CATEGORY, "Lock taken off by a forced removal"),
+        (PM_CONCURRENT_VERSIONS_CATEGORY, "Concurrent PM plan versions"),
+        (
+            PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+            "Work order put on hold by its permit's suspension",
+        ),
+        (
+            PERMIT_ENDED_UNDER_WORK_CATEGORY,
+            "Permit ended on another PC before or during the work",
+        ),
+        (
+            WO_PERMIT_RULE_MISSING_CATEGORY,
+            "Work order received started without its plant permit rule",
+        ),
+        (
+            ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+            "Originating inspection anomaly cancelled",
+        ),
     ] {
         ensure_category_rows(conn, category, label).await?;
     }
@@ -699,6 +758,7 @@ async fn send(
         source_record_id: entity_sync_id.to_string(),
         entity_type,
         entity_sync_id,
+        org_node_id: None,
     };
     let written = emit_notice(conn, &route, title, body, action_url, &message).await;
     match written {
@@ -724,6 +784,546 @@ async fn send(
     }
 }
 
+/// Writes the review notice of grants made by someone whose right to give access was withdrawn on
+/// another PC (`sync::grant_check::after_rights_change`), to the administrators (the audience of
+/// [`RECEIVED_RULE_CATEGORY`]: `adm.settings` holders and plant administrators, kept until each
+/// acknowledges it), in a savepoint of the apply of the received row. `fail_closed`: a notice that
+/// cannot be written fails the caller (a grant applied for review is never applied untold);
+/// otherwise it is logged (a withdrawal only takes access away and is never held back by its
+/// notice).
+pub(crate) async fn send_grant_review_notice(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+    fail_closed: bool,
+) -> AppResult<()> {
+    send(
+        conn,
+        entity_type,
+        entity_sync_id,
+        !fail_closed,
+        title,
+        body,
+        "/admin",
+        message,
+    )
+    .await
+}
+
+/// A work order received already started without the plant rule that concerns it here
+/// (`permit::requirement_rules::finding_for_started_without_rule`): the permit-issue right holders
+/// of its site are told, each until they acknowledge it ([`WO_PERMIT_RULE_MISSING_CATEGORY`],
+/// routed by the work order's site; nobody there: the settings administrators). The work order is
+/// applied whatever happens to the notice (its history is never held back): a notice that cannot be
+/// written is logged. The text does not say why the rule was missing there (a PC without the rule
+/// list, or an edited row): it says what is known.
+pub(crate) async fn notify_work_order_without_rule(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    wo_sync_id: &str,
+    wo_code: &str,
+    rule: &str,
+    permit_type: &str,
+    requires_permit: bool,
+    received: Option<(&str, Option<&str>)>,
+) -> AppResult<()> {
+    let (required_fr, required_en) = if requires_permit {
+        ("avec un permis exigé", "with a permit required")
+    } else {
+        ("sans permis exigé", "with no permit required")
+    };
+    // Received with a rule, but not the one (or not the permit type) the plant applies here: both
+    // are named (audit finding AU-04 R5-S2), never "without the rule".
+    let (title, body, key) = match received {
+        Some((named, named_type)) => {
+            let named_type = named_type.unwrap_or("?");
+            (
+                format!(
+                    "OT {wo_code} reçu démarré avec la règle {named} (permis {named_type}) au lieu de {rule} (permis \
+                     {permit_type}) / Work order {wo_code} received started with rule {named} ({named_type} permit) \
+                     instead of {rule} ({permit_type} permit)"
+                ),
+                format!(
+                    "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, avec la règle {named} \
+                     (permis {named_type}), alors que l'usine applique ici la règle {rule} (permis {permit_type}) pour \
+                     son équipement et son travail. Vérifiez comment ce travail a été protégé. / Received by sync: \
+                     work order {wo_code} was received started {required_en}, with rule {named} ({named_type} permit), \
+                     while the plant applies rule {rule} ({permit_type} permit) here for its equipment and work. Check \
+                     how this work was protected."
+                ),
+                "wo_permit_rule_other_on_arrival",
+            )
+        }
+        None => (
+            format!(
+                "OT {wo_code} reçu démarré sans la règle de permis {rule} / Work order {wo_code} received started \
+                 without permit rule {rule}"
+            ),
+            format!(
+                "Reçu par synchronisation : l'OT {wo_code} a été reçu démarré {required_fr}, sans la règle {rule} que \
+                 l'usine applique ici (un permis {permit_type} pour son équipement et son travail). Vérifiez comment ce \
+                 travail a été protégé. / Received by sync: work order {wo_code} was received started {required_en}, \
+                 without plant rule {rule} that applies here (a {permit_type} permit for its equipment and work). \
+                 Check how this work was protected."
+            ),
+            "wo_permit_rule_missing_on_arrival",
+        ),
+    };
+    let route = NoticeRoute {
+        category: WO_PERMIT_RULE_MISSING_CATEGORY,
+        // The work order's site routes the permit-issue right holders (`notifications::router`).
+        source_module: "work_orders",
+        source_record_id: wo_id.to_string(),
+        entity_type: "work_orders",
+        entity_sync_id: wo_sync_id,
+        org_node_id: None,
+    };
+    let message = NotificationMessage::new(
+        key,
+        json!({
+            "code": wo_code,
+            "rule": rule,
+            "permit_type": permit_type,
+            "requires_permit": requires_permit,
+            "received_rule": received.map(|r| r.0),
+            // A received rule with no permit type is shown "?", as in the title (check 6, C6-N5).
+            "received_permit_type": received.map(|r| r.1.unwrap_or("?")),
+        }),
+    );
+    send_logged_notice(
+        conn,
+        &route,
+        title,
+        body,
+        &format!("/work-orders?openWo={wo_id}"),
+        &message,
+    )
+    .await;
+    Ok(())
+}
+
+/// The permit type of the plant rule held on a work order changed (the list here gives another rule
+/// or type, `permit::requirement_rules::converge_received_rule`): the permit-issue right holders of
+/// its site are told, each until they acknowledge it ([`WO_PERMIT_RULE_MISSING_CATEGORY`], its
+/// audience and fallback), with the rule and permit type before and after (CMMS Advisor decision on
+/// AU-04 R5-S3, option A). The change itself is recorded in the work order's history and audit
+/// trail; a notice that cannot be written is logged.
+pub(crate) async fn notify_work_order_rule_type_changed(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    wo_sync_id: &str,
+    wo_code: &str,
+    before: (&str, Option<&str>),
+    after: (&str, Option<&str>),
+) {
+    let (old_rule, old_type) = (before.0, before.1.unwrap_or("?"));
+    let (new_rule, new_type) = (after.0, after.1.unwrap_or("?"));
+    let route = NoticeRoute {
+        category: WO_PERMIT_RULE_MISSING_CATEGORY,
+        source_module: "work_orders",
+        source_record_id: wo_id.to_string(),
+        entity_type: "work_orders",
+        entity_sync_id: wo_sync_id,
+        org_node_id: None,
+    };
+    send_logged_notice(
+        conn,
+        &route,
+        format!(
+            "OT {wo_code} : permis exigé changé de {old_type} à {new_type} / Work order {wo_code}: required permit \
+             changed from {old_type} to {new_type}"
+        ),
+        format!(
+            "Les règles de permis de l'usine appliquées ici donnent à l'OT {wo_code} la règle {new_rule} (permis \
+             {new_type}) au lieu de {old_rule} (permis {old_type}). Vérifiez le permis prévu pour ce travail. / The \
+             plant's permit rules applied here give work order {wo_code} rule {new_rule} ({new_type} permit) instead \
+             of {old_rule} ({old_type} permit). Check the permit planned for this work."
+        ),
+        &format!("/work-orders?openWo={wo_id}"),
+        &NotificationMessage::new(
+            "wo_permit_rule_type_changed",
+            json!({
+                "code": wo_code,
+                "rule": new_rule,
+                "permit_type": new_type,
+                "previous_rule": old_rule,
+                "previous_permit_type": old_type,
+            }),
+        ),
+    )
+    .await;
+}
+
+/// Writes a notice in a savepoint of the caller's transaction; a notice that cannot be written is
+/// logged and the change it tells of is kept (it is never held back by its notice).
+async fn send_logged_notice(
+    conn: &impl ConnectionTrait,
+    route: &NoticeRoute<'_>,
+    title: String,
+    body: String,
+    action_url: &str,
+    message: &NotificationMessage,
+) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT safety_notice").await?;
+        match emit_notice(conn, route, title, body, action_url, message).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE safety_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO safety_notice").await?;
+                conn.execute_unprepared("RELEASE safety_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            category = route.category,
+            entity_type = route.entity_type,
+            entity_sync_id = route.entity_sync_id,
+            error = %err,
+            "safety notice not written; the change it tells of is kept"
+        );
+    }
+}
+
+/// An inspection anomaly routed to a request or a work order whose condition is gone (its reading
+/// corrected or its photo added: cancelled by `inspection::results::sync_auto_anomaly`, here or on
+/// the PC that cancelled it): its follow-up is left as it is, and the follow-up's responsible is told,
+/// until they acknowledge it ([`ANOMALY_ORIGIN_CANCELLED_CATEGORY`]: the work order's responsible, or
+/// the responsible of the work order a request was converted to; nobody: the work order's planner,
+/// or the request's reviewer). A "revue permis requise" on the work order stays: it is cleared only
+/// through its own path. `anomaly_id` is the anomaly's local id. A notice that cannot be written is
+/// logged.
+pub(crate) async fn announce_anomaly_origin_cancelled(conn: &impl ConnectionTrait, anomaly_id: i64) {
+    let found = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.entity_sync_id, a.description, a.linked_di_id, a.linked_work_order_id, \
+                    wo.code AS wo_code, di.code AS di_code \
+               FROM inspection_anomalies a \
+               LEFT JOIN work_orders wo ON wo.id = a.linked_work_order_id \
+               LEFT JOIN intervention_requests di ON di.id = a.linked_di_id \
+              WHERE a.id = ?",
+            [anomaly_id.into()],
+        ))
+        .await;
+    let row = match found {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::error!(anomaly_id, error = %err, "cancelled anomaly notice: anomaly not read");
+            return;
+        }
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten();
+    let id = |c: &str| row.try_get::<Option<i64>>("", c).ok().flatten();
+    let anomaly_sync = get("entity_sync_id").unwrap_or_default();
+    let description = get("description").unwrap_or_default();
+    let (module, record, kind, code, action_url) = match (id("linked_work_order_id"), id("linked_di_id")) {
+        (Some(wo), _) => (
+            "work_orders",
+            wo,
+            "wo",
+            get("wo_code").unwrap_or_else(|| wo.to_string()),
+            format!("/work-orders?openWo={wo}"),
+        ),
+        (None, Some(di)) => (
+            "di",
+            di,
+            "di",
+            get("di_code").unwrap_or_else(|| di.to_string()),
+            format!("/requests?openDi={di}"),
+        ),
+        (None, None) => return,
+    };
+    let route = NoticeRoute {
+        category: ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+        // The follow-up routes its responsible, planner or reviewer (`notifications::router`).
+        source_module: module,
+        source_record_id: record.to_string(),
+        entity_type: "inspection_anomalies",
+        entity_sync_id: &anomaly_sync,
+        org_node_id: None,
+    };
+    send_logged_notice(
+        conn,
+        &route,
+        format!("Anomalie d'origine annulée : {code} / Originating anomaly cancelled: {code}"),
+        format!(
+            "L'anomalie d'inspection à l'origine de {code} a été annulée : son défaut n'est plus détecté ({description}). \
+             {code} n'est pas modifié : vérifiez s'il reste nécessaire. Une revue permis requise reste en place. / \
+             The inspection anomaly {code} was raised from was cancelled: its condition is no longer detected ({description}). \
+             {code} is not changed: check whether it is still needed. A required permit review stays in place."
+        ),
+        &action_url,
+        &NotificationMessage::new(
+            ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+            json!({ "code": code, "kind": kind, "anomaly": description }),
+        ),
+    )
+    .await;
+}
+
+/// A received cancel of an anomaly routed here (`inspection::sync_check` accepted it): its
+/// follow-up's responsible here is told, as on the PC that cancelled it.
+async fn received_anomaly_cancel(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    received: &Payload,
+) -> AppResult<()> {
+    let Some(local) = crate::permit::sync_check::local_wire(conn, "inspection_anomalies", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let row = crate::permit::sync_check::overlay(Some(&local), received);
+    if text(&local, "resolution_status") != Some("triaged") || text(&row, "resolution_status") != Some("cancelled") {
+        return Ok(());
+    }
+    let id = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM inspection_anomalies WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "id"))
+        .transpose()
+        .map_err(hook_err)?;
+    if let Some(id) = id {
+        announce_anomaly_origin_cancelled(conn, id).await;
+    }
+    Ok(())
+}
+
+/// Notification category of a reliability decision refused at synchronisation after a work order
+/// was created from it, or a PM version from it was published (AU-76b, CMMS Advisor Q6 and S4
+/// option A): the work order is kept (never cancelled by the refusal) and the published version
+/// keeps running; the work order's planner (else its responsible), the PM planners and the
+/// decision's proposer are told, on the PC that refused it and on each PC that receives the
+/// refusal while holding the work order or the published version. It cannot be muted or re-routed
+/// (`notifications::catalog::ALWAYS_DELIVERED`).
+pub const DECISION_REFUSED_WO_KEPT_CATEGORY: &str = "rel_decision_refused_wo_kept";
+
+/// Message key of the notice when it names a published PM version.
+pub const DECISION_REFUSED_PM_KEPT_MESSAGE: &str = "rel_decision_refused_pm_kept";
+
+/// The notice of [`DECISION_REFUSED_WO_KEPT_CATEGORY`] for the decision `decision_id` (local id):
+/// the work order `work_order` (local id) created from it and held here, else the PM version
+/// `pm_version` (local id) published from it here. Its event has an identity built from the
+/// decision's sync id, so the PCs that each raise it share one event and one notification per
+/// person. Written in a savepoint: a notice that cannot be written is logged, the refusal is kept.
+pub(crate) async fn announce_refused_decision(
+    conn: &impl ConnectionTrait,
+    decision_id: i64,
+    work_order: Option<i64>,
+    pm_version: Option<i64>,
+) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT decision_refused_notice").await?;
+        match decision_refused_notice(conn, decision_id, work_order, pm_version).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO decision_refused_notice").await?;
+                conn.execute_unprepared("RELEASE decision_refused_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            decision_id,
+            error = %err,
+            "refused decision notice not written; the refusal, the work order and the PM version are kept"
+        );
+    }
+}
+
+async fn decision_refused_notice(
+    conn: &impl ConnectionTrait,
+    decision_id: i64,
+    work_order: Option<i64>,
+    pm_version: Option<i64>,
+) -> AppResult<()> {
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, title, proposed_by_id FROM reliability_study_decisions WHERE id = ?",
+            [decision_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(());
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten().unwrap_or_default();
+    let decision_sync = get("entity_sync_id");
+    let title = get("title");
+    let proposer: Option<i64> = row.try_get("", "proposed_by_id").map_err(hook_err)?;
+    let mut watchers: Vec<i64> = proposer.into_iter().collect();
+    let (source_module, source_record, action_url, key, params, title_text, body_text);
+    if let Some(wo) = work_order {
+        let Some(w) = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT code, planner_id, primary_responsible_id FROM work_orders WHERE id = ?",
+                [wo.into()],
+            ))
+            .await?
+        else {
+            return Ok(());
+        };
+        let code: String = w.try_get("", "code").map_err(hook_err)?;
+        let planner: Option<i64> = w.try_get("", "planner_id").map_err(hook_err)?;
+        // No planner: the work order's responsible, who will run it (review note i).
+        if planner.is_none() {
+            let responsible: Option<i64> = w.try_get("", "primary_responsible_id").map_err(hook_err)?;
+            watchers.extend(responsible);
+        }
+        // The work order routes its planner; the others are its watchers.
+        source_module = "work_orders".to_string();
+        source_record = wo.to_string();
+        action_url = Some(format!("/work-orders?openWo={wo}"));
+        key = DECISION_REFUSED_WO_KEPT_CATEGORY;
+        params = json!({ "code": code, "decision": title });
+        title_text =
+            format!("Décision de fiabilité refusée : {code} conservé / Reliability decision refused: {code} kept");
+        body_text = format!(
+            "La décision « {title} » a été refusée à la synchronisation (son approbation n'est pas valable sur un \
+             poste). L'OT {code} créé à partir d'elle est conservé : vérifiez s'il reste nécessaire. / The decision \
+             \"{title}\" was refused at synchronisation (its approval is not valid on a PC). Work order {code} \
+             created from it is kept: check whether it is still needed."
+        );
+    } else if let Some(version) = pm_version {
+        let Some(v) = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT v.entity_sync_id, p.code AS plan_code, \
+                        (SELECT n.display_no FROM pm_plan_version_numbers n WHERE n.id = v.id) AS version_no \
+                   FROM pm_plan_versions v JOIN pm_plans p ON p.id = v.pm_plan_id WHERE v.id = ?",
+                [version.into()],
+            ))
+            .await?
+        else {
+            return Ok(());
+        };
+        let version_sync: Option<String> = v.try_get("", "entity_sync_id").map_err(hook_err)?;
+        let plan: String = v.try_get("", "plan_code").map_err(hook_err)?;
+        let number: Option<i64> = v.try_get("", "version_no").map_err(hook_err)?;
+        let number = number.map_or_else(|| "?".to_string(), |n| n.to_string());
+        // The PM planners (plant-wide) and the proposer; the version is named by its sync id.
+        watchers.extend(
+            crate::notifications::router::permission_holder_user_ids(conn, crate::rbac::permissions::PM_EDIT, None)
+                .await?,
+        );
+        source_module = "settings".to_string();
+        source_record = version_sync.unwrap_or_default();
+        action_url = None;
+        key = DECISION_REFUSED_PM_KEPT_MESSAGE;
+        params = json!({ "plan": plan, "version": number, "decision": title });
+        title_text = format!(
+            "Décision de fiabilité refusée : plan {plan} v{number} publié, à revoir / Reliability decision refused: \
+             plan {plan} v{number} published, to review"
+        );
+        body_text = format!(
+            "La décision « {title} » a été refusée à la synchronisation (son approbation n'est pas valable sur un \
+             poste). La version {number} du plan {plan}, publiée à partir d'elle, reste en vigueur : revoyez-la et \
+             publiez une autre version si elle ne convient pas. / The decision \"{title}\" was refused at \
+             synchronisation (its approval is not valid on a PC). Version {number} of plan {plan}, published from it, \
+             stays in force: review it and publish another version if it does not fit."
+        );
+    } else {
+        return Ok(());
+    }
+    watchers.sort_unstable();
+    watchers.dedup();
+    ensure_category_rows(
+        conn,
+        DECISION_REFUSED_WO_KEPT_CATEGORY,
+        "Reliability decision refused at synchronisation, work order or PM version kept",
+    )
+    .await?;
+    let event_id = crate::sync::identity::seeded_entity_sync_id(
+        "notification_events",
+        &format!("{DECISION_REFUSED_WO_KEPT_CATEGORY}|{decision_sync}"),
+    );
+    emit(
+        conn,
+        &NotificationEventInput {
+            source_module,
+            source_record_id: Some(source_record),
+            event_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            category_code: DECISION_REFUSED_WO_KEPT_CATEGORY.to_string(),
+            severity: "warning".to_string(),
+            dedupe_key: None,
+            payload_json: Some(
+                json!({
+                    "entity_type": "reliability_study_decisions",
+                    "entity_sync_id": decision_sync,
+                    "watcher_user_ids": watchers,
+                })
+                .to_string(),
+            ),
+            title: title_text,
+            body: Some(body_text),
+            action_url,
+        },
+        Some(event_id),
+        Some(&NotificationMessage::new(key, params)),
+        Arrival::New,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Writes a notice of concurrent PM plan versions (`pm::version_clash`) in a savepoint of the apply
+/// of the received row. A notice that cannot be written is logged and the row still applies: a
+/// version or an occurrence is never held back by its notice (nothing is changed by either).
+pub(crate) async fn send_pm_concurrent_notice(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    plan_sync_id: &str,
+    site: Option<i64>,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+) -> AppResult<()> {
+    conn.execute_unprepared("SAVEPOINT pm_concurrent_notice").await?;
+    let route = NoticeRoute {
+        category: PM_CONCURRENT_VERSIONS_CATEGORY,
+        // The plant-wide PM planners, and those of the site of the plan's equipment.
+        source_module: "pm_plan",
+        source_record_id: plan_sync_id.to_string(),
+        entity_type,
+        entity_sync_id,
+        org_node_id: site,
+    };
+    match emit_notice(conn, &route, title, body, "/pm", &message).await {
+        Ok(()) => conn.execute_unprepared("RELEASE pm_concurrent_notice").await?,
+        Err(err) => {
+            conn.execute_unprepared("ROLLBACK TO pm_concurrent_notice").await?;
+            conn.execute_unprepared("RELEASE pm_concurrent_notice").await?;
+            tracing::error!(
+                entity_type,
+                entity_sync_id,
+                error = %err,
+                "concurrent PM versions: applied without its notice (notice failed)"
+            );
+            return Ok(());
+        }
+    };
+    Ok(())
+}
+
 /// Where a notice goes: its category, the record it is about (its routing context: a permit routes
 /// to its site) and the row that caused it.
 struct NoticeRoute<'a> {
@@ -732,6 +1332,9 @@ struct NoticeRoute<'a> {
     source_record_id: String,
     entity_type: &'a str,
     entity_sync_id: &'a str,
+    /// The site the notice is about, when its record gives none: its holders at that site are told
+    /// too, besides the plant-wide ones.
+    org_node_id: Option<i64>,
 }
 
 async fn emit_notice(
@@ -761,7 +1364,13 @@ async fn emit_notice(
             severity: "warning".to_string(),
             dedupe_key: None,
             payload_json: Some(
-                json!({ "entity_type": entity_type, "entity_sync_id": entity_sync_id, "notice": nonce }).to_string(),
+                json!({
+                    "entity_type": entity_type,
+                    "entity_sync_id": entity_sync_id,
+                    "notice": nonce,
+                    "org_node_id": route.org_node_id,
+                })
+                .to_string(),
             ),
             title,
             body: Some(body),
@@ -836,6 +1445,7 @@ async fn send_forced_removal(
         source_record_id: n.permit_id.to_string(),
         entity_type: "permit_isolations",
         entity_sync_id: isolation_sync_id,
+        org_node_id: None,
     };
     conn.execute_unprepared("SAVEPOINT forced_removal_notice").await?;
     match emit_notice(conn, &route, title, body, "/permits", &message).await {
@@ -929,4 +1539,234 @@ async fn received_forced_removal(
         reason: text(&row, "forced_reason").unwrap_or_default().to_string(),
     };
     send_forced_removal(conn, entity_sync_id, notice).await
+}
+
+/// Writes a notice of a permit's work in a savepoint, logged when it cannot be written: the change it
+/// tells of (a suspension that stops the work, a received permit end) is never held back by its
+/// notice — it makes the plant safer, and a received end is a fact (its review conflict is kept).
+async fn send_permit_work_notice(
+    conn: &impl ConnectionTrait,
+    route: &NoticeRoute<'_>,
+    title: String,
+    body: String,
+    message: NotificationMessage,
+) {
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT permit_work_notice").await?;
+        match emit_notice(conn, route, title, body, "/permits", &message).await {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE permit_work_notice").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO permit_work_notice").await?;
+                conn.execute_unprepared("RELEASE permit_work_notice").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(
+            category = route.category,
+            entity_type = route.entity_type,
+            entity_sync_id = route.entity_sync_id,
+            error = %err,
+            "permit work notice not written; the change it tells of is kept"
+        );
+    }
+}
+
+/// A running work order put on hold because its permit was suspended (owner decision D5), in the
+/// transaction of the suspension (or of its apply here): its responsible is told, and kept told
+/// until they acknowledge it; a work order without a responsible (or whose responsible is not an
+/// active user here) tells the permit close-right holders of the permit's site instead
+/// (`notifications::catalog::ALWAYS_DELIVERED_FALLBACK`). `permit_id` is the permit's local id (its
+/// work order and site route the notice).
+pub(crate) async fn announce_work_held_by_suspension_of(
+    conn: &impl ConnectionTrait,
+    permit_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+    wo_code: &str,
+    reason: &str,
+) {
+    let route = NoticeRoute {
+        category: PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+        source_module: "permit",
+        source_record_id: permit_id.to_string(),
+        entity_type: "work_permits",
+        entity_sync_id: permit_sync_id,
+        org_node_id: None,
+    };
+    send_permit_work_notice(
+        conn,
+        &route,
+        format!(
+            "OT {wo_code} mis en attente : permis {permit_code} suspendu / Work order {wo_code} on hold: permit \
+             {permit_code} suspended"
+        ),
+        format!(
+            "Le permis {permit_code} a été suspendu (motif : {reason}). Le travail de l'OT {wo_code} est arrêté et ne \
+             reprendra qu'après la remise en vigueur du permis. / Permit {permit_code} was suspended (reason: \
+             {reason}). Work on {wo_code} is stopped until the permit is reinstated."
+        ),
+        NotificationMessage::new(
+            PERMIT_SUSPENDED_WORK_HELD_CATEGORY,
+            json!({ "permit": permit_code, "work_order": wo_code, "reason": reason }),
+        ),
+    )
+    .await;
+}
+
+/// [`announce_work_held_by_suspension_of`] for a suspension made on this PC.
+pub(crate) async fn announce_work_held_by_suspension(
+    conn: &impl ConnectionTrait,
+    permit: &crate::permit::domain::WorkPermit,
+    wo_code: &str,
+    reason: &str,
+) {
+    announce_work_held_by_suspension_of(conn, permit.id, &permit.entity_sync_id, &permit.code, wo_code, reason).await;
+}
+
+/// What a received permit end raised for review (`permit::ended_under_work`).
+pub(crate) struct PermitEndedNotice<'a> {
+    pub permit_id: i64,
+    pub permit_sync_id: &'a str,
+    pub permit_code: &'a str,
+    pub wo_code: &'a str,
+    /// The message key (`permit::ended_under_work::codes::NOTICE_*`): ended before the start or
+    /// during the work, each with or without the time of the end; or suspended around a start.
+    pub key: &'static str,
+    /// The permit's status received (`closed`, `handed_back`, `cancelled`, `suspended`,
+    /// `revalidation_required`).
+    pub status: &'a str,
+    /// When the permit ended there, when the row says it (`None`: a cancellation, no time).
+    pub end_at: Option<&'a str>,
+    /// When a suspension made and lifted there was lifted (`permit_suspended_around_start`).
+    pub until: Option<&'a str>,
+    /// When the work last started (or resumed, or was reopened) here.
+    pub start_at: Option<&'a str>,
+}
+
+/// A permit ended on another PC before, or while, its work order ran here (owner decision D9):
+/// the work order's responsible and the permit close-right holders of the permit's site are told,
+/// in the apply's transaction, each until they acknowledge it.
+pub(crate) async fn announce_permit_ended_under_work(conn: &impl ConnectionTrait, n: &PermitEndedNotice<'_>) {
+    let route = NoticeRoute {
+        category: PERMIT_ENDED_UNDER_WORK_CATEGORY,
+        source_module: "permit",
+        source_record_id: n.permit_id.to_string(),
+        entity_type: "work_permits",
+        entity_sync_id: n.permit_sync_id,
+        org_node_id: None,
+    };
+    let (permit, wo, status) = (n.permit_code, n.wo_code, n.status);
+    let start = n.start_at.unwrap_or("?");
+    use crate::permit::ended_under_work::codes;
+    let (title, body) = match (n.key, n.end_at) {
+        (k, Some(end)) if k == codes::NOTICE_SUSPENDED_AROUND_START => {
+            let until = n.until.unwrap_or("?");
+            (
+                format!(
+                    "Travail commencé pendant une suspension du permis {permit} (OT {wo}) / Work started while \
+                     permit {permit} was suspended ({wo})"
+                ),
+                format!(
+                    "Reçu par synchronisation : le permis {permit} a été suspendu sur un autre poste du {end} au \
+                     {until}, et le travail de l'OT {wo} a commencé ici le {start}, pendant cette suspension. Le \
+                     permis est de nouveau en vigueur : examinez le conflit de synchronisation. / Received by sync: \
+                     permit {permit} was suspended on another PC from {end} to {until}, and work on {wo} started \
+                     here on {start}, during that suspension. The permit is in force again: review the sync \
+                     conflict."
+                ),
+            )
+        }
+        (k, Some(end)) if k == codes::NOTICE_SUSPENDED_DURING_WORK => {
+            let until = n.until.unwrap_or("?");
+            (
+                format!(
+                    "Travail en cours pendant une suspension du permis {permit} (OT {wo}) / Work running while \
+                     permit {permit} was suspended ({wo})"
+                ),
+                format!(
+                    "Reçu par synchronisation : le permis {permit} a été suspendu sur un autre poste du {end} au \
+                     {until}, alors que le travail de l'OT {wo} était en cours ici (depuis le {start}). Le permis \
+                     est de nouveau en vigueur : examinez le conflit de synchronisation. / Received by sync: permit \
+                     {permit} was suspended on another PC from {end} to {until}, while work on {wo} was running here \
+                     (since {start}). The permit is in force again: review the sync conflict."
+                ),
+            )
+        }
+        (k, Some(end)) if k == codes::NOTICE_BEFORE_START => (
+            format!(
+                "Travail commencé sous un permis déjà terminé : {permit} (OT {wo}) / Work started under an ended \
+                 permit: {permit} ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » le {end} sur un autre poste, avant \
+                 le début du travail de l'OT {wo} ici le {start}. Arrêtez le travail et examinez le conflit de \
+                 synchronisation. / Received by sync: permit {permit} became '{status}' on {end} on another PC, \
+                 before work on {wo} started here on {start}. Stop the work and review the sync conflict."
+            ),
+        ),
+        (_, Some(end)) => (
+            format!(
+                "Permis terminé pendant le travail : {permit} (OT {wo}) / Permit ended during the work: {permit} \
+                 ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » (le {end}) sur un autre poste alors \
+                 que le travail de l'OT {wo} est en cours ici depuis le {start}. Arrêtez le travail et examinez le \
+                 conflit de synchronisation. / Received by sync: permit {permit} became '{status}' (on {end}) on \
+                 another PC while work on {wo} runs here since {start}. Stop the work and review the sync conflict."
+            ),
+        ),
+        // No time of the end (a cancellation): said so, never an empty time.
+        (k, None) if k == codes::NOTICE_DURING_WORK_UNTIMED => (
+            format!(
+                "Permis terminé pendant le travail : {permit} (OT {wo}) / Permit ended during the work: {permit} \
+                 ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » sur un autre poste (heure non \
+                 connue) alors que le travail de l'OT {wo} est en cours ici depuis le {start}. Arrêtez le travail et \
+                 examinez le conflit de synchronisation. / Received by sync: permit {permit} became '{status}' on \
+                 another PC (time not known) while work on {wo} runs here since {start}. Stop the work and review \
+                 the sync conflict."
+            ),
+        ),
+        (_, None) => (
+            format!(
+                "Permis terminé sur un autre poste, travail commencé ici : {permit} (OT {wo}) / Permit ended on \
+                 another PC, work started here: {permit} ({wo})"
+            ),
+            format!(
+                "Reçu par synchronisation : le permis {permit} est passé « {status} » sur un autre poste, à une heure \
+                 que la synchronisation ne donne pas ; le travail de l'OT {wo} a commencé ici le {start}. L'ordre ne \
+                 peut être établi : vérifiez que le travail est arrêté et examinez le conflit de synchronisation. / \
+                 Received by sync: permit {permit} became '{status}' on another PC, at a time sync does not give; \
+                 work on {wo} started here on {start}. The order cannot be established: make sure the work is \
+                 stopped and review the sync conflict."
+            ),
+        ),
+    };
+    send_permit_work_notice(
+        conn,
+        &route,
+        title,
+        body,
+        NotificationMessage::new(
+            n.key,
+            json!({
+                "permit": permit,
+                "work_order": wo,
+                "status": status,
+                "end_at": n.end_at,
+                "reinstated_at": n.until,
+                "start_at": n.start_at,
+            }),
+        ),
+    )
+    .await;
 }

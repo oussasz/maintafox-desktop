@@ -134,13 +134,13 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
-    "noTeamCapacity": "This team has no working hours that day: none of its members has a Classe horaire (timetable), or it has no members.",
-    "setUpTeamCapacity": "Set up its members' Classes horaires",
+    "noTeamCapacity": "This team has no working hours that day: none of its members has a schedule class (timetable), or it has no members.",
+    "setUpTeamCapacity": "Set up its members' schedule classes",
     "capacityBasis": {
-      "roster": "from the Classes horaires",
+      "roster": "from the schedule classes",
       "rest_day": "rest day",
       "holiday": "holiday",
-      "no_schedule": "no Classe horaire",
+      "no_schedule": "no schedule class",
       "no_members": "no team members"
     },
     "capacityBlockedHint": "This slot is longer than remaining crew capacity ({{remaining}} h). Shorten the end time.",
@@ -230,8 +230,13 @@
     "create": "Register break-in",
     "empty": "No break-ins for selected period.",
     "acknowledgeRefusals": "Override these refusals with the reason above",
-    "urgentHint": "Urgent reason: name an approver or give a dangerous-override reason.",
-    "inserted": "Added to a frozen week:"
+    "urgentHint": "Urgent reason: a second planner holding plan.confirm at the crew's site signs with their password.",
+    "approverPassword": "Approver's password",
+    "approverPasswordPlaceholder": "Typed by the approver",
+    "signatureHint": "The approver signs by typing their password on this PC. An urgent break-in, or one that forces a blocking check (crew capacity, locked window, shutdown window, readiness), must be signed.",
+    "noApprovers": "Nobody else holds plan.confirm at this crew's site: an urgent break-in cannot be signed. Emergency work runs as an unscheduled work order.",
+    "inserted": "Added to a frozen week:",
+    "syncRefused": "refused (sync)"
   },
   "freeze": {
     "title": "Freeze schedule period",

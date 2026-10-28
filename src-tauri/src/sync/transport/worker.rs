@@ -14,6 +14,8 @@
 //! 5. Media received from other devices (`sync_media_downloads`) is downloaded at the end of a
 //!    cycle that synced: presigned GET, streamed to a temporary file, size and SHA-256 checked,
 //!    then moved into place; failures are retried per file with backoff and never block sync.
+//! 6. A cycle whose exchanges reached the server head records whether the organisation has user
+//!    accounts on the server: the first administrator of a new PC waits for that (`plant_join`).
 //!
 //! Failures: no connection → `offline`, retried with backoff and woken by the webview `online`
 //! event; 5xx / interrupted → retried with the same key and counted as a delivery attempt
@@ -223,6 +225,9 @@ pub enum SyncWorkerState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SyncWorkerError {
     pub code: String,
+    /// Why the attempt failed, as a stable reason the screens translate (`error_kind`).
+    pub kind: &'static str,
+    /// Raw text ("HTTP 503: …", the network library's): log and technical details only.
     pub message: String,
     pub http_status: Option<u16>,
     pub at: String,
@@ -279,6 +284,11 @@ pub enum SyncCommand {
     Reevaluate,
     /// The webview saw the network come back.
     NetworkOnline,
+    /// The signed-out first-start screen asks to join the plant (`request_plant_join`): run a
+    /// cycle soon, but never sooner than `network_wake_min_spacing` after the last one started,
+    /// never before a server `Retry-After`, never during a pause, and without forgetting the
+    /// failure count (unlike `RunNow`). Repeated requests therefore coalesce into one cycle.
+    JoinPlant,
 }
 
 struct HandleInner {
@@ -353,6 +363,7 @@ impl SyncWorkerHandle {
             s.blocker = Some(BLOCKER_NOT_CONFIGURED.to_string());
             s.last_error = Some(SyncWorkerError {
                 code: BLOCKER_NOT_CONFIGURED.to_string(),
+                kind: error_kind(BLOCKER_NOT_CONFIGURED, None),
                 message: message.to_string(),
                 http_status: None,
                 at: store::now_utc(),
@@ -365,7 +376,7 @@ impl SyncWorkerHandle {
 pub async fn pause_sync(db: &DatabaseConnection, handle: &SyncWorkerHandle, minutes: u32) -> AppResult<String> {
     if minutes == 0 || minutes > SYNC_MAX_PAUSE_MINUTES {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
+            "GATE_SYNC_PAUSE_RANGE:max={SYNC_MAX_PAUSE_MINUTES}: Pause duration must be between 1 and {SYNC_MAX_PAUSE_MINUTES} minutes."
         )]));
     }
     let until = (chrono::Utc::now() + chrono::Duration::minutes(i64::from(minutes)))
@@ -455,9 +466,38 @@ fn retry_after_of(err: &TransportError) -> Option<Duration> {
     }
 }
 
+/// Stable reason of a failed attempt (`SyncWorkerError::kind`) from its raw code and HTTP status.
+/// The server's codes are open-ended, so an HTTP failure is read by its status first; an error
+/// read back from the worker state has no status, and the server codes known to the worker
+/// ([`classify`]) give its reason then.
+pub fn error_kind(code: &str, http_status: Option<u16>) -> &'static str {
+    match (http_status, code) {
+        (Some(401 | 403), _) => "access_refused",
+        (Some(408 | 429 | 500..=599), _) => "server_unavailable",
+        (Some(_), _) => "request_refused",
+        (None, "rate_limited" | "sync_exchange_failed") => "server_unavailable",
+        (None, "invalid_token" | "activation_revoked") => "access_refused",
+        (
+            None,
+            "tenant_config_mismatch"
+            | "invalid_checkpoint_token"
+            | "checkpoint_ahead_of_server"
+            | "idempotency_key_reused"
+            | "validation_error",
+        ) => "request_refused",
+        (None, "offline") => "network_unreachable",
+        (None, "interrupted") => "connection_interrupted",
+        (None, "invalid_server_response") => "invalid_server_response",
+        (None, "local_error") => "local_error",
+        (None, BLOCKER_NOT_CONFIGURED) => "not_configured",
+        _ => "other",
+    }
+}
+
 fn worker_error(err: &TransportError) -> SyncWorkerError {
     SyncWorkerError {
         code: err.code().to_string(),
+        kind: error_kind(err.code(), err.http_status()),
         message: err.message(),
         http_status: err.http_status(),
         at: store::now_utc(),
@@ -467,6 +507,7 @@ fn worker_error(err: &TransportError) -> SyncWorkerError {
 fn local_error(err: &AppError) -> SyncWorkerError {
     SyncWorkerError {
         code: "local_error".to_string(),
+        kind: error_kind("local_error", None),
         message: err.to_string(),
         http_status: None,
         at: store::now_utc(),
@@ -489,6 +530,21 @@ enum MediaFailure {
     NotYetAvailable(String),
     Retry(String),
     Permanent(String),
+}
+
+/// When a plant-join request (`SyncCommand::JoinPlant`) may run the next cycle: `None` during a
+/// pause; otherwise the wake spacing after the last cycle started, and not before the server's
+/// `Retry-After` (counted from the end of the cycle that received it) has passed.
+fn join_wake_at(outcome: &CycleOutcome, started: Instant, ended: Instant, timing: &SyncTiming) -> Option<Instant> {
+    let spaced = started + timing.network_wake_min_spacing;
+    match outcome {
+        CycleOutcome::Paused { .. } => None,
+        CycleOutcome::Retry {
+            retry_after: Some(after),
+            ..
+        } => Some(spaced.max(ended + *after)),
+        _ => Some(spaced),
+    }
 }
 
 /// Mirrors the server's `assertTenantOwnsObjectKey`: `{env}/media/{tenant}/…`.
@@ -535,6 +591,11 @@ async fn has_v2_checkpoint(db: &DatabaseConnection) -> AppResult<bool> {
     Ok(token.is_some_and(|t| t.starts_with("v2.")))
 }
 
+/// Run after a materialization that wrote a row the effective rights are read from
+/// (`MaterializeInboxResult::rights_changed`, AU-107): the app drops its cached permissions and
+/// tells the window, so a right withdrawn on another PC stops here at once.
+pub type RightsChangedHook = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 pub struct SyncWorker {
     db: DatabaseConnection,
     client: ControlPlaneClient,
@@ -542,6 +603,7 @@ pub struct SyncWorker {
     handle: SyncWorkerHandle,
     media_root: PathBuf,
     timing: SyncTiming,
+    on_rights_changed: Option<RightsChangedHook>,
 }
 
 impl SyncWorker {
@@ -559,7 +621,15 @@ impl SyncWorker {
             handle,
             media_root: config.media_root,
             timing: config.timing,
+            on_rights_changed: None,
         })
+    }
+
+    /// Called once per materialization that changed the effective rights ([`RightsChangedHook`]).
+    #[must_use]
+    pub fn on_rights_changed(mut self, hook: RightsChangedHook) -> Self {
+        self.on_rights_changed = Some(hook);
+        self
     }
 
     /// Run until cancelled. `commands` comes from `SyncWorkerHandle::take_receiver`.
@@ -571,11 +641,15 @@ impl SyncWorker {
                 () = cancel.cancelled() => break 'cycles,
                 result = self.cycle_once() => result,
             };
-            let mut deadline = Instant::now() + wait;
+            let cycle_ended = Instant::now();
+            let mut deadline = cycle_ended + wait;
             loop {
+                // `biased`: commands already queued are all read before a due deadline starts the
+                // cycle, so requests sent together (three join requests from the first-start
+                // screen) make one cycle, never one cycle each by the luck of `select!`'s order.
                 tokio::select! {
+                    biased;
                     () = cancel.cancelled() => break 'cycles,
-                    () = tokio::time::sleep_until(deadline) => break,
                     command = commands.recv() => match command {
                         None => break 'cycles,
                         Some(SyncCommand::RunNow) => {
@@ -590,7 +664,13 @@ impl SyncWorker {
                                 deadline = deadline.min(cycle_started + self.timing.network_wake_min_spacing);
                             }
                         }
+                        Some(SyncCommand::JoinPlant) => {
+                            if let Some(at) = join_wake_at(&outcome, cycle_started, cycle_ended, &self.timing) {
+                                deadline = deadline.min(at);
+                            }
+                        }
                     },
+                    () = tokio::time::sleep_until(deadline) => break,
                 }
             }
         }
@@ -671,12 +751,16 @@ impl SyncWorker {
             .ok()
             .map(|d| (chrono::Utc::now() + d).format("%Y-%m-%dT%H:%M:%SZ").to_string());
         let last_error = match (&state.last_error_code, &state.last_error_message, &state.last_error_at) {
-            (Some(code), Some(message), Some(at)) => Some(SyncWorkerError {
-                code: code.clone(),
-                message: message.clone(),
-                http_status: error.as_ref().and_then(|e| e.http_status),
-                at: at.clone(),
-            }),
+            (Some(code), Some(message), Some(at)) => {
+                let http_status = error.as_ref().and_then(|e| e.http_status);
+                Some(SyncWorkerError {
+                    code: code.clone(),
+                    kind: error_kind(code, http_status),
+                    message: message.clone(),
+                    http_status,
+                    at: at.clone(),
+                })
+            }
             _ => None,
         };
         self.handle.publish(SyncWorkerStatus {
@@ -713,6 +797,11 @@ impl SyncWorker {
             }
             store::set_paused_until(&self.db, None).await?;
         }
+        // The organisation this pull runs for, read before the activation token is: a complete pull
+        // records "the server confirmed no user accounts" for it only, and only if the activation
+        // is still the same at the end (`after_complete_pull`), so a swap of activation during the
+        // cycle can never record the fact for the wrong organisation (`plant_join`).
+        let pulled_for = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
         let token = match self.access.access(&self.db).await? {
             SyncAccess::NotLicensed => {
                 return Ok(CycleOutcome::Blocked {
@@ -770,10 +859,41 @@ impl SyncWorker {
                 Step::Stop(outcome) => return Ok(outcome),
             }
         }
+        if !more_work {
+            self.after_complete_pull(pulled_for.as_deref()).await?;
+        }
         let more_downloads = self.download_pending_media(&token).await?;
         Ok(CycleOutcome::Synced {
             more_work: more_work || more_downloads,
         })
+    }
+
+    /// The exchanges of this cycle reached the server head (`Step::Done`: `has_more` false and the
+    /// outbox drained, every received row materialized): this PC now holds everything the server
+    /// has for its organisation, which is the only time "the server has no user accounts" can be
+    /// told apart from "not received yet" (`plant_join::record_complete_pull`). Nothing is recorded
+    /// when the activation changed during the cycle: the pull ran for another organisation.
+    async fn after_complete_pull(&self, pulled_for: Option<&str>) -> AppResult<()> {
+        // Grants still waiting for an author or for rights that a complete pull did not bring wait
+        // no longer (`sync::grant_check`).
+        // Accounts, grants and role permissions released here change the rights: refreshed as after
+        // a run, also when the release failed part-way (each of its runs commits pass by pass).
+        let released = crate::sync::grant_check::release_after_complete_pull(&self.db).await;
+        self.refresh_rights(released.as_ref().map_or(true, |changed| *changed))
+            .await;
+        released?;
+        // Decisions sealed by the upgrade are sent once more by the PC whose version the server
+        // holds, now that this PC knows it (migration 264, review R2-S8).
+        crate::reliability::study::decision_sync::resend_sealed_after_complete_pull(&self.db).await?;
+        let Some(tenant_id) = pulled_for else {
+            return Ok(());
+        };
+        let current = crate::commands::product_license::get_activation_claim_tenant_id(&self.db).await?;
+        if current.as_deref() != Some(tenant_id) {
+            return Ok(());
+        }
+        crate::sync::plant_join::record_complete_pull(&self.db, tenant_id).await?;
+        Ok(())
     }
 
     /// Scope `all` snapshot; stores the delta checkpoint on its last page. `Some(outcome)` stops the
@@ -908,10 +1028,24 @@ impl SyncWorker {
         }
     }
 
+    /// The cached permissions are dropped and the window reloads its own ([`RightsChangedHook`]).
+    async fn refresh_rights(&self, needed: bool) {
+        if needed {
+            if let Some(hook) = &self.on_rights_changed {
+                hook().await;
+            }
+        }
+    }
+
     /// Apply every received row: pending rows parents first, then (`retry_deferred`) the rows that
     /// waited for a parent, until nothing more can be applied.
     async fn materialize(&self, retry_deferred: bool) -> AppResult<()> {
-        let result = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await?;
+        let run = materialize_inbox(&self.db, SYNC_MATERIALIZE_BATCH, retry_deferred).await;
+        // Once per run, not per row, also when the run failed after a pass that wrote rights rows
+        // had committed.
+        self.refresh_rights(crate::sync::materialize::rights_refresh_needed(&run))
+            .await;
+        let result = run?;
         if result.processed > 0 {
             info!(
                 target: "maintafox::sync",
@@ -921,6 +1055,28 @@ impl SyncWorker {
                 deferred = result.deferred,
                 "inbox materialized"
             );
+        }
+        // Reserved stock marks left by a write outside a pass (`inventory::reservations`), every cycle,
+        // also when nothing was received; no write when there is no mark.
+        if let Err(e) = crate::inventory::reservations::recompute_dirty_reserved(&self.db).await {
+            warn!(target: "maintafox::sync", "reserved stock recompute failed: {e}");
+        }
+        // D13: a close, a cancellation or a reservation received from another PC may leave a
+        // reservation open on an ended work order; it is released now, not at the next start. Run
+        // every cycle (it reads the open reservations only), also when the cycle only settled
+        // conflicts.
+        match crate::inventory::reservations::release_reservations_of_ended_work_orders(
+            &self.db,
+            crate::inventory::reservations::SweepOrigin::AfterSync,
+        )
+        .await
+        {
+            Ok(sweep) => {
+                for (wo_id, error) in &sweep.failures {
+                    warn!(target: "maintafox::sync", wo_id = *wo_id, error = %error, "reservations of an ended work order not released");
+                }
+            }
+            Err(e) => warn!(target: "maintafox::sync", "releasing reservations of ended work orders failed: {e}"),
         }
         Ok(())
     }
@@ -1350,6 +1506,128 @@ impl SyncWorker {
 mod tests {
     use super::*;
 
+    /// A worker whose rights hook counts its calls (`SyncWorker::on_rights_changed`, AU-107).
+    fn counting_worker(db: &DatabaseConnection) -> (SyncWorker, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let worker = SyncWorker::new(
+            db.clone(),
+            SyncWorkerHandle::new(),
+            SyncWorkerConfig {
+                api_base_url: "http://127.0.0.1:9".to_string(),
+                media_root: std::env::temp_dir(),
+                timing: timing(),
+            },
+            Arc::new(LicenseSyncAccess),
+        )
+        .expect("worker")
+        .on_rights_changed(Arc::new(move || {
+            let counter = counter.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })
+        }));
+        (worker, calls)
+    }
+
+    async fn run_sql(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+        db.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+
+    /// A role made on another PC, received as new: its row is written here when applied.
+    async fn receive_role(db: &DatabaseConnection, sync_id: &str) {
+        let at = chrono::Utc::now().to_rfc3339();
+        run_sql(
+            db,
+            "INSERT INTO roles (entity_sync_id, name, role_type, status, is_system, created_at, updated_at, row_version) \
+             VALUES (?, ?, 'custom', 'active', 0, ?, ?, 1)",
+            vec![sync_id.into(), sync_id.into(), at.clone().into(), at.into()],
+        )
+        .await;
+        let payload = crate::sync::test_support::current_payload(db, "roles", sync_id, &serde_json::Map::new())
+            .await
+            .expect("payload")
+            .expect("row");
+        // Removed again, with what this PC staged for it, so that it arrives as new.
+        run_sql(db, "DELETE FROM roles WHERE entity_sync_id = ?", vec![sync_id.into()]).await;
+        crate::sync::capture::drain_capture_journal(db).await.expect("drain");
+        run_sql(
+            db,
+            "DELETE FROM sync_outbox WHERE entity_sync_id = ?",
+            vec![sync_id.into()],
+        )
+        .await;
+        queries::apply_sync_batch(
+            db,
+            crate::sync::domain::ApplySyncBatchInput {
+                protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
+                server_batch_id: format!("b-{sync_id}"),
+                checkpoint_token: format!("v2.test.{sync_id}"),
+                acknowledged_items: vec![],
+                rejected_items: vec![],
+                inbound_items: vec![crate::sync::domain::SyncInboundItemInput {
+                    entity_type: "roles".into(),
+                    entity_sync_id: sync_id.into(),
+                    operation: "upsert".into(),
+                    row_version: 2,
+                    payload_json: serde_json::Value::Object(payload).to_string(),
+                    ..Default::default()
+                }],
+                conflict_items: vec![],
+                policy_metadata_json: None,
+            },
+        )
+        .await
+        .expect("ingest");
+    }
+
+    /// AU-107 (review of 461146ef): the rights hook runs once per run that wrote a rights row, never
+    /// for a run without one, and once for a run that failed (passes committed before the failure
+    /// may hold rights rows: the refresh does not depend on what the run reported).
+    #[tokio::test]
+    async fn the_rights_hook_runs_once_per_rights_run_and_on_a_failed_run() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let db = crate::sync::test_support::started_db().await;
+        let (worker, calls) = counting_worker(&db);
+
+        worker.materialize(true).await.expect("empty run");
+        assert_eq!(calls.load(SeqCst), 0, "nothing received");
+
+        receive_role(&db, "role-from-other-pc").await;
+        worker.materialize(true).await.expect("rights run");
+        assert_eq!(calls.load(SeqCst), 1, "one refresh for the run");
+        let held = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT 1 AS h FROM roles WHERE entity_sync_id = 'role-from-other-pc'".to_string(),
+            ))
+            .await
+            .expect("role");
+        assert!(held.is_some(), "the received role is written here");
+
+        // Every later step of a run fails (the inbox is gone): an error, refreshed anyway.
+        db.execute_unprepared("ALTER TABLE sync_inbox RENAME TO sync_inbox_gone")
+            .await
+            .expect("break the inbox");
+        assert!(worker.materialize(true).await.is_err());
+        assert_eq!(calls.load(SeqCst), 2, "refreshed once for the failed run");
+
+        // The release after a complete pull (grants and accounts waiting for their author), failed.
+        assert!(worker.after_complete_pull(None).await.is_err());
+        assert_eq!(calls.load(SeqCst), 3, "refreshed once for the failed release");
+    }
+
+    /// The release after a complete pull with nothing waiting changes no right: no refresh.
+    #[tokio::test]
+    async fn a_release_with_nothing_waiting_does_not_refresh() {
+        let db = crate::sync::test_support::started_db().await;
+        let (worker, calls) = counting_worker(&db);
+        worker.after_complete_pull(None).await.expect("release");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
     fn timing() -> SyncTiming {
         SyncTiming::production()
     }
@@ -1368,6 +1646,52 @@ mod tests {
         assert_eq!(high, SYNC_RETRY_MAX_DELAY.mul_f64(1.0 + SYNC_RETRY_JITTER_RATIO));
         // Never below the base delay.
         assert!(retry_delay(1, &t, 0.0) >= SYNC_RETRY_BASE_DELAY);
+    }
+
+    #[test]
+    fn worker_errors_carry_a_stable_reason_and_keep_the_raw_text_as_detail() {
+        let http = |status: u16, code: Option<&str>| TransportError::Http {
+            status,
+            code: code.map(str::to_string),
+            message: "upstream down".to_string(),
+            retry_after: None,
+        };
+        let cases = [
+            (TransportError::Offline("dns error".into()), "network_unreachable"),
+            (
+                TransportError::Interrupted("timed out".into()),
+                "connection_interrupted",
+            ),
+            (TransportError::Contract("bad json".into()), "invalid_server_response"),
+            (http(503, None), "server_unavailable"),
+            (http(500, Some("sync_exchange_failed")), "server_unavailable"),
+            (http(429, Some("rate_limited")), "server_unavailable"),
+            (http(408, None), "server_unavailable"),
+            (http(401, Some("invalid_token")), "access_refused"),
+            (http(403, None), "access_refused"),
+            (http(409, Some("tenant_config_mismatch")), "request_refused"),
+            (http(400, None), "request_refused"),
+        ];
+        for (err, kind) in cases {
+            let worker = worker_error(&err);
+            assert_eq!(worker.kind, kind, "{err:?}");
+            // The raw text stays available for the log and the technical details.
+            assert_eq!(worker.message, err.message());
+            assert_eq!(worker.code, err.code());
+        }
+        assert_eq!(worker_error(&http(503, None)).message, "HTTP 503: upstream down");
+        assert_eq!(
+            local_error(&AppError::SyncError("disk full".into())).kind,
+            "local_error"
+        );
+        // A persisted error read back without its HTTP status.
+        assert_eq!(error_kind(BLOCKER_NOT_CONFIGURED, None), "not_configured");
+        assert_eq!(error_kind("rate_limited", None), "server_unavailable");
+        assert_eq!(error_kind("invalid_token", None), "access_refused");
+        assert_eq!(error_kind("tenant_config_mismatch", None), "request_refused");
+        assert_eq!(error_kind("http_error", None), "other");
+        assert_eq!(error_kind("something_new", None), "other");
+        assert_eq!(error_kind("offline", None), "network_unreachable");
     }
 
     #[test]

@@ -8,10 +8,11 @@ use sea_orm::DatabaseConnection;
 use serde_json::json;
 
 use super::{
-    apply_product_license_reconciliation_in, bootstrap_initial_tenant_admin_in, check_product_license_key_entry_in,
-    get_activation_claim_tenant_id, licence_caller, record_activation_claim_for_tests, submit_product_license_key_in,
-    tenant_has_administrator_for_id, BootstrapInitialAdminInput, LicenceCaller, ProductLicenseActivationStatus,
-    PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE,
+    apply_product_license_reconciliation_in, authorize_signed_out_reset, bootstrap_initial_tenant_admin_in,
+    check_product_license_key_entry_in, get_activation_claim_tenant_id, licence_caller,
+    record_activation_claim_for_tests, submit_product_license_key_in, tenant_has_administrator_for_id,
+    BootstrapInitialAdminInput, LicenceCaller, ProductLicenseActivationStatus, PRODUCT_LICENSE_ONBOARDING_KEY,
+    PRODUCT_LICENSE_SCOPE,
 };
 use crate::errors::AppError;
 
@@ -52,6 +53,7 @@ async fn activated_plant_with_admin() -> DatabaseConnection {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("first administrator");
@@ -109,6 +111,7 @@ async fn the_first_administrator_is_created_once() {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     assert!(!tenant_has_administrator_for_id(&db, TENANT).await.expect("check"));
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
@@ -643,6 +646,7 @@ async fn two_first_administrators_at_once_make_one() {
     record_activation_claim_for_tests(&setup, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&setup, TENANT).await;
     setup.close().await.expect("close setup");
 
     // Two connections, so the two submissions really compete for the write lock.
@@ -1228,6 +1232,7 @@ async fn the_first_administrator_audit_detail_is_valid_json() {
     record_activation_claim_for_tests(&db, TENANT, FINGERPRINT, "token-1")
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     let username = r#"chef "o'neil" \ x"#;
     bootstrap_initial_tenant_admin_in(&db, admin_input(username))
         .await
@@ -1884,13 +1889,20 @@ async fn checklist_9_4_first_start_actions_work_then_are_refused_once_an_adminis
         .await
         .expect("first reconciliation signed out");
     assert_eq!(state.status, ProductLicenseActivationStatus::Active);
-    let before = super::get_activation_bootstrap_state_in(&db)
-        .await
-        .expect("bootstrap state");
+    let before =
+        super::get_activation_bootstrap_state_in(&db, &crate::sync::transport::SyncWorkerHandle::new().status())
+            .await
+            .expect("bootstrap state");
     assert_eq!(before.tenant_id.as_deref(), Some(TENANT));
     assert!(!before.has_tenant_admin, "the first-administrator step is open");
+    assert_eq!(
+        before.plant_join,
+        Some(crate::sync::plant_join::PlantJoinState::Joining),
+        "no complete pull yet: the screen joins the plant first"
+    );
 
     // (2) The first administrator, signed out.
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("first administrator");
@@ -1947,10 +1959,12 @@ async fn checklist_9_4_first_start_actions_work_then_are_refused_once_an_adminis
     assert_eq!(administrator_count(&db).await, 1);
 
     // (5) The first-start state reports the step as closed.
-    let after = super::get_activation_bootstrap_state_in(&db)
-        .await
-        .expect("bootstrap state");
+    let after =
+        super::get_activation_bootstrap_state_in(&db, &crate::sync::transport::SyncWorkerHandle::new().status())
+            .await
+            .expect("bootstrap state");
     assert!(after.has_tenant_admin, "the first-administrator step is closed");
+    assert_eq!(after.plant_join, Some(crate::sync::plant_join::PlantJoinState::SignIn));
 }
 
 // ── Round 3 ────────────────────────────────────────────────────────────────────────────────────
@@ -2351,6 +2365,7 @@ async fn the_seeded_administrator_counts_once_taken_into_use() {
     }
 
     set_seeded_admin(&db, 1, None).await;
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&db, TENANT).await;
     bootstrap_initial_tenant_admin_in(&db, admin_input("chef"))
         .await
         .expect("never used again: the first administrator is created");
@@ -2674,6 +2689,7 @@ async fn a_concurrent_signed_out_claim_never_overwrites_a_revocation() {
     record_activation_claim_for_tests(&setup, TENANT, FINGERPRINT, STORED_TOKEN)
         .await
         .expect("claim");
+    crate::sync::plant_join::confirm_empty_plant_for_tests(&setup, TENANT).await;
     bootstrap_initial_tenant_admin_in(&setup, admin_input("chef"))
         .await
         .expect("first administrator");
@@ -2775,5 +2791,122 @@ async fn the_update_manifest_stays_reachable_while_the_licence_requires_an_updat
         super::update_manifest_bearer_token(&db).await.expect("manifest token"),
         active,
         "an active licence: the same token as sync"
+    );
+}
+
+/// F8: a signed-out reset ("Réinitialiser l'activation / autre clé") on a plant with an
+/// administrator is refused with a coded reason the login screen translates (sign in as an
+/// administrator, or a vendor recovery code), not a bare authentication error; nothing is reset.
+/// Before any administrator exists, the reset stays open as before.
+#[tokio::test]
+async fn a_signed_out_reset_on_an_administered_plant_names_the_two_routes() {
+    let db = activated_plant_with_admin().await;
+    let err = authorize_signed_out_reset(&db).await.expect_err("administered");
+    assert_eq!(code_of(&err), Some("LICENSE_RESET_REQUIRES_ADMIN_SIGNIN"), "{err:?}");
+    assert!(!matches!(err, AppError::Auth(_)), "{err:?}");
+    assert_eq!(
+        get_activation_claim_tenant_id(&db).await.expect("tenant").as_deref(),
+        Some(TENANT),
+        "the licence is kept"
+    );
+    assert!(tenant_has_administrator_for_id(&db, TENANT).await.expect("check"));
+
+    // No administrator and no licence held yet (a true first start): still allowed.
+    let first_start = crate::db::test_db::seeded().await;
+    authorize_signed_out_reset(&first_start)
+        .await
+        .expect("no administrator: first start");
+}
+
+/// AU-127 (F11): the plant default language set in Settings is kept by an activation reset, in
+/// both places it is read from (the Settings row the reset puts back to the shipped "fr", and the
+/// runtime default), so the screen and the language in use agree after the reset.
+#[tokio::test]
+async fn the_plant_language_is_kept_across_a_reset() {
+    let db = crate::sync::test_support::started_db().await;
+    // As the Settings screen sets it: the Settings row, then the runtime default.
+    crate::settings::set_setting(
+        &db,
+        "locale.primary_language",
+        "tenant",
+        r#""en""#,
+        None,
+        "plant language",
+    )
+    .await
+    .expect("setting");
+    crate::locale::write_locale_config(&db, "locale.default_language", "en")
+        .await
+        .expect("default");
+
+    super::reset_local_tenant_runtime_data_impl(&db).await.expect("reset");
+
+    let row = crate::settings::get_setting(&db, "locale.primary_language", "tenant")
+        .await
+        .expect("read")
+        .expect("seeded again");
+    assert_eq!(row.setting_value_json, r#""en""#, "the Settings row is written back");
+    assert_eq!(
+        crate::locale::read_locale_config(&db, "locale.default_language")
+            .await
+            .expect("read")
+            .as_deref(),
+        Some("en")
+    );
+    assert_eq!(
+        crate::locale::resolve_locale_preference(&db)
+            .await
+            .expect("resolve")
+            .tenant_locale
+            .as_deref(),
+        Some("en")
+    );
+}
+
+/// A stored runtime default that is not a supported language never fails the reset (the wipe is
+/// committed by then): it counts as unset, and the Settings row's language is kept (review of
+/// fca24e70). A supported one stored with spaces or capitals is read as that language.
+#[tokio::test]
+async fn an_unsupported_stored_language_never_fails_the_reset() {
+    let db = crate::sync::test_support::started_db().await;
+    crate::settings::set_setting(
+        &db,
+        "locale.primary_language",
+        "tenant",
+        r#""en""#,
+        None,
+        "plant language",
+    )
+    .await
+    .expect("setting");
+    crate::sync::test_support::exec(
+        &db,
+        "INSERT INTO system_config (key, value, updated_at) VALUES ('locale.default_language', 'de', '2026-10-27T08:00:00Z')          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        crate::locale::read_plant_language(&db).await.expect("read").as_deref(),
+        Some("en")
+    );
+
+    super::reset_local_tenant_runtime_data_impl(&db).await.expect("reset");
+    assert_eq!(
+        crate::locale::read_locale_config(&db, "locale.default_language")
+            .await
+            .expect("read")
+            .as_deref(),
+        Some("en")
+    );
+
+    crate::sync::test_support::exec(
+        &db,
+        "UPDATE system_config SET value = ' FR ' WHERE key = 'locale.default_language'",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        crate::locale::read_plant_language(&db).await.expect("read").as_deref(),
+        Some("fr")
     );
 }

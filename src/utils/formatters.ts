@@ -58,14 +58,52 @@ export function formatDecimal(value: number, locale: string, decimalPlaces = 2):
  * Callers must pass the tenant currency from settings — there is no hardcoded default.
  * UI components should use `useFormatters().formatCurrency` which binds Settings → Localization.
  */
-export function formatCurrency(value: number, locale: string, currency: string): string {
+export function formatCurrency(
+  value: number,
+  locale: string,
+  currency: string,
+  symbol?: string | null,
+  minorUnits = 2,
+): string {
   if (!Number.isFinite(value)) return "\u2014";
-  return new Intl.NumberFormat(toIntlLocale(locale), {
+  const unit = symbol?.trim();
+  const parts = new Intl.NumberFormat(toIntlLocale(locale), {
     style: "currency",
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+    // With the reference list's own symbol ("DA") the ISO code is only a placeholder for it.
+    ...(unit ? { currencyDisplay: "code" as const } : {}),
+    minimumFractionDigits: minorUnits,
+    maximumFractionDigits: minorUnits,
+  }).formatToParts(value);
+  // The symbol sits where the language places a currency (fr: after the amount, en: before).
+  return parts.map((p) => (p.type === "currency" && unit ? unit : p.value)).join("");
+}
+
+/**
+ * A duration in hours: "3,5 h" (fr), "3.5 h" (en). Whole hours show no decimals; at most one
+ * decimal is kept.
+ */
+export function formatHours(value: number, locale: string): string {
+  if (!Number.isFinite(value)) return "\u2014";
+  return `${formatNumber(value, locale, { maximumFractionDigits: 1 })}\u00a0h`;
+}
+
+const BYTE_UNITS: Record<string, readonly string[]> = {
+  fr: ["o", "Ko", "Mo", "Go", "To"],
+  en: ["B", "KB", "MB", "GB", "TB"],
+};
+
+/** A file size: "1,5 Mo" (fr), "1.5 MB" (en); binary steps (1 024). */
+export function formatBytes(bytes: number, locale: string): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "\u2014";
+  const units = BYTE_UNITS[locale] ?? BYTE_UNITS["fr"] ?? [];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${formatNumber(n, locale, { maximumFractionDigits: i === 0 ? 0 : 1 })}\u00a0${units[i]}`;
 }
 
 /**
@@ -85,6 +123,19 @@ export function formatPercent(value: number, locale: string): string {
 // ─── Date Formatting ───────────────────────────────────────────────────────
 
 /**
+ * A date-only text ("2026-10-22", a calendar day with no time) is that day in the user's own
+ * time zone; `new Date("2026-10-22")` would be midnight UTC, i.e. the day before west of Greenwich.
+ */
+function toDate(value: Date | string | number): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (day) return new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+  }
+  return new Date(value);
+}
+
+/**
  * Formats a Date (or ISO string / timestamp) as a short date.
  *
  * French:  31/03/2026
@@ -98,7 +149,7 @@ export function formatDate(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "2-digit",
@@ -118,7 +169,7 @@ export function formatDateLong(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "numeric",
@@ -138,7 +189,7 @@ export function formatDateTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     day: "2-digit",
@@ -161,7 +212,7 @@ export function formatTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     hour: "2-digit",
@@ -180,7 +231,7 @@ export function formatRelativeTime(
   locale: string,
 ): string {
   if (value == null) return "\u2014";
-  const date = value instanceof Date ? value : new Date(value);
+  const date = toDate(value);
   if (Number.isNaN(date.getTime())) return "\u2014";
 
   const now = Date.now();

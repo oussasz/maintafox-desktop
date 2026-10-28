@@ -29,6 +29,17 @@ export function toErrorMessage(err: unknown): string {
 /** A validation message that is only an upper-case rule code, e.g. `DECISION_STALE`. */
 const BARE_CODE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
 
+/**
+ * The raw `details` of a backend refusal (`{ code, message, details }`), or `null` when the failure
+ * carries none. Service error classes copy it so `extractIpcValidationDetails` keeps working.
+ */
+export function ipcErrorDetails(err: unknown): unknown {
+  if (typeof err === "object" && err !== null && "details" in err) {
+    return (err as { details: unknown }).details ?? null;
+  }
+  return null;
+}
+
 /** Structured validation issues from AppError IPC `details` when present. */
 export function extractIpcValidationDetails(err: unknown): OrgIssueLike[] {
   if (typeof err !== "object" || err === null || !("details" in err)) {
@@ -81,6 +92,12 @@ export function formatOrgIpcError(err: unknown): string {
   }
   return toErrorMessage(err).replace(/^Validation failed:\s*/i, "");
 }
+
+/**
+ * Server code (`AppError::UpdateInProgress`): sign-in and unlock are refused while an update
+ * installs (pre-update backup until the restart). The sign-in and lock screens say so; no toast.
+ */
+export const AUTH_UPDATE_IN_PROGRESS = "AUTH_UPDATE_IN_PROGRESS";
 
 /** Tauri IPC error code when present on a plain reject object. */
 export function extractIpcErrorCode(err: unknown): string | null {

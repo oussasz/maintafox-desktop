@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { categoryLabel } from "@/components/notifications/notification-text";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateTimeField } from "@/components/ui/date-time-field";
 import {
   Select,
   SelectContent,
@@ -241,13 +242,12 @@ export function NotificationPreferencesPanel() {
                   </Select>
                 </TableCell>
                 <TableCell>
-                  <input
-                    type="datetime-local"
+                  <DateTimeField
                     disabled={disabled}
                     aria-label={`${t("preferences.col.muteUntil")} ${categoryLabel(row.category_code, t)}`}
                     className="h-9 rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
                     value={muteDrafts[row.category_code] ?? toDatetimeLocalValue(row.muted_until)}
-                    onChange={(e) => typeMuteUntil(row, e.target.value)}
+                    onChange={(v) => typeMuteUntil(row, v)}
                   />
                 </TableCell>
               </TableRow>

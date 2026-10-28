@@ -8,7 +8,9 @@ import { invoke } from "@/lib/ipc-invoke";
 
 /** Admin-only (adm.settings + step-up): human-readable recovery key `XXXX-XXXX-…`. */
 export async function getDatabaseRecoveryKey(): Promise<string> {
-  const raw = await invoke<unknown>("get_database_recovery_key");
+  const raw = await invoke<unknown>("get_database_recovery_key", undefined, {
+    notifyOnError: false,
+  });
   return z.string().min(1).parse(raw);
 }
 

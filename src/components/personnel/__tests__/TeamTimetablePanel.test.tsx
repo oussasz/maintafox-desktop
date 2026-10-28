@@ -98,9 +98,9 @@ describe("TeamTimetablePanel", () => {
     capacityMock.mockResolvedValue([day([withClass, without], "roster")]);
     const open = vi.fn();
     render(<TeamTimetablePanel teamId={2} onOpenPersonnel={open} />);
-    expect(await screen.findByText("1 member without a Classe horaire")).toBeInTheDocument();
+    expect(await screen.findByText("1 member without a schedule class")).toBeInTheDocument();
     expect(screen.getByText(/They count 0 h/)).toBeInTheDocument();
-    expect(screen.getByText(/each member counts their own Classe horaire/)).toBeInTheDocument();
+    expect(screen.getByText(/each member counts their own schedule class/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Set for Lina" }));
     expect(open).toHaveBeenCalledWith(8);
     expect(screen.queryByRole("button", { name: "Set for Karim" })).not.toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("TeamTimetablePanel", () => {
     linksMock.mockResolvedValue([migrated]);
     confirmMock.mockResolvedValue([{ ...migrated, review_status: null }]);
     render(<TeamTimetablePanel teamId={2} />);
-    expect(await screen.findByText(/No member has a Classe horaire/)).toBeInTheDocument();
+    expect(await screen.findByText(/No member has a schedule class/)).toBeInTheDocument();
     expect(screen.getByText(/former capacity rule — please review/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm as is" }));
     await waitFor(() => expect(confirmMock).toHaveBeenCalled());

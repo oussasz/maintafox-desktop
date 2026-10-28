@@ -6,11 +6,11 @@ import {
   CHART_COLORS,
   DEFAULT_MARGIN,
   getInnerDimensions,
-  renderXAxis,
   renderYAxis,
   useContainerSize,
 } from "@/components/charts/chart-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useFormatters } from "@/hooks/use-formatters";
 import type { AnalyticsWorkloadDay } from "@shared/ipc-types";
 
 const SERIES = [
@@ -31,6 +31,7 @@ export function AnalyticsWorkloadChart(props: {
   qualityBadge?: string | null;
 }) {
   const { t } = useTranslation("dashboard");
+  const { formatDate, formatNumber } = useFormatters();
   const { days, horizonDays, qualityBadge } = props;
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
   const xAxisRef = useRef<SVGGElement | null>(null);
@@ -49,10 +50,24 @@ export function AnalyticsWorkloadChart(props: {
   const maxY = d3.max(days, (d) => d.di_created + d.wo_completed + d.pm_due) ?? 1;
   const yScale = d3.scaleLinear().domain([0, maxY]).nice().range([innerHeight, 0]);
 
+  // One label every few days so they never overlap, dated in the app language (dd/mm/yyyy).
+  const tickEvery = Math.max(1, Math.ceil(days.length / 10));
+
   useEffect(() => {
-    renderXAxis(xAxisRef.current, xScale, innerHeight);
-    renderYAxis(yAxisRef.current, yScale);
-  }, [xScale, yScale, innerHeight]);
+    if (xAxisRef.current) {
+      d3.select(xAxisRef.current)
+        .attr("transform", `translate(0,${innerHeight})`)
+        .call(
+          d3
+            .axisBottom(xScale)
+            .tickValues(days.filter((_, i) => i % tickEvery === 0).map((d) => d.date))
+            .tickFormat((v) => formatDate(`${String(v)}T12:00:00`)) as never,
+        )
+        .selectAll("text")
+        .attr("class", "fill-current text-[10px]");
+    }
+    renderYAxis(yAxisRef.current, yScale, { integers: true, format: formatNumber });
+  }, [xScale, yScale, innerHeight, days, tickEvery, formatDate, formatNumber]);
 
   const hasData = days.some((d) => d.di_created + d.wo_completed + d.pm_due > 0);
 
@@ -99,7 +114,9 @@ export function AnalyticsWorkloadChart(props: {
                             width={xScale.bandwidth()}
                             height={Math.max(0, h)}
                             fill={s.color}
-                          />
+                          >
+                            <title>{`${formatDate(`${day.date}T12:00:00`)} · ${t(s.labelKey)} : ${formatNumber(v)}`}</title>
+                          </rect>
                         );
                       });
                     })}

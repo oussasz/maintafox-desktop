@@ -231,6 +231,19 @@ pub(crate) fn audit_chain_stubs_backfill_sql() -> String {
     m20261020_000250_audit_chain_stubs::backfill_sql()
 }
 mod m20261020_000251_stock_negative_reviews;
+mod m20261022_000252_sync_wait_reasons;
+mod m20261022_000253_pm_plan_code_clash;
+pub(crate) mod m20261022_000254_pm_version_number_not_unique;
+mod m20261022_000255_wo_permit_safety_origin;
+mod m20261022_000256_wo_task_outcome_evidence;
+mod m20261022_000257_stock_reserved_dirty;
+mod m20261023_000259_inventory_count_four_eyes;
+mod m20261025_000260_break_in_signature;
+mod m20261025_000261_user_credential_authors;
+mod m20261025_000262_delegation_policy_author;
+mod m20261026_000263_availability_block_version;
+pub(crate) mod m20261026_000264_reliability_decision_seal;
+mod m20261026_000265_retired_equipment_reviews;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -470,6 +483,19 @@ impl MigratorTrait for Migrator {
             Box::new(m20261020_000249_permit_lock_removal::Migration),
             Box::new(m20261020_000250_audit_chain_stubs::Migration),
             Box::new(m20261020_000251_stock_negative_reviews::Migration),
+            Box::new(m20261022_000252_sync_wait_reasons::Migration),
+            Box::new(m20261022_000253_pm_plan_code_clash::Migration),
+            Box::new(m20261022_000254_pm_version_number_not_unique::Migration),
+            Box::new(m20261022_000255_wo_permit_safety_origin::Migration),
+            Box::new(m20261022_000256_wo_task_outcome_evidence::Migration),
+            Box::new(m20261022_000257_stock_reserved_dirty::Migration),
+            Box::new(m20261023_000259_inventory_count_four_eyes::Migration),
+            Box::new(m20261025_000261_user_credential_authors::Migration),
+            Box::new(m20261025_000262_delegation_policy_author::Migration),
+            Box::new(m20261025_000260_break_in_signature::Migration),
+            Box::new(m20261026_000263_availability_block_version::Migration),
+            Box::new(m20261026_000264_reliability_decision_seal::Migration),
+            Box::new(m20261026_000265_retired_equipment_reviews::Migration),
         ]
     }
 }

@@ -47,6 +47,13 @@ pub struct MyWorkOrders {
     pub by_urgency: Vec<UrgencyCount>,
     /// Overdue first, then most urgent, then earliest planned end.
     pub items: Vec<MyWorkOrderItem>,
+    /// "Déconsignation à faire" (owner decision D4): mechanically complete work orders with a lock
+    /// still fitted under their permits (`permit::wo_gate::deisolation_pending_sql`), on the list of
+    /// their permit holders — the work order's responsible and whoever fitted one of those locks —
+    /// until the removal of the last lock is verified. Not counted in `open` (work done).
+    pub deisolation_pending: i64,
+    /// The first of them, earliest completed first.
+    pub deisolation_items: Vec<MyWorkOrderItem>,
 }
 
 /// The person's own requests (`di::queries::count_di_queues`, queue `mine`).
@@ -211,6 +218,7 @@ pub async fn my_work_orders(db: &DatabaseConnection, user_id: i64, now: DateTime
         })
         .collect::<AppResult<Vec<_>>>()?;
 
+    let (deisolation_pending, deisolation_items) = my_deisolation(db, user_id).await?;
     Ok(MyWorkOrders {
         open_rule: crate::wo::backlog::RULE_OPEN_WORK_TO_DO.to_string(),
         open: decode(&row, "open")?,
@@ -218,7 +226,65 @@ pub async fn my_work_orders(db: &DatabaseConnection, user_id: i64, now: DateTime
         today: decode(&row, "today")?,
         by_urgency,
         items,
+        deisolation_pending,
+        deisolation_items,
     })
+}
+
+/// [`MyWorkOrders::deisolation_pending`] of `user_id`: the count and the first ones.
+async fn my_deisolation(db: &DatabaseConnection, user_id: i64) -> AppResult<(i64, Vec<MyWorkOrderItem>)> {
+    let from = format!(
+        "FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
+         LEFT JOIN reference_values ul ON ul.id = wo.urgency_id \
+         LEFT JOIN equipment e ON e.id = wo.equipment_id \
+         WHERE {pending} \
+           AND (wo.primary_responsible_id = ? \
+                OR EXISTS (SELECT 1 FROM permit_isolations pi JOIN work_permits p ON p.id = pi.permit_id \
+                           WHERE p.linked_work_order_id = wo.id AND pi.applied_at IS NOT NULL \
+                             AND pi.removal_verified_at IS NULL AND pi.applied_by_id = ?))",
+        pending = crate::permit::wo_gate::deisolation_pending_sql("wo")
+    );
+    let count = one_row(
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT COUNT(*) AS n {from}"),
+            vec![user_id.into(), user_id.into()],
+        ))
+        .await?,
+        "my de-isolation count",
+    )?;
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id, wo.code, wo.title, s.code AS status_code, ul.code AS urgency_code, \
+                        wo.planned_start, wo.planned_end, \
+                        COALESCE(e.asset_id_code || ' — ' || e.name, e.name) AS asset_label \
+                 {from} \
+                 ORDER BY wo.mechanically_completed_at ASC, wo.id ASC \
+                 LIMIT {ITEM_LIMIT}"
+            ),
+            vec![user_id.into(), user_id.into()],
+        ))
+        .await?;
+    let items = rows
+        .iter()
+        .map(|r| {
+            Ok(MyWorkOrderItem {
+                id: decode(r, "id")?,
+                code: decode(r, "code")?,
+                title: decode(r, "title")?,
+                status_code: decode(r, "status_code")?,
+                urgency_code: decode(r, "urgency_code")?,
+                planned_start: decode(r, "planned_start")?,
+                planned_end: decode(r, "planned_end")?,
+                asset_label: decode(r, "asset_label")?,
+                // The work is done: a planned end passed is not "overdue" work.
+                overdue: false,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok((decode(&count, "n")?, items))
 }
 
 pub async fn my_requests(db: &DatabaseConnection, user_id: i64) -> AppResult<MyRequests> {

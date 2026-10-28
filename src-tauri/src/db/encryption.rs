@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use rand::RngCore;
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
+use crate::build_identity::KEYRING_SERVICE;
 use crate::errors::{AppError, AppResult};
 
-const KEYRING_SERVICE: &str = "maintafox-desktop";
 const KEYRING_DB_KEY_ENTRY: &str = "database-encryption-key-v1";
 const SQLITE_PLAINTEXT_HEADER: &[u8; 16] = b"SQLite format 3\0";
 const KEY_LEN: usize = 32;
@@ -75,7 +75,7 @@ impl DatabaseKey {
         let compact: String = input.chars().filter(char::is_ascii_hexdigit).collect();
         if compact.len() != KEY_LEN * 2 {
             return Err(AppError::ValidationFailed(vec![
-                "La clé de récupération doit contenir 64 caractères hexadécimaux. \
+                "GATE_DB_RECOVERY_KEY_FORMAT: La clé de récupération doit contenir 64 caractères hexadécimaux. \
                  (The recovery key must contain 64 hexadecimal characters.)"
                     .into(),
             ]));

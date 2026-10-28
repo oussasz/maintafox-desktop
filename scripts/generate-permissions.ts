@@ -33,6 +33,8 @@ interface PermissionEntry {
   requires_step_up: boolean;
   usage: "backend" | "frontend" | "both" | "catalog-only";
   usage_justification?: string;
+  /** false: kept in the catalog and on the roles that hold it, but not shown on the plant's role screens. */
+  plant_screens?: boolean;
   aliases: string[];
 }
 
@@ -44,6 +46,8 @@ interface DependencyEntry {
 
 interface Registry {
   version: number;
+  /** Whole categories not shown on the plant's role screens (e.g. the vendor console's own rights). */
+  plant_screens_hidden_categories?: string[];
   permissions: PermissionEntry[];
   dependencies: DependencyEntry[];
   role_defaults: {
@@ -83,6 +87,11 @@ function loadRegistry(): Registry {
     }
   }
   return registry;
+}
+
+/** Permissions flagged `plant_screens: false` (a hidden category is listed separately). */
+function hiddenFromPlantScreens(registry: Registry): PermissionEntry[] {
+  return registry.permissions.filter((p) => p.plant_screens === false);
 }
 
 function generateRust(registry: Registry): string {
@@ -190,6 +199,26 @@ function generateRust(registry: Registry): string {
   );
   lines.push("");
 
+  lines.push(
+    "/// Permissions kept in the catalog and on the roles that hold them, but not shown on the",
+  );
+  lines.push("/// plant's role screens (unused in this version).");
+  lines.push(
+    `pub const HIDDEN_FROM_PLANT_SCREENS: &[&str] = &[${hiddenFromPlantScreens(registry)
+      .map((p) => constName(p.name))
+      .join(", ")}];`,
+  );
+  lines.push("");
+  lines.push("/// Whole permission categories not shown on the plant's role screens.");
+  lines.push(
+    `pub const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: &[&str] = &[${(
+      registry.plant_screens_hidden_categories ?? []
+    )
+      .map((c) => JSON.stringify(c))
+      .join(", ")}];`,
+  );
+  lines.push("");
+
   lines.push("/// Resolve a permission or alias to its canonical name.");
   lines.push("pub fn canonicalize(name: &str) -> Option<&'static str> {");
   lines.push("    for meta in CATALOG {");
@@ -272,6 +301,37 @@ function generateTs(registry: Registry): string {
     }
   }
   lines.push("};");
+  lines.push("");
+  lines.push(
+    "/** Permissions kept in the catalog and on roles, but not shown on the plant's role screens. */",
+  );
+  lines.push(
+    `export const HIDDEN_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set([${hiddenFromPlantScreens(
+      registry,
+    )
+      .map((p) => `P.${constName(p.name)}`)
+      .join(", ")}]);`,
+  );
+  lines.push("");
+  lines.push("/** Whole permission categories not shown on the plant's role screens. */");
+  lines.push(
+    `export const HIDDEN_CATEGORIES_FROM_PLANT_SCREENS: ReadonlySet<string> = new Set([${(
+      registry.plant_screens_hidden_categories ?? []
+    )
+      .map((c) => JSON.stringify(c))
+      .join(", ")}]);`,
+  );
+  lines.push("");
+  lines.push(
+    "/** Whether a permission appears on the plant's role screens (custom names do; legacy aliases do not). */",
+  );
+  lines.push("export function isShownInPlantRoleScreens(name: string): boolean {");
+  lines.push(
+    "  if (HIDDEN_FROM_PLANT_SCREENS.has(name) || name in PERMISSION_ALIAS_MAP) return false;",
+  );
+  lines.push("  const meta = PERMISSION_CATALOG.find((p) => p.name === name);");
+  lines.push("  return !meta || !HIDDEN_CATEGORIES_FROM_PLANT_SCREENS.has(meta.category);");
+  lines.push("}");
   lines.push("");
   lines.push(
     "export const ROLE_TEMPLATES: Readonly<Record<string, readonly PermissionName[]>> = {",

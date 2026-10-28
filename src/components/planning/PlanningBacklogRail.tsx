@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { mfTone } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import type {
   CandidateConflictSummary,
@@ -168,6 +169,7 @@ function CandidateCardBody({
   summary: CandidateConflictSummary | undefined;
 }) {
   const { t } = useTranslation("planning");
+  const { formatDecimal } = useFormatters();
   const code = candidateDisplayCode(candidate);
   const title = candidateDisplayTitle(candidate);
   // One badge per kind of conflict: red when one of its reasons blocks, amber when all warn.
@@ -184,8 +186,8 @@ function CandidateCardBody({
     hours == null || hours <= 0
       ? t("backlog.notEstimated")
       : crew == null || crew < 1
-        ? t("backlog.noCrew", { hours: hours.toFixed(1) })
-        : t("backlog.estimate", { hours: hours.toFixed(1), crew });
+        ? t("backlog.noCrew", { hours: formatDecimal(hours, 1) })
+        : t("backlog.estimate", { hours: formatDecimal(hours, 1), crew });
 
   return (
     <div className="space-y-2">
@@ -203,7 +205,7 @@ function CandidateCardBody({
 
       <div className="flex flex-wrap gap-1.5">
         <Badge variant="secondary" className="text-[10px]">
-          {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
+          {t("backlog.readinessScore")}: {formatDecimal(candidate.readiness_score, 1)}
         </Badge>
         {candidate.skill_match_score != null && (
           <Badge variant="outline" className="text-[10px]">

@@ -27,7 +27,7 @@ const TENANT_BOOTSTRAP_SCOPE: &str = "device";
 /// that connection would wait on itself. One process writes the record (single-instance app).
 static LICENCE_RECORD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ProductLicenseOnboardingState {
     pub complete: bool,
     pub status: ProductLicenseActivationStatus,
@@ -65,7 +65,8 @@ pub enum ProductLicenseActivationStatus {
     DeniedOfflineGraceExpired,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` never shows the activation token (see the `impl` below).
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductActivationClaimRecord {
     pub tenant_id: String,
@@ -122,7 +123,8 @@ pub struct ProductLicenseReconciliationPolicy {
     pub last_error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` never shows the licence key nor the activation token (see the `impl` below).
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProductLicenseStateRecord {
     pub schema_version: u32,
     pub key_sha256: String,
@@ -153,6 +155,74 @@ pub struct ProductLicenseStateRecord {
     /// then needs an administrator.
     #[serde(default)]
     pub forced_update_lift_allowed: bool,
+}
+
+/// What replaces a secret field in a `Debug` output: whether it is set, never its value.
+fn redacted_debug(value: Option<&str>) -> &'static str {
+    match value {
+        Some(v) if !v.is_empty() => "[redacted]",
+        _ => "[none]",
+    }
+}
+
+impl std::fmt::Debug for ProductActivationClaimRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProductActivationClaimRecord")
+            .field("tenant_id", &self.tenant_id)
+            .field("license_id", &self.license_id)
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field("activation_token", &redacted_debug(Some(&self.activation_token)))
+            .field("expires_at", &self.expires_at)
+            .field("force_min_app_version", &self.force_min_app_version)
+            .field("force_update_required", &self.force_update_required)
+            .field("update_channel", &self.update_channel)
+            .field("offline_grace_hours", &self.offline_grace_hours)
+            .field(
+                "trust_revocation_disconnects_immediately",
+                &self.trust_revocation_disconnects_immediately,
+            )
+            .field(
+                "reconnect_requires_fresh_heartbeat",
+                &self.reconnect_requires_fresh_heartbeat,
+            )
+            .field("tenant_display_name", &self.tenant_display_name)
+            .field("tenant_slug", &self.tenant_slug)
+            .field("device_limit", &self.device_limit)
+            .field("license_tier", &self.license_tier)
+            .field("license_plan", &self.license_plan)
+            .field("license_status", &self.license_status)
+            .field("activated_device_count", &self.activated_device_count)
+            .field("has_demo_data", &self.has_demo_data)
+            .field("is_initialized", &self.is_initialized)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ProductLicenseStateRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProductLicenseStateRecord")
+            .field("schema_version", &self.schema_version)
+            .field("key_sha256", &self.key_sha256)
+            .field(
+                "license_key_plaintext",
+                &redacted_debug(self.license_key_plaintext.as_deref()),
+            )
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field("app_version", &self.app_version)
+            .field("submitted_at", &self.submitted_at)
+            .field("status", &self.status)
+            .field("pending_online_validation", &self.pending_online_validation)
+            .field("deny_reason_code", &self.deny_reason_code)
+            .field("deny_message", &self.deny_message)
+            .field("degraded_reason", &self.degraded_reason)
+            .field("activation_claim", &self.activation_claim)
+            .field("last_reconciled_at", &self.last_reconciled_at)
+            .field("reconciliation", &self.reconciliation)
+            .field("diagnostics", &self.diagnostics)
+            .field("company_display_name", &self.company_display_name)
+            .field("forced_update_lift_allowed", &self.forced_update_lift_allowed)
+            .finish()
+    }
 }
 
 impl ProductLicenseStateRecord {
@@ -309,8 +379,11 @@ fn extract_claim_and_envelope(
     ProductActivationClaimRecord,
     Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
 )> {
-    let mut value: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("claimJson must be valid JSON: {e}")]))?;
+    let mut value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: claimJson must be valid JSON: {e}"
+        )])
+    })?;
 
     let envelope = match value
         .as_object_mut()
@@ -318,8 +391,13 @@ fn extract_claim_and_envelope(
         .filter(|v| !v.is_null())
     {
         Some(env_value) => Some(
-            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
-                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value).map_err(
+                |e| {
+                    AppError::ValidationFailed(vec![format!(
+                        "GATE_LICENSE_ENVELOPE_INVALID: entitlement_envelope is invalid: {e}"
+                    )])
+                },
+            )?,
         ),
         None => None,
     };
@@ -330,7 +408,7 @@ fn extract_claim_and_envelope(
 
     let mut claim: ProductActivationClaimRecord = serde_json::from_value(value).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "claimJson must be valid ProductActivationClaimRecord JSON: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: claimJson must be valid ProductActivationClaimRecord JSON: {e}"
         )])
     })?;
     // Prefer explicit edition fields for display when plan/tier missing.
@@ -498,7 +576,7 @@ async fn load_state_record(state: &State<'_, AppState>) -> AppResult<Option<Prod
     load_state_record_from_db(&state.db).await
 }
 
-async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<ProductLicenseStateRecord>> {
+async fn load_state_record_from_db<C: ConnectionTrait>(db: &C) -> AppResult<Option<ProductLicenseStateRecord>> {
     let row = settings::get_setting(db, PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE).await?;
     let Some(row) = row else {
         return Ok(None);
@@ -511,7 +589,9 @@ async fn load_state_record_from_db(db: &DatabaseConnection) -> AppResult<Option<
     Ok(ProductLicenseStateRecord::from_legacy_json(legacy))
 }
 
-pub async fn get_activation_claim_tenant_id(db: &DatabaseConnection) -> AppResult<Option<String>> {
+/// The organisation of this PC's current activation (`None`: not activated). Any connection, so a
+/// caller's transaction can read it (`sync::plant_join::complete_pull_done`).
+pub async fn get_activation_claim_tenant_id<C: ConnectionTrait>(db: &C) -> AppResult<Option<String>> {
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
@@ -519,6 +599,12 @@ pub async fn get_activation_claim_tenant_id(db: &DatabaseConnection) -> AppResul
         return Ok(None);
     }
     Ok(record.activation_claim.as_ref().map(|claim| claim.tenant_id.clone()))
+}
+
+/// When the licence key of the current activation was entered on this PC (`submitted_at`, set by
+/// every key entry and kept by reconciliations); `None` when no key was entered.
+pub(crate) async fn activation_submitted_at(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    Ok(load_state_record_from_db(db).await?.map(|record| record.submitted_at))
 }
 
 pub async fn get_activation_claim_record(db: &DatabaseConnection) -> AppResult<Option<ProductActivationClaimRecord>> {
@@ -816,7 +902,7 @@ async fn user_holds_settings_right_at_any_scope(db: &DatabaseConnection, user_id
     Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0) > 0)
 }
 
-async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> AppResult<u64> {
+async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
     // Keep only global bootstrap/settings tables; wipe operational/runtime data to avoid cross-tenant leakage.
     let keep_tables: HashSet<&str> = HashSet::from([
         "seaql_migrations",
@@ -832,12 +918,15 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "admin_recovery_codes_used",
     ]);
 
+    // The plant default language is kept across the reset (F11): the wipe below puts its Settings
+    // row back to the shipped value, so it is written back right after the reseed (AU-127).
+    let plant_language = crate::locale::read_plant_language(db).await?;
+
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_begin",
         "Starting runtime tenant data reset"
     );
-    let table_rows = state
-        .db
+    let table_rows = db
         .query_all(Statement::from_string(
             DatabaseBackend::Sqlite,
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'".to_string(),
@@ -861,16 +950,16 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
     // The safety rule notices are otherwise never deleted: the reseed below guards them again.
-    crate::settings::received_notice::drop_notice_guards(&state.db).await?;
-    crate::sync::capture::suspend_capture(&state.db).await?;
+    crate::settings::received_notice::drop_notice_guards(db).await?;
+    crate::sync::capture::suspend_capture(db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
-    state.db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
+    db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
 
     let wipe_result: Result<u64, sea_orm::DbErr> = async {
-        let tx = state.db.begin().await?;
+        let tx = db.begin().await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
             let escaped = table.replace('"', "\"\"");
@@ -878,6 +967,31 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
             let result = tx.execute(Statement::from_string(DatabaseBackend::Sqlite, sql)).await?;
             wiped_rows_total = wiped_rows_total.saturating_add(result.rows_affected());
         }
+
+        // `system_config` is kept, the accounts and the sync checkpoint are not: "the server
+        // confirmed no user accounts" must come from a new complete pull (`sync::plant_join`), and
+        // the PC joins the plant again (its next snapshot is a first join).
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM system_config WHERE key IN (?, ?)",
+            [
+                crate::sync::plant_join::SERVER_CONFIRMED_NO_ACCOUNTS_KEY.into(),
+                crate::sync::plant_join::COMPLETE_PULL_DONE_KEY.into(),
+            ],
+        ))
+        .await?;
+        // The roles are wiped: the reseed below gives the editable ones their whole baseline again.
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM system_config WHERE substr(key, 1, ?) = ?",
+            [
+                i64::try_from(crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.len())
+                    .unwrap_or(i64::MAX)
+                    .into(),
+                crate::db::seeder::SEEDED_ROLE_PERMISSIONS_KEY_PREFIX.into(),
+            ],
+        ))
+        .await?;
 
         // Tenant-scoped preferences are tenant-owned context and should not leak across activations.
         tx.execute(Statement::from_string(
@@ -891,7 +1005,7 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     }
     .await;
 
-    if let Err(e) = state.db.execute_unprepared("PRAGMA foreign_keys = ON").await {
+    if let Err(e) = db.execute_unprepared("PRAGMA foreign_keys = ON").await {
         tracing::error!(
             error = %e,
             "failed to re-enable SQLite foreign_keys after tenant runtime reset"
@@ -900,17 +1014,23 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
 
     let reseeded: AppResult<u64> = async {
         let wiped_rows_total = wipe_result?;
-        crate::db::seeder::seed_system_data(&state.db).await?;
+        crate::db::seeder::seed_system_data(db).await?;
         // Without these rows every outbox staging (so every business write) and the sync worker fail.
-        crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
+        crate::sync::queries::ensure_sync_control_rows(db).await?;
         // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
         // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(db).await?;
+        // Never fails the reset (the wipe is committed): the language is set again in Settings.
+        if let Some(code) = &plant_language {
+            if let Err(e) = crate::locale::write_plant_language(db, code).await {
+                tracing::warn!(error = %e, language = %code, "reset: the plant language could not be written back");
+            }
+        }
         Ok(wiped_rows_total)
     }
     .await;
     // Capture comes back whatever happened above, so later business writes are never missed.
-    let installed = crate::sync::capture::install_capture(&state.db).await;
+    let installed = crate::sync::capture::install_capture(db).await;
     let wiped_rows_total = reseeded?;
     installed?;
     tracing::warn!(
@@ -934,6 +1054,9 @@ pub struct ActivationBootstrapState {
     pub tenant_id: Option<String>,
     pub company_display_name: Option<String>,
     pub has_tenant_admin: bool,
+    /// What the first-start screen shows on an activated PC (`sync::plant_join`); `None` when this
+    /// PC is not activated.
+    pub plant_join: Option<crate::sync::plant_join::PlantJoinState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -949,27 +1072,61 @@ pub struct ActivationLicenseMetadata {
 
 #[tauri::command]
 pub async fn get_activation_bootstrap_state(state: State<'_, AppState>) -> AppResult<ActivationBootstrapState> {
-    get_activation_bootstrap_state_in(&state.db).await
+    get_activation_bootstrap_state_in(&state.db, &state.sync_worker.status()).await
 }
 
-pub(crate) async fn get_activation_bootstrap_state_in(db: &DatabaseConnection) -> AppResult<ActivationBootstrapState> {
+/// `worker`: the sync worker's last status, from which the first-start screen tells "joining
+/// your plant" from "a connection is needed" (`plant_join::plant_join_state`).
+pub(crate) async fn get_activation_bootstrap_state_in(
+    db: &DatabaseConnection,
+    worker: &crate::sync::transport::SyncWorkerStatus,
+) -> AppResult<ActivationBootstrapState> {
     let record = load_state_record_from_db(db).await?;
     let Some(record) = record else {
         return Ok(ActivationBootstrapState {
             tenant_id: None,
             company_display_name: None,
             has_tenant_admin: false,
+            plant_join: None,
         });
     };
     let tenant_id = record.activation_claim.as_ref().map(|c| c.tenant_id.clone());
     // As `bootstrap_initial_tenant_admin` decides: an administrator of any organisation on this PC
     // closes the first-administrator step.
     let has_tenant_admin = tenant_id.is_some() && plant_has_administrator(db).await?;
+    let plant_join = match tenant_id.as_deref() {
+        Some(tenant) => {
+            let licence_syncs = crate::sync::plant_join::licence_syncs(db).await?;
+            Some(crate::sync::plant_join::plant_join_state(db, tenant, has_tenant_admin, licence_syncs, worker).await?)
+        }
+        None => None,
+    };
     Ok(ActivationBootstrapState {
         tenant_id,
         company_display_name: record.company_display_name,
         has_tenant_admin,
+        plant_join,
     })
+}
+
+/// The first-start screen joins the plant: the sync worker runs a cycle soon instead of waiting for
+/// its next re-check (it reads the activation made a moment ago), and again on "Retry". Signed out,
+/// so only while this PC has no administrator (afterwards sync is run by signed-in operators:
+/// `run_sync_now`, `sync.view`), and as `SyncCommand::JoinPlant`, not `RunNow`: repeated calls
+/// coalesce, keep the failure count and never run before the wake spacing or a server
+/// `Retry-After`.
+#[tauri::command]
+pub async fn request_plant_join(state: State<'_, AppState>) -> AppResult<()> {
+    if get_activation_claim_tenant_id(&state.db).await?.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_NOT_ACTIVATED: Device is not activated.".into(),
+        ]));
+    }
+    if plant_has_administrator(&state.db).await? {
+        return Err(first_admin_exists());
+    }
+    state.sync_worker.send(crate::sync::transport::SyncCommand::JoinPlant);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1018,6 +1175,18 @@ fn first_admin_exists() -> AppError {
     )
 }
 
+/// A first-start action refused because no complete pull has confirmed that the organisation has
+/// no user account on the server (`sync::plant_join`): this PC may belong to a plant whose
+/// accounts have not arrived yet.
+fn plant_join_required() -> AppError {
+    crate::errors::org_validation_failed(
+        "FIRST_ADMIN_PLANT_JOIN_REQUIRED",
+        "This PC has not joined your plant yet: it must synchronise with the server once to check whether your \
+         organisation already has accounts. Connect it to the network, then retry.",
+        std::collections::HashMap::new(),
+    )
+}
+
 /// A first-administrator creation that could not take the database (another one is being written):
 /// coded, to be retried.
 fn first_admin_retry() -> AppError {
@@ -1033,9 +1202,14 @@ fn first_admin_retry() -> AppError {
 /// so it is refused as soon as this PC has an administrator, for this organisation or any other
 /// (`plant_has_administrator`): the organisation stored here is not proof of a first start, since
 /// it can be replaced, while the administrators stay until local data is reset (which itself needs
-/// an administrator once one exists). The check and the account, role and scope rows are one
-/// write transaction that holds the write lock from its start (`begin_write_transaction`): two
-/// submissions at once make one administrator, the other waits and gets the coded refusal.
+/// an administrator once one exists). It is also refused until a complete sync pull has confirmed
+/// that the organisation has no user account on the server (`sync::plant_join`, CMMS Advisor
+/// decision 2026-10-21): a new PC of an existing plant gets that plant's accounts, never a second
+/// first administrator; the creation consumes that fact. A licence without sync (a single-PC
+/// plant, `plant_join::licence_syncs`) has no plant to join and skips that condition. The checks
+/// and the account, role and scope rows are one write transaction that holds the write lock from
+/// its start (`begin_write_transaction`): two submissions at once make one administrator, the
+/// other waits and gets the coded refusal.
 /// The password meets the plant password policy (`builtin_admin::validate_first_admin_password`);
 /// the same transaction records the "first administrator created" marker, which keeps this screen
 /// closed for good; once committed, a built-in "admin" never used is retired
@@ -1052,20 +1226,29 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
     db: &DatabaseConnection,
     input: BootstrapInitialAdminInput,
 ) -> AppResult<()> {
-    let tenant_id = get_activation_claim_tenant_id(db)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["Device is not activated.".into()]))?;
+    let tenant_id = get_activation_claim_tenant_id(db).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec!["GATE_LICENSE_NOT_ACTIVATED: Device is not activated.".into()])
+    })?;
     if plant_has_administrator(db).await? {
         return Err(first_admin_exists());
+    }
+    // A single-PC licence (no sync) has no plant to join.
+    let must_join = crate::sync::plant_join::licence_syncs(db).await?;
+    if must_join && !crate::sync::plant_join::server_confirmed_no_accounts(db, &tenant_id).await? {
+        return Err(plant_join_required());
     }
 
     let username = input.username.trim();
     if username.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["username is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_USERNAME_REQUIRED: username is required.".into(),
+        ]));
     }
     let email = input.email.trim();
     if email.is_empty() || !email.contains('@') || !email.contains('.') {
-        return Err(AppError::ValidationFailed(vec!["A valid email is required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_EMAIL_REQUIRED: A valid email is required.".into(),
+        ]));
     }
     crate::auth::builtin_admin::validate_first_admin_password(db, &input.password).await?;
     let password_hash = crate::auth::password::hash_password(&input.password)?;
@@ -1074,6 +1257,10 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
         let txn = begin_write_transaction(db).await?;
         if plant_has_administrator(&txn).await? {
             return Err(first_admin_exists());
+        }
+        // An account received while the form was being filled in closes the creation here too.
+        if must_join && !crate::sync::plant_join::server_confirmed_no_accounts(&txn, &tenant_id).await? {
+            return Err(plant_join_required());
         }
         let exists = txn
             .query_one(Statement::from_sql_and_values(
@@ -1084,7 +1271,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             .await?;
         if exists.is_some() {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Username '{username}' is already taken"
+                "GATE_ADMIN_USERNAME_TAKEN: Username '{username}' is already taken"
             )]));
         }
 
@@ -1139,6 +1326,15 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to read new user id")))?;
         let new_id: i64 = id_row.try_get("", "id")?;
+        // The administrator chose the password: the account is its author and its own root (who
+        // set it, `password_set_*`; `sync::credential_check`).
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE user_accounts SET password_changed_by_id = id, password_set_by_id = id, \
+             password_set_at = password_changed_at WHERE id = ?",
+            [new_id.into()],
+        ))
+        .await?;
 
         let assign_sync = Uuid::new_v4().to_string();
         let now_iso = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -1160,6 +1356,7 @@ pub(crate) async fn bootstrap_initial_tenant_admin_in(
         ))
         .await?;
         crate::auth::builtin_admin::record_first_administrator_in(&txn, &entity_sync_id).await?;
+        crate::sync::plant_join::forget(&txn).await?;
         txn.commit().await?;
         Ok::<(), AppError>(())
     }
@@ -1651,7 +1848,7 @@ fn offline_grace_raised(
 /// The licence a change would bring to this PC: read from the claim, or from the control plane's
 /// preview of that claim before it is taken (`check_product_license_key_entry`). Only what the
 /// rule reads.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct LicenceChangeTarget {
     pub tenant_id: String,
     pub license_id: String,
@@ -1687,6 +1884,40 @@ pub(crate) struct LicenceChangeTarget {
     /// The entitlement envelope that comes with the claim, if any.
     #[serde(skip)]
     pub envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+}
+
+/// Written by hand so a `?target` in a log line can never print the activation token.
+impl std::fmt::Debug for LicenceChangeTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LicenceChangeTarget")
+            .field("tenant_id", &self.tenant_id)
+            .field("license_id", &self.license_id)
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .field(
+                "activation_token",
+                &self.activation_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("has_demo_data", &self.has_demo_data)
+            .field("is_initialized", &self.is_initialized)
+            .field("expires_at", &self.expires_at)
+            .field("device_limit", &self.device_limit)
+            .field("license_tier", &self.license_tier)
+            .field("license_plan", &self.license_plan)
+            .field("offline_grace_hours", &self.offline_grace_hours)
+            .field("force_update_required", &self.force_update_required)
+            .field("force_min_app_version", &self.force_min_app_version)
+            .field("update_channel", &self.update_channel)
+            .field(
+                "trust_revocation_disconnects_immediately",
+                &self.trust_revocation_disconnects_immediately,
+            )
+            .field(
+                "reconnect_requires_fresh_heartbeat",
+                &self.reconnect_requires_fresh_heartbeat,
+            )
+            .field("envelope", &self.envelope)
+            .finish()
+    }
 }
 
 impl LicenceChangeTarget {
@@ -2030,16 +2261,24 @@ pub(crate) async fn check_product_license_key_entry_in(
     caller: LicenceCaller,
     preview_json: &str,
 ) -> AppResult<()> {
-    let mut value: serde_json::Value = serde_json::from_str(preview_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("previewJson must be valid JSON: {e}")]))?;
+    let mut value: serde_json::Value = serde_json::from_str(preview_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: previewJson must be valid JSON: {e}"
+        )])
+    })?;
     let envelope = match value
         .as_object_mut()
         .and_then(|obj| obj.remove("entitlement_envelope"))
         .filter(|v| !v.is_null())
     {
         Some(env_value) => Some(
-            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
-                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value).map_err(
+                |e| {
+                    AppError::ValidationFailed(vec![format!(
+                        "GATE_LICENSE_ENVELOPE_INVALID: entitlement_envelope is invalid: {e}"
+                    )])
+                },
+            )?,
         ),
         None => None,
     };
@@ -2048,7 +2287,7 @@ pub(crate) async fn check_product_license_key_entry_in(
     }
     let mut target: LicenceChangeTarget = serde_json::from_value(value).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "previewJson must name the tenant, licence and machine: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: previewJson must name the tenant, licence and machine: {e}"
         )])
     })?;
     // As `extract_claim_and_envelope` does for the claim.
@@ -2074,16 +2313,26 @@ fn keep_stored_display(claim: &mut ProductActivationClaimRecord, stored: Option<
     claim.tenant_slug = stored_claim.and_then(|c| c.tenant_slug.clone());
 }
 
+/// Records the key entry of the claim `claim_product_activation` holds in Rust for this key and
+/// organisation (`tenant_id`: the one the webview showed and decided the local data reset on).
+/// The webview never passes the claim or its activation token.
 #[tauri::command]
 pub async fn submit_product_license_key(
     key: String,
-    claim_json: Option<String>,
-    machine_fingerprint: Option<String>,
+    tenant_id: String,
     app_version: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = caller_of(&state).await?;
-    submit_product_license_key_in(&state.db, caller, &key, claim_json, machine_fingerprint, app_version).await
+    submit_pending_product_license_key_in(
+        &state.db,
+        caller,
+        &state.pending_activation_claim,
+        &key,
+        &tenant_id,
+        app_version,
+    )
+    .await
 }
 
 pub(crate) async fn submit_product_license_key_in(
@@ -2099,7 +2348,7 @@ pub(crate) async fn submit_product_license_key_in(
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
-            "License key must be at least 8 characters.".into(),
+            "GATE_LICENSE_KEY_SHORT: License key must be at least 8 characters.".into(),
         ]));
     }
     let mut entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput> = None;
@@ -2222,13 +2471,36 @@ pub(crate) async fn submit_product_license_key_in(
     Ok(())
 }
 
+/// Records the outcome of a licence check the webview could not complete (no answer, an error
+/// answer, a denial). A success is refused (`GATE_LICENSE_SUCCESS_FROM_SERVER_ONLY`): a claim is
+/// recorded only from the answer Rust received (`refresh_product_activation_policy`,
+/// `reclaim_product_activation`, `submit_product_license_key`), so no claim or activation token
+/// comes from the webview.
 #[tauri::command]
 pub async fn apply_product_license_reconciliation(
     outcome_json: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductLicenseOnboardingState> {
+    refuse_success_from_webview(&outcome_json)?;
     let caller = caller_of(&state).await?;
     apply_product_license_reconciliation_in(&state.db, caller, &outcome_json).await
+}
+
+/// See [`apply_product_license_reconciliation`]. An outcome that cannot be read is left to
+/// [`apply_product_license_reconciliation_in`], which refuses it.
+fn refuse_success_from_webview(outcome_json: &str) -> AppResult<()> {
+    let kind = serde_json::from_str::<serde_json::Value>(outcome_json)
+        .ok()
+        .and_then(|v| v.get("kind").cloned())
+        .and_then(|k| serde_json::from_value::<ProductLicenseReconciliationOutcomeKind>(k).ok());
+    if matches!(kind, Some(ProductLicenseReconciliationOutcomeKind::Success)) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_SUCCESS_FROM_SERVER_ONLY: A licence renewal is recorded only from the licence server's \
+             answer received by the app: nothing was changed."
+                .into(),
+        ]));
+    }
+    Ok(())
 }
 
 pub(crate) async fn apply_product_license_reconciliation_in(
@@ -2238,11 +2510,16 @@ pub(crate) async fn apply_product_license_reconciliation_in(
 ) -> AppResult<ProductLicenseOnboardingState> {
     let changed_by_id = caller.user_id;
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
-    let mut record = load_state_record_from_db(db)
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
+    let mut record = load_state_record_from_db(db).await?.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "GATE_LICENSE_NO_STATE: No local product license state found.".into()
+        ])
+    })?;
+    let outcome_value: serde_json::Value = serde_json::from_str(outcome_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "GATE_LICENSE_PAYLOAD_INVALID: outcomeJson must be valid JSON: {e}"
+        )])
+    })?;
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
         .cloned()
@@ -2272,7 +2549,7 @@ pub(crate) async fn apply_product_license_reconciliation_in(
     }
     let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta).map_err(|e| {
         AppError::ValidationFailed(vec![format!(
-            "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
+            "GATE_LICENSE_PAYLOAD_INVALID: outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
         )])
     })?;
     outcome.entitlement_envelope = entitlement_envelope;
@@ -2296,7 +2573,9 @@ pub(crate) async fn apply_product_license_reconciliation_in(
     match outcome.kind {
         ProductLicenseReconciliationOutcomeKind::Success => {
             let claim = outcome.claim.ok_or_else(|| {
-                AppError::ValidationFailed(vec!["Reconciliation success requires claim payload.".into()])
+                AppError::ValidationFailed(vec![
+                    "GATE_LICENSE_PAYLOAD_INVALID: Reconciliation success requires claim payload.".into(),
+                ])
             })?;
             // Signed out, `keep_stored_display` already put back the stored name (None when none
             // was stored), so the company name shown is only replaced by a name the claim states.
@@ -2472,14 +2751,26 @@ fn reset_builtin_admin_pending() -> AppError {
     )
 }
 
+/// A signed-out local reset refused because the plant has an administrator: the two routes that
+/// remain are an administrator signed in with a fresh identity check, or a vendor recovery code
+/// (coded, translated on screen).
+fn reset_requires_admin_signin() -> AppError {
+    crate::errors::org_validation_failed(
+        "LICENSE_RESET_REQUIRES_ADMIN_SIGNIN",
+        "This PC already has an administrator: sign in as an administrator (the password is asked again) to \
+         change the licence key, or use a vendor recovery code.",
+        std::collections::HashMap::new(),
+    )
+}
+
 /// The rule for a reset asked without a session (`reset_product_license_activation`,
 /// `reset_local_tenant_runtime_data`): allowed only on a true first start. The administrators
 /// decide, not the stored claim (which a signed-out key entry can empty): refused once the plant
-/// has an administrator (`administered_refusal`), and refused on a PC that holds a claim and is
-/// still reached through the never-used built-in account (`pre_administered_by_builtin_account`).
-pub(crate) async fn authorize_signed_out_reset(db: &DatabaseConnection, administered_refusal: &str) -> AppResult<()> {
+/// has an administrator (`reset_requires_admin_signin`), and refused on a PC that holds a claim and
+/// is still reached through the never-used built-in account (`pre_administered_by_builtin_account`).
+pub(crate) async fn authorize_signed_out_reset(db: &DatabaseConnection) -> AppResult<()> {
     if plant_has_administrator(db).await? {
-        return Err(AppError::Auth(administered_refusal.into()));
+        return Err(reset_requires_admin_signin());
     }
     let record = load_state_record_from_db(db).await?;
     if pre_administered_by_builtin_account(db, record.as_ref()).await? {
@@ -2506,11 +2797,7 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         );
         crate::require_step_up!(state);
     } else {
-        authorize_signed_out_reset(
-            &state.db,
-            "Session requise pour réinitialiser l'activation une fois un administrateur créé.",
-        )
-        .await?;
+        authorize_signed_out_reset(&state.db).await?;
     }
 
     let wiped_rows = reset_to_first_run(&state, "recovery").await?;
@@ -2535,7 +2822,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
     // Same lock as key entry and reconciliation, so a check in flight cannot write the
     // licence record back after it is forgotten here.
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
-    let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(&state.db).await?;
     let _ = settings::delete_setting(
         &state.db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
@@ -2572,18 +2859,14 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         );
         crate::require_step_up!(state);
     } else {
-        authorize_signed_out_reset(
-            &state.db,
-            "Session requise pour réinitialiser les données runtime une fois un administrateur créé.",
-        )
-        .await?;
+        authorize_signed_out_reset(&state.db).await?;
     }
 
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_command",
         "reset_local_tenant_runtime_data command invoked"
     );
-    let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(&state.db).await?;
     {
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
@@ -2597,8 +2880,10 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
 }
 
 /// Bearer token from the last successful activation claim (`/api/v1/activation/claim`) for the
-/// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
-/// activation is currently active.
+/// Rust sync worker. No command returns the stored token: sync, updates and the licence policy
+/// refresh (`refresh_product_activation_policy`) all read it here, in Rust. `None` unless the
+/// activation is currently active. The activation claim and the tenant initialisation are sent
+/// from Rust too (`claim_product_activation`, `mark_activation_tenant_initialized`).
 pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
     activation_bearer_token_when(db, &[ProductLicenseActivationStatus::Active]).await
 }
@@ -2637,17 +2922,977 @@ async fn activation_bearer_token_when(
     Ok(rec.activation_claim.map(|c| c.activation_token))
 }
 
-/// Device-local activation token for policy refresh before/without an app session.
-#[tauri::command]
-pub async fn get_product_activation_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
-        return Ok(None);
-    };
-    if !record_has_valid_activation_claim(&rec) {
-        return Ok(None);
+/// Licence policy refresh on the control API: the stored activation renewed without taking a
+/// device slot.
+const POLICY_REFRESH_PATH: &str = "/api/v1/activation/policy-refresh";
+/// Longest app version the licence server accepts.
+const APP_VERSION_MAX_LEN: usize = 32;
+/// Longest server error body kept in a policy-refresh result (the technical details on screen).
+const POLICY_REFRESH_DETAILS_MAX_CHARS: usize = 4000;
+
+/// What one licence policy refresh gave (`refresh_product_activation_policy`). Never carries the
+/// activation token: the request is sent from here and the token stays in Rust.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PolicyRefreshResult {
+    /// No valid activation claim is stored on this PC: nothing was sent.
+    NoToken,
+    /// The server renewed the activation; its claim was recorded as a successful reconciliation.
+    Refreshed { state: ProductLicenseOnboardingState },
+    /// The server answered an error status. `code` and `message` are read from its body
+    /// (`policy_refresh_error_fields`, as for every activation call); `details` is the body.
+    HttpError {
+        status: u16,
+        code: Option<String>,
+        message: Option<String>,
+        details: Option<String>,
+    },
+    /// The server answered 2xx with a body that is not a licence claim, or an answer too large to
+    /// read (`RAW_ANSWER_MAX_BYTES`), or the request could not be built. Nothing was recorded.
+    InvalidResponse { message: String },
+    /// No answer from the server (offline, connection refused, interrupted).
+    NetworkError { message: String },
+}
+
+/// The version sent to the licence server, compared there against a forced-update minimum:
+/// MAJOR.MINOR.PATCH with an optional pre-release ("0.4.0-dev" is below "0.4.0"), at most 32
+/// characters as the server accepts.
+fn well_formed_app_version(version: &str) -> bool {
+    if version.len() > APP_VERSION_MAX_LEN {
+        return false;
     }
-    Ok(rec.activation_claim.map(|c| c.activation_token))
+    let (core, pre_release) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && pre_release
+            .is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+}
+
+/// What replaces an activation token in a text that leaves Rust.
+const TOKEN_MARKER: &str = "[activation token]";
+/// What replaces the licence key in a text that leaves Rust.
+const KEY_MARKER: &str = "[licence key]";
+
+/// The secrets sent with an activation call (`(value, marker)`) replaced by their marker in a text
+/// that leaves the call (result, logs).
+fn without_secrets(text: String, secrets: &[(&str, &str)]) -> String {
+    secrets
+        .iter()
+        .filter(|(value, _)| !value.is_empty())
+        .fold(text, |text, (value, marker)| text.replace(value, marker))
+}
+
+/// The first of `keys` present and not null, as JavaScript's `a ?? b` reads them.
+fn first_present(raw: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<serde_json::Value> {
+    keys.iter().find_map(|k| raw.get(*k).filter(|v| !v.is_null()).cloned())
+}
+
+/// The value at `path` inside nested objects.
+fn nested_value<'a>(
+    raw: &'a serde_json::Map<String, serde_json::Value>,
+    path: &[&str],
+) -> Option<&'a serde_json::Value> {
+    let (first, rest) = path.split_first()?;
+    let mut current = raw.get(*first)?;
+    for segment in rest {
+        current = current.as_object()?.get(*segment)?;
+    }
+    Some(current)
+}
+
+/// `readNestedString`: a string at `path`.
+fn nested_string(raw: &serde_json::Map<String, serde_json::Value>, path: &[&str]) -> Option<serde_json::Value> {
+    nested_value(raw, path)
+        .and_then(serde_json::Value::as_str)
+        .map(serde_json::Value::from)
+}
+
+/// `readNestedNumber`: a number at `path`, or a string JavaScript's `Number()` reads as a finite
+/// number (an empty string reads as 0, as there).
+fn nested_number(raw: &serde_json::Map<String, serde_json::Value>, path: &[&str]) -> Option<serde_json::Value> {
+    match nested_value(raw, path)? {
+        serde_json::Value::Number(n) => Some(serde_json::Value::Number(n.clone())),
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            let parsed = if trimmed.is_empty() {
+                0.0
+            } else {
+                trimmed.parse::<f64>().ok().filter(|n| n.is_finite())?
+            };
+            // An integral value stays an integer, so it reads into the claim's integer fields.
+            if parsed.fract() == 0.0 && parsed.abs() < 9.0e15 {
+                Some(serde_json::Value::from(parsed as i64))
+            } else {
+                serde_json::Number::from_f64(parsed).map(serde_json::Value::Number)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The claim a policy-refresh answer gives, in the canonical shape of
+/// `ProductActivationClaimRecord`: the fields and fallbacks of `normalizeActivationPayload`
+/// followed by `toDesktopActivationClaimRecord` (product-license-service.ts), which the webview
+/// applied to this answer before the refresh moved here. An omitted or empty `activation_token` is
+/// the stored one (the server may leave it out of a refresh).
+fn policy_refresh_claim(
+    raw: &serde_json::Map<String, serde_json::Value>,
+    stored_token: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let get = |key: &str| first_present(raw, &[key]);
+    let edition = first_present(raw, &["edition", "license_tier", "license_plan", "tier", "plan"])
+        .or_else(|| nested_string(raw, &["claim", "tier"]))
+        .or_else(|| nested_string(raw, &["entitlement", "tier"]));
+    let activation_token = raw
+        .get("activation_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|t| !t.trim().is_empty())
+        .map_or_else(|| stored_token.to_string(), str::to_string);
+    let fields = [
+        ("tenant_id", get("tenant_id")),
+        ("license_id", get("license_id")),
+        ("machine_fingerprint", get("machine_fingerprint")),
+        ("activation_token", Some(serde_json::Value::from(activation_token))),
+        ("expires_at", get("expires_at")),
+        ("force_min_app_version", get("force_min_app_version")),
+        ("force_update_required", get("force_update_required")),
+        ("update_channel", get("update_channel")),
+        ("offline_grace_hours", get("offline_grace_hours")),
+        (
+            "trust_revocation_disconnects_immediately",
+            get("trust_revocation_disconnects_immediately"),
+        ),
+        (
+            "reconnect_requires_fresh_heartbeat",
+            get("reconnect_requires_fresh_heartbeat"),
+        ),
+        (
+            "tenant_display_name",
+            first_present(
+                raw,
+                &[
+                    "tenant_display_name",
+                    "company_display_name",
+                    "company_name",
+                    "tenant_name",
+                ],
+            )
+            .or_else(|| nested_string(raw, &["tenant", "display_name"]))
+            .or_else(|| nested_string(raw, &["tenant", "name"]))
+            .or_else(|| nested_string(raw, &["company", "display_name"])),
+        ),
+        (
+            "tenant_slug",
+            first_present(raw, &["tenant_slug", "slug"]).or_else(|| nested_string(raw, &["tenant", "slug"])),
+        ),
+        (
+            "device_limit",
+            first_present(
+                raw,
+                &["device_limit", "slot_limit", "seat_limit", "deviceLimit", "slotLimit"],
+            )
+            .or_else(|| nested_number(raw, &["claim", "slot_limit"]))
+            .or_else(|| nested_number(raw, &["entitlement", "slot_limit"]))
+            .or_else(|| nested_number(raw, &["license", "slot_limit"])),
+        ),
+        ("license_tier", edition.clone()),
+        ("license_plan", edition),
+        // As `normalizeActivationPayload`: a 2xx answer that states no licence status is active.
+        (
+            "license_status",
+            Some(get("license_status").unwrap_or_else(|| serde_json::Value::from("active"))),
+        ),
+        (
+            "activated_device_count",
+            first_present(raw, &["activated_device_count", "active_device_count"])
+                .or_else(|| nested_number(raw, &["limits", "activated"])),
+        ),
+        (
+            "has_demo_data",
+            first_present(raw, &["has_demo_data", "demo_data", "is_demo"]),
+        ),
+        (
+            "is_initialized",
+            get("is_initialized").or_else(|| {
+                nested_value(raw, &["tenant", "is_initialized"])
+                    .filter(|v| !v.is_null())
+                    .cloned()
+            }),
+        ),
+    ];
+    fields
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.unwrap_or(serde_json::Value::Null)))
+        .collect()
+}
+
+/// The claim and entitlement envelope of a 2xx claim or policy-refresh answer (`answer` names it in
+/// the error), or why the answer is not a licence claim.
+fn claim_of_answer(
+    body: &str,
+    stored_token: &str,
+    answer: &str,
+) -> Result<
+    (
+        ProductActivationClaimRecord,
+        Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+    ),
+    String,
+> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("The {answer} answer is not JSON: {e}"))?;
+    let raw = value
+        .as_object()
+        .ok_or_else(|| format!("The {answer} answer is not a JSON object."))?;
+    let envelope = match raw.get("entitlement_envelope").filter(|v| !v.is_null()) {
+        Some(v) => Some(
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(v.clone())
+                .map_err(|e| format!("The {answer} answer has an invalid entitlement envelope: {e}"))?,
+        ),
+        None => None,
+    };
+    let claim: ProductActivationClaimRecord =
+        serde_json::from_value(serde_json::Value::Object(policy_refresh_claim(raw, stored_token)))
+            .map_err(|e| format!("The {answer} answer is not a licence claim: {e}"))?;
+    Ok((claim, envelope))
+}
+
+/// The successful reconciliation outcome (`apply_product_license_reconciliation_in`) recording
+/// `claim`.
+fn success_outcome_json(
+    claim: &ProductActivationClaimRecord,
+    envelope: Option<&crate::entitlements::domain::EntitlementEnvelopeInput>,
+    app_version: Option<&str>,
+) -> String {
+    serde_json::json!({
+        "kind": "success",
+        "claim": claim,
+        "entitlement_envelope": envelope,
+        "app_version": app_version,
+    })
+    .to_string()
+}
+
+/// The reconciliation outcome of a 2xx policy-refresh answer, or why the answer is not a licence
+/// claim.
+fn policy_refresh_outcome_json(body: &str, stored_token: &str, app_version: Option<&str>) -> Result<String, String> {
+    let (claim, envelope) = claim_of_answer(body, stored_token, "policy refresh")?;
+    Ok(success_outcome_json(&claim, envelope.as_ref(), app_version))
+}
+
+/// The code and message of an activation call's error answer, as the webview read them before the
+/// calls moved to Rust: `code`, else `error` when a string, else `error.code`; `message`, else
+/// `detail`, `error_description`, `error.message`; a body that is not JSON is the message. What a status means when the body says
+/// nothing (a 409 is a slot limit) is decided by the webview, as for every activation error.
+fn policy_refresh_error_fields(body: &str) -> (Option<String>, Option<String>) {
+    let text = |v: Option<&serde_json::Value>| v.and_then(serde_json::Value::as_str).map(str::to_string);
+    let mut code = None;
+    let mut message = None;
+    let trimmed = body.trim();
+    if !trimmed.is_empty() {
+        match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(serde_json::Value::Object(obj)) => {
+                let nested = obj.get("error").and_then(serde_json::Value::as_object);
+                code = text(obj.get("code"))
+                    .or_else(|| text(obj.get("error")))
+                    .or_else(|| nested.and_then(|n| text(n.get("code"))));
+                message = text(obj.get("message"))
+                    .or_else(|| text(obj.get("detail")))
+                    .or_else(|| text(obj.get("error_description")))
+                    .or_else(|| nested.and_then(|n| text(n.get("message"))));
+            }
+            // JSON `null` fails there too (reading a field of null), so the body is the message.
+            Ok(serde_json::Value::Null) | Err(_) => message = Some(trimmed.to_string()),
+            Ok(_) => {}
+        }
+    }
+    (code, message)
+}
+
+/// Why an activation call to the control API gave no answer to read. Its texts never carry a
+/// secret sent with the call (`without_secrets`).
+#[derive(Debug)]
+enum ActivationCallFailure {
+    /// The server answered an error status. `code` and `message` are read from its body
+    /// (`policy_refresh_error_fields`); `details` is the body.
+    HttpError {
+        status: u16,
+        code: Option<String>,
+        message: Option<String>,
+        details: Option<String>,
+    },
+    /// An answer too large to read (`RAW_ANSWER_MAX_BYTES`), a request that could not be built, or
+    /// (set by the caller) a 2xx answer that is not what the call expects.
+    InvalidResponse { message: String },
+    /// No answer from the server (offline, connection refused, interrupted).
+    NetworkError { message: String },
+}
+
+impl From<ActivationCallFailure> for PolicyRefreshResult {
+    fn from(failure: ActivationCallFailure) -> Self {
+        match failure {
+            ActivationCallFailure::HttpError {
+                status,
+                code,
+                message,
+                details,
+            } => Self::HttpError {
+                status,
+                code,
+                message,
+                details,
+            },
+            ActivationCallFailure::InvalidResponse { message } => Self::InvalidResponse { message },
+            ActivationCallFailure::NetworkError { message } => Self::NetworkError { message },
+        }
+    }
+}
+
+/// `POST {path}` on the control API at `api_base`, with `bearer` when given: the body of a 2xx
+/// answer, or why there is none. Every text of a failure has the `secrets` sent replaced by their
+/// marker; the 2xx body is returned as received (the caller reads it and removes what must not
+/// leave Rust).
+async fn post_activation_call(
+    api_base: &str,
+    path: &str,
+    bearer: Option<&str>,
+    body: &serde_json::Value,
+    secrets: &[(&str, &str)],
+) -> AppResult<Result<String, ActivationCallFailure>> {
+    let client = crate::sync::transport::client::ControlPlaneClient::new(
+        api_base,
+        crate::sync::transport::SyncTiming::production().timeouts,
+    )
+    .map_err(AppError::SyncError)?;
+    let (status, answer) = match client.post_json_raw(path, bearer, body.to_string()).await {
+        Ok(answer) => answer,
+        // An answer too large to read (`RAW_ANSWER_MAX_BYTES`), or a request that could not be
+        // built: no licence answer, but not the network either.
+        Err(e @ crate::sync::transport::client::TransportError::Contract(_)) => {
+            let message = without_secrets(e.message(), secrets);
+            tracing::warn!(
+                event = "desktop_activation_call_invalid_answer",
+                path,
+                error = %message,
+                "Activation call answer could not be read"
+            );
+            return Ok(Err(ActivationCallFailure::InvalidResponse { message }));
+        }
+        Err(e) => {
+            let message = without_secrets(e.message(), secrets);
+            tracing::warn!(
+                event = "desktop_activation_call_unreachable",
+                path,
+                error = %message,
+                "Activation call got no answer"
+            );
+            return Ok(Err(ActivationCallFailure::NetworkError { message }));
+        }
+    };
+    if (200..300).contains(&status) {
+        return Ok(Ok(answer));
+    }
+    let (code, message) = policy_refresh_error_fields(&answer);
+    let code = code.map(|c| without_secrets(c, secrets));
+    let message = message.map(|m| without_secrets(m, secrets));
+    // Redacted before it is shortened: a secret cut at the limit would no longer be found.
+    let details = Some(answer.trim()).filter(|b| !b.is_empty()).map(|b| {
+        without_secrets(b.to_string(), secrets)
+            .chars()
+            .take(POLICY_REFRESH_DETAILS_MAX_CHARS)
+            .collect::<String>()
+    });
+    tracing::warn!(
+        event = "desktop_activation_call_refused",
+        path,
+        status,
+        code = code.as_deref().unwrap_or(""),
+        "Activation call answered an error"
+    );
+    Ok(Err(ActivationCallFailure::HttpError {
+        status,
+        code,
+        message,
+        details,
+    }))
+}
+
+/// A 2xx answer the caller could not read: logged, returned as `InvalidResponse`.
+fn invalid_answer(path: &str, why: String, secrets: &[(&str, &str)]) -> ActivationCallFailure {
+    let message = without_secrets(why, secrets);
+    tracing::warn!(
+        event = "desktop_activation_call_invalid_answer",
+        path,
+        error = %message,
+        "Activation call answer is not what the call expects"
+    );
+    ActivationCallFailure::InvalidResponse { message }
+}
+
+/// Licence policy refresh from Rust: sends the stored activation token to the control API at
+/// `api_base`, then records a 2xx answer as a successful reconciliation for `caller` (refusals of
+/// that change, such as `LICENSE_RECONCILE_ADMIN_REQUIRED` or a step-up, are returned as errors).
+/// `app_version` is sent only when well formed (`well_formed_app_version`); without it the server
+/// applies a forced update as if this PC were out of date.
+pub(crate) async fn refresh_product_activation_policy_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    api_base: &str,
+    app_version: Option<&str>,
+) -> AppResult<PolicyRefreshResult> {
+    let Some(record) = load_state_record_from_db(db).await? else {
+        return Ok(PolicyRefreshResult::NoToken);
+    };
+    if !record_has_valid_activation_claim(&record) {
+        return Ok(PolicyRefreshResult::NoToken);
+    }
+    let Some(token) = record.activation_claim.map(|c| c.activation_token.trim().to_string()) else {
+        return Ok(PolicyRefreshResult::NoToken);
+    };
+    let version = app_version.map(str::trim).filter(|v| !v.is_empty());
+    let request_body = match version.filter(|v| well_formed_app_version(v)) {
+        Some(v) => serde_json::json!({ "app_version": v }),
+        None => serde_json::json!({}),
+    };
+    let secrets = [(token.as_str(), TOKEN_MARKER)];
+    let body = match post_activation_call(api_base, POLICY_REFRESH_PATH, Some(&token), &request_body, &secrets).await? {
+        Ok(body) => body,
+        Err(failure) => return Ok(failure.into()),
+    };
+    let outcome_json = match policy_refresh_outcome_json(&body, &token, version) {
+        Ok(json) => json,
+        Err(why) => return Ok(invalid_answer(POLICY_REFRESH_PATH, why, &secrets).into()),
+    };
+    let state = apply_product_license_reconciliation_in(db, caller, &outcome_json).await?;
+    tracing::info!(
+        event = "desktop_policy_refresh_applied",
+        status = ?state.status,
+        "Licence policy refresh recorded"
+    );
+    Ok(PolicyRefreshResult::Refreshed { state })
+}
+
+/// Renews this PC's licence with the control API (policy refresh, no device slot taken) and records
+/// the answer. Runs before sign-in (the licence gate); the activation token never leaves Rust. The
+/// control API origin is the one sync and updates use (`build.rs`).
+#[tauri::command]
+pub async fn refresh_product_activation_policy(
+    app_version: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<PolicyRefreshResult> {
+    let caller = caller_of(&state).await?;
+    refresh_product_activation_policy_in(
+        &state.db,
+        caller,
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        app_version.as_deref(),
+    )
+    .await
+}
+
+/// Licence check without taking a device slot: the organisation and terms of a key.
+const ACTIVATION_PREVIEW_PATH: &str = "/api/v1/activation/preview";
+/// Takes a device slot for a key and issues this PC's activation token.
+const ACTIVATION_CLAIM_PATH: &str = "/api/v1/activation/claim";
+/// Marks the activated organisation as initialised (its first PC set it up).
+const TENANT_INITIALIZE_PATH: &str = "/api/v1/activation/tenant-status/initialize";
+
+/// What one activation call sent from Rust gave the webview. Never carries the activation token
+/// or the stored licence key: the request is sent from here and they stay in Rust.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActivationCallResult<T> {
+    /// The server answered; `answer` is what the call returns of it.
+    Answered { answer: T },
+    /// Nothing to send from this PC (no activation token, no licence key stored, or, for the tenant
+    /// initialisation, an organisation the stored claim already says is initialised): nothing was
+    /// sent.
+    NotActivated,
+    /// As `PolicyRefreshResult::HttpError`.
+    HttpError {
+        status: u16,
+        code: Option<String>,
+        message: Option<String>,
+        details: Option<String>,
+    },
+    /// As `PolicyRefreshResult::InvalidResponse`.
+    InvalidResponse { message: String },
+    /// As `PolicyRefreshResult::NetworkError`.
+    NetworkError { message: String },
+}
+
+impl<T> From<ActivationCallFailure> for ActivationCallResult<T> {
+    fn from(failure: ActivationCallFailure) -> Self {
+        match failure {
+            ActivationCallFailure::HttpError {
+                status,
+                code,
+                message,
+                details,
+            } => Self::HttpError {
+                status,
+                code,
+                message,
+                details,
+            },
+            ActivationCallFailure::InvalidResponse { message } => Self::InvalidResponse { message },
+            ActivationCallFailure::NetworkError { message } => Self::NetworkError { message },
+        }
+    }
+}
+
+/// A claim taken on the control API (`claim_product_activation`), held in Rust with its
+/// activation token until the key entry (`submit_product_license_key`) records it. One at a time:
+/// a new claim attempt replaces it, a recorded key entry clears it. In memory only.
+#[derive(Clone)]
+pub struct PendingActivationClaim {
+    /// SHA-256 of the licence key the claim was taken with (`settings::sha256_hex`).
+    key_sha256: String,
+    /// The machine fingerprint the claim was taken for.
+    machine_fingerprint: String,
+    claim: ProductActivationClaimRecord,
+    envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+}
+
+impl std::fmt::Debug for PendingActivationClaim {
+    // Never the activation token.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingActivationClaim")
+            .field("tenant_id", &self.claim.tenant_id)
+            .field("license_id", &self.claim.license_id)
+            .field("machine_fingerprint", &self.machine_fingerprint)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Where the pending claim is held (`AppState::pending_activation_claim`).
+pub type PendingActivationClaimSlot = std::sync::Arc<tokio::sync::Mutex<Option<PendingActivationClaim>>>;
+
+/// The key entry has no claim waiting in Rust (none taken, or already recorded).
+fn claim_not_pending() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_LICENSE_CLAIM_NOT_PENDING: No licence claim is waiting on this PC: validate the key and activate again."
+            .into(),
+    ])
+}
+
+/// The key entry names another key or organisation than the claim waiting in Rust.
+fn claim_mismatch() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_LICENSE_CLAIM_MISMATCH: The licence claim waiting on this PC is for another key or organisation: \
+         validate the key and activate again."
+            .into(),
+    ])
+}
+
+/// The body of a preview or claim, as the webview sent it: the label only when given, the app
+/// version only when well formed (`well_formed_app_version`).
+fn activation_request_body(
+    license_key: &str,
+    machine_fingerprint: &str,
+    machine_label: Option<&str>,
+    app_version: Option<&str>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "license_key": license_key,
+        "machine_fingerprint": machine_fingerprint,
+    });
+    if let Some(label) = machine_label.map(str::trim).filter(|l| !l.is_empty()) {
+        body["machine_label"] = serde_json::Value::from(label);
+    }
+    if let Some(version) = app_version.map(str::trim).filter(|v| well_formed_app_version(v)) {
+        body["app_version"] = serde_json::Value::from(version);
+    }
+    body
+}
+
+/// The licence key and machine fingerprint the webview gave for a preview or claim, trimmed:
+/// refused as the key entry refuses them (`GATE_LICENSE_KEY_SHORT`, `LICENSE_CLAIM_INVALID`).
+fn key_and_fingerprint<'a>(license_key: &'a str, machine_fingerprint: &'a str) -> AppResult<(&'a str, &'a str)> {
+    let key = license_key.trim();
+    if key.len() < 8 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LICENSE_KEY_SHORT: License key must be at least 8 characters.".into(),
+        ]));
+    }
+    let fingerprint = machine_fingerprint.trim();
+    if fingerprint.is_empty() {
+        return Err(claim_invalid());
+    }
+    Ok((key, fingerprint))
+}
+
+/// An activation answer as the webview may read it: every `activation_token` field removed, at
+/// any depth, and `token` replaced wherever else it appears.
+fn without_activation_token(value: serde_json::Value, token: &str) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(k, _)| k != "activation_token")
+                .map(|(k, v)| (k, without_activation_token(v, token)))
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(|v| without_activation_token(v, token)).collect())
+        }
+        serde_json::Value::String(s) => serde_json::Value::String(without_secrets(s, &[(token, TOKEN_MARKER)])),
+        other => other,
+    }
+}
+
+/// The `activation_token` text of a 2xx claim answer, to redact it from what leaves Rust even when
+/// the answer is not a complete claim.
+fn answered_token(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("activation_token")?.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// A 2xx claim answer read as a complete activation claim (organisation, licence, machine and
+/// activation token, each as it may be stored: `canonical_id`, as the key entry requires), or why
+/// it is not one. Checked before the webview gets the claim, so local data is never wiped for a
+/// claim the key entry would then refuse as malformed. The machine must be the one the claim was
+/// sent for (`sent_fingerprint`): a slot taken for another machine is not this PC's activation.
+fn complete_claim_of_answer(
+    body: &str,
+    sent_fingerprint: &str,
+) -> Result<
+    (
+        ProductActivationClaimRecord,
+        Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+    ),
+    String,
+> {
+    let (claim, envelope) = claim_of_answer(body, "", "activation claim")?;
+    let complete = [
+        &claim.tenant_id,
+        &claim.license_id,
+        &claim.machine_fingerprint,
+        &claim.activation_token,
+    ]
+    .into_iter()
+    .all(|value| canonical_id(value));
+    if !complete {
+        return Err(
+            "The activation claim answer misses the organisation, licence, machine or activation token.".to_string(),
+        );
+    }
+    if claim.machine_fingerprint != sent_fingerprint {
+        return Err(
+            "The activation claim answer names another machine than the one the claim was sent for.".to_string(),
+        );
+    }
+    Ok((claim, envelope))
+}
+
+/// Licence check from Rust (no device slot taken): posts the key to the control API at `api_base`
+/// and returns its answer as received (the webview reads it), any `activation_token` removed
+/// (a preview issues none; one sent anyway never reaches the webview).
+pub(crate) async fn preview_product_activation_in(
+    api_base: &str,
+    license_key: &str,
+    machine_fingerprint: &str,
+    machine_label: Option<&str>,
+    app_version: Option<&str>,
+) -> AppResult<ActivationCallResult<serde_json::Value>> {
+    let (key, fingerprint) = key_and_fingerprint(license_key, machine_fingerprint)?;
+    let body = activation_request_body(key, fingerprint, machine_label, app_version);
+    let secrets = [(key, KEY_MARKER)];
+    let answer = match post_activation_call(api_base, ACTIVATION_PREVIEW_PATH, None, &body, &secrets).await? {
+        Ok(answer) => answer,
+        Err(failure) => return Ok(failure.into()),
+    };
+    match serde_json::from_str::<serde_json::Value>(&answer) {
+        Ok(value @ serde_json::Value::Object(_)) => Ok(ActivationCallResult::Answered {
+            answer: without_activation_token(value, &answered_token(&answer)),
+        }),
+        Ok(_) => Ok(invalid_answer(
+            ACTIVATION_PREVIEW_PATH,
+            "The licence preview answer is not a JSON object.".to_string(),
+            &secrets,
+        )
+        .into()),
+        Err(e) => Ok(invalid_answer(
+            ACTIVATION_PREVIEW_PATH,
+            format!("The licence preview answer is not JSON: {e}"),
+            &secrets,
+        )
+        .into()),
+    }
+}
+
+/// Validates a licence key with the control API without taking a device slot (the licence gate's
+/// first step). The answer has the organisation and licence terms; the request is sent from Rust.
+#[tauri::command]
+pub async fn preview_product_activation(
+    license_key: String,
+    machine_fingerprint: String,
+    machine_label: Option<String>,
+    app_version: Option<String>,
+) -> AppResult<ActivationCallResult<serde_json::Value>> {
+    preview_product_activation_in(
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        &license_key,
+        &machine_fingerprint,
+        machine_label.as_deref(),
+        app_version.as_deref(),
+    )
+    .await
+}
+
+/// Activation claim from Rust: takes a device slot for the key on the control API at `api_base`.
+/// A complete claim is held in `pending` (with its activation token) for the key entry; the
+/// webview gets the answer without the token. Any earlier pending claim is dropped first, so a
+/// failed attempt leaves none.
+pub(crate) async fn claim_product_activation_in(
+    pending: &PendingActivationClaimSlot,
+    api_base: &str,
+    license_key: &str,
+    machine_fingerprint: &str,
+    machine_label: Option<&str>,
+    app_version: Option<&str>,
+) -> AppResult<ActivationCallResult<serde_json::Value>> {
+    let (key, fingerprint) = key_and_fingerprint(license_key, machine_fingerprint)?;
+    let mut slot = pending.lock().await;
+    *slot = None;
+    let body = activation_request_body(key, fingerprint, machine_label, app_version);
+    let answer = match post_activation_call(api_base, ACTIVATION_CLAIM_PATH, None, &body, &[(key, KEY_MARKER)]).await? {
+        Ok(answer) => answer,
+        Err(failure) => return Ok(failure.into()),
+    };
+    let token = answered_token(&answer);
+    let secrets = [(key, KEY_MARKER), (token.as_str(), TOKEN_MARKER)];
+    let (claim, envelope) = match complete_claim_of_answer(&answer, fingerprint) {
+        Ok(parts) => parts,
+        Err(why) => return Ok(invalid_answer(ACTIVATION_CLAIM_PATH, why, &secrets).into()),
+    };
+    // `complete_claim_of_answer` read it as a JSON object.
+    let view = without_activation_token(serde_json::from_str(&answer)?, &claim.activation_token);
+    tracing::info!(
+        event = "desktop_activation_claim_pending",
+        tenant_id = claim.tenant_id.as_str(),
+        license_id = claim.license_id.as_str(),
+        has_entitlement_envelope = envelope.is_some(),
+        "Activation claim taken; held until the key entry records it"
+    );
+    *slot = Some(PendingActivationClaim {
+        key_sha256: settings::sha256_hex(key),
+        machine_fingerprint: fingerprint.to_string(),
+        claim,
+        envelope,
+    });
+    Ok(ActivationCallResult::Answered { answer: view })
+}
+
+/// Activates this PC with a licence key (takes a device slot on the control API). The claim, with
+/// its activation token, stays in Rust until `submit_product_license_key` records it; the webview
+/// gets the organisation and licence terms of the answer, never the token.
+#[tauri::command]
+pub async fn claim_product_activation(
+    license_key: String,
+    machine_fingerprint: String,
+    machine_label: Option<String>,
+    app_version: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<ActivationCallResult<serde_json::Value>> {
+    claim_product_activation_in(
+        &state.pending_activation_claim,
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        &license_key,
+        &machine_fingerprint,
+        machine_label.as_deref(),
+        app_version.as_deref(),
+    )
+    .await
+}
+
+/// The key entry of the claim waiting in `pending`: refused unless one is waiting
+/// (`GATE_LICENSE_CLAIM_NOT_PENDING`) for this key and organisation (`GATE_LICENSE_CLAIM_MISMATCH`);
+/// then recorded with every check of [`submit_product_license_key_in`] (the machine fingerprint
+/// stored is the one the claim was taken for). A recorded entry clears the pending claim; a refused
+/// one keeps it.
+pub(crate) async fn submit_pending_product_license_key_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    pending: &PendingActivationClaimSlot,
+    key: &str,
+    tenant_id: &str,
+    app_version: Option<String>,
+) -> AppResult<()> {
+    let mut slot = pending.lock().await;
+    let Some(waiting) = slot.as_ref() else {
+        return Err(claim_not_pending());
+    };
+    if settings::sha256_hex(key.trim()) != waiting.key_sha256 || waiting.claim.tenant_id != tenant_id.trim() {
+        return Err(claim_mismatch());
+    }
+    let mut claim_json = serde_json::to_value(&waiting.claim)?;
+    if let (Some(obj), Some(envelope)) = (claim_json.as_object_mut(), waiting.envelope.as_ref()) {
+        obj.insert("entitlement_envelope".into(), serde_json::to_value(envelope)?);
+    }
+    submit_product_license_key_in(
+        db,
+        caller,
+        key,
+        Some(claim_json.to_string()),
+        Some(waiting.machine_fingerprint.clone()),
+        app_version,
+    )
+    .await?;
+    *slot = None;
+    Ok(())
+}
+
+/// The activation token the tenant initialisation uses: the stored activation's, when it is a valid
+/// claim. Never a pending claim's: one not recorded yet may be for another organisation than the
+/// one stored here (a claim taken, then its key entry abandoned). The gate initialises only after a
+/// recorded key entry, which stored the claim and cleared the pending one. Sent even when the
+/// stored claim already says initialised: the server answers it idempotently, and a retry whose
+/// first answer was lost (a refresh having since stored `is_initialized: true`) must still finish.
+async fn tenant_call_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let token = load_state_record_from_db(db)
+        .await?
+        .filter(record_has_valid_activation_claim)
+        .and_then(|record| record.activation_claim)
+        .map(|claim| claim.activation_token);
+    Ok(token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
+}
+
+/// The activated organisation's state on the control API.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ActivationTenantStatus {
+    pub tenant_id: String,
+    pub is_initialized: bool,
+}
+
+/// Marks the activated organisation initialised on the control API at `api_base`, with the token
+/// of [`tenant_call_token`]. `NotActivated` (nothing sent) only when this PC holds no valid stored
+/// activation; a claim already marked initialised is sent again (the call is idempotent).
+pub(crate) async fn mark_activation_tenant_initialized_in(
+    db: &DatabaseConnection,
+    api_base: &str,
+) -> AppResult<ActivationCallResult<ActivationTenantStatus>> {
+    let Some(token) = tenant_call_token(db).await? else {
+        return Ok(ActivationCallResult::NotActivated);
+    };
+    let secrets = [(token.as_str(), TOKEN_MARKER)];
+    let answer = match post_activation_call(
+        api_base,
+        TENANT_INITIALIZE_PATH,
+        Some(&token),
+        &serde_json::json!({}),
+        &secrets,
+    )
+    .await?
+    {
+        Ok(answer) => answer,
+        Err(failure) => return Ok(failure.into()),
+    };
+    match serde_json::from_str::<ActivationTenantStatus>(&answer) {
+        Ok(status) => Ok(ActivationCallResult::Answered { answer: status }),
+        Err(e) => Ok(invalid_answer(
+            TENANT_INITIALIZE_PATH,
+            format!("The tenant initialisation answer is not a tenant status: {e}"),
+            &secrets,
+        )
+        .into()),
+    }
+}
+
+/// Marks the activated organisation as initialised on the control API (after the first activation
+/// of an organisation not yet initialised). Sent from Rust with the stored activation token.
+#[tauri::command]
+pub async fn mark_activation_tenant_initialized(
+    state: State<'_, AppState>,
+) -> AppResult<ActivationCallResult<ActivationTenantStatus>> {
+    mark_activation_tenant_initialized_in(&state.db, env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL")).await
+}
+
+/// Claims this PC's activation again with the licence key stored at the key entry, when its
+/// activation token is unusable or absent (the webview asks after a policy refresh gave one of
+/// those answers), and records the new claim as a successful reconciliation for `caller` (its
+/// refusals are returned as errors, as for the refresh). The machine fingerprint is the stored
+/// one. `NotActivated` when no key or fingerprint is stored (nothing sent).
+pub(crate) async fn reclaim_product_activation_in(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    api_base: &str,
+    machine_label: Option<&str>,
+    app_version: Option<&str>,
+) -> AppResult<ActivationCallResult<ProductLicenseOnboardingState>> {
+    let Some(record) = load_state_record_from_db(db).await? else {
+        return Ok(ActivationCallResult::NotActivated);
+    };
+    let Some(key) = record
+        .license_key_plaintext
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| k.len() >= 8)
+    else {
+        return Ok(ActivationCallResult::NotActivated);
+    };
+    let Some(fingerprint) = record
+        .machine_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .or_else(|| {
+            record
+                .activation_claim
+                .as_ref()
+                .map(|c| c.machine_fingerprint.trim())
+                .filter(|f| !f.is_empty())
+        })
+    else {
+        return Ok(ActivationCallResult::NotActivated);
+    };
+    let body = activation_request_body(key, fingerprint, machine_label, app_version);
+    let answer = match post_activation_call(api_base, ACTIVATION_CLAIM_PATH, None, &body, &[(key, KEY_MARKER)]).await? {
+        Ok(answer) => answer,
+        Err(failure) => return Ok(failure.into()),
+    };
+    let token = answered_token(&answer);
+    let secrets = [(key, KEY_MARKER), (token.as_str(), TOKEN_MARKER)];
+    let (claim, envelope) = match complete_claim_of_answer(&answer, fingerprint) {
+        Ok(parts) => parts,
+        Err(why) => return Ok(invalid_answer(ACTIVATION_CLAIM_PATH, why, &secrets).into()),
+    };
+    let version = app_version.map(str::trim).filter(|v| !v.is_empty());
+    let outcome_json = success_outcome_json(&claim, envelope.as_ref(), version);
+    let state = apply_product_license_reconciliation_in(db, caller, &outcome_json).await?;
+    tracing::info!(
+        event = "desktop_activation_reclaim_applied",
+        status = ?state.status,
+        "Activation claimed again with the stored key and recorded"
+    );
+    Ok(ActivationCallResult::Answered { answer: state })
+}
+
+/// Claims this PC's activation again with the licence key stored here (its activation token is
+/// unusable or absent) and records it. Sent from Rust: neither the key nor the token reaches the
+/// webview.
+#[tauri::command]
+pub async fn reclaim_product_activation(
+    machine_label: Option<String>,
+    app_version: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<ActivationCallResult<ProductLicenseOnboardingState>> {
+    let caller = caller_of(&state).await?;
+    reclaim_product_activation_in(
+        &state.db,
+        caller,
+        env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
+        machine_label.as_deref(),
+        app_version.as_deref(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2878,3 +4123,11 @@ pub(crate) async fn record_activation_claim_for_tests(
 #[cfg(test)]
 #[path = "product_license_first_start_tests.rs"]
 mod first_start_tests;
+
+#[cfg(test)]
+#[path = "product_license_policy_refresh_tests.rs"]
+mod policy_refresh_tests;
+
+#[cfg(test)]
+#[path = "product_license_activation_calls_tests.rs"]
+mod activation_calls_tests;

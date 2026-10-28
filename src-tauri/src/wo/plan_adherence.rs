@@ -41,11 +41,11 @@ pub async fn get_plan_adherence(db: &impl ConnectionTrait, wo_id: i64) -> AppRes
             DbBackend::Sqlite,
             "SELECT expected_duration_hours, actual_duration_hours, \
                     planned_downtime_hours, \
-                    COALESCE(labor_cost, 0) AS labor_cost, \
-                    COALESCE(parts_cost, 0) AS parts_cost, \
-                    COALESCE(active_labor_hours, 0) AS active_labor_hours, \
-                    COALESCE(downtime_hours, 0) AS downtime_hours, \
-                    COALESCE(total_waiting_hours, 0) AS waiting_hours \
+                    COALESCE(labor_cost, 0.0) AS labor_cost, \
+                    COALESCE(parts_cost, 0.0) AS parts_cost, \
+                    COALESCE(active_labor_hours, 0.0) AS active_labor_hours, \
+                    COALESCE(downtime_hours, 0.0) AS downtime_hours, \
+                    COALESCE(total_waiting_hours, 0.0) AS waiting_hours \
                FROM work_orders WHERE id = ?",
             [wo_id.into()],
         ))

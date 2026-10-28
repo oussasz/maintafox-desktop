@@ -62,7 +62,7 @@ mod tests {
     }
 
     /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
-    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) -> i64 {
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
             .await
             .expect("lookup symptom")
@@ -72,6 +72,9 @@ mod tests {
             db,
             SaveFailureDetailInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 symptom_id: Some(symptom_id),
                 failure_mode_id: None,
                 failure_cause_id: None,
@@ -89,12 +92,15 @@ mod tests {
             db,
             UpdateWoRcaInput {
                 wo_id,
+                expected_row_version: crate::wo::closeout::wo_row_version(db, wo_id)
+                    .await
+                    .expect("wo row_version"),
                 root_cause_summary: Some("Test root cause".into()),
                 corrective_action_summary: Some("Test corrective action".into()),
             },
         )
         .await
-        .expect("seed_rams_for_complete: update_wo_rca");
+        .expect("seed_rams_for_complete: update_wo_rca")
     }
 
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
@@ -476,7 +482,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let result = execution::complete_wo_mechanically(
             &db,
@@ -556,7 +562,7 @@ mod tests {
         .expect("advance to in_progress");
         let rv = wo.row_version + 1;
 
-        seed_rams_for_complete(&db, wo.id).await;
+        let rv = seed_rams_for_complete(&db, wo.id).await;
 
         let result = execution::complete_wo_mechanically(
             &db,
@@ -611,7 +617,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let result = execution::complete_wo_mechanically(
             &db,
@@ -759,7 +765,6 @@ mod tests {
         )
         .await
         .expect("start_wo");
-        let mut rv = wo.row_version;
         assert_eq!(wo.status_code.as_deref(), Some("in_progress"));
 
         // 7. add_labor (with both timestamps — auto-closes)
@@ -803,14 +808,8 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        // Fetch latest rv (downtime segments may bump it)
-        let refreshed = queries::get_work_order(&db, wo_id)
-            .await
-            .expect("get_work_order")
-            .expect("WO must exist");
-        rv = refreshed.row_version;
-
-        seed_rams_for_complete(&db, wo_id).await;
+        // The seeding reads the latest rv (downtime segments may bump it) and returns the new one.
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         // 11. complete_wo_mechanically: in_progress → completed
         let wo = execution::complete_wo_mechanically(
@@ -886,8 +885,9 @@ mod tests {
         // permit flag a plant rule set at conversion (`clear_wo_permit_rule_flag`, ptw.issue). OT types
         // without a maintenance nature, for review (`list_work_order_types_to_review`), and giving one
         // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
-        // and the required / optional switch (`set_planned_part_required`).
-        assert_eq!(wo_lines.len(), 74, "invoke_handler must contain exactly 74 WO commands");
+        // and the required / optional switch (`set_planned_part_required`). Migration 265: work on
+        // retired equipment received by sync, to review (`list_retired_equipment_reviews`).
+        assert_eq!(wo_lines.len(), 76, "invoke_handler must contain exactly 76 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -1047,7 +1047,7 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
-        seed_rams_for_complete(&db, wo_id).await;
+        let rv = seed_rams_for_complete(&db, wo_id).await;
 
         let result = execution::complete_wo_mechanically(
             &db,
@@ -1676,6 +1676,9 @@ mod tests {
             closeout::SaveFailureCodingInput {
                 base: SaveFailureDetailInput {
                     wo_id,
+                    expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_id)
+                        .await
+                        .expect("wo row_version"),
                     symptom_id: Some(symptom),
                     failure_mode_id: None,
                     failure_cause_id: Some(cause),
@@ -1691,11 +1694,11 @@ mod tests {
         )
         .await
         .expect("cause / effect from reference domains must satisfy the foreign keys");
-        assert_eq!(saved.failure_cause_id, Some(cause));
-        assert_eq!(saved.failure_effect_id, Some(effect));
-        assert_eq!(saved.failure_mechanism_id, Some(mechanism));
-        assert_eq!(saved.detection_method_id, Some(detection));
-        assert!(saved.failure_mechanism_label.is_some());
+        assert_eq!(saved.detail.failure_cause_id, Some(cause));
+        assert_eq!(saved.detail.failure_effect_id, Some(effect));
+        assert_eq!(saved.detail.failure_mechanism_id, Some(mechanism));
+        assert_eq!(saved.detail.detection_method_id, Some(detection));
+        assert!(saved.detail.failure_mechanism_label.is_some());
 
         // A mechanism id from another domain is refused.
         let wrong = closeout::save_failure_coding(
@@ -1703,6 +1706,9 @@ mod tests {
             closeout::SaveFailureCodingInput {
                 base: SaveFailureDetailInput {
                     wo_id,
+                    expected_row_version: crate::wo::closeout::wo_row_version(&db, wo_id)
+                        .await
+                        .expect("wo row_version"),
                     symptom_id: Some(symptom),
                     failure_mode_id: None,
                     failure_cause_id: Some(cause),

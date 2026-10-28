@@ -199,12 +199,27 @@ fn entity_target(entity_type: &str) -> AppResult<Target> {
 /// Layout of an entity synchronised by the generic engine. The schema is the same for every
 /// database of one app version, so the layout is computed once per process.
 pub(crate) async fn layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResult<Arc<EntityLayout>> {
-    if let Some(found) = layouts()
+    let cached = layouts()
         .lock()
         .map_err(|_| AppError::SyncError("sync layout cache poisoned".into()))?
         .get(entity_type)
-    {
-        return Ok(found.clone());
+        .cloned();
+    if let Some(found) = cached {
+        // Tests also build databases from before a migration (upgrade tests): a layout cached from
+        // one of them is not used on a database of another schema (built again, not cached).
+        #[cfg(test)]
+        {
+            let columns = conn
+                .query_all(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!("SELECT name FROM pragma_table_info('{}')", found.def.table),
+                ))
+                .await?;
+            if columns.len() != found.columns.len() {
+                return Ok(Arc::new(build_layout(conn, entity_type).await?));
+            }
+        }
+        return Ok(found);
     }
     let built = Arc::new(build_layout(conn, entity_type).await?);
     layouts()
@@ -222,6 +237,34 @@ struct RawColumn {
 
 fn meta_err(e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("schema metadata: {e}"))
+}
+
+/// Tests only: the database has not run every registered migration (an upgrade test's database).
+#[cfg(test)]
+async fn before_latest_migration(conn: &impl ConnectionTrait) -> AppResult<bool> {
+    use sea_orm_migration::MigratorTrait;
+    let tracked = conn
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 AS t FROM sqlite_master WHERE type = 'table' AND name = 'seaql_migrations'".to_string(),
+        ))
+        .await?
+        .is_some();
+    if !tracked {
+        return Ok(false);
+    }
+    let applied = conn
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM seaql_migrations".to_string(),
+        ))
+        .await?
+        .map(|r| r.try_get::<i64>("", "n"))
+        .transpose()
+        .map_err(meta_err)?
+        .unwrap_or(0);
+    let registered = i64::try_from(crate::migrations::Migrator::migrations().len()).unwrap_or(i64::MAX);
+    Ok(applied < registered)
 }
 
 async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResult<EntityLayout> {
@@ -279,8 +322,15 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
     let values: HashSet<&str> = spec.value_columns.iter().copied().collect();
     let device: HashSet<&str> = spec.device_local.iter().copied().collect();
     let derived: HashMap<&str, &'static str> = spec.derived.iter().copied().collect();
+    // A test database built before a migration that added a column (an upgrade test,
+    // `sync::test_support::started_db_before_migration`) does not have it yet: the layout leaves it
+    // out, as capture does (`sync::capture`). Anywhere else a column the spec names must exist.
+    #[cfg(test)]
+    let before_a_migration = before_latest_migration(conn).await?;
+    #[cfg(not(test))]
+    let before_a_migration = false;
     for j in spec.json_refs {
-        if !raw.iter().any(|c| c.name == j.column) {
+        if !before_a_migration && !raw.iter().any(|c| c.name == j.column) {
             return Err(AppError::SyncError(format!(
                 "row spec of '{entity_type}' names JSON column '{}' that {table} does not have.",
                 j.column
@@ -293,7 +343,9 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
         .chain(device.iter())
         .chain(derived.keys())
     {
-        if !raw.iter().any(|c| c.name == *listed) {
+        // A database with every migration, and the app, still refuse a row spec naming a missing
+        // column.
+        if !before_a_migration && !raw.iter().any(|c| c.name == *listed) {
             return Err(AppError::SyncError(format!(
                 "row spec of '{entity_type}' names column '{listed}' that {table} does not have."
             )));
