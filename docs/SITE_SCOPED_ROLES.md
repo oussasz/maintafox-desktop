@@ -130,8 +130,8 @@ Cross-cutting surfaces:
 
 ### Publishing a new site structure
 
-- The publish moves to the copy of each unit the records that point to it: the records listed in `KNOWN_LIMITS.md`, plus per-site rules (time and author kept; their history is shown with the site), the site reliability decisions were proposed for, preventive plans scoped to a location, and site calendars. Weekly schedules are not moved.
-- Publishing is refused while a per-site rule is set both on a unit and on its draft copy (SITE_RULE_ON_DRAFT_COPY).
+- The publish moves to the copy of each unit the records that point to it: the records listed in `KNOWN_LIMITS.md`, plus per-site rules (time and author kept; their history is shown with the site), the site reliability decisions were proposed for, preventive plans scoped to a location, site calendars and weekly schedules (frozen weeks included, AU-130).
+- Publishing is refused while a per-site rule is set both on a unit and on its draft copy (SITE_RULE_ON_DRAFT_COPY), or a week is planned both on a unit and on its draft copy (WEEKLY_SCHEDULE_ON_DRAFT_COPY).
 - On the other PCs a moved record is accepted only onto the copy of its former unit: a live unit of the structure in use, with the same code and unit type. Each publish in between must have replaced the unit the same way. It waits while the former unit is not yet deleted there, or while the publish has arrived only in part.
 - A per-site rule received on a draft unit, or turned on at a deleted unit, is refused. A rule received turned off at a deleted unit is applied: it takes the rule off the copy.
 - The received unit rows themselves are not checked for who sent them (see `KNOWN_LIMITS.md`).
