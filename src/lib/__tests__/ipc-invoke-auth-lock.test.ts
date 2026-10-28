@@ -11,6 +11,7 @@ describe("ipc-invoke auth lock gating", () => {
   beforeAll(async () => {
     initI18n();
     await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
   });
 
   beforeEach(() => {
@@ -130,7 +131,7 @@ describe("ipc-invoke auth lock gating", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0]).toMatchObject({
       title: "Permission refusée.",
-      description: "Vous n'êtes pas autorisé à effectuer cette action.",
+      description: "Droit requis : Gérer les comptes utilisateurs",
       variant: "destructive",
     });
     // The server's technical English text is never shown.
@@ -164,6 +165,13 @@ describe("ipc-invoke auth lock gating", () => {
     const lockout = {
       code: "ACCOUNT_LOCKED",
       message: "Account locked until 2026-10-22T09:15:00Z",
+      details: [
+        {
+          code: "ACCOUNT_LOCKED",
+          message: "Account locked until 2026-10-22T09:15:00Z",
+          params: { until: "2026-10-22T09:15:00Z" },
+        },
+      ],
     };
     mockInvoke.mockRejectedValueOnce(lockout);
 
@@ -174,7 +182,9 @@ describe("ipc-invoke auth lock gating", () => {
     });
     const state = useSessionStore.getState();
     expect(state.info?.is_authenticated).toBe(false);
-    expect(state.error).toBe(lockout.message);
+    // The session keeps the end of the lockout, not the server's English sentence.
+    expect(state.lockedUntil).toBe("2026-10-22T09:15:00Z");
+    expect(state.error).toBeNull();
     expect(useAuthInterceptorStore.getState().isLockOpen).toBe(false);
     expect(useAppToastStore.getState().items).toHaveLength(0);
     expect(mockInvoke).toHaveBeenCalledTimes(1);

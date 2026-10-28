@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   getTeam,
@@ -98,7 +98,7 @@ export function TeamDetailWorkspace({
         getTeam(teamId),
         listTeamMembers(teamId),
         listSkillsMatrix({ team_id: teamId, include_inactive: false }).catch((err: unknown) => {
-          setSkillsError(describeAppError(err).title);
+          setSkillsError(appErrorReason(err));
           return [] as SkillMatrixRow[];
         }),
         scanSuccessionRisk(null, teamId),
@@ -118,7 +118,7 @@ export function TeamDetailWorkspace({
         setCapacityNote(t("crews.detail.capacityLoadUnavailable"));
       }
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
       setTeam(null);
     } finally {
       setLoading(false);
@@ -148,7 +148,7 @@ export function TeamDetailWorkspace({
         await load();
         onRosterChanged?.();
       } catch (err) {
-        setError(describeAppError(err).title);
+        setError(appErrorReason(err));
       } finally {
         setLeadBusyId(null);
       }

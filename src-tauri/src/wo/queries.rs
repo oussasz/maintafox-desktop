@@ -970,12 +970,12 @@ async fn refuse_equipment_change_with_old_items(
     }
     if permits > 0 {
         errors.push(format!(
-            "Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un autre équipement."
+            "GATE_WO_SITE_MOVE_PERMITS_OPEN:count={permits}: Cet OT a {permits} permis de travail encore ouvert(s) : menez-les à leur clôture avant de choisir un autre équipement."
         ));
     }
     if locks > 0 {
         errors.push(format!(
-            "Cet OT a {locks} consignation(s) posée(s) sous ses permis dont la dépose n'est pas vérifiée : faites vérifier la dépose avant de choisir un autre équipement."
+            "GATE_WO_SITE_MOVE_LOCKS_FITTED:count={locks}: Cet OT a {locks} consignation(s) posée(s) sous ses permis dont la dépose n'est pas vérifiée : faites vérifier la dépose avant de choisir un autre équipement."
         ));
     }
     if errors.is_empty() {

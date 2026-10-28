@@ -14,7 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfInput } from "@/design-system/tokens";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import { upsertPosition } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
@@ -142,7 +142,7 @@ export function PositionCreateDialog({ open, onClose, onCreated }: PositionCreat
       const created = await upsertPosition(input);
       onCreated(created);
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setSaving(false);
     }

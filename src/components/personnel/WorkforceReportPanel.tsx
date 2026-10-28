@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import {
   getWorkforceKpiReport,
   getWorkforceSkillsGapReport,
@@ -53,7 +53,7 @@ function WorkforceReportContent() {
       setKpi(nextKpi);
       setSkillsGap(nextSkills.slice(0, 8));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setLoading(false);
     }

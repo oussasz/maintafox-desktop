@@ -461,7 +461,8 @@
     "meterTypeRequired": "Choisissez le type de compteur suivi sur chaque équipement.",
     "scopeRequired": "Choisissez ce que couvre le plan.",
     "readingRequired": "Saisissez un relevé positif ou nul pour un compteur.",
-    "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur."
+    "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur.",
+    "PM_CODE_NOT_IN_LIST": "« {{code}} » n'est pas une valeur active de la liste de référence concernée."
   },
   "tolerance": {
     "title": "Fenêtre de tolérance",

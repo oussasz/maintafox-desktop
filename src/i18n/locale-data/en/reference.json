@@ -447,7 +447,7 @@
     "fallbackHint": "Without a nature, converting the request creates a corrective work order: immediate when the urgency is at the top level of the scale, deferred otherwise."
   },
   "schedulePattern": {
-    "title": "Classe horaire timetable",
+    "title": "Schedule class timetable",
     "column": "Timetable",
     "cancel": "Cancel",
     "close": "Close schedule pattern",

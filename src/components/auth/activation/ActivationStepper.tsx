@@ -1,4 +1,5 @@
 import { Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,7 @@ type ActivationStepperProps = {
  * list stays available to assistive technology at every width.
  */
 export function ActivationStepper({ current, labels, progressLabel }: ActivationStepperProps) {
+  const { t } = useTranslation("auth");
   const currentIndex = STEP_ORDER.indexOf(current);
   const total = STEP_ORDER.length;
 
@@ -47,7 +49,7 @@ export function ActivationStepper({ current, labels, progressLabel }: Activation
 
       <ol
         className="flex max-[479px]:sr-only min-[480px]:items-start"
-        aria-label="Activation progress"
+        aria-label={t("activation.stepperLabel")}
       >
         {STEP_ORDER.map((id, index) => {
           const done = index < currentIndex;

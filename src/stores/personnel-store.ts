@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 
-import { appErrorText } from "@/lib/app-error";
+import { appErrorReason, appErrorText } from "@/lib/app-error";
 import { isStepUpCancelledError } from "@/lib/step-up-bridge";
 import {
   createPersonnel,
@@ -13,7 +13,7 @@ import {
   listPersonnel,
   updatePersonnel,
 } from "@/services/personnel-service";
-import { isStepUpRequiredError, toErrorMessage } from "@/utils/errors";
+import { isStepUpRequiredError } from "@/utils/errors";
 import type {
   Personnel,
   PersonnelCreateInput,
@@ -80,7 +80,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       const page = await listPersonnel({ ...get().filter, offset: 0 });
       set({ items: page.items, total: page.total });
     } catch (err) {
-      set({ error: toErrorMessage(err), loadError: err });
+      set({ error: appErrorReason(err), loadError: err });
     } finally {
       set({ loading: false });
     }
@@ -112,7 +112,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       const detail = await getPersonnel(id);
       set({ activePersonnel: detail });
     } catch (err) {
-      set({ error: toErrorMessage(err), detailError: err });
+      set({ error: appErrorReason(err), detailError: err });
     }
   },
 
@@ -128,7 +128,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       set({ showCreateForm: false, editingPersonnel: null });
       return created;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });
@@ -147,7 +147,7 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
       await get().loadPersonnel();
     } catch (err) {
       if (!isStepUpRequiredError(err) && !isStepUpCancelledError(err))
-        set({ error: toErrorMessage(err) });
+        set({ error: appErrorReason(err) });
       throw err;
     } finally {
       set({ saving: false });

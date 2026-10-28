@@ -29,7 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFormatters } from "@/hooks/use-formatters";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
@@ -195,7 +195,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setAvailabilityState(null);
-          setStateError(describeAppError(err).title);
+          setStateError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -209,7 +209,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setSkills([]);
-          setSkillsError(describeAppError(err).title);
+          setSkillsError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -223,7 +223,7 @@ export function AvailabilityInspectorWorkspace({
       .catch((err: unknown) => {
         if (!cancelled) {
           setWorkload(null);
-          setWorkloadError(describeAppError(err).title);
+          setWorkloadError(appErrorReason(err));
         }
       })
       .finally(() => {
@@ -244,7 +244,7 @@ export function AvailabilityInspectorWorkspace({
       onSelectBlock(null);
       onBlocksChanged();
     } catch (err) {
-      setEndError(describeAppError(err).title);
+      setEndError(appErrorReason(err));
     } finally {
       setEnding(false);
     }

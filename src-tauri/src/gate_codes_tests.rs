@@ -49,9 +49,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ),
     ("sync/row_codec.rs", "{table}: invalid payload_json"),
     // Machine code + payload, not yet translated by a screen text.
-    ("commands/reliability_study.rs", "ADVANCED_TOOL_DISABLED"),
     ("commands/settings.rs", "SETTING_REASON_REQUIRED"),
-    ("", "READINESS_DENY:"),
     ("", "FMECA_ITEM_REVIEW_REQUIRED"),
     ("", "ASSIGNEE_UNAVAILABLE"),
     // Demo / golden-data seeds: developer tools, never reachable from a normal screen.
@@ -297,13 +295,6 @@ const LIST_ALLOWLIST: &[(&str, &str)] = &[
     ("sync/queries.rs", "confirm_phrase must be"),
     // Start-up upkeep report for the log, not a refusal.
     ("inventory/reservations.rs", ""),
-    // User-reachable, single language: recoded by the Error Texts & Localisation Lead (AU-24, AU-38).
-    ("commands/di.rs", ""),
-    ("commands/wo.rs", ""),
-    ("wo/workflow/actions/submit.rs", ""),
-    ("wo/workflow/readiness/mod.rs", ""),
-    ("wo/queries.rs", "Cet OT a "),
-    ("commands/admin_governance.rs", "Unknown permission"),
 ];
 
 /// AU-124: a refusal list built element by element is coded too. Every literal message pushed to

@@ -4,6 +4,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import { i18n } from "@/i18n/config";
+import { ACCOUNT_LOCKED, lockoutUntil } from "@/lib/account-lockout";
 import { describeAppError } from "@/lib/app-error";
 import {
   hasStepUpRequester,
@@ -24,15 +25,12 @@ const SILENT_IPC_COMMANDS = new Set([
 ]);
 
 /**
- * Server code (`AppError::AccountLocked`). Outside sign-in it only comes from a password check
- * inside the session, which ended the session with the lockout.
+ * The session ended with the account lockout (`ACCOUNT_LOCKED`; outside sign-in it only comes
+ * from a password check inside the session): sign-in shows the lockout with its end.
  */
-const ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
-
-/** The session ended with the account lockout: sign-in shows the lockout message. */
-async function applyAccountLockout(message: string): Promise<void> {
+async function applyAccountLockout(err: unknown): Promise<void> {
   const { useSessionStore } = await import("@/store/session-store");
-  useSessionStore.getState().applyAccountLockout(message);
+  useSessionStore.getState().applyAccountLockout(lockoutUntil(err));
 }
 
 /** Server code (`AppError::PasswordChangeRequired`): the password must be changed first. */
@@ -139,7 +137,7 @@ function handleSessionFailures(cmd: string, err: unknown): void {
     // A password check inside the session (unlock, step-up, PIN set/clear, password change)
     // locked the account and the server ended the session: back to sign-in with the lockout
     // message (a refresh would wipe that message, the sign-in-again dialog would hide it).
-    void applyAccountLockout(rawMsg);
+    void applyAccountLockout(err);
     return;
   }
 

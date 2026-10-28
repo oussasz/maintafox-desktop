@@ -2630,3 +2630,14 @@ async fn every_local_password_and_status_write_names_its_author() {
     );
     assert_eq!(authors(worker).await.1, Some(admin_id));
 }
+
+#[test]
+fn an_unknown_permission_is_named_only_when_the_name_fits_a_parameter() {
+    assert_eq!(
+        unknown_permission_refusal("cst.x"),
+        "GATE_ADMIN_PERMISSION_UNKNOWN:permission=cst.x: Permission 'cst.x' does not exist"
+    );
+    let unnamed = unknown_permission_refusal("a b,c=d");
+    assert!(unnamed.starts_with("GATE_ADMIN_PERMISSION_UNKNOWN_UNNAMED: "));
+    assert!(!unnamed.contains("permission="));
+}

@@ -134,13 +134,13 @@
     "matchingSkills": "{{count}} matching skills",
     "costRange": "Estimated labor cost: {{min}} – {{max}}",
     "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
-    "noTeamCapacity": "This team has no working hours that day: none of its members has a Classe horaire (timetable), or it has no members.",
-    "setUpTeamCapacity": "Set up its members' Classes horaires",
+    "noTeamCapacity": "This team has no working hours that day: none of its members has a schedule class (timetable), or it has no members.",
+    "setUpTeamCapacity": "Set up its members' schedule classes",
     "capacityBasis": {
-      "roster": "from the Classes horaires",
+      "roster": "from the schedule classes",
       "rest_day": "rest day",
       "holiday": "holiday",
-      "no_schedule": "no Classe horaire",
+      "no_schedule": "no schedule class",
       "no_members": "no team members"
     },
     "capacityBlockedHint": "This slot is longer than remaining crew capacity ({{remaining}} h). Shorten the end time.",

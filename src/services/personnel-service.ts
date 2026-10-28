@@ -6,7 +6,7 @@
 
 import { z, ZodError } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, type InvokeOptions } from "@/lib/ipc-invoke";
 import { ipcErrorDetails } from "@/utils/errors";
 import type {
   DeclareOwnSkillInput,
@@ -487,9 +487,12 @@ async function invokeParsed<T>(
   command: string,
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
+  options?: InvokeOptions,
 ): Promise<T> {
   try {
-    const raw = await invoke<unknown>(command, args);
+    const raw = await (options
+      ? invoke<unknown>(command, args, options)
+      : invoke<unknown>(command, args));
     return schema.parse(raw);
   } catch (err) {
     if (err instanceof ZodError) {
@@ -846,6 +849,8 @@ export async function createAvailabilityBlock(
     "create_availability_block",
     { input },
     PersonnelAvailabilityBlockSchema,
+    // The overlap confirmation is a question the form asks, not a failure: no global toast.
+    { notifyOnError: false },
   );
   return row as PersonnelAvailabilityBlock;
 }
@@ -857,6 +862,7 @@ export async function updateAvailabilityBlock(
     "update_availability_block",
     { input },
     PersonnelAvailabilityBlockSchema,
+    { notifyOnError: false },
   );
   return row as PersonnelAvailabilityBlock;
 }

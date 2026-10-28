@@ -39,6 +39,7 @@ import {
   getProductLicenseOnboardingState,
   resetProductLicenseActivation,
 } from "@/services/product-license-service";
+import { ACCOUNT_LOCKED, sessionErrorText } from "@/store/session-store";
 import { AUTH_UPDATE_IN_PROGRESS } from "@/utils/errors";
 
 export function LoginPage() {
@@ -340,8 +341,8 @@ export function LoginPage() {
           }
         />
 
-        {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
-          <AuthAlert tone="warning">{session.error}</AuthAlert>
+        {session.errorCode === ACCOUNT_LOCKED ? (
+          <AuthAlert tone="warning">{sessionErrorText(session)}</AuthAlert>
         ) : session.error && session.errorCode === "PASSWORD_NOT_RECEIVED" ? (
           // The account arrived by sync without its password (a change refused on arrival).
           <AuthAlert tone="warning" title={t("login.passwordNotReceived.title")}>
