@@ -2704,4 +2704,238 @@ mod tests {
             .expect("judged");
         assert!(verdict.is_none(), "the replacement is no crew move: {verdict:?}");
     }
+
+    // ── Weekly schedules follow their site (audit finding AU-130) ─────────
+
+    /// A week of `site` frozen with its first baseline, as freezing it leaves it.
+    async fn frozen_week_on(db: &sea_orm::DatabaseConnection, code: &str, site: i64) -> i64 {
+        exec(
+            db,
+            &format!(
+                "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status, approved_at, \
+                 frozen_at, baseline_no) VALUES ('org-remap-{code}', {site}, '2026-05-03', '2026-05-09', 'frozen', \
+                 '2026-05-01T08:00:00Z', '2026-05-02T00:00:00Z', 1)"
+            ),
+        )
+        .await;
+        scalar(
+            db,
+            &format!("SELECT id FROM weekly_schedules WHERE entity_sync_id = 'org-remap-{code}'"),
+        )
+        .await
+    }
+
+    /// Publishing a new structure moves the site's weekly schedules to the node replacing it, frozen
+    /// weeks included (a new version, sent by sync). On a PC receiving the publish, the moved week
+    /// is applied as received through the real inbound path and lands on the copy there too.
+    #[tokio::test]
+    async fn publish_moves_weekly_schedules_and_the_moved_week_applies_on_another_pc() {
+        use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, old_plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let week = frozen_week_on(&db, "ORG-REMAP-WSCH", old_plant).await;
+        let version = scalar(
+            &db,
+            &format!("SELECT row_version FROM weekly_schedules WHERE id = {week}"),
+        )
+        .await;
+
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect("publish with remap");
+        let new_plant = active_node_id_by_code(&db, "PLT1").await;
+        assert_ne!(new_plant, old_plant);
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT entity_id FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            new_plant,
+            "the week follows its site"
+        );
+        assert_eq!(
+            text(
+                &db,
+                &format!("SELECT status || '/' || baseline_no FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            "frozen/1",
+            "still frozen, same baseline"
+        );
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT row_version FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            version + 1
+        );
+
+        // The moved week as it travels: the site under its sync id, the copy's.
+        let week_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM weekly_schedules WHERE id = {week}"),
+        )
+        .await;
+        let new_plant_sync = text(
+            &db,
+            &format!("SELECT entity_sync_id FROM org_nodes WHERE id = {new_plant}"),
+        )
+        .await;
+        let payload =
+            crate::sync::test_support::current_payload(&db, "weekly_schedules", &week_sync, &Default::default())
+                .await
+                .expect("payload")
+                .expect("row");
+        assert_eq!(
+            payload.get("entity_sync_id").and_then(serde_json::Value::as_str),
+            Some(new_plant_sync.as_str())
+        );
+        // The week as the receiving PC holds it: on the former node (deleted there: the node
+        // deletes arrive before the rows moved off them), at its earlier version.
+        exec(
+            &db,
+            &format!("UPDATE weekly_schedules SET entity_id = {old_plant}, row_version = {version} WHERE id = {week}"),
+        )
+        .await;
+        let outcome = apply_inbound_payload(
+            &db,
+            "weekly_schedules",
+            &week_sync,
+            "upsert",
+            version + 1,
+            &serde_json::Value::Object(payload).to_string(),
+        )
+        .await
+        .expect("apply");
+        assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+        assert_eq!(
+            text(
+                &db,
+                &format!("SELECT entity_id || '/' || status FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            format!("{new_plant}/frozen"),
+            "the receiving PC moves the frozen week to the copy too"
+        );
+    }
+
+    /// A node whose site still has weekly schedules refuses the publish when the draft has no copy
+    /// of it; a week planned both on a node and on its draft copy refuses it too (one week per site
+    /// and week: the publish could not move the week in force, and never drops either). Nothing
+    /// moves, nothing is deleted.
+    #[tokio::test]
+    async fn a_weekly_schedule_on_an_unmapped_node_or_on_a_draft_copy_blocks_publish() {
+        // No copy of the plant in the draft.
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let draft_id = fork_active_model(&db, "Draft without the plant's lineage").await;
+        exec(
+            &db,
+            &format!(
+                "UPDATE org_nodes SET origin_node_id = NULL WHERE structure_model_id = {draft_id} \
+                 AND origin_node_id = {plant}"
+            ),
+        )
+        .await;
+        // Nothing else holds the plant: only the week below can block the publish.
+        let before = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(
+            !before
+                .issues
+                .iter()
+                .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+            "{:?}",
+            before.issues
+        );
+        let week = frozen_week_on(&db, "ORG-UNMAPPED-WSCH", plant).await;
+        let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(!blocked.can_publish);
+        assert!(
+            blocked
+                .issues
+                .iter()
+                .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+            "{:?}",
+            blocked.issues
+        );
+        let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect_err("publish refused");
+        assert!(
+            matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+            "{err:?}"
+        );
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT entity_id FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            plant,
+            "the week is kept on its node"
+        );
+
+        // The same week planned on the plant and on its draft copy.
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (_, plant, _) = create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let week = frozen_week_on(&db, "ORG-ACTIVE-WSCH", plant).await;
+        let (draft_id, _, _, _) = create_matching_draft_model(&db).await;
+        let copy = scalar(
+            &db,
+            &format!("SELECT id FROM org_nodes WHERE structure_model_id = {draft_id} AND origin_node_id = {plant}"),
+        )
+        .await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO weekly_schedules (entity_sync_id, entity_id, week_start, week_end, status) \
+                 VALUES ('org-remap-copy-week', {copy}, '2026-05-03', '2026-05-09', 'draft')"
+            ),
+        )
+        .await;
+        let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(!blocked.can_publish);
+        assert!(
+            blocked.issues.iter().any(|i| i.code == "WEEKLY_SCHEDULE_ON_DRAFT_COPY"),
+            "{:?}",
+            blocked.issues
+        );
+        let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
+            .await
+            .expect_err("publish refused");
+        assert!(
+            matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+            "{err:?}"
+        );
+        assert_eq!(
+            text(
+                &db,
+                &format!("SELECT entity_id || '/' || status FROM weekly_schedules WHERE id = {week}")
+            )
+            .await,
+            format!("{plant}/frozen"),
+            "the frozen week is kept on its node"
+        );
+        assert_eq!(
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM org_nodes WHERE id = {plant} AND deleted_at IS NULL")
+            )
+            .await,
+            1,
+            "nothing deleted"
+        );
+    }
 }

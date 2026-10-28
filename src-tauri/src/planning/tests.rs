@@ -6204,3 +6204,145 @@ async fn a_crew_site_change_received_by_sync_into_a_frozen_week_is_a_conflict_fo
         .expect("judged");
     assert!(verdict.is_none(), "{verdict:?}");
 }
+
+/// Audit finding AU-130: a new organisation structure published over a planning site moves the
+/// site's frozen week to the node replacing it, with its crew. New work entering that week for the
+/// new site still needs a break-in, as it did before the publish.
+#[tokio::test]
+async fn a_frozen_week_still_holds_its_site_after_a_publish_replaced_the_site() {
+    use crate::org::node_types::{self, CreateNodeTypePayload};
+    use crate::org::nodes::{self, CreateOrgNodePayload};
+    use crate::org::structure_model::{self, CreateStructureModelPayload};
+
+    let db = setup_db().await;
+    let model = structure_model::create_model(
+        &db,
+        CreateStructureModelPayload {
+            description: Some("Structure v1".to_string()),
+        },
+        1,
+    )
+    .await
+    .expect("structure v1");
+    let site_type = node_types::create_node_type(
+        &db,
+        CreateNodeTypePayload {
+            structure_model_id: model.id,
+            code: "AUSITE".to_string(),
+            label: "Site".to_string(),
+            icon_key: None,
+            color: None,
+            depth_hint: Some(0),
+            can_host_assets: true,
+            can_own_work: true,
+            can_carry_cost_center: false,
+            can_aggregate_kpis: true,
+            can_receive_permits: false,
+            is_root_type: true,
+        },
+    )
+    .await
+    .expect("site type");
+    structure_model::publish_model(&db, model.id, 1)
+        .await
+        .expect("publish v1");
+    let site = nodes::create_org_node(
+        &db,
+        CreateOrgNodePayload {
+            code: "AU130".to_string(),
+            name: "Site AU-130".to_string(),
+            node_type_id: site_type.id as i64,
+            parent_id: None,
+            description: None,
+            cost_center_code: None,
+            external_reference: None,
+            effective_from: None,
+            erp_reference: None,
+            notes: None,
+            structure_model_id: model.id as i64,
+        },
+        1,
+    )
+    .await
+    .expect("site")
+    .id;
+    exec_sql(
+        &db,
+        &format!(
+            "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at)
+             VALUES ('au130-team', 'CREW-AU130', 'Equipe AU-130', 'maintenance', {site}, 'active',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        ),
+    )
+    .await;
+    let team = scalar(&db, "SELECT id FROM teams WHERE entity_sync_id = 'au130-team'").await;
+    give_team_roster_capacity(&db, team).await;
+    let planned = insert_candidate(&db, "manual_test", 7991, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(planned, team, "2026-05-04T08:00", "2026-05-04T09:00"),
+    )
+    .await
+    .expect("committed");
+    crate::planning::weekly_schedule::freeze_weekly_schedule(&db, 1, week_ref(site, "2026-05-04", None))
+        .await
+        .expect("frozen");
+
+    let draft = structure_model::fork_draft_from_published(
+        &db,
+        &CreateStructureModelPayload {
+            description: Some("Structure v2".to_string()),
+        },
+        1,
+    )
+    .await
+    .expect("draft v2");
+    crate::org::validation::publish_model_with_remap(&db, draft.id as i64, 1)
+        .await
+        .expect("publish v2 with remap");
+    let new_site = scalar(
+        &db,
+        "SELECT n.id FROM org_nodes n JOIN org_structure_models m ON m.id = n.structure_model_id \
+         AND m.status = 'active' WHERE n.code = 'AU130' AND n.deleted_at IS NULL",
+    )
+    .await;
+    assert_ne!(new_site, site, "the site was replaced by its copy");
+
+    // The week moved with the site, frozen, with its baseline; nothing is left on the former node.
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {new_site} AND status = 'frozen' \
+                 AND baseline_no = 1"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM weekly_schedules WHERE entity_id = {site}")
+        )
+        .await,
+        0
+    );
+    let view = crate::planning::weekly_schedule::get_weekly_schedule(&db, new_site, "2026-05-04")
+        .await
+        .expect("week of the new site");
+    assert_eq!(view.schedule.expect("schedule").status, "frozen");
+    assert!(view.crews.iter().any(|c| c.team_id == team), "its crew is still on it");
+
+    // New work entering the week for the new site is refused without a break-in.
+    let urgent = insert_candidate(&db, "manual_test", 7992, "ready", 100.0).await;
+    let refused = scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(urgent, team, "2026-05-05T08:00", "2026-05-05T09:00"),
+    )
+    .await
+    .expect_err("frozen week of the new site");
+    assert!(format!("{refused:?}").contains("PLANNING_WEEK_FROZEN"), "{refused:?}");
+}
