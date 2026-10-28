@@ -2842,6 +2842,18 @@ mod tests {
             ),
         )
         .await;
+        // Nothing else holds the plant: only the week below can block the publish.
+        let before = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(
+            !before
+                .issues
+                .iter()
+                .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+            "{:?}",
+            before.issues
+        );
         let week = frozen_week_on(&db, "ORG-UNMAPPED-WSCH", plant).await;
         let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
