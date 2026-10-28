@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { i18n } from "@/i18n/config";
 import { appErrorLines, appErrorReason, describeAppError, gateSentenceText } from "@/lib/app-error";
+import { P } from "@shared/rbac/permissions.generated";
 
 describe("describeAppError", () => {
   it("shows a plain message, not the raw schema dump, when a response has an unexpected format", () => {
@@ -233,7 +234,7 @@ describe("a GATE refusal's title uses the parameters the backend sent", () => {
 describe("describeAppError (refused right)", () => {
   const refused = {
     code: "PERMISSION_DENIED",
-    message: "Permission denied: Permission requise : ot.close",
+    message: `Permission denied: Permission requise : ${P.OT_CLOSE}`,
   };
 
   it("names the missing right in the user's language", async () => {
@@ -244,7 +245,7 @@ describe("describeAppError (refused right)", () => {
     );
     await i18n.changeLanguage("en");
     expect(describeAppError(refused).description).toBe("Required right: Close work orders");
-    expect(describeAppError(refused).technical).toContain("ot.close");
+    expect(describeAppError(refused).technical).toContain(P.OT_CLOSE);
   });
 
   it("gives the generic reason when the sentence names no known right", async () => {
