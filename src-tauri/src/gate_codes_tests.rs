@@ -295,13 +295,6 @@ const LIST_ALLOWLIST: &[(&str, &str)] = &[
     ("sync/queries.rs", "confirm_phrase must be"),
     // Start-up upkeep report for the log, not a refusal.
     ("inventory/reservations.rs", ""),
-    // User-reachable, single language: recoded by the Error Texts & Localisation Lead (AU-24, AU-38).
-    ("commands/di.rs", ""),
-    ("commands/wo.rs", ""),
-    ("wo/workflow/actions/submit.rs", ""),
-    ("wo/workflow/readiness/mod.rs", ""),
-    ("wo/queries.rs", "Cet OT a "),
-    ("commands/admin_governance.rs", "Unknown permission"),
 ];
 
 /// AU-124: a refusal list built element by element is coded too. Every literal message pushed to

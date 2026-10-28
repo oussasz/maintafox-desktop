@@ -56,10 +56,7 @@ describe("backend GATE codes are translated", () => {
  * Codes still without a text in both languages. Each entry is listed with its owner; the list only
  * shrinks (a code that gets its texts must leave it).
  */
-const ISSUE_CODES_WITHOUT_TEXT: readonly string[] = [
-  // PM reason catalogue (AU-11): Error Texts & Localisation Lead.
-  "PM_CODE_NOT_IN_LIST",
-];
+const ISSUE_CODES_WITHOUT_TEXT: readonly string[] = [];
 
 const BASE_ISSUE_BUILDERS = [
   "org_validation_failed",

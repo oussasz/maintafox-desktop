@@ -295,11 +295,8 @@ pub async fn assert_ready_to_mark(db: &DatabaseConnection, wo_id: i64) -> AppRes
     )];
     for c in report.checks {
         if c.blocking && c.outcome == "fail" {
-            errors.push(format!(
-                "{}: {}",
-                blocked_rule_code(&c.code),
-                c.message.unwrap_or_else(|| "échec".into())
-            ));
+            let code = blocked_rule_code(&c.code);
+            errors.push(format!("{code}: {}", c.message.unwrap_or_else(|| "échec".into())));
         }
     }
     Err(AppError::ValidationFailed(errors))
