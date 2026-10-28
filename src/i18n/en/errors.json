@@ -1136,7 +1136,13 @@
     "GATE_REF_PUBLISH_UNRESOLVED_MIGRATIONS": "Cannot publish: some deactivated values have no migration map. Say which value replaces each of them.",
     "GATE_REF_PUBLISH_IMPACT_PREVIEW_REQUIRED": "Cannot publish: this domain is protected, so an impact preview is required before publishing. Run the impact preview, then publish.",
     "GATE_REF_PUBLISH_BLOCKED": "Cannot publish: the set does not meet all the publication conditions. Check the publication readiness.",
-    "GATE_REF_SET_BLOCKING_ISSUES": "Cannot validate: the set has {{count}} blocking problem(s). Fix them, then validate again."
+    "GATE_REF_SET_BLOCKING_ISSUES": "Cannot validate: the set has {{count}} blocking problem(s). Fix them, then validate again.",
+    "GATE_PASSWORD_MIN_LENGTH": "Password refused: it must be at least {{min}} characters long.",
+    "GATE_PASSWORD_UPPERCASE": "Password refused: it must contain at least one uppercase letter.",
+    "GATE_PASSWORD_LOWERCASE": "Password refused: it must contain at least one lowercase letter.",
+    "GATE_PASSWORD_DIGIT": "Password refused: it must contain at least one digit.",
+    "GATE_PASSWORD_SPECIAL": "Password refused: it must contain at least one special character (for example ! @ # $).",
+    "GATE_SYNC_RESOLUTION_REASON": "Choice refused: give the reason for this choice (at least {{min}} characters)."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",

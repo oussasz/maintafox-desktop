@@ -1136,7 +1136,13 @@
     "GATE_REF_PUBLISH_UNRESOLVED_MIGRATIONS": "Publication impossible : des valeurs d\u00e9sactiv\u00e9es n'ont pas de carte de migration. Indiquez par quelle valeur les remplacer.",
     "GATE_REF_PUBLISH_IMPACT_PREVIEW_REQUIRED": "Publication impossible : ce domaine est prot\u00e9g\u00e9, un aper\u00e7u d'impact est requis avant publication. Lancez l'aper\u00e7u d'impact, puis publiez.",
     "GATE_REF_PUBLISH_BLOCKED": "Publication impossible : le jeu ne remplit pas toutes les conditions de publication. Consultez la pr\u00e9paration \u00e0 la publication.",
-    "GATE_REF_SET_BLOCKING_ISSUES": "Validation impossible : le jeu contient {{count}} probl\u00e8me(s) bloquant(s). Corrigez-les, puis validez \u00e0 nouveau."
+    "GATE_REF_SET_BLOCKING_ISSUES": "Validation impossible : le jeu contient {{count}} probl\u00e8me(s) bloquant(s). Corrigez-les, puis validez \u00e0 nouveau.",
+    "GATE_PASSWORD_MIN_LENGTH": "Mot de passe refusé : il doit contenir au moins {{min}} caractères.",
+    "GATE_PASSWORD_UPPERCASE": "Mot de passe refusé : il doit contenir au moins une lettre majuscule.",
+    "GATE_PASSWORD_LOWERCASE": "Mot de passe refusé : il doit contenir au moins une lettre minuscule.",
+    "GATE_PASSWORD_DIGIT": "Mot de passe refusé : il doit contenir au moins un chiffre.",
+    "GATE_PASSWORD_SPECIAL": "Mot de passe refusé : il doit contenir au moins un caractère spécial (par exemple ! @ # $).",
+    "GATE_SYNC_RESOLUTION_REASON": "Choix refusé : donnez la raison de ce choix (au moins {{min}} caractères)."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "Cet enregistrement appartient à un site hors de vos rôles.",

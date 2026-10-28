@@ -272,3 +272,112 @@ fn every_user_facing_refusal_is_gate_coded() {
         stale.join("\n")
     );
 }
+
+/// Refusal lists built a message at a time (`errors.push(...)`, `let mut errors = vec![...]`, then
+/// `ValidationFailed(errors)`) that are deliberately not coded yet. `(file, literal prefix)` as in
+/// `ALLOWLIST`. One reason per group; an entry that no longer covers a site must go.
+const LIST_ALLOWLIST: &[(&str, &str)] = &[
+    // Licence / activation / entitlement contract fields: vendor-signed stored data, checked before
+    // it is written; never typed by a user.
+    ("activation/queries.rs", ""),
+    ("entitlements/queries.rs", ""),
+    // Sync protocol and repair inputs built by the app itself (ids, payload hash, mode, the fixed
+    // confirmation phrase of the repair dialog); a user never types them.
+    ("sync/queries.rs", "{field} is required."),
+    ("sync/queries.rs", "operation must be one of"),
+    ("sync/queries.rs", "payload_json must be"),
+    ("sync/queries.rs", "payload_hash does not match"),
+    ("sync/queries.rs", "conflict_id must be"),
+    ("sync/queries.rs", "expected_row_version must be"),
+    ("sync/queries.rs", "action must be one of"),
+    ("sync/queries.rs", "mode must be one of"),
+    ("sync/queries.rs", "single_item replay requires"),
+    ("sync/queries.rs", "confirm_phrase must be"),
+    // Start-up upkeep report for the log, not a refusal.
+    ("inventory/reservations.rs", ""),
+    // User-reachable, single language: recoded by the Error Texts & Localisation Lead (AU-24, AU-38).
+    ("commands/di.rs", ""),
+    ("commands/wo.rs", ""),
+    ("wo/workflow/actions/submit.rs", ""),
+    ("wo/workflow/readiness/mod.rs", ""),
+    ("wo/queries.rs", "Cet OT a "),
+    ("commands/admin_governance.rs", "Unknown permission"),
+];
+
+/// AU-124: a refusal list built element by element is coded too. Every literal message pushed to
+/// (or seeded into) a refusal list starts with a gate code, so each reason reaches the screen in
+/// the user's language (the details of a `ValidationFailed` are translated one by one).
+#[test]
+fn every_refusal_list_message_is_gate_coded() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    source_files(&src, &mut files);
+    // The names the refusal lists of the backend use; `report.errors` (seed reports) is not one.
+    let push = regex::Regex::new(r"(?:^|[^.\w])(?:errors|violations|validation_errors|inbound_errors)\.push\(")
+        .expect("regex");
+    let seeded = regex::Regex::new(
+        r"let\s+mut\s+(?:errors|violations|validation_errors|inbound_errors)\s*(?::\s*Vec<String>\s*)?=\s*vec!\s*\[",
+    )
+    .expect("regex");
+
+    let (mut sites, mut offenders) = (0usize, Vec::new());
+    let mut used = vec![false; LIST_ALLOWLIST.len()];
+    for path in files {
+        let rel = path
+            .strip_prefix(&src)
+            .expect("under src")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = std::fs::read_to_string(&path).expect("read source");
+        let skipped = test_module_ranges(&text);
+        for m in push.find_iter(&text).chain(seeded.find_iter(&text)) {
+            let at = m.start();
+            if skipped.iter().any(|(from, to)| at >= *from && at <= *to) {
+                continue;
+            }
+            let args = &text[m.end()..];
+            let Some((literal, end)) = first_literal(args) else {
+                continue;
+            };
+            sites += 1;
+            if literal.starts_with("GATE_") {
+                continue;
+            }
+            if literal.starts_with('{') && placeholder_is_code(&literal, &args[end..], &text) {
+                continue;
+            }
+            if let Some(entry) = LIST_ALLOWLIST
+                .iter()
+                .position(|(file, prefix)| rel.starts_with(file) && literal.starts_with(prefix))
+            {
+                used[entry] = true;
+                continue;
+            }
+            let line = text[..at].matches('\n').count() + 1;
+            let shown: String = literal.chars().take(80).collect();
+            offenders.push(format!("  {rel}:{line}  \"{shown}\""));
+        }
+    }
+
+    assert!(sites > 40, "the source scan found only {sites} refusal-list messages");
+    assert!(
+        offenders.is_empty(),
+        "{} refusal-list message(s) are not coded:\n{}\n\n\
+         Start the message with a gate code, `GATE_<MODULE>_<NAME>[:key=value]: original sentence`, \
+         and add its French and English text under `gateError` in src/i18n/fr/errors.json and \
+         src/i18n/en/errors.json, or list it in LIST_ALLOWLIST with its reason.",
+        offenders.len(),
+        offenders.join("\n")
+    );
+    let stale: Vec<String> = LIST_ALLOWLIST
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|((file, prefix), _)| format!("  (\"{file}\", \"{prefix}\")"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "LIST_ALLOWLIST entries that no longer cover any uncoded message (remove them):\n{}",
+        stale.join("\n")
+    );
+}

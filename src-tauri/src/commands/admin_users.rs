@@ -3747,20 +3747,22 @@ async fn compute_simulation_warnings(
 }
 
 /// Validate password strength: min 8 chars, at least one uppercase, one lowercase, one digit.
+/// Each broken rule is a coded refusal, the same codes as the plant policy
+/// (`auth::password_policy`), so the screen shows it in the user's language.
 pub(crate) fn validate_password_strength(password: &str) -> AppResult<()> {
     let mut errors = Vec::new();
 
     if password.len() < 8 {
-        errors.push("Password must be at least 8 characters".into());
+        errors.push("GATE_PASSWORD_MIN_LENGTH:min=8: Password must be at least 8 characters".into());
     }
     if !password.chars().any(|c| c.is_uppercase()) {
-        errors.push("Password must contain at least one uppercase letter".into());
+        errors.push("GATE_PASSWORD_UPPERCASE: Password must contain at least one uppercase letter".into());
     }
     if !password.chars().any(|c| c.is_lowercase()) {
-        errors.push("Password must contain at least one lowercase letter".into());
+        errors.push("GATE_PASSWORD_LOWERCASE: Password must contain at least one lowercase letter".into());
     }
     if !password.chars().any(|c| c.is_ascii_digit()) {
-        errors.push("Password must contain at least one digit".into());
+        errors.push("GATE_PASSWORD_DIGIT: Password must contain at least one digit".into());
     }
 
     if errors.is_empty() {
@@ -3798,6 +3800,23 @@ mod admin_set_password_tests {
         assert!(validate_password_strength("ALLUPPERCASE1").is_err());
         assert!(validate_password_strength("NoDigitsHere").is_err());
         assert!(validate_password_strength("ValidPass1").is_ok());
+    }
+
+    #[test]
+    fn each_broken_password_rule_is_a_coded_refusal() {
+        let Err(crate::errors::AppError::ValidationFailed(msgs)) = validate_password_strength("ab") else {
+            panic!("a weak password is refused");
+        };
+        let codes: Vec<&str> = msgs.iter().map(|m| m.split(':').next().unwrap_or_default()).collect();
+        assert_eq!(
+            codes,
+            [
+                "GATE_PASSWORD_MIN_LENGTH",
+                "GATE_PASSWORD_UPPERCASE",
+                "GATE_PASSWORD_DIGIT"
+            ]
+        );
+        assert!(msgs[0].starts_with("GATE_PASSWORD_MIN_LENGTH:min=8: "));
     }
 }
 
