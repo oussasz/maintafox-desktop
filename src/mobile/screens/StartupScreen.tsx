@@ -1,6 +1,11 @@
-import { ErrorBox, Shell } from "../components/Shell";
+import { DatabaseZap, History, OctagonAlert } from "lucide-react";
+
 import type { MobileStartupState } from "../hooks/use-startup";
 import { useMobileT } from "../i18n";
+import { toUserError } from "../lib/user-error";
+import { OnboardingScreen } from "../ui/OnboardingScreen";
+import { ErrorBanner } from "../ui/feedback";
+import { Hero, Progress } from "../ui/kit";
 
 /** Startup progress, or why the engine did not start. `ready` is handled by the caller. */
 export function StartupScreen({
@@ -14,40 +19,55 @@ export function StartupScreen({
 
   if (state.status === "failed") {
     return (
-      <Shell title={t("startup.failedTitle")}>
-        <ErrorBox title={t("startup.failedTitle")} message={state.reason} />
-        <button type="button" className="mf-btn" onClick={onRetry}>
-          {t("common.retry")}
-        </button>
-      </Shell>
+      <OnboardingScreen title={t("startup.failedTitle")}>
+        <Hero
+          icon={<OctagonAlert size={40} strokeWidth={2.2} aria-hidden />}
+          tone="red"
+          title={t("startup.failedTitle")}
+        />
+        <ErrorBanner error={toUserError(state.reason, "startup")} onRetry={onRetry} />
+      </OnboardingScreen>
     );
   }
   if (state.status === "database_key_required") {
+    toUserError(state.reason, "startup.database_key");
     return (
-      <Shell title={t("startup.databaseKeyTitle")}>
-        <p>{t("startup.databaseKeyBody")}</p>
-        <ErrorBox title={t("common.errorTitle")} message={state.reason} />
-      </Shell>
+      <OnboardingScreen title={t("startup.databaseKeyTitle")}>
+        <div role="alert">
+          <Hero
+            icon={<DatabaseZap size={40} strokeWidth={2.2} aria-hidden />}
+            tone="red"
+            title={t("startup.databaseKeyTitle")}
+            text={t("startup.databaseKeyBody")}
+          />
+        </div>
+      </OnboardingScreen>
     );
   }
   if (state.status === "update_rollback_required") {
+    toUserError(state.reason, "startup.update_rollback");
     return (
-      <Shell title={t("startup.rollbackTitle")}>
-        <p>{t("startup.rollbackBody", { from: state.from, to: state.to })}</p>
-        <ErrorBox title={t("common.errorTitle")} message={state.reason} />
-      </Shell>
+      <OnboardingScreen title={t("startup.rollbackTitle")}>
+        <div role="alert">
+          <Hero
+            icon={<History size={40} strokeWidth={2.2} aria-hidden />}
+            tone="red"
+            title={t("startup.rollbackTitle")}
+            text={t("startup.rollbackBody", { from: state.from, to: state.to })}
+          />
+        </div>
+      </OnboardingScreen>
     );
   }
 
   const progress =
     state.status === "loading" && state.stage !== "waiting"
-      ? t(`startup.stage.${state.stage}`, { applied: state.applied ?? 0 })
+      ? t(`startup.stage.${state.stage}`)
       : t("startup.waiting");
   return (
-    <Shell title={t("startup.title")}>
-      <p role="status" className="mf-status">
-        {progress}
-      </p>
-    </Shell>
+    <OnboardingScreen title={t("startup.title")}>
+      <Hero title={t("app.name")} text={t("startup.subtitle")} />
+      <Progress text={progress} />
+    </OnboardingScreen>
   );
 }
