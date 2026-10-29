@@ -173,7 +173,9 @@
     "submit": "Se connecter",
     "submitting": "Connexion…",
     "passwordChangeTitle": "Changement de mot de passe requis",
-    "passwordChangeBody": "Votre mot de passe doit être changé sur un PC Maintafox avant d'utiliser le téléphone."
+    "passwordChangeBody": "Votre mot de passe doit être changé sur un PC Maintafox avant d'utiliser le téléphone.",
+    "usernamePlaceholder": "Votre identifiant",
+    "passwordPlaceholder": "Votre mot de passe"
   },
   "tabs": {
     "label": "Navigation",

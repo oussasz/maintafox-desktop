@@ -10,7 +10,7 @@ import { type Appearance, setAppearance, storedAppearance } from "../lib/appeara
 import { isTestServer, serverAddress } from "../lib/server";
 import type { UserError } from "../lib/user-error";
 import { ErrorBanner } from "../ui/feedback";
-import { Actions, Banner, Button, Row, Screen, Section, Segmented, Sheet } from "../ui/kit";
+import { Banner, Row, Screen, Section, Segmented, Sheet } from "../ui/kit";
 
 /** Two letters of the user's name for the account avatar. */
 function initials(name: string): string {
@@ -153,16 +153,19 @@ export function SettingsScreen({
 
       <Sheet
         open={confirming}
+        action
         title={t("settings.signOutTitle")}
         onClose={() => setConfirming(false)}
-        closeLabel={t("common.close")}
+        closeLabel={t("common.cancel")}
       >
-        <p className="mf-hero__text" style={{ marginInline: "auto", textAlign: "center" }}>
+        <p className="mf-section__footer" style={{ textAlign: "center", marginBlockStart: -6 }}>
           {t("settings.signOutText")}
         </p>
-        <Actions>
-          <Button
-            variant="destructive"
+        <Section>
+          <Row
+            title={t("settings.signOut")}
+            tone="destructive"
+            center
             disabled={signingOut}
             onClick={() => {
               setSigningOut(true);
@@ -171,13 +174,16 @@ export function SettingsScreen({
                 setConfirming(false);
               });
             }}
-          >
-            {t("settings.signOut")}
-          </Button>
-          <Button variant="plain" onClick={() => setConfirming(false)}>
-            {t("common.cancel")}
-          </Button>
-        </Actions>
+          />
+        </Section>
+        <Section>
+          <Row
+            title={<strong>{t("common.cancel")}</strong>}
+            tone="tint"
+            center
+            onClick={() => setConfirming(false)}
+          />
+        </Section>
       </Sheet>
     </Screen>
   );

@@ -153,7 +153,6 @@ export function WorkOrderExecutionMockup({
       trailing={<MockupFlag />}
     >
       <div className="mf-detail-head">
-        <span className="mf-detail-head__code mf-ltr">{data.code}</span>
         <h2 className="mf-detail-head__title">{data.title}</h2>
         <div className="mf-detail-head__pills">
           <Pill tone={running ? "green" : "tint"} dot={running}>

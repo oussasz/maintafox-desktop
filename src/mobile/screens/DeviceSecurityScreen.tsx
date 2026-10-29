@@ -41,7 +41,7 @@ export function DeviceSecurityGate({ children }: { children: ReactNode }) {
 
   if (check.kind === "refused") {
     return (
-      <OnboardingScreen title={t("security.title")}>
+      <OnboardingScreen title={t("security.title")} language>
         <div role="alert">
           <Hero
             icon={<Lock size={40} strokeWidth={2.2} aria-hidden />}

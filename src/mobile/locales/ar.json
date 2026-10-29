@@ -173,7 +173,9 @@
     "submit": "دخول",
     "submitting": "جارٍ الدخول…",
     "passwordChangeTitle": "يجب تغيير كلمة المرور",
-    "passwordChangeBody": "يجب تغيير كلمة المرور على حاسوب مينتافوكس قبل استخدام الهاتف."
+    "passwordChangeBody": "يجب تغيير كلمة المرور على حاسوب مينتافوكس قبل استخدام الهاتف.",
+    "usernamePlaceholder": "اسم المستخدم الخاص بك",
+    "passwordPlaceholder": "كلمة المرور الخاصة بك"
   },
   "tabs": {
     "label": "التنقل",

@@ -103,20 +103,30 @@ function setNativeValue(el: HTMLInputElement, value: string) {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+/** The element a step acts on, once the screen shows it (a slow phone renders later). */
+async function target(selector: string, index = 0): Promise<HTMLElement | null> {
+  for (let i = 0; i < 60; i++) {
+    const el = document.querySelectorAll<HTMLElement>(selector)[index];
+    if (el && !(el as HTMLButtonElement).disabled) return el;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  console.warn(`[preview] step target not found: ${selector}`);
+  return null;
+}
+
 async function play(steps: Step[]) {
   for (const step of steps) {
     await new Promise((r) => setTimeout(r, STEP_DELAY_MS));
     if ("wait" in step) {
       await new Promise((r) => setTimeout(r, step.wait));
     } else if ("fill" in step) {
-      const el = document.querySelector<HTMLInputElement>(step.fill);
+      const el = (await target(step.fill)) as HTMLInputElement | null;
       if (el) setNativeValue(el, step.value);
     } else {
-      const el = document.querySelectorAll<HTMLElement>(step.click)[step.index ?? 0];
-      el?.click();
+      (await target(step.click, step.index ?? 0))?.click();
     }
   }
-  await new Promise((r) => setTimeout(r, STEP_DELAY_MS));
+  await new Promise((r) => setTimeout(r, STEP_DELAY_MS * 2));
   document.body.dataset["previewReady"] = "1";
 }
 

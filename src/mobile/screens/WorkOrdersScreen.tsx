@@ -1,4 +1,12 @@
-import { CalendarClock, ClipboardCheck, HardHat, Info, RefreshCw, Wrench } from "lucide-react";
+import {
+  CalendarClock,
+  ChevronRight,
+  ClipboardCheck,
+  HardHat,
+  Info,
+  RefreshCw,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { listWos } from "@/services/wo-service";
@@ -28,25 +36,17 @@ type Load =
   | { kind: "error"; error: UserError }
   | { kind: "ok"; items: WorkOrder[]; total: number };
 
-/** The urgency colour of the plant's urgency scale (reference data), as a bar on the row. */
-function UrgencyBar({ color }: { color: string | null | undefined }) {
-  return (
-    <span className="mf-urgency" style={color ? { background: color } : undefined} aria-hidden />
-  );
-}
-
 function WorkOrderRow({ wo, onOpen }: { wo: WorkOrder; onOpen: () => void }) {
   const { t, language } = useMobileT();
   const equipment = wo.asset_label ?? wo.asset_code ?? null;
   const planned = formatDateTime(wo.planned_start, language);
   return (
     <button type="button" className="mf-wo" onClick={onOpen}>
-      <UrgencyBar color={wo.urgency_color} />
       <span className="mf-wo__main">
         <span className="mf-wo__top">
           <span className="mf-wo__code mf-ltr">{wo.code}</span>
           {(wo.status_label ?? wo.status_code) ? (
-            <Pill tone="tint">{wo.status_label ?? wo.status_code}</Pill>
+            <Pill dotColor={wo.status_color}>{wo.status_label ?? wo.status_code}</Pill>
           ) : null}
         </span>
         <span className="mf-wo__title">{wo.title}</span>
@@ -61,6 +61,16 @@ function WorkOrderRow({ wo, onOpen }: { wo: WorkOrder; onOpen: () => void }) {
               {planned}
             </span>
           ) : null}
+          {wo.urgency_label ? (
+            <span>
+              <span
+                className="mf-pill__dot"
+                style={wo.urgency_color ? { background: wo.urgency_color } : undefined}
+                aria-hidden
+              />
+              {wo.urgency_label}
+            </span>
+          ) : null}
           {wo.requires_permit || wo.requires_shutdown ? (
             <span style={{ color: "var(--mf-orange)" }}>
               <HardHat size={15} aria-hidden />
@@ -69,6 +79,7 @@ function WorkOrderRow({ wo, onOpen }: { wo: WorkOrder; onOpen: () => void }) {
           ) : null}
         </span>
       </span>
+      <ChevronRight className="mf-row__chevron mf-mirror" size={20} aria-hidden />
     </button>
   );
 }
@@ -87,17 +98,12 @@ function WorkOrderDetail({ wo, onBack }: { wo: WorkOrder; onBack: () => void }) 
       leading={<BackButton label={t("wo.back")} onClick={onBack} />}
     >
       <div className="mf-detail-head">
-        <span className="mf-detail-head__code mf-ltr">{wo.code}</span>
         <h2 className="mf-detail-head__title">{wo.title}</h2>
         <div className="mf-detail-head__pills">
           {(wo.status_label ?? wo.status_code) ? (
-            <Pill tone="tint">{wo.status_label ?? wo.status_code}</Pill>
+            <Pill dotColor={wo.status_color}>{wo.status_label ?? wo.status_code}</Pill>
           ) : null}
-          {wo.urgency_label ? (
-            <Pill dot tone={wo.urgency_rank != null && wo.urgency_rank <= 2 ? "red" : "neutral"}>
-              {wo.urgency_label}
-            </Pill>
-          ) : null}
+          {wo.urgency_label ? <Pill dotColor={wo.urgency_color}>{wo.urgency_label}</Pill> : null}
           {wo.type_label ? <Pill>{wo.type_label}</Pill> : null}
         </div>
       </div>

@@ -6,6 +6,7 @@ import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type PointerEvent,
   type ReactNode,
   type TextareaHTMLAttributes,
   useEffect,
@@ -530,15 +531,24 @@ export type Tone = "neutral" | "tint" | "green" | "orange" | "red";
 export function Pill({
   tone = "neutral",
   dot = false,
+  dotColor,
   children,
 }: {
   tone?: Tone;
   dot?: boolean;
+  /** Dot colour given by the engine (status or urgency colour of the reference data). */
+  dotColor?: string | null | undefined;
   children: ReactNode;
 }) {
   return (
     <span className={cx("mf-pill", tone !== "neutral" && `mf-pill--${tone}`)}>
-      {dot ? <span className="mf-pill__dot" aria-hidden /> : null}
+      {dot || dotColor ? (
+        <span
+          className="mf-pill__dot"
+          style={dotColor ? { background: dotColor } : undefined}
+          aria-hidden
+        />
+      ) : null}
       {children}
     </span>
   );
@@ -758,6 +768,7 @@ export function Sheet({
   onClose,
   closeLabel,
   trailing,
+  action = false,
   children,
 }: {
   open: boolean;
@@ -765,9 +776,12 @@ export function Sheet({
   onClose: () => void;
   closeLabel: string;
   trailing?: ReactNode;
+  /** iOS action sheet: no close button, the caller's buttons (one of them Cancel) end it. */
+  action?: boolean;
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y: number; dy: number } | null>(null);
   const titleId = useId();
   // The caller's onClose is often a new function each render (e.g. while typing in a search field
   // inside the sheet): read it through a ref so the open/close effect runs on `open` only.
@@ -796,6 +810,37 @@ export function Sheet({
     };
   }, [open]);
 
+  // Swipe the grabber or title bar down to dismiss (past a quarter of the sheet, or 120 px).
+  const onDragStart = (e: PointerEvent<HTMLElement>) => {
+    drag.current = { y: e.clientY, dy: 0 };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onDragMove = (e: PointerEvent<HTMLElement>) => {
+    if (!drag.current || !panel.current) return;
+    drag.current.dy = Math.max(0, e.clientY - drag.current.y);
+    panel.current.style.transition = "none";
+    panel.current.style.transform = `translateY(${drag.current.dy}px)`;
+  };
+  const onDragEnd = () => {
+    const sheet = panel.current;
+    const dy = drag.current?.dy ?? 0;
+    drag.current = null;
+    if (!sheet) return;
+    sheet.style.transition = "transform 260ms var(--mf-ease)";
+    if (dy > Math.min(120, sheet.offsetHeight / 4)) {
+      sheet.style.transform = "translateY(100%)";
+      setTimeout(() => closeRef.current(), 200);
+    } else {
+      sheet.style.transform = "";
+    }
+  };
+  const dragHandlers = {
+    onPointerDown: onDragStart,
+    onPointerMove: onDragMove,
+    onPointerUp: onDragEnd,
+    onPointerCancel: onDragEnd,
+  };
+
   if (!open) return null;
   return createPortal(
     <div className="mf-sheet-root">
@@ -814,10 +859,12 @@ export function Sheet({
         aria-labelledby={titleId}
         tabIndex={-1}
       >
-        <span className="mf-sheet__grabber" aria-hidden />
-        <div className="mf-sheet__head">
+        <span className="mf-sheet__grabber" aria-hidden {...dragHandlers} />
+        <div className="mf-sheet__head" {...dragHandlers}>
           <div>
-            <NavButton label={closeLabel} onClick={onClose} icon={<X size={24} aria-hidden />} />
+            {action ? null : (
+              <NavButton label={closeLabel} onClick={onClose} icon={<X size={24} aria-hidden />} />
+            )}
           </div>
           <h2 id={titleId} className="mf-sheet__title">
             {title}

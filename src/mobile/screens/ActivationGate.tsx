@@ -306,7 +306,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <OnboardingScreen title={t("activation.title")}>
+    <OnboardingScreen title={t("activation.title")} language>
       <Hero title={t("activation.title")} text={t("activation.joinOnly")} />
       {steps(0)}
       {phase.denied ? <ErrorBanner error={phase.denied} /> : null}

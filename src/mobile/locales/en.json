@@ -173,7 +173,9 @@
     "submit": "Sign in",
     "submitting": "Signing in…",
     "passwordChangeTitle": "Password change required",
-    "passwordChangeBody": "Your password must be changed on a Maintafox PC before you use the phone."
+    "passwordChangeBody": "Your password must be changed on a Maintafox PC before you use the phone.",
+    "usernamePlaceholder": "Your username",
+    "passwordPlaceholder": "Your password"
   },
   "tabs": {
     "label": "Navigation",

@@ -175,6 +175,35 @@ button {
   unicode-bidi: plaintext;
 }
 
+/* plaintext would align each paragraph by its own direction: pin alignment to the UI's side. */
+:root[dir="rtl"]
+  :is(
+    .mf-row__title,
+    .mf-row__subtitle,
+    .mf-wo__title,
+    .mf-detail-head__title,
+    .mf-banner__text,
+    .mf-cell__input,
+    .mf-asset-card__name,
+    .mf-data
+  ) {
+  text-align: right;
+}
+
+:root[dir="ltr"]
+  :is(
+    .mf-row__title,
+    .mf-row__subtitle,
+    .mf-wo__title,
+    .mf-detail-head__title,
+    .mf-banner__text,
+    .mf-cell__input,
+    .mf-asset-card__name,
+    .mf-data
+  ) {
+  text-align: left;
+}
+
 .mf-visually-hidden {
   position: absolute;
   inline-size: 1px;
@@ -335,8 +364,9 @@ button {
   padding-block-end: calc(var(--mf-tab-h) + 28px + env(safe-area-inset-bottom));
 }
 
+/* Onboarding: content starts high (title about 96 px from the top), never floats mid-screen. */
 .mf-content--center {
-  justify-content: center;
+  padding-block-start: 40px;
 }
 
 .mf-form-stack {
@@ -543,17 +573,9 @@ button.mf-row:disabled {
   color: var(--mf-label-3);
 }
 
-.mf-cell:focus-within {
-  box-shadow: inset 3px 0 0 var(--mf-tint);
-}
-
-:root[dir="rtl"] .mf-cell:focus-within {
-  box-shadow: inset -3px 0 0 var(--mf-tint);
-}
-
 textarea.mf-cell__input {
   min-block-size: 96px;
-  resize: vertical;
+  resize: none;
   line-height: 1.4;
 }
 
@@ -627,9 +649,11 @@ textarea.mf-cell__input {
   opacity: 0.85;
 }
 
+/* iOS disabled: a neutral fill with readable grey text, not a faded colour. */
 .mf-btn:disabled {
   cursor: default;
-  opacity: 0.45;
+  background: var(--mf-fill);
+  color: var(--mf-label-3);
 }
 
 .mf-btn--filled {
@@ -792,7 +816,7 @@ textarea.mf-cell__input {
 .mf-banner--safety {
   background: var(--mf-safety);
   color: var(--mf-on-safety);
-  border-inline-start: 6px solid #000000;
+  box-shadow: inset 0 0 0 2px #000000;
 }
 
 .mf-banner--safety .mf-banner__text {
@@ -962,7 +986,7 @@ textarea.mf-cell__input {
 }
 
 .mf-hero__mark--red {
-  background: var(--mf-red);
+  background: #c4001a;
   color: #ffffff;
 }
 
@@ -1038,6 +1062,16 @@ textarea.mf-cell__input {
     0 3px 1px rgba(0, 0, 0, 0.04);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mf-segmented__btn[aria-pressed="true"] {
+    background: #636366;
+  }
+}
+
+:root[data-theme="dark"] .mf-segmented__btn[aria-pressed="true"] {
+  background: #636366;
+}
+
 .mf-lang-corner {
   inline-size: min(280px, calc(100% - 2 * var(--mf-gutter)));
   margin-inline: auto;
@@ -1051,7 +1085,7 @@ textarea.mf-cell__input {
   gap: 12px;
   inline-size: 100%;
   padding-block: 14px;
-  padding-inline: 26px 16px;
+  padding-inline: 16px 12px;
   border: 0;
   background: none;
   text-align: start;
@@ -1101,14 +1135,8 @@ textarea.mf-cell__input {
   gap: 4px;
 }
 
-/* Positioned rather than stretched: Android WebView buttons do not stretch flex children. */
-.mf-urgency {
-  position: absolute;
-  inset-block: 14px;
-  inset-inline-start: 12px;
-  inline-size: 4px;
-  border-radius: 999px;
-  background: var(--mf-fill);
+.mf-wo .mf-row__chevron {
+  align-self: center;
 }
 
 .mf-detail-head {
@@ -1158,39 +1186,40 @@ textarea.mf-cell__input {
   color: var(--mf-label-2);
 }
 
-/* Task result buttons: OK / Not OK / N/A. */
+/* Task result: OK / Not OK / N/A as one segmented track, glove-size. */
 .mf-result {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 2px;
   margin-block-start: 8px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--mf-fill);
 }
 
 .mf-result__btn {
-  min-block-size: 44px;
-  border: 1.5px solid var(--mf-separator);
-  border-radius: 10px;
-  background: var(--mf-surface);
+  min-block-size: var(--mf-row);
+  border: 0;
+  border-radius: 8px;
+  background: none;
   font: var(--mf-subhead);
   font-weight: 600;
+  color: var(--mf-label);
 }
 
 .mf-result__btn[aria-pressed="true"][data-tone="ok"] {
-  border-color: var(--mf-green);
   background: var(--mf-green);
-  color: #ffffff;
+  color: var(--mf-on-tint);
 }
 
 .mf-result__btn[aria-pressed="true"][data-tone="nok"] {
-  border-color: var(--mf-red);
   background: var(--mf-red);
-  color: #ffffff;
+  color: var(--mf-on-tint);
 }
 
 .mf-result__btn[aria-pressed="true"][data-tone="na"] {
-  border-color: var(--mf-label-3);
-  background: var(--mf-label-3);
-  color: var(--mf-surface);
+  background: var(--mf-surface);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
 }
 
 /* Stepper (parts quantity). */
@@ -1294,7 +1323,6 @@ textarea.mf-cell__input {
   padding: 18px;
   border-radius: var(--mf-radius-lg);
   background: var(--mf-surface);
-  box-shadow: var(--mf-shadow);
 }
 
 .mf-asset-card__code {
@@ -1386,8 +1414,7 @@ textarea.mf-cell__input {
   border: 0;
   background: none;
   color: var(--mf-label-3);
-  font: var(--mf-caption);
-  font-size: 0.66rem;
+  font: 600 12px/1.2 var(--mf-font);
 }
 
 .mf-tab[aria-current="page"] {

@@ -43,7 +43,7 @@ export function SignInScreen({
 
   const shown = error ?? outerError;
   return (
-    <OnboardingScreen title={t("signin.title")}>
+    <OnboardingScreen title={t("signin.title")} language>
       <Hero title={t("signin.title")} text={t("signin.subtitle")} />
       <Steps count={ONBOARDING_STEPS} current={2} label={t("onboarding.steps")} />
       <form className="mf-form-stack" onSubmit={(e) => void onSubmit(e)}>
@@ -51,6 +51,7 @@ export function SignInScreen({
           <TextCell
             label={t("signin.username")}
             value={username}
+            placeholder={t("signin.usernamePlaceholder")}
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
@@ -61,6 +62,7 @@ export function SignInScreen({
             label={t("signin.password")}
             type="password"
             value={password}
+            placeholder={t("signin.passwordPlaceholder")}
             autoComplete="current-password"
             dir="ltr"
             onChange={(e) => setPassword(e.target.value)}

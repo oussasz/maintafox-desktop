@@ -4,7 +4,17 @@
 import { AlertTriangle, ClipboardList, Flashlight, History, Keyboard, MapPin } from "lucide-react";
 
 import { useMobileT } from "../i18n";
-import { Actions, Button, MockupFlag, NavButton, Pill, Row, Screen, Section } from "../ui/kit";
+import {
+  Actions,
+  BackButton,
+  Button,
+  MockupFlag,
+  NavButton,
+  Pill,
+  Row,
+  Screen,
+  Section,
+} from "../ui/kit";
 
 export interface ScanSample {
   code: string;
@@ -51,7 +61,13 @@ export function ScanEquipmentMockup({ found }: { found: ScanSample | null }) {
   }
 
   return (
-    <Screen title={t("scan.equipment")} inlineTitle withTabs trailing={<MockupFlag />}>
+    <Screen
+      title={t("scan.equipment")}
+      inlineTitle
+      withTabs
+      leading={<BackButton label={t("scan.title")} onClick={() => undefined} />}
+      trailing={<MockupFlag />}
+    >
       <div className="mf-asset-card">
         <span className="mf-asset-card__code mf-ltr">{found.code}</span>
         <h2 className="mf-asset-card__name">{found.name}</h2>

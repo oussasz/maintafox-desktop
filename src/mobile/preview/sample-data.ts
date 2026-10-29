@@ -23,6 +23,7 @@ function workOrder(
     asset_code: string;
     asset_label: string;
     status_label: string;
+    status_color: string;
     type_label: string;
     urgency_code: "emergency" | "urgent" | "high" | "normal" | "low";
     urgency_rank: number;
@@ -100,6 +101,7 @@ export const SAMPLE_WORK_ORDERS = [
     asset_code: "PMP-101",
     asset_label: "Pompe de reprise eau brute",
     status_label: "Planifié",
+    status_color: "#1570ef",
     type_label: "Correctif",
     urgency_code: "urgent",
     urgency_rank: 2,
@@ -118,6 +120,7 @@ export const SAMPLE_WORK_ORDERS = [
     asset_code: "CNV-07",
     asset_label: "Convoyeur ligne 3",
     status_label: "Planifié",
+    status_color: "#1570ef",
     type_label: "Préventif",
     urgency_code: "normal",
     urgency_rank: 4,
@@ -136,6 +139,7 @@ export const SAMPLE_WORK_ORDERS = [
     asset_code: "CMP-02",
     asset_label: "Compresseur d'air 2",
     status_label: "En attente pièces",
+    status_color: "#f79009",
     type_label: "Préventif",
     urgency_code: "high",
     urgency_rank: 3,
