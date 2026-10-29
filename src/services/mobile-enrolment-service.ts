@@ -39,10 +39,18 @@ const IssuedMobileEnrolmentSchema = z.object({
 });
 
 export const MOBILE_ENROLMENT_STATUSES = ["pending", "redeemed", "cancelled", "expired"] as const;
+export type KnownMobileEnrolmentStatus = (typeof MOBILE_ENROLMENT_STATUSES)[number];
+
+export const MOBILE_PHONE_STATUSES = ["active", "wipe_pending"] as const;
+export type KnownMobilePhoneStatus = (typeof MOBILE_PHONE_STATUSES)[number];
+
+// The engine sends these statuses as plain strings. They are read tolerantly: a status added by a
+// later engine must not break the whole list. Callers narrow with the Known* types and show
+// anything else as "unknown".
 
 const MobileEnrolmentStatusSchema = z.object({
   enrolment_id: z.string(),
-  status: z.enum(MOBILE_ENROLMENT_STATUSES),
+  status: z.string(),
   person_label: z.string(),
   site_label: z.string(),
   expires_at: z.string().nullable(),
@@ -58,7 +66,7 @@ const MobilePhoneSchema = z.object({
   enrolled_at: z.string().nullable(),
   last_sync_at: z.string().nullable(),
   app_version: z.string().nullable(),
-  status: z.enum(["active", "wipe_pending"]),
+  status: z.string(),
   revoked_at: z.string().nullable(),
   revoked_by_label: z.string().nullable(),
 });

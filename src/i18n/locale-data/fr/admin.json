@@ -1246,7 +1246,8 @@
     },
     "status": {
       "active": "Actif",
-      "wipePending": "Retiré, en attente d'effacement"
+      "wipePending": "Retiré, en attente d'effacement",
+      "unknown": "Inconnu"
     },
     "revoke": {
       "action": "Révoquer",
@@ -1267,6 +1268,8 @@
       "candidatesError": "Les personnes et les sites n'ont pas pu être chargés.",
       "create": "Créer le QR code",
       "help": "Le technicien ouvre Maintafox Terrain sur son téléphone et scanne ce QR code (ou saisit le code). Il se connecte ensuite avec son propre mot de passe.",
+      "qrError": "Le QR code n'a pas pu être affiché. Utilisez le code à saisir.",
+      "unknown": "Statut inconnu.",
       "qrAlt": "QR code d'enrôlement",
       "code": "Code à saisir : {{code}}",
       "validFor": "Valable encore {{time}}",

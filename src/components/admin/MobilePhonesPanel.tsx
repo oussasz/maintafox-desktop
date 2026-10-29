@@ -38,7 +38,7 @@ import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import {
   type EnrolmentCandidates,
   type IssuedMobileEnrolment,
-  type MobileEnrolmentStatus,
+  type KnownMobileEnrolmentStatus,
   type MobilePhone,
   type MobilePhonesView,
   cancelMobileEnrolment,
@@ -79,7 +79,14 @@ function useSecondsLeft(expiresAt: string | null): number {
 
 // ── Enrolment dialog ────────────────────────────────────────────────────────────────────────────
 
-type EnrolStatus = MobileEnrolmentStatus["status"];
+/** What the dialog shows: the statuses it knows, or "unknown" for one a later engine may add. */
+type EnrolStatus = KnownMobileEnrolmentStatus | "unknown";
+
+function toEnrolStatus(raw: string): EnrolStatus {
+  return raw === "pending" || raw === "redeemed" || raw === "cancelled" || raw === "expired"
+    ? raw
+    : "unknown";
+}
 
 function EnrolDialog({
   open,
@@ -102,11 +109,17 @@ function EnrolDialog({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const onEnrolledRef = useRef(onEnrolled);
-  onEnrolledRef.current = onEnrolled;
-
-  // A fresh form each time the dialog opens.
   useEffect(() => {
-    if (!open) return undefined;
+    onEnrolledRef.current = onEnrolled;
+  }, [onEnrolled]);
+
+  // A fresh form each time the dialog opens; the QR secret is dropped as soon as it closes.
+  useEffect(() => {
+    if (!open) {
+      setIssued(null);
+      setStatus("pending");
+      return undefined;
+    }
     setPersonId("");
     setSiteId("");
     setIssued(null);
@@ -138,7 +151,7 @@ function EnrolDialog({
       getMobileEnrolmentStatus(enrolmentId)
         .then((s) => {
           if (cancelled || s.status === "pending") return;
-          setStatus(s.status);
+          setStatus(toEnrolStatus(s.status));
           if (s.status === "redeemed") onEnrolledRef.current();
         })
         .catch(() => {
@@ -155,6 +168,19 @@ function EnrolDialog({
   }, [open, enrolmentId, status]);
 
   const secondsLeft = useSecondsLeft(issued && status === "pending" ? issued.expires_at : null);
+
+  // The clock ran out while the QR code was still on screen: it is no longer usable, hide it.
+  useEffect(() => {
+    if (
+      issued &&
+      status === "pending" &&
+      secondsLeft === 0 &&
+      Date.now() >= new Date(issued.expires_at).getTime()
+    ) {
+      setStatus("expired");
+    }
+  }, [issued, status, secondsLeft]);
+
   const { svgHtml, error: qrError } = useIdentificationQr(
     issued?.qr_payload ?? "",
     open && issued != null && status === "pending",
@@ -185,7 +211,7 @@ function EnrolDialog({
     setBusy(true);
     try {
       const result = await cancelMobileEnrolment(issued.enrolment_id);
-      setStatus(result.status === "pending" ? "cancelled" : result.status);
+      setStatus(result.status === "pending" ? "cancelled" : toEnrolStatus(result.status));
       if (result.status === "redeemed") onEnrolledRef.current();
     } catch {
       // Toasted by the global handler; the QR code stays as it was.
@@ -200,12 +226,30 @@ function EnrolDialog({
     setStatus("pending");
   }, []);
 
+  // Closing (button, Esc, outside click) never leaves a usable QR code behind: the secret is
+  // dropped and a still-pending enrolment is cancelled. A failed cancel is logged by the engine.
+  const closeDialog = useCallback(() => {
+    const pendingId = issued && status === "pending" ? issued.enrolment_id : null;
+    setIssued(null);
+    setStatus("pending");
+    onClose();
+    if (!pendingId) return;
+    void (async () => {
+      try {
+        const result = await cancelMobileEnrolment(pendingId);
+        if (result.status === "redeemed") onEnrolledRef.current();
+      } catch {
+        // Nothing more to do here.
+      }
+    })();
+  }, [issued, status, onClose]);
+
   const noChoice =
     candidates != null && (candidates.people.length === 0 || candidates.sites.length === 0);
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <Dialog open={open} onOpenChange={(v) => !v && closeDialog()}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("phones.enrol.title")}</DialogTitle>
@@ -219,9 +263,9 @@ function EnrolDialog({
               ) : (
                 <>
                   <div className="space-y-1.5">
-                    <Label>{t("phones.enrol.person")}</Label>
+                    <Label htmlFor="phones-enrol-person">{t("phones.enrol.person")}</Label>
                     <Select value={personId} onValueChange={setPersonId}>
-                      <SelectTrigger>
+                      <SelectTrigger id="phones-enrol-person">
                         <SelectValue placeholder={t("phones.enrol.personPlaceholder")} />
                       </SelectTrigger>
                       <SelectContent>
@@ -238,9 +282,9 @@ function EnrolDialog({
                     ) : null}
                   </div>
                   <div className="space-y-1.5">
-                    <Label>{t("phones.enrol.site")}</Label>
+                    <Label htmlFor="phones-enrol-site">{t("phones.enrol.site")}</Label>
                     <Select value={siteId} onValueChange={setSiteId}>
-                      <SelectTrigger>
+                      <SelectTrigger id="phones-enrol-site">
                         <SelectValue placeholder={t("phones.enrol.sitePlaceholder")} />
                       </SelectTrigger>
                       <SelectContent>
@@ -272,7 +316,9 @@ function EnrolDialog({
                   <div className="h-[280px] w-[280px]" />
                 )}
               </div>
-              {qrError ? <p className="text-xs text-destructive">{qrError}</p> : null}
+              {qrError ? (
+                <p className="text-xs text-destructive">{t("phones.enrol.qrError")}</p>
+              ) : null}
               <p className="font-mono text-2xl font-semibold tracking-widest text-text-primary">
                 {t("phones.enrol.code", { code: issued.code })}
               </p>
@@ -283,22 +329,30 @@ function EnrolDialog({
                 {t("phones.enrol.for", { person: issued.person_label, site: issued.site_label })}
               </p>
             </div>
-          ) : (
-            <div className="py-6 text-center" role="status">
+          ) : null}
+
+          {/* Always mounted, empty until an end state is reached, so screen readers announce it. */}
+          <div
+            role="status"
+            className={issued != null && status !== "pending" ? "py-6 text-center" : undefined}
+          >
+            {issued != null && status !== "pending" ? (
               <p className="text-base font-medium text-text-primary">
                 {status === "redeemed"
                   ? t("phones.enrol.enrolled", { person: issued.person_label })
                   : status === "cancelled"
                     ? t("phones.enrol.cancelled")
-                    : t("phones.enrol.expired")}
+                    : status === "expired"
+                      ? t("phones.enrol.expired")
+                      : t("phones.enrol.unknown")}
               </p>
-            </div>
-          )}
+            ) : null}
+          </div>
 
           <DialogFooter>
             {issued == null ? (
               <>
-                <Button variant="outline" onClick={onClose}>
+                <Button variant="outline" onClick={closeDialog}>
                   {t("common.cancel")}
                 </Button>
                 <Button
@@ -313,7 +367,7 @@ function EnrolDialog({
                 <Button variant="outline" disabled={busy} onClick={() => void handleCancelQr()}>
                   {t("phones.enrol.cancelQr")}
                 </Button>
-                <Button variant="outline" onClick={onClose}>
+                <Button variant="outline" onClick={closeDialog}>
                   {t("common.close")}
                 </Button>
               </>
@@ -322,7 +376,7 @@ function EnrolDialog({
                 {status !== "redeemed" ? (
                   <Button onClick={restart}>{t("phones.enrol.newQr")}</Button>
                 ) : null}
-                <Button variant="outline" onClick={onClose}>
+                <Button variant="outline" onClick={closeDialog}>
                   {t("common.close")}
                 </Button>
               </>
@@ -420,8 +474,10 @@ export function MobilePhonesPanel() {
         cell: ({ row }) =>
           row.original.status === "active" ? (
             <Badge variant="default">{t("phones.status.active")}</Badge>
-          ) : (
+          ) : row.original.status === "wipe_pending" ? (
             <Badge variant="secondary">{t("phones.status.wipePending")}</Badge>
+          ) : (
+            <Badge variant="outline">{t("phones.status.unknown")}</Badge>
           ),
       },
       {
@@ -505,7 +561,10 @@ export function MobilePhonesPanel() {
         onEnrolled={() => void refresh()}
       />
 
-      <Dialog open={revokeTarget != null} onOpenChange={(v) => !v && setRevokeTarget(null)}>
+      <Dialog
+        open={revokeTarget != null}
+        onOpenChange={(v) => !v && !revoking && setRevokeTarget(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("phones.revoke.title")}</DialogTitle>
@@ -525,7 +584,7 @@ export function MobilePhonesPanel() {
             </Label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRevokeTarget(null)}>
+            <Button variant="outline" disabled={revoking} onClick={() => setRevokeTarget(null)}>
               {t("common.cancel")}
             </Button>
             <Button variant="destructive" disabled={revoking} onClick={() => void handleRevoke()}>

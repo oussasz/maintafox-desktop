@@ -11,6 +11,7 @@ import type {
   IssuedMobileEnrolment,
   MobilePhonesView,
 } from "@/services/mobile-enrolment-service";
+import { pushAppToast } from "@/store/app-toast-store";
 
 // Keys with their parameters, so the tests read what is said and for whom.
 vi.mock("react-i18next", () => ({
@@ -24,12 +25,14 @@ vi.mock("@/hooks/use-formatters", () => ({
   useFormatters: () => ({ formatDateTime: (v: string) => `dt:${v}` }),
 }));
 
+// Closing the password prompt rejects with this error.
+const stepUpCancelled = vi.hoisted(() => new Error("step-up cancelled"));
 vi.mock("@/hooks/use-step-up", () => ({
   useStepUp: () => ({
     withStepUp: <T,>(action: () => Promise<T>) => action(),
     StepUpDialogElement: null,
   }),
-  isStepUpCancelled: () => false,
+  isStepUpCancelled: (err: unknown) => err === stepUpCancelled,
 }));
 
 vi.mock("@/store/app-toast-store", () => ({ pushAppToast: vi.fn() }));
@@ -96,6 +99,7 @@ const issued: IssuedMobileEnrolment = {
 
 beforeEach(() => {
   Object.values(svc).forEach((fn) => fn.mockReset());
+  vi.mocked(pushAppToast).mockClear();
   svc.listMobilePhones.mockResolvedValue(view);
 });
 
@@ -103,11 +107,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function pick(comboboxIndex: number, optionName: RegExp) {
-  fireEvent.keyDown(screen.getAllByRole("combobox")[comboboxIndex] as HTMLElement, {
-    key: "Enter",
-  });
+async function pick(fieldLabel: string, optionName: RegExp) {
+  fireEvent.keyDown(screen.getByLabelText(fieldLabel), { key: "Enter" });
   fireEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
+function statusOf(status: string) {
+  return {
+    enrolment_id: "enr_abc",
+    status,
+    person_label: "Leila M.",
+    site_label: "Usine Nord",
+    expires_at: issued.expires_at,
+    redeemed_at: null,
+  };
+}
+
+/** Opens the enrolment dialog and fills it in, up to the "create" click. */
+async function openAndFill() {
+  render(<MobilePhonesPanel />);
+  await screen.findByText("Karim B.");
+  fireEvent.click(screen.getByRole("button", { name: "phones.enrol.action" }));
+  await waitFor(() => expect(svc.listMobileEnrolmentCandidates).toHaveBeenCalled());
+  await pick("phones.enrol.person", /Leila M\./);
+  await pick("phones.enrol.site", /Usine Nord/);
 }
 
 describe("MobilePhonesPanel list", () => {
@@ -203,8 +226,8 @@ describe("MobilePhonesPanel enrolment", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "phones.enrol.action" }));
     await waitFor(() => expect(svc.listMobileEnrolmentCandidates).toHaveBeenCalled());
-    await pick(0, /Leila M\./);
-    await pick(1, /Usine Nord/);
+    await pick("phones.enrol.person", /Leila M\./);
+    await pick("phones.enrol.site", /Usine Nord/);
     fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
 
     await waitFor(() =>
@@ -255,8 +278,8 @@ describe("MobilePhonesPanel enrolment", () => {
     await screen.findByText("Karim B.");
     fireEvent.click(screen.getByRole("button", { name: "phones.enrol.action" }));
     await waitFor(() => expect(svc.listMobileEnrolmentCandidates).toHaveBeenCalled());
-    await pick(0, /Leila M\./);
-    await pick(1, /Usine Nord/);
+    await pick("phones.enrol.person", /Leila M\./);
+    await pick("phones.enrol.site", /Usine Nord/);
     fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
     fireEvent.click(await screen.findByRole("button", { name: "phones.enrol.cancelQr" }));
 
@@ -264,5 +287,100 @@ describe("MobilePhonesPanel enrolment", () => {
     expect(svc.cancelMobileEnrolment).toHaveBeenCalledWith("enr_abc");
     fireEvent.click(screen.getByRole("button", { name: "phones.enrol.newQr" }));
     expect(await screen.findByRole("button", { name: "phones.enrol.create" })).toBeInTheDocument();
+  });
+
+  it("closes quietly and keeps the form when the password prompt is cancelled", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockRejectedValue(stepUpCancelled);
+    await openAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+
+    await waitFor(() => expect(svc.issueMobileEnrolment).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "phones.enrol.create" })).toBeEnabled(),
+    );
+    expect(pushAppToast).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the form, without a QR code, when the issue is refused", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockRejectedValue(new Error("MOBILE_ENROL_NO_FREE_SLOT"));
+    await openAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+
+    await waitFor(() => expect(svc.issueMobileEnrolment).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "phones.enrol.create" })).toBeEnabled(),
+    );
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "phones.enrol.qrAlt" })).not.toBeInTheDocument();
+  });
+
+  it("hides the QR code when the countdown reaches 00:00", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockResolvedValue({
+      ...issued,
+      expires_at: new Date(Date.now() + 5000).toISOString(),
+    });
+    svc.getMobileEnrolmentStatus.mockResolvedValue(statusOf("pending"));
+    await openAndFill();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+    expect(await screen.findByText(/phones\.enrol\.code/)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(await screen.findByText("phones.enrol.expired")).toBeInTheDocument();
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "phones.enrol.qrAlt" })).not.toBeInTheDocument();
+  });
+
+  it("clears the code and cancels the enrolment when a pending dialog is closed", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockResolvedValue(issued);
+    svc.cancelMobileEnrolment.mockResolvedValue(statusOf("cancelled"));
+    await openAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+    expect(await screen.findByText(/phones\.enrol\.code/)).toHaveTextContent("ABCD-2345");
+
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+
+    await waitFor(() => expect(svc.cancelMobileEnrolment).toHaveBeenCalledWith("enr_abc"));
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("cancels the pending enrolment when Esc closes the dialog, even if the cancel fails", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockResolvedValue(issued);
+    svc.cancelMobileEnrolment.mockRejectedValue(new Error("offline"));
+    await openAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+    await screen.findByText(/phones\.enrol\.code/);
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+
+    await waitFor(() => expect(svc.cancelMobileEnrolment).toHaveBeenCalledWith("enr_abc"));
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
+  });
+
+  it("shows a neutral label for a status it does not know", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    svc.issueMobileEnrolment.mockResolvedValue(issued);
+    svc.getMobileEnrolmentStatus.mockResolvedValue(statusOf("suspended"));
+    await openAndFill();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+    await screen.findByText(/phones\.enrol\.code/);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(await screen.findByText("phones.enrol.unknown")).toBeInTheDocument();
   });
 });

@@ -1246,7 +1246,8 @@
     },
     "status": {
       "active": "Active",
-      "wipePending": "Removed, waiting to be erased"
+      "wipePending": "Removed, waiting to be erased",
+      "unknown": "Unknown"
     },
     "revoke": {
       "action": "Revoke",
@@ -1267,6 +1268,8 @@
       "candidatesError": "The people and sites could not be loaded.",
       "create": "Create the QR code",
       "help": "The technician opens Maintafox Terrain on their phone and scans this QR code (or types the code). They then sign in with their own password.",
+      "qrError": "The QR code could not be displayed. Use the code to type.",
+      "unknown": "Unknown status.",
       "qrAlt": "Enrolment QR code",
       "code": "Code to type: {{code}}",
       "validFor": "Valid for another {{time}}",
