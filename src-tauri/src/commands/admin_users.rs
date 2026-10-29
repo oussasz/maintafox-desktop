@@ -1258,6 +1258,8 @@ pub async fn deactivate_user(input: SetUserActiveInput, app: AppHandle, state: S
     .await;
     if result.is_ok() {
         notify_rbac_user_change(&app, &state, target, "user_deactivated").await;
+        // Their phones are revoked too (owner decision 2026-10-29): sent now, or once online.
+        crate::commands::mobile_enrolment::queue_person_revocation(&state.db, &caller, target).await;
     }
     result
 }

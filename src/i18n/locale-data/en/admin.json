@@ -19,7 +19,8 @@
     "delegation": "Delegation",
     "emergency": "Emergency",
     "importExport": "Import / Export",
-    "audit": "Audit"
+    "audit": "Audit",
+    "phones": "Phones"
   },
   "metrics": {
     "loadError": "The administration figures could not be loaded",
@@ -1226,5 +1227,69 @@
     "saved": "Lockout saved.",
     "saveError": "Failed to save the lockout.",
     "loadError": "The lockout policy could not be loaded."
+  },
+  "phones": {
+    "title": "Phones",
+    "slots": "{{active}} / {{max}} phones in use",
+    "noLicence": "The licence does not include phones: ask your vendor for some.",
+    "pendingRevocations": "Phones to revoke as soon as this PC is online: {{names}}",
+    "loadError": "The list of phones could not be loaded.",
+    "empty": "No phone enrolled",
+    "never": "Never",
+    "columns": {
+      "person": "Person",
+      "site": "Site",
+      "enrolledBy": "Enrolled by",
+      "enrolledAt": "Enrolled on",
+      "lastSync": "Last sync",
+      "status": "Status"
+    },
+    "status": {
+      "active": "Active",
+      "wipePending": "Removed, waiting to be erased"
+    },
+    "revoke": {
+      "action": "Revoke",
+      "title": "Revoke this phone?",
+      "confirm": "{{person}}'s phone will no longer be able to sign in. Its pending work is sent at its next connection, then its data is erased.",
+      "lost": "Phone lost or stolen: it is cut off at once, without sending its pending work",
+      "done": "Phone revoked."
+    },
+    "enrol": {
+      "action": "Enrol a phone",
+      "title": "Enrol a phone",
+      "person": "Person",
+      "personPlaceholder": "Choose a person",
+      "site": "Site",
+      "sitePlaceholder": "Choose a site",
+      "noPerson": "Nobody can be given a phone: it takes an active account with its own password.",
+      "noSite": "No site available.",
+      "candidatesError": "The people and sites could not be loaded.",
+      "create": "Create the QR code",
+      "help": "The technician opens Maintafox Terrain on their phone and scans this QR code (or types the code). They then sign in with their own password.",
+      "qrAlt": "Enrolment QR code",
+      "code": "Code to type: {{code}}",
+      "validFor": "Valid for another {{time}}",
+      "for": "{{person}} · {{site}}",
+      "cancelQr": "Cancel this QR code",
+      "enrolled": "Phone enrolled for {{person}} ✓",
+      "expired": "This QR code has expired.",
+      "cancelled": "This QR code was cancelled.",
+      "newQr": "Create a new QR code"
+    }
+  },
+  "errors": {
+    "MOBILE_ENROL_NOT_LICENSED": "The licence does not include phones: ask your vendor to add some.",
+    "MOBILE_ENROL_NO_FREE_SLOT": "Every phone of the licence is in use: revoke a phone, or ask your vendor for more.",
+    "MOBILE_ENROL_NOT_FOUND": "The licence server does not know this enrolment or phone.",
+    "MOBILE_ENROL_SERVER_REFUSED": "The licence server refused the request. Try again later.",
+    "MOBILE_ENROL_OFFLINE": "The licence server cannot be reached. Phones are managed online: check the connection and try again.",
+    "MOBILE_ENROL_PC_NOT_ACTIVATED": "This PC has no active licence: phones cannot be managed from it.",
+    "MOBILE_ENROL_DESKTOP_ONLY": "Phones are managed from a desktop PC.",
+    "MOBILE_ENROL_ACTOR_UNKNOWN": "Your account is not known to the other PCs yet: synchronise, then try again.",
+    "MOBILE_ENROL_PERSON_INVALID": "This person cannot be given a phone: the account must be active and sign in with its own password.",
+    "MOBILE_ENROL_SITE_INVALID": "This site cannot be chosen for a phone.",
+    "MOBILE_ENROL_ID_INVALID": "This identifier is not valid.",
+    "MOBILE_ENROL_SERVER_ANSWER_INVALID": "The licence server's answer could not be read."
   }
 }

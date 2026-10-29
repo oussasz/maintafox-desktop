@@ -447,6 +447,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification email dispatcher started");
     }
 
+    // Phone enrolments issued here and revocations of disabled accounts' phones
+    // (`commands::mobile_enrolment`; desktop only, non-fatal).
+    {
+        let phones_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::commands::mobile_enrolment::start_follow_up(phones_db).await;
+        });
+        info!("startup: phone enrolment follow-up started");
+    }
+
     // Daily digest of notifications (`notifications::digest`), supervised background task.
     {
         let digest_db = app_state.db.clone();
