@@ -599,3 +599,54 @@ async fn on_work_order_closed_for_pm_inner(
     let _ = generate_pm_for_plan(db, pm_plan_id, None, "wo_close").await;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    /// "pm_generation_runs insert missing" (mobile proof, desktop too): the run id was read by a
+    /// second statement, `SELECT ... last_insert_rowid()`, on the pool. Other tasks' inserts that
+    /// ran on the connection in between gave another row's id. Each run must get its own row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn each_generation_run_gets_its_own_row_while_other_inserts_run() {
+        let db = crate::db::test_db::migrated().await;
+        let mut tasks = tokio::task::JoinSet::new();
+        for i in 0..40 {
+            let runs = db.clone();
+            tasks.spawn(async move {
+                let source = format!("test-{i}");
+                let id = super::insert_generation_run_start(&runs, &source, None).await;
+                Some((source, id))
+            });
+            let others = db.clone();
+            tasks.spawn(async move {
+                others
+                    .execute(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        "INSERT INTO system_config (key, value, updated_at) VALUES (?, '1', '2026-10-29T00:00:00Z')",
+                        [format!("rowid-race-{i}").into()],
+                    ))
+                    .await
+                    .expect("other insert");
+                None
+            });
+        }
+        while let Some(joined) = tasks.join_next().await {
+            let Some((source, id)) = joined.expect("task") else {
+                continue;
+            };
+            let id = id.unwrap_or_else(|e| panic!("run {source}: {e}"));
+            let stored = crate::sync::test_support::scalar_opt_text(
+                &db,
+                "SELECT trigger_source FROM pm_generation_runs WHERE id = ?",
+                vec![id.into()],
+            )
+            .await;
+            assert_eq!(
+                stored.as_deref(),
+                Some(source.as_str()),
+                "run id {id} names another row"
+            );
+        }
+    }
+}
