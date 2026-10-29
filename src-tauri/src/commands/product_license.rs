@@ -1011,6 +1011,7 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
         baseline
             .restore_into(&tx, "app_settings", Some("setting_scope = 'tenant'"))
             .await?;
+        crate::db::baseline::ensure_no_dangling_rows(&tx, &tables_to_wipe).await?;
 
         tx.commit().await?;
         Ok(wiped_rows_total)

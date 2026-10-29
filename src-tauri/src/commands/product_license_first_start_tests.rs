@@ -2911,64 +2911,55 @@ async fn an_unsupported_stored_language_never_fails_the_reset() {
     );
 }
 
-/// Join defect (mobile step 0): a plant's second PC (or a phone) joins through the first
-/// activation, which resets its local data, then pulls the plant. A user holding a role that a
-/// MIGRATION created ("Maintenance Technician") must arrive whole: the role is never sent by sync
-/// (it has the same identity on every device), so the reset must give it back. Before the fix the
-/// assignment waited for the role and sign-in was refused ("Tenant scope violation").
-#[tokio::test]
-async fn a_joining_pc_receives_a_user_holding_a_migration_seeded_role() {
-    use crate::sync::test_support::{exec, scalar_i64, started_device_db, TestServer};
-
-    let mut server = TestServer::new();
-    let first_pc = started_device_db().await;
-    let user_sync_id = uuid::Uuid::new_v4().to_string();
+/// An account `username` on `db`, plant-wide with `role`, granted by `granted_by` (an account of
+/// `db`), as the Users screen writes them.
+async fn account_with_role(db: &DatabaseConnection, username: &str, role: &str, granted_by: &str) {
+    use crate::sync::test_support::exec;
     exec(
-        &first_pc,
-        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
-         force_password_change, created_at, updated_at) VALUES (?, 'tech.join', 'Tech', 'local', 1, 0, 0, \
-         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        vec![user_sync_id.clone().into()],
+        db,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin,          force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 0, 0,          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        vec![uuid::Uuid::new_v4().to_string().into(), username.into(), username.into()],
     )
     .await;
     exec(
-        &first_pc,
-        // Granted by the plant administrator (the seeded account, on every PC), as the Users screen does.
-        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
-         assigned_by_id, created_at, updated_at, row_version) \
-         SELECT ?, (SELECT id FROM user_accounts WHERE username = 'tech.join'), id, 'tenant', ?, \
-                (SELECT id FROM user_accounts WHERE username = 'admin'), \
-                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1 \
-           FROM roles WHERE name = 'Maintenance Technician'",
-        vec![uuid::Uuid::new_v4().to_string().into(), TENANT.into()],
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,          assigned_by_id, created_at, updated_at, row_version)          SELECT ?, (SELECT id FROM user_accounts WHERE username = ?), id, 'tenant', ?,                 (SELECT id FROM user_accounts WHERE username = ?),                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1            FROM roles WHERE name = ?",
+        vec![
+            uuid::Uuid::new_v4().to_string().into(),
+            username.into(),
+            TENANT.into(),
+            granted_by.into(),
+            role.into(),
+        ],
     )
     .await;
-    let sent = server.exchange("first", &first_pc).await;
-    assert!(sent.sent >= 2, "the user and the assignment are sent: {sent:?}");
+}
 
-    // The second PC: first activation with no tenant bound yet → local reset, then the first pull.
-    let second_pc = started_device_db().await;
+/// The second PC joins: first activation with no tenant bound yet → local reset, then the first
+/// pull. `username` must arrive with nothing waiting and be able to sign in there.
+async fn join_and_sign_in(server: &mut crate::sync::test_support::TestServer, username: &str) {
+    let second_pc = crate::sync::test_support::started_device_db().await;
     super::reset_local_tenant_runtime_data_impl(&second_pc)
         .await
         .expect("reset");
     let received = server.exchange("second", &second_pc).await;
     assert!(received.received >= 2, "{received:?}");
+    assert!(
+        received.materialized.conflicts == 0 && received.materialized.errors.is_empty(),
+        "{received:?}"
+    );
 
     let waiting = crate::sync::waiting::list_waiting_inbox_rows(&second_pc, Some(50))
         .await
         .expect("waiting rows");
     assert_eq!(waiting.total, 0, "nothing waits after the join: {waiting:#?}");
-    let user_id = scalar_i64(
+    let user_id = crate::sync::test_support::scalar_i64(
         &second_pc,
-        "SELECT coalesce(max(id), 0) FROM user_accounts WHERE username = 'tech.join'",
-        vec![],
+        "SELECT coalesce(max(id), 0) FROM user_accounts WHERE username = ?",
+        vec![username.into()],
     )
     .await;
-    assert!(user_id > 0, "the user arrived");
-    assert!(
-        received.materialized.conflicts == 0 && received.materialized.errors.is_empty(),
-        "{received:?}"
-    );
+    assert!(user_id > 0, "{username} arrived");
     let scope = crate::auth::session_manager::resolve_tenant_scope_for_user(
         &second_pc,
         i32::try_from(user_id).expect("id"),
@@ -2976,7 +2967,39 @@ async fn a_joining_pc_receives_a_user_holding_a_migration_seeded_role() {
     )
     .await
     .expect("tenant scope");
-    assert!(scope.is_some(), "the technician can sign in on the joining PC");
+    assert!(scope.is_some(), "{username} can sign in on the joining PC");
+}
+
+/// Join defect (mobile step 0): a plant's second PC (or a phone) joins through the first
+/// activation, which resets its local data, then pulls the plant. A user holding a role that a
+/// MIGRATION created ("Maintenance Technician") must arrive whole: the role is never sent by sync
+/// (it has the same identity on every device), so the reset must give it back. Before the fix the
+/// assignment waited for the role and sign-in was refused ("Tenant scope violation").
+#[tokio::test]
+async fn a_joining_pc_receives_a_user_holding_a_migration_seeded_role() {
+    let mut server = crate::sync::test_support::TestServer::new();
+    let first_pc = crate::sync::test_support::started_device_db().await;
+    // Granted by the plant administrator seeded on every PC.
+    account_with_role(&first_pc, "tech.join", "Maintenance Technician", "admin").await;
+    let sent = server.exchange("first", &first_pc).await;
+    assert!(sent.sent >= 2, "the user and the assignment are sent: {sent:?}");
+
+    join_and_sign_in(&mut server, "tech.join").await;
+}
+
+/// The same join when the grant comes from an administrator who reaches the joining PC by sync
+/// too (the plant's own administrator, made on the first PC): its account and role arrive in the
+/// same pull and the grant it made is accepted there.
+#[tokio::test]
+async fn a_joining_pc_accepts_a_grant_from_an_administrator_received_in_the_same_pull() {
+    let mut server = crate::sync::test_support::TestServer::new();
+    let first_pc = crate::sync::test_support::started_device_db().await;
+    account_with_role(&first_pc, "plant.admin", "Administrator", "admin").await;
+    account_with_role(&first_pc, "tech.join", "Maintenance Technician", "plant.admin").await;
+    let sent = server.exchange("first", &first_pc).await;
+    assert!(sent.sent >= 4, "both accounts and their roles are sent: {sent:?}");
+
+    join_and_sign_in(&mut server, "tech.join").await;
 }
 
 /// Every row the migrations create on a new database (roles, permissions, statuses, catalogs,
@@ -3016,6 +3039,39 @@ async fn the_reset_restores_every_row_the_migrations_create() {
         let (expected, found) = (count(&baseline).await, count(&db).await);
         if found < expected {
             missing.push(format!("{table}: {found} < {expected}"));
+        }
+        // Counts can be topped up by the seeders: the rows with a seeded identity (the same on
+        // every database, `sync::identity::seeded_entity_sync_id`) must each be back.
+        let has_sync_id = crate::sync::test_support::scalar_i64(
+            &baseline,
+            "SELECT count(*) FROM pragma_table_info(?) WHERE name = 'entity_sync_id'",
+            vec![table.clone().into()],
+        )
+        .await
+            > 0;
+        if has_sync_id {
+            let quoted = table.replace('"', "\"\"");
+            let ids = baseline
+                .query_all(Statement::from_string(
+                    DatabaseBackend::Sqlite,
+                    format!(
+                        "SELECT entity_sync_id AS id FROM \"{quoted}\"                           WHERE length(entity_sync_id) = 36 AND substr(entity_sync_id, 15, 1) = '8'"
+                    ),
+                ))
+                .await
+                .expect("seeded ids");
+            for id_row in ids {
+                let id: String = id_row.try_get("", "id").expect("id");
+                let held = crate::sync::test_support::scalar_i64(
+                    &db,
+                    &format!("SELECT count(*) FROM \"{quoted}\" WHERE entity_sync_id = ?"),
+                    vec![id.clone().into()],
+                )
+                .await;
+                if held != 1 {
+                    missing.push(format!("{table}: seeded row {id}"));
+                }
+            }
         }
     }
     assert!(

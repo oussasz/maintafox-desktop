@@ -95,7 +95,7 @@ impl MigrationBaseline {
             .query_all(Statement::from_string(
                 DatabaseBackend::Sqlite,
                 format!(
-                    "SELECT {literals} AS v FROM {} WHERE {} ORDER BY rowid",
+                    "SELECT {literals} AS v FROM {} WHERE {}",
                     quote_identifier(table),
                     filter.unwrap_or("1 = 1")
                 ),
@@ -122,6 +122,27 @@ impl MigrationBaseline {
         }
         Ok(inserted)
     }
+}
+
+/// Fails when a row of `tables` points at a row that does not exist. Foreign keys are off while
+/// the reset copies the baseline back: run once every table is back, so the rows they point at
+/// (the baseline's own, or the kept tables') are all in place.
+pub async fn ensure_no_dangling_rows(target: &impl ConnectionTrait, tables: &[String]) -> AppResult<()> {
+    for table in tables {
+        let dangling = target
+            .query_all(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!("PRAGMA foreign_key_check({})", quote_identifier(table)),
+            ))
+            .await?;
+        if !dangling.is_empty() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "baseline restore: {} row(s) of {table} point at missing rows",
+                dangling.len()
+            )));
+        }
+    }
+    Ok(())
 }
 
 struct Column {
