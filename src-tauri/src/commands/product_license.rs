@@ -953,8 +953,6 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
 
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
-    // The safety rule notices are otherwise never deleted: the reseed below guards them again.
-    crate::settings::received_notice::drop_notice_guards(db).await?;
     crate::sync::capture::suspend_capture(db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
@@ -964,6 +962,9 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
 
     let wipe_result: AppResult<u64> = async {
         let tx = db.begin().await?;
+        // The safety rule notices are otherwise never deleted: the reseed below guards them again.
+        // Dropped inside the transaction, so a reset that fails keeps them guarded.
+        crate::settings::received_notice::drop_notice_guards(&tx).await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
             let escaped = table.replace('"', "\"\"");

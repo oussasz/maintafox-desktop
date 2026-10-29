@@ -2917,13 +2917,24 @@ async fn account_with_role(db: &DatabaseConnection, username: &str, role: &str, 
     use crate::sync::test_support::exec;
     exec(
         db,
-        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin,          force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 0, 0,          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        vec![uuid::Uuid::new_v4().to_string().into(), username.into(), username.into()],
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES (?, ?, ?, 'local', 1, 0, 0, \
+         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        vec![
+            uuid::Uuid::new_v4().to_string().into(),
+            username.into(),
+            username.into(),
+        ],
     )
     .await;
     exec(
         db,
-        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,          assigned_by_id, created_at, updated_at, row_version)          SELECT ?, (SELECT id FROM user_accounts WHERE username = ?), id, 'tenant', ?,                 (SELECT id FROM user_accounts WHERE username = ?),                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1            FROM roles WHERE name = ?",
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+         assigned_by_id, created_at, updated_at, row_version) \
+         SELECT ?, (SELECT id FROM user_accounts WHERE username = ?), id, 'tenant', ?, \
+                (SELECT id FROM user_accounts WHERE username = ?), \
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1 \
+           FROM roles WHERE name = ?",
         vec![
             uuid::Uuid::new_v4().to_string().into(),
             username.into(),
@@ -2937,7 +2948,7 @@ async fn account_with_role(db: &DatabaseConnection, username: &str, role: &str, 
 
 /// The second PC joins: first activation with no tenant bound yet → local reset, then the first
 /// pull. `username` must arrive with nothing waiting and be able to sign in there.
-async fn join_and_sign_in(server: &mut crate::sync::test_support::TestServer, username: &str) {
+async fn join_and_sign_in(server: &mut crate::sync::test_support::TestServer, username: &str) -> DatabaseConnection {
     let second_pc = crate::sync::test_support::started_device_db().await;
     super::reset_local_tenant_runtime_data_impl(&second_pc)
         .await
@@ -2968,6 +2979,7 @@ async fn join_and_sign_in(server: &mut crate::sync::test_support::TestServer, us
     .await
     .expect("tenant scope");
     assert!(scope.is_some(), "{username} can sign in on the joining PC");
+    second_pc
 }
 
 /// Join defect (mobile step 0): a plant's second PC (or a phone) joins through the first
@@ -2999,7 +3011,21 @@ async fn a_joining_pc_accepts_a_grant_from_an_administrator_received_in_the_same
     let sent = server.exchange("first", &first_pc).await;
     assert!(sent.sent >= 4, "both accounts and their roles are sent: {sent:?}");
 
-    join_and_sign_in(&mut server, "tech.join").await;
+    let second_pc = join_and_sign_in(&mut server, "tech.join").await;
+    // The grant was judged on what the joining PC holds, not accepted for review only: the
+    // administrator holds the right to manage users there (the Administrator role is back whole).
+    let admin_id = crate::sync::test_support::scalar_i64(
+        &second_pc,
+        "SELECT coalesce(max(id), 0) FROM user_accounts WHERE username = 'plant.admin'",
+        vec![],
+    )
+    .await;
+    assert!(
+        crate::settings::site::holds_tenant_right(&second_pc, admin_id, crate::rbac::permissions::ADM_USERS)
+            .await
+            .expect("right"),
+        "plant.admin holds adm.users on the joining PC"
+    );
 }
 
 /// Every row the migrations create on a new database (roles, permissions, statuses, catalogs,
