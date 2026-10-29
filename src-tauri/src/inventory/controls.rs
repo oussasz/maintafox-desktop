@@ -241,37 +241,29 @@ async fn insert_count_transaction<C: ConnectionTrait>(
         ));
     }
     let entity_sync_id = count_movement_sync_id(db, movement_type, session_id, article_id, location_id).await?;
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_transactions
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_transactions
             (entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
              source_type, source_id, source_ref, reason, performed_by_id, performed_at, row_version)
          VALUES (?, ?, ?, ?, NULL, ?, ?, 'COUNT_SESSION', ?, ?, ?, ?, ?, 1)",
-        [
-            entity_sync_id.clone().into(),
-            article_id.into(),
-            warehouse_id.into(),
-            location_id.into(),
-            movement_type.into(),
-            qty.into(),
-            session_id.into(),
-            source_ref.into(),
-            reason.map_or(Value::String(None), Value::from),
-            actor_id.map_or(Value::BigInt(None), Value::from),
-            now_iso().into(),
-        ],
-    ))
-    .await?;
-    let tx_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                entity_sync_id.clone().into(),
+                article_id.into(),
+                warehouse_id.into(),
+                location_id.into(),
+                movement_type.into(),
+                qty.into(),
+                session_id.into(),
+                source_ref.into(),
+                reason.map_or(Value::String(None), Value::from),
+                actor_id.map_or(Value::BigInt(None), Value::from),
+                now_iso().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Could not read transaction id.".to_string()])
-        })?;
-    Ok((tx_row.try_get("", "id")?, entity_sync_id))
+        .await?;
+    Ok((crate::db::inserted_id(&inserted)?, entity_sync_id))
 }
 
 pub async fn create_count_session(
@@ -280,7 +272,8 @@ pub async fn create_count_session(
 ) -> AppResult<InventoryCountSession> {
     // A variance is judged against the plant's four-eyes tolerance when it is entered
     // (`count_four_eyes`); the session records no tolerance of its own (migration 259).
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_count_sessions
             (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id, created_at, updated_at)
@@ -295,16 +288,7 @@ pub async fn create_count_session(
         ],
     ))
     .await?;
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Session creation failed.".to_string()])
-        })?;
-    ensure_count_session(db, row.try_get("", "id")?).await
+    ensure_count_session(db, crate::db::inserted_id(&inserted)?).await
 }
 
 pub async fn transition_count_session(
@@ -1324,79 +1308,81 @@ pub(crate) async fn record_location_count_in<C: ConnectionTrait>(
     } else {
         Value::from(count.actor_id)
     };
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_count_sessions
+    let session_insert = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_count_sessions
             (session_code, warehouse_id, location_id, status, critical_abs_threshold, opened_by_id,
              submitted_by_id, submitted_at, posted_by_id, posted_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            session_code.clone().into(),
-            warehouse_id.into(),
-            count.location_id.into(),
-            (if pending_approval { "submitted" } else { "posted" }).into(),
-            count.actor_id.into(),
-            count.actor_id.into(),
-            now.clone().into(),
-            posted_by.clone(),
-            if pending_approval {
-                Value::String(None)
-            } else {
-                Value::from(now.clone())
-            },
-            now.clone().into(),
-            now.clone().into(),
-        ],
-    ))
-    .await?;
-    let session_id = last_insert_id(tx).await?;
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_count_lines
+            [
+                session_code.clone().into(),
+                warehouse_id.into(),
+                count.location_id.into(),
+                (if pending_approval { "submitted" } else { "posted" }).into(),
+                count.actor_id.into(),
+                count.actor_id.into(),
+                now.clone().into(),
+                posted_by.clone(),
+                if pending_approval {
+                    Value::String(None)
+                } else {
+                    Value::from(now.clone())
+                },
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    let session_id = crate::db::inserted_id(&session_insert)?;
+    let line_insert = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_count_lines
             (session_id, article_id, warehouse_id, location_id, system_qty, counted_qty, variance_qty,
              variance_reason_code, is_critical, approval_required, approved_by_id, approved_at, approval_note,
              counted_by_id, self_approved, created_at, updated_at, count_replica_id, count_follows_json, count_path,
              entry_unit_cost, entry_variance_value)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            session_id.into(),
-            count.article_id.into(),
-            warehouse_id.into(),
-            count.location_id.into(),
-            system_qty.into(),
-            count.counted_qty.into(),
-            variance_qty.into(),
-            if has_variance {
-                Value::from(count.variance_reason_code)
-            } else {
-                Value::String(None)
-            },
-            i64::from(verdict.above_tolerance).into(),
-            i64::from(has_variance).into(),
-            posted_by,
-            if pending_approval {
-                Value::String(None)
-            } else {
-                Value::from(now.clone())
-            },
-            if pending_approval {
-                Value::String(None)
-            } else {
-                Value::from(count.evidence)
-            },
-            count.actor_id.into(),
-            i64::from(self_approved).into(),
-            now.clone().into(),
-            now.clone().into(),
-            count.mark.0.into(),
-            count.mark.1.into(),
-            crate::inventory::negative_stock::COUNT_PATH_RECONCILIATION.into(),
-            entry_unit_cost.into(),
-            entry_variance_value.into(),
-        ],
-    ))
-    .await?;
-    let line_id = last_insert_id(tx).await?;
+            [
+                session_id.into(),
+                count.article_id.into(),
+                warehouse_id.into(),
+                count.location_id.into(),
+                system_qty.into(),
+                count.counted_qty.into(),
+                variance_qty.into(),
+                if has_variance {
+                    Value::from(count.variance_reason_code)
+                } else {
+                    Value::String(None)
+                },
+                i64::from(verdict.above_tolerance).into(),
+                i64::from(has_variance).into(),
+                posted_by,
+                if pending_approval {
+                    Value::String(None)
+                } else {
+                    Value::from(now.clone())
+                },
+                if pending_approval {
+                    Value::String(None)
+                } else {
+                    Value::from(count.evidence)
+                },
+                count.actor_id.into(),
+                i64::from(self_approved).into(),
+                now.clone().into(),
+                now.clone().into(),
+                count.mark.0.into(),
+                count.mark.1.into(),
+                crate::inventory::negative_stock::COUNT_PATH_RECONCILIATION.into(),
+                entry_unit_cost.into(),
+                entry_variance_value.into(),
+            ],
+        ))
+        .await?;
+    let line_id = crate::db::inserted_id(&line_insert)?;
     let transaction_id = if has_variance && !pending_approval {
         Some(
             post_location_line_in(
@@ -1639,19 +1625,6 @@ pub(crate) async fn approve_location_count_in<C: ConnectionTrait>(
         tolerance_json: approval_tolerance_json(pending.is_critical, &tolerance),
         replaced_sessions: Vec::new(),
     })
-}
-
-async fn last_insert_id<C: ConnectionTrait>(db: &C) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Could not read the new row id.".to_string()])
-        })?;
-    Ok(row.try_get("", "id")?)
 }
 
 pub async fn run_reconciliation(

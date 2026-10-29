@@ -286,36 +286,30 @@ async fn append_stock_event<C: ConnectionTrait>(
     // today; back-dated postings are checked by their command before they reach the ledger).
     crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = uuid::Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_transactions
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_transactions
             (entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
              source_type, source_id, source_ref, reason, performed_by_id, performed_at, row_version)
          VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            entity_sync_id.into(),
-            article_id.into(),
-            warehouse_id.into(),
-            location_id.into(),
-            movement_type.into(),
-            quantity.into(),
-            source_type.into(),
-            source_id.map_or(Value::BigInt(None), Value::from),
-            source_ref.map_or(Value::String(None), Value::from),
-            reason.map_or(Value::String(None), Value::from),
-            performed_by_id.map_or(Value::BigInt(None), Value::from),
-            now_iso().into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                entity_sync_id.into(),
+                article_id.into(),
+                warehouse_id.into(),
+                location_id.into(),
+                movement_type.into(),
+                quantity.into(),
+                source_type.into(),
+                source_id.map_or(Value::BigInt(None), Value::from),
+                source_ref.map_or(Value::String(None), Value::from),
+                reason.map_or(Value::String(None), Value::from),
+                performed_by_id.map_or(Value::BigInt(None), Value::from),
+                now_iso().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
-    Ok(id_row.try_get("", "id")?)
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 fn guard_transition(current: &str, next: &str, allowed: &[(&str, &[&str])], entity: &str) -> AppResult<()> {
@@ -1402,7 +1396,8 @@ pub async fn create_repairable_order(
         ensure_supplier_active(db, vendor_supplier_id).await?;
     }
     let code = next_doc_number("REP");
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO repairable_orders
             (order_code, article_id, quantity, source_location_id, return_location_id, linked_po_line_id, linked_reservation_id,
@@ -1425,18 +1420,7 @@ pub async fn create_repairable_order(
         ],
     ))
     .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "GATE_INV_SAVE_FAILED: Unable to create repairable order.".to_string()
-            ])
-        })?
-        .try_get("", "id")?;
+    let id = crate::db::inserted_id(&inserted)?;
     record_state_event(
         db,
         "repairable_order",

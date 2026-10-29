@@ -1382,41 +1382,35 @@ pub async fn create_budget_actual(
         posted_at_sql
     );
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        sql,
-        [
-            input.budget_version_id.into(),
-            input.cost_center_id.into(),
-            input.period_month.into(),
-            budget_bucket.into(),
-            input.amount_source.into(),
-            source_currency.into(),
-            input.amount_base.into(),
-            base_currency.into(),
-            source_type.into(),
-            source_id.into(),
-            input.work_order_id.into(),
-            input.equipment_id.into(),
-            posting_status.into(),
-            optional_trimmed(&input.provisional_reason).into(),
-            posted_by_id.into(),
-            input.personnel_id.into(),
-            input.team_id.into(),
-            optional_trimmed(&input.rate_card_lane).into(),
-            event_at.into(),
-        ],
-    ))
-    .await?;
-
-    let inserted = db
-        .query_one(Statement::from_string(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            sql,
+            [
+                input.budget_version_id.into(),
+                input.cost_center_id.into(),
+                input.period_month.into(),
+                budget_bucket.into(),
+                input.amount_source.into(),
+                source_currency.into(),
+                input.amount_base.into(),
+                base_currency.into(),
+                source_type.into(),
+                source_id.into(),
+                input.work_order_id.into(),
+                input.equipment_id.into(),
+                posting_status.into(),
+                optional_trimmed(&input.provisional_reason).into(),
+                posted_by_id.into(),
+                input.personnel_id.into(),
+                input.team_id.into(),
+                optional_trimmed(&input.rate_card_lane).into(),
+                event_at.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget actual id missing.")))?;
-    let actual_id: i64 = inserted.try_get("", "id")?;
+        .await?;
+
+    let actual_id = crate::db::inserted_id(&insert_result)?;
     list_budget_actuals(
         db,
         BudgetActualFilter {
@@ -1566,9 +1560,10 @@ pub async fn reverse_budget_actual(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO budget_actuals (
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO budget_actuals (
             budget_version_id,
             cost_center_id,
             period_month,
@@ -1593,27 +1588,27 @@ pub async fn reverse_budget_actual(
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'reversal', ?, ?, ?, 'reversed',
                    strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, ?, ?, ?, ?, ?,
                    strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
-        [
-            current_budget_version_id.into(),
-            current_cost_center_id.into(),
-            current_period_month.into(),
-            current_budget_bucket.into(),
-            (-current_amount_source).into(),
-            current_source_currency.into(),
-            (-current_amount_base).into(),
-            current_base_currency.into(),
-            format!("REV-{}-{}", current_id, current_source_id).into(),
-            current_work_order_id.into(),
-            current_equipment_id.into(),
-            actor_user_id.into(),
-            current_id.into(),
-            reason.into(),
-            current_personnel_id.into(),
-            current_team_id.into(),
-            current_rate_card_lane.into(),
-        ],
-    ))
-    .await?;
+            [
+                current_budget_version_id.into(),
+                current_cost_center_id.into(),
+                current_period_month.into(),
+                current_budget_bucket.into(),
+                (-current_amount_source).into(),
+                current_source_currency.into(),
+                (-current_amount_base).into(),
+                current_base_currency.into(),
+                format!("REV-{}-{}", current_id, current_source_id).into(),
+                current_work_order_id.into(),
+                current_equipment_id.into(),
+                actor_user_id.into(),
+                current_id.into(),
+                reason.into(),
+                current_personnel_id.into(),
+                current_team_id.into(),
+                current_rate_card_lane.into(),
+            ],
+        ))
+        .await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1631,14 +1626,8 @@ pub async fn reverse_budget_actual(
     ))
     .await?;
 
-    let inserted = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted reversal id missing.")))?;
-    let reversal_id: i64 = inserted.try_get("", "id")?;
+    // The id comes from the reversal INSERT's own result, not from the UPDATE that ran after it.
+    let reversal_id = crate::db::inserted_id(&insert_result)?;
 
     list_budget_actuals(
         db,
@@ -1723,9 +1712,10 @@ pub async fn create_budget_commitment(
     let base_currency = required_trimmed("Base currency", &input.base_currency)?;
     let commitment_status = optional_trimmed(&input.commitment_status).unwrap_or_else(|| "open".to_string());
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO budget_commitments (
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO budget_commitments (
             budget_version_id,
             cost_center_id,
             period_month,
@@ -1745,37 +1735,30 @@ pub async fn create_budget_commitment(
             due_at,
             explainability_note
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            input.budget_version_id.into(),
-            input.cost_center_id.into(),
-            input.period_month.into(),
-            budget_bucket.into(),
-            commitment_type.into(),
-            source_type.into(),
-            source_id.into(),
-            input.obligation_amount.into(),
-            source_currency.into(),
-            input.base_amount.into(),
-            base_currency.into(),
-            commitment_status.into(),
-            input.work_order_id.into(),
-            input.contract_id.into(),
-            input.purchase_order_id.into(),
-            optional_trimmed(&input.planning_commitment_ref).into(),
-            optional_trimmed(&input.due_at).into(),
-            optional_trimmed(&input.explainability_note).into(),
-        ],
-    ))
-    .await?;
-
-    let inserted = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                input.budget_version_id.into(),
+                input.cost_center_id.into(),
+                input.period_month.into(),
+                budget_bucket.into(),
+                commitment_type.into(),
+                source_type.into(),
+                source_id.into(),
+                input.obligation_amount.into(),
+                source_currency.into(),
+                input.base_amount.into(),
+                base_currency.into(),
+                commitment_status.into(),
+                input.work_order_id.into(),
+                input.contract_id.into(),
+                input.purchase_order_id.into(),
+                optional_trimmed(&input.planning_commitment_ref).into(),
+                optional_trimmed(&input.due_at).into(),
+                optional_trimmed(&input.explainability_note).into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget commitment id missing.")))?;
-    let commitment_id: i64 = inserted.try_get("", "id")?;
+        .await?;
+
+    let commitment_id = crate::db::inserted_id(&insert_result)?;
     list_budget_commitments(
         db,
         BudgetCommitmentFilter {
@@ -1895,9 +1878,10 @@ pub async fn generate_budget_forecasts(
         include_pm, include_backlog, include_shutdown, include_planning, include_burn_rate
     );
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO budget_forecast_runs (
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO budget_forecast_runs (
             budget_version_id,
             generated_by_id,
             idempotency_key,
@@ -1905,21 +1889,23 @@ pub async fn generate_budget_forecasts(
             method_mix_json,
             confidence_policy_json
          ) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            input.budget_version_id.into(),
-            actor_user_id.into(),
-            idempotency_key.into(),
-            scope_signature.into(),
-            method_mix_json.into(),
-            optional_trimmed(&input.confidence_policy_json).into(),
-        ],
-    ))
-    .await?;
+            [
+                input.budget_version_id.into(),
+                actor_user_id.into(),
+                idempotency_key.into(),
+                scope_signature.into(),
+                method_mix_json.into(),
+                optional_trimmed(&input.confidence_policy_json).into(),
+            ],
+        ))
+        .await?;
 
+    let run_id = crate::db::inserted_id(&insert_result)?;
     let run_row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM budget_forecast_runs WHERE id = last_insert_rowid()".to_string(),
+            "SELECT * FROM budget_forecast_runs WHERE id = ?",
+            [run_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted forecast run missing.")))?;
@@ -2166,9 +2152,10 @@ pub async fn create_budget_variance_review(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO budget_variance_reviews (
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO budget_variance_reviews (
             budget_version_id,
             cost_center_id,
             period_month,
@@ -2181,29 +2168,22 @@ pub async fn create_budget_variance_review(
             review_commentary,
             snapshot_context_json
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
-        [
-            input.budget_version_id.into(),
-            input.cost_center_id.into(),
-            input.period_month.into(),
-            budget_bucket.into(),
-            input.variance_amount.into(),
-            input.variance_pct.into(),
-            driver_code.into(),
-            input.action_owner_id.into(),
-            review_commentary.into(),
-            snapshot_context_json.into(),
-        ],
-    ))
-    .await?;
-
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                input.budget_version_id.into(),
+                input.cost_center_id.into(),
+                input.period_month.into(),
+                budget_bucket.into(),
+                input.variance_amount.into(),
+                input.variance_pct.into(),
+                driver_code.into(),
+                input.action_owner_id.into(),
+                review_commentary.into(),
+                snapshot_context_json.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted variance review id missing.")))?;
-    let review_id: i64 = row.try_get("", "id")?;
+        .await?;
+
+    let review_id = crate::db::inserted_id(&insert_result)?;
     list_budget_variance_reviews(
         db,
         BudgetVarianceReviewFilter {

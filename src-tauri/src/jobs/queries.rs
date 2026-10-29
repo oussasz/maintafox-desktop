@@ -9,29 +9,19 @@ fn dec(f: &str, e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("computation_jobs.{f}: {e}"))
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    row.try_get("", "id").map_err(|e| dec("id", e))
-}
-
 pub async fn insert_computation_job(db: &DatabaseConnection, job_kind: &str, input_json: &str) -> AppResult<i64> {
     let eid = format!("computation_job:{}", Uuid::new_v4());
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO computation_jobs (
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO computation_jobs (
             entity_sync_id, job_kind, status, progress_pct, input_json, created_at, row_version
         ) VALUES (?, ?, 'pending', 0, ?, ?, 1)",
-        [eid.into(), job_kind.into(), input_json.into(), now.into()],
-    ))
-    .await?;
-    last_insert_id(db).await
+            [eid.into(), job_kind.into(), input_json.into(), now.into()],
+        ))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 pub async fn update_job_running(db: &DatabaseConnection, id: i64) -> AppResult<()> {

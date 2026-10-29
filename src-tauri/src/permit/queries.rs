@@ -1382,41 +1382,35 @@ async fn upsert_permit_type_in(
     }
 
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_types (entity_sync_id, code, name, description, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
          max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, \
          requires_energy_isolation, requires_three_person_removal, three_person_changed_by_id, \
          three_person_changed_at, three_person_change_reason, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.code.into(),
-            input.name.into(),
-            desc.into(),
-            i64::from(input.requires_hse_approval).into(),
-            i64::from(input.requires_operations_approval).into(),
-            i64::from(input.requires_atmospheric_test).into(),
-            opt_f64(input.max_duration_hours),
-            ppe.into(),
-            rules.into(),
-            i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
-            i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
-            trace.by.into(),
-            trace.at.clone().into(),
-            trace.reason.clone().into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.code.into(),
+                input.name.into(),
+                desc.into(),
+                i64::from(input.requires_hse_approval).into(),
+                i64::from(input.requires_operations_approval).into(),
+                i64::from(input.requires_atmospheric_test).into(),
+                opt_f64(input.max_duration_hours),
+                ppe.into(),
+                rules.into(),
+                i64::from(input.requires_energy_isolation.unwrap_or(false)).into(),
+                i64::from(input.requires_three_person_removal.unwrap_or(false)).into(),
+                trace.by.into(),
+                trace.at.clone().into(),
+                trace.reason.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let created = get_permit_type(db, new_id).await?.expect("row");
     if let Some(reason) = three_person_reason {
         audit_three_person_change(db, &created, None, reason, writer).await?;
@@ -1734,7 +1728,7 @@ async fn create_work_permit_in(
 
     let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
-    db.execute(Statement::from_sql_and_values(
+    let insert_result = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id,          asset_id, entity_id, status, requested_at, expires_at, row_version, created_by_id)          VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1, ?)",
         [
@@ -1749,14 +1743,7 @@ async fn create_work_permit_in(
         ],
     ))
     .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     // `PTW-<year>-<device>-NNNNNN`: unique across devices (`sync::device_code`).
     let code = crate::sync::code_clash::WORK_PERMITS.next_number(db).await?;
     db.execute(Statement::from_sql_and_values(
@@ -2425,28 +2412,22 @@ async fn suspend_work_permit_in(
     let suspended_at = now_ts();
     let react = input.reactivation_conditions.unwrap_or_default();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_suspensions (entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-         reactivation_conditions, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            input.reason.into(),
-            actor_id.into(),
-            suspended_at.clone().into(),
-            react.into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO permit_suspensions (entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
+         reactivation_conditions, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                input.reason.into(),
+                actor_id.into(),
+                suspended_at.clone().into(),
+                react.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let sid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let sid = crate::db::inserted_id(&insert_result)?;
     let new_wp_rv = current.row_version + 1;
     let aff = db
         .execute(Statement::from_sql_and_values(
@@ -2549,31 +2530,25 @@ async fn append_permit_handover_log_in(
     }
     let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
          confirmation_note, signed_at, signed_by_id, received_by_id, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            from_role.into(),
-            to_role.into(),
-            note.into(),
-            signed.into(),
-            signer_id.into(),
-            opt_i64(input.received_by_id),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                from_role.into(),
+                to_role.into(),
+                note.into(),
+                signed.into(),
+                signer_id.into(),
+                opt_i64(input.received_by_id),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2895,31 +2870,25 @@ async fn upsert_permit_isolation_in(
     }
 
     let sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
-        // the lists, no original entry.
-        "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            // `energy_type` / `isolation_method` are the pre-225 texts (NOT NULL): empty = recorded on
+            // the lists, no original entry.
+            "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
          isolation_method, energy_type_id, isolation_method_id, lock_number, row_version) \
          VALUES (?, ?, ?, '', '', ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            input.permit_id.into(),
-            point.into(),
-            energy_id.into(),
-            method_id.into(),
-            opt_string(lock_number),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                input.permit_id.into(),
+                point.into(),
+                energy_id.into(),
+                method_id.into(),
+                opt_string(lock_number),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let created = get_permit_isolation(db, new_id).await?;
     Ok(created)
 }
@@ -4123,27 +4092,21 @@ async fn record_loto_card_print_in(
     }
     let sync_id = Uuid::new_v4().to_string();
     let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO loto_card_print_jobs (permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, \
-         row_version) VALUES (?, ?, ?, ?, ?, 1)",
-        [
-            input.permit_id.into(),
-            input.isolation_id.into(),
-            printed_at.clone().into(),
-            actor_id.into(),
-            sync_id.clone().into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO loto_card_print_jobs (permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, \
+         row_version) VALUES (?, ?, ?, ?, ?, 1)",
+            [
+                input.permit_id.into(),
+                input.isolation_id.into(),
+                printed_at.clone().into(),
+                actor_id.into(),
+                sync_id.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+    let new_id = crate::db::inserted_id(&insert_result)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

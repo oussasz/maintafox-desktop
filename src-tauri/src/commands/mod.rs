@@ -32,6 +32,7 @@ pub mod license;
 pub mod locale;
 pub mod lookup;
 pub mod markov_mc;
+pub mod mobile;
 pub mod notifications;
 pub mod org;
 pub mod permit;

@@ -178,33 +178,27 @@ pub async fn create_rule(
     }
 
     let now = Utc::now().to_rfc3339();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO org_type_relationship_rules
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO org_type_relationship_rules
           (structure_model_id, parent_type_id, child_type_id,
            min_children, max_children, created_at)
           VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            payload.structure_model_id.into(),
-            payload.parent_type_id.into(),
-            payload.child_type_id.into(),
-            payload.min_children.into(),
-            payload.max_children.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-
-    // Retrieve the inserted rule via last_insert_rowid
-    let id_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id",
-            [],
+            [
+                payload.structure_model_id.into(),
+                payload.parent_type_id.into(),
+                payload.child_type_id.into(),
+                payload.min_children.into(),
+                payload.max_children.into(),
+                now.into(),
+            ],
         ))
-        .await?
-        .expect("last_insert_rowid always returns a row");
-    let new_id: i32 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        .await?;
+
+    // The id comes from the INSERT's own result, not from a second statement.
+    let new_id = i32::try_from(crate::db::inserted_id(&insert_result)?)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("inserted rule id out of range")))?;
 
     tracing::info!(
         rule_id = new_id,

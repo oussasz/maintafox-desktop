@@ -354,27 +354,30 @@ pub async fn create_availability_block(
 
     let is_critical = input.is_critical.unwrap_or(false) || tag == super::reference_lists::ABSENCE_TAG_CRITICAL;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO personnel_availability_blocks
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel_availability_blocks
             (personnel_id, block_type, start_at, end_at, reason_note, is_critical, created_by_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            input.personnel_id.into(),
-            block_type.into(),
-            input.start_at.clone().into(),
-            input.end_at.clone().into(),
-            input.reason_note.clone().into(),
-            (if is_critical { 1 } else { 0 }).into(),
-            actor_id.into(),
-        ],
-    ))
-    .await?;
+            [
+                input.personnel_id.into(),
+                block_type.into(),
+                input.start_at.clone().into(),
+                input.end_at.clone().into(),
+                input.reason_note.clone().into(),
+                (if is_critical { 1 } else { 0 }).into(),
+                actor_id.into(),
+            ],
+        ))
+        .await?;
 
+    let block_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{BLOCK_SELECT_SQL} WHERE b.id = last_insert_rowid()"),
+            format!("{BLOCK_SELECT_SQL} WHERE b.id = ?"),
+            [block_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("availability block insert failed")))?;

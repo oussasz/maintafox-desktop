@@ -241,33 +241,36 @@ pub async fn create_rate(
         )]));
     }
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO currency_exchange_rates
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO currency_exchange_rates
             (entity_sync_id, from_currency, to_currency, rate, valid_from, source, is_active, row_version,
              created_by_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
-        [
-            uuid::Uuid::new_v4().to_string().into(),
-            from.into(),
-            to.into(),
-            input.rate.into(),
-            input.valid_from.trim().to_string().into(),
-            input
-                .source
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .map_or(Value::String(None), Value::from),
-            actor_id.map_or(Value::BigInt(None), Value::from),
-            now.clone().into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+            [
+                uuid::Uuid::new_v4().to_string().into(),
+                from.into(),
+                to.into(),
+                input.rate.into(),
+                input.valid_from.trim().to_string().into(),
+                input
+                    .source
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .map_or(Value::String(None), Value::from),
+                actor_id.map_or(Value::BigInt(None), Value::from),
+                now.clone().into(),
+                now.into(),
+            ],
+        ))
+        .await?;
+    let rate_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("{RATE_SELECT} WHERE r.id = last_insert_rowid()"),
+            format!("{RATE_SELECT} WHERE r.id = ?"),
+            [rate_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created rate not found")))?;

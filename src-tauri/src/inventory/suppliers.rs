@@ -247,40 +247,32 @@ pub async fn upsert_supplier(
         .await?;
         get_supplier(db, id).await
     } else {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO inventory_suppliers
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO inventory_suppliers
                 (code, name, external_company_id, status_code, payment_terms_code, currency_value_id,
                  currency_code, incoterms_code, default_lead_time_days, default_buyer_person_id, is_active,
                  row_version, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            [
-                input.code.into(),
-                input.name.into(),
-                input.external_company_id.map_or(Value::BigInt(None), Value::from),
-                input.status_code.into(),
-                input.payment_terms_code.map_or(Value::String(None), Value::from),
-                input.currency_value_id.map_or(Value::BigInt(None), Value::from),
-                currency_code.clone().map_or(Value::String(None), Value::from),
-                input.incoterms_code.map_or(Value::String(None), Value::from),
-                input.default_lead_time_days.map_or(Value::BigInt(None), Value::from),
-                input.default_buyer_person_id.map_or(Value::BigInt(None), Value::from),
-                is_active.into(),
-                now_iso().into(),
-                now_iso().into(),
-            ],
-        ))
-        .await?;
-        let id: i64 = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
+                [
+                    input.code.into(),
+                    input.name.into(),
+                    input.external_company_id.map_or(Value::BigInt(None), Value::from),
+                    input.status_code.into(),
+                    input.payment_terms_code.map_or(Value::String(None), Value::from),
+                    input.currency_value_id.map_or(Value::BigInt(None), Value::from),
+                    currency_code.clone().map_or(Value::String(None), Value::from),
+                    input.incoterms_code.map_or(Value::String(None), Value::from),
+                    input.default_lead_time_days.map_or(Value::BigInt(None), Value::from),
+                    input.default_buyer_person_id.map_or(Value::BigInt(None), Value::from),
+                    is_active.into(),
+                    now_iso().into(),
+                    now_iso().into(),
+                ],
             ))
-            .await?
-            .ok_or_else(|| {
-                AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create supplier.".to_string()])
-            })?
-            .try_get("", "id")?;
+            .await?;
+        let id = crate::db::inserted_id(&inserted)?;
         get_supplier(db, id).await
     }
 }
@@ -579,34 +571,29 @@ pub async fn upsert_supplier_price(
         .await?;
         id
     } else {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO inventory_supplier_prices
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO inventory_supplier_prices
                 (supplier_id, article_id, unit_price, currency_value_id, price_unit_value_id,
                  min_order_qty, valid_from, valid_to, is_active, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                input.supplier_id.into(),
-                input.article_id.into(),
-                input.unit_price.into(),
-                input.currency_value_id.map_or(Value::BigInt(None), Value::from),
-                input.price_unit_value_id.map_or(Value::BigInt(None), Value::from),
-                input.min_order_qty.map_or(Value::Double(None), Value::from),
-                valid_from.into(),
-                input.valid_to.clone().map_or(Value::String(None), Value::from),
-                price_is_active.into(),
-                now_iso().into(),
-                now_iso().into(),
-            ],
-        ))
-        .await?;
-        db.query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create price.".to_string()]))?
-        .try_get("", "id")?
+                [
+                    input.supplier_id.into(),
+                    input.article_id.into(),
+                    input.unit_price.into(),
+                    input.currency_value_id.map_or(Value::BigInt(None), Value::from),
+                    input.price_unit_value_id.map_or(Value::BigInt(None), Value::from),
+                    input.min_order_qty.map_or(Value::Double(None), Value::from),
+                    valid_from.into(),
+                    input.valid_to.clone().map_or(Value::String(None), Value::from),
+                    price_is_active.into(),
+                    now_iso().into(),
+                    now_iso().into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
 
     let row = db
@@ -897,33 +884,24 @@ pub async fn upsert_supplier_contact(
         .await?;
         id
     } else {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO inventory_supplier_contacts
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO inventory_supplier_contacts
                 (supplier_id, contact_name, contact_role, phone, email, is_primary, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                input.supplier_id.into(),
-                input.contact_name.trim().to_string().into(),
-                input.contact_role.clone().map_or(Value::String(None), Value::from),
-                input.phone.clone().map_or(Value::String(None), Value::from),
-                input.email.clone().map_or(Value::String(None), Value::from),
-                is_primary.into(),
-                now_iso().into(),
-            ],
-        ))
-        .await?;
-        db.query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .and_then(|r| r.try_get::<i64>("", "id").ok())
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "GATE_INV_SAVE_FAILED: Unable to create supplier contact.".to_string()
-            ])
-        })?
+                [
+                    input.supplier_id.into(),
+                    input.contact_name.trim().to_string().into(),
+                    input.contact_role.clone().map_or(Value::String(None), Value::from),
+                    input.phone.clone().map_or(Value::String(None), Value::from),
+                    input.email.clone().map_or(Value::String(None), Value::from),
+                    is_primary.into(),
+                    now_iso().into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
 
     list_supplier_contacts(db, input.supplier_id)

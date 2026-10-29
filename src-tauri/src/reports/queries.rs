@@ -214,32 +214,22 @@ pub async fn insert_run(
     export_format: &str,
 ) -> AppResult<i64> {
     let now = Utc::now().to_rfc3339();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO report_runs (schedule_id, template_id, user_id, status, export_format, started_at)
-         VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            schedule_id.into(),
-            template_id.into(),
-            user_id.into(),
-            status.into(),
-            export_format.into(),
-            now.clone().into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_string(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            "INSERT INTO report_runs (schedule_id, template_id, user_id, status, export_format, started_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                schedule_id.into(),
+                template_id.into(),
+                user_id.into(),
+                status.into(),
+                export_format.into(),
+                now.clone().into(),
+            ],
         ))
         .await?;
-    let id: i64 = row
-        .as_ref()
-        .ok_or_else(|| AppError::Database(sea_orm::DbErr::Custom("last_insert_rowid".into())))?
-        .try_get("", "id")
-        .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?;
-    Ok(id)
+    crate::db::inserted_id(&inserted)
 }
 
 pub async fn finish_run_success(
@@ -324,7 +314,8 @@ pub async fn upsert_schedule(
         .await?;
         Ok(id)
     } else {
-        db.execute(Statement::from_sql_and_values(
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO report_schedules (user_id, template_id, cron_expr, export_format, enabled, next_run_at, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -340,16 +331,7 @@ pub async fn upsert_schedule(
             ],
         ))
         .await?;
-        let row = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?;
-        row.as_ref()
-            .ok_or_else(|| AppError::Database(sea_orm::DbErr::Custom("last_insert_rowid".into())))?
-            .try_get("", "id")
-            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))
+        crate::db::inserted_id(&inserted)
     }
 }
 
