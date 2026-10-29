@@ -82,9 +82,10 @@ pub struct ClientTimeouts {
 }
 
 impl ClientTimeouts {
-    /// The licence and phone-enrolment calls (activation preview, claim, policy refresh, phone
-    /// enrolment): a person waits on the screen for the answer, so a bad network route gives up
-    /// quickly and the screen offers to retry, instead of the sync worker's long limits.
+    /// The licence calls of `commands::product_license::post_activation_call` (activation preview,
+    /// claim, policy refresh, tenant initialisation): a person waits on the screen for the answer,
+    /// so a bad network route gives up quickly and the screen offers to retry, instead of the sync
+    /// worker's long limits.
     pub const fn interactive() -> Self {
         Self {
             connect: Duration::from_secs(8),
@@ -250,8 +251,8 @@ impl ControlPlaneClient {
         self.send_raw(path, request, token).await
     }
 
-    /// `GET {path}` with the same contract as [`Self::post_json_raw`] (the phone enrolment calls of
-    /// `commands::mobile_enrolment`).
+    /// `GET {path}` with the same contract as [`Self::post_json_raw`]. Groundwork for the phone
+    /// enrolment status and device list calls (no caller yet in this change).
     pub async fn get_json_raw(&self, path: &str, token: Option<&str>) -> Result<(u16, String), TransportError> {
         let request = self.http.get(format!("{}{path}", self.base_url));
         self.send_raw(path, request, token).await

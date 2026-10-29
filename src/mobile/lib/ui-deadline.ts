@@ -5,6 +5,12 @@
 /** Longer than the engine's 20 s request limit, so a normal engine answer always comes first. */
 export const UI_DEADLINE_MS = 25_000;
 
+/**
+ * Local-only steps on the phone (clearing a previous plant's data, recording the licence): no
+ * network, but they can take long on a slow phone, and a retry must not start while one runs.
+ */
+export const LOCAL_STEP_DEADLINE_MS = 120_000;
+
 /** After this long the screen says the server is slow and offers to stop waiting. */
 export const SLOW_HINT_MS = 10_000;
 

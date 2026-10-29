@@ -18,7 +18,7 @@ import {
 
 import { useMobileT } from "../i18n";
 import { deviceFingerprint, deviceLabel } from "../lib/device-identity";
-import { SLOW_HINT_MS, withUiDeadline } from "../lib/ui-deadline";
+import { LOCAL_STEP_DEADLINE_MS, SLOW_HINT_MS, withUiDeadline } from "../lib/ui-deadline";
 import { type UserError, licenceDenial, toUserError } from "../lib/user-error";
 import { OnboardingScreen } from "../ui/OnboardingScreen";
 import { ErrorBanner } from "../ui/feedback";
@@ -200,7 +200,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
       );
       const onboarding = await withUiDeadline(getProductLicenseOnboardingState(), where);
       if (activationRequiresLocalDataReset(onboarding.tenant_id, claim.tenant_id)) {
-        await withUiDeadline(resetLocalTenantRuntimeData(), where);
+        await withUiDeadline(resetLocalTenantRuntimeData(), where, LOCAL_STEP_DEADLINE_MS);
       }
       await withUiDeadline(
         submitProductLicenseKey({
@@ -209,6 +209,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
           app_version: info.version,
         }),
         where,
+        LOCAL_STEP_DEADLINE_MS,
       );
       setKeyInput("");
       requestedJoin.current = false;
