@@ -2910,3 +2910,159 @@ async fn an_unsupported_stored_language_never_fails_the_reset() {
         Some("fr")
     );
 }
+
+/// Join defect (mobile step 0): a plant's second PC (or a phone) joins through the first
+/// activation, which resets its local data, then pulls the plant. A user holding a role that a
+/// MIGRATION created ("Maintenance Technician") must arrive whole: the role is never sent by sync
+/// (it has the same identity on every device), so the reset must give it back. Before the fix the
+/// assignment waited for the role and sign-in was refused ("Tenant scope violation").
+#[tokio::test]
+async fn a_joining_pc_receives_a_user_holding_a_migration_seeded_role() {
+    use crate::sync::test_support::{exec, scalar_i64, started_device_db, TestServer};
+
+    let mut server = TestServer::new();
+    let first_pc = started_device_db().await;
+    let user_sync_id = uuid::Uuid::new_v4().to_string();
+    exec(
+        &first_pc,
+        "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+         force_password_change, created_at, updated_at) VALUES (?, 'tech.join', 'Tech', 'local', 1, 0, 0, \
+         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        vec![user_sync_id.clone().into()],
+    )
+    .await;
+    exec(
+        &first_pc,
+        // Granted by the plant administrator (the seeded account, on every PC), as the Users screen does.
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
+         assigned_by_id, created_at, updated_at, row_version) \
+         SELECT ?, (SELECT id FROM user_accounts WHERE username = 'tech.join'), id, 'tenant', ?, \
+                (SELECT id FROM user_accounts WHERE username = 'admin'), \
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1 \
+           FROM roles WHERE name = 'Maintenance Technician'",
+        vec![uuid::Uuid::new_v4().to_string().into(), TENANT.into()],
+    )
+    .await;
+    let sent = server.exchange("first", &first_pc).await;
+    assert!(sent.sent >= 2, "the user and the assignment are sent: {sent:?}");
+
+    // The second PC: first activation with no tenant bound yet → local reset, then the first pull.
+    let second_pc = started_device_db().await;
+    super::reset_local_tenant_runtime_data_impl(&second_pc)
+        .await
+        .expect("reset");
+    let received = server.exchange("second", &second_pc).await;
+    assert!(received.received >= 2, "{received:?}");
+
+    let waiting = crate::sync::waiting::list_waiting_inbox_rows(&second_pc, Some(50))
+        .await
+        .expect("waiting rows");
+    assert_eq!(waiting.total, 0, "nothing waits after the join: {waiting:#?}");
+    let user_id = scalar_i64(
+        &second_pc,
+        "SELECT coalesce(max(id), 0) FROM user_accounts WHERE username = 'tech.join'",
+        vec![],
+    )
+    .await;
+    assert!(user_id > 0, "the user arrived");
+    assert!(
+        received.materialized.conflicts == 0 && received.materialized.errors.is_empty(),
+        "{received:?}"
+    );
+    let scope = crate::auth::session_manager::resolve_tenant_scope_for_user(
+        &second_pc,
+        i32::try_from(user_id).expect("id"),
+        TENANT,
+    )
+    .await
+    .expect("tenant scope");
+    assert!(scope.is_some(), "the technician can sign in on the joining PC");
+}
+
+/// Every row the migrations create on a new database (roles, permissions, statuses, catalogs,
+/// lists) is present again after the reset: the reset gives back the whole baseline a new
+/// installation has, read from the migrations themselves, never from a list kept by hand.
+#[tokio::test]
+async fn the_reset_restores_every_row_the_migrations_create() {
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+
+    let baseline = crate::db::test_db::migrated().await;
+    let db = crate::sync::test_support::started_db().await;
+    super::reset_local_tenant_runtime_data_impl(&db).await.expect("reset");
+
+    let tables = baseline
+        .query_all(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                .to_string(),
+        ))
+        .await
+        .expect("tables");
+    let mut missing = Vec::new();
+    for row in tables {
+        let table: String = row.try_get("", "name").expect("name");
+        let count_sql = format!("SELECT count(*) AS c FROM \"{}\"", table.replace('"', "\"\""));
+        let count = |conn: &DatabaseConnection| {
+            let sql = count_sql.clone();
+            let conn = conn.clone();
+            async move {
+                conn.query_one(Statement::from_string(DatabaseBackend::Sqlite, sql))
+                    .await
+                    .expect("count")
+                    .and_then(|r| r.try_get::<i64>("", "c").ok())
+                    .unwrap_or(0)
+            }
+        };
+        let (expected, found) = (count(&baseline).await, count(&db).await);
+        if found < expected {
+            missing.push(format!("{table}: {found} < {expected}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "rows a new database holds are missing after the reset: {missing:#?}"
+    );
+
+    // The plant settings the migrations create (the reset deletes the plant's own settings only).
+    let settings = baseline
+        .query_all(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT setting_key FROM app_settings WHERE setting_scope = 'tenant'".to_string(),
+        ))
+        .await
+        .expect("settings");
+    assert!(!settings.is_empty(), "the migrations create plant settings");
+    for row in settings {
+        let key: String = row.try_get("", "setting_key").expect("key");
+        let held = crate::sync::test_support::scalar_i64(
+            &db,
+            "SELECT count(*) FROM app_settings WHERE setting_key = ? AND setting_scope = 'tenant'",
+            vec![key.clone().into()],
+        )
+        .await;
+        assert_eq!(held, 1, "plant setting {key} is back after the reset");
+    }
+
+    for (role, permission) in [
+        ("Maintenance Technician", "ot.view"),
+        ("Planner/Scheduler", "ot.view"),
+        ("Read Only Observer", "ot.view"),
+    ] {
+        let held = crate::sync::test_support::scalar_i64(
+            &db,
+            "SELECT count(*) FROM roles r JOIN role_permissions rp ON rp.role_id = r.id \
+               JOIN permissions p ON p.id = rp.permission_id \
+              WHERE r.name = ? AND p.name = ? AND r.entity_sync_id = ?",
+            vec![
+                role.into(),
+                permission.into(),
+                crate::sync::identity::seeded_entity_sync_id("roles", role).into(),
+            ],
+        )
+        .await;
+        assert_eq!(
+            held, 1,
+            "{role} is back with its baseline ({permission}) and its seeded identity"
+        );
+    }
+}
