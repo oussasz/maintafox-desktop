@@ -17,6 +17,12 @@
     "search": "بحث",
     "refresh": "تحديث"
   },
+  "time": {
+    "justNow": "الآن",
+    "minutesAgo": "منذ {{n}} د",
+    "hoursAgo": "منذ {{n}} س",
+    "on": "في {{date}}"
+  },
   "server": {
     "testFlag": "خادم تجريبي",
     "testTitle": "نسخة تجريبية",
@@ -306,6 +312,8 @@
     },
     "lastSuccessAt": "آخر مزامنة: {{date}}",
     "never": "لم تتم المزامنة بعد",
+    "freshness": "تمت المزامنة {{when}}",
+    "freshnessWithState": "{{fresh}} · {{state}}",
     "details": "على هذا الهاتف",
     "pending": "بانتظار الإرسال",
     "conflicts": "تعارضات يجب حلّها",

@@ -362,6 +362,13 @@ button {
   color: var(--mf-label-2);
 }
 
+.mf-sync-fresh {
+  display: block;
+  margin-block-start: 2px;
+  font: var(--mf-footnote);
+  color: var(--mf-label-3);
+}
+
 .mf-content {
   flex: 1;
   display: flex;

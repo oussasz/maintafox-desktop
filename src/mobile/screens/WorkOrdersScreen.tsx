@@ -12,6 +12,8 @@ import { useCallback, useEffect, useState } from "react";
 import { listWos } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
 
+import { SyncFreshness } from "../components/SyncFreshness";
+import { useAfterBackgroundSync, useSyncStatus } from "../hooks/use-sync-status";
 import { useMobileT } from "../i18n";
 import { formatDateTime, formatHours } from "../lib/format";
 import { type UserError, toUserError } from "../lib/user-error";
@@ -160,24 +162,32 @@ export function WorkOrdersScreen({ userId, name }: { userId: number; name: strin
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [opened, setOpened] = useState<WorkOrder | null>(null);
 
-  const run = useCallback(async () => {
-    setLoad({ kind: "loading" });
-    try {
-      const page = await listWos({
-        primary_responsible_id: userId,
-        not_closed_only: true,
-        limit: PAGE_SIZE,
-        offset: 0,
-      });
-      setLoad({ kind: "ok", items: page.items, total: page.total });
-    } catch (err) {
-      setLoad({ kind: "error", error: toUserError(err, "wo.list") });
-    }
-  }, [userId]);
+  const { status } = useSyncStatus();
+
+  // `background`: a sync just finished, so the list is replaced in place without the spinner.
+  const run = useCallback(
+    async (background = false) => {
+      if (!background) setLoad({ kind: "loading" });
+      try {
+        const page = await listWos({
+          primary_responsible_id: userId,
+          not_closed_only: true,
+          limit: PAGE_SIZE,
+          offset: 0,
+        });
+        setLoad({ kind: "ok", items: page.items, total: page.total });
+      } catch (err) {
+        setLoad({ kind: "error", error: toUserError(err, "wo.list") });
+      }
+    },
+    [userId],
+  );
 
   useEffect(() => {
     void run();
   }, [run]);
+
+  useAfterBackgroundSync(status, () => void run(true));
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -185,12 +195,18 @@ export function WorkOrdersScreen({ userId, name }: { userId: number; name: strin
 
   if (opened) return <WorkOrderDetail wo={opened} onBack={() => setOpened(null)} />;
 
-  const subtitle =
+  const heading =
     load.kind === "ok" && load.total > 0
       ? t("wo.total", { count: load.total })
       : name
         ? t("wo.hello", { name })
         : undefined;
+  const subtitle = (
+    <>
+      {heading}
+      <SyncFreshness status={status} />
+    </>
+  );
 
   return (
     <Screen

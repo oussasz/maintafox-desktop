@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,18 +8,14 @@ import {
   WifiOff,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-import {
-  SYNC_WORKER_STATUS_EVENT,
-  SyncWorkerStatusSchema,
-  getSyncWorkerStatus,
-  runSyncNow,
-} from "@/services/sync-service";
+import { runSyncNow } from "@/services/sync-service";
 import type { SyncWorkerStatus } from "@shared/ipc-types";
 
+import { useNow, useSyncStatus } from "../hooks/use-sync-status";
 import { useMobileT } from "../i18n";
-import { formatDateTime } from "../lib/format";
+import { formatRelativeTime } from "../lib/format";
 import { type UserError, toUserError } from "../lib/user-error";
 import { ErrorBanner } from "../ui/feedback";
 import { Actions, Banner, Button, EmptyState, Progress, Row, Screen, Section } from "../ui/kit";
@@ -36,7 +31,8 @@ const KNOWN_BLOCKERS = [
 
 function StateHeader({ status }: { status: SyncWorkerStatus }) {
   const { t, language } = useMobileT();
-  const last = formatDateTime(status.last_success_at, language);
+  const now = useNow();
+  const last = formatRelativeTime(status.last_success_at, now, language, t);
   const subtitle = last ? t("sync.lastSuccessAt", { date: last }) : t("sync.never");
   const title = t(`sync.state.${status.state}`);
   switch (status.state) {
@@ -89,43 +85,9 @@ function StateHeader({ status }: { status: SyncWorkerStatus }) {
 /** Sync state, last success, what waits to be sent, conflicts, with a "synchronise now" button. */
 export function SyncScreen() {
   const { t } = useMobileT();
-  const [status, setStatus] = useState<SyncWorkerStatus | null>(null);
-  const [statusError, setStatusError] = useState<UserError | null>(null);
+  const { status, error: statusError, refresh } = useSyncStatus();
   const [runError, setRunError] = useState<UserError | null>(null);
   const [starting, setStarting] = useState(false);
-
-  const read = useCallback(async () => {
-    try {
-      setStatus(await getSyncWorkerStatus());
-      setStatusError(null);
-    } catch (err) {
-      setStatusError(toUserError(err, "sync.status"));
-    }
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void read();
-    void listen<unknown>(SYNC_WORKER_STATUS_EVENT, (event) => {
-      const parsed = SyncWorkerStatusSchema.safeParse(event.payload);
-      if (parsed.success) {
-        setStatus(parsed.data as SyncWorkerStatus);
-        setStatusError(null);
-      } else {
-        setStatusError(toUserError(parsed.error, "sync.status_event"));
-      }
-    })
-      .then((fn) => {
-        if (cancelled) fn();
-        else unlisten = fn;
-      })
-      .catch((err: unknown) => setStatusError(toUserError(err, "sync.listen")));
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [read]);
 
   async function onSyncNow() {
     setStarting(true);
@@ -148,7 +110,7 @@ export function SyncScreen() {
 
   return (
     <Screen title={t("sync.title")} withTabs>
-      {statusError ? <ErrorBanner error={statusError} onRetry={() => void read()} /> : null}
+      {statusError ? <ErrorBanner error={statusError} onRetry={() => void refresh()} /> : null}
       {status === null && !statusError ? <Progress text={t("common.loading")} /> : null}
       {status ? <StateHeader status={status} /> : null}
       {status?.blocker ? (

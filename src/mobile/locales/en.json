@@ -17,6 +17,12 @@
     "search": "Search",
     "refresh": "Refresh"
   },
+  "time": {
+    "justNow": "just now",
+    "minutesAgo": "{{n}} min ago",
+    "hoursAgo": "{{n}} h ago",
+    "on": "on {{date}}"
+  },
   "server": {
     "testFlag": "Test server",
     "testTitle": "Test build",
@@ -306,6 +312,8 @@
     },
     "lastSuccessAt": "Last synchronised: {{date}}",
     "never": "Never synchronised",
+    "freshness": "Synced {{when}}",
+    "freshnessWithState": "{{fresh}} · {{state}}",
     "details": "On this phone",
     "pending": "Waiting to be sent",
     "conflicts": "Conflicts to resolve",

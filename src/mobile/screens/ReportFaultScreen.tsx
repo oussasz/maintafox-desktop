@@ -8,6 +8,8 @@ import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-s
 import { listUrgencyLevels } from "@/services/urgency-scale-service";
 import type { AssetSearchResult, DiCreateInput, UrgencyLevel } from "@shared/ipc-types";
 
+import { SyncFreshness } from "../components/SyncFreshness";
+import { useAfterBackgroundSync, useSyncStatus } from "../hooks/use-sync-status";
 import { type MobileLanguage, useMobileT } from "../i18n";
 import { type UserError, toUserError } from "../lib/user-error";
 import { ErrorBanner } from "../ui/feedback";
@@ -155,6 +157,10 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
   const { t, language } = useMobileT();
   const [load, setLoad] = useState<ListsLoad>({ kind: "loading" });
   const [reloadToken, setReloadToken] = useState(0);
+  // Set when the lists are re-read after a background sync: they are replaced in place, the form
+  // stays on screen and keeps what the technician typed.
+  const silentReload = useRef(false);
+  const { status } = useSyncStatus();
 
   const [equipment, setEquipment] = useState<AssetSearchResult | null>(null);
   const [pickingEquipment, setPickingEquipment] = useState(false);
@@ -180,18 +186,28 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoad({ kind: "loading" });
+    const silent = silentReload.current;
+    silentReload.current = false;
+    if (!silent) setLoad({ kind: "loading" });
     readFormLists()
       .then((lists) => {
         if (!cancelled) setLoad({ kind: "ok", lists });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoad({ kind: "error", error: toUserError(err, "report_fault.lists") });
+        // A failed background re-read keeps the lists already on screen.
+        if (!cancelled && !silent) {
+          setLoad({ kind: "error", error: toUserError(err, "report_fault.lists") });
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [reloadToken]);
+
+  useAfterBackgroundSync(status, () => {
+    silentReload.current = true;
+    setReloadToken((n) => n + 1);
+  });
 
   function resetForm() {
     setEquipment(null);
@@ -267,7 +283,16 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
   }
 
   return (
-    <Screen title={t("di.title")} subtitle={t("di.subtitle")} withTabs>
+    <Screen
+      title={t("di.title")}
+      subtitle={
+        <>
+          {t("di.subtitle")}
+          <SyncFreshness status={status} />
+        </>
+      }
+      withTabs
+    >
       {load.kind === "loading" ? <Progress text={t("common.loading")} /> : null}
       {load.kind === "error" ? (
         <ErrorBanner error={load.error} onRetry={() => setReloadToken((n) => n + 1)} />

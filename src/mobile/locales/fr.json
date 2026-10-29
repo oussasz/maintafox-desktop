@@ -17,6 +17,12 @@
     "search": "Rechercher",
     "refresh": "Actualiser"
   },
+  "time": {
+    "justNow": "à l'instant",
+    "minutesAgo": "il y a {{n}} min",
+    "hoursAgo": "il y a {{n}} h",
+    "on": "le {{date}}"
+  },
   "server": {
     "testFlag": "Serveur de test",
     "testTitle": "Version de test",
@@ -306,6 +312,8 @@
     },
     "lastSuccessAt": "Dernière synchronisation : {{date}}",
     "never": "Jamais synchronisé",
+    "freshness": "Synchronisé {{when}}",
+    "freshnessWithState": "{{fresh}} · {{state}}",
     "details": "Sur ce téléphone",
     "pending": "En attente d'envoi",
     "conflicts": "Conflits à résoudre",
