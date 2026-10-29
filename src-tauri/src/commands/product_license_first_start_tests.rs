@@ -3126,9 +3126,9 @@ async fn the_reset_restores_every_row_the_migrations_create() {
     }
 
     for (role, permission) in [
-        ("Maintenance Technician", "ot.view"),
-        ("Planner/Scheduler", "ot.view"),
-        ("Read Only Observer", "ot.view"),
+        ("Maintenance Technician", crate::rbac::permissions::OT_VIEW),
+        ("Planner/Scheduler", crate::rbac::permissions::OT_VIEW),
+        ("Read Only Observer", crate::rbac::permissions::OT_VIEW),
     ] {
         let held = crate::sync::test_support::scalar_i64(
             &db,
