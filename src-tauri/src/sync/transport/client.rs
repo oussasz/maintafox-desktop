@@ -81,6 +81,19 @@ pub struct ClientTimeouts {
     pub media_transfer: Duration,
 }
 
+impl ClientTimeouts {
+    /// The licence and phone-enrolment calls (activation preview, claim, policy refresh, phone
+    /// enrolment): a person waits on the screen for the answer, so a bad network route gives up
+    /// quickly and the screen offers to retry, instead of the sync worker's long limits.
+    pub const fn interactive() -> Self {
+        Self {
+            connect: Duration::from_secs(8),
+            request: Duration::from_secs(20),
+            media_transfer: Duration::from_secs(20),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ControlPlaneClient {
     http: reqwest::Client,
@@ -150,6 +163,20 @@ fn http_error(status: u16, text: &str, retry_after: Option<Duration>) -> Transpo
     }
 }
 
+/// TLS for the Android app: the server certificate is checked against the Mozilla root
+/// certificates bundled with the app (`webpki-roots`), with full chain and host name validation.
+/// reqwest's default on other systems, the platform verifier, needs a Java component on Android
+/// that the app does not ship: without this every HTTPS call failed or panicked there.
+#[cfg(target_os = "android")]
+fn android_tls_config() -> Result<rustls::ClientConfig, String> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("Cannot build the TLS configuration: {e}"))
+        .map(|b| b.with_root_certificates(roots).with_no_client_auth())
+}
+
 impl ControlPlaneClient {
     pub fn new(base_url: &str, timeouts: ClientTimeouts) -> Result<Self, String> {
         // reqwest is built without a default crypto provider (same as tauri-plugin-updater);
@@ -164,10 +191,13 @@ impl ControlPlaneClient {
                 .parse()
                 .map_err(|e| format!("{e}"))?,
         );
-        let http = reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .default_headers(headers)
             .connect_timeout(timeouts.connect)
-            .timeout(timeouts.request)
+            .timeout(timeouts.request);
+        #[cfg(target_os = "android")]
+        let builder = builder.tls_backend_preconfigured(android_tls_config()?);
+        let http = builder
             .build()
             .map_err(|e| format!("Cannot build the sync HTTP client: {e}"))?;
         Ok(Self {
@@ -212,16 +242,31 @@ impl ControlPlaneClient {
         token: Option<&str>,
         body: String,
     ) -> Result<(u16, String), TransportError> {
-        let mut request = self.http.post(format!("{}{path}", self.base_url));
+        let request = self
+            .http
+            .post(format!("{}{path}", self.base_url))
+            .header(CONTENT_TYPE, "application/json")
+            .body(body);
+        self.send_raw(path, request, token).await
+    }
+
+    /// `GET {path}` with the same contract as [`Self::post_json_raw`] (the phone enrolment calls of
+    /// `commands::mobile_enrolment`).
+    pub async fn get_json_raw(&self, path: &str, token: Option<&str>) -> Result<(u16, String), TransportError> {
+        let request = self.http.get(format!("{}{path}", self.base_url));
+        self.send_raw(path, request, token).await
+    }
+
+    async fn send_raw(
+        &self,
+        path: &str,
+        mut request: reqwest::RequestBuilder,
+        token: Option<&str>,
+    ) -> Result<(u16, String), TransportError> {
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
-        let mut response = request
-            .header(CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| map_send_error(&e))?;
+        let mut response = request.send().await.map_err(|e| map_send_error(&e))?;
         let status = response.status().as_u16();
         let mut bytes = Vec::new();
         while let Some(chunk) = response
@@ -394,6 +439,48 @@ impl ControlPlaneClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interactive_calls_give_up_within_twenty_seconds() {
+        let t = ClientTimeouts::interactive();
+        assert_eq!(t.connect, Duration::from_secs(8));
+        assert_eq!(t.request, Duration::from_secs(20));
+        assert!(t.media_transfer <= t.request);
+    }
+
+    /// A server that accepts the connection but never answers: the call ends with an error at the
+    /// request limit (the licence screen then offers to retry), it never waits forever.
+    #[tokio::test]
+    async fn a_silent_server_ends_the_call_at_the_request_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let (socket, _) = listener.accept().await.expect("accept");
+                held.push(socket);
+            }
+        });
+        let client = ControlPlaneClient::new(
+            &format!("http://{addr}"),
+            ClientTimeouts {
+                connect: Duration::from_millis(500),
+                request: Duration::from_millis(700),
+                media_transfer: Duration::from_millis(700),
+            },
+        )
+        .expect("client");
+        let started = std::time::Instant::now();
+        let result = client
+            .post_json_raw("/api/v1/activation/preview", None, "{}".into())
+            .await;
+        server.abort();
+        assert!(
+            matches!(result, Err(TransportError::Interrupted(_) | TransportError::Offline(_))),
+            "{result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    }
 
     #[test]
     fn base_url_must_be_https_unless_local() {
