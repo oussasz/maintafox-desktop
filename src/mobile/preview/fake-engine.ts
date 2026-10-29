@@ -43,6 +43,24 @@ function onboarding(complete: boolean) {
   };
 }
 
+/** The engine's removal status (`get_phone_removal_status`). */
+function removal(
+  phase: "none" | "uploading" | "waiting_to_upload" | "erasing" | "done",
+  kind: "removed" | "unbound" | "revoked" | null = null,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    phase,
+    kind,
+    uploaded_count: 0,
+    dropped_count: 0,
+    dropped_by_kind: {},
+    last_error: null,
+    wipe_confirmed: null,
+    ...extra,
+  };
+}
+
 /** The answers of a phone already activated, joined and signed in. */
 export function signedInAnswers(): Answers {
   return {
@@ -68,6 +86,7 @@ export function signedInAnswers(): Answers {
       has_tenant_admin: true,
       plant_join: "sign_in",
     }),
+    get_phone_removal_status: () => removal("none"),
     get_session_info: () => session(true),
     login: () => ({ session_info: session(true) }),
     logout: () => null,
@@ -150,25 +169,59 @@ export const SCENARIO_ANSWERS: Record<string, Answers> = {
   "activation-unreachable": {
     get_product_license_onboarding_state: () => onboarding(false),
     // The very failure the owner saw on the phone, now shown in plain words.
-    preview_product_activation: () => ({
-      kind: "network_error",
-      message:
-        "Control API request interrupted: error sending request for url (http://127.0.0.1:47831/api/v1/activation/preview)",
-    }),
+    redeem_mobile_enrolment: () => {
+      throw {
+        code: "VALIDATION_FAILED",
+        message: "ENROLMENT_OFFLINE: Cannot reach the control API",
+        details: [{ code: "ENROLMENT_OFFLINE", message: "Cannot reach the control API" }],
+      };
+    },
+  },
+  "activation-invalid-code": {
+    get_product_license_onboarding_state: () => onboarding(false),
+    redeem_mobile_enrolment: () => {
+      throw {
+        code: "VALIDATION_FAILED",
+        message: "ENROLMENT_CODE_INVALID",
+        details: [{ code: "ENROLMENT_CODE_INVALID", message: "Invalid code" }],
+      };
+    },
   },
   "activation-confirm": {
     get_product_license_onboarding_state: () => onboarding(false),
-    preview_product_activation: () => ({
-      kind: "answered",
-      answer: {
-        tenant_id: TENANT,
-        license_id: "lic-demo",
-        machine_fingerprint: "phone",
-        tenant_display_name: "Usine de démonstration — Blida",
-        edition: "Entreprise",
-        is_initialized: true,
-      },
+    redeem_mobile_enrolment: () => ({
+      tenant_id: TENANT,
+      company_display_name: "Usine de démonstration — Blida",
+      person_sync_id: "person-1",
+      person_label: "Karim Benali",
+      site_sync_id: "site-1",
+      site_label: "Atelier Nord",
+      enrolled_at: "2026-10-29T10:00:00Z",
     }),
+  },
+  "removal-uploading": {
+    get_phone_removal_status: () =>
+      removal("uploading", "removed", { uploaded_count: 12, dropped_count: 0 }),
+  },
+  "removal-waiting": {
+    get_phone_removal_status: () =>
+      removal("waiting_to_upload", "removed", {
+        uploaded_count: 5,
+        last_error: {
+          code: "offline",
+          kind: "retryable",
+          message: "Cannot reach the control API",
+          http_status: null,
+          at: "2026-10-29T10:00:00Z",
+        },
+      }),
+  },
+  "removal-revoked": {
+    get_phone_removal_status: () =>
+      removal("erasing", "revoked", {
+        dropped_count: 4,
+        dropped_by_kind: { work_orders: 3, media_files: 1 },
+      }),
   },
   "plant-joining": {
     get_activation_bootstrap_state: () => ({
@@ -180,6 +233,22 @@ export const SCENARIO_ANSWERS: Record<string, Answers> = {
   },
   signin: {
     get_session_info: () => session(false),
+  },
+  "signin-other-person": {
+    get_session_info: () => session(false),
+    login: () => {
+      throw {
+        code: "VALIDATION_FAILED",
+        message: "Ce téléphone est attribué à Karim Benali.",
+        details: [
+          {
+            code: "PHONE_ASSIGNED_TO_OTHER_PERSON",
+            message: "Ce téléphone est attribué à Karim Benali.",
+            params: { person_label: "Karim Benali" },
+          },
+        ],
+      };
+    },
   },
   "signin-refused": {
     get_session_info: () => session(false),

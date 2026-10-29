@@ -27,12 +27,30 @@ export type UserErrorKind =
   | "notFound"
   | "validation"
   | "databaseKey"
+  | "enrolInputRequired"
+  | "enrolQrInvalid"
+  | "enrolOtherServer"
+  | "enrolCodeInvalid"
+  | "enrolDesktopRefused"
+  | "enrolAlreadyActivated"
+  | "enrolPhoneNotEmpty"
+  | "enrolRemovalInProgress"
+  | "enrolWipePending"
+  | "enrolDeviceId"
+  | "enrolAlreadyEnrolled"
+  | "enrolRateLimited"
+  | "enrolServerRefused"
+  | "phoneAssigned"
+  | "phoneNotEnrolled"
+  | "phoneRemovalInProgress"
   | "generic";
 
 export interface UserError {
   kind: UserErrorKind;
   /** The end of an account lockout (UTC instant), shown in local time by the screen. */
   until?: string;
+  /** The person a phone is assigned to (`phoneAssigned`), shown in the sentence. */
+  person?: string;
 }
 
 /** Where the failure happened: the same engine code means different things at sign-in. */
@@ -73,6 +91,46 @@ const ENGINE_CODES: Record<string, UserErrorKind> = {
   DATABASE_KEY_UNAVAILABLE: "databaseKey",
 };
 
+/**
+ * Enrolment refusals (`ENROLMENT_*`, see services/enrolment.ts) and sign-in refusals on a phone
+ * (`PHONE_*`). The engine sends them as the `code` of the first entry of `details`.
+ */
+const ENROLMENT_CODES: Record<string, UserErrorKind> = {
+  ENROLMENT_INPUT_REQUIRED: "enrolInputRequired",
+  ENROLMENT_QR_INVALID: "enrolQrInvalid",
+  ENROLMENT_QR_OTHER_SERVER: "enrolOtherServer",
+  ENROLMENT_CODE_INVALID: "enrolCodeInvalid",
+  ENROLMENT_INVALID: "enrolCodeInvalid",
+  ENROLMENT_DESKTOP_REFUSED: "enrolDesktopRefused",
+  ENROLMENT_ALREADY_ACTIVATED: "enrolAlreadyActivated",
+  ENROLMENT_PHONE_NOT_EMPTY: "enrolPhoneNotEmpty",
+  ENROLMENT_REMOVAL_IN_PROGRESS: "enrolRemovalInProgress",
+  ENROLMENT_WIPE_PENDING: "enrolWipePending",
+  ENROLMENT_DEVICE_ID_UNAVAILABLE: "enrolDeviceId",
+  ENROLMENT_ALREADY_ENROLLED: "enrolAlreadyEnrolled",
+  ENROLMENT_LICENCE_REVOKED: "licenseRevoked",
+  ENROLMENT_LICENCE_EXPIRED: "licenseExpired",
+  ENROLMENT_LICENCE_INVALID: "licenseDenied",
+  ENROLMENT_NOT_LICENSED: "mobileNotLicensed",
+  ENROLMENT_NO_FREE_SLOT: "deviceLimit",
+  ENROLMENT_DEVICE_CLASS_MISMATCH: "mobileNotLicensed",
+  ENROLMENT_RATE_LIMITED: "enrolRateLimited",
+  ENROLMENT_OFFLINE: "serverUnreachable",
+  ENROLMENT_SERVER_UNAVAILABLE: "serverError",
+  ENROLMENT_SERVER_REFUSED: "enrolServerRefused",
+  ENROLMENT_INVALID_ANSWER: "serverError",
+  PHONE_ASSIGNED_TO_OTHER_PERSON: "phoneAssigned",
+  PHONE_NOT_ENROLLED: "phoneNotEnrolled",
+  PHONE_REMOVAL_IN_PROGRESS: "phoneRemovalInProgress",
+};
+
+/** The first entry of the engine's `details` (its rule code and parameters), when there is one. */
+function firstDetail(err: unknown): { code?: unknown; params?: unknown } | null {
+  const details = field(err, "details");
+  const first = Array.isArray(details) ? (details[0] as unknown) : null;
+  return typeof first === "object" && first !== null ? first : null;
+}
+
 function field(err: unknown, name: string): unknown {
   return typeof err === "object" && err !== null && name in err
     ? (err as Record<string, unknown>)[name]
@@ -85,7 +143,22 @@ export function classifyError(err: unknown, context: ErrorContext = "general"): 
   const status = field(err, "status");
   const text = toErrorMessage(err);
 
+  const detail = firstDetail(err);
+  const detailCode = typeof detail?.code === "string" ? detail.code : undefined;
+  const enrolment = detailCode ? ENROLMENT_CODES[detailCode] : undefined;
+  if (enrolment) {
+    const params = detail?.params;
+    const person =
+      typeof params === "object" && params !== null && "person_label" in params
+        ? (params as Record<string, unknown>)["person_label"]
+        : undefined;
+    return enrolment === "phoneAssigned" && typeof person === "string"
+      ? { kind: enrolment, person }
+      : { kind: enrolment };
+  }
   if (typeof code === "string") {
+    const direct = ENROLMENT_CODES[code];
+    if (direct) return { kind: direct };
     if (code === "ACCOUNT_LOCKED") {
       const until = lockoutUntil(err);
       return until ? { kind: "accountLocked", until } : { kind: "accountLocked" };

@@ -116,6 +116,70 @@
     "generic": {
       "title": "Something went wrong",
       "text": "Try again. If it continues, tell your administrator."
+    },
+    "enrolInputRequired": {
+      "title": "Code missing",
+      "text": "Scan the QR code or type your administrator's code."
+    },
+    "enrolQrInvalid": {
+      "title": "Unreadable QR code",
+      "text": "This QR code is not a Maintafox activation code. Scan your administrator's one or type the code."
+    },
+    "enrolOtherServer": {
+      "title": "QR code from another server",
+      "text": "This QR code does not come from your Maintafox server."
+    },
+    "enrolCodeInvalid": {
+      "title": "Invalid or expired code",
+      "text": "Invalid or expired code. Ask your administrator for a new QR code."
+    },
+    "enrolDesktopRefused": {
+      "title": "Phone only",
+      "text": "Enrolment is done on the technician's phone, not on a PC."
+    },
+    "enrolAlreadyActivated": {
+      "title": "Phone already activated",
+      "text": "This phone is already activated. Sign in."
+    },
+    "enrolPhoneNotEmpty": {
+      "title": "Phone already in use",
+      "text": "This phone already holds data. Tell your administrator."
+    },
+    "enrolRemovalInProgress": {
+      "title": "Erasing in progress",
+      "text": "This phone is finishing its erasure. Wait, then try again."
+    },
+    "enrolWipePending": {
+      "title": "Erasure to finish",
+      "text": "This phone must first finish its erasure (sending pending work, then erasing). Keep the connection, then try again."
+    },
+    "enrolDeviceId": {
+      "title": "Phone not identifiable",
+      "text": "This phone's identifier cannot be read. Restart the app; if it continues, tell your administrator."
+    },
+    "enrolAlreadyEnrolled": {
+      "title": "Code already used",
+      "text": "This code has already activated a phone. Ask your administrator for a new QR code."
+    },
+    "enrolRateLimited": {
+      "title": "Too many attempts",
+      "text": "Too many attempts. Wait a few minutes, then try again."
+    },
+    "enrolServerRefused": {
+      "title": "Activation refused",
+      "text": "The server refused to activate this phone. Tell your administrator."
+    },
+    "phoneAssigned": {
+      "title": "Sign-in refused",
+      "text": "This phone is assigned to {{person}}. Only that person can sign in on it."
+    },
+    "phoneNotEnrolled": {
+      "title": "Phone to be enrolled",
+      "text": "This phone must be enrolled by your administrator. Its pending work will be sent, then it will be reset."
+    },
+    "phoneRemovalInProgress": {
+      "title": "Phone is erasing itself",
+      "text": "This phone is sending its pending work, then erasing itself. Sign-in is not possible for now."
     }
   },
   "startup": {
@@ -146,21 +210,7 @@
   },
   "activation": {
     "title": "Join your plant",
-    "joinOnly": "Enter the licence key your administrator gave you. The phone joins an existing plant.",
-    "keyLabel": "Licence key",
-    "keyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
-    "keyHint": "The phone never creates an organisation or the first administrator: that is done on a Maintafox PC.",
-    "validate": "Continue",
-    "validating": "Checking…",
-    "confirmTitle": "Confirm the plant",
-    "confirmText": "Check this is your plant before you continue.",
-    "company": "Organisation",
-    "edition": "Edition",
-    "join": "Join this plant",
-    "joining": "Activating…",
-    "cancel": "Use another key",
-    "notInitializedTitle": "Plant not ready yet",
-    "notInitialized": "This organisation is not set up yet. Set it up on a Maintafox PC first.",
+    "joinOnly": "Scan the QR code your administrator gave you, or type its code. The phone joins an existing plant.",
     "noAdminTitle": "No account in this plant",
     "noAdminBody": "The plant has no administrator yet. It must be created on a Maintafox PC.",
     "recheck": "Check again",
@@ -170,7 +220,27 @@
     "connectionNeededTitle": "Connection needed",
     "connectionNeeded": "Connect the phone to the internet to receive the plant's data.",
     "checking": "Checking activation…",
-    "slow": "The server is taking a while to answer…"
+    "slow": "The server is taking a while to answer…",
+    "enrolHint": "The phone never creates an organisation or the first administrator: that is done on a Maintafox PC.",
+    "enrol": {
+      "scan": "Scan the QR code",
+      "typeCode": "Type the code",
+      "codeLabel": "Activation code",
+      "codePlaceholder": "XXXX-XXXX",
+      "codeHint": "The 8 characters your administrator gave you (letters and digits).",
+      "codeSubmit": "Activate the phone",
+      "backToScan": "Scan the QR code",
+      "enrolling": "Activating the phone…",
+      "cameraTitle": "Allow the camera",
+      "cameraText": "Maintafox uses the camera only to read your administrator's QR code. No photo is saved.",
+      "cameraAllow": "Allow the camera",
+      "cameraRefused": "The camera is not allowed. Type the code your administrator gave you instead.",
+      "scanFailed": "The scan did not complete. Try again or type the code.",
+      "successTitle": "Phone activated",
+      "assigned": "Phone assigned to {{person}} — {{site}}",
+      "unboundNotice": "Your administrator must remove the old phone from the Phones list.",
+      "continue": "Continue"
+    }
   },
   "signin": {
     "title": "Sign in",
@@ -325,7 +395,8 @@
       "activation_refused": "This phone's activation was refused. Tell your administrator.",
       "tenant_config_mismatch": "This phone is linked to another plant. Tell your administrator.",
       "not_configured": "Synchronisation is not set up yet.",
-      "other": "Synchronisation is stopped. Tell your administrator."
+      "other": "Synchronisation is stopped. Tell your administrator.",
+      "phone_removed": "This phone was removed: pending work is being sent, then the data is erased."
     }
   },
   "settings": {
@@ -342,5 +413,31 @@
     "signOut": "Sign out",
     "signOutTitle": "Sign out?",
     "signOutText": "The plant's data stays on the phone. You will need to enter your password again."
+  },
+  "removal": {
+    "title": {
+      "removed": "Phone removed",
+      "unbound": "Phone to be enrolled",
+      "revoked": "Phone reported lost"
+    },
+    "text": {
+      "removed": {
+        "uploading": "This phone was removed by your administrator. Sending pending work…",
+        "waiting_to_upload": "A connection is needed to send pending work. The data is kept.",
+        "erasing": "Erasing data…"
+      },
+      "unbound": {
+        "uploading": "This phone must be enrolled by your administrator. Sending pending work…",
+        "waiting_to_upload": "A connection is needed to send pending work. The data is kept.",
+        "erasing": "Erasing data…"
+      },
+      "revoked": "This phone was reported lost or removed: its data is erased without being sent."
+    },
+    "locked": "The phone is locked until this is finished. It cannot be interrupted.",
+    "uploaded": "Work sent: {{n}}",
+    "dropped": "Not sent: {{n}} (recorded in the log)",
+    "droppedPhotos": "of which photos not sent: {{n}}",
+    "lastError": "Last sending failure",
+    "waiting": "Retrying as soon as the connection returns."
   }
 }

@@ -37,20 +37,48 @@ const SUBMIT = "button[type=submit]";
 export const SCENARIOS: Record<string, Scenario> = {
   "security-refused": { view: "app" },
   startup: { view: "app" },
-  "activation-key": {
+  "activation-key": { view: "app" },
+  "activation-code": {
     view: "app",
-    steps: [{ fill: ".mf-cell__input", value: "MFX-7Q2K-91DA-4C3E" }],
+    steps: [{ click: ".mf-btn--gray" }, { fill: ".mf-cell__input", value: "K7M2-93QA" }],
   },
   "activation-unreachable": {
     view: "app",
-    steps: [{ fill: ".mf-cell__input", value: "MFX-7Q2K-91DA-4C3E" }, { click: SUBMIT }],
+    steps: [
+      { click: ".mf-btn--gray" },
+      { fill: ".mf-cell__input", value: "K7M2-93QA" },
+      { click: SUBMIT },
+    ],
+  },
+  "activation-invalid-code": {
+    view: "app",
+    steps: [
+      { click: ".mf-btn--gray" },
+      { fill: ".mf-cell__input", value: "K7M2-93QA" },
+      { click: SUBMIT },
+    ],
   },
   "activation-confirm": {
     view: "app",
-    steps: [{ fill: ".mf-cell__input", value: "MFX-7Q2K-91DA-4C3E" }, { click: SUBMIT }],
+    steps: [
+      { click: ".mf-btn--gray" },
+      { fill: ".mf-cell__input", value: "K7M2-93QA" },
+      { click: SUBMIT },
+    ],
   },
+  "removal-uploading": { view: "app" },
+  "removal-waiting": { view: "app" },
+  "removal-revoked": { view: "app" },
   "plant-joining": { view: "app" },
   signin: { view: "app", steps: [{ fill: ".mf-cell__input", value: SAMPLE_TECHNICIAN.username }] },
+  "signin-other-person": {
+    view: "app",
+    steps: [
+      { fill: ".mf-cell__input", value: SAMPLE_TECHNICIAN.username },
+      { fill: "input[type=password]", value: "********" },
+      { click: SUBMIT },
+    ],
+  },
   "signin-refused": {
     view: "app",
     steps: [

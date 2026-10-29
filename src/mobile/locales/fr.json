@@ -116,6 +116,70 @@
     "generic": {
       "title": "Une erreur est survenue",
       "text": "Réessayez. Si cela continue, prévenez votre administrateur."
+    },
+    "enrolInputRequired": {
+      "title": "Code manquant",
+      "text": "Scannez le QR code ou saisissez le code de votre administrateur."
+    },
+    "enrolQrInvalid": {
+      "title": "QR code illisible",
+      "text": "Ce QR code n'est pas un code d'activation Maintafox. Scannez celui de votre administrateur ou saisissez le code."
+    },
+    "enrolOtherServer": {
+      "title": "QR code d'un autre serveur",
+      "text": "Ce QR code ne vient pas de votre serveur Maintafox."
+    },
+    "enrolCodeInvalid": {
+      "title": "Code invalide ou expiré",
+      "text": "Code invalide ou expiré. Demandez un nouveau QR code à votre administrateur."
+    },
+    "enrolDesktopRefused": {
+      "title": "Réservé au téléphone",
+      "text": "L'enrôlement se fait sur le téléphone du technicien, pas sur un PC."
+    },
+    "enrolAlreadyActivated": {
+      "title": "Téléphone déjà activé",
+      "text": "Ce téléphone est déjà activé. Connectez-vous."
+    },
+    "enrolPhoneNotEmpty": {
+      "title": "Téléphone déjà utilisé",
+      "text": "Ce téléphone contient déjà des données. Prévenez votre administrateur."
+    },
+    "enrolRemovalInProgress": {
+      "title": "Effacement en cours",
+      "text": "Ce téléphone termine son effacement. Patientez, puis réessayez."
+    },
+    "enrolWipePending": {
+      "title": "Effacement à terminer",
+      "text": "Ce téléphone doit d'abord terminer son effacement (envoi des travaux en attente, puis effacement). Gardez la connexion, puis réessayez."
+    },
+    "enrolDeviceId": {
+      "title": "Téléphone non identifiable",
+      "text": "L'identifiant de ce téléphone est illisible. Redémarrez l'application ; si cela continue, prévenez votre administrateur."
+    },
+    "enrolAlreadyEnrolled": {
+      "title": "Code déjà utilisé",
+      "text": "Ce code a déjà servi à activer un téléphone. Demandez un nouveau QR code à votre administrateur."
+    },
+    "enrolRateLimited": {
+      "title": "Trop d'essais",
+      "text": "Trop de tentatives. Patientez quelques minutes, puis réessayez."
+    },
+    "enrolServerRefused": {
+      "title": "Activation refusée",
+      "text": "Le serveur a refusé l'activation de ce téléphone. Prévenez votre administrateur."
+    },
+    "phoneAssigned": {
+      "title": "Connexion refusée",
+      "text": "Ce téléphone est attribué à {{person}}. Seule cette personne peut s'y connecter."
+    },
+    "phoneNotEnrolled": {
+      "title": "Téléphone à enrôler",
+      "text": "Ce téléphone doit être enrôlé par votre administrateur. Ses travaux en attente vont être envoyés, puis il sera réinitialisé."
+    },
+    "phoneRemovalInProgress": {
+      "title": "Téléphone en cours d'effacement",
+      "text": "Ce téléphone envoie ses travaux en attente puis s'efface. Connexion impossible pour l'instant."
     }
   },
   "startup": {
@@ -146,21 +210,7 @@
   },
   "activation": {
     "title": "Rejoindre votre usine",
-    "joinOnly": "Saisissez la clé de licence donnée par votre administrateur. Le téléphone rejoint une usine existante.",
-    "keyLabel": "Clé de licence",
-    "keyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
-    "keyHint": "Le téléphone ne crée jamais d'organisation ni de premier administrateur : cela se fait sur un PC Maintafox.",
-    "validate": "Continuer",
-    "validating": "Vérification…",
-    "confirmTitle": "Confirmer l'usine",
-    "confirmText": "Vérifiez qu'il s'agit bien de votre usine avant de continuer.",
-    "company": "Organisation",
-    "edition": "Édition",
-    "join": "Rejoindre cette usine",
-    "joining": "Activation en cours…",
-    "cancel": "Utiliser une autre clé",
-    "notInitializedTitle": "Usine pas encore prête",
-    "notInitialized": "Cette organisation n'est pas encore initialisée. Initialisez-la d'abord sur un PC Maintafox.",
+    "joinOnly": "Scannez le QR code donné par votre administrateur, ou saisissez son code. Le téléphone rejoint une usine existante.",
     "noAdminTitle": "Aucun compte dans cette usine",
     "noAdminBody": "L'usine n'a pas encore d'administrateur. Il doit être créé sur un PC Maintafox.",
     "recheck": "Vérifier à nouveau",
@@ -170,7 +220,27 @@
     "connectionNeededTitle": "Connexion nécessaire",
     "connectionNeeded": "Connectez le téléphone à Internet pour recevoir les données de l'usine.",
     "checking": "Vérification de l'activation…",
-    "slow": "Le serveur met du temps à répondre…"
+    "slow": "Le serveur met du temps à répondre…",
+    "enrolHint": "Le téléphone ne crée jamais d'organisation ni de premier administrateur : cela se fait sur un PC Maintafox.",
+    "enrol": {
+      "scan": "Scanner le QR code",
+      "typeCode": "Saisir le code",
+      "codeLabel": "Code d'activation",
+      "codePlaceholder": "XXXX-XXXX",
+      "codeHint": "Les 8 caractères donnés par votre administrateur (lettres et chiffres).",
+      "codeSubmit": "Activer le téléphone",
+      "backToScan": "Scanner le QR code",
+      "enrolling": "Activation du téléphone…",
+      "cameraTitle": "Autoriser l'appareil photo",
+      "cameraText": "Maintafox utilise l'appareil photo uniquement pour lire le QR code de votre administrateur. Aucune photo n'est enregistrée.",
+      "cameraAllow": "Autoriser l'appareil photo",
+      "cameraRefused": "L'appareil photo n'est pas autorisé. Saisissez le code donné par votre administrateur à la place.",
+      "scanFailed": "Le scan n'a pas abouti. Réessayez ou saisissez le code.",
+      "successTitle": "Téléphone activé",
+      "assigned": "Téléphone attribué à {{person}} — {{site}}",
+      "unboundNotice": "Votre administrateur doit retirer l'ancien téléphone de la liste Téléphones.",
+      "continue": "Continuer"
+    }
   },
   "signin": {
     "title": "Connexion",
@@ -325,7 +395,8 @@
       "activation_refused": "L'activation de ce téléphone a été refusée. Prévenez votre administrateur.",
       "tenant_config_mismatch": "Ce téléphone est relié à une autre usine. Prévenez votre administrateur.",
       "not_configured": "La synchronisation n'est pas encore configurée.",
-      "other": "La synchronisation est arrêtée. Prévenez votre administrateur."
+      "other": "La synchronisation est arrêtée. Prévenez votre administrateur.",
+      "phone_removed": "Ce téléphone a été retiré : les travaux en attente sont envoyés, puis les données sont effacées."
     }
   },
   "settings": {
@@ -342,5 +413,31 @@
     "signOut": "Se déconnecter",
     "signOutTitle": "Se déconnecter ?",
     "signOutText": "Les données de l'usine restent sur le téléphone. Vous devrez saisir à nouveau votre mot de passe."
+  },
+  "removal": {
+    "title": {
+      "removed": "Téléphone retiré",
+      "unbound": "Téléphone à enrôler",
+      "revoked": "Téléphone déclaré perdu"
+    },
+    "text": {
+      "removed": {
+        "uploading": "Ce téléphone a été retiré par votre administrateur. Envoi des travaux en attente…",
+        "waiting_to_upload": "Connexion nécessaire pour envoyer les travaux en attente. Les données sont conservées.",
+        "erasing": "Effacement des données…"
+      },
+      "unbound": {
+        "uploading": "Ce téléphone doit être enrôlé par votre administrateur. Envoi des travaux en attente…",
+        "waiting_to_upload": "Connexion nécessaire pour envoyer les travaux en attente. Les données sont conservées.",
+        "erasing": "Effacement des données…"
+      },
+      "revoked": "Ce téléphone a été déclaré perdu ou retiré : ses données sont effacées sans envoi."
+    },
+    "locked": "Le téléphone est verrouillé jusqu'à la fin de l'opération. Elle ne peut pas être interrompue.",
+    "uploaded": "Travaux envoyés : {{n}}",
+    "dropped": "Non envoyés : {{n}} (enregistrés dans le journal)",
+    "droppedPhotos": "dont photos non envoyées : {{n}}",
+    "lastError": "Dernier échec d'envoi",
+    "waiting": "Nouvelle tentative dès que la connexion revient."
   }
 }

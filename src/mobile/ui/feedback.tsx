@@ -29,7 +29,7 @@ export function ErrorBanner({ error, onRetry }: { error: UserError; onRetry?: ()
         icon={<Icon size={22} aria-hidden />}
         title={t(`errors.${error.kind}.title`)}
       >
-        {t(`errors.${error.kind}.text`)}
+        {t(`errors.${error.kind}.text`, { person: error.person ?? "" })}
         {until ? ` ${t("errors.lockedUntil", { time: until })}` : null}
       </Banner>
       {onRetry ? (

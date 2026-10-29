@@ -88,7 +88,7 @@ use tracing_subscriber::EnvFilter;
 
 /// Plugins that exist on one platform only. Desktop: single instance (focus the existing window on
 /// a second launch). Android field app: secrets (database key, device and activation secrets) in
-/// the Keystore.
+/// the Keystore; barcode scanner (QR code of the phone enrolment).
 fn register_platform_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -98,7 +98,9 @@ fn register_platform_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Buil
         }
     }));
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(platform::secret_store::plugin());
+    let builder = builder
+        .plugin(platform::secret_store::plugin())
+        .plugin(tauri_plugin_barcode_scanner::init());
     builder
 }
 

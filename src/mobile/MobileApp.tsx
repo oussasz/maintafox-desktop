@@ -9,6 +9,7 @@ import { type UserError, toUserError } from "./lib/user-error";
 import { ActivationGate } from "./screens/ActivationGate";
 import { DeviceSecurityGate } from "./screens/DeviceSecurityScreen";
 import { FieldApp } from "./screens/FieldApp";
+import { PhoneRemovalGate } from "./screens/PhoneRemovalScreen";
 import { SignInScreen } from "./screens/SignInScreen";
 import { StartupScreen } from "./screens/StartupScreen";
 import { OnboardingScreen } from "./ui/OnboardingScreen";
@@ -69,15 +70,17 @@ function SessionRoute() {
   );
 }
 
-/** Engine startup, then joining the plant, then the session. */
+/** Engine startup, then a phone removal in progress, then joining the plant, then the session. */
 function StartupRoute() {
   const { state, retryProbe } = useMobileStartup();
 
   if (state.status !== "ready") return <StartupScreen state={state} onRetry={retryProbe} />;
   return (
-    <ActivationGate>
-      <SessionRoute />
-    </ActivationGate>
+    <PhoneRemovalGate>
+      <ActivationGate>
+        <SessionRoute />
+      </ActivationGate>
+    </PhoneRemovalGate>
   );
 }
 

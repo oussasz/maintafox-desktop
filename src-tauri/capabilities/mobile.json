@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "Android field app. Core IPC only: no shell, no file system, no dialogs. The secure-store plugin is deliberately absent, so the webview can never read the database key or device secrets (only Rust calls it).",
+  "description": "Android field app. Core IPC only: no shell, no file system, no dialogs; camera only for the QR scan of the phone enrolment. The secure-store plugin is deliberately absent, so the webview can never read the database key or device secrets (only Rust calls it).",
   "platforms": [
     "android"
   ],
@@ -9,6 +9,10 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel"
   ]
 }

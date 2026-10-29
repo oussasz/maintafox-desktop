@@ -1,45 +1,65 @@
-import { Building2, CloudDownload, UserX, WifiOff } from "lucide-react";
+import {
+  Format,
+  checkPermissions,
+  requestPermissions,
+  scan,
+} from "@tauri-apps/plugin-barcode-scanner";
+import {
+  CircleCheck,
+  CloudDownload,
+  Keyboard,
+  QrCode,
+  ScanLine,
+  UserX,
+  WifiOff,
+} from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
-import { getAppInfo } from "@/services/app.service";
 import {
   type PlantJoinState,
-  type ProductActivationPreview,
-  activationRequiresLocalDataReset,
-  checkProductLicenseKeyEntry,
-  claimProductActivation,
   getActivationBootstrapState,
   getProductLicenseOnboardingState,
-  previewProductActivation,
   requestPlantJoin,
-  resetLocalTenantRuntimeData,
-  submitProductLicenseKey,
 } from "@/services/product-license-service";
+import { toErrorMessage as toErrorText } from "@/utils/errors";
 
+import { useRemovalNotice } from "../hooks/removal-notice";
 import { useMobileT } from "../i18n";
-import { deviceFingerprint, deviceLabel } from "../lib/device-identity";
-import { LOCAL_STEP_DEADLINE_MS, SLOW_HINT_MS, withUiDeadline } from "../lib/ui-deadline";
+import { formatEnrolmentCode, isCompleteEnrolmentCode } from "../lib/enrolment-code";
+import { SLOW_HINT_MS, withUiDeadline } from "../lib/ui-deadline";
 import { type UserError, licenceDenial, toUserError } from "../lib/user-error";
+import {
+  type MobileEnrolmentRedeemed,
+  type RedeemMobileEnrolmentInput,
+  redeemMobileEnrolment,
+} from "../services/enrolment";
 import { OnboardingScreen } from "../ui/OnboardingScreen";
 import { ErrorBanner } from "../ui/feedback";
-import { Actions, Banner, Button, Hero, Progress, Row, Section, Steps, TextCell } from "../ui/kit";
+import { Actions, Banner, Button, Hero, Progress, Section, Steps, TextCell } from "../ui/kit";
 
 type Phase =
   | { kind: "loading" }
   | { kind: "error"; error: UserError }
-  | { kind: "key"; denied: UserError | null }
-  | { kind: "preview"; preview: ProductActivationPreview; key: string }
+  | { kind: "enrol"; denied: UserError | null }
+  | { kind: "enrolled"; result: MobileEnrolmentRedeemed }
   | { kind: "plant"; join: PlantJoinState; actionError: UserError | null }
   | { kind: "ready" };
 
 /** How often the "joining the plant" screen asks the engine again. */
 const JOIN_POLL_MS = 3000;
 
-/** Onboarding steps shown as progress dots: licence key, plant, sign-in. */
+/** Onboarding steps shown as progress dots: enrolment, plant, sign-in. */
 export const ONBOARDING_STEPS = 3;
 
+/** What the enrolment screen shows: the two ways in, the camera explanation, the typed code. */
+type EnrolMode = "choose" | "camera" | "code";
+
+/** A scan the person cancelled (the plugin rejects it): nothing to report. */
+const SCAN_CANCELLED = /cancel/i;
+
 /**
- * Activation of the phone on an existing plant. The phone always JOINS: it never bootstraps a
+ * Activation of the phone on an existing plant, with the QR code or the code its administrator
+ * issued (never a licence key). The phone always JOINS: it never bootstraps a
  * tenant (an organisation not initialised is refused, not initialised here) and never creates
  * the first administrator (the engine's `create_first_admin` state is a refusal screen).
  * `children` render once the plant allows signing in.
@@ -47,12 +67,14 @@ export const ONBOARDING_STEPS = 3;
 export function ActivationGate({ children }: { children: ReactNode }) {
   const { t } = useMobileT();
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
-  const [keyInput, setKeyInput] = useState("");
+  const [codeInput, setCodeInput] = useState("");
+  const [mode, setMode] = useState<EnrolMode>("choose");
+  const [notice, setNotice] = useState<"cameraRefused" | "scanFailed" | null>(null);
+  const lastInput = useRef<RedeemMobileEnrolmentInput | null>(null);
+  const removalNotice = useRemovalNotice();
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<UserError | null>(null);
   const requestedJoin = useRef(false);
-  // Bumped when the person stops waiting for a licence check: its late answer is then ignored.
-  const previewAttempt = useRef(0);
   const [slow, setSlow] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -71,13 +93,13 @@ export function ActivationGate({ children }: { children: ReactNode }) {
           );
           denied = licenceDenial(onboarding.deny_reason_code);
         }
-        setPhase({ kind: "key", denied });
+        setPhase({ kind: "enrol", denied });
         return;
       }
       const bootstrap = await withUiDeadline(getActivationBootstrapState(), "activation.state");
       switch (bootstrap.plant_join) {
         case null:
-          setPhase({ kind: "key", denied: null });
+          setPhase({ kind: "enrol", denied: null });
           return;
         case "sign_in":
           setPhase({ kind: "ready" });
@@ -132,8 +154,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, [plantJoin, refresh]);
 
-  // A slow answer: after a few seconds the screen says so (and, for the licence check, offers to
-  // stop waiting).
+  // A slow answer: after a few seconds the screen says so.
   const waiting = busy || phase.kind === "loading";
   useEffect(() => {
     setSlow(false);
@@ -142,83 +163,81 @@ export function ActivationGate({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [waiting]);
 
-  async function onValidateKey(event: FormEvent) {
-    event.preventDefault();
-    const key = keyInput.trim();
-    if (!key) return;
-    const attempt = ++previewAttempt.current;
+  /** Sends the scanned text or typed code to the engine, which validates it and enrols. */
+  async function redeem(input: RedeemMobileEnrolmentInput) {
+    lastInput.current = input;
     setBusy(true);
     setFormError(null);
+    setNotice(null);
     try {
-      const preview = await withUiDeadline(
-        getAppInfo().then((info) =>
-          previewProductActivation({
-            license_key: key,
-            machine_fingerprint: deviceFingerprint(),
-            machine_label: deviceLabel(),
-            app_version: info.version,
-          }),
-        ),
-        "activation.preview",
-      );
-      if (attempt !== previewAttempt.current) return;
-      setPhase({ kind: "preview", preview, key });
+      // The engine's own request limit (20 s) comes first; this deadline covers a lost answer.
+      const result = await withUiDeadline(redeemMobileEnrolment(input), "activation.enrol");
+      setCodeInput("");
+      setPhase({ kind: "enrolled", result });
     } catch (err) {
-      if (attempt !== previewAttempt.current) return;
-      setFormError(toUserError(err, "activation.preview", "activation"));
-    } finally {
-      if (attempt === previewAttempt.current) setBusy(false);
-    }
-  }
-
-  /** Stops waiting for the licence check (a preview only: it takes no device slot). */
-  function stopWaitingForPreview() {
-    previewAttempt.current += 1;
-    setBusy(false);
-  }
-
-  async function onJoinPlant(preview: ProductActivationPreview, key: string) {
-    setBusy(true);
-    setFormError(null);
-    try {
-      // Each step has its own deadline; there is no "stop waiting" here, because the claim takes a
-      // device slot on the server and must be followed through (a retry claims the same slot).
-      const where = "activation.claim";
-      const info = await withUiDeadline(getAppInfo(), where);
-      const label = deviceLabel();
-      // The engine is asked first whether it would accept this licence, before a device slot is
-      // taken on the server (same sequence as the desktop activation).
-      await withUiDeadline(checkProductLicenseKeyEntry(preview), where);
-      const claim = await withUiDeadline(
-        claimProductActivation({
-          license_key: key,
-          machine_fingerprint: deviceFingerprint(),
-          machine_label: label,
-          app_version: info.version,
-        }),
-        where,
-      );
-      const onboarding = await withUiDeadline(getProductLicenseOnboardingState(), where);
-      if (activationRequiresLocalDataReset(onboarding.tenant_id, claim.tenant_id)) {
-        await withUiDeadline(resetLocalTenantRuntimeData(), where, LOCAL_STEP_DEADLINE_MS);
-      }
-      await withUiDeadline(
-        submitProductLicenseKey({
-          key,
-          tenant_id: claim.tenant_id,
-          app_version: info.version,
-        }),
-        where,
-        LOCAL_STEP_DEADLINE_MS,
-      );
-      setKeyInput("");
-      requestedJoin.current = false;
-      await refresh();
-    } catch (err) {
-      setFormError(toUserError(err, "activation.claim", "activation"));
+      const error = toUserError(err, "activation.enrol", "activation");
+      setFormError(error);
+      // An earlier attempt whose answer was lost did activate the phone: go on from its state.
+      if (error.kind === "enrolAlreadyActivated") void refresh();
     } finally {
       setBusy(false);
     }
+  }
+
+  async function scanNow() {
+    let content: string | undefined;
+    try {
+      const scanned = await scan({ formats: [Format.QRCode] });
+      content = scanned.content;
+    } catch (err) {
+      if (!SCAN_CANCELLED.test(toErrorText(err))) setNotice("scanFailed");
+      setMode("choose");
+      return;
+    }
+    if (!content) {
+      setNotice("scanFailed");
+      setMode("choose");
+      return;
+    }
+    // The raw text goes to the engine untouched: it alone decides whether it is a valid code.
+    await redeem({ qr_payload: content });
+  }
+
+  function cameraRefused() {
+    setNotice("cameraRefused");
+    setMode("code");
+  }
+
+  async function onScan() {
+    setNotice(null);
+    setFormError(null);
+    let permission: string;
+    try {
+      permission = await checkPermissions();
+    } catch {
+      cameraRefused();
+      return;
+    }
+    if (permission === "granted") await scanNow();
+    else if (permission === "denied") cameraRefused();
+    else setMode("camera");
+  }
+
+  async function onAllowCamera() {
+    let permission: string;
+    try {
+      permission = await requestPermissions();
+    } catch {
+      permission = "denied";
+    }
+    if (permission === "granted") await scanNow();
+    else cameraRefused();
+  }
+
+  function onSubmitCode(event: FormEvent) {
+    event.preventDefault();
+    if (!isCompleteEnrolmentCode(codeInput) || busy) return;
+    void redeem({ code: codeInput });
   }
 
   if (phase.kind === "ready") return <>{children}</>;
@@ -301,83 +320,148 @@ export function ActivationGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (phase.kind === "preview") {
-    const { preview, key } = phase;
-    const company = preview.tenant_display_name ?? preview.tenant_slug ?? preview.tenant_id;
-    const initialised = preview.is_initialized !== false;
+  if (phase.kind === "enrolled") {
+    const { result } = phase;
     return (
-      <OnboardingScreen title={t("activation.confirmTitle")}>
+      <OnboardingScreen title={t("activation.enrol.successTitle")}>
         <Hero
-          icon={<Building2 size={40} strokeWidth={2.2} aria-hidden />}
-          title={t("activation.confirmTitle")}
-          text={t("activation.confirmText")}
+          icon={<CircleCheck size={40} strokeWidth={2.2} aria-hidden />}
+          title={t("activation.enrol.successTitle")}
+          text={t("activation.enrol.assigned", {
+            person: result.person_label,
+            site: result.site_label,
+          })}
         />
         {steps(1)}
-        <Section>
-          <Row title={t("activation.company")} detail={company} />
-          {preview.edition ? (
-            <Row title={t("activation.edition")} detail={preview.edition} />
-          ) : null}
-        </Section>
-        {initialised ? null : (
-          <Banner tone="warning" alert title={t("activation.notInitializedTitle")}>
-            {t("activation.notInitialized")}
-          </Banner>
-        )}
-        {formError ? <ErrorBanner error={formError} /> : null}
-        {busy && slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
         <Actions>
-          {initialised ? (
-            <Button disabled={busy} onClick={() => void onJoinPlant(preview, key)}>
-              {busy ? t("activation.joining") : t("activation.join")}
-            </Button>
-          ) : null}
           <Button
-            variant="plain"
-            disabled={busy}
             onClick={() => {
-              setFormError(null);
-              setPhase({ kind: "key", denied: null });
+              requestedJoin.current = false;
+              setPhase({ kind: "loading" });
+              void refresh();
             }}
           >
-            {t("activation.cancel")}
+            {t("activation.enrol.continue")}
           </Button>
         </Actions>
       </OnboardingScreen>
     );
   }
 
+  const retryable =
+    formError !== null &&
+    lastInput.current !== null &&
+    (formError.kind === "serverUnreachable" || formError.kind === "serverError");
+  const banners = (
+    <>
+      {removalNotice.oldSlotToRemove ? (
+        <Banner tone="info">{t("activation.enrol.unboundNotice")}</Banner>
+      ) : null}
+      {phase.denied ? <ErrorBanner error={phase.denied} /> : null}
+      {notice ? <Banner tone="info">{t(`activation.enrol.${notice}`)}</Banner> : null}
+      {formError ? (
+        <ErrorBanner
+          error={formError}
+          {...(retryable && !busy
+            ? {
+                onRetry: () => {
+                  if (lastInput.current) void redeem(lastInput.current);
+                },
+              }
+            : {})}
+        />
+      ) : null}
+      {busy ? <Progress text={t("activation.enrol.enrolling")} /> : null}
+      {busy && slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
+    </>
+  );
+
+  if (mode === "camera") {
+    return (
+      <OnboardingScreen title={t("activation.enrol.cameraTitle")} language>
+        <Hero
+          icon={<ScanLine size={40} strokeWidth={2.2} aria-hidden />}
+          title={t("activation.enrol.cameraTitle")}
+          text={t("activation.enrol.cameraText")}
+        />
+        {steps(0)}
+        <Actions>
+          <Button onClick={() => void onAllowCamera()}>{t("activation.enrol.cameraAllow")}</Button>
+          <Button variant="plain" onClick={() => setMode("code")}>
+            {t("activation.enrol.typeCode")}
+          </Button>
+        </Actions>
+      </OnboardingScreen>
+    );
+  }
+
+  if (mode === "code") {
+    return (
+      <OnboardingScreen title={t("activation.title")} language>
+        <Hero title={t("activation.title")} text={t("activation.joinOnly")} />
+        {steps(0)}
+        {banners}
+        <form className="mf-form-stack" onSubmit={onSubmitCode}>
+          <Section footer={t("activation.enrol.codeHint")}>
+            <TextCell
+              label={t("activation.enrol.codeLabel")}
+              value={codeInput}
+              placeholder={t("activation.enrol.codePlaceholder")}
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              dir="ltr"
+              onChange={(e) => setCodeInput(formatEnrolmentCode(e.target.value))}
+            />
+          </Section>
+          <Actions>
+            <Button type="submit" disabled={busy || !isCompleteEnrolmentCode(codeInput)}>
+              {busy ? t("activation.enrol.enrolling") : t("activation.enrol.codeSubmit")}
+            </Button>
+            <Button
+              variant="plain"
+              disabled={busy}
+              onClick={() => {
+                setFormError(null);
+                setNotice(null);
+                setMode("choose");
+              }}
+            >
+              <QrCode size={20} aria-hidden />
+              {t("activation.enrol.backToScan")}
+            </Button>
+          </Actions>
+        </form>
+      </OnboardingScreen>
+    );
+  }
+
   return (
     <OnboardingScreen title={t("activation.title")} language>
-      <Hero title={t("activation.title")} text={t("activation.joinOnly")} />
+      <Hero
+        title={t("activation.title")}
+        text={`${t("activation.joinOnly")} ${t("activation.enrolHint")}`}
+      />
       {steps(0)}
-      {phase.denied ? <ErrorBanner error={phase.denied} /> : null}
-      <form className="mf-form-stack" onSubmit={(e) => void onValidateKey(e)}>
-        <Section footer={t("activation.keyHint")}>
-          <TextCell
-            label={t("activation.keyLabel")}
-            value={keyInput}
-            placeholder={t("activation.keyPlaceholder")}
-            autoCapitalize="characters"
-            autoComplete="off"
-            spellCheck={false}
-            dir="ltr"
-            onChange={(e) => setKeyInput(e.target.value)}
-          />
-        </Section>
-        {formError ? <ErrorBanner error={formError} /> : null}
-        {busy && slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
-        <Actions>
-          <Button type="submit" disabled={busy || keyInput.trim() === ""}>
-            {busy ? t("activation.validating") : t("activation.validate")}
-          </Button>
-          {busy && slow ? (
-            <Button variant="plain" onClick={stopWaitingForPreview}>
-              {t("common.cancel")}
-            </Button>
-          ) : null}
-        </Actions>
-      </form>
+      {banners}
+      <Actions>
+        <Button disabled={busy} onClick={() => void onScan()}>
+          <QrCode size={20} aria-hidden />
+          {t("activation.enrol.scan")}
+        </Button>
+        <Button
+          variant="gray"
+          disabled={busy}
+          onClick={() => {
+            setFormError(null);
+            setNotice(null);
+            setMode("code");
+          }}
+        >
+          <Keyboard size={20} aria-hidden />
+          {t("activation.enrol.typeCode")}
+        </Button>
+      </Actions>
     </OnboardingScreen>
   );
 }

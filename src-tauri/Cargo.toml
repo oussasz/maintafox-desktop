@@ -77,6 +77,8 @@ ttf-parser = "0.25"
 # the Android build does not ship.
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-roots = "1"
+# QR scan of the phone enrolment (the screen reads the camera through this official plugin).
+tauri-plugin-barcode-scanner = "2"
 
 [[bin]]
 name = "rams-readiness-eval"

@@ -27,6 +27,7 @@ const KNOWN_BLOCKERS = [
   "activation_refused",
   "tenant_config_mismatch",
   "not_configured",
+  "phone_removed",
 ];
 
 function StateHeader({ status }: { status: SyncWorkerStatus }) {
