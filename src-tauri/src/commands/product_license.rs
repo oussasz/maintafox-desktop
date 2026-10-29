@@ -921,6 +921,10 @@ pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection
     // The plant default language is kept across the reset (F11): the wipe below puts its Settings
     // row back to the shipped value, so it is written back right after the reseed (AU-127).
     let plant_language = crate::locale::read_plant_language(db).await?;
+    // The rows the migrations create (system roles, permissions, statuses, catalogs, plant
+    // settings) are put back after the wipe, as a new installation holds them: the migrations are
+    // not run again and sync never sends these rows. Built before anything is deleted.
+    let baseline = crate::db::baseline::MigrationBaseline::build().await?;
 
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_begin",
@@ -949,8 +953,6 @@ pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection
 
     // The wipe and the reseed below are local maintenance, not changes for other devices: capture
     // is off until it is installed again at the end.
-    // The safety rule notices are otherwise never deleted: the reseed below guards them again.
-    crate::settings::received_notice::drop_notice_guards(db).await?;
     crate::sync::capture::suspend_capture(db).await?;
 
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
@@ -958,8 +960,11 @@ pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
     db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
 
-    let wipe_result: Result<u64, sea_orm::DbErr> = async {
+    let wipe_result: AppResult<u64> = async {
         let tx = db.begin().await?;
+        // The safety rule notices are otherwise never deleted: the reseed below guards them again.
+        // Dropped inside the transaction, so a reset that fails keeps them guarded.
+        crate::settings::received_notice::drop_notice_guards(&tx).await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
             let escaped = table.replace('"', "\"\"");
@@ -999,6 +1004,15 @@ pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection
             "DELETE FROM app_settings WHERE setting_scope = 'tenant'".to_string(),
         ))
         .await?;
+
+        // What was deleted comes back as the migrations left it on a new database.
+        for table in &tables_to_wipe {
+            baseline.restore_into(&tx, table, None).await?;
+        }
+        baseline
+            .restore_into(&tx, "app_settings", Some("setting_scope = 'tenant'"))
+            .await?;
+        crate::db::baseline::ensure_no_dangling_rows(&tx, &tables_to_wipe).await?;
 
         tx.commit().await?;
         Ok(wiped_rows_total)
