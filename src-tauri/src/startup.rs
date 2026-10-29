@@ -448,12 +448,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     }
 
     // Phone enrolments issued here and revocations of disabled accounts' phones
-    // (`commands::mobile_enrolment`; desktop only, non-fatal).
+    // (`commands::mobile_enrolment`; desktop only, non-fatal), supervised background task: each
+    // round runs on its own, so a failed round never stops the next.
     {
         let phones_db = app_state.db.clone();
-        tauri::async_runtime::spawn(async move {
-            crate::commands::mobile_enrolment::start_follow_up(phones_db).await;
-        });
+        app_state
+            .tasks
+            .spawn("mobile_enrolment_follow_up", move |cancel| {
+                crate::commands::mobile_enrolment::run_follow_up(phones_db, cancel)
+            })
+            .await;
         info!("startup: phone enrolment follow-up started");
     }
 
