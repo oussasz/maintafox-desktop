@@ -921,6 +921,10 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
     // The plant default language is kept across the reset (F11): the wipe below puts its Settings
     // row back to the shipped value, so it is written back right after the reseed (AU-127).
     let plant_language = crate::locale::read_plant_language(db).await?;
+    // The rows the migrations create (system roles, permissions, statuses, catalogs, plant
+    // settings) are put back after the wipe, as a new installation holds them: the migrations are
+    // not run again and sync never sends these rows. Built before anything is deleted.
+    let baseline = crate::db::baseline::MigrationBaseline::build().await?;
 
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_begin",
@@ -958,7 +962,7 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
     db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
 
-    let wipe_result: Result<u64, sea_orm::DbErr> = async {
+    let wipe_result: AppResult<u64> = async {
         let tx = db.begin().await?;
         let mut wiped_rows_total: u64 = 0;
         for table in &tables_to_wipe {
@@ -999,6 +1003,14 @@ async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppRes
             "DELETE FROM app_settings WHERE setting_scope = 'tenant'".to_string(),
         ))
         .await?;
+
+        // What was deleted comes back as the migrations left it on a new database.
+        for table in &tables_to_wipe {
+            baseline.restore_into(&tx, table, None).await?;
+        }
+        baseline
+            .restore_into(&tx, "app_settings", Some("setting_scope = 'tenant'"))
+            .await?;
 
         tx.commit().await?;
         Ok(wiped_rows_total)

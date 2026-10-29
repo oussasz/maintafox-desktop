@@ -17,9 +17,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection};
+use sea_orm::DatabaseConnection;
 use sea_orm_migration::MigratorTrait;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteOwnedBuf, SqlitePoolOptions};
+use sqlx::sqlite::SqliteOwnedBuf;
 use tokio::sync::OnceCell;
 
 type BuildFn = for<'a> fn(&'a DatabaseConnection) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
@@ -78,20 +78,7 @@ impl Template {
 /// A private in-memory database on a single connection that lives as long as the pool, opened
 /// like `Database::connect("sqlite::memory:")` does (sqlx defaults, so `foreign_keys = ON`).
 pub(crate) async fn empty_memory_db() -> DatabaseConnection {
-    let opts = SqliteConnectOptions::new().in_memory(true).shared_cache(false);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .min_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect_with(opts)
-        .await
-        .expect("in-memory SQLite");
-    let db = sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
-    db.execute_unprepared("PRAGMA foreign_keys = ON")
-        .await
-        .expect("PRAGMA foreign_keys");
-    db
+    crate::db::baseline::empty_memory_db().await.expect("in-memory SQLite")
 }
 
 static MIGRATED: Template = Template::new(|db| {
@@ -128,7 +115,7 @@ pub(crate) async fn seeded() -> DatabaseConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
 
     async fn rows(db: &DatabaseConnection, sql: &str) -> Vec<String> {
         db.query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))

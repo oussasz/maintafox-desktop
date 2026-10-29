@@ -1,3 +1,4 @@
+pub mod baseline;
 pub mod demo_seeder;
 pub mod encryption;
 pub mod integrity;
