@@ -383,8 +383,10 @@ export function PickerRow({
             className="mf-row__title"
             style={chosen ? undefined : { color: "var(--mf-label-3)" }}
           >
-            {chosen?.color ? <Dot color={chosen.color} /> : null}
-            {chosen ? chosen.label : placeholder}
+            <span className="mf-dotted">
+              {chosen?.color ? <Dot color={chosen.color} /> : null}
+              {chosen ? chosen.label : placeholder}
+            </span>
           </span>
         </span>
         <ChevronRight className="mf-row__chevron mf-mirror" size={20} aria-hidden />
@@ -413,8 +415,10 @@ export function PickerRow({
               >
                 <span className="mf-row__main">
                   <span className="mf-row__title">
-                    {o.color ? <Dot color={o.color} /> : null}
-                    {o.label}
+                    <span className="mf-dotted">
+                      {o.color ? <Dot color={o.color} /> : null}
+                      {o.label}
+                    </span>
                   </span>
                   {o.hint ? <span className="mf-row__subtitle">{o.hint}</span> : null}
                 </span>
@@ -440,8 +444,7 @@ function Dot({ color }: { color: string }) {
         blockSize: 10,
         borderRadius: "50%",
         background: color,
-        marginInline: 8,
-        verticalAlign: "middle",
+        flex: "none",
       }}
     />
   );
@@ -781,7 +784,8 @@ export function Sheet({
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ y: number; dy: number } | null>(null);
+  const drag = useRef<{ id: number; y: number; dy: number } | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleId = useId();
   // The caller's onClose is often a new function each render (e.g. while typing in a search field
   // inside the sheet): read it through a ref so the open/close effect runs on `open` only.
@@ -790,6 +794,12 @@ export function Sheet({
 
   useEffect(() => {
     if (!open) return;
+    const sheet = panel.current;
+    if (sheet) {
+      sheet.style.animation = "";
+      sheet.style.transition = "";
+      sheet.style.transform = "";
+    }
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -803,6 +813,8 @@ export function Sheet({
     const wasInert = app?.hasAttribute("inert") ?? false;
     app?.setAttribute("inert", "");
     return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      closeTimer.current = null;
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
       if (!wasInert) app?.removeAttribute("inert");
@@ -810,35 +822,44 @@ export function Sheet({
     };
   }, [open]);
 
-  // Swipe the grabber or title bar down to dismiss (past a quarter of the sheet, or 120 px).
+  // Swipe the grabber or the title down to dismiss (past a quarter of the sheet, or 120 px). The
+  // drag zone holds no button, so the close button and trailing actions keep their taps.
   const onDragStart = (e: PointerEvent<HTMLElement>) => {
-    drag.current = { y: e.clientY, dy: 0 };
+    drag.current = { id: e.pointerId, y: e.clientY, dy: 0 };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onDragMove = (e: PointerEvent<HTMLElement>) => {
-    if (!drag.current || !panel.current) return;
+    if (!drag.current || drag.current.id !== e.pointerId || !panel.current) return;
     drag.current.dy = Math.max(0, e.clientY - drag.current.y);
+    panel.current.style.animation = "none";
     panel.current.style.transition = "none";
     panel.current.style.transform = `translateY(${drag.current.dy}px)`;
   };
-  const onDragEnd = () => {
+  const settle = (dismiss: boolean) => {
     const sheet = panel.current;
-    const dy = drag.current?.dy ?? 0;
     drag.current = null;
     if (!sheet) return;
     sheet.style.transition = "transform 260ms var(--mf-ease)";
-    if (dy > Math.min(120, sheet.offsetHeight / 4)) {
+    if (dismiss) {
       sheet.style.transform = "translateY(100%)";
-      setTimeout(() => closeRef.current(), 200);
+      closeTimer.current = setTimeout(() => {
+        closeTimer.current = null;
+        closeRef.current();
+      }, 200);
     } else {
       sheet.style.transform = "";
     }
   };
-  const dragHandlers = {
+  const onDragEnd = (e: PointerEvent<HTMLElement>) => {
+    if (!drag.current || drag.current.id !== e.pointerId || !panel.current) return;
+    settle(drag.current.dy > Math.min(120, panel.current.offsetHeight / 4));
+  };
+  const dragZone = {
     onPointerDown: onDragStart,
     onPointerMove: onDragMove,
     onPointerUp: onDragEnd,
-    onPointerCancel: onDragEnd,
+    // A cancelled gesture puts the sheet back; it never dismisses it.
+    onPointerCancel: () => settle(false),
   };
 
   if (!open) return null;
@@ -859,14 +880,14 @@ export function Sheet({
         aria-labelledby={titleId}
         tabIndex={-1}
       >
-        <span className="mf-sheet__grabber" aria-hidden {...dragHandlers} />
-        <div className="mf-sheet__head" {...dragHandlers}>
+        <span className="mf-sheet__grabber" aria-hidden {...dragZone} />
+        <div className="mf-sheet__head">
           <div>
             {action ? null : (
               <NavButton label={closeLabel} onClick={onClose} icon={<X size={24} aria-hidden />} />
             )}
           </div>
-          <h2 id={titleId} className="mf-sheet__title">
+          <h2 id={titleId} className="mf-sheet__title" {...dragZone}>
             {title}
           </h2>
           <div className="mf-sheet__trailing">{trailing}</div>

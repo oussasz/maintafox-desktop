@@ -67,7 +67,7 @@ export function SettingsScreen({
               inlineSize: 52,
               blockSize: 52,
               borderRadius: "50%",
-              background: "var(--mf-brand-navy)",
+              background: "var(--mf-tile-navy)",
               color: "#ffffff",
               font: "var(--mf-title-3)",
             }}
@@ -96,7 +96,7 @@ export function SettingsScreen({
           </div>
         </div>
         <div className="mf-row mf-row--icon" style={{ flexWrap: "wrap" }}>
-          <span className="mf-row__icon" style={{ background: "var(--mf-brand-navy)" }}>
+          <span className="mf-row__icon" style={{ background: "var(--mf-tile-navy)" }}>
             <Moon aria-hidden />
           </span>
           <span className="mf-row__main">{t("settings.appearance")}</span>

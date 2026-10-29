@@ -44,7 +44,9 @@ export interface ExecutionSample {
   equipment: string;
   location: string;
   status: string;
+  statusColor: string;
   urgency: string;
+  urgencyColor: string;
   type: string;
   permit: string;
   isolation: string;
@@ -134,7 +136,10 @@ export function WorkOrderExecutionMockup({
   onBack: () => void;
 }) {
   const { t } = useMobileT();
-  const [tasks, setTasks] = useState(data.tasks);
+  // Nothing is answered before the work starts.
+  const [tasks, setTasks] = useState(
+    stage === "ready" ? data.tasks.map((task) => ({ ...task, result: null })) : data.tasks,
+  );
   const [parts, setParts] = useState(data.parts);
   const [safetyRead, setSafetyRead] = useState(stage !== "ready");
   const [mode, setMode] = useState(data.failure.mode);
@@ -155,12 +160,10 @@ export function WorkOrderExecutionMockup({
       <div className="mf-detail-head">
         <h2 className="mf-detail-head__title">{data.title}</h2>
         <div className="mf-detail-head__pills">
-          <Pill tone={running ? "green" : "tint"} dot={running}>
+          <Pill dotColor={running ? "var(--mf-green)" : data.statusColor}>
             {running ? t("exec.inProgress") : data.status}
           </Pill>
-          <Pill tone="red" dot>
-            {data.urgency}
-          </Pill>
+          <Pill dotColor={data.urgencyColor}>{data.urgency}</Pill>
           <Pill>{data.type}</Pill>
         </div>
       </div>
@@ -176,11 +179,7 @@ export function WorkOrderExecutionMockup({
       </Banner>
 
       <Section>
-        <Row
-          icon={<Wrench aria-hidden />}
-          iconColor="var(--mf-brand-navy)"
-          title={data.equipment}
-        />
+        <Row icon={<Wrench aria-hidden />} iconColor="var(--mf-tile-navy)" title={data.equipment} />
         <Row icon={<MapPin aria-hidden />} iconColor="var(--mf-label-3)" title={data.location} />
       </Section>
 

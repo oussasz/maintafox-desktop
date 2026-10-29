@@ -230,8 +230,12 @@ const theme = params.get("theme") === "dark" ? "dark" : "light";
 // The emulator captures load this page over plain HTTP, where browsers withhold randomUUID (the
 // app itself runs on a secure origin): give the preview a stand-in.
 if (typeof crypto.randomUUID !== "function") {
-  Object.assign(crypto, {
-    randomUUID: () => "00000000-0000-4000-8000-" + String(Date.now()).padStart(12, "0").slice(-12),
+  let n = 0;
+  Object.defineProperty(crypto, "randomUUID", {
+    value: () =>
+      `00000000-0000-4000-8000-${String(Date.now() + n++)
+        .slice(-12)
+        .padStart(12, "0")}`,
   });
 }
 installFakeEngine({ ...signedInAnswers(), ...(SCENARIO_ANSWERS[name] ?? {}) });

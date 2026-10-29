@@ -1,5 +1,5 @@
 import { BadgeCheck, CheckCircle2, Factory, HardHat, Leaf, Wrench } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { getReferenceTypeConfig } from "@/components/reference/reference-types";
 import { searchAssets } from "@/services/asset-search-service";
@@ -126,7 +126,7 @@ function EquipmentPicker({
             <li key={a.id}>
               <Row
                 icon={<Wrench aria-hidden />}
-                iconColor="var(--mf-brand-navy)"
+                iconColor="var(--mf-tile-navy)"
                 title={
                   <>
                     <span className="mf-ltr" style={{ fontWeight: 600 }}>
@@ -173,6 +173,7 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
 
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
+  const problemsRef = useRef<HTMLDivElement>(null);
   const [submitError, setSubmitError] = useState<UserError | null>(null);
   const [savedCode, setSavedCode] = useState<string | null>(null);
   const clearSaved = useCallback(() => setSavedCode(null), []);
@@ -227,7 +228,10 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
     if (userId == null) found.push(t("di.noUser"));
     setProblems(found);
     if (found.length > 0 || equipment === null || equipment.org_node_id == null || userId == null) {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      // Bring the list of what is missing into view (it sits just above the send button).
+      requestAnimationFrame(() =>
+        problemsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      );
       return;
     }
 
@@ -291,7 +295,7 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
             {equipment ? (
               <Row
                 icon={<Wrench aria-hidden />}
-                iconColor="var(--mf-brand-navy)"
+                iconColor="var(--mf-tile-navy)"
                 title={
                   <>
                     <span className="mf-ltr" style={{ fontWeight: 600 }}>
@@ -406,13 +410,15 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
           </Section>
 
           {problems.length > 0 ? (
-            <Banner tone="danger" alert title={t("di.problemsTitle")}>
-              <ul style={{ margin: 0, paddingInlineStart: 18 }}>
-                {problems.map((p) => (
-                  <li key={p}>{p}</li>
-                ))}
-              </ul>
-            </Banner>
+            <div ref={problemsRef}>
+              <Banner tone="danger" alert title={t("di.problemsTitle")}>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {problems.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </Banner>
+            </div>
           ) : null}
           {submitError ? <ErrorBanner error={submitError} /> : null}
           <Actions>

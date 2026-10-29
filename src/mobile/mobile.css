@@ -35,7 +35,8 @@
   --mf-orange-soft: #fff1e0;
   --mf-safety: #ffcc00;
   --mf-on-safety: #000000;
-  --mf-bar: rgba(249, 249, 251, 0.86);
+  --mf-bar: rgba(249, 249, 251, 0.96);
+  --mf-tile-navy: #0b1f3a;
   --mf-scrim: rgba(0, 0, 0, 0.4);
   --mf-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
 
@@ -85,7 +86,8 @@
     --mf-green-soft: #0e2e17;
     --mf-orange: #ffb04d;
     --mf-orange-soft: #3a2406;
-    --mf-bar: rgba(22, 22, 24, 0.84);
+    --mf-bar: rgba(22, 22, 24, 0.94);
+    --mf-tile-navy: #2a4a7a;
     --mf-scrim: rgba(0, 0, 0, 0.6);
     --mf-shadow: none;
   }
@@ -109,7 +111,8 @@
   --mf-green-soft: #0e2e17;
   --mf-orange: #ffb04d;
   --mf-orange-soft: #3a2406;
-  --mf-bar: rgba(22, 22, 24, 0.84);
+  --mf-bar: rgba(22, 22, 24, 0.94);
+  --mf-tile-navy: #2a4a7a;
   --mf-scrim: rgba(0, 0, 0, 0.6);
   --mf-shadow: none;
 }
@@ -171,6 +174,7 @@ button {
 .mf-banner__text,
 .mf-cell__input,
 .mf-asset-card__name,
+.mf-asset-card__code,
 .mf-data {
   unicode-bidi: plaintext;
 }
@@ -185,9 +189,15 @@ button {
     .mf-banner__text,
     .mf-cell__input,
     .mf-asset-card__name,
+    .mf-asset-card__code,
     .mf-data
   ) {
   text-align: right;
+}
+
+/* A trailing value sits at the far (left) end of an Arabic row, whatever its own direction. */
+:root[dir="rtl"] .mf-row__detail {
+  text-align: left;
 }
 
 :root[dir="ltr"]
@@ -518,6 +528,12 @@ button.mf-row:disabled {
   color: var(--mf-label-2);
   text-align: end;
   overflow-wrap: anywhere;
+}
+
+.mf-dotted {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .mf-row__chevron {
@@ -929,15 +945,15 @@ textarea.mf-cell__input {
   inline-size: 35%;
   border-radius: inherit;
   background: var(--mf-tint);
-  animation: mf-indeterminate 1.4s var(--mf-ease) infinite;
+  animation: mf-indeterminate 1.1s ease-in-out infinite alternate;
 }
 
 @keyframes mf-indeterminate {
   from {
-    transform: translateX(-110%);
+    transform: translateX(0);
   }
   to {
-    transform: translateX(310%);
+    transform: translateX(185%);
   }
 }
 
@@ -947,10 +963,10 @@ textarea.mf-cell__input {
 
 @keyframes mf-indeterminate-rtl {
   from {
-    transform: translateX(110%);
+    transform: translateX(0);
   }
   to {
-    transform: translateX(-310%);
+    transform: translateX(-185%);
   }
 }
 
@@ -1234,8 +1250,8 @@ textarea.mf-cell__input {
 .mf-stepper button {
   display: grid;
   place-items: center;
-  inline-size: 44px;
-  block-size: 40px;
+  inline-size: 52px;
+  block-size: 52px;
   border: 0;
   background: none;
   color: var(--mf-label);
@@ -1500,6 +1516,11 @@ textarea.mf-cell__input {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   padding: 2px 8px 8px;
+}
+
+.mf-sheet__grabber,
+.mf-sheet__title {
+  touch-action: none;
 }
 
 .mf-sheet__trailing {
