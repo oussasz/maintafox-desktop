@@ -238,8 +238,9 @@ describe("report a fault (DI form)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Envoyer la demande" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Champ obligatoire : Équipement");
-    expect(alert).toHaveTextContent("Champ obligatoire : Objet");
+    expect(alert).toHaveTextContent("Champs obligatoires à remplir");
+    expect(alert).toHaveTextContent("Équipement");
+    expect(alert).toHaveTextContent("Objet");
     expect(calls).toBe(0);
   });
 

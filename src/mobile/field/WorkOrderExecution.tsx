@@ -67,10 +67,13 @@ function TaskRow({
   label,
   result,
   onResult,
+  disabled,
 }: {
   label: string;
   result: TaskResult;
   onResult: (r: TaskResult) => void;
+  /** Before the work starts, results cannot be entered. */
+  disabled: boolean;
 }) {
   const { t } = useMobileT();
   const options: Array<{ value: Exclude<TaskResult, null>; label: string }> = [
@@ -89,6 +92,7 @@ function TaskRow({
             className="mf-result__btn"
             data-tone={o.value}
             aria-pressed={result === o.value}
+            disabled={disabled}
             onClick={() => onResult(result === o.value ? null : o.value)}
           >
             {o.label}
@@ -103,10 +107,12 @@ function Stepper({
   value,
   onChange,
   label,
+  disabled,
 }: {
   value: number;
   onChange: (n: number) => void;
   label: string;
+  disabled: boolean;
 }) {
   const { t } = useMobileT();
   return (
@@ -114,12 +120,18 @@ function Stepper({
       <button
         type="button"
         aria-label={t("exec.less")}
+        disabled={disabled || value === 0}
         onClick={() => onChange(Math.max(0, value - 1))}
       >
         <Minus size={18} aria-hidden />
       </button>
       <output>{value}</output>
-      <button type="button" aria-label={t("exec.more")} onClick={() => onChange(value + 1)}>
+      <button
+        type="button"
+        aria-label={t("exec.more")}
+        disabled={disabled}
+        onClick={() => onChange(value + 1)}
+      >
         <Plus size={18} aria-hidden />
       </button>
     </span>
@@ -140,7 +152,10 @@ export function WorkOrderExecutionMockup({
   const [tasks, setTasks] = useState(
     stage === "ready" ? data.tasks.map((task) => ({ ...task, result: null })) : data.tasks,
   );
-  const [parts, setParts] = useState(data.parts);
+  // Parts are counted as they are used: none before the work starts.
+  const [parts, setParts] = useState(
+    stage === "ready" ? data.parts.map((part) => ({ ...part, qty: 0 })) : data.parts,
+  );
   const [safetyRead, setSafetyRead] = useState(stage !== "ready");
   const [mode, setMode] = useState(data.failure.mode);
   const [cause, setCause] = useState(data.failure.cause);
@@ -222,6 +237,7 @@ export function WorkOrderExecutionMockup({
             key={task.label}
             label={task.label}
             result={task.result}
+            disabled={!running}
             onResult={(r) =>
               setTasks((list) => list.map((x, j) => (j === i ? { ...x, result: r } : x)))
             }
@@ -245,6 +261,7 @@ export function WorkOrderExecutionMockup({
               <Stepper
                 label={p.name}
                 value={p.qty}
+                disabled={!running}
                 onChange={(n) =>
                   setParts((list) => list.map((x, j) => (j === i ? { ...x, qty: n } : x)))
                 }

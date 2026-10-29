@@ -1257,6 +1257,13 @@ textarea.mf-cell__input {
   color: var(--mf-label);
 }
 
+.mf-result__btn:disabled,
+.mf-stepper button:disabled {
+  cursor: default;
+  color: var(--mf-label-3);
+  opacity: 0.6;
+}
+
 .mf-stepper output {
   min-inline-size: 36px;
   text-align: center;
