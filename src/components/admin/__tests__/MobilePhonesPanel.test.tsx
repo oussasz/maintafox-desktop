@@ -322,7 +322,7 @@ describe("MobilePhonesPanel enrolment", () => {
     svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
     svc.issueMobileEnrolment.mockResolvedValue({
       ...issued,
-      expires_at: new Date(Date.now() + 5000).toISOString(),
+      expires_at: new Date(Date.now() + 4500).toISOString(),
     });
     svc.getMobileEnrolmentStatus.mockResolvedValue(statusOf("pending"));
     await openAndFill();
@@ -331,7 +331,7 @@ describe("MobilePhonesPanel enrolment", () => {
     expect(await screen.findByText(/phones\.enrol\.code/)).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(6000);
+      await vi.advanceTimersByTimeAsync(5100);
     });
 
     expect(await screen.findByText("phones.enrol.expired")).toBeInTheDocument();
@@ -382,5 +382,27 @@ describe("MobilePhonesPanel enrolment", () => {
     });
 
     expect(await screen.findByText("phones.enrol.unknown")).toBeInTheDocument();
+  });
+
+  it("drops and cancels a QR code issued after the dialog was closed", async () => {
+    svc.listMobileEnrolmentCandidates.mockResolvedValue(candidates);
+    let resolveIssue: (v: IssuedMobileEnrolment) => void = () => {};
+    svc.issueMobileEnrolment.mockReturnValue(
+      new Promise<IssuedMobileEnrolment>((resolve) => {
+        resolveIssue = resolve;
+      }),
+    );
+    svc.cancelMobileEnrolment.mockResolvedValue(statusOf("cancelled"));
+    await openAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "phones.enrol.create" }));
+    await waitFor(() => expect(svc.issueMobileEnrolment).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    await act(async () => {
+      resolveIssue(issued);
+    });
+
+    await waitFor(() => expect(svc.cancelMobileEnrolment).toHaveBeenCalledWith("enr_abc"));
+    expect(screen.queryByText(/phones\.enrol\.code/)).not.toBeInTheDocument();
   });
 });

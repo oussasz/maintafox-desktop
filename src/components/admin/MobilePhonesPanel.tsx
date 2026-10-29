@@ -108,6 +108,8 @@ function EnrolDialog({
   const [status, setStatus] = useState<EnrolStatus>("pending");
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  // Bumped each time the dialog opens or closes: an answer that arrives for an older one is dropped.
+  const sessionRef = useRef(0);
   const onEnrolledRef = useRef(onEnrolled);
   useEffect(() => {
     onEnrolledRef.current = onEnrolled;
@@ -115,6 +117,7 @@ function EnrolDialog({
 
   // A fresh form each time the dialog opens; the QR secret is dropped as soon as it closes.
   useEffect(() => {
+    sessionRef.current += 1;
     if (!open) {
       setIssued(null);
       setStatus("pending");
@@ -170,16 +173,16 @@ function EnrolDialog({
   const secondsLeft = useSecondsLeft(issued && status === "pending" ? issued.expires_at : null);
 
   // The clock ran out while the QR code was still on screen: it is no longer usable, hide it.
+  // A one-shot timer on the real expiry (not the displayed whole seconds) so it cannot be missed.
+  const expiresAt = issued?.expires_at ?? null;
   useEffect(() => {
-    if (
-      issued &&
-      status === "pending" &&
-      secondsLeft === 0 &&
-      Date.now() >= new Date(issued.expires_at).getTime()
-    ) {
-      setStatus("expired");
-    }
-  }, [issued, status, secondsLeft]);
+    if (!expiresAt || status !== "pending") return undefined;
+    const timer = setTimeout(
+      () => setStatus((s) => (s === "pending" ? "expired" : s)),
+      Math.max(0, new Date(expiresAt).getTime() - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [expiresAt, status]);
 
   const { svgHtml, error: qrError } = useIdentificationQr(
     issued?.qr_payload ?? "",
@@ -190,10 +193,20 @@ function EnrolDialog({
     if (!personId || !siteId || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    const session = sessionRef.current;
     try {
       const result = await withStepUp(() =>
         issueMobileEnrolment({ user_id: Number(personId), site_node_id: Number(siteId) }),
       );
+      if (session !== sessionRef.current) {
+        // The dialog was closed while the QR code was being issued: drop it and cancel it.
+        try {
+          await cancelMobileEnrolment(result.enrolment_id);
+        } catch {
+          // Nothing more to do here; it expires by itself.
+        }
+        return;
+      }
       setIssued(result);
       setStatus("pending");
     } catch (err) {
@@ -228,8 +241,11 @@ function EnrolDialog({
 
   // Closing (button, Esc, outside click) never leaves a usable QR code behind: the secret is
   // dropped and a still-pending enrolment is cancelled. A failed cancel is logged by the engine.
+  // No cancel on unmount: the enrolment is single-use and expires after 15 minutes, and async
+  // work during teardown is unreliable.
   const closeDialog = useCallback(() => {
     const pendingId = issued && status === "pending" ? issued.enrolment_id : null;
+    sessionRef.current += 1;
     setIssued(null);
     setStatus("pending");
     onClose();
