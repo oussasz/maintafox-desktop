@@ -47,6 +47,7 @@ pub mod org;
 pub mod permit;
 pub mod personnel;
 pub mod planning;
+pub mod platform;
 pub mod pm;
 pub mod qualification;
 pub mod rbac;
@@ -60,6 +61,7 @@ pub mod settings;
 pub mod startup;
 pub mod state;
 pub mod sync;
+#[cfg(desktop)]
 pub mod tray;
 pub mod updater;
 pub mod vps;
@@ -84,7 +86,24 @@ mod window_tests;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
+/// Plugins that exist on one platform only. Desktop: single instance (focus the existing window on
+/// a second launch). Android field app: secrets (database key, device and activation secrets) in
+/// the Keystore.
+fn register_platform_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            w.set_focus().ok();
+            w.show().ok();
+        }
+    }));
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(platform::secret_store::plugin());
+    builder
+}
+
 #[allow(clippy::large_stack_frames)]
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("maintafox=info")))
@@ -95,22 +114,16 @@ pub fn run() {
     // Development builds get their own identifier, so their data never mixes with an installed version.
     build_identity::apply(&mut context);
     updater::add_plugin_config(&mut context);
-    updater::register_plugin(
+    register_platform_plugins(updater::register_plugin(
         tauri::Builder::default()
             .plugin(tauri_plugin_shell::init())
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_fs::init())
             .plugin(tauri_plugin_notification::init()),
-    )
-    // Single-instance: focus existing window on second launch
-    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(w) = app.get_webview_window("main") {
-            w.set_focus().ok();
-            w.show().ok();
-        }
-    }))
+    ))
     .setup(|app| {
         // Tray icon (non-fatal if tray is not supported on this platform)
+        #[cfg(desktop)]
         if let Err(e) = tray::setup_tray(app) {
             tracing::warn!("System tray unavailable: {e}");
         }
@@ -155,6 +168,9 @@ pub fn run() {
         commands::app::get_app_info,
         commands::app::get_task_status,
         commands::app::shutdown_app,
+        // Android field app shell (src/mobile/): phone lock check before activation
+        commands::mobile::get_mobile_device_security,
+        commands::mobile::get_last_startup_event,
         // Ã¢â€â‚¬Ã¢â€â‚¬ Auth Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::auth::login,
         commands::auth::logout,

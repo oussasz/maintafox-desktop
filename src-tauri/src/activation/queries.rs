@@ -121,11 +121,19 @@ fn read_machine_id_or_fallback() -> String {
             }
         }
     }
+    // Android: the app's own installation id (no hardware id). If the secret store refuses (no
+    // screen lock), storing the activation binding secret fails too, so activation stops there.
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(id) = crate::platform::installation_id::get_or_create() {
+            return id;
+        }
+    }
     "unknown-machine".to_string()
 }
 
-fn get_keyring_entry(secret_name: &str) -> AppResult<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, secret_name)
+fn get_keyring_entry(secret_name: &str) -> AppResult<crate::platform::secret_store::Entry> {
+    crate::platform::secret_store::Entry::new(KEYRING_SERVICE, secret_name)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("keyring open failed: {e}")))
 }
 
@@ -138,7 +146,7 @@ fn get_activation_binding_secret() -> AppResult<Option<Vec<u8>>> {
                 hex::decode(value).map_err(|e| AppError::Internal(anyhow::anyhow!("keyring decode failed: {e}")))?;
             Ok(Some(bytes))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(crate::platform::secret_store::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::Internal(anyhow::anyhow!("keyring read failed: {e}"))),
     }
 }
