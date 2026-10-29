@@ -51,21 +51,22 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 
     // ── 1. Org structure model (required for org_node_types) ──────────
     let model_sync = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO org_structure_models
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO org_structure_models
             (entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', 'Modèle démo', ?, ?, ?)",
-        [
-            model_sync.clone().into(),
-            now.clone().into(),
-            now.clone().into(),
-            now.clone().into(),
-        ],
-    ))
-    .await?;
+            [
+                model_sync.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
 
-    let model_id = last_insert_id(db).await?;
+    let model_id = crate::db::inserted_id(&inserted)?;
 
     // ── 2. Org node types ─────────────────────────────────────────────
     let types = [
@@ -76,7 +77,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
     ];
     let mut type_ids: Vec<i64> = Vec::new();
     for (code, label, can_host, can_own, is_root) in &types {
-        db.execute(Statement::from_sql_and_values(
+        let inserted = db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO org_node_types
                 (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, is_root_type, created_at, updated_at)
@@ -94,7 +95,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
             ],
         ))
         .await?;
-        type_ids.push(last_insert_id(db).await?);
+        type_ids.push(crate::db::inserted_id(&inserted)?);
     }
 
     // ── 3. Org nodes (site → zones → buildings → lines) ──────────────
@@ -598,46 +599,48 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
     let mut domain_ids: Vec<(i64, &str)> = Vec::new();
     for (code, name, structure, governance, extendable, audience) in domains {
         let category = derive_category_for_persist(code, governance);
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO reference_domains
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO reference_domains
                 (code, name, structure_type, governance_level, governance_category, audience, is_extendable,
                  created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (*code).into(),
-                (*name).into(),
-                (*structure).into(),
-                (*governance).into(),
-                category.as_str().into(),
-                audience.as_str().into(),
-                (*extendable as i32).into(),
-                now.clone().into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
-        let id = last_insert_id(db).await?;
+                [
+                    (*code).into(),
+                    (*name).into(),
+                    (*structure).into(),
+                    (*governance).into(),
+                    category.as_str().into(),
+                    audience.as_str().into(),
+                    (*extendable as i32).into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+        let id = crate::db::inserted_id(&inserted)?;
         domain_ids.push((id, *code));
     }
 
     // ── Reference sets (each domain gets one published set + some get a draft) ──
     for (domain_id, code) in &domain_ids {
         // Published set v1
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO reference_sets
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO reference_sets
                 (domain_id, version_no, status, effective_from, created_by_id, created_at, published_at)
               VALUES (?, 1, 'published', ?, 1, ?, ?)",
-            [
-                (*domain_id).into(),
-                now.clone().into(),
-                now.clone().into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
-        let set_id = last_insert_id(db).await?;
+                [
+                    (*domain_id).into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+        let set_id = crate::db::inserted_id(&inserted)?;
 
         // Seed values for key domains
         match *code {
@@ -1201,39 +1204,40 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         };
         let code = crate::wo::domain::generate_wo_code(db).await?;
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT INTO work_orders (
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO work_orders (
                 entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
                 requester_id, planner_id, urgency_id,
                 title, description,
                 planned_start, planned_end, expected_duration_hours,
                 row_version, created_at, updated_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            [
-                crate::sync::identity::new_entity_sync_id().into(),
-                code.into(),
-                type_id.into(),
-                (*sid).into(),
-                eq_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
-                entity_id.into(),
-                admin_id.into(),
-                admin_id.into(),
-                urgency_id.into(),
-                (*title).into(),
-                (*desc).into(),
-                (*p_start).into(),
-                (*p_end).into(),
-                (*dur).into(),
-                now.clone().into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
+                [
+                    crate::sync::identity::new_entity_sync_id().into(),
+                    code.into(),
+                    type_id.into(),
+                    (*sid).into(),
+                    eq_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or(sea_orm::Value::from(None::<i64>)),
+                    entity_id.into(),
+                    admin_id.into(),
+                    admin_id.into(),
+                    urgency_id.into(),
+                    (*title).into(),
+                    (*desc).into(),
+                    (*p_start).into(),
+                    (*p_end).into(),
+                    (*dur).into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
 
-        let wo_id = last_insert_id(db).await?;
+        let wo_id = crate::db::inserted_id(&inserted)?;
 
         // Transition log: record creation
         db.execute(Statement::from_sql_and_values(
@@ -1488,19 +1492,6 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid failed")))?;
-    use sea_orm::TryGetable;
-    let id = i64::try_get(&row, "", "id").map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e:?}")))?;
-    Ok(id)
-}
-
 async fn insert_org_node(
     db: &DatabaseConnection,
     structure_model_id: i64,
@@ -1512,27 +1503,28 @@ async fn insert_org_node(
     depth: i32,
     now: &str,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO org_nodes
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO org_nodes
             (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
-        [
-            Uuid::new_v4().to_string().into(),
-            code.into(),
-            name.into(),
-            type_id.into(),
-            parent_id.map_or(sea_orm::Value::String(None), |v| v.into()),
-            ancestor_path.into(),
-            depth.into(),
-            now.into(),
-            now.into(),
-            structure_model_id.into(),
-        ],
-    ))
-    .await?;
-    last_insert_id(db).await
+            [
+                Uuid::new_v4().to_string().into(),
+                code.into(),
+                name.into(),
+                type_id.into(),
+                parent_id.map_or(sea_orm::Value::String(None), |v| v.into()),
+                ancestor_path.into(),
+                depth.into(),
+                now.into(),
+                now.into(),
+                structure_model_id.into(),
+            ],
+        ))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn insert_eq_class(
@@ -1543,23 +1535,24 @@ async fn insert_eq_class(
     level: &str,
     now: &str,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO equipment_classes
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO equipment_classes
             (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-        [
-            Uuid::new_v4().to_string().into(),
-            code.into(),
-            name.into(),
-            parent_id.map_or(sea_orm::Value::String(None), |v| v.into()),
-            level.into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    last_insert_id(db).await
+            [
+                Uuid::new_v4().to_string().into(),
+                code.into(),
+                name.into(),
+                parent_id.map_or(sea_orm::Value::String(None), |v| v.into()),
+                level.into(),
+                now.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn insert_equipment(
@@ -1571,25 +1564,26 @@ async fn insert_equipment(
     manufacturer: &str,
     now: &str,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO equipment
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO equipment
             (entity_sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
              manufacturer, created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, 'active_in_service', ?, ?, ?, ?, 1)",
-        [
-            Uuid::new_v4().to_string().into(),
-            asset_code.into(),
-            name.into(),
-            class_id.map_or(sea_orm::Value::String(None), |v| v.into()),
-            node_id.into(),
-            manufacturer.into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    last_insert_id(db).await
+            [
+                Uuid::new_v4().to_string().into(),
+                asset_code.into(),
+                name.into(),
+                class_id.map_or(sea_orm::Value::String(None), |v| v.into()),
+                node_id.into(),
+                manufacturer.into(),
+                now.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1608,32 +1602,33 @@ async fn insert_di(
     submitted_at: &str,
     now: &str,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r"INSERT INTO intervention_requests
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO intervention_requests
             (entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unknown', 0, ?, 0, 0, ?, ?, ?, 1, ?, ?)",
-        [
-            crate::sync::identity::new_entity_sync_id().into(),
-            code.into(),
-            asset_id.into(),
-            org_node_id.into(),
-            status.into(),
-            title.into(),
-            description.into(),
-            origin.into(),
-            (safety as i32).into(),
-            urgency.into(),
-            submitted_at.into(),
-            submitter_id.into(),
-            now.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    last_insert_id(db).await
+            [
+                crate::sync::identity::new_entity_sync_id().into(),
+                code.into(),
+                asset_id.into(),
+                org_node_id.into(),
+                status.into(),
+                title.into(),
+                description.into(),
+                origin.into(),
+                (safety as i32).into(),
+                urgency.into(),
+                submitted_at.into(),
+                submitter_id.into(),
+                now.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 #[cfg(test)]
