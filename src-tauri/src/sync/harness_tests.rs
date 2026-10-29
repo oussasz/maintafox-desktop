@@ -66,7 +66,7 @@ struct DeviceConfig {
 }
 
 /// The harness only ever talks to the API the script started on this machine.
-fn require_local(url: &str) {
+pub(super) fn require_local(url: &str) {
     let rest = url
         .strip_prefix("http://")
         .unwrap_or_else(|| panic!("harness URL must be plain http on this machine: {url}"));

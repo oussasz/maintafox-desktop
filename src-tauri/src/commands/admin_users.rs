@@ -3017,7 +3017,7 @@ async fn validate_admin_set_password(db: &sea_orm::DatabaseConnection, password:
     crate::auth::password_policy::validate_password_strength(password, &policy).map_err(AppError::ValidationFailed)
 }
 
-fn generate_temporary_password(length: usize) -> String {
+pub(crate) fn generate_temporary_password(length: usize) -> String {
     use rand::Rng;
     const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
     const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";

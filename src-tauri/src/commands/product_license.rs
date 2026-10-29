@@ -902,7 +902,7 @@ async fn user_holds_settings_right_at_any_scope(db: &DatabaseConnection, user_id
     Ok(row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0) > 0)
 }
 
-async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
+pub(crate) async fn reset_local_tenant_runtime_data_impl(db: &DatabaseConnection) -> AppResult<u64> {
     // Keep only global bootstrap/settings tables; wipe operational/runtime data to avoid cross-tenant leakage.
     let keep_tables: HashSet<&str> = HashSet::from([
         "seaql_migrations",
