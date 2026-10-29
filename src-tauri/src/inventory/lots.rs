@@ -123,33 +123,27 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_lots
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_lots
             (entity_sync_id, article_id, lot_number, serial_number, expiry_date, goods_receipt_line_id,
              notes, row_version, created_by_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)",
-        [
-            uuid::Uuid::new_v4().to_string().into(),
-            article_id.into(),
-            lot_number.map_or(Value::String(None), Value::from),
-            serial_number.map_or(Value::String(None), Value::from),
-            expiry_date.map_or(Value::String(None), Value::from),
-            goods_receipt_line_id.map_or(Value::BigInt(None), Value::from),
-            actor_id.map_or(Value::BigInt(None), Value::from),
-            now.clone().into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                uuid::Uuid::new_v4().to_string().into(),
+                article_id.into(),
+                lot_number.map_or(Value::String(None), Value::from),
+                serial_number.map_or(Value::String(None), Value::from),
+                expiry_date.map_or(Value::String(None), Value::from),
+                goods_receipt_line_id.map_or(Value::BigInt(None), Value::from),
+                actor_id.map_or(Value::BigInt(None), Value::from),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read lot id")))?;
-    Ok(row.try_get("", "id")?)
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn lot_total_on_hand<C: ConnectionTrait>(db: &C, lot_id: i64) -> AppResult<f64> {

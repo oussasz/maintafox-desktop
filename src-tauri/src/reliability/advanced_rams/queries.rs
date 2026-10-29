@@ -26,17 +26,6 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("advanced_rams decode '{field}': {err}"))
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    row.try_get("", "id").map_err(|e| decode_err("id", e))
-}
-
 fn parse_ts(s: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s.trim())
         .map(|d| d.with_timezone(&Utc))
@@ -249,44 +238,45 @@ pub async fn run_and_store_weibull_fit(
     let eid = format!("weibull_fit:{}", Uuid::new_v4());
     let ok = fit.adequate_sample;
     let pick = |v: f64| if ok { Some(v) } else { None };
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO weibull_fit_results (
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO weibull_fit_results (
             entity_sync_id, equipment_id, period_start, period_end, n_points,
             inter_arrival_hours_json, beta, eta, beta_ci_low, beta_ci_high,
             eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id,
             algorithm_version, dataset_hash_sha256, time_base, failure_mode_id,
             n_failures, n_censored, observations_json, exposure_source
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            eid.into(),
-            input.equipment_id.into(),
-            opt_str_value(input.period_start.clone()),
-            opt_str_value(input.period_end.clone()),
-            (observations.len() as i64).into(),
-            inter_json.into(),
-            opt_f64_value(pick(fit.beta)),
-            opt_f64_value(pick(fit.eta)),
-            opt_f64_value(pick(fit.beta_ci_low)),
-            opt_f64_value(pick(fit.beta_ci_high)),
-            opt_f64_value(pick(fit.eta_ci_low)),
-            opt_f64_value(pick(fit.eta_ci_high)),
-            i64::from(ok).into(),
-            message.into(),
-            now.to_rfc3339().into(),
-            opt_i64_value(uid),
-            WEIBULL_ALGORITHM_VERSION.into(),
-            dataset_hash.into(),
-            WEIBULL_TIME_BASE_EXPOSURE.into(),
-            opt_i64_value(input.failure_mode_id),
-            (fit.n_failures as i64).into(),
-            (fit.n_censored as i64).into(),
-            observations_json.into(),
-            basis.source().into(),
-        ],
-    ))
-    .await?;
-    let id = last_insert_id(db).await?;
+            [
+                eid.into(),
+                input.equipment_id.into(),
+                opt_str_value(input.period_start.clone()),
+                opt_str_value(input.period_end.clone()),
+                (observations.len() as i64).into(),
+                inter_json.into(),
+                opt_f64_value(pick(fit.beta)),
+                opt_f64_value(pick(fit.eta)),
+                opt_f64_value(pick(fit.beta_ci_low)),
+                opt_f64_value(pick(fit.beta_ci_high)),
+                opt_f64_value(pick(fit.eta_ci_low)),
+                opt_f64_value(pick(fit.eta_ci_high)),
+                i64::from(ok).into(),
+                message.into(),
+                now.to_rfc3339().into(),
+                opt_i64_value(uid),
+                WEIBULL_ALGORITHM_VERSION.into(),
+                dataset_hash.into(),
+                WEIBULL_TIME_BASE_EXPOSURE.into(),
+                opt_i64_value(input.failure_mode_id),
+                (fit.n_failures as i64).into(),
+                (fit.n_censored as i64).into(),
+                observations_json.into(),
+                basis.source().into(),
+            ],
+        ))
+        .await?;
+    let id = crate::db::inserted_id(&inserted)?;
     get_weibull_fit(db, id)
         .await?
         .ok_or_else(|| AppError::SyncError("weibull_fit_results insert missing.".into()))
@@ -566,7 +556,7 @@ pub async fn create_fmeca_analysis(
     let eid = format!("fmeca_analysis:{}", Uuid::new_v4());
     let status = input.status.unwrap_or_else(|| "draft".into());
     let boundary = input.boundary_definition.unwrap_or_default();
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO fmeca_analyses (
             entity_sync_id, equipment_id, title, boundary_definition, status, row_version, created_at, created_by_id, updated_at
@@ -583,7 +573,7 @@ pub async fn create_fmeca_analysis(
         ],
     ))
     .await?;
-    let id = last_insert_id(db).await?;
+    let id = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -749,7 +739,7 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
     let fe = input.failure_effect.clone().unwrap_or_default();
     let ra = input.recommended_action.clone().unwrap_or_default();
     let cc = input.current_control.clone().unwrap_or_default();
-    if let Some(id) = input.id {
+    let nid = if let Some(id) = input.id {
         let exp = input.expected_row_version.ok_or_else(|| {
             AppError::ValidationFailed(vec![
                 "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
@@ -806,6 +796,7 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
                 "GATE_RECORD_CHANGED_ELSEWHERE: fmeca_items update conflict.".into(),
             ]));
         }
+        id
     } else {
         if let Some(did) = input.source_ram_ishikawa_diagram_id {
             let d_exists = db
@@ -822,64 +813,61 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
             }
         }
         let eid = format!("fmeca_item:{}", Uuid::new_v4());
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO fmeca_items (
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO fmeca_items (
                 entity_sync_id, analysis_id, component_id, functional_failure, failure_mode_id,
                 failure_effect, severity, occurrence, detectability, rpn,
                 recommended_action, current_control, linked_pm_plan_id, linked_work_order_id, revised_rpn,
                 source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id,
                 row_version, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            [
-                eid.into(),
-                input.analysis_id.into(),
-                input
-                    .component_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                ff.into(),
-                input
-                    .failure_mode_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                fe.into(),
-                input.severity.into(),
-                input.occurrence.into(),
-                input.detectability.into(),
-                rpn.into(),
-                ra.into(),
-                cc.into(),
-                input
-                    .linked_pm_plan_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input
-                    .linked_work_order_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input
-                    .revised_rpn
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input
-                    .source_ram_ishikawa_diagram_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input
-                    .source_ishikawa_flow_node_id
-                    .clone()
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                now.into(),
-            ],
-        ))
-        .await?;
-    }
-    let nid = if let Some(id) = input.id {
-        id
-    } else {
-        last_insert_id(db).await?
+                [
+                    eid.into(),
+                    input.analysis_id.into(),
+                    input
+                        .component_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    ff.into(),
+                    input
+                        .failure_mode_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    fe.into(),
+                    input.severity.into(),
+                    input.occurrence.into(),
+                    input.detectability.into(),
+                    rpn.into(),
+                    ra.into(),
+                    cc.into(),
+                    input
+                        .linked_pm_plan_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .linked_work_order_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .revised_rpn
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .source_ram_ishikawa_diagram_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .source_ishikawa_flow_node_id
+                        .clone()
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                    now.into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -956,26 +944,27 @@ pub async fn create_rcm_study(
     let now = Utc::now().to_rfc3339();
     let eid = format!("rcm_study:{}", Uuid::new_v4());
     let status = input.status.unwrap_or_else(|| "draft".into());
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO rcm_studies (
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO rcm_studies (
             entity_sync_id, equipment_id, title, status, row_version, created_at, created_by_id, updated_at
         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)",
-        [
-            eid.into(),
-            input.equipment_id.into(),
-            input.title.into(),
-            status.into(),
-            now.clone().into(),
-            user_id
-                .map(i64::from)
-                .map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-            now.into(),
-        ],
-    ))
-    .await?;
-    let id = last_insert_id(db).await?;
+            [
+                eid.into(),
+                input.equipment_id.into(),
+                input.title.into(),
+                status.into(),
+                now.clone().into(),
+                user_id
+                    .map(i64::from)
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                now.into(),
+            ],
+        ))
+        .await?;
+    let id = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1122,7 +1111,7 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
     let ff = input.functional_failure.clone().unwrap_or_default();
     let cc = input.consequence_category.clone().unwrap_or_default();
     let jus = input.justification.clone().unwrap_or_default();
-    if let Some(id) = input.id {
+    let nid = if let Some(id) = input.id {
         let exp = input.expected_row_version.ok_or_else(|| {
             AppError::ValidationFailed(vec![
                 "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
@@ -1167,44 +1156,42 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
                 "GATE_RECORD_CHANGED_ELSEWHERE: rcm_decisions update conflict.".into(),
             ]));
         }
+        id
     } else {
         let eid = format!("rcm_decision:{}", Uuid::new_v4());
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO rcm_decisions (
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO rcm_decisions (
                 entity_sync_id, study_id, function_description, functional_failure, failure_mode_id,
                 consequence_category, selected_tactic, justification, review_due_at, linked_pm_plan_id,
                 row_version, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            [
-                eid.into(),
-                input.study_id.into(),
-                fd.into(),
-                ff.into(),
-                input
-                    .failure_mode_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                cc.into(),
-                input.selected_tactic.into(),
-                jus.into(),
-                input
-                    .review_due_at
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                input
-                    .linked_pm_plan_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                now.into(),
-            ],
-        ))
-        .await?;
-    }
-    let nid = if let Some(id) = input.id {
-        id
-    } else {
-        last_insert_id(db).await?
+                [
+                    eid.into(),
+                    input.study_id.into(),
+                    fd.into(),
+                    ff.into(),
+                    input
+                        .failure_mode_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    cc.into(),
+                    input.selected_tactic.into(),
+                    jus.into(),
+                    input
+                        .review_due_at
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                    input
+                        .linked_pm_plan_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    now.into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -1938,7 +1925,7 @@ pub async fn upsert_ram_ishikawa_diagram(
 ) -> AppResult<RamIshikawaDiagram> {
     let now = Utc::now().to_rfc3339();
     let _ = _user_id;
-    if let Some(id) = input.id {
+    let nid = if let Some(id) = input.id {
         let exp = input.expected_row_version.ok_or_else(|| {
             AppError::ValidationFailed(vec![
                 "GATE_INV_ROW_VERSION_REQUIRED: expected_row_version required.".into()
@@ -1969,30 +1956,27 @@ pub async fn upsert_ram_ishikawa_diagram(
                 "GATE_RECORD_CHANGED_ELSEWHERE: ram_ishikawa_diagrams update conflict.".into(),
             ]));
         }
+        id
     } else {
         let eid = format!("ram_ishikawa:{}", Uuid::new_v4());
         let title = input.title.clone().unwrap_or_default();
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO ram_ishikawa_diagrams (
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO ram_ishikawa_diagrams (
                 entity_sync_id, equipment_id, title, flow_json, row_version, created_at, updated_at
             ) VALUES (?, ?, ?, ?, 1, ?, ?)",
-            [
-                eid.into(),
-                input.equipment_id.into(),
-                title.into(),
-                input.flow_json.into(),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
-    }
-
-    let nid = if let Some(id) = input.id {
-        id
-    } else {
-        last_insert_id(db).await?
+                [
+                    eid.into(),
+                    input.equipment_id.into(),
+                    title.into(),
+                    input.flow_json.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
     let row = db
         .query_one(Statement::from_sql_and_values(

@@ -143,28 +143,21 @@ async fn insert_generation_run_start(
     trigger_source: &str,
     scope_json: Option<&str>,
 ) -> AppResult<i64> {
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO pm_generation_runs
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO pm_generation_runs
             (started_at, finished_at, trigger_source, status, generated_count, skipped_count,
              trigger_events_recorded, error_message, scope_json)
          VALUES (?, NULL, ?, 'running', 0, 0, 0, NULL, ?)",
-        [
-            now_rfc3339().into(),
-            trigger_source.to_string().into(),
-            scope_json.map(|s| s.to_string()).into(),
-        ],
-    ))
-    .await?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM pm_generation_runs WHERE rowid = last_insert_rowid()",
-            [],
+            [
+                now_rfc3339().into(),
+                trigger_source.to_string().into(),
+                scope_json.map(|s| s.to_string()).into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm_generation_runs insert missing")))?;
-    Ok(row.try_get("", "id")?)
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn finish_generation_run(

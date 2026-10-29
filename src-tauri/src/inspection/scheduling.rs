@@ -571,36 +571,29 @@ async fn insert_generated_round(
         "inspection_rounds",
         &format!("{}|{}|{}", schedule.entity_sync_id, schedule.row_version, plan.basis),
     );
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inspection_rounds (entity_sync_id, template_id, template_version_id, scheduled_at, \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inspection_rounds (entity_sync_id, template_id, template_version_id, scheduled_at, \
          assigned_to_id, assigned_team_id, status, schedule_id, due_basis, window_end_at, due_meter_value, \
          missed_at, row_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
-        [
-            sync_id.into(),
-            schedule.template_id.into(),
-            version_id.into(),
-            ts(plan.due).into(),
-            schedule.assigned_to_id.into(),
-            schedule.assigned_team_id.into(),
-            (if missed { "missed" } else { "scheduled" }).into(),
-            schedule.id.into(),
-            plan.basis.clone().into(),
-            ts(window_end).into(),
-            plan.due_meter_value.into(),
-            (if missed { Some(ts(window_end)) } else { None }).into(),
-        ],
-    ))
-    .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                sync_id.into(),
+                schedule.template_id.into(),
+                version_id.into(),
+                ts(plan.due).into(),
+                schedule.assigned_to_id.into(),
+                schedule.assigned_team_id.into(),
+                (if missed { "missed" } else { "scheduled" }).into(),
+                schedule.id.into(),
+                plan.basis.clone().into(),
+                ts(window_end).into(),
+                plan.due_meter_value.into(),
+                (if missed { Some(ts(window_end)) } else { None }).into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .await?;
+    let id = crate::db::inserted_id(&insert_result)?;
     created_ids.push(id);
     Ok(true)
 }

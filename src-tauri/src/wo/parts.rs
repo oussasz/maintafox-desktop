@@ -396,56 +396,58 @@ pub async fn add_planned_part<C: ConnectionTrait + TransactionTrait>(db: &C, inp
         None
     };
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO work_order_parts \
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO work_order_parts \
          (work_order_id, article_id, article_ref, quantity_planned, quantity_used, unit_cost, \
           stock_location_id, notes, origin, consumption_status, is_required) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            input.wo_id.into(),
-            input
-                .article_id
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input
-                .article_ref
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            if origin == "execution_added" {
-                input.quantity_planned.into()
-            } else {
-                qty_for_insert.into()
-            },
-            initial_used
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            input
-                .unit_cost
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            input
-                .stock_location_id
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input
-                .notes
-                .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
-            origin.clone().into(),
-            initial_status.into(),
-            i64::from(input.is_required).into(),
-        ],
-    ))
-    .await?;
+            [
+                input.wo_id.into(),
+                input
+                    .article_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
+                input
+                    .article_ref
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                if origin == "execution_added" {
+                    input.quantity_planned.into()
+                } else {
+                    qty_for_insert.into()
+                },
+                initial_used
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                input
+                    .unit_cost
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                input
+                    .stock_location_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
+                input
+                    .notes
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                origin.clone().into(),
+                initial_status.into(),
+                i64::from(input.is_required).into(),
+            ],
+        ))
+        .await?;
 
+    let part_rowid = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.rowid = last_insert_rowid()"),
-            [],
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.rowid = ?"),
+            [part_rowid.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert")))?;
