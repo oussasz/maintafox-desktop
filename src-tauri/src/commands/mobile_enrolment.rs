@@ -1380,7 +1380,7 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .retain(|key, _| {
             key.strip_prefix(skip_prefix.as_str())
-                .map_or(true, |device| active.iter().any(|p| p.device_id == device))
+                .is_none_or(|device| active.iter().any(|p| p.device_id == device))
         });
     let mut people: BTreeMap<String, Vec<&MobilePhone>> = BTreeMap::new();
     for phone in active {
