@@ -11,7 +11,15 @@ if [ -z "${NDK_HOME:-}" ]; then
   NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)"
 fi
 export NDK_HOME ANDROID_NDK_HOME="$NDK_HOME"
-export JAVA_HOME="${JAVA_HOME:-/c/Program Files/Microsoft/jdk-21.0.12.8-hotspot}"
+if [ -z "${JAVA_HOME:-}" ]; then
+  # Newest Microsoft JDK 17+ installed (Android Gradle needs 17 or later).
+  JAVA_HOME="$(ls -d "/c/Program Files/Microsoft"/jdk-{17,21,25}* 2>/dev/null | sort -V | tail -1)"
+fi
+if [ ! -x "${JAVA_HOME:-}/bin/java.exe" ] && [ ! -x "${JAVA_HOME:-}/bin/java" ]; then
+  echo "env.sh: no JDK found; set JAVA_HOME to a JDK 17+ before sourcing" >&2
+  return 1 2>/dev/null || exit 1
+fi
+export JAVA_HOME
 # Short folder outside the repo: the OpenSSL build (scripts/android/build-openssl.sh), the Perl
 # modules it needs and the `make` shim.
 export MFX_ANDROID_HOME="${MFX_ANDROID_HOME:-$(_mfx_u "$LOCALAPPDATA")/mfx-android}"

@@ -14,6 +14,7 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
+import java.io.FileOutputStream
 import java.security.KeyStore
 import java.security.MessageDigest
 import javax.crypto.Cipher
@@ -65,6 +66,9 @@ class SecureStorePlugin(private val activity: Activity) : Plugin(activity) {
         return File(storeDir(), digest.joinToString("") { "%02x".format(it) } + ".bin")
     }
 
+    // One key generation and one file write at a time: two first-launch calls must never create two
+    // keys (data sealed with the replaced key would be lost) or share the same temporary file.
+    @Synchronized
     private fun wrapKey(): SecretKey {
         val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (ks.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -128,11 +132,17 @@ class SecureStorePlugin(private val activity: Activity) : Plugin(activity) {
             cipher.updateAAD(args.name.toByteArray(Charsets.UTF_8))
             val sealed = cipher.doFinal(args.value.toByteArray(Charsets.UTF_8))
             val target = fileFor(args.name)
-            val tmp = File(target.parentFile, target.name + ".tmp")
-            tmp.writeBytes(cipher.iv + sealed)
-            if (!tmp.renameTo(target)) {
-                tmp.delete()
-                return invoke.reject("cannot write secret file")
+            synchronized(this) {
+                val tmp = File(target.parentFile, target.name + ".tmp")
+                // On disk before the rename: a power cut must never leave a partial database key.
+                FileOutputStream(tmp).use { out ->
+                    out.write(cipher.iv + sealed)
+                    out.fd.sync()
+                }
+                if (!tmp.renameTo(target)) {
+                    tmp.delete()
+                    return invoke.reject("cannot write secret file")
+                }
             }
             invoke.resolve()
         } catch (e: Exception) {

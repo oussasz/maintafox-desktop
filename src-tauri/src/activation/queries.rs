@@ -81,6 +81,7 @@ fn validate_activation_input(input: &ApplyMachineActivationInput) -> AppResult<(
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 fn read_machine_id_or_fallback() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -121,15 +122,21 @@ fn read_machine_id_or_fallback() -> String {
             }
         }
     }
-    // Android: the app's own installation id (no hardware id). If the secret store refuses (no
-    // screen lock), storing the activation binding secret fails too, so activation stops there.
+    "unknown-machine".to_string()
+}
+
+/// Machine id anchor. Android: the app's own installation id (no hardware id), and an error when
+/// the secret store cannot give it, never the shared fallback (fails closed, as `auth::device`).
+fn read_machine_id() -> AppResult<String> {
     #[cfg(target_os = "android")]
     {
-        if let Ok(id) = crate::platform::installation_id::get_or_create() {
-            return id;
-        }
+        crate::platform::installation_id::get_or_create()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("android installation id unavailable: {e}")))
     }
-    "unknown-machine".to_string()
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(read_machine_id_or_fallback())
+    }
 }
 
 fn get_keyring_entry(secret_name: &str) -> AppResult<crate::platform::secret_store::Entry> {
@@ -190,7 +197,7 @@ fn derive_anchor_hash(secret: &[u8], anchor_name: &str, anchor_value: &str) -> S
 
 pub(crate) fn current_anchor_hashes() -> AppResult<BTreeMap<String, String>> {
     let secret = get_or_initialize_activation_binding_secret()?;
-    let machine_id = read_machine_id_or_fallback();
+    let machine_id = read_machine_id()?;
     let hostname = hostname::get()
         .map(|v| v.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown-host".to_string());
