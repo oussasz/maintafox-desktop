@@ -440,7 +440,7 @@ function Dot({ color }: { color: string }) {
         blockSize: 10,
         borderRadius: "50%",
         background: color,
-        marginInlineEnd: 8,
+        marginInline: 8,
         verticalAlign: "middle",
       }}
     />
