@@ -163,7 +163,8 @@
     "plantJoining": "Réception des données de l'usine…",
     "connectionNeededTitle": "Connexion nécessaire",
     "connectionNeeded": "Connectez le téléphone à Internet pour recevoir les données de l'usine.",
-    "checking": "Vérification de l'activation…"
+    "checking": "Vérification de l'activation…",
+    "slow": "Le serveur met du temps à répondre…"
   },
   "signin": {
     "title": "Connexion",
