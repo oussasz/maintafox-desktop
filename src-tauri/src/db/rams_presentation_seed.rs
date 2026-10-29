@@ -693,14 +693,14 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
     let domain_id: i64 = if let Some(row) = domain_id {
         row.try_get("", "id").map_err(decode)?
     } else {
-        db.execute(Statement::from_sql_and_values(
+        let inserted = db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reference_domains (code, name, structure_type, governance_level, governance_category, audience, is_extendable, created_at, updated_at) \
              VALUES ('WORK.FAILURE_MODES', 'Modes de défaillance', 'hierarchical', 'system_seeded', 'controlled_catalog', 'company', 0, ?, ?)",
             [now.clone().into(), now.clone().into()],
         ))
         .await?;
-        last_insert_id(db).await?
+        crate::db::inserted_id(&inserted)?
     };
 
     let set_row = db
@@ -713,13 +713,13 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
     let set_id: i64 = if let Some(row) = set_row {
         row.try_get("", "id").map_err(decode)?
     } else {
-        db.execute(Statement::from_sql_and_values(
+        let inserted = db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reference_sets (domain_id, version_no, status, created_by_id, created_at) VALUES (?, 1, 'published', 1, ?)",
             [domain_id.into(), now.clone().into()],
         ))
         .await?;
-        last_insert_id(db).await?
+        crate::db::inserted_id(&inserted)?
     };
 
     db.execute(Statement::from_sql_and_values(
@@ -978,17 +978,6 @@ async fn resolve_verifier_id(db: &DatabaseConnection, actor_id: i64) -> AppResul
     Err(AppError::ValidationFailed(vec![
         "Need at least two active users: actor and verifier must differ for WO verification.".into(),
     ]))
-}
-
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing".into()))?;
-    row.try_get("", "id").map_err(decode)
 }
 
 fn decode(err: sea_orm::DbErr) -> AppError {

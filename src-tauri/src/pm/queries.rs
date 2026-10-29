@@ -2626,27 +2626,29 @@ pub async fn execute_pm_occurrence(
         (None, None)
     };
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO pm_executions
+    let inserted_execution = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO pm_executions
             (pm_occurrence_id, work_order_id, execution_result, executed_at, completed_by_id, notes, actor_id,
              actual_duration_hours, actual_labor_hours, created_at, meter_reading, timing_status)
          VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            occurrence.id.into(),
-            work_order_id.into(),
-            execution_result.clone().into(),
-            executed_at.clone().into(),
-            input.note.clone().into(),
-            actor_id.into(),
-            actual_duration_hours.into(),
-            actual_labor_hours.into(),
-            executed_at.clone().into(),
-            meter_reading.into(),
-            timing_status.clone().into(),
-        ],
-    ))
-    .await?;
+            [
+                occurrence.id.into(),
+                work_order_id.into(),
+                execution_result.clone().into(),
+                executed_at.clone().into(),
+                input.note.clone().into(),
+                actor_id.into(),
+                actual_duration_hours.into(),
+                actual_labor_hours.into(),
+                executed_at.clone().into(),
+                meter_reading.into(),
+                timing_status.clone().into(),
+            ],
+        ))
+        .await?;
+    let execution_id = crate::db::inserted_id(&inserted_execution)?;
 
     let execution_row = db
         .query_one(Statement::from_sql_and_values(
@@ -2656,8 +2658,8 @@ pub async fn execute_pm_occurrence(
                 pe.meter_reading, pe.timing_status
              FROM pm_executions pe
              LEFT JOIN work_orders wo ON wo.id = pe.work_order_id
-             WHERE pe.rowid = last_insert_rowid()",
-            [],
+             WHERE pe.id = ?",
+            [execution_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inserted PM execution")))?;

@@ -12,17 +12,6 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("ram_review decode '{field}': {err}"))
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    row.try_get("", "id").map_err(|e| decode_err("id", e))
-}
-
 fn map_row(row: &sea_orm::QueryResult) -> AppResult<RamExpertSignOff> {
     Ok(RamExpertSignOff {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
@@ -102,7 +91,7 @@ pub async fn create_ram_expert_sign_off(
     let rn = input.reviewer_name.unwrap_or_default();
     let rr = input.reviewer_role.unwrap_or_default();
     let notes = input.notes.unwrap_or_default();
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO ram_expert_sign_offs (entity_sync_id, equipment_id, method_category, target_ref, title, reviewer_name, reviewer_role, status, signed_at, notes, row_version, created_at, created_by_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', NULL, ?, 1, ?, ?, ?)",
         [
@@ -120,7 +109,7 @@ pub async fn create_ram_expert_sign_off(
         ],
     ))
     .await?;
-    let id = last_insert_id(db).await?;
+    let id = crate::db::inserted_id(&inserted)?;
     load_by_id(db, id).await
 }
 

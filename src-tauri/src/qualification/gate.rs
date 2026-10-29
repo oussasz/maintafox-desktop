@@ -1413,37 +1413,30 @@ async fn write_override(
     let gaps_json = serde_json::to_string(gaps)?;
     let override_sync_id = crate::sync::identity::new_entity_sync_id();
     let now = now_ts();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO qualification_overrides \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO qualification_overrides \
          (entity_sync_id, personnel_id, user_id, context_kind, work_order_id, permit_id, role_code, gaps_json, \
           reason, approved_by_id, approved_at, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            override_sync_id.clone().into(),
-            personnel_id.into(),
-            user_id.into(),
-            kind.into(),
-            wo_id.into(),
-            permit_id.into(),
-            role.map(str::to_string).into(),
-            gaps_json.into(),
-            reason.to_string().into(),
-            approved_by_id.into(),
-            now.clone().into(),
-            now.into(),
-        ],
-    ))
-    .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                override_sync_id.clone().into(),
+                personnel_id.into(),
+                user_id.into(),
+                kind.into(),
+                wo_id.into(),
+                permit_id.into(),
+                role.map(str::to_string).into(),
+                gaps_json.into(),
+                reason.to_string().into(),
+                approved_by_id.into(),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("qualification override: no row id")))?
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .await?;
+    let id = crate::db::inserted_id(&insert_result)?;
 
     crate::audit::writer::write_audit_event_in(
         db,

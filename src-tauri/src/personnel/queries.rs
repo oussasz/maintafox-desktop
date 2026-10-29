@@ -1443,7 +1443,7 @@ async fn sync_position_requirement_profile(
         pid
     } else {
         let entity_sync_id = crate::sync::identity::new_entity_sync_id();
-        db.execute(Statement::from_sql_and_values(
+        let insert_result = db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO qualification_requirement_profiles (entity_sync_id, profile_name, required_certification_type_ids_json, \
               applies_to_permit_type_codes_json, row_version) \
@@ -1457,14 +1457,7 @@ async fn sync_position_requirement_profile(
             ],
         ))
         .await?;
-        let id_row = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT last_insert_rowid() AS id".to_string(),
-            ))
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("profile insert rowid")))?;
-        let new_id: i64 = id_row.try_get("", "id").unwrap();
+        let new_id = crate::db::inserted_id(&insert_result)?;
         // Link profile to position
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1818,29 +1811,31 @@ pub async fn create_rate_card(
     let effective_from = Utc::now().format("%Y-%m-%d").to_string();
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO personnel_rate_cards \
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel_rate_cards \
             (personnel_id, effective_from, labor_rate, overtime_rate, cost_center_id, source_type, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            personnel_id.into(),
-            effective_from.into(),
-            labor_rate.into(),
-            overtime_rate.into(),
-            cost_center_id.into(),
-            source_type.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+            [
+                personnel_id.into(),
+                effective_from.into(),
+                labor_rate.into(),
+                overtime_rate.into(),
+                cost_center_id.into(),
+                source_type.into(),
+                now.into(),
+            ],
+        ))
+        .await?;
 
+    let rate_card_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, personnel_id, effective_from, labor_rate, overtime_rate, cost_center_id, source_type, created_at \
-             FROM personnel_rate_cards WHERE id = last_insert_rowid()"
-                .to_string(),
+             FROM personnel_rate_cards WHERE id = ?",
+            [rate_card_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("rate card insert")))?;
@@ -1902,7 +1897,8 @@ pub async fn create_authorization(
     AuthorizationType::try_from(authorization_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_authorizations \
             (personnel_id, authorization_type, valid_from, valid_to, source_certification_type_id, is_active, created_at) \
@@ -1918,13 +1914,14 @@ pub async fn create_authorization(
     ))
     .await?;
 
+    let authorization_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, personnel_id, authorization_type, valid_from, valid_to, \
                     source_certification_type_id, is_active, created_at \
-             FROM personnel_authorizations WHERE id = last_insert_rowid()"
-                .to_string(),
+             FROM personnel_authorizations WHERE id = ?",
+            [authorization_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("authorization insert")))?;
@@ -2011,7 +2008,8 @@ pub async fn create_external_company(
     notes: Option<String>,
 ) -> AppResult<ExternalCompany> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
+    let insert_result = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO external_companies \
             (name, service_domain, contract_start, contract_end, notes, onboarding_status, insurance_status, is_active, created_at, updated_at) \
@@ -2028,13 +2026,14 @@ pub async fn create_external_company(
     ))
     .await?;
 
+    let company_id = crate::db::inserted_id(&insert_result)?;
     let row = db
-        .query_one(Statement::from_string(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, name, service_domain, contract_start, contract_end, onboarding_status, insurance_status, \
                     notes, is_active, created_at, updated_at \
-             FROM external_companies WHERE id = last_insert_rowid()"
-                .to_string(),
+             FROM external_companies WHERE id = ?",
+            [company_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("external company insert")))?;

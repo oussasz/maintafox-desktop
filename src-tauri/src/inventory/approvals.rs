@@ -116,31 +116,26 @@ pub async fn upsert_limit(
         .await?;
         id
     } else {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO procurement_approval_limits
+        let inserted = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO procurement_approval_limits
                 (entity_sync_id, role_id, document_type, max_amount, is_active, row_version, created_by_id,
                  created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
-            [
-                uuid::Uuid::new_v4().to_string().into(),
-                input.role_id.into(),
-                input.document_type.clone().into(),
-                input.max_amount.map_or(Value::Double(None), Value::from),
-                is_active.into(),
-                input.actor_id.map_or(Value::BigInt(None), Value::from),
-                now.clone().into(),
-                now.into(),
-            ],
-        ))
-        .await?;
-        db.query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read limit id")))?
-        .try_get("", "id")?
+                [
+                    uuid::Uuid::new_v4().to_string().into(),
+                    input.role_id.into(),
+                    input.document_type.clone().into(),
+                    input.max_amount.map_or(Value::Double(None), Value::from),
+                    is_active.into(),
+                    input.actor_id.map_or(Value::BigInt(None), Value::from),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+        crate::db::inserted_id(&inserted)?
     };
     let row = db
         .query_one(Statement::from_sql_and_values(

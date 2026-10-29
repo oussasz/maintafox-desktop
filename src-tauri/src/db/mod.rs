@@ -19,6 +19,15 @@ use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
 
+/// The row id of the row the `INSERT` that gave `result` added, read from that statement's own
+/// result. A separate `SELECT last_insert_rowid()` on the pool is a second statement: another task
+/// can run its own insert on the connection in between, and the id read then names that other row
+/// (or none of this table). Inside a transaction both forms are safe; this one is safe everywhere.
+pub fn inserted_id(result: &sea_orm::ExecResult) -> AppResult<i64> {
+    i64::try_from(result.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("inserted row id out of range")))
+}
+
 /// Opens a single-connection pool on `path` through SQLCipher.
 ///
 /// `key = None` opens a plaintext file (only used to migrate legacy databases and in tests).

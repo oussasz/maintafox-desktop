@@ -2267,37 +2267,31 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     // today; back-dated postings are checked by their command before they reach the ledger).
     crate::inventory::periods::ensure_posting_date_open(db, &crate::inventory::fx::today()).await?;
     let entity_sync_id = entity_sync_id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO inventory_transactions (
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO inventory_transactions (
              entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
              source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at,
              row_version
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
-        [
-            entity_sync_id.into(),
-            article_id.into(),
-            warehouse_id.into(),
-            location_id.into(),
-            reservation_id.into(),
-            movement_type.to_string().into(),
-            quantity.into(),
-            source_type.to_string().into(),
-            source_id.into(),
-            source_ref.map(|v| v.to_string()).into(),
-            reason_code.map(|v| v.to_string()).into(),
-            notes.map(|v| v.to_string()).into(),
-        ],
-    ))
-    .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                entity_sync_id.into(),
+                article_id.into(),
+                warehouse_id.into(),
+                location_id.into(),
+                reservation_id.into(),
+                movement_type.to_string().into(),
+                quantity.into(),
+                source_type.to_string().into(),
+                source_id.into(),
+                source_ref.map(|v| v.to_string()).into(),
+                reason_code.map(|v| v.to_string()).into(),
+                notes.map(|v| v.to_string()).into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
-    Ok(id_row.try_get("", "id")?)
+        .await?;
+    crate::db::inserted_id(&inserted)
 }
 
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
@@ -2429,34 +2423,28 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     )
     .await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO stock_reservations (
+    let insert_result = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO stock_reservations (
              entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id, source_ref,
              quantity_reserved, quantity_issued, status, notes, created_by_id, row_version
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL, 1)",
-        [
-            uuid::Uuid::new_v4().to_string().into(),
-            input.article_id.into(),
-            warehouse_id.into(),
-            input.location_id.into(),
-            input.source_type.clone().into(),
-            input.source_id.into(),
-            input.source_ref.clone().into(),
-            input.quantity.into(),
-            input.notes.clone().into(),
-        ],
-    ))
-    .await?;
-
-    let reservation_id_row = tx
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
+            [
+                uuid::Uuid::new_v4().to_string().into(),
+                input.article_id.into(),
+                warehouse_id.into(),
+                input.location_id.into(),
+                input.source_type.clone().into(),
+                input.source_id.into(),
+                input.source_ref.clone().into(),
+                input.quantity.into(),
+                input.notes.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to load reservation id")))?;
-    let reservation_id: i64 = reservation_id_row.try_get("", "id")?;
+        .await?;
+
+    let reservation_id = crate::db::inserted_id(&insert_result)?;
 
     insert_inventory_transaction(
         tx,
@@ -4371,7 +4359,8 @@ pub async fn upsert_inventory_document_link(
         .valid_from
         .clone()
         .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-    db.execute(Statement::from_sql_and_values(
+    let inserted = db
+        .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_document_links
             (entity_type, entity_id, document_ref, link_purpose, is_primary, valid_from, valid_to, created_by_id, created_at)
@@ -4388,16 +4377,7 @@ pub async fn upsert_inventory_document_link(
         ],
     ))
     .await?;
-    let id: i64 = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["GATE_INV_SAVE_FAILED: Failed to create document link.".to_string()])
-        })?
-        .try_get("", "id")?;
+    let id = crate::db::inserted_id(&inserted)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

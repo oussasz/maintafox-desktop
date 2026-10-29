@@ -330,22 +330,17 @@ async fn insert_occurrence(
             ],
         ))
         .await;
-    if let Err(db_err) = inserted {
-        let err = AppError::Database(db_err);
-        if is_occurrence_idempotency_conflict(&err) {
-            return Ok(None);
+    let inserted = match inserted {
+        Ok(result) => result,
+        Err(db_err) => {
+            let err = AppError::Database(db_err);
+            if is_occurrence_idempotency_conflict(&err) {
+                return Ok(None);
+            }
+            return Err(err);
         }
-        return Err(err);
-    }
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM pm_occurrences WHERE rowid = last_insert_rowid()",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inserted PM occurrence")))?;
-    Ok(Some(row.try_get("", "id")?))
+    };
+    Ok(Some(crate::db::inserted_id(&inserted)?))
 }
 
 /// Creates the occurrence unless it exists; records the trigger event either way.
