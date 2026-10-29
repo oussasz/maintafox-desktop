@@ -111,8 +111,8 @@ pub fn detect_file_state(path: &Path) -> AppResult<DatabaseFileState> {
     Ok(DatabaseFileState::Encrypted)
 }
 
-fn keyring_entry() -> AppResult<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_DB_KEY_ENTRY)
+fn keyring_entry() -> AppResult<crate::platform::secret_store::Entry> {
+    crate::platform::secret_store::Entry::new(KEYRING_SERVICE, KEYRING_DB_KEY_ENTRY)
         .map_err(|e| AppError::DatabaseKeyUnavailable(format!("OS credential store unavailable: {e}")))
 }
 
@@ -120,7 +120,7 @@ fn keyring_entry() -> AppResult<keyring::Entry> {
 pub fn load_stored_key() -> AppResult<Option<DatabaseKey>> {
     match keyring_entry()?.get_password() {
         Ok(hex_key) => DatabaseKey::from_hex(&hex_key).map(Some),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(crate::platform::secret_store::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::DatabaseKeyUnavailable(format!(
             "cannot read database key from OS credential store: {e}"
         ))),

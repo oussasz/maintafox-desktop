@@ -1,3 +1,7 @@
+// The phone build keeps only the no-op `apply_window_mode` / `restore_window_state`; the desktop
+// window bookkeeping below is unused there.
+#![cfg_attr(mobile, allow(dead_code, unused_imports))]
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -70,7 +74,14 @@ fn window_err(e: &tauri::Error) -> crate::errors::AppError {
     crate::errors::AppError::Internal(anyhow::anyhow!("{e}"))
 }
 
+/// Phone: one full-screen window, no compact shape to switch to.
+#[cfg(mobile)]
+pub fn apply_window_mode(_app: &AppHandle, _mode: WindowMode) -> AppResult<()> {
+    Ok(())
+}
+
 /// Switches the main window between its compact and normal shapes.
+#[cfg(desktop)]
 pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
@@ -215,8 +226,15 @@ pub fn save_state(app: &AppHandle, state: &WindowState) {
     }
 }
 
+/// Phone: the system sizes the only window; there is no size or position to remember.
+#[cfg(mobile)]
+pub fn restore_window_state(_app: &mut tauri::App) -> AppResult<()> {
+    Ok(())
+}
+
 /// Called in the Tauri setup hook. Applies the saved state to the main window
 /// and registers event listeners to persist state on resize/move/close.
+#[cfg(desktop)]
 pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
     let mut state = load_state(&app.handle().clone());
     let handle = app.handle().clone();

@@ -10,8 +10,23 @@ use crate::sync::domain::{
     SyncRejectedItemInput, SyncServerConflictInput, TenantConfigSyncPayload, SYNC_PROTOCOL_VERSION_V2,
 };
 
-/// `device_class` of this application (contract §3: `"desktop" | "mobile"`).
-pub const DEVICE_CLASS_DESKTOP: &str = "desktop";
+/// `device_class` of this application (contract §3: `"desktop" | "mobile"`): the Android field
+/// app is `mobile`, every other build `desktop`. The server checks it against the activation.
+pub const DEVICE_CLASS: &str = if cfg!(target_os = "android") {
+    "mobile"
+} else {
+    "desktop"
+};
+
+/// `device_class` for requests where an absent field means desktop: `None` on the desktop, so its
+/// requests stay byte-identical to earlier versions.
+pub const fn device_class_if_not_desktop() -> Option<&'static str> {
+    if cfg!(target_os = "android") {
+        Some(DEVICE_CLASS)
+    } else {
+        None
+    }
+}
 
 /// Contract §3: at most this many users in `current_user_sync_ids`.
 pub const MAX_CURRENT_USER_SYNC_IDS: usize = 100;
@@ -108,6 +123,9 @@ pub struct SnapshotRequest<'a> {
     pub page_size: u32,
     pub scope: &'static str,
     pub current_user_sync_ids: &'a [String],
+    /// Sent only by the Android field app (`mobile`); a desktop body is unchanged (absent = desktop).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_class: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]

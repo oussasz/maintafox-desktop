@@ -43,6 +43,8 @@ mod history_ids_tests;
 #[cfg(test)]
 mod hook_round_trip_tests;
 #[cfg(test)]
+mod mobile_proof_tests;
+#[cfg(test)]
 mod registry_tests;
 #[cfg(test)]
 mod row_sync_tests;

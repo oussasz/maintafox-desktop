@@ -661,7 +661,19 @@ fn rights_changed_hook(
     })
 }
 
+/// The last startup event, for a page that starts listening after it was sent (the phone's webview
+/// loads later than the engine starts). Process memory only.
+static LAST_STARTUP_EVENT: std::sync::Mutex<Option<StartupEvent>> = std::sync::Mutex::new(None);
+
+/// The last startup event sent, if any (`commands::mobile::get_last_startup_event`).
+pub fn last_startup_event() -> Option<StartupEvent> {
+    LAST_STARTUP_EVENT.lock().ok().and_then(|last| last.clone())
+}
+
 fn emit_event(app: &AppHandle, event: StartupEvent) {
+    if let Ok(mut last) = LAST_STARTUP_EVENT.lock() {
+        *last = Some(event.clone());
+    }
     if let Err(e) = app.emit("startup_event", event) {
         error!("failed to emit startup event: {e}");
     }
