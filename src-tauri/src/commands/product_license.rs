@@ -3356,10 +3356,14 @@ pub(crate) async fn refresh_product_activation_policy_in(
         return Ok(PolicyRefreshResult::NoToken);
     };
     let version = app_version.map(str::trim).filter(|v| !v.is_empty());
-    let request_body = match version.filter(|v| well_formed_app_version(v)) {
+    let mut request_body = match version.filter(|v| well_formed_app_version(v)) {
         Some(v) => serde_json::json!({ "app_version": v }),
         None => serde_json::json!({}),
     };
+    // The phone names its class on every licence call (server: absent = desktop).
+    if let Some(class) = crate::sync::transport::wire::device_class_if_not_desktop() {
+        request_body["device_class"] = serde_json::Value::from(class);
+    }
     let secrets = [(token.as_str(), TOKEN_MARKER)];
     let body = match post_activation_call(api_base, POLICY_REFRESH_PATH, Some(&token), &request_body, &secrets).await? {
         Ok(body) => body,
@@ -3508,6 +3512,11 @@ fn activation_request_body(
     }
     if let Some(version) = app_version.map(str::trim).filter(|v| well_formed_app_version(v)) {
         body["app_version"] = serde_json::Value::from(version);
+    }
+    // The Android field app claims a mobile slot (its own count on the licence). Desktop requests
+    // stay exactly as before: no field, which the server reads as `desktop`.
+    if let Some(class) = crate::sync::transport::wire::device_class_if_not_desktop() {
+        body["device_class"] = serde_json::Value::from(class);
     }
     body
 }

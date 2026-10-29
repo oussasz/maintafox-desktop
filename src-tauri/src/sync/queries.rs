@@ -994,7 +994,7 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
         checkpoint_token,
         outbox_batch,
         tenant_config,
-        device_class: Some("desktop".to_string()),
+        device_class: Some(crate::sync::transport::wire::DEVICE_CLASS.to_string()),
         media_manifest,
         current_user_sync_ids,
     })
