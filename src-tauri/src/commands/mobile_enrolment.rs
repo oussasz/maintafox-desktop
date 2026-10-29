@@ -740,6 +740,7 @@ async fn issue_in(
         "Phone enrolment issued",
         // Sync ids and names only: the details travel to the other PCs as they are (see `audit`).
         serde_json::json!({
+            "enrolment_id": answer.enrolment_id,
             "person_sync_id": person.sync_id,
             "person_label": person_name,
             "site_sync_id": site.sync_id,
@@ -778,7 +779,7 @@ async fn issue_in(
                     AUDIT_ENROLMENT_CANCELLED,
                     &answer.enrolment_id,
                     "Phone enrolment cancelled: it could not be recorded on this PC",
-                    serde_json::json!({}),
+                    serde_json::json!({ "enrolment_id": answer.enrolment_id }),
                 )
                 .await;
             }
@@ -839,6 +840,7 @@ async fn settle_issued(db: &DatabaseConnection, status: &MobileEnrolmentStatus) 
             &entry.enrolment_id,
             "Phone enrolled",
             serde_json::json!({
+                "enrolment_id": entry.enrolment_id,
                 "person_label": status.person_label,
                 "site_label": status.site_label,
                 "redeemed_at": status.redeemed_at,
@@ -896,7 +898,7 @@ async fn cancel_in(
         AUDIT_ENROLMENT_CANCELLED,
         id,
         "Phone enrolment cancelled",
-        serde_json::json!({}),
+        serde_json::json!({ "enrolment_id": id }),
     )
     .await;
     status_in(db, server, id).await
@@ -980,7 +982,7 @@ async fn revoke_in(
         } else {
             "Phone revoked"
         },
-        serde_json::json!({ "lost": input.lost }),
+        serde_json::json!({ "device_id": id, "lost": input.lost }),
     )
     .await;
     Ok(())
@@ -1423,6 +1425,7 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
                         "Phone of a disabled account left active for now: enrolled after the account's last \
                          change on this PC (revoked if still so after the grace period)",
                         serde_json::json!({
+                            "device_id": phone.device_id,
                             "person_sync_id": person_sync_id,
                             "person_label": account.label,
                             "enrolled_at": phone.enrolled_at,
@@ -1779,7 +1782,7 @@ pub async fn cancel_mobile_enrolment(
         AUDIT_ENROLMENT_CANCEL_FAILURE,
         &attempted_id(&enrolment_id),
         "Phone enrolment not cancelled",
-        serde_json::json!({}),
+        serde_json::json!({ "enrolment_id": attempted_id(&enrolment_id) }),
         &result,
     )
     .await;
@@ -1822,7 +1825,7 @@ pub async fn revoke_mobile_phone(input: RevokeMobilePhoneInput, state: State<'_,
         AUDIT_PHONE_REVOKE_FAILURE,
         &attempted_id(&input.device_id),
         "Phone not revoked",
-        serde_json::json!({ "lost": input.lost }),
+        serde_json::json!({ "device_id": attempted_id(&input.device_id), "lost": input.lost }),
         &result,
     )
     .await;
@@ -2199,6 +2202,21 @@ mod tests {
         )
         .await;
         assert_eq!(left, 0, "a phone audit carries a local id");
+        // The target is sent empty: the details name the enrolment, the phone or the person.
+        let unnamed = scalar(
+            db,
+            "SELECT COUNT(*) AS v FROM audit_events WHERE target_type = 'mobile_phone' \
+               AND COALESCE(json_extract(details_json, '$.detail.enrolment_id'), \
+                            json_extract(details_json, '$.detail.device_id'), \
+                            json_extract(details_json, '$.detail.person_sync_id'), \
+                            json_extract(details_json, '$.detail.person_label')) IS NULL",
+            vec![],
+        )
+        .await;
+        assert_eq!(
+            unnamed, 0,
+            "a phone audit names neither its enrolment, its phone nor its person"
+        );
     }
 
     async fn set_active(state: &AppState, caller: &AuthenticatedUser, user_id: i64, active: bool) -> AppResult<()> {
@@ -2287,6 +2305,7 @@ mod tests {
         assert_eq!(detail["person_label"], "phone_technician", "{detail}");
         assert_eq!(detail["site_sync_id"], "mob-site", "{detail}");
         assert_eq!(detail["site_label"], "Site M", "{detail}");
+        assert_eq!(detail["enrolment_id"], "enr_issued1", "{detail}");
         assert_no_local_ids_in_phone_audits(&db).await;
         let followed = load_follow_up(&db).await.expect("state").issued;
         assert_eq!(followed.len(), 1);
@@ -2336,6 +2355,46 @@ mod tests {
                 "site_label": null,
             })
         );
+    }
+
+    /// A cancelled enrolment and a revoked phone are audited with their licence-server id in the
+    /// details: the target itself is sent empty to the other PCs.
+    #[tokio::test]
+    async fn a_cancel_and_a_revoke_name_their_enrolment_and_phone() {
+        let db = crate::db::test_db::seeded().await;
+        let admin = plant_admin(&db).await;
+        let stub = start_stub(|method, path| {
+            if method == "POST"
+                && (path == format!("{ISSUE_PATH}/enr_cancel1/cancel")
+                    || path == format!("{DEVICES_PATH}/act_revoke1/revoke"))
+            {
+                (200, "{}".into())
+            } else {
+                (404, r#"{"error":"not_found"}"#.into())
+            }
+        })
+        .await;
+
+        // The status read after the cancel is not answered here: only the audit matters.
+        let _ = cancel_in(&db, &stub.server, &admin, "enr_cancel1").await;
+        revoke_in(
+            &db,
+            &stub.server,
+            &admin,
+            &RevokeMobilePhoneInput {
+                device_id: "act_revoke1".into(),
+                lost: true,
+            },
+        )
+        .await
+        .expect("revoked");
+
+        let detail = detail_of(&db, AUDIT_ENROLMENT_CANCELLED, "enr_cancel1").await;
+        assert_eq!(detail["enrolment_id"], "enr_cancel1", "{detail}");
+        let detail = detail_of(&db, AUDIT_PHONE_REVOKED, "act_revoke1").await;
+        assert_eq!(detail["device_id"], "act_revoke1", "{detail}");
+        assert_eq!(detail["lost"], true, "{detail}");
+        assert_no_local_ids_in_phone_audits(&db).await;
     }
 
     // ── Revocation of a disabled account's phones ───────────────────────────────────────────────
@@ -2614,6 +2673,7 @@ mod tests {
         assert_eq!(detail["status_changed_by_label"], AUTOMATIC_ACTOR_LABEL, "{detail}");
         let detail = detail_of(&db, AUDIT_REVOCATION_DEFERRED, "act_3").await;
         assert_eq!(detail["person_sync_id"], "re_enrolled_elsewhere-sync", "{detail}");
+        assert_eq!(detail["device_id"], "act_3", "{detail}");
         assert_no_local_ids_in_phone_audits(&db).await;
     }
 
