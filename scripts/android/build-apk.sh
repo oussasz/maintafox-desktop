@@ -25,6 +25,15 @@ case "$profile" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# The licence server is compiled into the app (src-tauri/build.rs). Without VITE_ADMIN_API_BASE_URL
+# the build talks to the real Maintafox server (shared/control-plane.json); with it, to a test
+# server, and every screen of the app shows a red "test server" marker.
+if [ -n "${VITE_ADMIN_API_BASE_URL:-}" ]; then
+  echo "NOTE: TEST build, licence server = $VITE_ADMIN_API_BASE_URL (marked in red in the app)" >&2
+else
+  echo "Licence server: the real Maintafox server (shared/control-plane.json)"
+fi
 log="$MFX_ANDROID_HOME/tauri-$abi-$profile.log"
 cd "$repo_root"
 set +e
