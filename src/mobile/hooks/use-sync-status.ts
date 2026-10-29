@@ -83,7 +83,9 @@ export function useAfterBackgroundSync(
 ): void {
   const baseline = useRef<{ at: string | null } | null>(null);
   const callback = useRef(onSynced);
-  callback.current = onSynced;
+  useEffect(() => {
+    callback.current = onSynced;
+  });
   const lastSuccess = status ? status.last_success_at : undefined;
   useEffect(() => {
     if (lastSuccess === undefined) return;

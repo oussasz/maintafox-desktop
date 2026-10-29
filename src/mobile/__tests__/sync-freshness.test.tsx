@@ -171,3 +171,123 @@ describe("Signaler", () => {
     expect(screen.getByText("Synchronisé à l'instant")).toBeTruthy();
   });
 });
+
+async function settle() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
+const EMPTY_PAGE = { items: [], total: 0, hidden_outside_scope: 0, hidden_without_site: 0 };
+
+describe("failed and interrupted reads", () => {
+  it("Mes OT keeps its list when a background read fails", async () => {
+    let calls = 0;
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_sync_worker_status: () => status(),
+        list_wo: () => {
+          calls += 1;
+          if (calls > 1) throw new Error("boom");
+          return EMPTY_PAGE;
+        },
+      }),
+    );
+    renderMobile(<WorkOrdersScreen userId={4} name="Karim" />);
+    await screen.findByText("Rien à faire pour l'instant");
+    await emit(status({ last_success_at: "2026-10-29T11:59:30Z" }));
+    await settle();
+    expect(calls).toBe(2);
+    expect(screen.getByText("Rien à faire pour l'instant")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+  });
+
+  it("Mes OT ignores a read that ends after the screen is gone", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let release: (page: unknown) => void = () => {};
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_sync_worker_status: () => status(),
+        list_wo: () => new Promise((resolve) => (release = resolve)),
+      }),
+    );
+    const { unmount } = renderMobile(<WorkOrdersScreen userId={4} name="Karim" />);
+    await settle();
+    unmount();
+    release(EMPTY_PAGE);
+    await settle();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+    vi.mocked(window.scrollTo).mockRestore();
+  });
+
+  it("Mes OT: the first status is a baseline, a first-ever success afterwards is a change", async () => {
+    let lists = 0;
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_sync_worker_status: () => status({ last_success_at: null }),
+        list_wo: () => {
+          lists += 1;
+          return EMPTY_PAGE;
+        },
+      }),
+    );
+    renderMobile(<WorkOrdersScreen userId={4} name="Karim" />);
+    await screen.findByText("Jamais synchronisé");
+    await settle();
+    expect(lists).toBe(1);
+    await emit(status({ last_success_at: "2026-10-29T11:59:30Z" }));
+    await settle();
+    expect(lists).toBe(2);
+  });
+
+  it("Signaler keeps its form when a background read fails", async () => {
+    let reads = 0;
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_sync_worker_status: () => status(),
+        list_reference_domains: () => [],
+        list_urgency_levels: () => {
+          reads += 1;
+          if (reads > 1) throw new Error("boom");
+          return [];
+        },
+      }),
+    );
+    renderMobile(<ReportFaultScreen userId={12} />);
+    const subject = await screen.findByLabelText("Objet");
+    fireEvent.change(subject, { target: { value: "Fuite pompe" } });
+    await emit(status({ last_success_at: "2026-10-29T11:59:30Z" }));
+    await settle();
+    expect(reads).toBe(2);
+    expect(screen.getByLabelText("Objet")).toBe(subject);
+    expect((subject as HTMLInputElement).value).toBe("Fuite pompe");
+    expect(screen.queryByRole("button", { name: "Réessayer" })).toBeNull();
+  });
+
+  it("Signaler shows the error, not an endless spinner, when a sync interrupts the first load and the re-read fails", async () => {
+    let reads = 0;
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_sync_worker_status: () => status(),
+        list_reference_domains: () => [],
+        list_urgency_levels: () => {
+          reads += 1;
+          if (reads === 1) return new Promise(() => {});
+          throw new Error("boom");
+        },
+      }),
+    );
+    renderMobile(<ReportFaultScreen userId={12} />);
+    await settle();
+    expect(reads).toBe(1);
+    expect(screen.getByText("Chargement…")).toBeTruthy();
+
+    await emit(status({ last_success_at: "2026-10-29T11:59:30Z" }));
+    await settle();
+    expect(reads).toBe(2);
+    expect(screen.queryByText("Chargement…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Réessayer" })).toBeTruthy();
+  });
+});

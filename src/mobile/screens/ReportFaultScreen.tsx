@@ -194,10 +194,11 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
         if (!cancelled) setLoad({ kind: "ok", lists });
       })
       .catch((err: unknown) => {
-        // A failed background re-read keeps the lists already on screen.
-        if (!cancelled && !silent) {
-          setLoad({ kind: "error", error: toUserError(err, "report_fault.lists") });
-        }
+        if (cancelled) return;
+        // A failed background re-read keeps the lists already on screen; with nothing on screen
+        // yet (a sync arrived during the first load) the error is shown, never an endless spinner.
+        const error = toUserError(err, "report_fault.lists");
+        setLoad((prev) => (silent && prev.kind === "ok" ? prev : { kind: "error", error }));
       });
     return () => {
       cancelled = true;

@@ -27,9 +27,5 @@ export function SyncFreshness({ status }: { status: SyncWorkerStatus | null }) {
   const text = QUALIFIED_STATES.has(status.state)
     ? t("sync.freshnessWithState", { fresh, state: t(`sync.state.${status.state}`) })
     : fresh;
-  return (
-    <span className="mf-sync-fresh" role="status">
-      {text}
-    </span>
-  );
+  return <span className="mf-sync-fresh">{text}</span>;
 }

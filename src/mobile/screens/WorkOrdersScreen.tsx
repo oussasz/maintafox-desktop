@@ -7,7 +7,7 @@ import {
   RefreshCw,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { listWos } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -165,8 +165,11 @@ export function WorkOrdersScreen({ userId, name }: { userId: number; name: strin
   const { status } = useSyncStatus();
 
   // `background`: a sync just finished, so the list is replaced in place without the spinner.
+  // Only the latest read may update the screen (an older or unmounted one is ignored).
+  const latest = useRef(0);
   const run = useCallback(
     async (background = false) => {
+      const request = ++latest.current;
       if (!background) setLoad({ kind: "loading" });
       try {
         const page = await listWos({
@@ -175,9 +178,14 @@ export function WorkOrdersScreen({ userId, name }: { userId: number; name: strin
           limit: PAGE_SIZE,
           offset: 0,
         });
-        setLoad({ kind: "ok", items: page.items, total: page.total });
+        if (request === latest.current) {
+          setLoad({ kind: "ok", items: page.items, total: page.total });
+        }
       } catch (err) {
-        setLoad({ kind: "error", error: toUserError(err, "wo.list") });
+        if (request !== latest.current) return;
+        const error = toUserError(err, "wo.list");
+        // A failed background re-read keeps the list already on screen.
+        setLoad((prev) => (background && prev.kind === "ok" ? prev : { kind: "error", error }));
       }
     },
     [userId],
@@ -185,6 +193,9 @@ export function WorkOrdersScreen({ userId, name }: { userId: number; name: strin
 
   useEffect(() => {
     void run();
+    return () => {
+      latest.current += 1;
+    };
   }, [run]);
 
   useAfterBackgroundSync(status, () => void run(true));
