@@ -137,6 +137,25 @@ pub(crate) async fn login_impl(
         return Err(AppError::Auth("Identifiant ou mot de passe invalide.".into()));
     }
 
+    // ── Phone bound to its enrolled person (Android only) ────────────────
+    // Checked once the password is right, so the bound person's name is never shown to someone who
+    // does not hold an account's password.
+    if let Err(refusal) = crate::auth::phone_binding::enforce_phone_sign_in(&state.db, user_id).await {
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::LOGIN_FAILURE,
+                actor_id: Some(user_id),
+                summary: "Failed login attempt — this phone is not this person's",
+                ..Default::default()
+            },
+        )
+        .await;
+        // An unbound phone has just recorded its removal: the sync worker starts it now.
+        state.sync_worker.send(crate::sync::transport::SyncCommand::Reevaluate);
+        return Err(refusal);
+    }
+
     // ── Device trust enforcement ─────────────────────────────────────────
     let fingerprint =
         crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown-fingerprint".to_string());

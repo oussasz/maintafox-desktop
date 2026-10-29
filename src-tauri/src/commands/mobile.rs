@@ -47,3 +47,14 @@ pub fn get_mobile_device_security() -> AppResult<MobileDeviceSecurity> {
 pub fn get_last_startup_event() -> Option<crate::startup::StartupEvent> {
     crate::startup::last_startup_event()
 }
+
+/// Where this phone's removal stands (`sync::transport::removal`): uploading its pending work,
+/// waiting to upload, erasing, done, with what was uploaded and what was dropped. Needs no
+/// session: the phone signs its user out when the removal starts. The same status comes as the
+/// `phone-removal-status` event at each change. No secret.
+#[tauri::command]
+pub fn get_phone_removal_status(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> crate::sync::transport::removal::PhoneRemovalStatus {
+    state.sync_worker.removal_status()
+}

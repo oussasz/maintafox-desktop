@@ -15,6 +15,7 @@ pub mod last_admin;
 pub mod lockout;
 pub mod password;
 pub mod password_policy;
+pub mod phone_binding;
 pub mod pin;
 pub mod rbac;
 pub mod recovery_code;

@@ -48,6 +48,24 @@ pub fn derive_device_fingerprint() -> AppResult<String> {
     Ok(encode(hasher.finalize()))
 }
 
+/// Gives this phone a new installation identity, so [`derive_device_fingerprint`] answers a new
+/// fingerprint (`platform::installation_id::regenerate`). Android only: a desktop's fingerprint
+/// comes from its OS and is never regenerated (refused).
+pub fn regenerate_installation_identity() -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    {
+        crate::platform::installation_id::regenerate()
+            .map(|_| ())
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("android installation id not regenerated: {e}")))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err(AppError::Internal(anyhow::anyhow!(
+            "a desktop's machine fingerprint cannot be regenerated"
+        )))
+    }
+}
+
 /// A console program (`reg`) started without a window. The release app is a GUI
 /// program (`windows_subsystem = "windows"`), so Windows opens a new console window for every
 /// console program it starts unless told not to: a black window flashing over the app at each

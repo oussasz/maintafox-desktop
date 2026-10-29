@@ -526,6 +526,37 @@ Each entry must include:
 
 ---
 
+### `redeem_mobile_enrolment`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/phone_enrolment.rs` (module `commands::product_license::phone_enrolment`) |
+| **Input** | `input: { qr_payload?: string, code?: string }` (exactly one; `Debug` hides both) |
+| **Output** | `AppResult<MobileEnrolmentRedeemed>` → `{ tenant_id, company_display_name, person_sync_id, person_label, site_sync_id, site_label, enrolled_at }` (no token, no code, no device token) |
+| **TS Type** | local to `src/mobile/services/enrolment.ts` |
+| **Auth required** | No (the phone is not activated yet). Android only: a desktop gets `ENROLMENT_DESKTOP_REFUSED` |
+| **AppState fields** | `db` (read + write), `session` (read: licence caller) |
+| **TS Service** | `src/mobile/services/enrolment.ts::redeemMobileEnrolment` |
+| **Phase** | Mobile v0.9.3 (QR enrolment) |
+| **Description** | Reads the QR strictly (`maintafox-enrol:1?s=…&t=…`, server must be this build's licence server) or normalises the typed code, then posts `/api/v1/mobile-enrolments/redeem` with the phone's own fingerprint, label and version. Records the activation through the key entry's path, with the person/site binding and without a licence key. Only a phone in its first-run state. |
+| **Errors** | `ENROLMENT_*` codes (see `ENROLMENT_ERROR_CODES`), with `status` / `server_code` params for server refusals |
+
+---
+
+### `get_phone_removal_status`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/mobile.rs` |
+| **Input** | None |
+| **Output** | `PhoneRemovalStatus` → `{ phase, kind, uploaded_count, dropped_count, dropped_by_kind, last_error, wipe_confirmed }` (no secret) |
+| **TS Type** | local to `src/mobile/services/enrolment.ts` |
+| **Auth required** | No (the removal signs the user out) |
+| **AppState fields** | `sync_worker` (read) |
+| **TS Service** | `src/mobile/services/enrolment.ts::getPhoneRemovalStatus`; event `phone-removal-status` |
+| **Phase** | Mobile v0.9.3 (QR enrolment) |
+| **Description** | Where a removed, revoked or unbound phone stands in its upload-then-erase procedure (`sync::transport::removal`). |
+
+---
+
 
 ## Command Summary
 
@@ -537,6 +568,8 @@ Each entry must include:
 | `shutdown_app` | `commands::app::shutdown_app` | No | `tasks` (shutdown) | `invoke("shutdown_app")` |
 | `get_mobile_device_security` | `commands::mobile::get_mobile_device_security` | No | — | `src/mobile/services/device-security.ts` |
 | `get_last_startup_event` | `commands::mobile::get_last_startup_event` | No | — | `src/mobile/hooks/use-startup.ts` |
+| `redeem_mobile_enrolment` | `commands::product_license::phone_enrolment::redeem_mobile_enrolment` | No | `db` (read + write), `session` (read) | `src/mobile/services/enrolment.ts` |
+| `get_phone_removal_status` | `commands::mobile::get_phone_removal_status` | No | `sync_worker` (read) | `src/mobile/services/enrolment.ts` |
 | `list_lookup_domains` | `commands::lookup::list_lookup_domains` | No | `db` (read) | `lookup-service.ts::listLookupDomains` |
 | `get_lookup_values` | `commands::lookup::get_lookup_values` | No | `db` (read) | `lookup-service.ts::getLookupValues` |
 | `get_lookup_value_by_id` | `commands::lookup::get_lookup_value_by_id` | No | `db` (read) | `lookup-service.ts::getLookupValueById` |

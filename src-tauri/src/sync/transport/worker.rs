@@ -38,6 +38,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::client::{ClientTimeouts, ControlPlaneClient, TransportError, OBJECT_NOT_FOUND};
+use super::removal::{self, PhoneRemovalStatus, RemovalKind, RemovalOutcome, RemovalSteps, UploadRound};
 use super::store::{self, PendingExchange, PendingMediaDownload, PendingMediaUpload};
 use super::wire::{
     ExchangeOutboxItem, ExchangeRequest, PresignGetRequest, PresignPutRequest, SnapshotRequest, StoredExchangeRequest,
@@ -107,6 +108,15 @@ pub const BLOCKER_NOT_ACTIVATED: &str = "not_activated";
 pub const BLOCKER_ACTIVATION_REFUSED: &str = "activation_refused";
 pub const BLOCKER_TENANT_MISMATCH: &str = "tenant_config_mismatch";
 pub const BLOCKER_NOT_CONFIGURED: &str = "not_configured";
+/// The phone erased itself (`removal`): it must be enrolled again.
+pub const BLOCKER_PHONE_REMOVED: &str = "phone_removed";
+
+/// How often a phone asks the server whether it was removed, when nothing else it sent this
+/// cycle would have told it: its push-only exchanges keep working once it is removed.
+pub const REMOVAL_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// A read-only route every activated device may call: answered `device_wipe_required` or
+/// `activation_revoked` to a removed phone.
+const REMOVAL_PROBE_PATH: &str = "/api/v1/activation/tenant-status";
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyncTiming {
@@ -295,6 +305,8 @@ struct HandleInner {
     commands: mpsc::UnboundedSender<SyncCommand>,
     receiver: Mutex<Option<mpsc::UnboundedReceiver<SyncCommand>>>,
     status: watch::Sender<SyncWorkerStatus>,
+    /// The phone's removal (`removal`), for the screens.
+    removal: watch::Sender<PhoneRemovalStatus>,
 }
 
 /// Shared handle to the worker (in `AppState`): status for the UI, commands for the worker.
@@ -321,13 +333,28 @@ impl SyncWorkerHandle {
     pub fn new() -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (status, _) = watch::channel(SyncWorkerStatus::starting());
+        let (removal, _) = watch::channel(PhoneRemovalStatus::none());
         Self {
             inner: Arc::new(HandleInner {
                 commands,
                 receiver: Mutex::new(Some(receiver)),
                 status,
+                removal,
             }),
         }
+    }
+
+    /// Where the phone's removal stands (`PhoneRemovalStatus::none()` when there is none).
+    pub fn removal_status(&self) -> PhoneRemovalStatus {
+        self.inner.removal.borrow().clone()
+    }
+
+    pub fn subscribe_removal(&self) -> watch::Receiver<PhoneRemovalStatus> {
+        self.inner.removal.subscribe()
+    }
+
+    fn publish_removal(&self, status: PhoneRemovalStatus) {
+        self.inner.removal.send_replace(status);
     }
 
     pub fn status(&self) -> SyncWorkerStatus {
@@ -604,6 +631,12 @@ pub struct SyncWorker {
     media_root: PathBuf,
     timing: SyncTiming,
     on_rights_changed: Option<RightsChangedHook>,
+    /// The app's session, ended when the phone starts erasing itself (`removal`).
+    session: Option<Arc<tokio::sync::RwLock<crate::auth::session_manager::SessionManager>>>,
+    /// A removal a server answer of this cycle revealed, recorded when the cycle ends.
+    removal_seen: Mutex<Option<RemovalKind>>,
+    /// When the phone last asked whether it was removed (`REMOVAL_PROBE_INTERVAL`).
+    removal_probed_at: Mutex<Option<Instant>>,
 }
 
 impl SyncWorker {
@@ -622,7 +655,20 @@ impl SyncWorker {
             media_root: config.media_root,
             timing: config.timing,
             on_rights_changed: None,
+            session: None,
+            removal_seen: Mutex::new(None),
+            removal_probed_at: Mutex::new(None),
         })
+    }
+
+    /// The session a phone's removal ends (`removal`): the app's own.
+    #[must_use]
+    pub fn with_session(
+        mut self,
+        session: Arc<tokio::sync::RwLock<crate::auth::session_manager::SessionManager>>,
+    ) -> Self {
+        self.session = Some(session);
+        self
     }
 
     /// Called once per materialization that changed the effective rights ([`RightsChangedHook`]).
@@ -694,6 +740,7 @@ impl SyncWorker {
                 CycleOutcome::Failed { error: local_error(&e) }
             }
         };
+        let removal_recorded = self.record_seen_removal().await;
         let wait = match self.settle(&outcome).await {
             Ok(wait) => wait,
             Err(e) => {
@@ -701,7 +748,8 @@ impl SyncWorker {
                 self.timing.retry_max
             }
         };
-        (outcome, wait)
+        // A removal revealed by this cycle starts at once.
+        (outcome, if removal_recorded { Duration::ZERO } else { wait })
     }
 
     async fn settle(&self, outcome: &CycleOutcome) -> AppResult<Duration> {
@@ -787,6 +835,12 @@ impl SyncWorker {
     }
 
     async fn try_cycle(&self) -> AppResult<CycleOutcome> {
+        // A phone being removed does nothing else (not even during a pause): it uploads, then erases.
+        if removal::applies_on_this_device() {
+            if let Some(outcome) = self.phone_removal().await? {
+                return Ok(outcome);
+            }
+        }
         let state = store::load_state(&self.db).await?;
         if let Some(until) = state.paused_until.as_deref() {
             let active = chrono::DateTime::parse_from_rfc3339(until).is_ok_and(|u| u > chrono::Utc::now());
@@ -850,7 +904,10 @@ impl SyncWorker {
 
         let mut more_work = true;
         for _ in 0..SYNC_MAX_EXCHANGES_PER_CYCLE {
-            match self.exchange_once(&token, &token_hash, &mut snapshot_done).await? {
+            match self
+                .exchange_once(&token, &token_hash, &mut snapshot_done, true)
+                .await?
+            {
                 Step::Continue => {}
                 Step::Done => {
                     more_work = false;
@@ -861,6 +918,9 @@ impl SyncWorker {
         }
         if !more_work {
             self.after_complete_pull(pulled_for.as_deref()).await?;
+        }
+        if removal::applies_on_this_device() {
+            self.probe_removal(&token).await;
         }
         let more_downloads = self.download_pending_media(&token).await?;
         Ok(CycleOutcome::Synced {
@@ -909,6 +969,7 @@ impl SyncWorker {
 
     /// Outcome for a failed request that carried no outbox items (snapshot).
     async fn request_failure(&self, err: &TransportError, token_hash: &str) -> AppResult<CycleOutcome> {
+        self.note_removal(err);
         let error = worker_error(err);
         Ok(match classify(err) {
             FailureKind::Offline => CycleOutcome::Offline { error },
@@ -936,6 +997,108 @@ impl SyncWorker {
             reason: reason.to_string(),
             error: Some(error),
         })
+    }
+
+    // ── Phone removal (`removal`) ────────────────────────────────────────────────────────────
+
+    /// Keeps the removal a server answer reveals, on a phone, for the end of the cycle.
+    fn note_removal(&self, err: &TransportError) {
+        if !removal::applies_on_this_device() {
+            return;
+        }
+        if let Some(kind) = removal::kind_of_transport_error(err) {
+            if let Ok(mut seen) = self.removal_seen.lock() {
+                *seen = (*seen).max(Some(kind));
+            }
+        }
+    }
+
+    /// Records the removal noted during the cycle, if any. Whether one was recorded.
+    async fn record_seen_removal(&self) -> bool {
+        let seen = self.removal_seen.lock().ok().and_then(|mut seen| seen.take());
+        let Some(kind) = seen else {
+            return false;
+        };
+        match removal::record(&self.db, kind).await {
+            Ok(_) => true,
+            Err(e) => {
+                error!(target: "maintafox::sync", "cannot record the phone removal: {e}");
+                false
+            }
+        }
+    }
+
+    /// At most every [`REMOVAL_PROBE_INTERVAL`], asks the server whether this phone was removed (a
+    /// removed phone's exchanges are still answered). A failure says nothing: the next probe asks
+    /// again.
+    async fn probe_removal(&self, token: &str) {
+        let due = self.removal_probed_at.lock().is_ok_and(|mut last| {
+            let due = last.is_none_or(|at| at.elapsed() >= REMOVAL_PROBE_INTERVAL);
+            if due {
+                *last = Some(Instant::now());
+            }
+            due
+        });
+        if !due {
+            return;
+        }
+        if let Ok((status, body)) = self.client.get_json_raw(REMOVAL_PROBE_PATH, Some(token)).await {
+            let code = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(serde_json::Value::as_str).map(str::to_string));
+            if let Some(kind) = removal::kind_of_refusal(status, code.as_deref()) {
+                if let Ok(mut seen) = self.removal_seen.lock() {
+                    *seen = (*seen).max(Some(kind));
+                }
+            }
+        }
+    }
+
+    /// The phone's removal, when one is recorded or this phone is activated without an enrolment
+    /// (`auth::phone_binding::unbound_phone_policy`): one attempt of `removal::run_removal`.
+    /// `None` when there is nothing to remove.
+    async fn phone_removal(&self) -> AppResult<Option<CycleOutcome>> {
+        let pending = match removal::pending(&self.db).await? {
+            Some(pending) => pending,
+            None => match crate::auth::phone_binding::unbound_phone_removal() {
+                Some(kind) if crate::auth::phone_binding::unbound_phone_needs_removal(&self.db).await? => {
+                    removal::record(&self.db, kind).await?
+                }
+                _ => return Ok(None),
+            },
+        };
+        // Read before anything is erased; dropped when this attempt ends.
+        let token = crate::commands::product_license::stored_activation_token(&self.db).await?;
+        let mut steps = WorkerRemoval {
+            worker: self,
+            token: token.clone(),
+        };
+        Ok(Some(
+            match removal::run_removal(&self.db, &mut steps, pending, token).await? {
+                RemovalOutcome::Done(_) => CycleOutcome::Blocked {
+                    reason: BLOCKER_PHONE_REMOVED.to_string(),
+                    error: None,
+                },
+                RemovalOutcome::Waiting {
+                    error: Some(error),
+                    retry_after,
+                } => {
+                    if error.code == "offline" {
+                        CycleOutcome::Offline { error }
+                    } else {
+                        CycleOutcome::Retry { error, retry_after }
+                    }
+                }
+                // More to upload than one attempt sends: the next attempt starts at once.
+                RemovalOutcome::Waiting { error: None, .. } => CycleOutcome::Synced { more_work: true },
+            },
+        ))
+    }
+
+    /// Unsent outbox items (pending, in flight, captured and not drained yet).
+    async fn unsent_count(&self) -> AppResult<i64> {
+        let summary = queries::get_sync_state_summary(&self.db).await?;
+        Ok(summary.pending_outbox_count + summary.in_flight_outbox_count)
     }
 
     async fn run_snapshot(
@@ -1123,7 +1286,15 @@ impl SyncWorker {
         Ok(pending)
     }
 
-    async fn exchange_once(&self, token: &str, token_hash: &str, snapshot_done: &mut bool) -> AppResult<Step> {
+    /// One exchange. `with_media`: the files announced are uploaded first (a phone being removed
+    /// cannot: the server takes only its exchanges).
+    async fn exchange_once(
+        &self,
+        token: &str,
+        token_hash: &str,
+        snapshot_done: &mut bool,
+        with_media: bool,
+    ) -> AppResult<Step> {
         let pending = match store::load_state(&self.db).await?.pending {
             Some(pending) => {
                 queries::mark_outbox_items_resent(&self.db, &pending.outbox_ids).await?;
@@ -1131,7 +1302,9 @@ impl SyncWorker {
             }
             None => self.build_exchange().await?,
         };
-        self.upload_pending_media(token).await?;
+        if with_media {
+            self.upload_pending_media(token).await?;
+        }
 
         let response = match self.client.exchange(token, &pending.body).await {
             Ok(response) => response,
@@ -1185,6 +1358,7 @@ impl SyncWorker {
         token_hash: &str,
         snapshot_done: &mut bool,
     ) -> AppResult<Step> {
+        self.note_removal(err);
         let error = worker_error(err);
         let ids = &pending.outbox_ids;
         let outcome = match classify(err) {
@@ -1315,10 +1489,13 @@ impl SyncWorker {
         crate::sync::media::verify_content_hash(&bytes, &upload.content_sha256)
             .map_err(|e| MediaFailure::Permanent(e.to_string()))?;
 
-        let media_failure = |e: TransportError| match classify(&e) {
-            FailureKind::Offline => MediaFailure::Offline,
-            FailureKind::Permanent => MediaFailure::Permanent(e.message()),
-            _ => MediaFailure::Retry(e.message()),
+        let media_failure = |e: TransportError| {
+            self.note_removal(&e);
+            match classify(&e) {
+                FailureKind::Offline => MediaFailure::Offline,
+                FailureKind::Permanent => MediaFailure::Permanent(e.message()),
+                _ => MediaFailure::Retry(e.message()),
+            }
         };
         let presigned = self
             .client
@@ -1417,13 +1594,16 @@ impl SyncWorker {
                 },
             )
             .await
-            .map_err(|e| match (e.code(), classify(&e)) {
-                ("object_key_tenant_mismatch", _) => MediaFailure::Permanent(e.message()),
-                (_, FailureKind::Offline | FailureKind::ActivationRefused | FailureKind::TenantMismatch) => {
-                    MediaFailure::Offline
+            .map_err(|e| {
+                self.note_removal(&e);
+                match (e.code(), classify(&e)) {
+                    ("object_key_tenant_mismatch", _) => MediaFailure::Permanent(e.message()),
+                    (_, FailureKind::Offline | FailureKind::ActivationRefused | FailureKind::TenantMismatch) => {
+                        MediaFailure::Offline
+                    }
+                    (_, FailureKind::Permanent) => MediaFailure::Permanent(e.message()),
+                    _ => MediaFailure::Retry(e.message()),
                 }
-                (_, FailureKind::Permanent) => MediaFailure::Permanent(e.message()),
-                _ => MediaFailure::Retry(e.message()),
             })?;
         if !presigned.method.eq_ignore_ascii_case("GET") || presigned.object_key != download.object_key {
             return Err(MediaFailure::Permanent(format!(
@@ -1500,6 +1680,144 @@ impl SyncWorker {
             let _ = tokio::fs::remove_file(&part).await;
         }
         result
+    }
+}
+
+/// The removal steps as the worker carries them out on this phone.
+struct WorkerRemoval<'a> {
+    worker: &'a SyncWorker,
+    /// The device token of the activation being removed (read before the erase).
+    token: Option<String>,
+}
+
+/// Wipe confirmation of a removed phone (the server takes it with the old device token).
+const WIPE_CONFIRMED_PATH: &str = "/api/v1/mobile-device/wipe-confirmed";
+
+impl RemovalSteps for WorkerRemoval<'_> {
+    async fn end_session(&mut self) {
+        if let Some(session) = &self.worker.session {
+            if session.write().await.clear_session().is_some() {
+                warn!(target: "maintafox::sync", "phone removal: the session was ended");
+            }
+        }
+    }
+
+    async fn upload_round(&mut self, kind: RemovalKind) -> AppResult<UploadRound> {
+        let worker = self.worker;
+        let nothing_stored = store::load_state(&worker.db).await?.pending.is_none();
+        let before = worker.unsent_count().await?;
+        if before == 0 && nothing_stored {
+            return Ok(UploadRound::Empty { uploaded: 0 });
+        }
+        let Some(token) = self.token.as_deref() else {
+            warn!(target: "maintafox::sync", "phone removal: no device token left to upload with");
+            return Ok(UploadRound::Revoked);
+        };
+        let dead_before = queries::get_sync_state_summary(&worker.db)
+            .await?
+            .dead_letter_outbox_count;
+        let token_hash = hash_payload(token);
+        // Never a snapshot here (`snapshot_done`): the server refuses one to a removed phone.
+        // Files go only where the server still takes them (an unbound phone).
+        let step = worker
+            .exchange_once(token, &token_hash, &mut true, kind == RemovalKind::Unbound)
+            .await?;
+        let summary = queries::get_sync_state_summary(&worker.db).await?;
+        let after = summary.pending_outbox_count + summary.in_flight_outbox_count;
+        // Items given up during the round left the unsent count without reaching the server.
+        let uploaded = (before - after - (summary.dead_letter_outbox_count - dead_before)).max(0);
+        match step {
+            Step::Continue | Step::Done => {
+                let nothing_stored = store::load_state(&worker.db).await?.pending.is_none();
+                Ok(if after == 0 && nothing_stored {
+                    UploadRound::Empty { uploaded }
+                } else {
+                    UploadRound::More { uploaded }
+                })
+            }
+            Step::Stop(outcome) => {
+                let (error, retry_after) = match outcome {
+                    CycleOutcome::Offline { error } | CycleOutcome::Failed { error } => (error, None),
+                    CycleOutcome::Retry { error, retry_after } => (error, retry_after),
+                    CycleOutcome::Blocked { error: Some(error), .. } => (error, None),
+                    CycleOutcome::Blocked { reason, error: None } => (
+                        SyncWorkerError {
+                            code: reason.clone(),
+                            kind: error_kind(&reason, None),
+                            message: reason,
+                            http_status: None,
+                            at: store::now_utc(),
+                        },
+                        None,
+                    ),
+                    CycleOutcome::Synced { .. } | CycleOutcome::Paused { .. } => {
+                        return Ok(UploadRound::More { uploaded })
+                    }
+                };
+                // The window passed, or the phone was reported lost meanwhile: nothing more is taken.
+                if error
+                    .http_status
+                    .and_then(|status| removal::kind_of_refusal(status, Some(&error.code)))
+                    == Some(RemovalKind::Revoked)
+                {
+                    return Ok(UploadRound::Revoked);
+                }
+                Ok(UploadRound::Failed { error, retry_after })
+            }
+        }
+    }
+
+    async fn leftover(&mut self) -> AppResult<std::collections::BTreeMap<String, i64>> {
+        removal::unsent_by_kind(&self.worker.db).await
+    }
+
+    async fn erase(&mut self) -> AppResult<()> {
+        let worker = self.worker;
+        let own_session;
+        let session = match &worker.session {
+            Some(session) => session.as_ref(),
+            None => {
+                own_session = tokio::sync::RwLock::new(crate::auth::session_manager::SessionManager::new());
+                &own_session
+            }
+        };
+        crate::commands::product_license::reset_to_first_run_in(&worker.db, session, "phone removed").await?;
+        // The synchronised files (photos, documents) go with the data that named them.
+        for dir in crate::sync::media::MEDIA_STORAGE_DIRECTORIES {
+            match tokio::fs::remove_dir_all(worker.media_root.join(dir)).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(AppError::Io(e)),
+            }
+        }
+        Ok(())
+    }
+
+    async fn regenerate_identity(&mut self) -> AppResult<()> {
+        crate::auth::device::regenerate_installation_identity()
+    }
+
+    async fn confirm_wipe(&mut self, old_token: &str) -> bool {
+        match self
+            .worker
+            .client
+            .post_json_raw(WIPE_CONFIRMED_PATH, Some(old_token), "{}".to_string())
+            .await
+        {
+            Ok((status, _)) if (200..300).contains(&status) => true,
+            Ok((status, _)) => {
+                warn!(target: "maintafox::sync", status, "phone removal: the wipe confirmation was refused");
+                false
+            }
+            Err(e) => {
+                warn!(target: "maintafox::sync", error = %e.message(), "phone removal: the wipe confirmation got no answer");
+                false
+            }
+        }
+    }
+
+    fn publish(&mut self, status: PhoneRemovalStatus) {
+        self.worker.handle.publish_removal(status);
     }
 }
 

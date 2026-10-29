@@ -155,6 +155,25 @@ pub struct ProductLicenseStateRecord {
     /// then needs an administrator.
     #[serde(default)]
     pub forced_update_lift_allowed: bool,
+    /// The person and site this phone was enrolled for (`phone_enrolment`), stored with the
+    /// activation it came with: written only by the redemption of an administrator's enrolment, kept
+    /// by every reconciliation, dropped by a key entry (which replaces the activation) and erased
+    /// with the record by `reset_to_first_run`. `None` on desktops and on a phone activated with
+    /// the licence key before enrolment existed.
+    #[serde(default)]
+    pub mobile_enrolment: Option<MobileEnrolmentBinding>,
+}
+
+/// Who may use this phone, and where: the `enrolment` part of the licence server's redeem answer.
+/// Names only, never a secret.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MobileEnrolmentBinding {
+    pub enrolment_id: String,
+    pub person_sync_id: String,
+    pub person_label: String,
+    pub site_sync_id: String,
+    pub site_label: String,
+    pub enrolled_at: String,
 }
 
 /// What replaces a secret field in a `Debug` output: whether it is set, never its value.
@@ -221,6 +240,7 @@ impl std::fmt::Debug for ProductLicenseStateRecord {
             .field("diagnostics", &self.diagnostics)
             .field("company_display_name", &self.company_display_name)
             .field("forced_update_lift_allowed", &self.forced_update_lift_allowed)
+            .field("mobile_enrolment", &self.mobile_enrolment)
             .finish()
     }
 }
@@ -263,6 +283,7 @@ impl ProductLicenseStateRecord {
             diagnostics: vec![],
             company_display_name: None,
             forced_update_lift_allowed: false,
+            mobile_enrolment: None,
         })
     }
 
@@ -2357,7 +2378,6 @@ pub(crate) async fn submit_product_license_key_in(
     machine_fingerprint: Option<String>,
     app_version: Option<String>,
 ) -> AppResult<()> {
-    let changed_by_id = caller.user_id;
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
     let trimmed = key.trim();
     if trimmed.len() < 8 {
@@ -2383,6 +2403,50 @@ pub(crate) async fn submit_product_license_key_in(
         }
         None => None,
     };
+    record_claim_locked(
+        db,
+        caller,
+        ClaimOrigin::LicenceKey(trimmed),
+        parsed_claim,
+        entitlement_envelope,
+        machine_fingerprint,
+        app_version,
+    )
+    .await
+}
+
+/// Where a claim recorded by [`record_claim_locked`] comes from.
+pub(crate) enum ClaimOrigin<'a> {
+    /// A licence key entered (trimmed): its hash and the key itself are stored for the re-claim.
+    LicenceKey(&'a str),
+    /// An administrator's enrolment redeemed by this phone (`phone_enrolment`): no licence key
+    /// exists on the phone. The key hash is derived from the enrolment id (nothing compares it with
+    /// a key: it only says which activation the record is), and the binding is stored with it.
+    Enrolment(MobileEnrolmentBinding),
+}
+
+impl ClaimOrigin<'_> {
+    fn key_sha256(&self) -> String {
+        match self {
+            Self::LicenceKey(key) => settings::sha256_hex(key),
+            Self::Enrolment(binding) => settings::sha256_hex(&format!("mobile-enrolment:{}", binding.enrolment_id)),
+        }
+    }
+}
+
+/// Records a claim as the licence record of this device, under [`LICENCE_RECORD_LOCK`] (held by
+/// the caller): the licence rule (`authorize_licence_change`, as a key entry), the new record, its
+/// entitlement envelope and the tenant bootstrap. Shared by the key entry and the phone enrolment.
+async fn record_claim_locked(
+    db: &DatabaseConnection,
+    caller: LicenceCaller,
+    origin: ClaimOrigin<'_>,
+    parsed_claim: Option<ProductActivationClaimRecord>,
+    entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+    machine_fingerprint: Option<String>,
+    app_version: Option<String>,
+) -> AppResult<()> {
+    let changed_by_id = caller.user_id;
     let current = load_state_record_from_db(db).await?;
     let target = parsed_claim
         .as_ref()
@@ -2396,10 +2460,15 @@ pub(crate) async fn submit_product_license_key_in(
         }
     }
 
+    let key_sha256 = origin.key_sha256();
+    let (license_key_plaintext, mobile_enrolment) = match origin {
+        ClaimOrigin::LicenceKey(key) => (Some(key.to_string()), None),
+        ClaimOrigin::Enrolment(binding) => (None, Some(binding)),
+    };
     let mut record = ProductLicenseStateRecord {
         schema_version: 1,
-        key_sha256: settings::sha256_hex(trimmed),
-        license_key_plaintext: Some(trimmed.to_string()),
+        key_sha256,
+        license_key_plaintext,
         machine_fingerprint,
         app_version,
         submitted_at: Utc::now().to_rfc3339(),
@@ -2420,6 +2489,7 @@ pub(crate) async fn submit_product_license_key_in(
         forced_update_lift_allowed: parsed_claim
             .as_ref()
             .is_some_and(|claim| forced_update_lift_allowed(current.as_ref(), claim, authority)),
+        mobile_enrolment,
     };
     if let Some(claim) = parsed_claim {
         if claim.force_update_required.unwrap_or(false) {
@@ -2826,8 +2896,18 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
 /// Returns the device to its first-run state: wipes tenant runtime data, forgets the product
 /// license onboarding and tenant bootstrap, and ends the session. Callers enforce authorization.
 pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str) -> AppResult<u64> {
-    let changed_by_id = state
-        .session
+    reset_to_first_run_in(&state.db, &state.session, reason).await
+}
+
+/// [`reset_to_first_run`] with the database and session it works on (the sync worker erases a
+/// removed phone with it, outside any command). The licence record goes with the phone's
+/// enrolment binding stored in it.
+pub(crate) async fn reset_to_first_run_in(
+    db: &DatabaseConnection,
+    session: &tokio::sync::RwLock<crate::auth::session_manager::SessionManager>,
+    reason: &str,
+) -> AppResult<u64> {
+    let changed_by_id = session
         .read()
         .await
         .current
@@ -2836,9 +2916,9 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
     // Same lock as key entry and reconciliation, so a check in flight cannot write the
     // licence record back after it is forgotten here.
     let _record_lock = LICENCE_RECORD_LOCK.lock().await;
-    let wiped_rows = reset_local_tenant_runtime_data_impl(&state.db).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(db).await?;
     let _ = settings::delete_setting(
-        &state.db,
+        db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
         PRODUCT_LICENSE_SCOPE,
         changed_by_id,
@@ -2846,7 +2926,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
     )
     .await?;
     let _ = settings::delete_setting(
-        &state.db,
+        db,
         TENANT_BOOTSTRAP_KEY,
         TENANT_BOOTSTRAP_SCOPE,
         changed_by_id,
@@ -2854,10 +2934,32 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
     )
     .await?;
     {
-        let mut session_guard = state.session.write().await;
+        let mut session_guard = session.write().await;
         session_guard.clear_session();
     }
     Ok(wiped_rows)
+}
+
+/// The enrolment binding of this phone's current activation (`None`: not activated, or activated
+/// without an enrolment, e.g. a desktop or a phone activated with the licence key).
+pub(crate) async fn mobile_enrolment_binding<C: ConnectionTrait>(db: &C) -> AppResult<Option<MobileEnrolmentBinding>> {
+    Ok(load_state_record_from_db(db)
+        .await?
+        .filter(record_has_valid_activation_claim)
+        .and_then(|record| record.mobile_enrolment))
+}
+
+/// The stored activation token whatever the licence status says, for the final upload and wipe
+/// confirmation of a removed phone (`sync::transport::removal`): the server keeps accepting it on
+/// those two routes after every other call is refused, so a denial recorded meanwhile must not
+/// hide it. Never returned to the webview.
+pub(crate) async fn stored_activation_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    Ok(load_state_record_from_db(db)
+        .await?
+        .filter(record_has_valid_activation_claim)
+        .and_then(|record| record.activation_claim)
+        .map(|claim| claim.activation_token.trim().to_string())
+        .filter(|token| !token.is_empty()))
 }
 
 #[tauri::command]
@@ -3381,7 +3483,14 @@ pub(crate) async fn refresh_product_activation_policy_in(
     let secrets = [(token.as_str(), TOKEN_MARKER)];
     let body = match post_activation_call(api_base, POLICY_REFRESH_PATH, Some(&token), &request_body, &secrets).await? {
         Ok(body) => body,
-        Err(failure) => return Ok(failure.into()),
+        Err(failure) => {
+            // A phone removed by its administrator (or revoked) learns it here at every start:
+            // recorded for the sync worker, which uploads its pending work and erases it.
+            if let ActivationCallFailure::HttpError { status, code, .. } = &failure {
+                crate::sync::transport::removal::note_refusal(db, *status, code.as_deref()).await;
+            }
+            return Ok(failure.into());
+        }
     };
     let outcome_json = match policy_refresh_outcome_json(&body, &token, version) {
         Ok(json) => json,
@@ -3405,13 +3514,20 @@ pub async fn refresh_product_activation_policy(
     state: State<'_, AppState>,
 ) -> AppResult<PolicyRefreshResult> {
     let caller = caller_of(&state).await?;
-    refresh_product_activation_policy_in(
+    let result = refresh_product_activation_policy_in(
         &state.db,
         caller,
         env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL"),
         app_version.as_deref(),
     )
-    .await
+    .await?;
+    // A removal recorded by the refresh starts now, not at the worker's next cycle.
+    if let PolicyRefreshResult::HttpError { status, code, .. } = &result {
+        if crate::sync::transport::removal::kind_of_refusal(*status, code.as_deref()).is_some() {
+            state.sync_worker.send(crate::sync::transport::SyncCommand::Reevaluate);
+        }
+    }
+    Ok(result)
 }
 
 /// Licence check without taking a device slot: the organisation and terms of a key.
@@ -4142,6 +4258,28 @@ pub(crate) async fn record_activation_claim_for_tests(
     )
     .await
 }
+
+/// Tests: [`record_activation_claim_for_tests`] for a phone enrolled with `binding`.
+#[cfg(test)]
+pub(crate) async fn record_enrolled_claim_for_tests(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    machine_fingerprint: &str,
+    activation_token: &str,
+    binding: Option<&MobileEnrolmentBinding>,
+) -> AppResult<()> {
+    record_activation_claim_for_tests(db, tenant_id, machine_fingerprint, activation_token).await?;
+    let mut record = load_state_record_from_db(db)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("test activation not recorded")))?;
+    record.mobile_enrolment = binding.cloned();
+    persist_state_record_in(db, None, &record, "test enrolment").await
+}
+
+/// A phone joins with its administrator's enrolment (QR or typed code), never with the licence key.
+/// A child module so it records its claim through this module's private path, unchanged.
+#[path = "phone_enrolment.rs"]
+pub mod phone_enrolment;
 
 #[cfg(test)]
 #[path = "product_license_first_start_tests.rs"]

@@ -4,6 +4,7 @@
 //! `maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md`.
 
 pub mod client;
+pub mod removal;
 pub mod store;
 pub mod wire;
 pub mod worker;

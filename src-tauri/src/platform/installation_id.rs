@@ -25,3 +25,13 @@ pub fn get_or_create() -> Result<String, Error> {
         Err(e) => Err(e),
     }
 }
+
+/// Replaces the installation id with a new one, as a reinstall would: done once a removed phone
+/// has erased its data (`sync::transport::removal`), so its next enrolment is a new phone for the
+/// licence server and never meets the removed activation again.
+pub fn regenerate() -> Result<String, Error> {
+    let entry = Entry::new(KEYRING_SERVICE, INSTALLATION_ID_ENTRY)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    entry.set_password(&id)?;
+    Ok(id)
+}

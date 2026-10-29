@@ -616,6 +616,18 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
             }
         });
     }
+    {
+        let mut removal = handle.subscribe_removal();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while removal.changed().await.is_ok() {
+                let current = removal.borrow_and_update().clone();
+                if let Err(e) = app.emit(crate::sync::transport::removal::PHONE_REMOVAL_STATUS_EVENT, current) {
+                    warn!("startup: cannot forward the phone removal status to the window: {e}");
+                }
+            }
+        });
+    }
 
     let media_root = match app.path().app_data_dir() {
         Ok(dir) => dir,
@@ -642,7 +654,9 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
         config,
         std::sync::Arc::new(LicenseSyncAccess),
     ) {
-        Ok(worker) => worker.on_rights_changed(rights_changed_hook(app, state)),
+        Ok(worker) => worker
+            .on_rights_changed(rights_changed_hook(app, state))
+            .with_session(state.session.clone()),
         Err(message) => {
             error!("startup: sync worker not started: {message}");
             handle.publish_not_configured(&message);
