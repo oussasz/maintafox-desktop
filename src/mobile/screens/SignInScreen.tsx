@@ -1,27 +1,30 @@
 import { type FormEvent, useState } from "react";
 
-import { lockoutUntil } from "@/lib/account-lockout";
 import { login } from "@/services/auth-service";
-import { toErrorMessage } from "@/utils/errors";
 import type { SessionInfo } from "@shared/ipc-types";
 
-import { ErrorBox, Shell } from "../components/Shell";
 import { useMobileT } from "../i18n";
+import { type UserError, toUserError } from "../lib/user-error";
+import { OnboardingScreen } from "../ui/OnboardingScreen";
+import { ErrorBanner } from "../ui/feedback";
+import { Actions, Button, Hero, Section, Steps, TextCell } from "../ui/kit";
 
-/** The refusal of the engine as it says it, with the end of an account lockout when it sends one. */
-function signInFailure(err: unknown): string {
-  const message = toErrorMessage(err);
-  const until = lockoutUntil(err);
-  return until ? `${message} (${until})` : message;
-}
+import { ONBOARDING_STEPS } from "./ActivationGate";
 
-/** Sign-in with the engine's `login` command; lockout and password errors are the engine's own text. */
-export function SignInScreen({ onSignedIn }: { onSignedIn: (session: SessionInfo) => void }) {
+/** Sign-in with the engine's `login` command; refusals are shown in the user's words. */
+export function SignInScreen({
+  onSignedIn,
+  error: outerError = null,
+}: {
+  onSignedIn: (session: SessionInfo) => void;
+  /** A failure from before this screen (reading the session), shown above the form. */
+  error?: UserError | null;
+}) {
   const { t } = useMobileT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -32,19 +35,21 @@ export function SignInScreen({ onSignedIn }: { onSignedIn: (session: SessionInfo
       setPassword("");
       onSignedIn(response.session_info);
     } catch (err) {
-      setError(signInFailure(err));
+      setError(toUserError(err, "sign_in", "signin"));
     } finally {
       setBusy(false);
     }
   }
 
+  const shown = error ?? outerError;
   return (
-    <Shell title={t("signin.title")}>
-      <form className="mf-form" onSubmit={(e) => void onSubmit(e)}>
-        <label className="mf-field">
-          <span>{t("signin.username")}</span>
-          <input
-            className="mf-input"
+    <OnboardingScreen title={t("signin.title")}>
+      <Hero title={t("signin.title")} text={t("signin.subtitle")} />
+      <Steps count={ONBOARDING_STEPS} current={2} label={t("onboarding.steps")} />
+      <form className="mf-form-stack" onSubmit={(e) => void onSubmit(e)}>
+        <Section>
+          <TextCell
+            label={t("signin.username")}
             value={username}
             autoComplete="username"
             autoCapitalize="none"
@@ -52,27 +57,22 @@ export function SignInScreen({ onSignedIn }: { onSignedIn: (session: SessionInfo
             dir="ltr"
             onChange={(e) => setUsername(e.target.value)}
           />
-        </label>
-        <label className="mf-field">
-          <span>{t("signin.password")}</span>
-          <input
-            className="mf-input"
+          <TextCell
+            label={t("signin.password")}
             type="password"
             value={password}
             autoComplete="current-password"
             dir="ltr"
             onChange={(e) => setPassword(e.target.value)}
           />
-        </label>
-        {error ? <ErrorBox title={t("common.errorTitle")} message={error} /> : null}
-        <button
-          type="submit"
-          className="mf-btn mf-btn--primary"
-          disabled={busy || username.trim() === "" || password === ""}
-        >
-          {busy ? t("signin.submitting") : t("signin.submit")}
-        </button>
+        </Section>
+        {shown ? <ErrorBanner error={shown} /> : null}
+        <Actions>
+          <Button type="submit" disabled={busy || username.trim() === "" || password === ""}>
+            {busy ? t("signin.submitting") : t("signin.submit")}
+          </Button>
+        </Actions>
       </form>
-    </Shell>
+    </OnboardingScreen>
   );
 }

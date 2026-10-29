@@ -1,134 +1,335 @@
 {
-  "app": { "name": "Maintafox Field" },
-  "language": { "label": "Language", "fr": "Français", "ar": "العربية", "en": "English" },
+  "app": {
+    "name": "Maintafox Field"
+  },
+  "language": {
+    "label": "Language",
+    "fr": "Français",
+    "ar": "العربية",
+    "en": "English"
+  },
   "common": {
     "retry": "Try again",
     "loading": "Loading…",
-    "errorTitle": "Error",
-    "unknownError": "Unknown error",
-    "none": "None"
+    "close": "Close",
+    "cancel": "Cancel",
+    "choose": "Choose",
+    "search": "Search",
+    "refresh": "Refresh"
+  },
+  "server": {
+    "testFlag": "Test server",
+    "testTitle": "Test build",
+    "testText": "This build is connected to a test server, not the Maintafox server:"
+  },
+  "preview": {
+    "mockup": "Mockup"
+  },
+  "errors": {
+    "lockedUntil": "Try again after {{time}}.",
+    "serverUnreachable": {
+      "title": "Server unreachable",
+      "text": "Check the phone's connection (Wi-Fi or mobile data), then try again."
+    },
+    "serverError": {
+      "title": "The server is not responding properly",
+      "text": "Try again in a few minutes. If it continues, tell your administrator."
+    },
+    "badCredentials": {
+      "title": "Sign-in refused",
+      "text": "Wrong username or password."
+    },
+    "accountLocked": {
+      "title": "Account locked",
+      "text": "Too many password attempts."
+    },
+    "sessionExpired": {
+      "title": "Session expired",
+      "text": "Sign in again to continue."
+    },
+    "permissionDenied": {
+      "title": "Not allowed",
+      "text": "Your account is not allowed to do this. Ask your administrator."
+    },
+    "accessScope": {
+      "title": "No access",
+      "text": "This account has no access to this plant on this phone. Tell your administrator."
+    },
+    "passwordChange": {
+      "title": "Password change needed",
+      "text": "Change your password on a Maintafox PC, then sign in again."
+    },
+    "licenseNotFound": {
+      "title": "Unknown key",
+      "text": "This licence key does not exist. Check it and try again."
+    },
+    "licenseRevoked": {
+      "title": "Licence revoked",
+      "text": "Ask your administrator for a new key."
+    },
+    "licenseExpired": {
+      "title": "Licence expired",
+      "text": "The licence must be renewed before this phone can be activated."
+    },
+    "licenseDenied": {
+      "title": "Licence refused",
+      "text": "The licence does not allow this phone. Tell your administrator."
+    },
+    "deviceRevoked": {
+      "title": "Phone removed",
+      "text": "This phone was removed from the licence. Ask your administrator to allow it again."
+    },
+    "deviceLimit": {
+      "title": "No phone slot left",
+      "text": "All phones allowed by the licence are already activated. Ask your administrator to free one."
+    },
+    "mobileNotLicensed": {
+      "title": "Phones not included",
+      "text": "Your plant's licence does not include the field app. Tell your administrator."
+    },
+    "tenantInactive": {
+      "title": "Company account deactivated",
+      "text": "Contact Maintafox to restore access."
+    },
+    "updateRequired": {
+      "title": "Update needed",
+      "text": "Install the latest version of the app, then try again."
+    },
+    "notFound": {
+      "title": "Not found",
+      "text": "This item no longer exists on this phone. Synchronise, then try again."
+    },
+    "validation": {
+      "title": "Data refused",
+      "text": "Check what you entered, then try again."
+    },
+    "databaseKey": {
+      "title": "Phone data unreadable",
+      "text": "This phone's encrypted data cannot be opened. Contact your administrator."
+    },
+    "generic": {
+      "title": "Something went wrong",
+      "text": "Try again. If it continues, tell your administrator."
+    }
   },
   "startup": {
     "title": "Starting",
-    "waiting": "Starting the engine…",
+    "subtitle": "Getting the app ready…",
+    "waiting": "Starting…",
     "stage": {
-      "db_ready": "Database ready",
-      "migrations_complete": "Migrations applied ({{applied}})",
-      "entitlement_cache_loaded": "Configuration loaded",
+      "db_ready": "Data opened",
+      "migrations_complete": "Data up to date",
+      "entitlement_cache_loaded": "Licence checked",
       "ready": "Ready"
     },
-    "failedTitle": "Startup failed",
-    "databaseKeyTitle": "Database key required",
-    "databaseKeyBody": "The encrypted database on this phone cannot be opened. Contact your administrator.",
+    "failedTitle": "The app did not start",
+    "databaseKeyTitle": "Phone data unreadable",
+    "databaseKeyBody": "This phone's encrypted data cannot be opened. Contact your administrator.",
     "rollbackTitle": "The update failed",
-    "rollbackBody": "Version {{to}} could not update the database. Reinstall version {{from}}.",
-    "engineUnreachable": "The Maintafox engine is not responding"
+    "rollbackBody": "Version {{to}} could not update the data. Reinstall version {{from}}."
   },
   "security": {
     "title": "Screen lock required",
     "body": "A phone screen lock (PIN, pattern or fingerprint) is required. Turn it on in the phone settings, then check again.",
     "recheck": "Check again",
     "checking": "Checking the phone's security…",
-    "errorTitle": "Cannot read the phone's security"
+    "errorTitle": "Phone security unreadable"
+  },
+  "onboarding": {
+    "steps": "Setup steps"
   },
   "activation": {
-    "title": "Join the plant",
-    "joinOnly": "This phone joins an existing plant. It never creates a new organisation or the first administrator.",
+    "title": "Join your plant",
+    "joinOnly": "Enter the licence key your administrator gave you. The phone joins an existing plant.",
     "keyLabel": "Licence key",
-    "keyHint": "Given by your administrator.",
-    "validate": "Check the key",
+    "keyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
+    "keyHint": "The phone never creates an organisation or the first administrator: that is done on a Maintafox PC.",
+    "validate": "Continue",
     "validating": "Checking…",
+    "confirmTitle": "Confirm the plant",
+    "confirmText": "Check this is your plant before you continue.",
     "company": "Organisation",
     "edition": "Edition",
     "join": "Join this plant",
     "joining": "Activating…",
     "cancel": "Use another key",
-    "notInitialized": "This organisation is not initialised yet. The phone cannot create it: initialise it first on a Maintafox PC.",
+    "notInitializedTitle": "Plant not ready yet",
+    "notInitialized": "This organisation is not set up yet. Set it up on a Maintafox PC first.",
     "noAdminTitle": "No account in this plant",
-    "noAdminBody": "The plant has no administrator yet. It must be created on a Maintafox PC; the phone does not do it.",
+    "noAdminBody": "The plant has no administrator yet. It must be created on a Maintafox PC.",
     "recheck": "Check again",
-    "plantJoining": "Synchronising the plant's data…",
-    "connectionNeeded": "A connection is needed to fetch the plant's data.",
-    "deniedTitle": "Licence refused",
-    "checking": "Checking the activation…"
+    "plantJoiningTitle": "Downloading the plant",
+    "plantJoiningHint": "Keep the app open. It usually takes less than a minute.",
+    "plantJoining": "Receiving the plant's data…",
+    "connectionNeededTitle": "Connection needed",
+    "connectionNeeded": "Connect the phone to the internet to receive the plant's data.",
+    "checking": "Checking activation…"
   },
   "signin": {
     "title": "Sign in",
+    "subtitle": "Sign in with your Maintafox account.",
     "username": "Username",
     "password": "Password",
     "submit": "Sign in",
     "submitting": "Signing in…",
     "passwordChangeTitle": "Password change required",
-    "passwordChangeBody": "Your password must be changed on a Maintafox PC before you can use the phone."
+    "passwordChangeBody": "Your password must be changed on a Maintafox PC before you use the phone."
   },
-  "home": {
-    "title": "Home",
-    "signedInAs": "Signed in: {{name}}",
-    "signOut": "Sign out",
-    "signOutError": "Cannot sign out"
+  "tabs": {
+    "label": "Navigation",
+    "work": "My WOs",
+    "report": "Report",
+    "scan": "Scan",
+    "sync": "Sync",
+    "settings": "Settings"
   },
   "wo": {
     "title": "My work orders",
-    "empty": "No work order is assigned to you.",
-    "total": "{{count}} work order(s)",
+    "hello": "Hello {{name}}",
+    "total": "Open work orders: {{count}}",
+    "emptyTitle": "Nothing to do right now",
+    "empty": "No open work order is assigned to you.",
+    "back": "My WOs",
     "equipment": "Equipment",
-    "status": "Status",
     "noEquipment": "No equipment",
-    "loadError": "Cannot read the work orders"
+    "details": "Details",
+    "description": "Description",
+    "plannedStart": "Planned start",
+    "expectedDuration": "Expected duration",
+    "hours": "{{hours}} h",
+    "shift": "Shift",
+    "safetyShort": "Safety",
+    "safetyTitle": "Safety before work",
+    "permitRequired": "Work permit required",
+    "permitRequiredType": "Work permit required: {{type}}",
+    "shutdownRequired": "Equipment shutdown required",
+    "executionSoonTitle": "Execution on the phone: next step",
+    "executionSoon": "Starting, timing, entering results and closing the work order from the phone come with field version 1. Until then, use a Maintafox PC."
+  },
+  "exec": {
+    "inProgress": "In progress",
+    "start": "Start work",
+    "pause": "Pause",
+    "finish": "Finish work",
+    "elapsed": "Time spent",
+    "safetyConfirm": "I have read the safety instructions",
+    "safetyConfirmHint": "Required before starting. Your confirmation is recorded.",
+    "tasks": "Tasks",
+    "taskProgress": "{{done}} of {{total}}",
+    "taskOk": "OK",
+    "taskNok": "Not OK",
+    "taskNa": "N/A",
+    "parts": "Parts used",
+    "addPart": "Add a part",
+    "less": "Less",
+    "more": "More",
+    "photos": "Photos",
+    "addPhoto": "Take a photo",
+    "finishTitle": "Finish the work order",
+    "failure": "Failure coding",
+    "failureHint": "Lists from the plant's reference data.",
+    "failureMode": "Failure mode",
+    "failureCause": "Cause",
+    "failureAction": "Action taken",
+    "summary": "Summary",
+    "handover": "Hand-over note",
+    "handoverPlaceholder": "What the next shift needs to know",
+    "confirmFinish": "Confirm finish"
+  },
+  "scan": {
+    "title": "Scan",
+    "hint": "Place the equipment's QR code in the frame",
+    "manual": "Type the equipment code",
+    "torch": "Torch",
+    "equipment": "Equipment",
+    "reportFault": "Report a fault",
+    "openWos": "Open work orders",
+    "history": "Recent history"
+  },
+  "pin": {
+    "title": "App code",
+    "subtitle": "{{name}}, enter your 4-digit code",
+    "entered": "Digits entered: {{count}}",
+    "signOut": "Switch",
+    "delete": "Delete"
   },
   "di": {
-    "title": "Report a fault (DI)",
+    "title": "Report a fault",
+    "subtitle": "Intervention request (DI)",
     "equipment": "Equipment",
-    "equipmentSearch": "Search equipment",
+    "equipmentChoose": "Choose the equipment",
+    "equipmentSearch": "Equipment code or name",
     "equipmentNone": "No equipment found.",
-    "equipmentChange": "Change equipment",
-    "searchError": "Equipment search failed",
+    "equipmentChange": "Change",
+    "problem": "Problem seen",
     "subject": "Subject",
+    "subjectPlaceholder": "E.g. leak at the gland",
     "description": "Description",
+    "descriptionPlaceholder": "What you see, hear, smell",
+    "classification": "Classification",
     "origin": "Origin",
     "requestType": "Request type",
     "symptom": "Symptom",
     "urgency": "Urgency",
     "impact": "Impact level",
-    "choose": "Choose…",
-    "flags": "This fault involves a risk",
-    "safety": "Personnel safety",
+    "flags": "This fault carries a risk",
+    "safety": "People's safety",
     "production": "Production impact",
     "environment": "Environment",
     "quality": "Quality",
     "send": "Send the request",
     "submitting": "Sending…",
     "success": "Request {{code}} saved.",
-    "submitError": "Cannot send the request",
+    "problemsTitle": "To complete",
     "required": "Required field: {{field}}",
     "noOrgNode": "This equipment has no site: the request cannot be created.",
     "noUser": "User session not found.",
-    "listEmpty": "Empty list in the reference data: {{field}}",
-    "listsError": "Cannot read the reference lists"
+    "listEmptyTitle": "Empty reference list",
+    "listEmpty": "Empty list in the reference data: {{field}}. Tell your administrator."
   },
   "sync": {
     "title": "Synchronisation",
     "now": "Synchronise now",
     "syncing": "Synchronising…",
     "state": {
-      "label": "State",
       "starting": "Starting",
-      "idle": "Up to date",
-      "running": "Running",
+      "idle": "Everything is up to date",
+      "running": "Synchronising",
       "paused": "Paused",
       "offline": "Offline",
-      "retrying": "Retrying",
-      "blocked": "Blocked",
-      "error": "Error"
+      "retrying": "Retrying soon",
+      "blocked": "Synchronisation blocked",
+      "error": "Synchronisation failed"
     },
-    "lastSuccess": "Last successful sync",
-    "never": "Never",
+    "lastSuccessAt": "Last synchronised: {{date}}",
+    "never": "Never synchronised",
+    "details": "On this phone",
     "pending": "Waiting to be sent",
     "conflicts": "Conflicts to resolve",
     "deadLetter": "Rejected items",
-    "blocker": "Blocked: {{blocker}}",
-    "lastError": "Last error",
-    "statusError": "Cannot read the sync status",
-    "runError": "Cannot start the sync"
+    "blockedTitle": "Cannot synchronise",
+    "blockers": {
+      "not_licensed": "The licence does not allow synchronisation. Tell your administrator.",
+      "not_activated": "This phone is not activated yet.",
+      "activation_refused": "This phone's activation was refused. Tell your administrator.",
+      "tenant_config_mismatch": "This phone is linked to another plant. Tell your administrator.",
+      "not_configured": "Synchronisation is not set up yet.",
+      "other": "Synchronisation is stopped. Tell your administrator."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "preferences": "Preferences",
+    "appearance": "Appearance",
+    "appearanceSystem": "Auto",
+    "appearanceLight": "Light",
+    "appearanceDark": "Dark",
+    "about": "About",
+    "server": "Server",
+    "serverProduction": "Maintafox",
+    "version": "Version",
+    "signOut": "Sign out",
+    "signOutTitle": "Sign out?",
+    "signOutText": "The plant's data stays on the phone. You will need to enter your password again."
   }
 }

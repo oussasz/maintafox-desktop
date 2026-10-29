@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { mockInvoke } from "@/test/mocks/tauri";
 
-import { ReportFault } from "../components/ReportFault";
+import { ReportFaultScreen } from "../screens/ReportFaultScreen";
 
 import { ipcAnswering, renderMobile } from "./helpers";
 
@@ -159,6 +159,18 @@ function handlers(onCreate: (input: Record<string, unknown>) => void) {
   });
 }
 
+/** Opens a picker row (its name starts with its label) and taps one option of its sheet. */
+async function pick(label: string, option: string) {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${label}:`) }));
+  fireEvent.click(await screen.findByRole("radio", { name: option }));
+}
+
+/** Opens the equipment sheet and taps the engine's match. */
+async function pickEquipment(code: RegExp) {
+  fireEvent.click(await screen.findByRole("button", { name: "Choisir l'équipement" }));
+  fireEvent.click(await screen.findByRole("button", { name: code }));
+}
+
 describe("report a fault (DI form)", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
@@ -171,26 +183,23 @@ describe("report a fault (DI form)", () => {
         created = input;
       }),
     );
-    renderMobile(<ReportFault userId={12} />);
+    renderMobile(<ReportFaultScreen userId={12} />);
 
     // Equipment comes from the engine's search.
-    fireEvent.click(await screen.findByRole("button", { name: /PMP-001/ }));
+    await pickEquipment(/PMP-001/);
     fireEvent.change(screen.getByLabelText("Objet"), { target: { value: "  Fuite pompe  " } });
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Fuite d'huile au palier" },
     });
 
     // Each list shows the engine's labels (nothing declared in the shell).
-    const origin = await screen.findByLabelText("Origine");
-    expect(Array.from((origin as HTMLSelectElement).options).map((o) => o.text)).toEqual([
-      "Choisir…",
-      "Opérateur",
-    ]);
-    fireEvent.change(origin, { target: { value: "operator" } });
-    fireEvent.change(screen.getByLabelText("Type de demande"), { target: { value: "corrective" } });
-    fireEvent.change(screen.getByLabelText("Symptôme"), { target: { value: "301" } });
-    fireEvent.change(screen.getByLabelText("Urgence"), { target: { value: "urgent" } });
-    fireEvent.change(screen.getByLabelText("Niveau d'impact"), { target: { value: "major" } });
+    fireEvent.click(await screen.findByRole("button", { name: /^Origine:/ }));
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["Opérateur"]);
+    fireEvent.click(screen.getByRole("radio", { name: "Opérateur" }));
+    await pick("Type de demande", "Dépannage");
+    await pick("Symptôme", "Fuite");
+    await pick("Urgence", "Urgent");
+    await pick("Niveau d'impact", "Majeur");
     fireEvent.click(screen.getByLabelText("Sécurité des personnes"));
 
     fireEvent.click(screen.getByRole("button", { name: "Envoyer la demande" }));
@@ -223,8 +232,8 @@ describe("report a fault (DI form)", () => {
         calls += 1;
       }),
     );
-    renderMobile(<ReportFault userId={12} />);
-    await screen.findByLabelText("Origine");
+    renderMobile(<ReportFaultScreen userId={12} />);
+    await screen.findByRole("button", { name: /^Origine:/ });
 
     fireEvent.click(screen.getByRole("button", { name: "Envoyer la demande" }));
 
@@ -234,7 +243,7 @@ describe("report a fault (DI form)", () => {
     expect(calls).toBe(0);
   });
 
-  it("shows the engine's refusal as it is when create_di fails", async () => {
+  it("shows a refusal of create_di in plain words, never the engine's text", async () => {
     mockInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === "create_di") {
         throw { code: "PERMISSION_DENIED", message: "Permission denied: di.create" };
@@ -258,18 +267,22 @@ describe("report a fault (DI form)", () => {
         search_assets: () => [ASSET],
       })(cmd, args);
     });
-    renderMobile(<ReportFault userId={12} />);
+    renderMobile(<ReportFaultScreen userId={12} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /PMP-001/ }));
+    await pickEquipment(/PMP-001/);
     fireEvent.change(screen.getByLabelText("Objet"), { target: { value: "Fuite" } });
     fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Fuite" } });
-    fireEvent.change(await screen.findByLabelText("Origine"), { target: { value: "operator" } });
-    fireEvent.change(screen.getByLabelText("Type de demande"), { target: { value: "corrective" } });
-    fireEvent.change(screen.getByLabelText("Symptôme"), { target: { value: "301" } });
-    fireEvent.change(screen.getByLabelText("Urgence"), { target: { value: "urgent" } });
-    fireEvent.change(screen.getByLabelText("Niveau d'impact"), { target: { value: "major" } });
+    await pick("Origine", "Opérateur");
+    await pick("Type de demande", "Dépannage");
+    await pick("Symptôme", "Fuite");
+    await pick("Urgence", "Urgent");
+    await pick("Niveau d'impact", "Majeur");
     fireEvent.click(screen.getByRole("button", { name: "Envoyer la demande" }));
 
-    await waitFor(() => expect(screen.getByText("Permission denied: di.create")).toBeTruthy());
+    // The refusal in the user's words; the engine's technical text stays in the log.
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Action non autorisée"),
+    );
+    expect(screen.queryByText(/Permission denied/)).toBeNull();
   });
 });

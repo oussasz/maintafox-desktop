@@ -35,10 +35,10 @@ describe("device security gate", () => {
     expect(screen.queryByText("FLOW")).toBeNull();
     // The only action is a new check.
     expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Vérifier à nouveau",
       "Français",
       "العربية",
       "English",
-      "Vérifier à nouveau",
     ]);
   });
 
@@ -89,7 +89,9 @@ describe("device security gate", () => {
         <p>FLOW</p>
       </DeviceSecurityGate>,
     );
-    expect(await screen.findByText("keyguard unreachable")).toBeTruthy();
+    // The engine's technical text stays in the log; the user reads a plain sentence.
+    expect(await screen.findByRole("alert")).toHaveTextContent("Une erreur est survenue");
+    expect(screen.queryByText(/keyguard unreachable/)).toBeNull();
     expect(screen.queryByText("FLOW")).toBeNull();
   });
 

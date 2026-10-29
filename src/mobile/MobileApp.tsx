@@ -3,25 +3,27 @@ import { useEffect, useState } from "react";
 import { getSessionInfo } from "@/services/auth-service";
 import type { SessionInfo } from "@shared/ipc-types";
 
-import { ErrorBox, Shell } from "./components/Shell";
 import { useMobileStartup } from "./hooks/use-startup";
 import { useMobileT } from "./i18n";
+import { type UserError, toUserError } from "./lib/user-error";
 import { ActivationGate } from "./screens/ActivationGate";
 import { DeviceSecurityGate } from "./screens/DeviceSecurityScreen";
-import { HomeScreen } from "./screens/HomeScreen";
+import { FieldApp } from "./screens/FieldApp";
 import { SignInScreen } from "./screens/SignInScreen";
 import { StartupScreen } from "./screens/StartupScreen";
+import { OnboardingScreen } from "./ui/OnboardingScreen";
+import { Progress } from "./ui/kit";
 
 type Session =
   | { kind: "checking" }
   | { kind: "signed_out" }
   | { kind: "signed_in"; info: SessionInfo };
 
-/** Reads the session once the plant is joined: an engine session still open goes straight home. */
+/** Reads the session once the plant is joined: an engine session still open goes straight in. */
 function SessionRoute() {
   const { t } = useMobileT();
   const [session, setSession] = useState<Session>({ kind: "checking" });
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +38,7 @@ function SessionRoute() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(toUserError(err, "session"));
         setSession({ kind: "signed_out" });
       });
     return () => {
@@ -46,23 +48,24 @@ function SessionRoute() {
 
   if (session.kind === "checking") {
     return (
-      <Shell title={t("signin.title")}>
-        <p role="status" className="mf-status">
-          {t("common.loading")}
-        </p>
-      </Shell>
+      <OnboardingScreen title={t("signin.title")}>
+        <Progress text={t("common.loading")} />
+      </OnboardingScreen>
     );
   }
   if (session.kind === "signed_in") {
     return (
-      <HomeScreen session={session.info} onSignedOut={() => setSession({ kind: "signed_out" })} />
+      <FieldApp session={session.info} onSignedOut={() => setSession({ kind: "signed_out" })} />
     );
   }
   return (
-    <>
-      {error ? <ErrorBox title={t("common.errorTitle")} message={error} /> : null}
-      <SignInScreen onSignedIn={(info) => setSession({ kind: "signed_in", info })} />
-    </>
+    <SignInScreen
+      error={error}
+      onSignedIn={(info) => {
+        setError(null);
+        setSession({ kind: "signed_in", info });
+      }}
+    />
   );
 }
 
@@ -81,7 +84,7 @@ function StartupRoute() {
 /**
  * The mobile shell: one screen at a time, in a fixed order. The phone's screen-lock check first
  * (it needs no database, and without a lock the engine cannot open its database at all), then
- * engine startup, then joining the plant, then sign-in, then home.
+ * engine startup, then joining the plant, then sign-in, then the field app.
  */
 export function MobileApp() {
   return (

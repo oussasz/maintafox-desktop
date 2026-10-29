@@ -1,28 +1,132 @@
 {
-  "app": { "name": "Maintafox Terrain" },
-  "language": { "label": "Langue", "fr": "Français", "ar": "العربية", "en": "English" },
+  "app": {
+    "name": "Maintafox Terrain"
+  },
+  "language": {
+    "label": "Langue",
+    "fr": "Français",
+    "ar": "العربية",
+    "en": "English"
+  },
   "common": {
     "retry": "Réessayer",
     "loading": "Chargement…",
-    "errorTitle": "Erreur",
-    "unknownError": "Erreur inconnue",
-    "none": "Aucun"
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "choose": "Choisir",
+    "search": "Rechercher",
+    "refresh": "Actualiser"
+  },
+  "server": {
+    "testFlag": "Serveur de test",
+    "testTitle": "Version de test",
+    "testText": "Cette version est reliée à un serveur de test, pas au serveur Maintafox :"
+  },
+  "preview": {
+    "mockup": "Maquette"
+  },
+  "errors": {
+    "lockedUntil": "Réessayez après {{time}}.",
+    "serverUnreachable": {
+      "title": "Serveur injoignable",
+      "text": "Vérifiez la connexion du téléphone (Wi-Fi ou données mobiles), puis réessayez."
+    },
+    "serverError": {
+      "title": "Le serveur ne répond pas correctement",
+      "text": "Réessayez dans quelques minutes. Si cela continue, prévenez votre administrateur."
+    },
+    "badCredentials": {
+      "title": "Connexion refusée",
+      "text": "Nom d'utilisateur ou mot de passe incorrect."
+    },
+    "accountLocked": {
+      "title": "Compte verrouillé",
+      "text": "Trop d'essais de mot de passe."
+    },
+    "sessionExpired": {
+      "title": "Session expirée",
+      "text": "Reconnectez-vous pour continuer."
+    },
+    "permissionDenied": {
+      "title": "Action non autorisée",
+      "text": "Votre compte n'a pas le droit de faire cette action. Demandez-le à votre administrateur."
+    },
+    "accessScope": {
+      "title": "Accès non autorisé",
+      "text": "Ce compte n'a pas accès à cette usine sur ce téléphone. Prévenez votre administrateur."
+    },
+    "passwordChange": {
+      "title": "Mot de passe à changer",
+      "text": "Changez votre mot de passe sur un PC Maintafox, puis reconnectez-vous."
+    },
+    "licenseNotFound": {
+      "title": "Clé inconnue",
+      "text": "Cette clé de licence n'existe pas. Vérifiez-la et réessayez."
+    },
+    "licenseRevoked": {
+      "title": "Licence révoquée",
+      "text": "Demandez une nouvelle clé à votre administrateur."
+    },
+    "licenseExpired": {
+      "title": "Licence expirée",
+      "text": "La licence doit être renouvelée avant d'activer ce téléphone."
+    },
+    "licenseDenied": {
+      "title": "Licence refusée",
+      "text": "La licence n'autorise pas ce téléphone. Prévenez votre administrateur."
+    },
+    "deviceRevoked": {
+      "title": "Téléphone retiré",
+      "text": "Ce téléphone a été retiré de la licence. Demandez à votre administrateur de le réautoriser."
+    },
+    "deviceLimit": {
+      "title": "Plus de place pour un téléphone",
+      "text": "Tous les téléphones autorisés par la licence sont déjà activés. Demandez à votre administrateur d'en libérer un."
+    },
+    "mobileNotLicensed": {
+      "title": "Téléphones non inclus",
+      "text": "La licence de votre usine n'inclut pas l'application terrain. Prévenez votre administrateur."
+    },
+    "tenantInactive": {
+      "title": "Compte de l'entreprise désactivé",
+      "text": "Contactez Maintafox pour rétablir l'accès."
+    },
+    "updateRequired": {
+      "title": "Mise à jour nécessaire",
+      "text": "Installez la dernière version de l'application, puis réessayez."
+    },
+    "notFound": {
+      "title": "Introuvable",
+      "text": "Cet élément n'existe plus sur ce téléphone. Synchronisez, puis réessayez."
+    },
+    "validation": {
+      "title": "Données refusées",
+      "text": "Vérifiez les champs saisis, puis réessayez."
+    },
+    "databaseKey": {
+      "title": "Données du téléphone illisibles",
+      "text": "Les données chiffrées de ce téléphone ne peuvent pas être ouvertes. Contactez votre administrateur."
+    },
+    "generic": {
+      "title": "Une erreur est survenue",
+      "text": "Réessayez. Si cela continue, prévenez votre administrateur."
+    }
   },
   "startup": {
     "title": "Démarrage",
-    "waiting": "Démarrage du moteur…",
+    "subtitle": "Préparation de l'application…",
+    "waiting": "Démarrage…",
     "stage": {
-      "db_ready": "Base de données prête",
-      "migrations_complete": "Migrations appliquées ({{applied}})",
-      "entitlement_cache_loaded": "Configuration chargée",
+      "db_ready": "Données ouvertes",
+      "migrations_complete": "Données à jour",
+      "entitlement_cache_loaded": "Licence vérifiée",
       "ready": "Prêt"
     },
-    "failedTitle": "Le démarrage a échoué",
-    "databaseKeyTitle": "Clé de la base de données requise",
-    "databaseKeyBody": "La base de données chiffrée de ce téléphone ne peut pas être ouverte. Contactez votre administrateur.",
+    "failedTitle": "L'application n'a pas démarré",
+    "databaseKeyTitle": "Données du téléphone illisibles",
+    "databaseKeyBody": "Les données chiffrées de ce téléphone ne peuvent pas être ouvertes. Contactez votre administrateur.",
     "rollbackTitle": "La mise à jour a échoué",
-    "rollbackBody": "La version {{to}} n'a pas pu mettre à jour la base de données. Réinstallez la version {{from}}.",
-    "engineUnreachable": "Le moteur Maintafox ne répond pas"
+    "rollbackBody": "La version {{to}} n'a pas pu mettre à jour les données. Réinstallez la version {{from}}."
   },
   "security": {
     "title": "Verrouillage d'écran requis",
@@ -31,29 +135,39 @@
     "checking": "Vérification de la sécurité du téléphone…",
     "errorTitle": "Sécurité du téléphone illisible"
   },
+  "onboarding": {
+    "steps": "Étapes de mise en service"
+  },
   "activation": {
-    "title": "Rejoindre l'usine",
-    "joinOnly": "Ce téléphone rejoint une usine existante. Il ne crée jamais une nouvelle organisation ni le premier administrateur.",
+    "title": "Rejoindre votre usine",
+    "joinOnly": "Saisissez la clé de licence donnée par votre administrateur. Le téléphone rejoint une usine existante.",
     "keyLabel": "Clé de licence",
-    "keyHint": "Fournie par votre administrateur.",
-    "validate": "Vérifier la clé",
+    "keyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
+    "keyHint": "Le téléphone ne crée jamais d'organisation ni de premier administrateur : cela se fait sur un PC Maintafox.",
+    "validate": "Continuer",
     "validating": "Vérification…",
+    "confirmTitle": "Confirmer l'usine",
+    "confirmText": "Vérifiez qu'il s'agit bien de votre usine avant de continuer.",
     "company": "Organisation",
     "edition": "Édition",
     "join": "Rejoindre cette usine",
     "joining": "Activation en cours…",
-    "cancel": "Changer de clé",
-    "notInitialized": "Cette organisation n'est pas encore initialisée. Le téléphone ne peut pas la créer : initialisez-la d'abord sur un PC Maintafox.",
+    "cancel": "Utiliser une autre clé",
+    "notInitializedTitle": "Usine pas encore prête",
+    "notInitialized": "Cette organisation n'est pas encore initialisée. Initialisez-la d'abord sur un PC Maintafox.",
     "noAdminTitle": "Aucun compte dans cette usine",
-    "noAdminBody": "L'usine n'a pas encore d'administrateur. Il doit être créé sur un PC Maintafox ; le téléphone ne le fait pas.",
+    "noAdminBody": "L'usine n'a pas encore d'administrateur. Il doit être créé sur un PC Maintafox.",
     "recheck": "Vérifier à nouveau",
-    "plantJoining": "Synchronisation des données de l'usine…",
-    "connectionNeeded": "Une connexion est nécessaire pour récupérer les données de l'usine.",
-    "deniedTitle": "Licence refusée",
+    "plantJoiningTitle": "Téléchargement de l'usine",
+    "plantJoiningHint": "Gardez l'application ouverte. Cela prend en général moins d'une minute.",
+    "plantJoining": "Réception des données de l'usine…",
+    "connectionNeededTitle": "Connexion nécessaire",
+    "connectionNeeded": "Connectez le téléphone à Internet pour recevoir les données de l'usine.",
     "checking": "Vérification de l'activation…"
   },
   "signin": {
     "title": "Connexion",
+    "subtitle": "Connectez-vous avec votre compte Maintafox.",
     "username": "Nom d'utilisateur",
     "password": "Mot de passe",
     "submit": "Se connecter",
@@ -61,36 +175,103 @@
     "passwordChangeTitle": "Changement de mot de passe requis",
     "passwordChangeBody": "Votre mot de passe doit être changé sur un PC Maintafox avant d'utiliser le téléphone."
   },
-  "home": {
-    "title": "Accueil",
-    "signedInAs": "Connecté : {{name}}",
-    "signOut": "Se déconnecter",
-    "signOutError": "Déconnexion impossible"
+  "tabs": {
+    "label": "Navigation",
+    "work": "Mes OT",
+    "report": "Signaler",
+    "scan": "Scanner",
+    "sync": "Synchro",
+    "settings": "Réglages"
   },
   "wo": {
     "title": "Mes ordres de travail",
-    "empty": "Aucun ordre de travail ne vous est assigné.",
-    "total": "{{count}} ordre(s) de travail",
+    "hello": "Bonjour {{name}}",
+    "total": "OT ouverts : {{count}}",
+    "emptyTitle": "Rien à faire pour l'instant",
+    "empty": "Aucun ordre de travail ouvert ne vous est assigné.",
+    "back": "Mes OT",
     "equipment": "Équipement",
-    "status": "Statut",
     "noEquipment": "Sans équipement",
-    "loadError": "Ordres de travail illisibles"
+    "details": "Détails",
+    "description": "Description",
+    "plannedStart": "Début prévu",
+    "expectedDuration": "Durée prévue",
+    "hours": "{{hours}} h",
+    "shift": "Poste",
+    "safetyShort": "Sécurité",
+    "safetyTitle": "Sécurité avant intervention",
+    "permitRequired": "Permis de travail requis",
+    "permitRequiredType": "Permis de travail requis : {{type}}",
+    "shutdownRequired": "Arrêt de l'équipement requis",
+    "executionSoonTitle": "Exécution sur le téléphone : prochaine étape",
+    "executionSoon": "Démarrer, pointer, saisir les résultats et clôturer l'OT depuis le téléphone arrive avec la version terrain 1. En attendant, utilisez un PC Maintafox."
+  },
+  "exec": {
+    "inProgress": "En cours",
+    "start": "Démarrer l'intervention",
+    "pause": "Pause",
+    "finish": "Terminer l'intervention",
+    "elapsed": "Temps passé",
+    "safetyConfirm": "J'ai lu les consignes de sécurité",
+    "safetyConfirmHint": "Obligatoire avant de démarrer. Votre confirmation est enregistrée.",
+    "tasks": "Tâches",
+    "taskProgress": "{{done}} sur {{total}}",
+    "taskOk": "Conforme",
+    "taskNok": "Non conforme",
+    "taskNa": "N/A",
+    "parts": "Pièces utilisées",
+    "addPart": "Ajouter une pièce",
+    "less": "Moins",
+    "more": "Plus",
+    "photos": "Photos",
+    "addPhoto": "Prendre une photo",
+    "finishTitle": "Terminer l'OT",
+    "failure": "Codage de la défaillance",
+    "failureHint": "Listes issues des données de référence de l'usine.",
+    "failureMode": "Mode de défaillance",
+    "failureCause": "Cause",
+    "failureAction": "Action réalisée",
+    "summary": "Résumé",
+    "handover": "Note de relève",
+    "handoverPlaceholder": "Ce que le poste suivant doit savoir",
+    "confirmFinish": "Confirmer la fin"
+  },
+  "scan": {
+    "title": "Scanner",
+    "hint": "Placez le code QR de l'équipement dans le cadre",
+    "manual": "Saisir le code de l'équipement",
+    "torch": "Lampe",
+    "equipment": "Équipement",
+    "reportFault": "Signaler une panne",
+    "openWos": "OT ouverts",
+    "history": "Historique récent"
+  },
+  "pin": {
+    "title": "Code de l'application",
+    "subtitle": "{{name}}, saisissez votre code à 4 chiffres",
+    "entered": "Chiffres saisis : {{count}}",
+    "signOut": "Changer",
+    "delete": "Effacer"
   },
   "di": {
-    "title": "Signaler une panne (DI)",
+    "title": "Signaler une panne",
+    "subtitle": "Demande d'intervention (DI)",
     "equipment": "Équipement",
-    "equipmentSearch": "Rechercher un équipement",
+    "equipmentChoose": "Choisir l'équipement",
+    "equipmentSearch": "Code ou nom de l'équipement",
     "equipmentNone": "Aucun équipement trouvé.",
-    "equipmentChange": "Changer d'équipement",
-    "searchError": "Recherche d'équipement impossible",
+    "equipmentChange": "Changer",
+    "problem": "Problème constaté",
     "subject": "Objet",
+    "subjectPlaceholder": "Ex. : fuite au presse-étoupe",
     "description": "Description",
+    "descriptionPlaceholder": "Ce que vous voyez, entendez, sentez",
+    "classification": "Classement",
     "origin": "Origine",
     "requestType": "Type de demande",
     "symptom": "Symptôme",
     "urgency": "Urgence",
     "impact": "Niveau d'impact",
-    "choose": "Choisir…",
     "flags": "Cette panne présente un risque",
     "safety": "Sécurité des personnes",
     "production": "Impact sur la production",
@@ -99,36 +280,56 @@
     "send": "Envoyer la demande",
     "submitting": "Envoi…",
     "success": "Demande {{code}} enregistrée.",
-    "submitError": "Envoi impossible",
+    "problemsTitle": "À compléter",
     "required": "Champ obligatoire : {{field}}",
     "noOrgNode": "Cet équipement n'a pas de site rattaché : la demande ne peut pas être créée.",
     "noUser": "Session utilisateur introuvable.",
-    "listEmpty": "Liste vide dans les données de référence : {{field}}",
-    "listsError": "Listes de référence illisibles"
+    "listEmptyTitle": "Liste de référence vide",
+    "listEmpty": "Liste vide dans les données de référence : {{field}}. Prévenez votre administrateur."
   },
   "sync": {
     "title": "Synchronisation",
     "now": "Synchroniser maintenant",
     "syncing": "Synchronisation…",
     "state": {
-      "label": "État",
       "starting": "Démarrage",
-      "idle": "À jour",
-      "running": "En cours",
+      "idle": "Tout est à jour",
+      "running": "Synchronisation en cours",
       "paused": "En pause",
       "offline": "Hors ligne",
-      "retrying": "Nouvelle tentative",
-      "blocked": "Bloquée",
-      "error": "Erreur"
+      "retrying": "Nouvelle tentative bientôt",
+      "blocked": "Synchronisation bloquée",
+      "error": "Échec de la synchronisation"
     },
-    "lastSuccess": "Dernière synchronisation réussie",
-    "never": "Jamais",
+    "lastSuccessAt": "Dernière synchronisation : {{date}}",
+    "never": "Jamais synchronisé",
+    "details": "Sur ce téléphone",
     "pending": "En attente d'envoi",
     "conflicts": "Conflits à résoudre",
     "deadLetter": "Éléments rejetés",
-    "blocker": "Blocage : {{blocker}}",
-    "lastError": "Dernière erreur",
-    "statusError": "État de la synchronisation illisible",
-    "runError": "Synchronisation impossible"
+    "blockedTitle": "Synchronisation impossible",
+    "blockers": {
+      "not_licensed": "La licence n'autorise pas la synchronisation. Prévenez votre administrateur.",
+      "not_activated": "Ce téléphone n'est pas encore activé.",
+      "activation_refused": "L'activation de ce téléphone a été refusée. Prévenez votre administrateur.",
+      "tenant_config_mismatch": "Ce téléphone est relié à une autre usine. Prévenez votre administrateur.",
+      "not_configured": "La synchronisation n'est pas encore configurée.",
+      "other": "La synchronisation est arrêtée. Prévenez votre administrateur."
+    }
+  },
+  "settings": {
+    "title": "Réglages",
+    "preferences": "Préférences",
+    "appearance": "Apparence",
+    "appearanceSystem": "Auto",
+    "appearanceLight": "Clair",
+    "appearanceDark": "Sombre",
+    "about": "À propos",
+    "server": "Serveur",
+    "serverProduction": "Maintafox",
+    "version": "Version",
+    "signOut": "Se déconnecter",
+    "signOutTitle": "Se déconnecter ?",
+    "signOutText": "Les données de l'usine restent sur le téléphone. Vous devrez saisir à nouveau votre mot de passe."
   }
 }
