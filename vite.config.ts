@@ -12,6 +12,8 @@ export default defineConfig({
       "@shared": resolve(__dirname, "./shared"),
     },
   },
+  // The Android field app has its own page (mobile.html → src/mobile/); desktop builds keep index.html.
+  build: mobile ? { rollupOptions: { input: resolve(__dirname, "mobile.html") } } : undefined,
   clearScreen: false,
   server: {
     port: 1420,
