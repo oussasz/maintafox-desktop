@@ -27,7 +27,6 @@
 //! names enrolments and people, never a secret.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -260,6 +259,7 @@ const PERSON_SQL: &str =
     "SELECT ua.id, ua.entity_sync_id, COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS label, \
      ua.username FROM user_accounts ua \
      WHERE ua.deleted_at IS NULL AND ua.is_active = 1 AND ua.entity_sync_id IS NOT NULL \
+       AND TRIM(ua.entity_sync_id) <> '' \
        AND ua.password_hash IS NOT NULL AND ua.identity_mode IN ('local', 'hybrid')";
 
 fn decode_err(what: &str, e: sea_orm::DbErr) -> AppError {
@@ -278,7 +278,8 @@ fn person_of(r: &sea_orm::QueryResult) -> AppResult<EnrolmentPerson> {
 fn site_sql() -> String {
     format!(
         "SELECT n.id, n.entity_sync_id, n.code, n.name FROM org_nodes n JOIN org_node_types t ON t.id = n.node_type_id \
-          WHERE n.deleted_at IS NULL AND t.can_own_work = 1 AND n.entity_sync_id IS NOT NULL AND {}",
+          WHERE n.deleted_at IS NULL AND t.can_own_work = 1 AND n.entity_sync_id IS NOT NULL \
+          AND TRIM(n.entity_sync_id) <> '' AND {}",
         crate::settings::site::NOT_A_DRAFT_NODE_SQL
     )
 }
@@ -349,13 +350,25 @@ async fn actor_of(db: &DatabaseConnection, user: &AuthenticatedUser) -> AppResul
             "Your account is not known to the other PCs yet: synchronise, then try again.",
         )
     })?;
-    let label = user
-        .display_name
-        .as_deref()
+    Ok((
+        sync_id,
+        person_label(user.user_id, user.display_name.as_deref(), &user.username),
+    ))
+}
+
+/// The name of a person whose display name and username leave nothing the licence server accepts
+/// (never the automatic name: this is a real person).
+fn unnamed_user_label(user_id: i32) -> String {
+    format!("Utilisateur #{user_id}")
+}
+
+/// A person's name for the licence server: the display name, else the username (each as
+/// [`server_label`] leaves it), else [`unnamed_user_label`].
+fn person_label(user_id: i32, display_name: Option<&str>, username: &str) -> String {
+    display_name
         .and_then(server_label)
-        .or_else(|| server_label(&user.username))
-        .unwrap_or_else(|| AUTOMATIC_ACTOR_LABEL.to_string());
-    Ok((sync_id, label))
+        .or_else(|| server_label(username))
+        .unwrap_or_else(|| unnamed_user_label(user_id))
 }
 
 /// An account of this PC as the revocations judge it.
@@ -371,16 +384,19 @@ struct LocalAccount {
     updated_at: Option<String>,
 }
 
-const LOCAL_ACCOUNT_SQL: &str =
-    "SELECT id, entity_sync_id, COALESCE(NULLIF(TRIM(display_name), ''), username) AS label, \
+const LOCAL_ACCOUNT_SQL: &str = "SELECT id, entity_sync_id, display_name, username, \
      CASE WHEN is_active = 1 AND deleted_at IS NULL THEN 1 ELSE 0 END AS in_use, status_changed_by_id, \
      updated_at FROM user_accounts";
 
 fn local_account_of(r: &sea_orm::QueryResult) -> AppResult<LocalAccount> {
+    let user_id: i32 = r.try_get("", "id").map_err(|e| decode_err("account", e))?;
+    let display_name: Option<String> = r.try_get("", "display_name").map_err(|e| decode_err("account", e))?;
+    let username: String = r.try_get("", "username").map_err(|e| decode_err("account", e))?;
     Ok(LocalAccount {
-        user_id: r.try_get("", "id").map_err(|e| decode_err("account", e))?,
+        user_id,
         sync_id: r.try_get("", "entity_sync_id").map_err(|e| decode_err("account", e))?,
-        label: r.try_get("", "label").map_err(|e| decode_err("account", e))?,
+        // Chosen here, not in SQL: SQLite's TRIM removes spaces only (not U+FEFF or U+00A0).
+        label: person_label(user_id, display_name.as_deref(), &username),
         in_use: r.try_get::<i32>("", "in_use").map_err(|e| decode_err("account", e))? == 1,
         status_changed_by_id: r
             .try_get("", "status_changed_by_id")
@@ -421,7 +437,7 @@ fn is_trimmed(c: char) -> bool {
 
 /// A name as the licence server accepts it for an actor: trimmed as it trims, and cut (on a
 /// character boundary) to at most [`ACTOR_LABEL_MAX_UTF16`] UTF-16 units. None when nothing is
-/// left; the caller then names [`AUTOMATIC_ACTOR_LABEL`].
+/// left; the caller then falls back to another name.
 fn server_label(raw: &str) -> Option<String> {
     let mut units = 0;
     let cut: String = raw
@@ -451,8 +467,7 @@ async fn author_of(db: &DatabaseConnection, user_id: Option<i32>) -> AppResult<A
     };
     let label = account
         .as_ref()
-        .and_then(|a| server_label(&a.label))
-        .unwrap_or_else(|| AUTOMATIC_ACTOR_LABEL.to_string());
+        .map_or_else(|| AUTOMATIC_ACTOR_LABEL.to_string(), |a| a.label.clone());
     Ok(Author {
         sync_id: account.and_then(|a| non_blank(a.sync_id)),
         label,
@@ -698,14 +713,20 @@ async fn issue_in(
         .transpose()?
         .ok_or_else(|| refused("MOBILE_ENROL_SITE_INVALID", "This site cannot be chosen for a phone."))?;
     let (actor_sync_id, actor_label) = actor_of(db, caller).await?;
+    // Names as the licence server accepts them (SQLite's TRIM leaves U+FEFF and U+00A0).
+    let person_name =
+        server_label(&person.label).unwrap_or_else(|| person_label(person.user_id, None, &person.username));
+    let site_name = server_label(&site.label)
+        .or_else(|| server_label(&site.code))
+        .unwrap_or_else(|| format!("Site #{}", site.node_id));
     let answer: IssueAnswer = server
         .post(
             ISSUE_PATH,
             serde_json::json!({
                 "person_sync_id": person.sync_id,
-                "person_label": person.label,
+                "person_label": person_name,
                 "site_sync_id": site.sync_id,
-                "site_label": site.label,
+                "site_label": site_name,
                 "issued_by_sync_id": actor_sync_id,
                 "issued_by_label": actor_label,
             }),
@@ -1200,19 +1221,33 @@ const RECONCILE_CLOCK_TOLERANCE: Duration = Duration::from_secs(60);
 /// person's phone working for good, unaudited.
 const RECONCILE_GRACE: Duration = Duration::from_secs(60 * 60);
 
-/// After this long without a single comparison in a run of the application, support is told once
-/// that the comparison is off ([`warn_if_never_compared`]).
+/// After this long without a comparison (since the start of the follow-up, or since the last
+/// comparison), support is told once that the comparison is off ([`warn_if_comparison_off`]).
 const RECONCILE_OFF_WARNING_AFTER: Duration = Duration::from_secs(30 * 60);
 
-/// What the comparison last audited, by key (a person sync id for a refused revoke, `skip:` and a
-/// phone id for a phone left alone): audited when it changes, not every round. In memory: a
+/// What the comparison last audited, by key (a person sync id for a refused revoke; `skip:`, the
+/// licence server address and a phone id for a phone left alone, forgotten once that server no
+/// longer lists the phone as active): audited when it changes, not every round. In memory: a
 /// restart audits it once more.
 static RECONCILE_AUDITED: std::sync::Mutex<BTreeMap<String, String>> = std::sync::Mutex::new(BTreeMap::new());
 
-/// The comparison ran at least once in this run of the application.
-static RECONCILE_EVER_RAN: AtomicBool = AtomicBool::new(false);
-/// "The comparison is off" was already logged in this run.
-static RECONCILE_OFF_WARNED: AtomicBool = AtomicBool::new(false);
+/// When the comparison last ran in this run of the application, and whether the off-period since
+/// then was already reported.
+struct ReconcileWatch {
+    last_compared: Option<DateTime<Utc>>,
+    off_warned: bool,
+}
+
+static RECONCILE_WATCH: std::sync::Mutex<ReconcileWatch> = std::sync::Mutex::new(ReconcileWatch {
+    last_compared: None,
+    off_warned: false,
+});
+
+fn reconcile_watch() -> std::sync::MutexGuard<'static, ReconcileWatch> {
+    RECONCILE_WATCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Records `reason` as the last one audited for `key`; true when it is new (to audit).
 fn reconcile_reason_is_new(key: &str, reason: &str) -> bool {
@@ -1288,21 +1323,33 @@ async fn accounts_fresh_enough(db: &DatabaseConnection, session_started: DateTim
         && now - last <= chrono_of(RECONCILE_SYNC_MAX_AGE)?)
 }
 
-/// Logs once per run of the application when no comparison could run within
-/// [`RECONCILE_OFF_WARNING_AFTER`] of the start: the phones of disabled people are then not
-/// checked (the PC never catches up with the server, or its clock is wrong).
-fn warn_if_never_compared(session_started: DateTime<Utc>) -> AppResult<()> {
-    if RECONCILE_EVER_RAN.load(Ordering::Relaxed)
-        || Utc::now() - session_started < chrono_of(RECONCILE_OFF_WARNING_AFTER)?
-        || RECONCILE_OFF_WARNED.swap(true, Ordering::Relaxed)
-    {
+/// Logs once per off-period when no comparison could run for [`RECONCILE_OFF_WARNING_AFTER`]
+/// (since the start of the follow-up, or since the last comparison): the phones of disabled people
+/// are then not checked (the PC does not catch up with the server, or its clock is wrong). A
+/// comparison re-arms it.
+fn warn_if_comparison_off(session_started: DateTime<Utc>) -> AppResult<()> {
+    let off_after = chrono_of(RECONCILE_OFF_WARNING_AFTER)?;
+    let mut watch = reconcile_watch();
+    let since = watch
+        .last_compared
+        .map_or(session_started, |last| last.max(session_started));
+    if watch.off_warned || Utc::now() - since < off_after {
         return Ok(());
     }
+    watch.off_warned = true;
     tracing::warn!(
-        "mobile enrolment: no complete synchronisation in this run yet; the phones of disabled \
+        since = %since.to_rfc3339(),
+        "mobile enrolment: no complete synchronisation for a while; the phones of disabled \
          accounts are not compared with the licence server until this PC catches up"
     );
     Ok(())
+}
+
+/// A comparison ran now: the next off-period is reported again.
+fn record_comparison(now: DateTime<Utc>) {
+    let mut watch = reconcile_watch();
+    watch.last_compared = Some(now);
+    watch.off_warned = false;
 }
 
 /// The phones the licence server still lets work, compared with the accounts of this PC: the
@@ -1316,18 +1363,29 @@ fn warn_if_never_compared(session_started: DateTime<Utc>) -> AppResult<()> {
 /// when this PC's accounts are fresh ([`accounts_fresh_enough`]).
 async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_started: DateTime<Utc>) -> AppResult<()> {
     if !accounts_fresh_enough(db, session_started).await? {
-        warn_if_never_compared(session_started)?;
+        warn_if_comparison_off(session_started)?;
         tracing::debug!("mobile enrolment: no recent complete synchronisation; phones not compared this round");
         return Ok(());
     }
-    RECONCILE_EVER_RAN.store(true, Ordering::Relaxed);
     let view: MobilePhonesView = server.get(DEVICES_PATH).await?;
     let now = Utc::now();
+    record_comparison(now);
     let grace = chrono_of(RECONCILE_GRACE)?;
+    let active: Vec<&MobilePhone> = view.devices.iter().filter(|d| d.status == PHONE_ACTIVE).collect();
+    // A phone left alone that is no longer active on this server is forgotten.
+    let skip_prefix = format!("skip:{}:", server.base_url);
+    let skip_key = |device_id: &str| format!("{skip_prefix}{device_id}");
+    RECONCILE_AUDITED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|key, _| {
+            key.strip_prefix(skip_prefix.as_str())
+                .map_or(true, |device| active.iter().any(|p| p.device_id == device))
+        });
     let mut people: BTreeMap<String, Vec<&MobilePhone>> = BTreeMap::new();
-    for phone in view.devices.iter().filter(|d| d.status == PHONE_ACTIVE) {
-        if let Some(person) = &phone.person_sync_id {
-            people.entry(person.clone()).or_default().push(phone);
+    for phone in active {
+        if let Some(person) = non_blank(phone.person_sync_id.clone()) {
+            people.entry(person).or_default().push(phone);
         }
     }
     for (person_sync_id, phones) in people {
@@ -1351,7 +1409,7 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
                     phone.enrolled_at.as_deref().unwrap_or_default(),
                     account.updated_at.as_deref().unwrap_or_default()
                 );
-                if reconcile_reason_is_new(&format!("skip:{}", phone.device_id), &reason) {
+                if reconcile_reason_is_new(&skip_key(&phone.device_id), &reason) {
                     audit(
                         db,
                         None,
@@ -1391,7 +1449,7 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
             Ok(answer) => {
                 forget_reconcile_reason(&person_sync_id);
                 for phone in &phones {
-                    forget_reconcile_reason(&format!("skip:{}", phone.device_id));
+                    forget_reconcile_reason(&skip_key(&phone.device_id));
                 }
                 audit(
                     db,
@@ -1402,6 +1460,12 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
                     detail(serde_json::json!({
                         "revoked_device_ids": answer.revoked_device_ids,
                         "cancelled_enrolment_ids": answer.cancelled_enrolment_ids,
+                        "phones": phones
+                            .iter()
+                            .map(|p| serde_json::json!({ "device_id": p.device_id, "enrolled_at": p.enrolled_at }))
+                            .collect::<Vec<_>>(),
+                        "account_updated_at": account.updated_at,
+                        "compared_at": now.to_rfc3339(),
                     })),
                 )
                 .await;
@@ -2423,10 +2487,20 @@ mod tests {
         let session_started = Utc::now() - chrono::Duration::minutes(1);
 
         // A sync success that is only a partial catch-up (more to fetch: no complete pull) does not
-        // count.
+        // count, on an activated PC.
+        crate::commands::product_license::record_activation_claim_for_tests(&db, TENANT, "fp-mobile", "token-mobile")
+            .await
+            .expect("activation");
         crate::sync::transport::store::record_success(&db)
             .await
             .expect("sync success");
+        assert!(follow_up_round(&db, &stub.server, session_started).await);
+        assert!(!compared(&stub), "{:?}", stub.received());
+
+        // Nor a complete pull, during this run, of another organisation.
+        crate::sync::plant_join::record_complete_pull(&db, "tenant-other")
+            .await
+            .expect("complete pull elsewhere");
         assert!(follow_up_round(&db, &stub.server, session_started).await);
         assert!(!compared(&stub), "{:?}", stub.received());
 
@@ -2463,7 +2537,7 @@ mod tests {
     async fn a_phone_enrolled_after_the_disable_is_left_alone_only_for_the_grace_period() {
         let db = crate::db::test_db::seeded().await;
         let changed = minutes_ago(3 * 60);
-        for name in ["grace_old", "grace_recent", "grace_mixed"] {
+        for name in ["grace_old", "grace_recent", "grace_mixed", "grace_future"] {
             let id = insert_account(&db, name, false).await;
             disabled_elsewhere(&db, id, None, &changed).await;
         }
@@ -2473,6 +2547,8 @@ mod tests {
             phone("grace_p2", "grace_recent-sync", "active", Some(&minutes_ago(5))),
             phone("grace_p3", "grace_mixed-sync", "active", Some(&minutes_ago(2 * 60))),
             phone("grace_p4", "grace_mixed-sync", "active", Some(&minutes_ago(5))),
+            // Dated two hours ahead (a wrong clock): not left alone either.
+            phone("grace_p5", "grace_future-sync", "active", Some(&minutes_ago(-2 * 60))),
         ]);
         let stub = start_stub(move |method, path| match (method, path) {
             ("GET", DEVICES_PATH) => (200, devices.clone()),
@@ -2491,19 +2567,19 @@ mod tests {
             .collect();
         people.sort();
         people.dedup();
-        assert_eq!(people, vec!["grace_mixed-sync", "grace_old-sync"]);
+        assert_eq!(people, vec!["grace_future-sync", "grace_mixed-sync", "grace_old-sync"]);
         assert_eq!(
             audited(&db, AUDIT_REVOCATION_DEFERRED, "grace_p2").await,
             1,
             "audited once"
         );
-        for revoked in ["grace_p1", "grace_p3", "grace_p4"] {
+        for revoked in ["grace_p1", "grace_p3", "grace_p4", "grace_p5"] {
             assert_eq!(audited(&db, AUDIT_REVOCATION_DEFERRED, revoked).await, 0);
         }
     }
 
     /// Actor names are cut as the licence server counts (UTF-16 units: an emoji counts 2) and
-    /// trimmed as it trims (U+FEFF too); nothing left gives the automatic name.
+    /// trimmed as it trims (U+FEFF too); nothing left gives the username, then a neutral name.
     #[tokio::test]
     async fn actor_names_fit_the_licence_server() {
         let emoji = "\u{1F527}".repeat(100);
@@ -2534,7 +2610,26 @@ mod tests {
             username: " ".into(),
             ..admin.clone()
         };
-        assert_eq!(actor_of(&db, &blank).await.expect("actor").1, AUTOMATIC_ACTOR_LABEL);
+        // A real person: a neutral name, never the automatic one.
+        assert_eq!(
+            actor_of(&db, &blank).await.expect("actor").1,
+            format!("Utilisateur #{}", admin.user_id)
+        );
+
+        // A display name of U+FEFF only (SQLite's TRIM keeps it) gives way to the username.
+        let invisible = insert_account(&db, "invisible_name", false).await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET display_name = ? WHERE id = ?",
+            ["\u{feff}\u{feff}".into(), invisible.into()],
+        ))
+        .await
+        .expect("invisible name");
+        let author = author_of(&db, Some(i32::try_from(invisible).expect("fits")))
+            .await
+            .expect("author");
+        assert_eq!(author.label, "invisible_name");
+        assert_eq!(author.sync_id.as_deref(), Some("invisible_name-sync"));
 
         let technician = insert_account(&db, "emoji_disabled", false).await;
         set_active(&state, &admin, technician, false).await.expect("disable");
