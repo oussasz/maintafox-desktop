@@ -1062,10 +1062,13 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("machine_activation_contract", LOCAL_ROW),
                         ("license_admin_action", LOCAL_ROW),
                         ("licensing_trust_key", LOCAL_ROW),
-                        // A phone enrolled, cancelled or revoked from "Téléphones"
-                        // (`commands::mobile_enrolment`): the target is a licence-server id, a
-                        // person's sync id or a local account id, so it is not sent; the licence
-                        // server keeps the enrolment's own audit.
+                        // Phone audits (`commands::mobile_enrolment`): an enrolment issued,
+                        // cancelled or used, a phone revoked, a revocation deferred or withdrawn,
+                        // and the failed attempts. The event travels with its target sent empty:
+                        // the target is a licence-server id, a person's sync id or a local account
+                        // id. Its details name people, sites and authors by sync id and name only
+                        // (no local id, so no JSON reference to translate); the licence server
+                        // keeps the enrolment's own audit.
                         ("mobile_phone", LOCAL_ROW),
                         ("sync_repair_actions", LOCAL_ROW),
                         ("sync_conflict", LOCAL_ROW),

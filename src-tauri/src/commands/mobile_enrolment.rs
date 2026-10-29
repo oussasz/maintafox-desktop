@@ -373,7 +373,6 @@ fn person_label(user_id: i32, display_name: Option<&str>, username: &str) -> Str
 
 /// An account of this PC as the revocations judge it.
 struct LocalAccount {
-    user_id: i32,
     sync_id: Option<String>,
     label: String,
     /// Enabled and not deleted.
@@ -393,7 +392,6 @@ fn local_account_of(r: &sea_orm::QueryResult) -> AppResult<LocalAccount> {
     let display_name: Option<String> = r.try_get("", "display_name").map_err(|e| decode_err("account", e))?;
     let username: String = r.try_get("", "username").map_err(|e| decode_err("account", e))?;
     Ok(LocalAccount {
-        user_id,
         sync_id: r.try_get("", "entity_sync_id").map_err(|e| decode_err("account", e))?,
         // Chosen here, not in SQL: SQLite's TRIM removes spaces only (not U+FEFF or U+00A0).
         label: person_label(user_id, display_name.as_deref(), &username),
@@ -740,11 +738,12 @@ async fn issue_in(
         AUDIT_ENROLMENT_ISSUED,
         &answer.enrolment_id,
         "Phone enrolment issued",
+        // Sync ids and names only: the details travel to the other PCs as they are (see `audit`).
         serde_json::json!({
-            "person_user_id": person.user_id,
             "person_sync_id": person.sync_id,
-            "site_node_id": site.node_id,
+            "person_label": person_name,
             "site_sync_id": site.sync_id,
+            "site_label": site_name,
             "expires_at": answer.expires_at,
         }),
     )
@@ -1164,8 +1163,9 @@ async fn send_one_revocation(db: &DatabaseConnection, server: &Server, entry: &P
             AUDIT_REVOCATION_WITHDRAWN,
             &entry.user_id.to_string(),
             "Revocation of phones withdrawn: the account is not known to the licence server",
+            // No sync id to name the person by: the name only (the local account id stays the
+            // target here, sent empty).
             serde_json::json!({
-                "person_user_id": entry.user_id,
                 "person_label": entry.person_label,
                 "requested_at": entry.requested_at,
             }),
@@ -1180,7 +1180,11 @@ async fn send_one_revocation(db: &DatabaseConnection, server: &Server, entry: &P
             AUDIT_REVOCATION_WITHDRAWN,
             &person_sync_id,
             "Revocation of phones withdrawn: the account was enabled again",
-            serde_json::json!({ "person_label": entry.person_label, "requested_at": entry.requested_at }),
+            serde_json::json!({
+                "person_sync_id": person_sync_id,
+                "person_label": entry.person_label,
+                "requested_at": entry.requested_at,
+            }),
         )
         .await;
         return Ok(());
@@ -1194,6 +1198,7 @@ async fn send_one_revocation(db: &DatabaseConnection, server: &Server, entry: &P
         &person_sync_id,
         "Phones of a disabled account revoked",
         serde_json::json!({
+            "person_sync_id": person_sync_id,
             "person_label": entry.person_label,
             "revoked_device_ids": answer.revoked_device_ids,
             "cancelled_enrolment_ids": answer.cancelled_enrolment_ids,
@@ -1419,7 +1424,6 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
                          change on this PC (revoked if still so after the grace period)",
                         serde_json::json!({
                             "person_sync_id": person_sync_id,
-                            "person_user_id": account.user_id,
                             "person_label": account.label,
                             "enrolled_at": phone.enrolled_at,
                             "account_updated_at": account.updated_at,
@@ -1435,9 +1439,9 @@ async fn reconcile_phones(db: &DatabaseConnection, server: &Server, session_star
         let result = revoke_person_on_server(server, &person_sync_id, &automatic_author()).await;
         let detail = |extra: serde_json::Value| {
             let mut detail = serde_json::json!({
-                "person_user_id": account.user_id,
+                "person_sync_id": person_sync_id,
                 "person_label": account.label,
-                "status_changed_by_id": account.status_changed_by_id,
+                "status_changed_by_sync_id": status_changed_by.sync_id,
                 "status_changed_by_label": status_changed_by.label,
             });
             if let (Some(map), Some(extra)) = (detail.as_object_mut(), extra.as_object()) {
@@ -1605,6 +1609,9 @@ const AUDIT_ENROLMENT_ISSUE_FAILURE: &str = "mobile.enrolment_issue_failure";
 const AUDIT_ENROLMENT_CANCEL_FAILURE: &str = "mobile.enrolment_cancel_failure";
 const AUDIT_PHONE_REVOKE_FAILURE: &str = "mobile.phone_revoke_failure";
 
+/// Records a phone audit (`mobile_phone`). It travels to the other PCs with its target sent empty
+/// (`sync::row_spec`), and its details as they are: they name people, sites and authors by sync id
+/// and name, never by a local id of this PC (which would name another row, or none, elsewhere).
 async fn audit(
     db: &DatabaseConnection,
     actor_id: Option<i32>,
@@ -1655,6 +1662,32 @@ fn attempted_id(id: &str) -> String {
     id.chars().take(64).collect()
 }
 
+/// The person and site a refused issue named, as the other PCs can read them: their sync ids and
+/// names when the ids name rows here, null otherwise (the ids were typed by the caller and may name
+/// nothing). Never the local ids themselves (see [`audit`]).
+async fn issue_attempt_detail(db: &DatabaseConnection, input: &IssueMobileEnrolmentInput) -> serde_json::Value {
+    let person = local_account(db, "id", input.user_id.into()).await.ok().flatten();
+    let site = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id, name FROM org_nodes WHERE id = ?",
+            [input.site_node_id.into()],
+        ))
+        .await
+        .ok()
+        .flatten();
+    let site_text = |column: &str| {
+        site.as_ref()
+            .and_then(|r| r.try_get::<Option<String>>("", column).ok().flatten())
+    };
+    serde_json::json!({
+        "person_sync_id": person.as_ref().and_then(|a| non_blank(a.sync_id.clone())),
+        "person_label": person.as_ref().map(|a| a.label.clone()),
+        "site_sync_id": non_blank(site_text("entity_sync_id")),
+        "site_label": site_text("name"),
+    })
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────────────────────────
 
 /// People who may be given a phone (those whose account the caller may manage), and the sites a
@@ -1690,16 +1723,18 @@ pub async fn issue_mobile_enrolment(
         issue_in(&state.db, &server, &user, &input).await
     }
     .await;
-    audit_failed_attempt(
-        &state.db,
-        user.user_id,
-        AUDIT_ENROLMENT_ISSUE_FAILURE,
-        &input.user_id.to_string(),
-        "Phone enrolment not issued",
-        serde_json::json!({ "person_user_id": input.user_id, "site_node_id": input.site_node_id }),
-        &result,
-    )
-    .await;
+    if result.is_err() {
+        audit_failed_attempt(
+            &state.db,
+            user.user_id,
+            AUDIT_ENROLMENT_ISSUE_FAILURE,
+            &input.user_id.to_string(),
+            "Phone enrolment not issued",
+            issue_attempt_detail(&state.db, &input).await,
+            &result,
+        )
+        .await;
+    }
     result
 }
 
@@ -2135,6 +2170,37 @@ mod tests {
         .await
     }
 
+    /// The details of the one audit of `action` on `target` (what `audit` was given).
+    async fn detail_of(db: &DatabaseConnection, action: &str, target: &str) -> serde_json::Value {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT details_json FROM audit_events WHERE action_code = ? AND target_id = ?",
+                [action.into(), target.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("audited");
+        let raw: String = row.try_get("", "details_json").expect("details");
+        serde_json::from_str::<serde_json::Value>(&raw).expect("json")["detail"].clone()
+    }
+
+    /// No phone audit names an account, a site or an author by its local id: the details travel to
+    /// the other PCs as they are, where that id names another row or none.
+    async fn assert_no_local_ids_in_phone_audits(db: &DatabaseConnection) {
+        let left = scalar(
+            db,
+            "SELECT COUNT(*) AS v FROM audit_events WHERE target_type = 'mobile_phone' \
+               AND (json_type(details_json, '$.detail.person_user_id') IS NOT NULL \
+                 OR json_type(details_json, '$.detail.site_node_id') IS NOT NULL \
+                 OR json_type(details_json, '$.detail.status_changed_by_id') IS NOT NULL \
+                 OR json_type(details_json, '$.detail.user_id') IS NOT NULL)",
+            vec![],
+        )
+        .await;
+        assert_eq!(left, 0, "a phone audit carries a local id");
+    }
+
     async fn set_active(state: &AppState, caller: &AuthenticatedUser, user_id: i64, active: bool) -> AppResult<()> {
         crate::commands::admin_users::set_user_active_impl(
             state,
@@ -2215,9 +2281,61 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert!(sent[0].body.contains("phone_technician-sync"), "{}", sent[0].body);
         assert_eq!(audited(&db, AUDIT_ENROLMENT_ISSUED, "enr_issued1").await, 1);
+        // Named by sync ids and names, as the other PCs can read them.
+        let detail = detail_of(&db, AUDIT_ENROLMENT_ISSUED, "enr_issued1").await;
+        assert_eq!(detail["person_sync_id"], "phone_technician-sync", "{detail}");
+        assert_eq!(detail["person_label"], "phone_technician", "{detail}");
+        assert_eq!(detail["site_sync_id"], "mob-site", "{detail}");
+        assert_eq!(detail["site_label"], "Site M", "{detail}");
+        assert_no_local_ids_in_phone_audits(&db).await;
         let followed = load_follow_up(&db).await.expect("state").issued;
         assert_eq!(followed.len(), 1);
         assert_eq!(followed[0].enrolment_id, "enr_issued1");
+    }
+
+    /// A refused issue names the person and site it was asked for by sync id and name, never by the
+    /// local ids it was given (typed by the caller: they may name nothing here).
+    #[tokio::test]
+    async fn a_refused_issue_names_the_person_and_site_by_sync_id() {
+        let db = crate::db::test_db::seeded().await;
+        let technician = insert_account(&db, "refused_technician", false).await;
+        let site = seed_site(&db).await;
+
+        let known = issue_attempt_detail(
+            &db,
+            &IssueMobileEnrolmentInput {
+                user_id: i32::try_from(technician).unwrap(),
+                site_node_id: site,
+            },
+        )
+        .await;
+        assert_eq!(
+            known,
+            serde_json::json!({
+                "person_sync_id": "refused_technician-sync",
+                "person_label": "refused_technician",
+                "site_sync_id": "mob-site",
+                "site_label": "Site M",
+            })
+        );
+
+        let unknown = issue_attempt_detail(
+            &db,
+            &IssueMobileEnrolmentInput {
+                user_id: 987_654,
+                site_node_id: 987_654,
+            },
+        )
+        .await;
+        assert_eq!(
+            unknown,
+            serde_json::json!({
+                "person_sync_id": null,
+                "person_label": null,
+                "site_sync_id": null,
+                "site_label": null,
+            })
+        );
     }
 
     // ── Revocation of a disabled account's phones ───────────────────────────────────────────────
@@ -2315,6 +2433,17 @@ mod tests {
             1
         );
         assert_eq!(audited(&db, AUDIT_REVOCATION_WITHDRAWN, &unsynced.to_string()).await, 1);
+        // The target is sent empty: the details name the person by sync id where it has one.
+        for (action, target) in [
+            (AUDIT_PHONE_REVOKED, "gone_technician-sync"),
+            (AUDIT_REVOCATION_WITHDRAWN, "back_technician-sync"),
+        ] {
+            let detail = detail_of(&db, action, target).await;
+            assert_eq!(detail["person_sync_id"], target, "{action}: {detail}");
+        }
+        let detail = detail_of(&db, AUDIT_REVOCATION_WITHDRAWN, &unsynced.to_string()).await;
+        assert_eq!(detail["person_label"], "Removed account", "{detail}");
+        assert_no_local_ids_in_phone_audits(&db).await;
     }
 
     /// Disable, re-enable and disable again while a sender is sending the first revocation: the
@@ -2466,6 +2595,26 @@ mod tests {
             assert_eq!(without_actor, 1, "{person}: audited without an actor");
         }
         assert_eq!(audited(&db, AUDIT_REVOCATION_DEFERRED, "act_3").await, 1);
+        // Who disabled the account is named by sync id and name (none when a rule did).
+        let detail = detail_of(&db, AUDIT_PHONE_REVOKED, "disabled_by_admin-sync").await;
+        assert_eq!(detail["person_sync_id"], "disabled_by_admin-sync", "{detail}");
+        let by_admin_author = author_of(&db, Some(admin.user_id)).await.expect("author");
+        assert_eq!(
+            detail["status_changed_by_sync_id"],
+            serde_json::json!(by_admin_author.sync_id),
+            "{detail}"
+        );
+        assert_eq!(
+            detail["status_changed_by_label"],
+            by_admin_author.label.as_str(),
+            "{detail}"
+        );
+        let detail = detail_of(&db, AUDIT_PHONE_REVOKED, "disabled_by_rule-sync").await;
+        assert!(detail["status_changed_by_sync_id"].is_null(), "{detail}");
+        assert_eq!(detail["status_changed_by_label"], AUTOMATIC_ACTOR_LABEL, "{detail}");
+        let detail = detail_of(&db, AUDIT_REVOCATION_DEFERRED, "act_3").await;
+        assert_eq!(detail["person_sync_id"], "re_enrolled_elsewhere-sync", "{detail}");
+        assert_no_local_ids_in_phone_audits(&db).await;
     }
 
     /// Without a successful synchronisation during this run, recent enough, the accounts here may be
