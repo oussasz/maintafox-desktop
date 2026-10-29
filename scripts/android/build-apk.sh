@@ -28,7 +28,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # The licence server is compiled into the app (src-tauri/build.rs). Without VITE_ADMIN_API_BASE_URL
 # the build talks to the real Maintafox server (shared/control-plane.json); with it, to a test
-# server, and every screen of the app shows a red "test server" marker.
+# server, and every screen of the app shows a red "test server" marker. Set the server with this
+# environment variable only (not a .env file): the app's marker reads the same variable.
 if [ -n "${VITE_ADMIN_API_BASE_URL:-}" ]; then
   echo "NOTE: TEST build, licence server = $VITE_ADMIN_API_BASE_URL (marked in red in the app)" >&2
 else

@@ -83,7 +83,11 @@ export function ActivationGate({ children }: { children: ReactNode }) {
           );
       }
     } catch (err) {
-      setPhase({ kind: "error", error: toUserError(err, "activation.state", "activation") });
+      const error = toUserError(err, "activation.state", "activation");
+      // While the plant is downloading, a failed check keeps the download screen with a banner.
+      setPhase((current) =>
+        current.kind === "plant" ? { ...current, actionError: error } : { kind: "error", error },
+      );
     }
   }, []);
 
@@ -99,7 +103,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
         current.kind === "plant" ? { ...current, actionError: null } : current,
       );
     } catch (err) {
-      const error = toUserError(err, "activation.plant_join", "activation");
+      const error = toUserError(err, "activation.plant_join");
       setPhase((current) =>
         current.kind === "plant" ? { ...current, actionError: error } : current,
       );

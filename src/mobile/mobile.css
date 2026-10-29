@@ -1475,6 +1475,10 @@ textarea.mf-cell__input {
   padding: 2px 8px 8px;
 }
 
+.mf-sheet__trailing {
+  justify-self: end;
+}
+
 .mf-sheet__title {
   margin: 0;
   font: var(--mf-headline);

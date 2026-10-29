@@ -769,23 +769,32 @@ export function Sheet({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // The caller's onClose is often a new function each render (e.g. while typing in a search field
+  // inside the sheet): read it through a ref so the open/close effect runs on `open` only.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeRef.current();
     };
     document.addEventListener("keydown", onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // The screen behind the sheet can be neither tapped nor reached by TalkBack or the keyboard.
+    const app = document.getElementById("root");
+    const wasInert = app?.hasAttribute("inert") ?? false;
+    app?.setAttribute("inert", "");
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
+      if (!wasInert) app?.removeAttribute("inert");
       previous?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(
@@ -813,7 +822,7 @@ export function Sheet({
           <h2 id={titleId} className="mf-sheet__title">
             {title}
           </h2>
-          <div style={{ justifySelf: "end" }}>{trailing}</div>
+          <div className="mf-sheet__trailing">{trailing}</div>
         </div>
         <div className="mf-sheet__body">{children}</div>
       </div>
