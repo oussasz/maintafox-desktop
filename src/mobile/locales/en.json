@@ -163,7 +163,8 @@
     "plantJoining": "Receiving the plant's data…",
     "connectionNeededTitle": "Connection needed",
     "connectionNeeded": "Connect the phone to the internet to receive the plant's data.",
-    "checking": "Checking activation…"
+    "checking": "Checking activation…",
+    "slow": "The server is taking a while to answer…"
   },
   "signin": {
     "title": "Sign in",

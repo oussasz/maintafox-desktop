@@ -37,6 +37,13 @@ use journal::{JournalState, StartupAction, UpdateJournal, UpdateKind};
 
 /// The owner's updater public key, embedded by `build.rs` (None: this build has no updater).
 pub const UPDATER_PUBLIC_KEY: Option<&str> = option_env!("MAINTAFOX_UPDATER_PUBKEY");
+
+/// In-app updates: desktop builds that carry the owner's updater public key. Never the phone app
+/// (its updates come with a new APK; the plugin's HTTPS client relies on the platform certificate
+/// verifier, which the Android build does not initialise).
+pub fn updater_enabled() -> bool {
+    UPDATER_PUBLIC_KEY.is_some() && !cfg!(mobile)
+}
 /// Header asking the manifest for the version this device came from (failed database update).
 pub const ROLLBACK_HEADER: &str = "X-Maintafox-Rollback-To";
 /// NSIS update mode: progress window only, no questions (the user already confirmed in the app).
@@ -47,7 +54,7 @@ const WINDOWS_INSTALL_MODE: &str = "basicUi";
 /// Adds the updater plugin configuration to the app context when this build has a public key.
 /// The key is not in tauri.conf.json: it comes from the owner's key file (no placeholder).
 pub fn add_plugin_config<R: Runtime>(context: &mut tauri::Context<R>) {
-    if let Some(pubkey) = UPDATER_PUBLIC_KEY {
+    if let Some(pubkey) = UPDATER_PUBLIC_KEY.filter(|_| updater_enabled()) {
         context.config_mut().plugins.0.insert(
             "updater".to_string(),
             serde_json::json!({ "pubkey": pubkey, "windows": { "installMode": WINDOWS_INSTALL_MODE } }),
@@ -55,9 +62,9 @@ pub fn add_plugin_config<R: Runtime>(context: &mut tauri::Context<R>) {
     }
 }
 
-/// Registers the updater plugin only when the build has a public key.
+/// Registers the updater plugin only when in-app updates are enabled ([`updater_enabled`]).
 pub fn register_plugin<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    if UPDATER_PUBLIC_KEY.is_some() {
+    if updater_enabled() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     } else {
         tracing::warn!("updater: this build has no updater public key; in-app updates are disabled");
@@ -284,7 +291,7 @@ pub async fn ask_manifest(
     locale: Option<&str>,
     rollback_to: Option<&str>,
 ) -> AppResult<ManifestAnswer> {
-    if UPDATER_PUBLIC_KEY.is_none() {
+    if !updater_enabled() {
         return Ok(ManifestAnswer::NotConfigured);
     }
     // An active licence, or one that requires an update (installing it ends that denial).

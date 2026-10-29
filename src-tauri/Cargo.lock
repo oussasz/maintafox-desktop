@@ -3172,6 +3172,7 @@ dependencies = [
  "tracing-subscriber",
  "ttf-parser",
  "uuid",
+ "webpki-roots 1.0.6",
 ]
 
 [[package]]

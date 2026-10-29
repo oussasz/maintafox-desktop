@@ -3281,7 +3281,7 @@ async fn post_activation_call(
 ) -> AppResult<Result<String, ActivationCallFailure>> {
     let client = crate::sync::transport::client::ControlPlaneClient::new(
         api_base,
-        crate::sync::transport::SyncTiming::production().timeouts,
+        crate::sync::transport::client::ClientTimeouts::interactive(),
     )
     .map_err(AppError::SyncError)?;
     let (status, answer) = match client.post_json_raw(path, bearer, body.to_string()).await {

@@ -72,6 +72,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 pdf-writer = "0.12"
 ttf-parser = "0.25"
 
+# Android: HTTPS checks servers against the bundled Mozilla root certificates
+# (sync::transport::client::tls_config); reqwest's platform verifier needs a Java component that
+# the Android build does not ship.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-roots = "1"
+
 [[bin]]
 name = "rams-readiness-eval"
 path = "src/bin/rams_readiness_eval.rs"

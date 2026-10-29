@@ -18,6 +18,7 @@ import {
 
 import { useMobileT } from "../i18n";
 import { deviceFingerprint, deviceLabel } from "../lib/device-identity";
+import { LOCAL_STEP_DEADLINE_MS, SLOW_HINT_MS, withUiDeadline } from "../lib/ui-deadline";
 import { type UserError, licenceDenial, toUserError } from "../lib/user-error";
 import { OnboardingScreen } from "../ui/OnboardingScreen";
 import { ErrorBanner } from "../ui/feedback";
@@ -50,10 +51,16 @@ export function ActivationGate({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<UserError | null>(null);
   const requestedJoin = useRef(false);
+  // Bumped when the person stops waiting for a licence check: its late answer is then ignored.
+  const previewAttempt = useRef(0);
+  const [slow, setSlow] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const onboarding = await getProductLicenseOnboardingState();
+      const onboarding = await withUiDeadline(
+        getProductLicenseOnboardingState(),
+        "activation.state",
+      );
       if (!onboarding.complete || onboarding.status.startsWith("denied")) {
         let denied: UserError | null = null;
         if (onboarding.status.startsWith("denied")) {
@@ -67,7 +74,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
         setPhase({ kind: "key", denied });
         return;
       }
-      const bootstrap = await getActivationBootstrapState();
+      const bootstrap = await withUiDeadline(getActivationBootstrapState(), "activation.state");
       switch (bootstrap.plant_join) {
         case null:
           setPhase({ kind: "key", denied: null });
@@ -125,52 +132,85 @@ export function ActivationGate({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, [plantJoin, refresh]);
 
+  // A slow answer: after a few seconds the screen says so (and, for the licence check, offers to
+  // stop waiting).
+  const waiting = busy || phase.kind === "loading";
+  useEffect(() => {
+    setSlow(false);
+    if (!waiting) return;
+    const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
+    return () => clearTimeout(timer);
+  }, [waiting]);
+
   async function onValidateKey(event: FormEvent) {
     event.preventDefault();
     const key = keyInput.trim();
     if (!key) return;
+    const attempt = ++previewAttempt.current;
     setBusy(true);
     setFormError(null);
     try {
-      const info = await getAppInfo();
-      const preview = await previewProductActivation({
-        license_key: key,
-        machine_fingerprint: deviceFingerprint(),
-        machine_label: deviceLabel(),
-        app_version: info.version,
-      });
+      const preview = await withUiDeadline(
+        getAppInfo().then((info) =>
+          previewProductActivation({
+            license_key: key,
+            machine_fingerprint: deviceFingerprint(),
+            machine_label: deviceLabel(),
+            app_version: info.version,
+          }),
+        ),
+        "activation.preview",
+      );
+      if (attempt !== previewAttempt.current) return;
       setPhase({ kind: "preview", preview, key });
     } catch (err) {
+      if (attempt !== previewAttempt.current) return;
       setFormError(toUserError(err, "activation.preview", "activation"));
     } finally {
-      setBusy(false);
+      if (attempt === previewAttempt.current) setBusy(false);
     }
+  }
+
+  /** Stops waiting for the licence check (a preview only: it takes no device slot). */
+  function stopWaitingForPreview() {
+    previewAttempt.current += 1;
+    setBusy(false);
   }
 
   async function onJoinPlant(preview: ProductActivationPreview, key: string) {
     setBusy(true);
     setFormError(null);
     try {
-      const info = await getAppInfo();
+      // Each step has its own deadline; there is no "stop waiting" here, because the claim takes a
+      // device slot on the server and must be followed through (a retry claims the same slot).
+      const where = "activation.claim";
+      const info = await withUiDeadline(getAppInfo(), where);
       const label = deviceLabel();
       // The engine is asked first whether it would accept this licence, before a device slot is
       // taken on the server (same sequence as the desktop activation).
-      await checkProductLicenseKeyEntry(preview);
-      const claim = await claimProductActivation({
-        license_key: key,
-        machine_fingerprint: deviceFingerprint(),
-        machine_label: label,
-        app_version: info.version,
-      });
-      const onboarding = await getProductLicenseOnboardingState();
+      await withUiDeadline(checkProductLicenseKeyEntry(preview), where);
+      const claim = await withUiDeadline(
+        claimProductActivation({
+          license_key: key,
+          machine_fingerprint: deviceFingerprint(),
+          machine_label: label,
+          app_version: info.version,
+        }),
+        where,
+      );
+      const onboarding = await withUiDeadline(getProductLicenseOnboardingState(), where);
       if (activationRequiresLocalDataReset(onboarding.tenant_id, claim.tenant_id)) {
-        await resetLocalTenantRuntimeData();
+        await withUiDeadline(resetLocalTenantRuntimeData(), where, LOCAL_STEP_DEADLINE_MS);
       }
-      await submitProductLicenseKey({
-        key,
-        tenant_id: claim.tenant_id,
-        app_version: info.version,
-      });
+      await withUiDeadline(
+        submitProductLicenseKey({
+          key,
+          tenant_id: claim.tenant_id,
+          app_version: info.version,
+        }),
+        where,
+        LOCAL_STEP_DEADLINE_MS,
+      );
       setKeyInput("");
       requestedJoin.current = false;
       await refresh();
@@ -191,6 +231,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
     return (
       <OnboardingScreen title={t("activation.title")}>
         <Progress text={t("activation.checking")} />
+        {slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
       </OnboardingScreen>
     );
   }
@@ -284,6 +325,7 @@ export function ActivationGate({ children }: { children: ReactNode }) {
           </Banner>
         )}
         {formError ? <ErrorBanner error={formError} /> : null}
+        {busy && slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
         <Actions>
           {initialised ? (
             <Button disabled={busy} onClick={() => void onJoinPlant(preview, key)}>
@@ -324,10 +366,16 @@ export function ActivationGate({ children }: { children: ReactNode }) {
           />
         </Section>
         {formError ? <ErrorBanner error={formError} /> : null}
+        {busy && slow ? <Banner tone="info">{t("activation.slow")}</Banner> : null}
         <Actions>
           <Button type="submit" disabled={busy || keyInput.trim() === ""}>
             {busy ? t("activation.validating") : t("activation.validate")}
           </Button>
+          {busy && slow ? (
+            <Button variant="plain" onClick={stopWaitingForPreview}>
+              {t("common.cancel")}
+            </Button>
+          ) : null}
         </Actions>
       </form>
     </OnboardingScreen>
