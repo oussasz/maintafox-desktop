@@ -577,6 +577,242 @@ async fn posting_and_reversal_rules_preserve_traceability() {
     assert_eq!(listed.len(), 2);
 }
 
+/// A posted labour actual of 3200 EUR on a fresh version, ready to be reversed.
+async fn posted_actual(db: &DatabaseConnection, code: &str) -> (i64, crate::finance::domain::BudgetActual) {
+    let center = queries::create_cost_center(
+        db,
+        CreateCostCenterInput {
+            code: code.to_string(),
+            name: "Reversal".to_string(),
+            entity_id: Some(site_node_id(db).await),
+            parent_cost_center_id: None,
+            budget_owner_id: None,
+            erp_external_id: None,
+            is_active: Some(true),
+        },
+    )
+    .await
+    .expect("create center");
+    let version = queries::create_budget_version(
+        db,
+        1,
+        CreateBudgetVersionInput {
+            fiscal_year: 2028,
+            scenario_type: "approved".to_string(),
+            currency_code: "EUR".to_string(),
+            title: Some("FY28".to_string()),
+            planning_basis: None,
+            source_basis_mix_json: None,
+            labor_assumptions_json: None,
+            baseline_reference: None,
+            erp_external_ref: None,
+        },
+    )
+    .await
+    .expect("create version");
+    let posted = queries::create_budget_actual(
+        db,
+        1,
+        CreateBudgetActualInput {
+            budget_version_id: version.id,
+            cost_center_id: center.id,
+            period_month: Some(1),
+            budget_bucket: "labor".to_string(),
+            amount_source: 3200.0,
+            source_currency: "EUR".to_string(),
+            amount_base: 3200.0,
+            base_currency: "EUR".to_string(),
+            source_type: "wo_labor".to_string(),
+            source_id: format!("{code}-LAB-1"),
+            work_order_id: None,
+            equipment_id: None,
+            posting_status: Some("posted".to_string()),
+            provisional_reason: None,
+            personnel_id: None,
+            team_id: Some(budget_crew_id(db).await),
+            rate_card_lane: Some("regular".to_string()),
+            event_at: None,
+        },
+        true,
+    )
+    .await
+    .expect("create posted actual");
+    (version.id, posted)
+}
+
+async fn version_actuals(db: &DatabaseConnection, version_id: i64) -> Vec<crate::finance::domain::BudgetActual> {
+    queries::list_budget_actuals(
+        db,
+        BudgetActualFilter {
+            budget_version_id: Some(version_id),
+            ..BudgetActualFilter::default()
+        },
+    )
+    .await
+    .expect("list actuals")
+}
+
+fn is_gate(err: &AppError, gate: &str) -> bool {
+    matches!(err, AppError::ValidationFailed(msgs) if msgs.iter().any(|m| m.starts_with(gate)))
+}
+
+#[tokio::test]
+async fn reversal_with_stale_version_leaves_no_reversal_row() {
+    let db = setup_db().await;
+    let (version_id, posted) = posted_actual(&db, "CC-REV-STALE").await;
+
+    // Stale version caught before any write.
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: posted.row_version - 1,
+            reason: "stale screen".to_string(),
+        },
+    )
+    .await
+    .expect_err("stale version is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
+
+    // Another writer bumps the row between the version check and the UPDATE: the trigger fires on the
+    // reversal INSERT, so the UPDATE matches nothing and the reversal row must be rolled back with it.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER concurrent_edit AFTER INSERT ON budget_actuals
+         WHEN NEW.reversal_of_actual_id IS NOT NULL
+         BEGIN
+           UPDATE budget_actuals SET row_version = row_version + 1 WHERE id = NEW.reversal_of_actual_id;
+         END",
+    ))
+    .await
+    .expect("create concurrent-edit trigger");
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: posted.row_version,
+            reason: "raced".to_string(),
+        },
+    )
+    .await
+    .expect_err("UPDATE that matched nothing is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
+
+    let rows = version_actuals(&db, version_id).await;
+    assert_eq!(rows.len(), 1, "no half-done reversal row is left");
+    assert_eq!(rows[0].posting_status, "posted");
+    assert_eq!(rows[0].row_version, posted.row_version);
+    assert!((rows.iter().map(|a| a.amount_base).sum::<f64>() - 3200.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn reversal_happens_once_and_a_second_reversal_is_refused() {
+    let db = setup_db().await;
+    let (version_id, posted) = posted_actual(&db, "CC-REV-ONCE").await;
+
+    let reversal = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: posted.row_version,
+            reason: "  wrong rate  ".to_string(),
+        },
+    )
+    .await
+    .expect("reverse posted");
+    assert_eq!(reversal.reversal_of_actual_id, Some(posted.id));
+    assert!((reversal.amount_base + 3200.0).abs() < 1e-9);
+
+    let rows = version_actuals(&db, version_id).await;
+    assert_eq!(rows.len(), 2);
+    let original = rows.iter().find(|a| a.id == posted.id).expect("original");
+    assert_eq!(original.posting_status, "reversed");
+    assert_eq!(original.row_version, posted.row_version + 1);
+    assert!(rows.iter().map(|a| a.amount_base).sum::<f64>().abs() < 1e-9);
+
+    // Same screen clicked twice (old version), or reloaded first (new version): both refused.
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: posted.row_version,
+            reason: "again".to_string(),
+        },
+    )
+    .await
+    .expect_err("double reversal with the old version is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: posted.id,
+            expected_row_version: original.row_version,
+            reason: "again".to_string(),
+        },
+    )
+    .await
+    .expect_err("double reversal with the new version is refused");
+    assert!(is_gate(&err, "GATE_FIN_ACTUAL_NOT_POSTED"), "{err:?}");
+    let err = queries::reverse_budget_actual(
+        &db,
+        1,
+        ReverseBudgetActualInput {
+            actual_id: reversal.id,
+            expected_row_version: reversal.row_version,
+            reason: "reverse the reversal".to_string(),
+        },
+    )
+    .await
+    .expect_err("a reversal row is never reversed");
+    assert!(
+        is_gate(&err, "GATE_FIN_ACTUAL_NOT_POSTED") || is_gate(&err, "GATE_FIN_REVERSAL_OF_REVERSAL"),
+        "{err:?}"
+    );
+
+    assert_eq!(
+        version_actuals(&db, version_id).await.len(),
+        2,
+        "still exactly one reversal"
+    );
+}
+
+#[tokio::test]
+async fn erp_master_import_with_a_refused_record_imports_nothing() {
+    let db = setup_db().await;
+    let record = |code: &str| crate::finance::domain::ErpCostCenterMasterRecordInput {
+        external_code: code.to_string(),
+        external_name: format!("ERP {code}"),
+        local_cost_center_code: None,
+        is_active: Some(true),
+    };
+    let err = queries::import_erp_cost_center_master(
+        &db,
+        ImportErpCostCenterMasterInput {
+            import_batch_id: "BATCH-DUP".to_string(),
+            records: vec![record("ERP-A"), record("ERP-B"), record("ERP-A")],
+        },
+    )
+    .await
+    .expect_err("duplicate code is refused");
+    assert!(is_gate(&err, "GATE_FIN_ERP_DUPLICATE_CODE"), "{err:?}");
+    let count = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM budget_erp_cost_center_master WHERE import_batch_id = 'BATCH-DUP'",
+        ))
+        .await
+        .expect("count")
+        .expect("row")
+        .try_get::<i64>("", "n")
+        .expect("n");
+    assert_eq!(count, 0, "no part of a refused batch is imported");
+}
+
 #[tokio::test]
 async fn forecast_generation_is_idempotent_and_commitments_stay_separate() {
     let db = setup_db().await;
@@ -739,6 +975,38 @@ async fn forecast_generation_is_idempotent_and_commitments_stay_separate() {
     .await
     .expect("list forecasts");
     assert!(!forecasts.is_empty());
+
+    // A forecast line that fails to save leaves no run behind (a retry would otherwise reuse it).
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER fail_forecast BEFORE INSERT ON budget_forecasts
+         BEGIN SELECT RAISE(ABORT, 'forced forecast failure'); END",
+    ))
+    .await
+    .expect("create failing trigger");
+    queries::generate_budget_forecasts(
+        &db,
+        1,
+        GenerateBudgetForecastInput {
+            budget_version_id: version.id,
+            idempotency_key: "fy29-full-v2".to_string(),
+            scope_signature: "fy29:all".to_string(),
+            period_month_start: None,
+            period_month_end: None,
+            include_pm_occurrence: Some(true),
+            include_backlog_demand: Some(true),
+            include_shutdown_demand: Some(true),
+            include_planning_demand: Some(true),
+            include_burn_rate: Some(false),
+            confidence_policy_json: None,
+        },
+    )
+    .await
+    .expect_err("a failed forecast line fails the run");
+    let runs = queries::list_forecast_runs(&db, Some(version.id))
+        .await
+        .expect("list runs");
+    assert_eq!(runs.len(), 1, "no partial run is left behind");
 }
 
 #[tokio::test]
@@ -904,6 +1172,28 @@ async fn variance_review_lifecycle_enforces_driver_taxonomy_and_duplicate_scope_
     .await
     .expect("list variance reviews");
     assert_eq!(listed.len(), 1);
+
+    // The UPDATE matches no row (another writer won the race): refused, not reported as saved.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER lost_race BEFORE UPDATE ON budget_variance_reviews
+         BEGIN SELECT RAISE(IGNORE); END",
+    ))
+    .await
+    .expect("create lost-race trigger");
+    let err = queries::transition_budget_variance_review(
+        &db,
+        TransitionBudgetVarianceReviewInput {
+            review_id: reopened.id,
+            expected_row_version: reopened.row_version,
+            next_status: "in_review".to_string(),
+            review_commentary: None,
+            reopen_reason: None,
+        },
+    )
+    .await
+    .expect_err("an update that matched nothing is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
 }
 
 #[tokio::test]
@@ -1235,7 +1525,7 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
     .await
     .expect("freeze");
 
-    queries::create_budget_alert_config(
+    let config = queries::create_budget_alert_config(
         &db,
         CreateBudgetAlertConfigInput {
             budget_version_id: Some(version.id),
@@ -1301,6 +1591,27 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
     .await
     .expect("ack");
     assert!(acknowledged.acknowledged_at.is_some());
+
+    // The UPDATE matches no row (another writer won the race): refused and rolled back.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER lost_race BEFORE UPDATE ON budget_alert_configs
+         BEGIN SELECT RAISE(IGNORE); END",
+    ))
+    .await
+    .expect("create lost-race trigger");
+    let err = queries::update_budget_alert_config(
+        &db,
+        config.id,
+        config.row_version,
+        crate::finance::domain::UpdateBudgetAlertConfigInput {
+            threshold_pct: Some(90.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("an update that matched nothing is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
 }
 
 #[tokio::test]

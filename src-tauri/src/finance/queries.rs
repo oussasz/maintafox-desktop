@@ -1502,7 +1502,9 @@ pub async fn reverse_budget_actual(
     input: ReverseBudgetActualInput,
 ) -> AppResult<BudgetActual> {
     let reason = required_trimmed("Reversal reason", &input.reason)?;
-    let row = db
+    // The reversal row and the original's status change land together or not at all.
+    let txn = db.begin().await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_actuals WHERE id = ?",
@@ -1547,7 +1549,7 @@ pub async fn reverse_budget_actual(
             "GATE_FIN_REVERSAL_OF_REVERSAL: Reversal records cannot be reversed again.".to_string(),
         ]));
     }
-    let already_reversed = db
+    let already_reversed = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM budget_actuals WHERE reversal_of_actual_id = ? LIMIT 1",
@@ -1560,7 +1562,7 @@ pub async fn reverse_budget_actual(
         ]));
     }
 
-    let insert_result = db
+    let insert_result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO budget_actuals (
@@ -1602,7 +1604,7 @@ pub async fn reverse_budget_actual(
                 current_equipment_id.into(),
                 actor_user_id.into(),
                 current_id.into(),
-                reason.into(),
+                reason.clone().into(),
                 current_personnel_id.into(),
                 current_team_id.into(),
                 current_rate_card_lane.into(),
@@ -1610,24 +1612,28 @@ pub async fn reverse_budget_actual(
         ))
         .await?;
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE budget_actuals
-         SET posting_status = 'reversed',
-             reversal_reason = ?,
-             row_version = row_version + 1,
-             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-         WHERE id = ? AND row_version = ?",
-        [
-            input.reason.into(),
-            input.actual_id.into(),
-            input.expected_row_version.into(),
-        ],
-    ))
-    .await?;
-
-    // The id comes from the reversal INSERT's own result, not from the UPDATE that ran after it.
+    // The id comes from the reversal INSERT's own result, not from the UPDATE that runs after it.
     let reversal_id = crate::db::inserted_id(&insert_result)?;
+
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE budget_actuals
+             SET posting_status = 'reversed',
+                 reversal_reason = ?,
+                 row_version = row_version + 1,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE id = ? AND row_version = ? AND posting_status = 'posted'",
+            [reason.into(), input.actual_id.into(), input.expected_row_version.into()],
+        ))
+        .await?;
+    // Dropping the transaction un-does the reversal row: no half-done reversal is left behind.
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget actual reversal failed (stale row_version).".to_string(),
+        ]));
+    }
+    txn.commit().await?;
 
     list_budget_actuals(
         db,
@@ -1843,7 +1849,11 @@ pub async fn generate_budget_forecasts(
     let idempotency_key = required_trimmed("Idempotency key", &input.idempotency_key)?;
     let scope_signature = required_trimmed("Scope signature", &input.scope_signature)?;
 
-    if let Some(existing_row) = db
+    // The run and its forecast lines land together: a failure part-way never leaves a partial run
+    // that a retry with the same idempotency key would then return as if complete. The key lookup
+    // is inside the transaction too, so two identical requests reuse one run instead of colliding.
+    let txn = db.begin().await?;
+    if let Some(existing_row) = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_forecast_runs WHERE idempotency_key = ?",
@@ -1852,6 +1862,8 @@ pub async fn generate_budget_forecasts(
         .await?
     {
         let run = map_forecast_run(&existing_row)?;
+        // Release the (single pooled) connection before reading through `db`.
+        txn.commit().await?;
         let forecasts = list_budget_forecasts(
             db,
             BudgetForecastFilter {
@@ -1878,7 +1890,7 @@ pub async fn generate_budget_forecasts(
         include_pm, include_backlog, include_shutdown, include_planning, include_burn_rate
     );
 
-    let insert_result = db
+    let insert_result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO budget_forecast_runs (
@@ -1901,7 +1913,7 @@ pub async fn generate_budget_forecasts(
         .await?;
 
     let run_id = crate::db::inserted_id(&insert_result)?;
-    let run_row = db
+    let run_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_forecast_runs WHERE id = ?",
@@ -1912,7 +1924,7 @@ pub async fn generate_budget_forecasts(
     let run = map_forecast_run(&run_row)?;
 
     let lines = list_budget_lines(
-        db,
+        &txn,
         BudgetLineFilter {
             budget_version_id: Some(input.budget_version_id),
             ..BudgetLineFilter::default()
@@ -1962,7 +1974,7 @@ pub async fn generate_budget_forecasts(
             }
         );
 
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO budget_forecasts (
                 forecast_run_id,
@@ -1995,7 +2007,7 @@ pub async fn generate_budget_forecasts(
     }
 
     if include_burn_rate {
-        let burn_rows = db
+        let burn_rows = txn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT cost_center_id,
@@ -2012,7 +2024,7 @@ pub async fn generate_budget_forecasts(
             let cost_center_id: i64 = row.try_get("", "cost_center_id")?;
             let budget_bucket: String = row.try_get("", "budget_bucket")?;
             let burn_rate_amount: f64 = row.try_get("", "burn_rate_amount")?;
-            db.execute(Statement::from_sql_and_values(
+            txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO budget_forecasts (
                     forecast_run_id,
@@ -2039,6 +2051,7 @@ pub async fn generate_budget_forecasts(
             .await?;
         }
     }
+    txn.commit().await?;
 
     let forecasts = list_budget_forecasts(
         db,
@@ -2250,9 +2263,10 @@ pub async fn transition_budget_variance_review(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE budget_variance_reviews
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE budget_variance_reviews
          SET review_status = ?,
              review_commentary = ?,
              reviewed_at = CASE WHEN ? IN ('in_review', 'actioned', 'accepted', 'closed') THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE reviewed_at END,
@@ -2261,18 +2275,23 @@ pub async fn transition_budget_variance_review(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            next_status.into(),
-            commentary.into(),
-            input.next_status.clone().into(),
-            input.next_status.clone().into(),
-            input.next_status.into(),
-            reopen_reason.into(),
-            input.review_id.into(),
-            input.expected_row_version.into(),
-        ],
-    ))
-    .await?;
+            [
+                next_status.into(),
+                commentary.into(),
+                input.next_status.clone().into(),
+                input.next_status.clone().into(),
+                input.next_status.into(),
+                reopen_reason.into(),
+                input.review_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: Variance review transition failed (stale row_version).".to_string(),
+        ]));
+    }
 
     list_budget_variance_reviews(
         db,
@@ -2646,6 +2665,8 @@ pub async fn import_erp_cost_center_master(
     let mut linked_count = 0_i64;
     let mut inactive_count = 0_i64;
     let mut seen_codes = std::collections::HashSet::new();
+    // A refused record mid-payload (e.g. a duplicate code) leaves none of the batch imported.
+    let txn = db.begin().await?;
 
     for ErpCostCenterMasterRecordInput {
         external_code,
@@ -2663,7 +2684,7 @@ pub async fn import_erp_cost_center_master(
         }
 
         let local_cost_center_id = if let Some(local_code) = optional_trimmed(&local_cost_center_code) {
-            let row = db
+            let row = txn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "SELECT id FROM cost_centers WHERE code = ? LIMIT 1",
@@ -2682,7 +2703,7 @@ pub async fn import_erp_cost_center_master(
             inactive_count += 1;
         }
 
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO budget_erp_cost_center_master (
                 import_batch_id,
@@ -2709,6 +2730,7 @@ pub async fn import_erp_cost_center_master(
         .await?;
         imported_count += 1;
     }
+    txn.commit().await?;
 
     Ok(ErpMasterImportResult {
         imported_count,
@@ -3367,9 +3389,10 @@ pub async fn update_budget_alert_config(
         .unwrap_or(current.try_get::<i64>("", "requires_ack")? == 1);
     let is_active = input.is_active.unwrap_or(current.try_get::<i64>("", "is_active")? == 1);
 
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE budget_alert_configs
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE budget_alert_configs
          SET budget_bucket = ?,
              threshold_pct = ?,
              threshold_amount = ?,
@@ -3382,21 +3405,26 @@ pub async fn update_budget_alert_config(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [
-            budget_bucket.into(),
-            threshold_pct.into(),
-            threshold_amount.into(),
-            recipient_user_id.into(),
-            recipient_role_id.into(),
-            labor_template.into(),
-            dedupe_window_minutes.into(),
-            i64::from(requires_ack).into(),
-            i64::from(is_active).into(),
-            config_id.into(),
-            expected_row_version.into(),
-        ],
-    ))
-    .await?;
+            [
+                budget_bucket.into(),
+                threshold_pct.into(),
+                threshold_amount.into(),
+                recipient_user_id.into(),
+                recipient_role_id.into(),
+                labor_template.into(),
+                dedupe_window_minutes.into(),
+                i64::from(requires_ack).into(),
+                i64::from(is_active).into(),
+                config_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: Budget alert config update failed (stale row_version).".to_string(),
+        ]));
+    }
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
