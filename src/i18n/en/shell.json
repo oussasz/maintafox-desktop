@@ -482,6 +482,8 @@
   },
   "startup": {
     "loading": "Starting up…",
+    "stalledTitle": "Start-up is taking longer than expected",
+    "stalledBody": "Maintafox has not finished starting yet. A long operation (for example a large synchronisation) may be using the database. Wait a moment, or click “Retry”.",
     "errorTitle": "Startup error",
     "retry": "Retry",
     "dbRecovery": {

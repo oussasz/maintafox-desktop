@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { useStartupBridge } from "@/hooks/use-startup-bridge";
+import { STARTUP_STALL_AFTER_MS, useStartupBridge } from "@/hooks/use-startup-bridge";
 import { useAppStore } from "@/store/app-store";
 import { mockInvoke, fixtures } from "@/test/mocks/tauri";
 import type { StartupEvent } from "@shared/ipc-types";
@@ -34,6 +34,7 @@ describe("useStartupBridge", () => {
     useAppStore.setState({
       appStatus: "loading",
       startupMessage: "",
+      startupStalled: false,
       appVersion: "",
       updateRecovery: null,
     });
@@ -155,10 +156,8 @@ describe("useStartupBridge", () => {
     await waitFor(() => {
       expect(useAppStore.getState().appStatus).toBe("update_rollback_required");
     });
-    // Let the health_check fallback run: it must not override the recovery status.
-    await waitFor(() =>
-      expect(mockInvoke.mock.calls.some(([command]) => command === "health_check")).toBe(true),
-    );
+    // Give the fallback probes time to run: they must not override the recovery status.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await Promise.resolve();
     expect(useAppStore.getState().appStatus).toBe("update_rollback_required");
     expect(useAppStore.getState().updateRecovery).toEqual({
@@ -192,5 +191,89 @@ describe("useStartupBridge", () => {
 
     await waitFor(() => expect(useAppStore.getState().appStatus).toBe("ready"));
     expect(useAppStore.getState().updateRecovery).toBeNull();
+  });
+
+  describe("backend that is slow to answer", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("applies the backend's last start-up event when ready was emitted before the listener", async () => {
+      mockInvoke.mockImplementation(async (command) => {
+        if (command === "get_app_info") return fixtures.appInfo;
+        if (command === "get_last_startup_event") return { stage: "ready" };
+        if (command === "health_check") throw new Error("timeout");
+        return null;
+      });
+
+      renderHook(() => useStartupBridge());
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(useAppStore.getState().appStatus).toBe("ready");
+    });
+
+    it("keeps asking the health check until the busy database answers", async () => {
+      let healthCalls = 0;
+      mockInvoke.mockImplementation(async (command) => {
+        if (command === "get_app_info") return fixtures.appInfo;
+        if (command === "health_check") {
+          healthCalls += 1;
+          if (healthCalls < 4) throw new Error("timeout");
+          return fixtures.healthCheck;
+        }
+        return null;
+      });
+
+      renderHook(() => useStartupBridge());
+      await vi.advanceTimersByTimeAsync(10);
+      expect(useAppStore.getState().appStatus).toBe("loading");
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(healthCalls).toBe(4);
+      expect(useAppStore.getState().appStatus).toBe("ready");
+    });
+
+    it("flags a stalled start after a while, and a late answer still gets in", async () => {
+      let healthy = false;
+      mockInvoke.mockImplementation(async (command) => {
+        if (command === "get_app_info") return fixtures.appInfo;
+        if (command === "health_check") {
+          if (!healthy) throw new Error("timeout");
+          return fixtures.healthCheck;
+        }
+        return null;
+      });
+
+      renderHook(() => useStartupBridge());
+      await vi.advanceTimersByTimeAsync(STARTUP_STALL_AFTER_MS - 1000);
+      expect(useAppStore.getState().startupStalled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(useAppStore.getState().startupStalled).toBe(true);
+      expect(useAppStore.getState().appStatus).toBe("loading");
+
+      healthy = true;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(useAppStore.getState().appStatus).toBe("ready");
+    });
+
+    it("stops asking once the screen is unmounted", async () => {
+      mockInvoke.mockImplementation(async (command) => {
+        if (command === "get_app_info") return fixtures.appInfo;
+        throw new Error("timeout");
+      });
+
+      const { unmount } = renderHook(() => useStartupBridge());
+      await vi.advanceTimersByTimeAsync(10);
+      unmount();
+      const callsAtUnmount = mockInvoke.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(mockInvoke.mock.calls.length).toBe(callsAtUnmount);
+    });
   });
 });

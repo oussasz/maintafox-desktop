@@ -20,6 +20,7 @@ import { AUTH_UPDATE_IN_PROGRESS, toErrorMessage } from "@/utils/errors";
 const SILENT_IPC_COMMANDS = new Set([
   "health_check",
   "get_app_info",
+  "get_last_startup_event",
   "get_task_status",
   "set_window_mode",
 ]);
