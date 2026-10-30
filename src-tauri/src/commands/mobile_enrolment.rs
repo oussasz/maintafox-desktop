@@ -1555,6 +1555,22 @@ async fn follow_up_round(db: &DatabaseConnection, server: &Server, session_start
     }
 }
 
+/// One round of [`run_follow_up`] with the licence server at `base_url` instead of the built-in one
+/// (tests that run the app's background jobs without the network).
+#[cfg(test)]
+pub(crate) async fn follow_up_round_at(db: &DatabaseConnection, base_url: &str) -> bool {
+    match Server::for_background(db).await {
+        Some(server) => {
+            let server = Server {
+                base_url: base_url.to_string(),
+                ..server
+            };
+            follow_up_round(db, &server, Utc::now()).await
+        }
+        None => true,
+    }
+}
+
 /// The wait before the next round: [`FOLLOW_UP_INTERVAL`], doubled at each round the server could
 /// not be reached, at most [`FOLLOW_UP_MAX_WAIT`].
 fn follow_up_wait(unreachable_rounds: u32) -> Duration {
