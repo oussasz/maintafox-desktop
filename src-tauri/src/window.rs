@@ -159,7 +159,9 @@ pub fn apply_window_mode(app: &AppHandle, mode: WindowMode) -> AppResult<()> {
             // The compact window may have been maximised: the remembered size only applies to a
             // window in its normal state.
             if window.is_maximized().unwrap_or(false) {
-                window.unmaximize().map_err(|e| window_err(&e))?;
+                if let Err(e) = window.unmaximize() {
+                    warn!("Cannot unmaximize the compact window: {e}");
+                }
             }
             window.set_resizable(true).map_err(|e| window_err(&e))?;
             window.set_maximizable(true).map_err(|e| window_err(&e))?;
