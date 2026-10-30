@@ -5,7 +5,7 @@
 //! cost-of-failure all agree. Corrective = OT types of a corrective EN 13306 nature (failure cost, used
 //! by RAMS cost-based intervals); preventive = every other type.
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,7 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
     db: &C,
     filter: AssetCostFilter,
 ) -> AppResult<AssetCostHistory> {
-    let since_12m = (Utc::now() - Duration::days(365))
+    let since_12m = (crate::clock::now() - Duration::days(365))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     // Cost by fiscal year, in the local calendar, like the budget.

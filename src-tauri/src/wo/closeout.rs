@@ -21,7 +21,7 @@ use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
 use crate::wo::time::{now_utc_second, now_utc_z, stamp};
 use crate::wo::workflow::state_machine::status_i18n_key;
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -1789,7 +1789,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // Optimistic immediate RAMS KPI refresh for the impacted equipment.
     if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
         if let Some(equipment_id) = wo.equipment_id {
-            let period_end = Utc::now();
+            let period_end = crate::clock::now();
             let period_start = period_end - Duration::days(365);
             let refresh_input = RefreshReliabilityKpiSnapshotInput {
                 equipment_id,
@@ -2003,7 +2003,7 @@ async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> 
                     .into(),
             ])
         })?;
-    let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
+    let age_days = (crate::clock::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
     if age_days > window as f64 {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_REOPEN_WINDOW_EXPIRED:days={window}: This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."

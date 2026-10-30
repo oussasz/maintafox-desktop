@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use calamine::{Reader, Xlsx};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -131,7 +130,7 @@ pub async fn create_import_batch(
         ]));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let txn = db.begin().await?;
 
     txn.execute(Statement::from_sql_and_values(
@@ -254,7 +253,7 @@ pub async fn apply_import_batch(
     let mut updated = 0_i64;
     let mut skipped = 0_i64;
     let mut protected_ignored = 0_i64;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let txn = db.begin().await?;
     for row in rows {
@@ -520,7 +519,7 @@ async fn validate_staged_rows(txn: &impl ConnectionTrait, batch_id: i64, mode: &
         }
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE personnel_import_batches

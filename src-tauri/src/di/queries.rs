@@ -6,7 +6,6 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -392,7 +391,7 @@ pub async fn list_intervention_requests_in_scope(
     }
     if let Some(days) = filter.waiting_days {
         where_clauses.push(super::stats::WAITING_SQL.to_string());
-        binds.push(super::stats::waiting_since(chrono::Utc::now(), days).into());
+        binds.push(super::stats::waiting_since(crate::clock::now(), days).into());
     }
 
     // ── Free-text search (title + description + code) ─────────────────────
@@ -662,7 +661,7 @@ pub async fn create_intervention_request_in(
     refuse_retired_equipment(db, input.equipment_id).await?;
 
     let code = generate_di_code(db).await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     db.execute(Statement::from_sql_and_values(
@@ -881,7 +880,7 @@ pub async fn update_di_draft_fields(
     }
 
     // Always bump version + updated_at
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     sets.push("row_version = row_version + 1".into());
     sets.push("updated_at = ?".into());
     values.push(now.into());
@@ -957,7 +956,7 @@ pub async fn triage_submitted_di(
 
     guard_transition(&status, &DiStatus::InReview).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(

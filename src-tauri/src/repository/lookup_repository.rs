@@ -242,11 +242,10 @@ pub async fn insert_lookup_value(
     color: Option<&str>,
     _created_by_sync_id: &str,
 ) -> AppResult<i32> {
-    use chrono::Utc;
     use uuid::Uuid;
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let sql = r"
         INSERT INTO lookup_values

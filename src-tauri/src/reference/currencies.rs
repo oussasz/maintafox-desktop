@@ -286,7 +286,7 @@ pub async fn mirror_into_lookup(conn: &impl ConnectionTrait) -> AppResult<u64> {
         // links to a lookup currency yet.
         return Ok(0);
     };
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut written = 0;
     for (i, c) in published_currencies(conn).await?.iter().enumerate() {
         if !c.is_active {

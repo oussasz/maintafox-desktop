@@ -8,7 +8,6 @@
 //!    covers the document amount. A document whose amount cannot be established (line without a
 //!    price, foreign currency without a stored rate) can only be approved with an unlimited role.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -89,7 +88,7 @@ pub async fn upsert_limit(
             id: input.role_id.to_string(),
         });
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let is_active = input.is_active.unwrap_or(true) as i64;
     let existing = db
         .query_one(Statement::from_sql_and_values(

@@ -395,7 +395,7 @@ fn valid_alert_type(alert_type: &str) -> bool {
 }
 
 fn current_utc_text() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 async fn get_cost_center_row(db: &DatabaseConnection, cost_center_id: i64) -> AppResult<(i64, Option<i64>, i64)> {

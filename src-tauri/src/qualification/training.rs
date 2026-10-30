@@ -1,4 +1,4 @@
-use chrono::{Months, NaiveDate, Utc};
+use chrono::{Months, NaiveDate};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
@@ -171,10 +171,10 @@ async fn maybe_issue_cert_from_pass(
     let issued = completed_at
         .clone()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
     let issued_day = parse_iso_date_prefix(&issued)
         .map(|d| d.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%d").to_string());
     let expires = expires_from_issued(&issued_day, ct.default_validity_months);
 
     let cref = format!("training_session:{}", session.id);

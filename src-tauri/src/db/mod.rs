@@ -63,6 +63,55 @@ pub(crate) async fn connect_sqlcipher(
     Ok(sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool))
 }
 
+/// Opens an EXISTING database for the developer-only demo-company generator, through the SQLite
+/// VFS `vfs` (the generator's simulated clock) and with the key this PC stores for its database.
+/// Never creates a file: the generator only fills a database the app itself created.
+#[cfg(feature = "demo-company")]
+pub async fn open_existing_with_vfs(path: &Path, vfs: &str) -> AppResult<DatabaseConnection> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use sqlx::ConnectOptions;
+
+    if !path.is_file() {
+        return Err(AppError::NotFound {
+            entity: "database".into(),
+            id: path.display().to_string(),
+        });
+    }
+    let key = match encryption::detect_file_state(path)? {
+        encryption::DatabaseFileState::Encrypted => Some(
+            encryption::load_stored_key()?
+                .ok_or_else(|| AppError::DatabaseKeyUnavailable("this PC has no stored key for the database".into()))?,
+        ),
+        encryption::DatabaseFileState::Plaintext => None,
+        encryption::DatabaseFileState::Missing => {
+            return Err(AppError::NotFound {
+                entity: "database".into(),
+                id: path.display().to_string(),
+            })
+        }
+    };
+    let mut opts = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .vfs(vfs.to_string())
+        .disable_statement_logging();
+    if let Some(key) = &key {
+        opts = opts.pragma("key", key.pragma_value());
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(opts)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot open database {}: {e}", path.display())))?;
+    let db = sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
+    assert_sqlcipher_linked(&db).await?;
+    db.execute_unprepared("PRAGMA foreign_keys=ON;").await?;
+    db.execute_unprepared("PRAGMA busy_timeout=5000;").await?;
+    Ok(db)
+}
+
 /// Fails unless the linked SQLite is SQLCipher: without it `PRAGMA key` is silently ignored and the
 /// database would stay plaintext.
 async fn assert_sqlcipher_linked(db: &DatabaseConnection) -> AppResult<()> {

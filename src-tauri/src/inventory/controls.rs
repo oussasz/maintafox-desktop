@@ -1,4 +1,3 @@
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -31,11 +30,11 @@ pub const REFUSED_COUNT_LINE_NOT_APPROVED: &str = "COUNT_LINE_NOT_APPROVED";
 pub const SETTING_RECONCILIATION_DRIFT_BREAK: &str = "inventory.reconciliation_drift_break";
 
 fn now_iso() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn next_doc(prefix: &str) -> String {
-    format!("{prefix}-{}", Utc::now().timestamp_millis())
+    format!("{prefix}-{}", crate::clock::now().timestamp_millis())
 }
 
 async fn ensure_count_session<C: ConnectionTrait>(db: &C, session_id: i64) -> AppResult<InventoryCountSession> {
@@ -1635,7 +1634,7 @@ pub async fn run_reconciliation(
     let break_threshold = crate::settings::catalog::decimal_setting(db, SETTING_RECONCILIATION_DRIFT_BREAK).await?;
     let tx = db.begin().await?;
     let run_code = next_doc("RECON");
-    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_reconciliation_runs

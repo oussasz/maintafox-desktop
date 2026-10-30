@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -173,7 +173,7 @@ pub async fn upsert_holiday(
             "This day is already a holiday for this site.",
         ));
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let id = if let Some(id) = input.id {
         let current = get_holiday(&txn, id).await?;
         let res = txn
@@ -311,7 +311,7 @@ pub async fn set_site_work_week(
 ) -> AppResult<Vec<SiteWorkWeek>> {
     let from = NaiveDate::parse_from_str(input.effective_from.trim(), "%Y-%m-%d")
         .map_err(|_| issue("TIMETABLE_DATE_INVALID", "Enter the date as YYYY-MM-DD."))?;
-    let today = Utc::now().date_naive();
+    let today = crate::clock::now().date_naive();
     if from < today {
         return Err(org_validation_failed(
             "TIMETABLE_DATE_IN_PAST",
@@ -351,7 +351,7 @@ pub async fn set_site_work_week(
             });
         }
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
     let updated = txn
         .execute(Statement::from_sql_and_values(

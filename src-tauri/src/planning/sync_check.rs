@@ -30,7 +30,6 @@
 //!   baseline) comes with its `unfrozen` decision, here or in the inbox, decided by someone other
 //!   than the requester who holds plan.confirm at the site here, now.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde_json::{json, Value};
 
@@ -809,7 +808,8 @@ async fn judge_commitment(
     }
     let frozen_week = match ctx.team {
         Some(team) => {
-            super::weekly_schedule::frozen_week_for_slot(conn, team, &ctx.to.start, &ctx.to.end, Utc::now()).await?
+            super::weekly_schedule::frozen_week_for_slot(conn, team, &ctx.to.start, &ctx.to.end, crate::clock::now())
+                .await?
         }
         None => None,
     };
@@ -951,7 +951,7 @@ pub(crate) async fn inbound_crew_site_check(
             }
         }
     }
-    let Some(block) = super::crew_site::crew_site_change_block(conn, team, new_node, Utc::now()).await? else {
+    let Some(block) = super::crew_site::crew_site_change_block(conn, team, new_node, crate::clock::now()).await? else {
         return Ok(None);
     };
     let sent_at = field(received, "updated_at").unwrap_or("not recorded");
@@ -2066,7 +2066,7 @@ pub(crate) async fn keep_planning_plan(
         return Ok(());
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let refusal = refusal_text(&conflict.conflict_type, reason);
     if local.is_some() {
         // The break-ins that brought the refused version, marked refused and sent with it.
@@ -2369,8 +2369,14 @@ pub(crate) async fn planning_conflict_times(
         Ok(ctx) => {
             let week = match ctx.team {
                 Some(team) => {
-                    super::weekly_schedule::frozen_week_for_slot(conn, team, &ctx.to.start, &ctx.to.end, Utc::now())
-                        .await?
+                    super::weekly_schedule::frozen_week_for_slot(
+                        conn,
+                        team,
+                        &ctx.to.start,
+                        &ctx.to.end,
+                        crate::clock::now(),
+                    )
+                    .await?
                 }
                 None => None,
             };

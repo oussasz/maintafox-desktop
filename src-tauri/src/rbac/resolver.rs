@@ -38,7 +38,7 @@ pub const PERMANENT_ASSIGNMENT_IN_FORCE_SQL: &str = "usa.deleted_at IS NULL AND 
 /// The instant the assignment rules compare with, in the stored form of validity bounds and
 /// emergency expiries (`YYYY-MM-DDTHH:MM:SSZ`).
 pub fn assignment_clock() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Values bound by [`ASSIGNMENT_IN_FORCE_SQL`].

@@ -367,7 +367,7 @@ pub async fn weekly_capacity(db: &DatabaseConnection, org: Option<i64>) -> AppRe
             i64::try_get(r, "", "pid").map_err(|e| AppError::Internal(anyhow::anyhow!("smrp decode 'pid': {e:?}")))
         })
         .collect::<AppResult<Vec<_>>>()?;
-    let today = chrono::Utc::now().date_naive();
+    let today = crate::clock::now().date_naive();
     let week_end = today + chrono::Duration::days(6);
     let mut total = 0.0;
     let mut counted = 0_i64;

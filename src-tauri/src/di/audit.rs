@@ -63,7 +63,7 @@ pub struct DiAuditFilter {
 /// level but is NOT returned. This ensures that a transient audit-write failure
 /// never blocks the primary DI workflow.
 pub async fn record_di_change_event(db: &DatabaseConnection, input: DiAuditInput) {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let result = db
         .execute(Statement::from_sql_and_values(

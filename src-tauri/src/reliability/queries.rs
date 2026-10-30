@@ -559,7 +559,7 @@ pub async fn deactivate_failure_code(
 }
 
 fn utc_now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    crate::clock::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn map_failure_event(row: &sea_orm::QueryResult) -> AppResult<FailureEvent> {

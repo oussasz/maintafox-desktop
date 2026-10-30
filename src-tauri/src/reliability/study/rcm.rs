@@ -12,7 +12,6 @@
 //! The decision is recorded in `rcm_decisions` (linked to the FMECA item) and sent to the study
 //! decision log by the analyst.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -343,7 +342,7 @@ async fn ensure_rcm_study(db: &DatabaseConnection, study: &ReliabilityStudy, act
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reliability_studies SET rcm_study_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
-        [rcm.id.into(), Utc::now().to_rfc3339().into(), study.id.into()],
+        [rcm.id.into(), crate::clock::now().to_rfc3339().into(), study.id.into()],
     ))
     .await?;
     Ok(rcm.id)

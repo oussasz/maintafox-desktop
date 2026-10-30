@@ -320,7 +320,7 @@ pub async fn study_clocks(
 pub async fn build_dataset(db: &DatabaseConnection, study_id: i64) -> AppResult<BuiltDataset> {
     let study = get_study(db, study_id).await?;
     let period_start = parse_instant(&study.period_start)?;
-    let now = Utc::now();
+    let now = crate::clock::now();
     let period_end = {
         let e = parse_instant(&study.period_end)?;
         if e > now {
@@ -743,7 +743,7 @@ pub async fn failures_since(
     mode: Option<i64>,
     since: DateTime<Utc>,
 ) -> AppResult<(i64, f64)> {
-    let now = Utc::now();
+    let now = crate::clock::now();
     let mut count = 0_i64;
     let mut total = 0.0;
     for id in equipment_ids {

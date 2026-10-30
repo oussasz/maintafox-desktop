@@ -32,7 +32,6 @@
 
 use std::collections::BTreeMap;
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -1169,7 +1168,7 @@ pub(crate) async fn keep_this_pc_decision(
              conflict closes by itself at the next synchronisation.",
         ));
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let refusal = refusal_text(&conflict.conflict_type, reason);
     let held_id = crate::permit::sync_check::local_id(conn, ENTITY, sid).await?;
     if let Some(id) = held_id {

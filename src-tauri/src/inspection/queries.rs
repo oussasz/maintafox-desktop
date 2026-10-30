@@ -29,7 +29,7 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn now_rfc3339() -> String {
-    Utc::now().to_rfc3339()
+    crate::clock::now().to_rfc3339()
 }
 
 fn opt_i64(v: Option<i64>) -> sea_orm::Value {

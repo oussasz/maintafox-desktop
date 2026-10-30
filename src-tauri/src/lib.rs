@@ -24,6 +24,7 @@ pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod build_identity;
+pub mod clock;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;

@@ -2,7 +2,6 @@
 //! plan counts on (lifetime values, readings with rollover / replacement), and the revision of
 //! a plan from a finding.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::assets::meters::{self, MeterReadingKind, RecordMeterReadingPayload};
@@ -227,7 +226,7 @@ pub async fn create_pm_revision_from_finding(db: &DatabaseConnection, finding_id
                 "GATE_PM_NO_VERSION_TO_REVISE: The plan has no version to revise; create a version first.".to_string(),
             ])
         })?;
-    let effective_from = Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
+    let effective_from = crate::clock::now().format("%Y-%m-%dT00:00:00Z").to_string();
     let draft = queries::create_pm_plan_version(
         db,
         plan_id,

@@ -3630,7 +3630,7 @@ pub async fn evaluate_replenishment(
                 let lt_days: Option<i64> = row.try_get("", "lead_time_days").ok().flatten();
                 let cost = price.map(|p| p * r.suggested_reorder_qty);
                 let arrival = lt_days.map(|d| {
-                    let dt = chrono::Utc::now() + chrono::Duration::days(d);
+                    let dt = crate::clock::now() + chrono::Duration::days(d);
                     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
                 });
                 (sid, sname, cost, arrival)
@@ -4358,7 +4358,7 @@ pub async fn upsert_inventory_document_link(
     let valid_from = input
         .valid_from
         .clone()
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
     let inserted = db
         .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

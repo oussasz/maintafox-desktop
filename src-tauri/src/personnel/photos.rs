@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 use uuid::Uuid;
@@ -225,7 +224,7 @@ pub async fn upload_personnel_photo(
         "personnel photo copied"
     );
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE personnel SET photo_path = ?, updated_at = ? WHERE id = ?",

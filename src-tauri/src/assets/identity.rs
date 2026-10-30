@@ -29,7 +29,6 @@
 //!   org_cost_center_code → nearest org node (self or ancestor) carrying `cost_center_code`
 
 use crate::errors::{issue_params, org_validation_failed, AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
 };
@@ -973,7 +972,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
 
     // ── Decommission date guard ──────────────────────────────────────────
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
-        Some(Utc::now().to_rfc3339())
+        Some(crate::clock::now().to_rfc3339())
     } else {
         None
     };
@@ -988,7 +987,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // class policy allows it. For now, warn-level validation only.
     // (Full class-policy enforcement deferred to File 04.)
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     txn.execute(Statement::from_sql_and_values(
@@ -1390,7 +1389,7 @@ async fn update_identity_columns(
     mut binds: Vec<sea_orm::Value>,
 ) -> AppResult<()> {
     // Always bump version and timestamp
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     sets.push("updated_at = ?".to_string());
     binds.push(now.into());
     sets.push("row_version = row_version + 1".to_string());
@@ -1436,7 +1435,7 @@ pub async fn update_asset_commercial(
                 commercial.replacement_value.into(),
                 commercial.cost_center_code.into(),
                 commercial.notes.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 asset_id.into(),
                 expected_row_version.into(),
             ],

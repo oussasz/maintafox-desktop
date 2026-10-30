@@ -2,7 +2,6 @@
 
 use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
@@ -627,7 +626,7 @@ pub async fn create_personnel(
     }
 
     let blocked_override = input.blocked_override.unwrap_or(false);
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let started_at = input.hire_date.as_deref().unwrap_or(now.as_str()).to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
@@ -935,7 +934,7 @@ pub async fn update_personnel(
         return Ok(current);
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     // Handle assignment history if tracked fields changed
@@ -1042,8 +1041,8 @@ pub async fn deactivate_personnel(
         ));
     }
 
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let today = crate::clock::now().format("%Y-%m-%d").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let txn = db.begin().await?;
     let result = txn
@@ -1214,7 +1213,7 @@ pub async fn upsert_position(
         ]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     let (pos_id, old_code, old_name): (i64, String, String) = if let Some(id) = input.id {
@@ -1334,7 +1333,7 @@ pub async fn upsert_position(
 }
 
 pub async fn archive_position(db: &DatabaseConnection, id: i64, actor_id: Option<i64>) -> AppResult<Position> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
     let result = txn
@@ -1808,8 +1807,8 @@ pub async fn create_rate_card(
     source_type: String,
     actor_id: i64,
 ) -> AppResult<PersonnelRateCard> {
-    let effective_from = Utc::now().format("%Y-%m-%d").to_string();
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let effective_from = crate::clock::now().format("%Y-%m-%d").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let insert_result = db
         .execute(Statement::from_sql_and_values(
@@ -1896,7 +1895,7 @@ pub async fn create_authorization(
 ) -> AppResult<PersonnelAuthorization> {
     AuthorizationType::try_from(authorization_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2007,7 +2006,7 @@ pub async fn create_external_company(
     contract_end: Option<String>,
     notes: Option<String>,
 ) -> AppResult<ExternalCompany> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2092,7 +2091,7 @@ pub async fn update_external_company(
                 input.insurance_status.into(),
                 clean(input.notes).into(),
                 i64::from(input.is_active).into(),
-                Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
+                crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
                 input.id.into(),
             ],
         ))
@@ -2271,7 +2270,7 @@ pub async fn set_team_lead(
     input: crate::personnel::domain::SetTeamLeadInput,
 ) -> AppResult<crate::personnel::domain::TeamMemberRow> {
     let _ = crate::repository::team_repository::get_team_by_id(db, input.team_id).await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let txn = db.begin().await?;
 

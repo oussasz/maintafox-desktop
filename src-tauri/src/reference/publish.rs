@@ -13,7 +13,6 @@
 //! status for each, including placeholder "unavailable" for modules not yet wired.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -284,7 +283,7 @@ pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> App
         });
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // Mark preview as computed so readiness check passes.
     mark_impact_computed(db, set_id, &now).await?;
@@ -347,7 +346,7 @@ pub async fn publish_reference_set(
     }
 
     // Publish the set.
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE reference_sets SET status = 'published', published_at = ?, \

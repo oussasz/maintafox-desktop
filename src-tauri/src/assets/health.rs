@@ -105,7 +105,7 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
         });
     };
 
-    let now = Utc::now();
+    let now = crate::clock::now();
     let days = (now - most_recent).num_days().max(0);
 
     let recency: i64 = if days <= 7 {

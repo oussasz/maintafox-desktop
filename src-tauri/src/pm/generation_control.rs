@@ -11,7 +11,7 @@ use crate::pm::domain::{
 use crate::pm::queries::generate_pm_occurrences;
 
 fn now_rfc3339() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 pub fn next_cron_run_rfc3339(cron_expr: &str) -> String {
@@ -22,7 +22,7 @@ pub fn next_cron_run_rfc3339(cron_expr: &str) -> String {
     schedule
         .upcoming(Utc)
         .next()
-        .unwrap_or_else(|| Utc::now() + Duration::hours(1))
+        .unwrap_or_else(|| crate::clock::now() + Duration::hours(1))
         .to_rfc3339()
 }
 

@@ -1451,7 +1451,7 @@ pub(crate) async fn remap_unit_value(conn: &impl ConnectionTrait, from_id: i64, 
               WHERE is_active = 1 AND ((from_unit_value_id = ? AND to_unit_value_id = ?) \
                  OR (from_unit_value_id = ? AND to_unit_value_id = ?))",
             [
-                chrono::Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 from_id.into(),
                 to_id.into(),
                 to_id.into(),

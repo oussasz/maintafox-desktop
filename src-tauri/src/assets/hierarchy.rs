@@ -18,7 +18,6 @@
 
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -265,7 +264,7 @@ pub async fn link_asset_hierarchy(
     assert_single_parent(&txn, payload.child_asset_id, &payload.relation_type).await?;
 
     // ── Insert hierarchy relation ────────────────────────────────────────
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let effective_from = payload.effective_from.unwrap_or_else(|| now.clone());
 
     txn.execute(Statement::from_sql_and_values(
@@ -348,7 +347,7 @@ pub async fn unlink_asset_hierarchy(
     }
 
     // ── Set effective_to ─────────────────────────────────────────────────
-    let end_date = effective_to.unwrap_or_else(|| Utc::now().to_rfc3339());
+    let end_date = effective_to.unwrap_or_else(|| crate::clock::now().to_rfc3339());
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -469,7 +468,7 @@ pub(crate) async fn move_asset_org_node_in(
     identity::assert_org_node_active(txn, new_org_node_id).await?;
 
     // ── Update org node and increment row_version ────────────────────────
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

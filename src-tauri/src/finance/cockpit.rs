@@ -15,7 +15,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -213,7 +212,7 @@ async fn live_commitments<C: ConnectionTrait>(db: &C) -> AppResult<Vec<LiveCommi
         .await?;
     let mut out = Vec::new();
     if !po_rows.is_empty() {
-        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let today = crate::clock::now().format("%Y-%m-%d").to_string();
         let tenant = crate::inventory::fx::tenant_currency(db).await?;
         let mut rates: HashMap<String, Option<f64>> = HashMap::new();
         for r in po_rows {

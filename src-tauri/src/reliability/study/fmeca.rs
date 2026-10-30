@@ -12,7 +12,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -215,7 +214,7 @@ fn ids_sql(ids: &[i64]) -> String {
 /// Equipment-years of the study (equipment × calendar years of the period, capped at now).
 fn equipment_years(study: &ReliabilityStudy) -> AppResult<f64> {
     let start = parse_instant(&study.period_start)?;
-    let end = parse_instant(&study.period_end)?.min(Utc::now());
+    let end = parse_instant(&study.period_end)?.min(crate::clock::now());
     let years = ((end - start).num_milliseconds() as f64 / 3_600_000.0 / HOURS_PER_YEAR).max(0.0);
     Ok(years * study.assets.len() as f64)
 }
@@ -631,7 +630,11 @@ async fn ensure_analysis(db: &DatabaseConnection, study: &ReliabilityStudy, acto
         DbBackend::Sqlite,
         "UPDATE reliability_studies SET fmeca_analysis_id = ?, row_version = row_version + 1, updated_at = ?
          WHERE id = ?",
-        [analysis.id.into(), Utc::now().to_rfc3339().into(), study.id.into()],
+        [
+            analysis.id.into(),
+            crate::clock::now().to_rfc3339().into(),
+            study.id.into(),
+        ],
     ))
     .await?;
     Ok(analysis.id)

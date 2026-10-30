@@ -28,7 +28,7 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn now_z() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

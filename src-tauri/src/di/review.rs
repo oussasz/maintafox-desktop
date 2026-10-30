@@ -15,7 +15,6 @@
 //!   - `screen_di` auto-advances PendingReview → Screened → AwaitingApproval atomically
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -403,7 +402,7 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
         }
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     // 4. UPDATE — final persisted state is 'awaiting_approval' (auto-advanced)
     let result = txn
@@ -509,7 +508,7 @@ pub async fn return_di_for_clarification(
     guard_transition(&current_status, &DiStatus::ReturnedForClarification)
         .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -605,7 +604,7 @@ pub async fn resubmit_returned_di(db: &DatabaseConnection, input: DiResubmitInpu
 
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -696,7 +695,7 @@ pub async fn close_di(db: &DatabaseConnection, input: DiCloseInput) -> AppResult
 
     guard_transition(&current_status, &DiStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let disposition = input.disposition_code.trim().to_string();
 
     let result = txn
@@ -820,7 +819,7 @@ pub async fn cancel_own_di(db: &DatabaseConnection, input: DiCancelOwnInput) -> 
 
     guard_transition(&current_status, &DiStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let disposition = super::disposition::DISPOSITION_CANCELLED_BY_REQUESTER.to_string();
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
@@ -947,7 +946,7 @@ pub async fn approve_di(db: &DatabaseConnection, input: DiApproveInput) -> AppRe
 
     guard_transition(&current_status, &DiStatus::Approved).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1038,7 +1037,7 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
             "GATE_DI_DEFER_DATE_REQUIRED: La date de report (deferred_until) est obligatoire.".into(),
         ]));
     }
-    let today = Utc::now().date_naive();
+    let today = crate::clock::now().date_naive();
     let date_part = until.get(..10).unwrap_or(until);
     let until_date = chrono::NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|_| {
         AppError::ValidationFailed(vec![
@@ -1069,7 +1068,7 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
 
     guard_transition(&current_status, &DiStatus::Deferred).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let from_saved = current_status.as_str().to_string();
 
     let result = txn
@@ -1167,7 +1166,7 @@ pub async fn reactivate_deferred_di(
 
     guard_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let target_str = target.as_str().to_string();
 
     let result = txn
@@ -1250,7 +1249,7 @@ pub async fn archive_di(db: &DatabaseConnection, input: DiArchiveInput) -> AppRe
         ]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(

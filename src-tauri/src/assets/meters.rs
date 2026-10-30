@@ -35,7 +35,6 @@
 //! Corrections are recorded as a new reading with `quality_flag = 'corrected'`.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -457,7 +456,7 @@ pub async fn create_asset_meter(
 
     // ── 6. Insert the meter row ──────────────────────────────────────────
     let entity_sync_id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -562,7 +561,7 @@ pub async fn record_meter_reading_of_kind(
     // ── 4. Quality flag: default to 'accepted' ──────────────────────────
     let quality_flag = payload.quality_flag.as_deref().unwrap_or("accepted").to_string();
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let reading_at = payload.reading_at.unwrap_or_else(|| now.clone());
 
     let current_offset: f64 = txn

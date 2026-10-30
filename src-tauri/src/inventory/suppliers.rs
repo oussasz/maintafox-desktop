@@ -1,6 +1,5 @@
 //! Inventory supplier master, article sourcing, price lists, and scorecard.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -11,7 +10,7 @@ use crate::inventory::domain::{
 };
 
 fn now_iso() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────

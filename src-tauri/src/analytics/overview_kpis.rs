@@ -131,7 +131,7 @@ pub async fn build_overview_kpis(
     let mut cells = Vec::new();
 
     // Point-in-time measures: now vs the same measure at the start of the horizon (`as_of`).
-    let now = chrono::Utc::now();
+    let now = crate::clock::now();
     let start = as_of::days_before(now, OVERVIEW_HORIZON_DAYS);
 
     let (di_now, di_prev) = if perms.can_di {

@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -220,7 +220,7 @@ pub async fn get_wo_backlog_heatmap_in_scope(
         Some(raw) => NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
             AppError::ValidationFailed(vec!["GATE_WO_BACKLOG_START_DATE: start_date must be YYYY-MM-DD.".into()])
         })?,
-        None => Utc::now().date_naive(),
+        None => crate::clock::now().date_naive(),
     };
     let days: Vec<NaiveDate> = (0..input.weeks * 7).map(|i| start + Duration::days(i)).collect();
     let end = start + Duration::days(input.weeks * 7);
@@ -271,7 +271,7 @@ pub async fn get_wo_backlog_heatmap_in_scope(
         })
         .collect();
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     // The scope predicate closes each bucket's WHERE: its binds follow the bucket's own.
     let unscheduled = bucket(
         db,

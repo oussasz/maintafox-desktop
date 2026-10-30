@@ -308,7 +308,7 @@ pub async fn upsert_personnel_skill(
             "Only a user linked to a personnel record can validate a skill.",
         ));
     }
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let validated_by = if input.validate { validator_personnel_id } else { None };
     let validated_at = validated_by.map(|_| now.clone());
     if input.is_primary {

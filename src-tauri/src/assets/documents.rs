@@ -22,7 +22,6 @@
 //!   created_at           → asset_document_links.created_at
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -230,7 +229,7 @@ pub async fn upsert_asset_document_link(
 
     // ── 4. Enforce primary uniqueness (supersession) ─────────────────────
     let is_primary = payload.is_primary.unwrap_or(false);
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     if is_primary {
         expire_existing_primary(&txn, payload.asset_id, &payload.link_purpose, &now).await?;
@@ -290,7 +289,7 @@ pub async fn expire_asset_document_link(
     valid_to: Option<String>,
     actor_id: i32,
 ) -> AppResult<AssetDocumentLink> {
-    let expire_at = valid_to.unwrap_or_else(|| Utc::now().to_rfc3339());
+    let expire_at = valid_to.unwrap_or_else(|| crate::clock::now().to_rfc3339());
 
     let result = db
         .execute(Statement::from_sql_and_values(

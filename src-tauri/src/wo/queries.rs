@@ -356,7 +356,7 @@ pub async fn list_work_orders_in_scope(
             "wo.id IN (SELECT wo.id FROM work_orders wo              JOIN work_order_statuses s ON s.id = wo.status_id WHERE {})",
             crate::wo::backlog::WO_OVERDUE_SQL
         ));
-        binds.push(crate::analytics::as_of::instant(chrono::Utc::now()).into());
+        binds.push(crate::analytics::as_of::instant(crate::clock::now()).into());
     }
 
     // ── Completed in a window (the work-mix indicators' own predicate) ───────────────────

@@ -15,7 +15,7 @@ pub fn now_utc_z() -> String {
 /// "Now" in whole seconds (truncated, as [`now_utc_z`] records it). Read once by a status change
 /// that is judged (the permit gate) and recorded, so both use the identical moment.
 pub fn now_utc_second() -> DateTime<Utc> {
-    let now = Utc::now();
+    let now = crate::clock::now();
     now - Duration::nanoseconds(i64::from(now.timestamp_subsec_nanos()))
 }
 

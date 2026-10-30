@@ -20,7 +20,6 @@ use crate::reference::audience::DomainAudience;
 use crate::reference::governance::{
     default_is_extendable, derive_category_for_persist, GovernanceCategory, GOVERNANCE_CATEGORIES,
 };
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -323,7 +322,7 @@ pub async fn create_reference_domain(
         derive_category_for_persist(&code, &payload.governance_level)
     };
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let is_extendable: i32 = if let Some(ext) = payload.is_extendable {
         if ext {
             1
@@ -448,7 +447,7 @@ pub async fn update_reference_domain(
         return Ok(existing);
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     sets.push("updated_at = ?".into());
     values.push(now.into());
     values.push(domain_id.into());

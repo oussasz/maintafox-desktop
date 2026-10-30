@@ -39,7 +39,7 @@ impl PermissionCache {
 
     /// The user's site-aware access map, while fresh (same rules as [`Self::get`]).
     pub fn get_access(&self, user_id: i64) -> Option<&crate::auth::scope::AccessMap> {
-        let now = chrono::Utc::now();
+        let now = crate::clock::now();
         self.access.get(&user_id).and_then(|entry| {
             let fresh = entry.stored_at.elapsed() < self.max_age && entry.valid_until.is_none_or(|until| now < until);
             fresh.then_some(&entry.map)
@@ -71,7 +71,7 @@ impl PermissionCache {
     /// - one of the user's assignments started, ended or expired since it was computed.
     pub fn get(&self, user_id: i64, scope_key: &str) -> Option<&HashSet<String>> {
         let key = (user_id, scope_key.to_string());
-        let now = chrono::Utc::now();
+        let now = crate::clock::now();
         self.entries.get(&key).and_then(|entry| {
             let fresh = entry.stored_at.elapsed() < self.max_age && entry.valid_until.is_none_or(|until| now < until);
             fresh.then_some(&entry.perms)
@@ -179,14 +179,14 @@ mod tests {
         cache.put(1, "tenant".into(), perms.clone(), None);
         assert!(cache.get(1, "tenant").is_some());
 
-        let past = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let past = crate::clock::now() - chrono::Duration::seconds(1);
         cache.put(1, "tenant".into(), perms.clone(), Some(past));
         assert!(
             cache.get(1, "tenant").is_none(),
             "an expired grant is not served from cache"
         );
 
-        let future = chrono::Utc::now() + chrono::Duration::minutes(5);
+        let future = crate::clock::now() + chrono::Duration::minutes(5);
         cache.put(1, "tenant".into(), perms, Some(future));
         assert!(cache.get(1, "tenant").is_some());
     }

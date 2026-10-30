@@ -11,7 +11,6 @@
 //!   draft PM plan version; the source keeps the link and the PM version records its source.
 //! - **Criticality number** (MIL-STD-1629A): mode criticality `Cm = β · α · λp · t`.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -358,7 +357,7 @@ pub async fn apply_rcm_decision_logic(
                 rec.recommended_tactic.clone().into(),
                 serde_json::to_string(&input.answers)?.into(),
                 serde_json::to_string(&rec.path)?.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 input.decision_id.into(),
                 input.expected_row_version.into(),
             ],
@@ -550,7 +549,7 @@ pub(crate) async fn create_pm_revision_from_source_in(
         db,
         input.pm_plan_id,
         crate::pm::domain::CreatePmPlanVersionInput {
-            effective_from: Utc::now().to_rfc3339(),
+            effective_from: crate::clock::now().to_rfc3339(),
             effective_to: None,
             trigger_definition_json: trigger,
             task_package_json: get_s("task_package_json")?,
@@ -595,7 +594,7 @@ pub(crate) async fn create_pm_revision_from_source_in(
         [
             input.pm_plan_id.into(),
             version.id.into(),
-            Utc::now().to_rfc3339().into(),
+            crate::clock::now().to_rfc3339().into(),
             input.source_id.into(),
         ],
     ))
@@ -690,7 +689,11 @@ pub(crate) async fn create_wo_from_source_in(
         format!(
             "UPDATE {table} SET linked_work_order_id = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?"
         ),
-        [wo.id.into(), Utc::now().to_rfc3339().into(), input.source_id.into()],
+        [
+            wo.id.into(),
+            crate::clock::now().to_rfc3339().into(),
+            input.source_id.into(),
+        ],
     ))
     .await?;
     Ok(SourceAction {
@@ -847,7 +850,7 @@ pub async fn compute_fmeca_criticality(
                 lambda.into(),
                 input.operating_hours.into(),
                 cm.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 input.item_id.into(),
                 input.expected_row_version.into(),
             ],

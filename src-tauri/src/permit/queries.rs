@@ -156,7 +156,7 @@ const fn i64_to_bool(v: i64) -> bool {
 }
 
 fn now_ts() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Parses an RFC 3339 timestamp and returns it in the canonical stored form
@@ -212,7 +212,7 @@ async fn checked_expiry(db: &impl ConnectionTrait, permit_type_id: i64, value: O
     if let Some(hours) = max_hours.filter(|h| *h > 0.0) {
         // Whole seconds: the stored form has no fractions.
         #[allow(clippy::cast_possible_truncation)]
-        let limit = (Utc::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
+        let limit = (crate::clock::now() + chrono::Duration::seconds((hours * 3600.0).round() as i64))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
         if ts > limit {
@@ -1220,7 +1220,7 @@ async fn guard_change_clock(db: &impl ConnectionTrait, current: &PermitType, clo
         return Ok(());
     };
     // `now_ts()` has whole seconds: the record written would be `now` truncated.
-    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(Utc::now);
+    let now = crate::settings::site::instant(&now_ts()).unwrap_or_else(crate::clock::now);
     if last >= now {
         return Err(crate::errors::org_validation_failed(
             clock.code,
@@ -3519,7 +3519,7 @@ pub const AUDIT_WORKER_INFORMED: &str = "permit.forced_removal_worker_informed";
 
 /// Latest time this PC accepts for a time given by a person (the tolerated clock difference).
 fn latest_accepted_ts() -> String {
-    (Utc::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
+    (crate::clock::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
 }
@@ -4091,7 +4091,7 @@ async fn record_loto_card_print_in(
         ));
     }
     let sync_id = Uuid::new_v4().to_string();
-    let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let printed_at = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -4150,7 +4150,7 @@ pub async fn list_open_permits_report_in_scope(
     db: &impl ConnectionTrait,
     scope: &AccessScope,
 ) -> AppResult<WorkPermitListPage> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // What the report shows (open, not expired): one condition for the rows and the hidden counts.
     let open_sql = format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND (wp.expires_at IS NULL OR wp.expires_at > ?)");
     let scope_sql = super::access::scope_sql(scope);
@@ -4192,7 +4192,7 @@ pub async fn permit_compliance_kpi_30d_in_scope(
     db: &impl ConnectionTrait,
     scope: &AccessScope,
 ) -> AppResult<PermitComplianceKpi30d> {
-    let cutoff = (Utc::now() - Duration::days(30))
+    let cutoff = (crate::clock::now() - Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     let scope_sql = super::access::scope_sql(scope);

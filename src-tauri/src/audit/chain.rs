@@ -523,7 +523,7 @@ pub async fn verify_audit_chain(conn: &impl ConnectionTrait) -> AppResult<AuditC
     }
     let intact = chains.iter().all(|c| c.intact);
     Ok(AuditChainReport {
-        checked_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        checked_at: crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         chains,
         unchained_events: unchained,
         intact,
