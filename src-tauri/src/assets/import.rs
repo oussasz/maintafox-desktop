@@ -19,7 +19,6 @@
 use crate::assets::governance::{self, NormalizedImportRow, ValidationMessage};
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -248,7 +247,7 @@ pub async fn create_import_batch(
     file_sha256: &str,
     actor_id: Option<i64>,
 ) -> AppResult<ImportBatchSummary> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let txn = db.begin().await?;
 
@@ -404,7 +403,7 @@ pub async fn parse_and_stage_csv(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE asset_import_batches SET total_rows = ?, updated_at = ? WHERE id = ?",
-        [row_no.into(), Utc::now().to_rfc3339().into(), batch_id.into()],
+        [row_no.into(), crate::clock::now().to_rfc3339().into(), batch_id.into()],
     ))
     .await?;
 
@@ -507,7 +506,7 @@ pub async fn validate_import_batch(
         }
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // Update batch with summary counts and advance to validated
     txn.execute(Statement::from_sql_and_values(
@@ -649,7 +648,7 @@ pub(crate) async fn record_import_event_txn(
     summary_json: Option<&str>,
     actor_id: Option<i64>,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO asset_import_events \
@@ -802,7 +801,7 @@ pub async fn apply_import_batch(
     let total_ineligible = batch.total_rows - staging_rows.len() as i64;
     skipped += total_ineligible;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // ── Transition batch to applied ──────────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
@@ -982,7 +981,7 @@ async fn apply_single_row(
 
             // Link external key if provided
             if let Some(ek) = ext_key {
-                let now = Utc::now().to_rfc3339();
+                let now = crate::clock::now().to_rfc3339();
                 txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO asset_external_ids \
@@ -1013,7 +1012,7 @@ async fn insert_equipment_from_import(
     criticality_value_id: i64,
     status_code: &str,
 ) -> AppResult<i64> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = Uuid::new_v4().to_string();
 
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
@@ -1073,7 +1072,7 @@ async fn update_equipment_from_import(
     criticality_value_id: i64,
     status_code: &str,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
         Some(now.clone())

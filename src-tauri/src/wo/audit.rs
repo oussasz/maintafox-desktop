@@ -78,7 +78,7 @@ pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput
 /// Insert one audit event on `conn` (a transaction included) and return the failure: for a change
 /// whose audit entry must be written with it or not at all (the caller rolls back on error).
 pub async fn insert_wo_change_event<C: ConnectionTrait>(conn: &C, input: &WoAuditInput) -> Result<(), sea_orm::DbErr> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO wo_change_events

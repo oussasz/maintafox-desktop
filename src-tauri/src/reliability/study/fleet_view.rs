@@ -8,7 +8,6 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::AppResult;
@@ -38,7 +37,7 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
     let start = parse_instant(&filter.period_start)?;
     let end = {
         let e = parse_instant(&filter.period_end)?;
-        let now = Utc::now();
+        let now = crate::clock::now();
         if e > now {
             now
         } else {

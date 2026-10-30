@@ -19,7 +19,6 @@
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
 use crate::org::model_scope;
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -443,7 +442,7 @@ pub async fn create_org_node(
         (0, String::new(), None)
     };
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     // Insert with a temporary ancestor_path; we'll update once we know the id
@@ -582,7 +581,7 @@ pub async fn update_org_node_metadata(
         return Ok(node);
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     sets.push("updated_at = ?".to_string());
     vals.push(now.into());
     sets.push("row_version = row_version + 1".to_string());
@@ -705,7 +704,7 @@ pub async fn move_org_node(
         format!("/{}/", payload.node_id)
     };
     let depth_delta = new_depth - node.depth;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     // Update the moved node itself
     txn.execute(Statement::from_sql_and_values(
@@ -843,7 +842,7 @@ pub async fn deactivate_org_node(
         ));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     let result = txn
         .execute(Statement::from_sql_and_values(

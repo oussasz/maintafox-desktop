@@ -5,7 +5,6 @@
 //! the rate is captured on each goods receipt (entered, or taken from the rate table valid on the
 //! posting date) and the received quantity is valued at `PO price × rate`. No rate is built in.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -110,7 +109,7 @@ pub fn parse_iso_date(value: &str, field: &str) -> AppResult<chrono::NaiveDate> 
 }
 
 pub fn today() -> String {
-    Utc::now().format("%Y-%m-%d").to_string()
+    crate::clock::now().format("%Y-%m-%d").to_string()
 }
 
 /// Latest active rate `from → to` valid on `on_date` (YYYY-MM-DD).
@@ -240,7 +239,7 @@ pub async fn create_rate(
             date = input.valid_from.trim()
         )]));
     }
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

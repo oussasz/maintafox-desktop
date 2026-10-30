@@ -158,7 +158,7 @@ fn hours(p: &Payload, key: &str) -> Hours {
 
 /// Latest time a received row may carry: this device's clock plus the tolerated difference.
 fn future_bound() -> DateTime<Utc> {
-    Utc::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
+    crate::clock::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
 }
 
 pub(crate) fn conflict(code: &'static str, message: String) -> AppResult<Option<InboundVerdict>> {

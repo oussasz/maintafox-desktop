@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +108,7 @@ pub async fn get_qualification_matrix(
     db: &impl ConnectionTrait,
     filter: QualificationMatrixFilter,
 ) -> AppResult<QualificationMatrix> {
-    let today = Utc::now().date_naive();
+    let today = crate::clock::now().date_naive();
 
     let mut columns: Vec<MatrixColumn> = db
         .query_all(Statement::from_string(

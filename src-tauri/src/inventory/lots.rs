@@ -9,7 +9,6 @@
 //! Picking is FEFO (first expiry, first out): lots expiring first, then lots without expiry, oldest
 //! first. Expired lots are never picked automatically.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -122,7 +121,7 @@ pub async fn create_or_reuse_lot<C: ConnectionTrait>(
         }
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let inserted = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

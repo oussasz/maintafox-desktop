@@ -7,7 +7,7 @@
 //! - the remaining issues of `v_ram_data_quality_issues` (small samples, inspection coverage),
 //!   which a reliability manager can dismiss.
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
 
@@ -67,7 +67,7 @@ pub struct DataQualityView {
 pub const MAX_ROWS: i64 = 300;
 
 pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) -> AppResult<DataQualityView> {
-    let end = Utc::now();
+    let end = crate::clock::now();
     let start = end - Duration::days(months.clamp(1, 120) * 30);
     let (s, e) = (start.to_rfc3339(), end.to_rfc3339());
 

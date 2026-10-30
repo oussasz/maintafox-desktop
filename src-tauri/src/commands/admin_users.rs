@@ -770,7 +770,7 @@ pub(crate) async fn create_user_impl(
         }
     }
 
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let assignment_sync_id = Uuid::new_v4().to_string();
     let identity_mode = input.identity_mode.clone();
@@ -1163,7 +1163,7 @@ pub(crate) async fn update_user_impl(
         return Ok(());
     }
 
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     sets.push("updated_at = ?");
     values.push(now.into());
     values.push(input.user_id.into());

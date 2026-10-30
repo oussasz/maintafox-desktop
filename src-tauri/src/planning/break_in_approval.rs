@@ -254,7 +254,7 @@ pub(crate) async fn validate_break_in_approval(
         approver: Some(approver),
         approver_personnel: Some(personnel),
         approver_name: name,
-        signed_at: Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        signed_at: Some(crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
     })
 }
 

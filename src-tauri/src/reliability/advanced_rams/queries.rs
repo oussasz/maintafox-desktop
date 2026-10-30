@@ -202,7 +202,7 @@ pub async fn run_and_store_weibull_fit(
         input.failure_mode_id,
     )
     .await?;
-    let now = Utc::now();
+    let now = crate::clock::now();
     let censor_at = if include_censored {
         let end = input.period_end.as_deref().map(parse_ts).transpose()?.unwrap_or(now);
         Some(if end < now { end } else { now })
@@ -352,7 +352,7 @@ async fn exposure_age_hours(
     let events = load_weibull_source_events(db, equipment_id, None, None, failure_mode_id).await?;
     Ok(events
         .last()
-        .map(|last| basis.hours_between(last.renewal(None), Utc::now())))
+        .map(|last| basis.hours_between(last.renewal(None), crate::clock::now())))
 }
 
 fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {
@@ -552,7 +552,7 @@ pub async fn create_fmeca_analysis(
     user_id: Option<i32>,
     input: CreateFmecaAnalysisInput,
 ) -> AppResult<FmecaAnalysis> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let eid = format!("fmeca_analysis:{}", Uuid::new_v4());
     let status = input.status.unwrap_or_else(|| "draft".into());
     let boundary = input.boundary_definition.unwrap_or_default();
@@ -614,7 +614,7 @@ pub async fn update_fmeca_analysis(
                     .status
                     .map(sea_orm::Value::from)
                     .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 input.id.into(),
                 input.expected_row_version.into(),
             ],
@@ -734,7 +734,7 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
         ensure_failure_mode_id_governed(db, failure_mode_id).await?;
     }
     let rpn = input.severity * input.occurrence * input.detectability;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let ff = input.functional_failure.clone().unwrap_or_default();
     let fe = input.failure_effect.clone().unwrap_or_default();
     let ra = input.recommended_action.clone().unwrap_or_default();
@@ -941,7 +941,7 @@ pub async fn create_rcm_study(
     user_id: Option<i32>,
     input: CreateRcmStudyInput,
 ) -> AppResult<RcmStudy> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let eid = format!("rcm_study:{}", Uuid::new_v4());
     let status = input.status.unwrap_or_else(|| "draft".into());
     let inserted = db
@@ -996,7 +996,7 @@ pub async fn update_rcm_study(db: &DatabaseConnection, input: UpdateRcmStudyInpu
                     .status
                     .map(sea_orm::Value::from)
                     .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 input.id.into(),
                 input.expected_row_version.into(),
             ],
@@ -1106,7 +1106,7 @@ fn validate_tactic(t: &str) -> AppResult<()> {
 
 pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisionInput) -> AppResult<RcmDecision> {
     validate_tactic(&input.selected_tactic)?;
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let fd = input.function_description.clone().unwrap_or_default();
     let ff = input.functional_failure.clone().unwrap_or_default();
     let cc = input.consequence_category.clone().unwrap_or_default();
@@ -1923,7 +1923,7 @@ pub async fn upsert_ram_ishikawa_diagram(
     _user_id: Option<i32>,
     input: UpsertRamIshikawaDiagramInput,
 ) -> AppResult<RamIshikawaDiagram> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let _ = _user_id;
     let nid = if let Some(id) = input.id {
         let exp = input.expected_row_version.ok_or_else(|| {

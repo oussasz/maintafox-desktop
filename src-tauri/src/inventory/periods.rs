@@ -13,7 +13,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -400,7 +399,7 @@ pub async fn close_period(
             "GATE_INV_PERIOD_RANGE: The period start must be on or before its end.".to_string(),
         ]));
     }
-    let today_date = Utc::now().date_naive();
+    let today_date = crate::clock::now().date_naive();
     if end >= today_date {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_FIN_PERIOD_NOT_ENDED:end={end}: A period can be closed once it has ended: {end} is not in the past."
@@ -424,7 +423,7 @@ pub async fn close_period(
     }
     let currency_code = tenant_currency(db).await?;
     let code = period_code(start, end);
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let tx = db.begin().await?;
     let figures = figures_as_at(&tx, &end_s).await?;

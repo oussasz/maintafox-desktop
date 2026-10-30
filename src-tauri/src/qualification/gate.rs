@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -178,11 +178,11 @@ fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
 }
 
 fn today() -> NaiveDate {
-    Utc::now().date_naive()
+    crate::clock::now().date_naive()
 }
 
 fn now_ts() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// The personnel record linked to a login, if any.

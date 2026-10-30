@@ -24,9 +24,12 @@ pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod build_identity;
+pub mod clock;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;
+#[cfg(feature = "demo-company")]
+pub mod demo_company;
 pub mod di;
 pub mod diagnostics;
 pub mod entitlements;

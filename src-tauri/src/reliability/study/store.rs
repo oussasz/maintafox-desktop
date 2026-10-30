@@ -1,7 +1,6 @@
 //! Persistence of reliability studies, their equipment, the analyst's record choices and the
 //! per-class cost defaults.
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait, TryGetable};
 
 use crate::errors::{AppError, AppResult};
@@ -47,7 +46,7 @@ fn invalid(code: &str) -> AppError {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339()
+    crate::clock::now().to_rfc3339()
 }
 
 async fn load_assets(db: &impl ConnectionTrait, study_id: i64) -> AppResult<Vec<StudyAsset>> {

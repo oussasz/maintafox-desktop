@@ -16,7 +16,6 @@
 //!   - deactivated values in protected domains without a migration map
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -199,7 +198,7 @@ pub async fn validate_reference_set(
     let report_json = serde_json::to_string(&issues)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to serialize validation issues: {e}")))?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

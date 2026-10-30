@@ -60,7 +60,7 @@ pub async fn get_inspection_kpis(db: &impl ConnectionTrait, input: InspectionKpi
             "GATE_INSP_KPI_PERIOD_RANGE: the period must be between 1 and {MAX_KPI_PERIOD_DAYS} days."
         )]));
     }
-    let end = Utc::now();
+    let end = crate::clock::now();
     let start = end - Duration::days(input.period_days);
     let (period_start, period_end) = (ts(start), ts(end));
     let in_period = "ir.scheduled_at IS NOT NULL AND julianday(ir.scheduled_at) >= julianday(?) \

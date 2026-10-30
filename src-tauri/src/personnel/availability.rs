@@ -549,7 +549,7 @@ pub async fn end_availability_block(
     if existing.row_version != expected_row_version {
         return Err(block_changed_elsewhere());
     }
-    let now = Utc::now();
+    let now = crate::clock::now();
     let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let start = chrono::DateTime::parse_from_rfc3339(&existing.start_at)
@@ -626,7 +626,7 @@ pub async fn compute_personnel_availability_state(
     db: &DatabaseConnection,
     personnel_id: i64,
 ) -> AppResult<PersonnelAvailabilityState> {
-    let as_of = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let as_of = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     // Fetch blocked_override + employment_status
     let row = db

@@ -6,7 +6,6 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -187,7 +186,7 @@ pub async fn unassign_equipment_from_node(db: &DatabaseConnection, equipment_id:
             DbBackend::Sqlite,
             "UPDATE equipment SET installed_at_node_id = NULL, updated_at = ?, \
              row_version = row_version + 1 WHERE id = ? AND deleted_at IS NULL",
-            [Utc::now().to_rfc3339().into(), equipment_id.into()],
+            [crate::clock::now().to_rfc3339().into(), equipment_id.into()],
         ))
         .await?;
     if affected.rows_affected() == 0 {

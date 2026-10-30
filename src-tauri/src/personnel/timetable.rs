@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -139,11 +139,11 @@ fn issue_with(code: &str, message: &str, params: &[(&str, String)]) -> AppError 
 }
 
 fn today() -> NaiveDate {
-    Utc::now().date_naive()
+    crate::clock::now().date_naive()
 }
 
 fn now_text() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn parse_date(raw: &str, code: &str) -> AppResult<NaiveDate> {

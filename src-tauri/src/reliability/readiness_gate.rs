@@ -190,7 +190,7 @@ pub async fn evaluate_equipment_readiness(
     db: &DatabaseConnection,
     input: ReliabilityReadinessInput,
 ) -> AppResult<ReliabilityReadinessGate> {
-    let now = Utc::now();
+    let now = crate::clock::now();
     let p1 = match input.period_end.as_deref() {
         Some(s) => parse_dt(s)?,
         None => now,

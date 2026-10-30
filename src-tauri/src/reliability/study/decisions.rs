@@ -12,7 +12,6 @@
 //! approved by its own proposer is flagged `self_approved` wherever it is listed, and the same rule
 //! is checked when a decision arrives by synchronisation (`inbound_self_approval_check`).
 
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
@@ -335,7 +334,7 @@ pub async fn list_decisions(db: &DatabaseConnection, study_id: i64) -> AppResult
 
 /// Active users who hold `ram.manage` through a tenant-wide role assignment (or are admins).
 pub async fn list_approvers(db: &DatabaseConnection) -> AppResult<Vec<ApproverOption>> {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -552,7 +551,7 @@ pub async fn create_decision(
     let baseline_mtbf =
         (baseline_failures > 0 && baseline_hours > 0.0).then(|| baseline_hours / baseline_failures as f64);
 
-    let ts = Utc::now().to_rfc3339();
+    let ts = crate::clock::now().to_rfc3339();
     let sync_id = crate::sync::identity::new_entity_sync_id();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -618,7 +617,7 @@ async fn set_status(
             [
                 to.into(),
                 actor_id.into(),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 opt_str(
                     input
                         .note
@@ -627,7 +626,7 @@ async fn set_status(
                         .filter(|s| !s.is_empty())
                         .map(str::to_string),
                 ),
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 input.decision_id.into(),
                 from.into(),
                 input.expected_row_version.into(),
@@ -929,7 +928,7 @@ pub async fn apply_decision(
 ) -> AppResult<StudyDecision> {
     let txn = db.begin().await?;
     refuse_if_refused_at_sync(&txn, input.decision_id).await?;
-    let ts = Utc::now().to_rfc3339();
+    let ts = crate::clock::now().to_rfc3339();
     let claimed = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

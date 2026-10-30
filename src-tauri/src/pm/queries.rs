@@ -802,7 +802,7 @@ fn occurrence_transition_allowed(current: &str, next: &str) -> bool {
 }
 
 fn now_rfc3339() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 pub(crate) fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>> {
@@ -815,7 +815,7 @@ pub(crate) fn parse_as_of_or_now(as_of: Option<&str>) -> AppResult<DateTime<Utc>
             })?;
             Ok(parsed.with_timezone(&Utc))
         }
-        None => Ok(Utc::now()),
+        None => Ok(crate::clock::now()),
     }
 }
 
@@ -1291,7 +1291,7 @@ pub async fn get_pm_governance_kpi_report(
         db,
         parse_bound(&from)?,
         parse_bound(&to)?,
-        Utc::now(),
+        crate::clock::now(),
         crate::pm::compliance::ComplianceScope {
             pm_plan_id: input.pm_plan_id,
             org_node_id: None,
@@ -1771,7 +1771,7 @@ fn rate_pct(numerator: i64, denominator: i64) -> Option<f64> {
 }
 
 fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult<(String, String)> {
-    let now = Utc::now();
+    let now = crate::clock::now();
     let from = match input_from {
         Some(value) => DateTime::parse_from_rfc3339(value)
             .map_err(|_| {
@@ -2381,7 +2381,7 @@ pub async fn list_pm_recurring_findings(
 ) -> AppResult<Vec<PmRecurringFinding>> {
     let days_window = input.days_window.unwrap_or(90).clamp(1, 3650);
     let min_occurrences = input.min_occurrences.unwrap_or(2).max(2);
-    let threshold = (Utc::now() - Duration::days(days_window))
+    let threshold = (crate::clock::now() - Duration::days(days_window))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
 

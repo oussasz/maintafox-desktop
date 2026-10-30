@@ -189,7 +189,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
                     next_team,
                     &cmt.committed_start,
                     &cmt.committed_end,
-                    chrono::Utc::now(),
+                    crate::clock::now(),
                 )
                 .await?
                 {

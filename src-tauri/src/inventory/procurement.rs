@@ -1,4 +1,3 @@
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -20,7 +19,7 @@ const PO_DOCUMENT_ENTITY_TYPE: &str = "PURCHASE_ORDER";
 const REPAIRABLE_DOCUMENT_ENTITY_TYPE: &str = "REPAIRABLE_ORDER";
 
 fn now_iso() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// How far a PO line's received quantity may stand above its ordered quantity on one PC (the
@@ -30,7 +29,7 @@ fn now_iso() -> String {
 pub(crate) const RECEIVE_OVER_ORDERED_TOLERANCE: f64 = 1e-6;
 
 fn next_doc_number(prefix: &str) -> String {
-    format!("{prefix}-{}", Utc::now().timestamp_millis())
+    format!("{prefix}-{}", crate::clock::now().timestamp_millis())
 }
 
 /// Treat whitespace-only user input as absent so the column stays NULL instead of blank.
@@ -804,7 +803,7 @@ async fn resolve_expected_delivery_date<C: ConnectionTrait>(db: &C, purchase_ord
         })
         .filter(|days| *days >= 0)
         .unwrap_or(DEFAULT_PO_LEAD_TIME_DAYS);
-    Ok((Utc::now() + chrono::Duration::days(lead_time_days))
+    Ok((crate::clock::now() + chrono::Duration::days(lead_time_days))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string())
 }

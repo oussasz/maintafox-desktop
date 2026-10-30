@@ -174,7 +174,7 @@ pub async fn build_executive_dashboard(
 
     // ── Ops KPIs: point-in-time counts now vs at the start of the horizon ──
     // Same measure at both instants (`analytics::as_of`), so the trend is a real change.
-    let now = chrono::Utc::now();
+    let now = crate::clock::now();
     let start = as_of::days_before(now, horizon);
 
     let open_dis = if can_di {
@@ -351,8 +351,8 @@ pub async fn build_executive_dashboard(
 
         // Seed continuous axis in Rust (avoid N round-trips for calendar labels).
         {
-            use chrono::{Duration, Utc};
-            let today = Utc::now().date_naive();
+            use chrono::Duration;
+            let today = crate::clock::now().date_naive();
             for offset in (0..horizon).rev() {
                 let d = today - Duration::days(offset);
                 let date = d.format("%Y-%m-%d").to_string();

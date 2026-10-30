@@ -94,7 +94,7 @@ fn parse_dt(input: &str) -> Option<DateTime<Utc>> {
 }
 
 fn in_period(dt: DateTime<Utc>, period: &AssetHistoryPeriod) -> bool {
-    let now = Utc::now();
+    let now = crate::clock::now();
     match period {
         AssetHistoryPeriod::All => true,
         AssetHistoryPeriod::Today => dt.date_naive() == now.date_naive(),
@@ -188,7 +188,7 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
     let age_days = created_at
         .as_deref()
         .and_then(parse_dt)
-        .map(|dt| (Utc::now() - dt).num_days().max(0));
+        .map(|dt| (crate::clock::now() - dt).num_days().max(0));
 
     let binding = bindings::get_asset_binding_summary(db, asset_id).await?;
     // Real availability (reliability snapshot), never the indicative health score.

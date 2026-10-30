@@ -55,6 +55,9 @@ const ALLOWLIST: &[(&str, &str)] = &[
     // Demo / golden-data seeds: developer tools, never reachable from a normal screen.
     ("db/rams_presentation_seed.rs", ""),
     ("db/rams_sql_demo_seed.rs", ""),
+    // Demo-company generator (feature `demo-company`, not in the shipped app): its refusals are
+    // printed in the developer's terminal by the `demo-company` binary.
+    ("demo_company/", ""),
     // Internal: corrupt stored data / technical, not a rule the user can act on.
     ("data_integrity/repair.rs", "segment_id_"),
     ("sync/media.rs", "media bytes must not be empty"),

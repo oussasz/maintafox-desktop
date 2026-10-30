@@ -27,7 +27,6 @@
 //! Lifecycle events are append-only. They are never updated or deleted.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
 };
@@ -387,7 +386,7 @@ pub(crate) async fn record_lifecycle_event_in(
     }
 
     // ── 5. Apply side-effects for status-changing events ─────────────────
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let event_at = payload.event_at.clone().unwrap_or_else(|| now.clone());
 
     match payload.event_type.as_str() {

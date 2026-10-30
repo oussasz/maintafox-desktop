@@ -1,4 +1,3 @@
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -154,7 +153,7 @@ async fn fetch_equipment_stats(
     failure_mode_id: Option<i64>,
 ) -> AppResult<EquipmentStats> {
     let days = lookback_days.clamp(1, 3650);
-    let since = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+    let since = (crate::clock::now() - chrono::Duration::days(days)).to_rfc3339();
 
     let mut ev_sql = String::from(
         "SELECT
@@ -492,7 +491,7 @@ pub async fn create_fta_model(
     user_id: Option<i64>,
     input: CreateFtaModelInput,
 ) -> AppResult<FtaModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let g = input.graph_json.unwrap_or_else(|| "{}".to_string());
     let st = input.status.unwrap_or_else(|| "draft".to_string());
     let eid = format!("fta_model:{}", Uuid::new_v4());
@@ -516,7 +515,7 @@ pub async fn create_fta_model(
 }
 
 pub async fn update_fta_model(db: &DatabaseConnection, input: UpdateFtaModelInput) -> AppResult<FtaModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut sets = Vec::new();
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(t) = input.title {
@@ -587,7 +586,7 @@ pub async fn evaluate_fta_model(db: &DatabaseConnection, id: i64) -> AppResult<F
         .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_FTA_GRAPH_INVALID: FTA graph_json: {e}")]))?;
     let ev = evaluate_fta(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let latest_data_at = latest_rams_data_change_at(db, m.equipment_id).await?;
-    let evaluated_at = Utc::now().to_rfc3339();
+    let evaluated_at = crate::clock::now().to_rfc3339();
     let result_payload = json!({
         "evaluation": ev,
         "data_binding": binding_meta,
@@ -598,7 +597,7 @@ pub async fn evaluate_fta_model(db: &DatabaseConnection, id: i64) -> AppResult<F
         }
     });
     let result_json = serde_json::to_string(&result_payload).unwrap_or_else(|_| "{}".to_string());
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let n = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -639,7 +638,7 @@ pub async fn create_rbd_model(
     user_id: Option<i64>,
     input: CreateRbdModelInput,
 ) -> AppResult<RbdModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let g = input.graph_json.unwrap_or_else(|| "{}".to_string());
     let st = input.status.unwrap_or_else(|| "draft".to_string());
     let eid = format!("rbd_model:{}", Uuid::new_v4());
@@ -663,7 +662,7 @@ pub async fn create_rbd_model(
 }
 
 pub async fn update_rbd_model(db: &DatabaseConnection, input: UpdateRbdModelInput) -> AppResult<RbdModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut sets = Vec::new();
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(t) = input.title {
@@ -734,7 +733,7 @@ pub async fn evaluate_rbd_model(db: &DatabaseConnection, id: i64) -> AppResult<R
         .map_err(|e| AppError::ValidationFailed(vec![format!("GATE_REL_RBD_GRAPH_INVALID: RBD graph_json: {e}")]))?;
     let ev = evaluate_rbd(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let latest_data_at = latest_rams_data_change_at(db, m.equipment_id).await?;
-    let evaluated_at = Utc::now().to_rfc3339();
+    let evaluated_at = crate::clock::now().to_rfc3339();
     let result_payload = json!({
         "evaluation": ev,
         "data_binding": binding_meta,
@@ -745,7 +744,7 @@ pub async fn evaluate_rbd_model(db: &DatabaseConnection, id: i64) -> AppResult<R
         }
     });
     let result_json = serde_json::to_string(&result_payload).unwrap_or_else(|_| "{}".to_string());
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE rbd_models SET graph_json = ?, result_json = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
@@ -784,7 +783,7 @@ pub async fn create_event_tree_model(
     user_id: Option<i64>,
     input: CreateEventTreeModelInput,
 ) -> AppResult<EventTreeModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let g = input.graph_json.unwrap_or_else(|| "{}".to_string());
     let st = input.status.unwrap_or_else(|| "draft".to_string());
     let eid = format!("event_tree_model:{}", Uuid::new_v4());
@@ -811,7 +810,7 @@ pub async fn update_event_tree_model(
     db: &DatabaseConnection,
     input: UpdateEventTreeModelInput,
 ) -> AppResult<EventTreeModel> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let mut sets = Vec::new();
     let mut vals: Vec<sea_orm::Value> = Vec::new();
     if let Some(t) = input.title {
@@ -881,7 +880,7 @@ pub async fn evaluate_event_tree_model(db: &DatabaseConnection, id: i64) -> AppR
     })?;
     let ev = evaluate_eta(&g).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     let result_json = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE event_tree_models SET result_json = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",

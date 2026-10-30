@@ -61,7 +61,7 @@ pub(crate) async fn started_file_db(path: &std::path::Path) -> DatabaseConnectio
     db
 }
 
-async fn prepare_started(db: &DatabaseConnection) {
+pub(crate) async fn prepare_started(db: &DatabaseConnection) {
     prepare_started_up_to(db, None).await;
 }
 

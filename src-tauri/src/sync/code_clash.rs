@@ -56,7 +56,7 @@ fn pm_plan_prefix() -> String {
     "PM".to_string()
 }
 fn permit_prefix() -> String {
-    format!("PTW-{}", chrono::Utc::now().format("%Y"))
+    format!("PTW-{}", crate::clock::now().format("%Y"))
 }
 
 pub const WORK_ORDERS: NumberedTable = NumberedTable {

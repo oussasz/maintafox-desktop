@@ -2108,7 +2108,7 @@ pub async fn create_schedule_commitment(
             input.assigned_team_id,
             &input.committed_start,
             &input.committed_end,
-            chrono::Utc::now(),
+            crate::clock::now(),
         )
         .await?;
         let break_in = match (&frozen_week, &input.frozen_week_break_in) {
@@ -2419,7 +2419,7 @@ pub async fn reschedule_schedule_commitment(
         input.assigned_team_id,
         &input.committed_start,
         &input.committed_end,
-        chrono::Utc::now(),
+        crate::clock::now(),
     )
     .await?
     {

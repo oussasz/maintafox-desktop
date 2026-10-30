@@ -362,7 +362,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
 
     // Labour is recorded after the fact: a start or end later than now (5 min clock tolerance)
     // would book hours that have not been worked.
-    let latest_allowed = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let latest_allowed = crate::clock::now() + chrono::Duration::minutes(5);
     for (raw, field) in [(&input.started_at, "started_at"), (&input.ended_at, "ended_at")] {
         if let Some(raw) = raw.as_deref().filter(|s| !s.trim().is_empty()) {
             let at = crate::wo::time::parse_utc_timestamp(raw, field)?;
@@ -402,7 +402,7 @@ async fn book_labor(db: &DatabaseConnection, input: LaborBooking) -> AppResult<W
             .or(input.ended_at.as_deref())
             .and_then(|t| t.get(..10))
             .map(str::to_string)
-            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+            .unwrap_or_else(|| crate::clock::now().format("%Y-%m-%d").to_string());
         match input.personnel_id {
             Some(pid) => match crate::personnel::queries::resolve_rate_pair_on(&txn, pid, &work_day).await? {
                 Some((normal, overtime)) => (

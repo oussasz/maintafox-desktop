@@ -379,7 +379,7 @@ pub async fn save_inspection_schedule(
         ));
     }
 
-    let now = ts(Utc::now());
+    let now = ts(crate::clock::now());
     let txn = db.begin().await?;
     let id = match input.id {
         None => {
@@ -735,7 +735,7 @@ pub async fn generate_inspection_rounds(
                 "GATE_INSP_DATE_INVALID: as_of must be an RFC 3339 timestamp.".into()
             ])
         })?,
-        None => Utc::now(),
+        None => crate::clock::now(),
     };
     let txn = db.begin().await?;
     let mut sql = format!("SELECT {SCHEDULE_COLUMNS} FROM inspection_schedules s WHERE s.is_active = 1");

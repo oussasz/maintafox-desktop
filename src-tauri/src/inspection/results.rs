@@ -1,4 +1,3 @@
-use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -276,7 +275,7 @@ async fn open_round_for_results(db: &impl ConnectionTrait, round: &InspectionRou
             "UPDATE inspection_rounds SET status = 'in_progress', started_at = COALESCE(started_at, ?), \
              row_version = row_version + 1 WHERE id = ? AND row_version = ?",
             [
-                Utc::now().to_rfc3339().into(),
+                crate::clock::now().to_rfc3339().into(),
                 round.id.into(),
                 round.row_version.into(),
             ],
@@ -473,7 +472,7 @@ pub async fn record_inspection_result(
         )]));
     }
 
-    let recorded_at = Utc::now().to_rfc3339();
+    let recorded_at = crate::clock::now().to_rfc3339();
     let entity_sync_id = Uuid::new_v4().to_string();
 
     let row = if let Some(eid) = existing_id {
@@ -745,7 +744,7 @@ pub async fn add_inspection_evidence(
             ]));
         }
     }
-    let cap = input.captured_at.unwrap_or_else(|| Utc::now().to_rfc3339());
+    let cap = input.captured_at.unwrap_or_else(|| crate::clock::now().to_rfc3339());
     let txn = db.begin().await?;
     let entity_sync_id = Uuid::new_v4().to_string();
     txn.execute(Statement::from_sql_and_values(

@@ -174,7 +174,7 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
         db,
         from,
         to,
-        Utc::now(),
+        crate::clock::now(),
         ComplianceScope {
             pm_plan_id: input.pm_plan_id,
             org_node_id: None,

@@ -198,7 +198,11 @@ async fn make_digest(
     let total: usize = by_code.values().sum();
     let message_params = serde_json::json!({ "date": day.to_string(), "total": total, "counts": by_code });
     let event_sync = seeded_entity_sync_id("notification_events", &format!("{DIGEST_CATEGORY}|{user_sync}|{day}"));
-    let last = items.iter().map(|i| i.created_at).max().unwrap_or_else(Utc::now);
+    let last = items
+        .iter()
+        .map(|i| i.created_at)
+        .max()
+        .unwrap_or_else(crate::clock::now);
     let inserted = conn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -257,7 +261,7 @@ pub async fn run_digest_round(db: &DatabaseConnection) -> AppResult<i64> {
     let lang = crate::locale::resolve_locale_preference(db).await?.active_locale;
     let txn = db.begin().await?;
     begin_suppression(&txn).await?;
-    let created = build_due_digests(&txn, &chrono::Local, Utc::now(), &lang).await?;
+    let created = build_due_digests(&txn, &chrono::Local, crate::clock::now(), &lang).await?;
     end_suppression(&txn).await?;
     txn.commit().await?;
     Ok(created)

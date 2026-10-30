@@ -12,7 +12,6 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::fail;
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -177,7 +176,7 @@ pub async fn create_rule(
         ));
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::clock::now().to_rfc3339();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
