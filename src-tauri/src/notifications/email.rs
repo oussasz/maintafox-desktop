@@ -357,7 +357,7 @@ pub async fn close_unavailable(conn: &impl ConnectionTrait, reason: &str) -> App
     Ok(res.rows_affected())
 }
 
-async fn run_round(db: &DatabaseConnection, sender: &dyn EmailSender) -> AppResult<()> {
+pub(crate) async fn run_round(db: &DatabaseConnection, sender: &dyn EmailSender) -> AppResult<()> {
     let (availability, token) = channel(db).await?;
     match (availability.available, token) {
         (true, Some(token)) => {

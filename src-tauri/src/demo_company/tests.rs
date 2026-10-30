@@ -305,6 +305,233 @@ async fn refuses_an_account_received_with_the_checkpoint() {
     refused_with(preflight(&db).await, "user_accounts");
 }
 
+/// The demo company once onboarded, on the real clock: the onboarding pull's checkpoint and ONE
+/// administrator created by the built-in account (as the first-start screen does).
+async fn onboarded_company_file(path: &Path) {
+    fresh_company_file(path).await;
+    let url = format!("sqlite://{}?mode=rw", path.display());
+    let db = Database::connect(&url).await.expect("open");
+    db.execute_unprepared(ONBOARDING_PULL).await.expect("pull applied");
+    let builtin = first_id(&db, "SELECT id FROM user_accounts ORDER BY id LIMIT 1").await;
+    let caller = crate::auth::session_manager::AuthenticatedUser {
+        user_id: i32::try_from(builtin).expect("id"),
+        username: "admin".into(),
+        display_name: None,
+        is_admin: true,
+        force_password_change: false,
+        tenant_id: String::new(),
+        token_tenant_id: String::new(),
+    };
+    let role_id = first_id(&db, "SELECT id FROM roles WHERE name = 'Administrator'").await;
+    let state = crate::state::AppState::new(db.clone());
+    crate::commands::admin_users::create_user_impl(
+        &state,
+        &caller,
+        crate::commands::admin_users::CreateUserInput {
+            username: "premier.admin".into(),
+            identity_mode: "hybrid".into(),
+            role_id,
+            scope_node_id: None,
+            personnel_id: None,
+            initial_password: None,
+            force_password_change: Some(true),
+        },
+    )
+    .await
+    .expect("onboarding administrator");
+    db.close().await.expect("close");
+}
+
+/// Rows per table.
+async fn table_counts(db: &DatabaseConnection) -> std::collections::BTreeMap<String, i64> {
+    let mut out = std::collections::BTreeMap::new();
+    for table in rows(db, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").await {
+        let n = rows(db, &format!("SELECT CAST(COUNT(*) AS TEXT) FROM \"{table}\"")).await;
+        out.insert(table, n[0].parse::<i64>().expect("count"));
+    }
+    out
+}
+
+/// An address where nothing listens: the jobs that call the licence server find it offline.
+const NO_SERVER: &str = "http://127.0.0.1:9";
+
+/// What the app runs on its own after the activation, while idle on an empty company
+/// (`startup::run_startup_sequence`, real clock), each once: the startup steps that
+/// `sync::test_support::prepare_started` and `activate_licence` do not run, then one tick of every
+/// background job, in the order the startup spawns them. Each job is called through the function
+/// its loop calls every tick; only the network differs (no licence server: [`NO_SERVER`]). Returns
+/// the tables whose row count changed.
+async fn run_background_jobs(path: &Path) -> Vec<String> {
+    let url = format!("sqlite://{}?mode=rw", path.display());
+    let db = Database::connect(&url).await.expect("open");
+    let before = table_counts(&db).await;
+    let dir = tempfile::tempdir().expect("app data dir");
+
+    // Startup steps (Phases 3 to 4a''').
+    crate::qualification::expiry_alerts::scan_due_certification_alerts(&db)
+        .await
+        .expect("certification expiry scan");
+    crate::org::model_scope::heal_null_structure_model_ids_onto_active(&db)
+        .await
+        .expect("organisation heal");
+    let (_, upkeep_errors) = crate::inventory::reservations::startup_reservation_upkeep(&db).await;
+    assert!(upkeep_errors.is_empty(), "{upkeep_errors:?}");
+    let sweep = crate::permit::ended_hold::sweep(&db).await;
+    assert_eq!(sweep.failures, 0, "permit-end catch-up");
+    crate::permit::requirement_rules::catch_up(&db).await;
+    // Phase 4b: the sync worker's start and one cycle (no server: offline, or blocked when the
+    // licence does not allow sync).
+    crate::sync::media::backfill_library_document_media(&db, dir.path())
+        .await
+        .expect("library media backfill");
+    let worker = crate::sync::transport::SyncWorker::new(
+        db.clone(),
+        crate::sync::transport::SyncWorkerHandle::new(),
+        crate::sync::transport::SyncWorkerConfig {
+            api_base_url: NO_SERVER.to_string(),
+            media_root: dir.path().to_path_buf(),
+            timing: crate::sync::transport::SyncTiming::production(),
+        },
+        std::sync::Arc::new(crate::sync::transport::LicenseSyncAccess),
+    )
+    .expect("sync worker");
+    let (outcome, _) = worker.cycle_once().await;
+    eprintln!("sync cycle: {outcome:?}");
+
+    // Phase 5 onwards: one tick of each background job.
+    crate::notifications::scheduler::run_scheduler_tick_for_test(&db)
+        .await
+        .expect("notification sweep");
+    let email = crate::sync::transport::client::ControlPlaneClient::new(
+        NO_SERVER,
+        crate::sync::transport::SyncTiming::production().timeouts,
+    )
+    .expect("client");
+    crate::notifications::email::run_round(&db, &email)
+        .await
+        .expect("email round");
+    crate::commands::mobile_enrolment::follow_up_round_at(&db, NO_SERVER).await;
+    crate::notifications::digest::run_digest_round(&db)
+        .await
+        .expect("daily digest");
+    crate::di::sla_poller::run_sla_poll_tick(&db)
+        .await
+        .expect("DI SLA poll");
+    crate::reports::scheduler::run_due_schedules(&db, dir.path())
+        .await
+        .expect("report schedules");
+    // The control row the migrations seed is due at once: the first tick records a run.
+    crate::pm::scheduler::run_due_pm_generation(&db)
+        .await
+        .expect("PM generation");
+    // Called without the scheduler's wait for a first synchronisation (`shared_actions_allowed`),
+    // so the tick runs here whatever the sync state.
+    crate::planning::scheduler::run_planning_tick(&db, crate::clock::now())
+        .await
+        .expect("planning tick");
+    crate::inspection::scheduler::run_inspection_round_pass(&db)
+        .await
+        .expect("inspection rounds");
+    // As if the app had run across the nightly backup time since a day: a scheduled backup is due.
+    // A test database has no encryption key, so the backup is refused and recorded as a failed run
+    // (`backup_runs`, like a successful one): not asserted, the run row is what matters here.
+    let backup = crate::backup::scheduler::run_due_backup(
+        &db,
+        dir.path(),
+        chrono::Local::now() - chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    eprintln!("scheduled backup: {backup:?}");
+
+    let after = table_counts(&db).await;
+    db.close().await.expect("close");
+    let changed: Vec<String> = after
+        .iter()
+        .filter(|(table, n)| before.get(*table) != Some(n))
+        .map(|(table, n)| format!("{table}: {} -> {n}", before.get(table).copied().unwrap_or(0)))
+        .collect();
+    eprintln!("written by the background jobs: {changed:#?}");
+    changed
+}
+
+#[tokio::test]
+async fn accepts_the_apps_own_background_bookkeeping() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("company.db");
+    onboarded_company_file(&path).await;
+    let changed = run_background_jobs(&path).await;
+    for table in ["notification_watch_state", "pm_generation_runs"] {
+        assert!(
+            changed.iter().any(|c| c.starts_with(&format!("{table}:"))),
+            "{table} not written: {changed:#?}"
+        );
+    }
+    let (db, _clock) = open_simulated(&path).await;
+    preflight(&db)
+        .await
+        .expect("the app's own bookkeeping with zero output is not company data");
+}
+
+#[tokio::test]
+async fn refuses_a_background_job_that_produced_something() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("company.db");
+    onboarded_company_file(&path).await;
+    run_background_jobs(&path).await;
+    let (db, _clock) = open_simulated(&path).await;
+
+    // A PM generation run that generated occurrences (or recorded trigger events).
+    for column in ["generated_count", "trigger_events_recorded"] {
+        db.execute_unprepared(&format!("UPDATE pm_generation_runs SET {column} = 2"))
+            .await
+            .expect("run with output");
+        refused_with(ensure_no_business_data(&db).await, "pm_generation_runs");
+        db.execute_unprepared(&format!("UPDATE pm_generation_runs SET {column} = 0"))
+            .await
+            .expect("back to zero");
+    }
+    preflight(&db).await.expect("zero-output runs only");
+
+    // A notification raised by a watcher is company data, whatever the watch state says.
+    db.execute_unprepared(
+        "INSERT INTO notification_events (entity_sync_id, source_module, source_record_id, event_code, \
+         category_code, severity, occurred_at, dedupe_key) \
+         VALUES ('watch-event-1', 'work_orders', '1', 'wo_overdue', 'wo_overdue', 'warning', \
+         '2026-01-01T00:00:00Z', 'watch:wo_overdue:x')",
+    )
+    .await
+    .expect("watcher event");
+    refused_with(ensure_no_business_data(&db).await, "notification_events");
+}
+
+/// Background bookkeeping dated "now" does not change what the generator writes back-dated: same
+/// seed and day, with and without it, give the same company.
+#[tokio::test]
+async fn background_bookkeeping_does_not_change_the_generated_company() {
+    let today = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+    let opts = GenerationOptions {
+        seed: 7,
+        today,
+        history_days: 45,
+    };
+    let mut prints = Vec::new();
+    for with_jobs in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("company.db");
+        onboarded_company_file(&path).await;
+        if with_jobs {
+            run_background_jobs(&path).await;
+        }
+        let (db, report) = run(&path, &opts).await;
+        assert_only_end_of_history_warnings(&report);
+        prints.push(fingerprint(&db, &report).await);
+        db.close().await.expect("close");
+    }
+    assert!(prints[0].len() > 100, "history too small: {}", prints[0].len());
+    assert_eq!(prints[0], prints[1]);
+}
+
 /// The only steps allowed to stop are the ones that reached the end of the history.
 fn assert_only_end_of_history_warnings(report: &GenerationReport) {
     let refusals: Vec<&String> = report

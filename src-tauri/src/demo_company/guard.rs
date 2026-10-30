@@ -8,6 +8,14 @@
 //!   database fills on its own ([`SYSTEM_TABLES`]) and a few with an exact rule ([`RULED_TABLES`]).
 //!   Inverted on purpose: a table added by a later migration counts as company data until it is
 //!   listed here.
+//!
+//! The app's own background bookkeeping is accepted when it holds no output: the app may have run
+//! (idle, on the empty company) between the activation and the generation, and its background
+//! jobs (`startup::run_startup_sequence`) note their cursors and runs. A cursor is listed in
+//! [`SYSTEM_TABLES`]; a run log is in [`RULED_TABLES`] with the rule "nothing produced". What a job
+//! produced (a notification, an occurrence, a work order, a round…) is in its own table and is
+//! refused like any company data. `accepts_the_apps_own_background_bookkeeping` (tests) runs every
+//! job once: a job that starts writing a new table on an empty company fails it.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
@@ -70,6 +78,10 @@ pub const SYSTEM_TABLES: &[&str] = &[
     // Backups of this PC.
     "backup_policies",
     "backup_runs",
+    // The app's own background bookkeeping (module documentation): since when each notification
+    // watcher watches, on this PC. What a watcher raises (`notification_events`, `notifications`)
+    // is company data.
+    "notification_watch_state",
     // System catalogs seeded by every installation.
     "certification_types",
     "closeout_validation_policies",
@@ -120,6 +132,9 @@ pub const RULED_TABLES: &[&str] = &[
     // Only the empty 'MAIN' store the migrations create, and its locations.
     "warehouses",
     "stock_locations",
+    // Background job logs (module documentation): only runs that produced nothing. The PM
+    // generation scheduler records one run at its first tick (the control row is due at once).
+    "pm_generation_runs",
 ];
 
 /// Refuses unless the database holds no company data at all; the message lists what was found.
@@ -264,6 +279,17 @@ async fn ruled_offenders(db: &DatabaseConnection) -> AppResult<Vec<String>> {
         count(
             db,
             "SELECT COUNT(*) FROM stock_locations WHERE warehouse_id NOT IN (SELECT id FROM warehouses WHERE code = 'MAIN')",
+            vec![],
+        )
+        .await?,
+    );
+
+    push(
+        "pm_generation_runs",
+        "passages de génération préventive qui ont produit des échéances",
+        count(
+            db,
+            "SELECT COUNT(*) FROM pm_generation_runs WHERE generated_count <> 0 OR trigger_events_recorded <> 0",
             vec![],
         )
         .await?,
