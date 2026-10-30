@@ -1360,14 +1360,15 @@ async fn break_in_write_back_updates_work_order_slot() {
 
     let (wo_id, actor_id) = create_planning_wo(&db, "Sync break-in WO").await;
     let candidate_id = insert_candidate(&db, "work_order", wo_id, "ready", 100.0).await;
+    // A past week: never frozen, whatever day the suite runs (a coming week freezes as it nears).
     let commitment = scheduling::create_schedule_commitment(
         &db,
         actor_id,
         CreateScheduleCommitmentInput {
             schedule_candidate_id: candidate_id,
             expected_candidate_row_version: None,
-            committed_start: "2026-11-01T08:00:00Z".to_string(),
-            committed_end: "2026-11-01T10:00:00Z".to_string(),
+            committed_start: "2026-10-04T08:00:00Z".to_string(),
+            committed_end: "2026-10-04T10:00:00Z".to_string(),
             assigned_team_id: team_id,
             assigned_personnel_id: Some(personnel_id),
             allow_double_booking_override: Some(false),
@@ -1387,8 +1388,8 @@ async fn break_in_write_back_updates_work_order_slot() {
             schedule_commitment_id: commitment.id,
             expected_commitment_row_version: commitment.row_version,
             break_in_reason: "emergency".to_string(),
-            new_slot_start: "2026-11-01T14:00:00Z".to_string(),
-            new_slot_end: "2026-11-01T16:00:00Z".to_string(),
+            new_slot_start: "2026-10-04T14:00:00Z".to_string(),
+            new_slot_end: "2026-10-04T16:00:00Z".to_string(),
             new_assigned_team_id: Some(team_id),
             new_assigned_personnel_id: Some(personnel_id),
             clear_assignee: None,
@@ -1404,8 +1405,8 @@ async fn break_in_write_back_updates_work_order_slot() {
     .expect("break-in");
 
     let (start, end, group, _) = load_wo_planning_fields(&db, wo_id).await;
-    assert_eq!(start.as_deref(), Some("2026-11-01T14:00:00Z"));
-    assert_eq!(end.as_deref(), Some("2026-11-01T16:00:00Z"));
+    assert_eq!(start.as_deref(), Some("2026-10-04T14:00:00Z"));
+    assert_eq!(end.as_deref(), Some("2026-10-04T16:00:00Z"));
     assert_eq!(group, Some(team_id));
 }
 
