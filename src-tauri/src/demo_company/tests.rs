@@ -246,16 +246,63 @@ async fn refuses_the_licence_of_another_company() {
     ));
 }
 
+/// The checkpoint of the complete pull that onboarding needs before the first administrator.
+const ONBOARDING_PULL: &str = "INSERT INTO sync_checkpoint (id, checkpoint_token, last_sync_at) \
+     VALUES (1, 'cp-1', '2026-01-01T00:00:00Z') \
+     ON CONFLICT(id) DO UPDATE SET checkpoint_token = 'cp-1', last_sync_at = '2026-01-01T00:00:00Z'";
+
+#[tokio::test]
+async fn accepts_the_checkpoint_of_the_onboarding_pull() {
+    let (_dir, db) = fresh_opened().await;
+    db.execute_unprepared(ONBOARDING_PULL).await.expect("pull applied");
+    preflight(&db)
+        .await
+        .expect("a complete pull that brought nothing is accepted");
+}
+
 #[tokio::test]
 async fn refuses_a_database_that_received_sync_data() {
     let (_dir, db) = fresh_opened().await;
+    db.execute_unprepared(ONBOARDING_PULL).await.expect("pull applied");
     db.execute_unprepared(
-        "INSERT INTO sync_checkpoint (id, checkpoint_token, last_sync_at) VALUES (1, 'cp-1', '2026-01-01T00:00:00Z') \
-         ON CONFLICT(id) DO UPDATE SET checkpoint_token = 'cp-1', last_sync_at = '2026-01-01T00:00:00Z'",
+        "INSERT INTO sync_inbox (server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation, \
+         row_version, payload_json, payload_hash, apply_status) \
+         VALUES ('b-1', 'cp-1', 'equipment', 'eq-1', 'upsert', 1, '{}', 'h-1', 'pending')",
     )
     .await
-    .expect("pull applied");
-    refused_with(ensure_no_received_sync_data(&db).await, "synchronisation");
+    .expect("row received");
+    refused_with(ensure_no_received_sync_data(&db).await, "1 éléments reçus");
+    refused_with(preflight(&db).await, "synchronisation");
+}
+
+#[tokio::test]
+async fn refuses_an_account_received_with_the_checkpoint() {
+    let (_dir, db) = fresh_opened().await;
+    db.execute_unprepared(ONBOARDING_PULL).await.expect("pull applied");
+    // The administrator created at onboarding, then an account of the plant that a pull brought
+    // (applied, so it sits in `user_accounts` too).
+    let columns = rows(&db, "SELECT name FROM pragma_table_info('user_accounts')").await;
+    let copied: Vec<&str> = columns
+        .iter()
+        .map(String::as_str)
+        .filter(|c| !matches!(*c, "id" | "username" | "entity_sync_id"))
+        .collect();
+    for (username, sync_id) in [
+        ("premier.admin", "onboarding-admin"),
+        ("compte.recu", "received-account"),
+    ] {
+        db.execute_unprepared(&format!(
+            "INSERT INTO user_accounts (username, entity_sync_id, {cols}) \
+             SELECT '{username}', '{sync_id}', {cols} FROM user_accounts ORDER BY id LIMIT 1",
+            cols = copied.join(", ")
+        ))
+        .await
+        .expect("account");
+        if username == "premier.admin" {
+            preflight(&db).await.expect("the onboarding administrator is accepted");
+        }
+    }
+    refused_with(preflight(&db).await, "user_accounts");
 }
 
 /// The only steps allowed to stop are the ones that reached the end of the history.
