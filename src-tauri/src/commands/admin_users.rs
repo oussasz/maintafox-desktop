@@ -1258,6 +1258,9 @@ pub async fn deactivate_user(input: SetUserActiveInput, app: AppHandle, state: S
     .await;
     if result.is_ok() {
         notify_rbac_user_change(&app, &state, target, "user_deactivated").await;
+        // Their phones are revoked too (owner decision 2026-10-29): recorded with the disable,
+        // sent now, or by the follow-up task once the licence server can be reached.
+        crate::commands::mobile_enrolment::send_pending_revocations_soon(&state.db);
     }
     result
 }
@@ -1341,6 +1344,14 @@ pub(crate) async fn set_user_active_impl(
     }
 
     let now = now_utc_text();
+    // A disable also records the revocation of the person's phones, in this transaction (it cannot
+    // be lost); the phone follow-up lock is taken before the transaction opens and held until it
+    // ends (`mobile_enrolment::lock_follow_up`).
+    let phones_lock = if active {
+        None
+    } else {
+        Some(crate::commands::mobile_enrolment::lock_follow_up().await)
+    };
     let tx = state.db.begin().await?;
     let admins_before = active_admin_holders(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
@@ -1365,6 +1376,9 @@ pub(crate) async fn set_user_active_impl(
     } else {
         crate::auth::session_manager::revoke_user_sessions(&tx, user_id).await?
     };
+    if let Some(lock) = &phones_lock {
+        crate::commands::mobile_enrolment::record_person_revocation_in(&tx, lock, user_id, caller.user_id).await?;
+    }
     let action = if active { "user_reactivated" } else { "user_deactivated" };
     crate::commands::admin_governance::write_admin_event(
         &tx,
@@ -1386,6 +1400,7 @@ pub(crate) async fn set_user_active_impl(
     )
     .await?;
     tx.commit().await?;
+    drop(phones_lock);
 
     state.permission_cache.write().await.invalidate_user(user_id);
 

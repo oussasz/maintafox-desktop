@@ -447,6 +447,20 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification email dispatcher started");
     }
 
+    // Phone enrolments issued here and revocations of disabled accounts' phones
+    // (`commands::mobile_enrolment`; desktop only, non-fatal), supervised background task: each
+    // round runs on its own, so a failed round never stops the next.
+    {
+        let phones_db = app_state.db.clone();
+        app_state
+            .tasks
+            .spawn("mobile_enrolment_follow_up", move |cancel| {
+                crate::commands::mobile_enrolment::run_follow_up(phones_db, cancel)
+            })
+            .await;
+        info!("startup: phone enrolment follow-up started");
+    }
+
     // Daily digest of notifications (`notifications::digest`), supervised background task.
     {
         let digest_db = app_state.db.clone();

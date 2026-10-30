@@ -19,7 +19,8 @@
     "delegation": "Délégation",
     "emergency": "Urgence",
     "importExport": "Import / Export",
-    "audit": "Audit"
+    "audit": "Audit",
+    "phones": "Téléphones"
   },
   "metrics": {
     "loadError": "Impossible de charger les indicateurs d'administration",
@@ -1226,5 +1227,72 @@
     "saved": "Verrouillage enregistré.",
     "saveError": "Échec de l'enregistrement du verrouillage.",
     "loadError": "La politique de verrouillage n'a pas pu être chargée."
+  },
+  "phones": {
+    "title": "Téléphones",
+    "slots": "{{active}} / {{max}} téléphones utilisés",
+    "noLicence": "La licence ne comprend pas de téléphones : demandez-en à votre fournisseur.",
+    "pendingRevocations": "Téléphones à révoquer dès que ce poste sera en ligne : {{names}}",
+    "loadError": "La liste des téléphones n'a pas pu être chargée.",
+    "empty": "Aucun téléphone enrôlé",
+    "never": "Jamais",
+    "columns": {
+      "person": "Personne",
+      "site": "Site",
+      "enrolledBy": "Enrôlé par",
+      "enrolledAt": "Enrôlé le",
+      "lastSync": "Dernière synchro",
+      "status": "État"
+    },
+    "status": {
+      "active": "Actif",
+      "wipePending": "Retiré, en attente d'effacement",
+      "unknown": "Inconnu"
+    },
+    "revoke": {
+      "action": "Révoquer",
+      "title": "Révoquer ce téléphone ?",
+      "confirm": "Le téléphone de {{person}} ne pourra plus se connecter. Son travail en attente est envoyé à sa prochaine connexion, puis ses données sont effacées.",
+      "lost": "Téléphone perdu ou volé : il est coupé tout de suite, sans envoi du travail en attente",
+      "done": "Téléphone révoqué."
+    },
+    "enrol": {
+      "action": "Enrôler un téléphone",
+      "title": "Enrôler un téléphone",
+      "person": "Personne",
+      "personPlaceholder": "Choisir une personne",
+      "site": "Site",
+      "sitePlaceholder": "Choisir un site",
+      "noPerson": "Aucune personne ne peut recevoir de téléphone : il faut un compte actif avec son propre mot de passe.",
+      "noSite": "Aucun site disponible.",
+      "candidatesError": "Les personnes et les sites n'ont pas pu être chargés.",
+      "create": "Créer le QR code",
+      "help": "Le technicien ouvre Maintafox Terrain sur son téléphone et scanne ce QR code (ou saisit le code). Il se connecte ensuite avec son propre mot de passe.",
+      "qrError": "Le QR code n'a pas pu être affiché. Utilisez le code à saisir.",
+      "unknown": "Statut inconnu.",
+      "qrAlt": "QR code d'enrôlement",
+      "code": "Code à saisir : {{code}}",
+      "validFor": "Valable encore {{time}}",
+      "for": "{{person}} · {{site}}",
+      "cancelQr": "Annuler ce QR code",
+      "enrolled": "Téléphone enrôlé pour {{person}} ✓",
+      "expired": "Ce QR code a expiré.",
+      "cancelled": "Ce QR code a été annulé.",
+      "newQr": "Créer un nouveau QR code"
+    }
+  },
+  "errors": {
+    "MOBILE_ENROL_NOT_LICENSED": "La licence ne comprend pas de téléphones : demandez-en à votre fournisseur.",
+    "MOBILE_ENROL_NO_FREE_SLOT": "Tous les téléphones de la licence sont utilisés : révoquez un téléphone, ou demandez-en davantage à votre fournisseur.",
+    "MOBILE_ENROL_NOT_FOUND": "Le serveur de licence ne connaît pas cet enrôlement ou ce téléphone.",
+    "MOBILE_ENROL_SERVER_REFUSED": "Le serveur de licence a refusé la demande. Réessayez plus tard.",
+    "MOBILE_ENROL_OFFLINE": "Le serveur de licence est injoignable. Les téléphones se gèrent en ligne : vérifiez la connexion puis réessayez.",
+    "MOBILE_ENROL_PC_NOT_ACTIVATED": "Ce poste n'a pas de licence active : les téléphones ne peuvent pas y être gérés.",
+    "MOBILE_ENROL_DESKTOP_ONLY": "Les téléphones se gèrent depuis un poste de bureau.",
+    "MOBILE_ENROL_ACTOR_UNKNOWN": "Votre compte n'est pas encore connu des autres postes : synchronisez, puis réessayez.",
+    "MOBILE_ENROL_PERSON_INVALID": "Cette personne ne peut pas recevoir de téléphone : son compte doit être actif et se connecter avec son propre mot de passe.",
+    "MOBILE_ENROL_SITE_INVALID": "Ce site ne peut pas être choisi pour un téléphone.",
+    "MOBILE_ENROL_ID_INVALID": "Cet identifiant n'est pas valable.",
+    "MOBILE_ENROL_SERVER_ANSWER_INVALID": "La réponse du serveur de licence n'a pas pu être lue."
   }
 }

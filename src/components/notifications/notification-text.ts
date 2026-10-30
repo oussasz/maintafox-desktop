@@ -84,6 +84,8 @@ export const MESSAGE_KEYS = [
   // version still in force (the planners and the decision's proposer).
   "rel_decision_refused_wo_kept",
   "rel_decision_refused_pm_kept",
+  // A technician's phone was enrolled with a QR issued from this PC (the holders of adm.users).
+  "mobile_phone_enrolled",
 ] as const;
 
 type Fmt = Pick<Formatters, "formatDate" | "formatDateTime" | "formatNumber">;

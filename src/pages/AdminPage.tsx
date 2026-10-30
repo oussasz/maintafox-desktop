@@ -37,6 +37,11 @@ const RoleImportExportPanel = lazy(() =>
     default: m.RoleImportExportPanel,
   })),
 );
+const MobilePhonesPanel = lazy(() =>
+  import("../components/admin/MobilePhonesPanel").then((m) => ({
+    default: m.MobilePhonesPanel,
+  })),
+);
 const AdminAuditTimeline = lazy(() =>
   import("../components/admin/AdminAuditTimeline").then((m) => ({
     default: m.AdminAuditTimeline,
@@ -79,6 +84,12 @@ const ADMIN_TABS: AdminTab[] = [
     labelKey: "admin:tabs.emergency",
     permission: P.ADM_USERS,
     component: EmergencyElevationPanel,
+  },
+  {
+    key: "phones",
+    labelKey: "admin:tabs.phones",
+    permission: P.ADM_USERS,
+    component: MobilePhonesPanel,
   },
   {
     key: "import-export",
