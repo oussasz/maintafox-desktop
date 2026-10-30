@@ -298,8 +298,18 @@ pub(crate) fn same_company(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
-/// Refuses a database that has received anything by synchronisation (rows in the inbox, conflicts,
-/// refusals, rows of another history) or applied a pull (a stored checkpoint).
+/// Refuses a database that has received anything by synchronisation: rows in the inbox, conflicts,
+/// refusals, rows of another history.
+///
+/// A stored checkpoint alone is accepted: with a licence that syncs, the first administrator can be
+/// created only after a complete pull confirmed that the organisation has no account on the server
+/// (`sync::plant_join`), so every onboarded database has one.
+///
+/// What proves that nothing was received is the inbox: every received row is stored in
+/// `sync_inbox` (or `sync_conflicts` when invalid) and stays there once applied, deferred or
+/// rejected. [`ensure_no_business_data`] alone would not see every received row, since several
+/// synced tables (positions, lookup values, role permissions…) are in `SYSTEM_TABLES`. A future
+/// clean-up of applied inbox rows must come back to this guard.
 pub async fn ensure_no_received_sync_data(db: &DatabaseConnection) -> AppResult<()> {
     let mut found = Vec::new();
     for (table, label) in [
@@ -313,21 +323,12 @@ pub async fn ensure_no_received_sync_data(db: &DatabaseConnection) -> AppResult<
             found.push(format!("{n} {label}"));
         }
     }
-    let pulled = count(
-        db,
-        "SELECT COUNT(*) FROM sync_checkpoint WHERE checkpoint_token IS NOT NULL OR last_sync_at IS NOT NULL",
-        vec![],
-    )
-    .await?;
-    if pulled > 0 {
-        found.push("une réception déjà appliquée (point de reprise enregistré)".into());
-    }
     if found.is_empty() {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(vec![format!(
             "Cette base a déjà reçu des données par synchronisation ({}). Le générateur ne remplit qu'une base \
-             qui n'a jamais synchronisé.",
+             qui n'a rien reçu du serveur.",
             found.join(", ")
         )]))
     }
