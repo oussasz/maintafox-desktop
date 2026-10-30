@@ -50,12 +50,14 @@ fn main() -> Result<()> {
         .context("runtime")?;
     let _guard = clock.install_on_this_thread();
     // Checks first (read only), then the copy of the closed file, then the generation.
+    ensure_not_in_use(&cli.db)?;
     runtime.block_on(async {
         let db = maintafox_lib::db::open_existing_with_vfs(&cli.db, SIM_VFS_NAME).await?;
         let checked = preflight(&db).await;
         db.close().await.ok();
         checked
     })?;
+    ensure_not_in_use(&cli.db)?;
     let backup = backup_copy(&cli.db)?;
     println!("Copie de sauvegarde avant génération: {}", backup.display());
     let report = runtime.block_on(async {
@@ -105,6 +107,43 @@ fn main() -> Result<()> {
     println!(
         "Journal d'audit: les événements de l'activation et de la première connexion, datés du jour, précèdent dans la chaîne l'historique daté en arrière (accepté pour une base de démonstration)."
     );
+    Ok(())
+}
+
+/// Refuses while another program (normally Maintafox itself) has the database open: its background
+/// work would write rows dated today among the back-dated history, and the copy could be torn.
+/// SQLite opens its files shared, so an open without sharing fails while any other handle exists.
+#[cfg(windows)]
+fn ensure_not_in_use(db: &Path) -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let name = db
+        .file_name()
+        .context("nom de fichier de la base")?
+        .to_string_lossy()
+        .into_owned();
+    for suffix in ["", "-wal", "-shm"] {
+        let file = db.with_file_name(format!("{name}{suffix}"));
+        if !file.is_file() {
+            continue;
+        }
+        if std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&file)
+            .is_err()
+        {
+            bail!(
+                "La base est ouverte par un autre programme ({}). Fermez Maintafox, puis relancez le générateur.",
+                file.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Other systems: the run guide asks for Maintafox to be closed; nothing to check here.
+#[cfg(not(windows))]
+fn ensure_not_in_use(_db: &Path) -> Result<()> {
     Ok(())
 }
 
