@@ -1655,3 +1655,445 @@ async fn a_join_request_waits_for_retry_after() {
     cancel.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
 }
+
+// ── Phone removal (`removal`), the worker's own steps against the stub ─────────────────────────
+//
+// The worker is run as a phone (`as_phone`) on any host. Whatever the server does short of its
+// explicit erase marker, the phone never erases work the server has not acknowledged.
+
+mod phone_removal {
+    use super::*;
+    use crate::sync::transport::removal::{self, RemovalKind, RemovalPhase};
+
+    const DEVICE_TOKEN: &str = "device-token-removed-phone";
+    const WIPE_CONFIRMED: &str = "/api/v1/mobile-device/wipe-confirmed";
+    const PROBE: &str = "/api/v1/activation/tenant-status";
+    const EXCHANGE: &str = "/api/v1/sync/exchange";
+
+    /// An enrolled phone with a delta checkpoint, removed by its administrator.
+    async fn removed_phone(with_token: bool) -> DatabaseConnection {
+        let db = setup_db().await;
+        seed_checkpoint(&db, "v2.start").await;
+        if with_token {
+            crate::commands::product_license::record_enrolled_claim_for_tests(
+                &db,
+                "tenant-1",
+                "fp-phone",
+                DEVICE_TOKEN,
+                Some(&crate::commands::product_license::MobileEnrolmentBinding {
+                    enrolment_id: "enr-1".into(),
+                    person_sync_id: "person-1".into(),
+                    person_label: "Amina Benali".into(),
+                    site_sync_id: "site-1".into(),
+                    site_label: "Usine Nord".into(),
+                    enrolled_at: "2026-10-29T08:00:00Z".into(),
+                }),
+            )
+            .await
+            .expect("activated");
+        }
+        removal::record(&db, RemovalKind::Removed).await.expect("removed");
+        db
+    }
+
+    fn phone_worker(db: &DatabaseConnection, base_url: &str, root: PathBuf) -> (SyncWorker, SyncWorkerHandle) {
+        let handle = SyncWorkerHandle::new();
+        let worker = SyncWorker::new(
+            db.clone(),
+            handle.clone(),
+            SyncWorkerConfig {
+                api_base_url: base_url.to_string(),
+                media_root: root,
+                timing: test_timing(),
+            },
+            FixedAccess::new(TOKEN),
+        )
+        .expect("worker")
+        .as_phone();
+        (worker, handle)
+    }
+
+    async fn outbox_status(db: &DatabaseConnection, id: i64) -> String {
+        scalar(db, "SELECT status FROM sync_outbox WHERE id = ?", vec![id.into()]).await
+    }
+
+    fn acked(req: &Recorded) -> Reply {
+        ok(exchange_answer("v2.start", acks_for(req, 1), vec![], false))
+    }
+
+    #[tokio::test]
+    async fn thirty_server_errors_keep_the_data_and_never_erase() {
+        let db = removed_phone(true).await;
+        let staged = stage_team(&db, "team-kept").await;
+        let stub = start_stub(|req| match req.path.as_str() {
+            EXCHANGE => status(503, json!({ "error": "unavailable" })),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        for _ in 0..30 {
+            let (outcome, _) = worker.cycle_once().await;
+            assert!(matches!(outcome, CycleOutcome::Retry { .. }), "{outcome:?}");
+        }
+        assert_eq!(stub.requests_to(EXCHANGE).len(), 30);
+        assert!(OUTBOX_MAX_DELIVERY_ATTEMPTS < 30);
+        let status_now = outbox_status(&db, staged.id).await;
+        assert!(
+            status_now == "pending" || status_now == "in_flight",
+            "{status_now}: never given up"
+        );
+        let pending = removal::pending(&db).await.expect("read").expect("still pending");
+        assert!(!pending.erased);
+        assert!(stub.requests_to(WIPE_CONFIRMED).is_empty());
+        assert_eq!(handle.removal_status().phase, RemovalPhase::WaitingToUpload);
+        assert!(crate::commands::product_license::get_activation_claim_tenant_id(&db)
+            .await
+            .expect("tenant")
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn dead_letters_from_before_are_uploaded_then_the_phone_erases_and_reads_not_activated() {
+        let db = removed_phone(true).await;
+        let staged = stage_team(&db, "team-dead").await;
+        exec(
+            &db,
+            "UPDATE sync_outbox SET status = 'dead_letter', attempt_count = 25 WHERE id = ?",
+            vec![staged.id.into()],
+        )
+        .await;
+        let stub = start_stub(|req| match req.path.as_str() {
+            EXCHANGE => acked(req),
+            WIPE_CONFIRMED => ok(json!({ "ok": true })),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        let (outcome, _) = worker.cycle_once().await;
+        assert!(
+            matches!(outcome, CycleOutcome::Blocked { ref reason, .. } if reason == "phone_removed"),
+            "{outcome:?}"
+        );
+
+        let exchanges = stub.requests_to(EXCHANGE);
+        assert_eq!(exchanges.len(), 1);
+        assert_eq!(outbox_of(&exchanges[0])[0]["entity_sync_id"], "team-dead");
+        let confirm = stub.requests_to(WIPE_CONFIRMED);
+        assert_eq!(confirm.len(), 1);
+        assert_eq!(
+            confirm[0].header("authorization"),
+            Some("Bearer device-token-removed-phone")
+        );
+        assert_eq!(confirm[0].json(), json!({}), "nothing dropped");
+
+        let done = handle.removal_status();
+        assert_eq!(done.phase, RemovalPhase::Done);
+        assert_eq!(done.uploaded_count, 1);
+        assert_eq!(done.uploaded_by_kind.get("teams"), Some(&1));
+        assert_eq!(done.wipe_confirmed, Some(true));
+        // After the erase the phone is not activated: the app shows the enrolment, never sign-in.
+        assert_eq!(removal::pending(&db).await.expect("read"), None);
+        assert!(crate::commands::product_license::get_activation_claim_tenant_id(&db)
+            .await
+            .expect("tenant")
+            .is_none());
+        let bootstrap = crate::commands::product_license::get_activation_bootstrap_state_in(&db, &handle.status())
+            .await
+            .expect("bootstrap");
+        assert!(bootstrap.tenant_id.is_none());
+        assert!(bootstrap.plant_join.is_none());
+        assert!(bootstrap.phone_binding.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_device_token_with_unsent_work_keeps_the_data_and_the_lock() {
+        let db = removed_phone(false).await;
+        let staged = stage_team(&db, "team-no-token").await;
+        let stub = start_stub(|_| status(500, json!({ "error": "unexpected" }))).await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        let (outcome, _) = worker.cycle_once().await;
+        assert!(
+            matches!(outcome, CycleOutcome::Retry { ref error, .. } if error.code == "no_device_token"),
+            "{outcome:?}"
+        );
+        assert!(stub.requests().is_empty(), "nothing sent without a token");
+        assert_eq!(outbox_status(&db, staged.id).await, "pending");
+        assert!(!removal::pending(&db).await.expect("read").expect("pending").erased);
+        assert_eq!(handle.removal_status().phase, RemovalPhase::WaitingToUpload);
+    }
+
+    #[tokio::test]
+    async fn the_photos_are_uploaded_after_their_record_and_before_the_erase() {
+        let db = removed_phone(true).await;
+        stage_team(&db, "team-with-photo").await;
+        let bytes = b"photo of the pump".to_vec();
+        let sha = crate::sync::media::content_sha256_hex(&bytes);
+        let object_key = format!("prod/media/tenant-1/work_orders/wo-1/{sha}");
+        let root = media_root();
+        std::fs::create_dir_all(root.join("asset_photos/1")).expect("dir");
+        std::fs::write(root.join("asset_photos/1/p.jpg"), &bytes).expect("file");
+        crate::sync::media::upsert_media_attachment_row(
+            &db,
+            &crate::sync::domain::MediaAttachmentSyncPayload {
+                entity_sync_id: "media-1".into(),
+                row_version: 1,
+                parent_entity_type: "work_orders".into(),
+                parent_entity_sync_id: "wo-1".into(),
+                content_sha256: sha.clone(),
+                mime_type: "image/jpeg".into(),
+                byte_size: i64::try_from(bytes.len()).expect("size"),
+                object_key: object_key.clone(),
+                file_name: "p.jpg".into(),
+                relative_path: Some("asset_photos/1/p.jpg".into()),
+                capture_meta_json: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("media row");
+        store::record_media_manifest(
+            &db,
+            &[crate::sync::domain::SyncMediaManifestItem {
+                entity_sync_id: "media-1".into(),
+                content_sha256: sha.clone(),
+                object_key: object_key.clone(),
+                byte_size: i64::try_from(bytes.len()).expect("size"),
+            }],
+        )
+        .await
+        .expect("manifest");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let upload_url = format!("{base}/object-storage/photo");
+        let key = object_key.clone();
+        let stub = start_stub_on(listener, move |req| match req.path.as_str() {
+            EXCHANGE => acked(req),
+            "/api/v1/sync/media/presign-put" => ok(json!({
+                "url": upload_url,
+                "method": "PUT",
+                "bucket": "media",
+                "object_key": key,
+                "expires_in_seconds": 900,
+                "headers": { "x-amz-checksum-sha256": "c2lnbmVk" },
+            })),
+            "/object-storage/photo" => ok(json!({})),
+            WIPE_CONFIRMED => ok(json!({ "ok": true })),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, root.clone());
+        worker.cycle_once().await;
+
+        let order: Vec<String> = stub.requests().iter().map(|r| r.path.clone()).collect();
+        assert_eq!(
+            order,
+            [
+                EXCHANGE,
+                "/api/v1/sync/media/presign-put",
+                "/object-storage/photo",
+                WIPE_CONFIRMED
+            ],
+            "record and manifest first, then the file, then the erase and its confirmation"
+        );
+        let put = &stub.requests_to("/object-storage/photo")[0];
+        assert_eq!(put.body.as_bytes(), bytes.as_slice());
+        assert_eq!(
+            put.header("x-amz-checksum-sha256"),
+            Some("c2lnbmVk"),
+            "the signed header is sent"
+        );
+        let done = handle.removal_status();
+        assert_eq!(done.phase, RemovalPhase::Done);
+        assert_eq!(done.uploaded_by_kind.get("media_files"), Some(&1));
+        assert_eq!(done.dropped_count, 0);
+        assert!(!root.join("asset_photos").exists(), "the files go with the erase");
+    }
+
+    #[tokio::test]
+    async fn a_file_already_stored_counts_as_uploaded_and_one_refused_for_good_as_dropped() {
+        for (answer, uploaded, dropped) in [
+            (status(409, json!({ "error": "media_already_stored" })), 1, 0),
+            (status(403, json!({ "error": "media_not_from_this_device" })), 0, 1),
+        ] {
+            let db = removed_phone(true).await;
+            let bytes = b"photo".to_vec();
+            let sha = crate::sync::media::content_sha256_hex(&bytes);
+            let object_key = format!("prod/media/tenant-1/work_orders/wo-2/{sha}");
+            let root = media_root();
+            std::fs::create_dir_all(root.join("asset_photos/2")).expect("dir");
+            std::fs::write(root.join("asset_photos/2/p.jpg"), &bytes).expect("file");
+            crate::sync::media::upsert_media_attachment_row(
+                &db,
+                &crate::sync::domain::MediaAttachmentSyncPayload {
+                    entity_sync_id: "media-2".into(),
+                    row_version: 1,
+                    parent_entity_type: "work_orders".into(),
+                    parent_entity_sync_id: "wo-2".into(),
+                    content_sha256: sha.clone(),
+                    mime_type: "image/jpeg".into(),
+                    byte_size: 5,
+                    object_key: object_key.clone(),
+                    file_name: "p.jpg".into(),
+                    relative_path: Some("asset_photos/2/p.jpg".into()),
+                    capture_meta_json: None,
+                    updated_at: None,
+                },
+            )
+            .await
+            .expect("media row");
+            store::record_media_manifest(
+                &db,
+                &[crate::sync::domain::SyncMediaManifestItem {
+                    entity_sync_id: "media-2".into(),
+                    content_sha256: sha,
+                    object_key,
+                    byte_size: 5,
+                }],
+            )
+            .await
+            .expect("manifest");
+            let reply = std::sync::Mutex::new(Some(answer));
+            let stub = start_stub(move |req| match req.path.as_str() {
+                "/api/v1/sync/media/presign-put" => reply
+                    .lock()
+                    .expect("reply")
+                    .take()
+                    .unwrap_or_else(|| status(500, json!({ "error": "twice" }))),
+                WIPE_CONFIRMED => ok(json!({ "ok": true })),
+                _ => status(404, json!({ "error": "not_found" })),
+            })
+            .await;
+            let (worker, handle) = phone_worker(&db, &stub.base_url, root);
+            worker.cycle_once().await;
+            let done = handle.removal_status();
+            assert_eq!(done.phase, RemovalPhase::Done, "{done:?}");
+            assert_eq!(done.uploaded_by_kind.get("media_files").copied().unwrap_or(0), uploaded);
+            assert_eq!(done.dropped_by_kind.get("media_files").copied().unwrap_or(0), dropped);
+            let body = stub.requests_to(WIPE_CONFIRMED)[0].json();
+            if dropped > 0 {
+                assert_eq!(
+                    body,
+                    json!({ "dropped": { "total": 1, "by_kind": { "media_files": 1 } } })
+                );
+            } else {
+                assert_eq!(body, json!({}));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_as_invalid_is_dropped_counted_and_reported() {
+        let db = removed_phone(true).await;
+        let staged = stage_team(&db, "team-refused").await;
+        let stub = start_stub(|req| match req.path.as_str() {
+            EXCHANGE => status(400, json!({ "error": "validation_error", "message": "bad item" })),
+            WIPE_CONFIRMED => ok(json!({ "ok": true })),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        let (outcome, _) = worker.cycle_once().await;
+        assert!(matches!(outcome, CycleOutcome::Retry { .. }), "{outcome:?}");
+        assert_eq!(outbox_status(&db, staged.id).await, "dead_letter");
+        assert!(stub.requests_to(WIPE_CONFIRMED).is_empty(), "never in the same attempt");
+
+        worker.cycle_once().await;
+        let done = handle.removal_status();
+        assert_eq!(done.phase, RemovalPhase::Done);
+        assert_eq!(done.dropped_by_kind.get("teams"), Some(&1));
+        assert_eq!(
+            stub.requests_to(WIPE_CONFIRMED)[0].json(),
+            json!({ "dropped": { "total": 1, "by_kind": { "teams": 1 } } })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_without_the_marker_locks_keeps_the_data_and_lifts_when_accepted() {
+        let db = removed_phone(true).await;
+        let staged = stage_team(&db, "team-locked").await;
+        let accepted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = accepted.clone();
+        let stub = start_stub(move |req| match req.path.as_str() {
+            EXCHANGE if flag.load(std::sync::atomic::Ordering::SeqCst) => acked(req),
+            EXCHANGE => status(403, json!({ "error": "activation_revoked" })),
+            PROBE if flag.load(std::sync::atomic::Ordering::SeqCst) => ok(json!({ "is_initialized": true })),
+            PROBE => status(403, json!({ "error": "activation_revoked" })),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        worker.cycle_once().await;
+        let (outcome, _) = worker.cycle_once().await;
+        assert!(
+            matches!(outcome, CycleOutcome::Blocked { ref reason, .. } if reason == "phone_locked"),
+            "{outcome:?}"
+        );
+        let status_now = handle.removal_status();
+        assert_eq!(status_now.phase, RemovalPhase::Blocked);
+        assert_eq!(status_now.kind, Some(RemovalKind::RevokedUnconfirmed));
+        assert_eq!(outbox_status(&db, staged.id).await, "pending");
+        assert!(stub.requests_to(WIPE_CONFIRMED).is_empty());
+        assert!(crate::commands::product_license::get_activation_claim_tenant_id(&db)
+            .await
+            .expect("tenant")
+            .is_some());
+
+        accepted.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (outcome, _) = worker.cycle_once().await;
+        assert_eq!(removal::pending(&db).await.expect("read"), None, "lock lifted");
+        assert_eq!(handle.removal_status().phase, RemovalPhase::None);
+        // The normal sync goes on in the same cycle: the kept work reaches the server.
+        assert!(matches!(outcome, CycleOutcome::Synced { .. }), "{outcome:?}");
+        assert_eq!(outbox_status(&db, staged.id).await, "acked");
+    }
+
+    #[tokio::test]
+    async fn the_marker_erases_without_upload_and_counts_what_was_lost() {
+        let db = removed_phone(true).await;
+        stage_team(&db, "team-lost").await;
+        let stub = start_stub(|req| match req.path.as_str() {
+            EXCHANGE => status(
+                403,
+                json!({ "error": "activation_revoked", "message": "lost", "wipe": "without_upload", "reason": "lost" }),
+            ),
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        worker.cycle_once().await;
+        let done = handle.removal_status();
+        assert_eq!(done.phase, RemovalPhase::Done);
+        assert_eq!(done.kind, Some(RemovalKind::Revoked));
+        assert_eq!(done.dropped_by_kind.get("teams"), Some(&1));
+        assert!(
+            stub.requests_to(WIPE_CONFIRMED).is_empty(),
+            "a revoked phone confirms nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lost_confirmation_answer_is_sent_again_and_the_marker_reads_as_confirmed() {
+        let db = removed_phone(true).await;
+        let sent = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let count = sent.clone();
+        let stub = start_stub(move |req| match req.path.as_str() {
+            WIPE_CONFIRMED => {
+                if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    Reply::Drop
+                } else {
+                    status(
+                        403,
+                        json!({ "error": "activation_revoked", "wipe": "without_upload", "reason": "upload_window_closed" }),
+                    )
+                }
+            }
+            _ => status(404, json!({ "error": "not_found" })),
+        })
+        .await;
+        let (worker, handle) = phone_worker(&db, &stub.base_url, media_root());
+        worker.cycle_once().await;
+        assert_eq!(stub.requests_to(WIPE_CONFIRMED).len(), 2);
+        assert_eq!(handle.removal_status().wipe_confirmed, Some(true));
+    }
+}

@@ -610,6 +610,17 @@ async fn load_state_record_from_db<C: ConnectionTrait>(db: &C) -> AppResult<Opti
     Ok(ProductLicenseStateRecord::from_legacy_json(legacy))
 }
 
+/// Whether the stored licence record is readable only through the legacy fallback
+/// (`ProductLicenseStateRecord::from_legacy_json`), which drops the phone's enrolment binding: on
+/// such a record "bound to nobody" is unknown, never a reason to erase the phone
+/// (`auth::phone_binding::unbound_phone_needs_removal`).
+pub(crate) async fn licence_record_is_legacy<C: ConnectionTrait>(db: &C) -> AppResult<bool> {
+    let Some(row) = settings::get_setting(db, PRODUCT_LICENSE_ONBOARDING_KEY, PRODUCT_LICENSE_SCOPE).await? else {
+        return Ok(false);
+    };
+    Ok(serde_json::from_str::<ProductLicenseStateRecord>(&row.setting_value_json).is_err())
+}
+
 /// The organisation of this PC's current activation (`None`: not activated). Any connection, so a
 /// caller's transaction can read it (`sync::plant_join::complete_pull_done`).
 pub async fn get_activation_claim_tenant_id<C: ConnectionTrait>(db: &C) -> AppResult<Option<String>> {
@@ -1092,6 +1103,17 @@ pub struct ActivationBootstrapState {
     /// What the first-start screen shows on an activated PC (`sync::plant_join`); `None` when this
     /// PC is not activated.
     pub plant_join: Option<crate::sync::plant_join::PlantJoinState>,
+    /// The person and site an enrolled phone is bound to, shown on its sign-in screen ("Téléphone
+    /// de … — …"): names only, never the sync ids or a token. `None` on a desktop, on a phone not
+    /// activated or activated without an enrolment.
+    pub phone_binding: Option<PhoneBindingLabels>,
+}
+
+/// The names of a phone's enrolment binding (`MobileEnrolmentBinding`), for the screens.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PhoneBindingLabels {
+    pub person_label: String,
+    pub site_label: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1123,8 +1145,17 @@ pub(crate) async fn get_activation_bootstrap_state_in(
             company_display_name: None,
             has_tenant_admin: false,
             plant_join: None,
+            phone_binding: None,
         });
     };
+    let phone_binding = record
+        .mobile_enrolment
+        .as_ref()
+        .filter(|_| record_has_valid_activation_claim(&record))
+        .map(|binding| PhoneBindingLabels {
+            person_label: binding.person_label.clone(),
+            site_label: binding.site_label.clone(),
+        });
     let tenant_id = record.activation_claim.as_ref().map(|c| c.tenant_id.clone());
     // As `bootstrap_initial_tenant_admin` decides: an administrator of any organisation on this PC
     // closes the first-administrator step.
@@ -1141,6 +1172,7 @@ pub(crate) async fn get_activation_bootstrap_state_in(
         company_display_name: record.company_display_name,
         has_tenant_admin,
         plant_join,
+        phone_binding,
     })
 }
 
@@ -3486,8 +3518,11 @@ pub(crate) async fn refresh_product_activation_policy_in(
         Err(failure) => {
             // A phone removed by its administrator (or revoked) learns it here at every start:
             // recorded for the sync worker, which uploads its pending work and erases it.
-            if let ActivationCallFailure::HttpError { status, code, .. } = &failure {
-                crate::sync::transport::removal::note_refusal(db, *status, code.as_deref()).await;
+            if let ActivationCallFailure::HttpError {
+                status, code, details, ..
+            } = &failure
+            {
+                crate::sync::transport::removal::note_refusal(db, *status, code.as_deref(), details.as_deref()).await;
             }
             return Ok(failure.into());
         }
@@ -3522,8 +3557,14 @@ pub async fn refresh_product_activation_policy(
     )
     .await?;
     // A removal recorded by the refresh starts now, not at the worker's next cycle.
-    if let PolicyRefreshResult::HttpError { status, code, .. } = &result {
-        if crate::sync::transport::removal::kind_of_refusal(*status, code.as_deref()).is_some() {
+    if let PolicyRefreshResult::HttpError {
+        status, code, details, ..
+    } = &result
+    {
+        let wipe_marked = details
+            .as_deref()
+            .is_some_and(|body| crate::sync::transport::removal::wipe_marker_of_body(*status, body).is_some());
+        if crate::sync::transport::removal::kind_of_refusal(*status, code.as_deref(), wipe_marked).is_some() {
             state.sync_worker.send(crate::sync::transport::SyncCommand::Reevaluate);
         }
     }

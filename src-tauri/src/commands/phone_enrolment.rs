@@ -17,6 +17,14 @@
 //!
 //! The token and the code never reach a log or an error text (`Debug` hides them, every failure
 //! text has them replaced), and the device token of the answer stays in Rust.
+//!
+//! A lost answer (mobile data dropping mid-call): the phone recorded nothing, so the screen's
+//! "Réessayer" sends the same secret again. Each secret is sent with a `redeem_nonce` (32 random
+//! bytes, base64url) made once for it and kept in a device setting, never logged
+//! ([`RedeemNonce`]): every retry of the same secret, after a restart too, sends the same nonce,
+//! and the server answers a replay by the same phone with the same nonce within the enrolment's
+//! 15 minutes with the same activation (no second slot). The nonce is forgotten once the phone is
+//! enrolled or the server refused the secret for good.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -38,6 +46,8 @@ const REDEEM_PATH: &str = "/api/v1/mobile-enrolments/redeem";
 const ENROLMENT_TOKEN_MARKER: &str = "[enrolment token]";
 /// What replaces the typed code in a failure text.
 const ENROLMENT_CODE_MARKER: &str = "[enrolment code]";
+/// What replaces the redeem nonce in a failure text.
+const REDEEM_NONCE_MARKER: &str = "[redeem nonce]";
 
 /// The typed code: 8 characters of Crockford base32 (the server's `CODE_ALPHABET`).
 const CODE_ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -52,6 +62,14 @@ const BINDING_FIELD_MAX_CHARS: usize = 256;
 
 /// The name this phone gets in the plant's phone list (the person's name is shown first there).
 const PHONE_LABEL: &str = "Mobile (Android)";
+
+/// Device setting holding the nonce of the secret being redeemed ([`RedeemNonce`]).
+const REDEEM_NONCE_KEY: &str = "mobile.enrolment_redeem_nonce";
+const REDEEM_NONCE_SCOPE: &str = "device";
+/// An enrolment lives 15 minutes from issue: an older nonce cannot replay anything.
+const REDEEM_NONCE_LIFETIME_MINUTES: i64 = 15;
+/// Random bytes of a nonce (43 base64url characters).
+const REDEEM_NONCE_BYTES: usize = 32;
 
 // ── Refusal codes (stable; the phone screens translate them) ─────────────────────────────────────
 
@@ -154,6 +172,97 @@ impl EnrolmentSecret {
             Self::Token(token) => (token.as_str(), ENROLMENT_TOKEN_MARKER),
             Self::Code(code) => (code.as_str(), ENROLMENT_CODE_MARKER),
         }
+    }
+}
+
+/// The `redeem_nonce` of one secret, kept so every retry of that secret sends the same one. Only
+/// a hash of the secret is stored with it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RedeemNonce {
+    secret_sha256: String,
+    nonce: String,
+    created_at: String,
+}
+
+impl std::fmt::Debug for RedeemNonce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedeemNonce")
+            .field("nonce", &"[redacted]")
+            .field("created_at", &self.created_at)
+            .finish_non_exhaustive()
+    }
+}
+
+fn secret_hash(secret: &EnrolmentSecret) -> String {
+    let (kind, value) = match secret {
+        EnrolmentSecret::Token(token) => ("token", token.as_str()),
+        EnrolmentSecret::Code(code) => ("code", code.as_str()),
+    };
+    crate::settings::sha256_hex(&format!("{kind}:{value}"))
+}
+
+fn new_redeem_nonce() -> String {
+    use base64::Engine as _;
+    use rand_core::{OsRng, RngCore};
+    let mut bytes = [0_u8; REDEEM_NONCE_BYTES];
+    OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// The nonce to send with `secret`: the one kept for it while it may still be replayed, otherwise
+/// a new one, kept before the call.
+async fn redeem_nonce_for(db: &sea_orm::DatabaseConnection, secret: &EnrolmentSecret) -> AppResult<String> {
+    let hash = secret_hash(secret);
+    let kept = crate::settings::get_setting(db, REDEEM_NONCE_KEY, REDEEM_NONCE_SCOPE)
+        .await?
+        .and_then(|row| serde_json::from_str::<RedeemNonce>(&row.setting_value_json).ok())
+        .filter(|kept| {
+            kept.secret_sha256 == hash
+                && chrono::DateTime::parse_from_rfc3339(&kept.created_at).is_ok_and(|at| {
+                    chrono::Utc::now() - at.with_timezone(&chrono::Utc)
+                        < chrono::Duration::minutes(REDEEM_NONCE_LIFETIME_MINUTES)
+                })
+        });
+    if let Some(kept) = kept {
+        return Ok(kept.nonce);
+    }
+    let fresh = RedeemNonce {
+        secret_sha256: hash,
+        nonce: new_redeem_nonce(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    crate::settings::set_setting(
+        db,
+        REDEEM_NONCE_KEY,
+        REDEEM_NONCE_SCOPE,
+        &serde_json::to_string(&fresh)?,
+        None,
+        "phone enrolment attempt",
+    )
+    .await?;
+    Ok(fresh.nonce)
+}
+
+async fn forget_redeem_nonce(db: &sea_orm::DatabaseConnection) {
+    if let Err(e) = crate::settings::delete_setting(
+        db,
+        REDEEM_NONCE_KEY,
+        REDEEM_NONCE_SCOPE,
+        None,
+        "phone enrolment attempt ended",
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "mobile enrolment: the attempt's nonce could not be forgotten");
+    }
+}
+
+/// Whether a failed redemption may succeed if the same secret is sent again (no answer, an
+/// unreadable answer, a server failure, too many attempts): the nonce is then kept for the retry.
+fn retry_may_succeed(failure: &ActivationCallFailure) -> bool {
+    match failure {
+        ActivationCallFailure::NetworkError { .. } | ActivationCallFailure::InvalidResponse { .. } => true,
+        ActivationCallFailure::HttpError { status, .. } => matches!(status, 408 | 429 | 500..=599),
     }
 }
 
@@ -320,11 +429,12 @@ fn this_phone() -> AppResult<PhoneIdentity> {
     })
 }
 
-fn redeem_body(secret: &EnrolmentSecret, phone: &PhoneIdentity) -> serde_json::Value {
+fn redeem_body(secret: &EnrolmentSecret, phone: &PhoneIdentity, nonce: &str) -> serde_json::Value {
     let mut body = serde_json::json!({
         "machine_fingerprint": phone.machine_fingerprint,
         "machine_label": phone.machine_label,
         "device_class": "mobile",
+        "redeem_nonce": nonce,
     });
     match secret {
         EnrolmentSecret::Token(token) => body["token"] = serde_json::Value::from(token.as_str()),
@@ -483,15 +593,22 @@ pub(crate) async fn redeem_mobile_enrolment_in(
 ) -> AppResult<MobileEnrolmentRedeemed> {
     let secret = secret_of_input(input, api_base)?;
     ensure_first_run(db).await?;
-    let body = redeem_body(&secret, phone);
+    let nonce = redeem_nonce_for(db, &secret).await?;
+    let body = redeem_body(&secret, phone, &nonce);
     let sent = secret.redaction();
-    let answer = match post_activation_call(api_base, REDEEM_PATH, None, &body, &[sent]).await? {
+    let hidden_nonce = (nonce.as_str(), REDEEM_NONCE_MARKER);
+    let answer = match post_activation_call(api_base, REDEEM_PATH, None, &body, &[sent, hidden_nonce]).await? {
         Ok(answer) => answer,
-        // Logged by `post_activation_call`, the secret replaced.
-        Err(failure) => return Err(refusal_of(failure)),
+        // Logged by `post_activation_call`, the secret and the nonce replaced.
+        Err(failure) => {
+            if !retry_may_succeed(&failure) {
+                forget_redeem_nonce(db).await;
+            }
+            return Err(refusal_of(failure));
+        }
     };
     let token = answered_token(&answer);
-    let secrets = [sent, (token.as_str(), TOKEN_MARKER)];
+    let secrets = [sent, hidden_nonce, (token.as_str(), TOKEN_MARKER)];
     let (claim, envelope) = complete_claim_of_answer(&answer, &phone.machine_fingerprint)
         .map_err(|why| refusal_of(invalid_answer(REDEEM_PATH, why, &secrets)))?;
     let binding = binding_of_answer(&answer).map_err(|why| refusal_of(invalid_answer(REDEEM_PATH, why, &secrets)))?;
@@ -519,6 +636,7 @@ pub(crate) async fn redeem_mobile_enrolment_in(
         Some(phone.app_version.clone()),
     )
     .await?;
+    forget_redeem_nonce(db).await;
     tracing::info!(
         event = "mobile_enrolment_redeemed",
         enrolment_id = enrolment_id.as_str(),

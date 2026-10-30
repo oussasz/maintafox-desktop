@@ -159,6 +159,10 @@ pub struct PresignResponse {
     pub url: String,
     pub method: String,
     pub object_key: String,
+    /// Headers the upload must send exactly (they are signed): for a phone, the file's
+    /// `x-amz-checksum-sha256`, so the store takes no other bytes. Absent for a desktop.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
 }
 
 /// One file of a diagnostic bundle (`POST /api/v1/sync/diagnostic-bundles`).

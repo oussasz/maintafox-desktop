@@ -537,7 +537,7 @@ Each entry must include:
 | **AppState fields** | `db` (read + write), `session` (read: licence caller) |
 | **TS Service** | `src/mobile/services/enrolment.ts::redeemMobileEnrolment` |
 | **Phase** | Mobile v0.9.3 (QR enrolment) |
-| **Description** | Reads the QR strictly (`maintafox-enrol:1?s=…&t=…`, server must be this build's licence server) or normalises the typed code, then posts `/api/v1/mobile-enrolments/redeem` with the phone's own fingerprint, label and version. Records the activation through the key entry's path, with the person/site binding and without a licence key. Only a phone in its first-run state. |
+| **Description** | Reads the QR strictly (`maintafox-enrol:1?s=…&t=…`, server must be this build's licence server) or normalises the typed code, then posts `/api/v1/mobile-enrolments/redeem` with the phone's own fingerprint, label, version and a `redeem_nonce` (32 random bytes, base64url) kept per secret in a device setting, so a retry of the same secret after a lost answer (or a restart) sends the same nonce and the server's replay completes it; the nonce is forgotten after success or a definitive refusal, never logged. Records the activation through the key entry's path, with the person/site binding and without a licence key. Only a phone in its first-run state. |
 | **Errors** | `ENROLMENT_*` codes (see `ENROLMENT_ERROR_CODES`), with `status` / `server_code` params for server refusals |
 
 ---
@@ -547,13 +547,13 @@ Each entry must include:
 |---|---|
 | **Location** | `src-tauri/src/commands/mobile.rs` |
 | **Input** | None |
-| **Output** | `PhoneRemovalStatus` → `{ phase, kind, uploaded_count, dropped_count, dropped_by_kind, last_error, wipe_confirmed }` (no secret) |
+| **Output** | `PhoneRemovalStatus` → `{ phase: none\|uploading\|waiting_to_upload\|blocked\|erasing\|done, kind: unbound\|removed\|revoked_unconfirmed\|revoked\|null, uploaded_count, uploaded_by_kind, dropped_count, dropped_by_kind, last_error, wipe_confirmed }` (`*_by_kind`: entity type or `media_files`; no secret) |
 | **TS Type** | local to `src/mobile/services/enrolment.ts` |
 | **Auth required** | No (the removal signs the user out) |
 | **AppState fields** | `sync_worker` (read) |
 | **TS Service** | `src/mobile/services/enrolment.ts::getPhoneRemovalStatus`; event `phone-removal-status` |
 | **Phase** | Mobile v0.9.3 (QR enrolment) |
-| **Description** | Where a removed, revoked or unbound phone stands in its upload-then-erase procedure (`sync::transport::removal`). |
+| **Description** | Where a removed, revoked or unbound phone stands in its upload-then-erase procedure (`sync::transport::removal`). Only `403 activation_revoked` with the server's marker (`wipe: "without_upload"`) erases without upload (`kind: revoked`); a plain `activation_revoked` locks the phone with its data kept (`phase: blocked`, `kind: revoked_unconfirmed`) until the server answers otherwise. |
 
 ---
 

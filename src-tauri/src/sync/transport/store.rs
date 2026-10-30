@@ -319,6 +319,21 @@ pub async fn mark_media_failed(
     Ok(())
 }
 
+/// A phone's final upload (`removal`): every upload given up goes back to `pending` (attempts
+/// reset), so the files are offered once more before the erase. Returns how many.
+pub async fn requeue_failed_media(db: &impl ConnectionTrait) -> AppResult<i64> {
+    let result = db
+        .execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_media_uploads
+             SET status = 'pending', attempt_count = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE status = 'failed'"
+                .to_string(),
+        ))
+        .await?;
+    Ok(i64::try_from(result.rows_affected()).unwrap_or(0))
+}
+
 /// `(pending, failed)` media uploads.
 pub async fn media_counts(db: &impl ConnectionTrait) -> AppResult<(i64, i64)> {
     let row = db

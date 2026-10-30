@@ -678,6 +678,14 @@ const ActivationBootstrapStateSchema = z.object({
   has_tenant_admin: z.boolean(),
   /** `null` when this PC is not activated. */
   plant_join: PlantJoinStateSchema.nullable(),
+  /**
+   * An enrolled phone's person and site (names only), shown on its sign-in screen; `null` on a
+   * desktop or a phone not enrolled.
+   */
+  phone_binding: z
+    .object({ person_label: z.string(), site_label: z.string() })
+    .nullable()
+    .optional(),
 });
 
 const ActivationLicenseMetadataSchema = z.object({

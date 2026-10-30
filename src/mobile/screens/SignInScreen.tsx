@@ -1,6 +1,7 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { login } from "@/services/auth-service";
+import { getActivationBootstrapState } from "@/services/product-license-service";
 import type { SessionInfo } from "@shared/ipc-types";
 
 import { useMobileT } from "../i18n";
@@ -11,7 +12,12 @@ import { Actions, Button, Hero, Section, Steps, TextCell } from "../ui/kit";
 
 import { ONBOARDING_STEPS } from "./ActivationGate";
 
-/** Sign-in with the engine's `login` command; refusals are shown in the user's words. */
+type PhoneBinding = { person_label: string; site_label: string };
+
+/**
+ * Sign-in with the engine's `login` command; refusals are shown in the user's words. An enrolled
+ * phone names its person and site ("Téléphone de … — …"), read from the engine before sign-in.
+ */
 export function SignInScreen({
   onSignedIn,
   error: outerError = null,
@@ -25,6 +31,20 @@ export function SignInScreen({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
+  const [binding, setBinding] = useState<PhoneBinding | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getActivationBootstrapState()
+      .then((state) => {
+        if (!cancelled) setBinding(state.phone_binding ?? null);
+      })
+      // Only a label: the form works without it (the engine still refuses anyone else).
+      .catch((err: unknown) => toUserError(err, "signin.binding"));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -44,7 +64,14 @@ export function SignInScreen({
   const shown = error ?? outerError;
   return (
     <OnboardingScreen title={t("signin.title")} language>
-      <Hero title={t("signin.title")} text={t("signin.subtitle")} />
+      <Hero
+        title={t("signin.title")}
+        text={
+          binding
+            ? t("signin.phoneOf", { person: binding.person_label, site: binding.site_label })
+            : t("signin.subtitle")
+        }
+      />
       <Steps count={ONBOARDING_STEPS} current={2} label={t("onboarding.steps")} />
       <form className="mf-form-stack" onSubmit={(e) => void onSubmit(e)}>
         <Section>

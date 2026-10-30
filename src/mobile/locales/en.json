@@ -180,6 +180,10 @@
     "phoneRemovalInProgress": {
       "title": "Phone is erasing itself",
       "text": "This phone is sending its pending work, then erasing itself. Sign-in is not possible for now."
+    },
+    "phoneLocked": {
+      "title": "Phone blocked",
+      "text": "This phone is blocked: the server refused it without confirmation. The data is kept. Contact your administrator."
     }
   },
   "startup": {
@@ -252,7 +256,8 @@
     "passwordChangeTitle": "Password change required",
     "passwordChangeBody": "Your password must be changed on a Maintafox PC before you use the phone.",
     "usernamePlaceholder": "Your username",
-    "passwordPlaceholder": "Your password"
+    "passwordPlaceholder": "Your password",
+    "phoneOf": "Phone of {{person}} — {{site}}"
   },
   "tabs": {
     "label": "Navigation",
@@ -418,7 +423,8 @@
     "title": {
       "removed": "Phone removed",
       "unbound": "Phone to be enrolled",
-      "revoked": "Phone reported lost"
+      "revoked": "Phone reported lost",
+      "revoked_unconfirmed": "Phone blocked"
     },
     "text": {
       "removed": {
@@ -431,13 +437,16 @@
         "waiting_to_upload": "A connection is needed to send pending work. The data is kept.",
         "erasing": "Erasing data…"
       },
-      "revoked": "This phone was reported lost or removed: its data is erased without being sent."
+      "revoked": "This phone was reported lost or removed: its data is erased without being sent.",
+      "revoked_unconfirmed": "This phone is blocked: the server refused it without confirmation. The data is kept. Contact your administrator."
     },
     "locked": "The phone is locked until this is finished. It cannot be interrupted.",
     "uploaded": "Work sent: {{n}}",
     "dropped": "Not sent: {{n}} (recorded in the log)",
     "droppedPhotos": "of which photos not sent: {{n}}",
     "lastError": "Last sending failure",
-    "waiting": "Retrying as soon as the connection returns."
+    "waiting": "Retrying as soon as the connection returns.",
+    "blocked": "The server will be asked again regularly; nothing is erased.",
+    "uploadedPhotos": "including photos sent: {{n}}"
   }
 }

@@ -55,6 +55,7 @@ fn http(status: u16) -> TransportError {
         code: Some("x".into()),
         message: format!("status {status}"),
         retry_after: None,
+        wipe_without_upload: None,
     }
 }
 

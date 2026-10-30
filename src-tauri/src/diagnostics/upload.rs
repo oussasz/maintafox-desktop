@@ -71,7 +71,9 @@ pub async fn upload_bundle_bytes(
             created.upload.method
         )));
     }
-    client.put_object(&created.upload.url, bytes).await?;
+    client
+        .put_object(&created.upload.url, bytes, &std::collections::BTreeMap::new())
+        .await?;
     client.complete_diagnostic_bundle(token, &created.bundle_id).await
 }
 

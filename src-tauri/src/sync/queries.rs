@@ -1714,6 +1714,69 @@ pub async fn return_unsent_outbox_items(db: &DatabaseConnection, outbox_ids: &[i
     Ok(())
 }
 
+/// A phone's final upload (`sync::transport::removal`): a delivery that failed for a reason other
+/// than a refusal of the request (server error, interrupted answer) puts the items back to
+/// `pending` and never gives them up, whatever their attempt count: they are erased only once
+/// the server has them.
+pub async fn keep_outbox_items_after_failure(
+    db: &DatabaseConnection,
+    outbox_ids: &[i64],
+    error: &str,
+) -> AppResult<()> {
+    if outbox_ids.is_empty() {
+        return Ok(());
+    }
+    let ids_json = serde_json::to_string(outbox_ids)?;
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_outbox
+         SET status = 'pending', last_error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE status = 'in_flight' AND id IN (SELECT value FROM json_each(?))",
+        [error.into(), ids_json.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// A phone's final upload: the server refused the request carrying these items as invalid (a
+/// permanent refusal); they are given up at once (`dead_letter`) and counted as dropped when the
+/// phone erases itself. Returns how many.
+pub async fn give_up_outbox_items(db: &DatabaseConnection, outbox_ids: &[i64], error: &str) -> AppResult<i64> {
+    if outbox_ids.is_empty() {
+        return Ok(0);
+    }
+    let ids_json = serde_json::to_string(outbox_ids)?;
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_outbox
+             SET status = 'dead_letter', last_error = ?,
+                 dead_lettered_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE status IN ('pending', 'in_flight') AND id IN (SELECT value FROM json_each(?))",
+            [error.into(), ids_json.into()],
+        ))
+        .await?;
+    Ok(i64::try_from(result.rows_affected()).unwrap_or(0))
+}
+
+/// A phone's final upload: every dead-lettered item goes back to `pending` (attempts reset), so
+/// work given up before the removal is offered to the server once more before the erase. Returns
+/// how many.
+pub async fn requeue_dead_letters(db: &DatabaseConnection) -> AppResult<i64> {
+    let result = db
+        .execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_outbox
+             SET status = 'pending', attempt_count = 0, dead_lettered_at = NULL,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE status = 'dead_letter'"
+                .to_string(),
+        ))
+        .await?;
+    Ok(i64::try_from(result.rows_affected()).unwrap_or(0))
+}
+
 /// Mark the items of a stored exchange request as being sent again (same key, same body): they
 /// count one more delivery attempt, exactly like `get_sync_push_payload` does for a new request.
 pub async fn mark_outbox_items_resent(db: &DatabaseConnection, outbox_ids: &[i64]) -> AppResult<()> {

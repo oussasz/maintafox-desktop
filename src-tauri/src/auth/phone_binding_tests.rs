@@ -50,12 +50,12 @@ async fn user(db: &DatabaseConnection, username: &str, sync_id: &str) -> i32 {
 fn only_the_enrolled_person_signs_in() {
     let b = binding();
     assert_eq!(
-        phone_sign_in(true, Some(&b), false, Some("person-amina")),
+        phone_sign_in(true, Some(&b), None, Some("person-amina")),
         PhoneSignIn::Allowed
     );
     for other in [Some("person-karim"), Some("PERSON-AMINA"), Some(""), None] {
         assert_eq!(
-            phone_sign_in(true, Some(&b), false, other),
+            phone_sign_in(true, Some(&b), None, other),
             PhoneSignIn::AssignedToOther {
                 person_label: "Amina Benali".into()
             },
@@ -67,17 +67,30 @@ fn only_the_enrolled_person_signs_in() {
 #[test]
 fn an_unbound_or_erasing_phone_signs_nobody_in() {
     assert_eq!(
-        phone_sign_in(true, None, false, Some("person-amina")),
+        phone_sign_in(true, None, None, Some("person-amina")),
         PhoneSignIn::NotEnrolled
     );
     let b = binding();
     assert_eq!(
-        phone_sign_in(true, Some(&b), true, Some("person-amina")),
+        phone_sign_in(true, Some(&b), Some(RemovalKind::Removed), Some("person-amina")),
         PhoneSignIn::RemovalInProgress
     );
-    assert_eq!(phone_sign_in(false, None, true, None), PhoneSignIn::RemovalInProgress);
+    assert_eq!(
+        phone_sign_in(false, None, Some(RemovalKind::Revoked), None),
+        PhoneSignIn::RemovalInProgress
+    );
+    // Refused without the erase marker: locked, whoever it is.
+    assert_eq!(
+        phone_sign_in(
+            true,
+            Some(&b),
+            Some(RemovalKind::RevokedUnconfirmed),
+            Some("person-amina")
+        ),
+        PhoneSignIn::Locked
+    );
     // Not activated: sign-in is refused further on, as on any device.
-    assert_eq!(phone_sign_in(false, None, false, None), PhoneSignIn::Allowed);
+    assert_eq!(phone_sign_in(false, None, None, None), PhoneSignIn::Allowed);
 }
 
 #[test]
@@ -155,4 +168,60 @@ async fn a_bound_phone_being_removed_signs_nobody_in() {
     removal::record(&db, RemovalKind::Removed).await.expect("removed");
     let err = enforce_phone_sign_in_on(&db, amina, true).await.expect_err("removal");
     assert_eq!(code_of(&err), PHONE_REMOVAL_IN_PROGRESS);
+}
+
+#[tokio::test]
+async fn a_locked_phone_signs_nobody_in() {
+    let db = crate::db::test_db::seeded().await;
+    record_enrolled_claim_for_tests(&db, TENANT, "fp-1", "token-1", Some(&binding()))
+        .await
+        .expect("enrolled");
+    let amina = user(&db, "amina", "person-amina").await;
+    removal::record(&db, RemovalKind::RevokedUnconfirmed)
+        .await
+        .expect("locked");
+    let err = enforce_phone_sign_in_on(&db, amina, true).await.expect_err("locked");
+    assert_eq!(code_of(&err), PHONE_LOCKED);
+}
+
+/// A licence record readable only in its legacy form has lost its enrolment binding: the phone is
+/// never erased as unbound for it (no removal recorded, neither by the worker nor by sign-in).
+#[tokio::test]
+async fn a_legacy_licence_record_never_starts_an_unbound_removal() {
+    let db = crate::db::test_db::seeded().await;
+    record_enrolled_claim_for_tests(&db, TENANT, "fp-1", "token-1", Some(&binding()))
+        .await
+        .expect("enrolled");
+    let row = crate::settings::get_setting(&db, "product.license_onboarding", "device")
+        .await
+        .expect("read")
+        .expect("record");
+    let mut legacy: serde_json::Value = serde_json::from_str(&row.setting_value_json).expect("json");
+    // A field the current record requires: only the legacy reading accepts the record now.
+    legacy.as_object_mut().expect("object").remove("status");
+    crate::settings::set_setting(
+        &db,
+        "product.license_onboarding",
+        "device",
+        &legacy.to_string(),
+        None,
+        "test",
+    )
+    .await
+    .expect("write");
+    assert!(crate::commands::product_license::licence_record_is_legacy(&db)
+        .await
+        .expect("legacy"));
+    assert!(crate::commands::product_license::get_activation_claim_tenant_id(&db)
+        .await
+        .expect("tenant")
+        .is_some());
+    assert!(!unbound_phone_needs_removal(&db).await.expect("unknown binding"));
+
+    let amina = user(&db, "amina", "person-amina").await;
+    let err = enforce_phone_sign_in_on(&db, amina, true)
+        .await
+        .expect_err("binding unreadable");
+    assert_eq!(code_of(&err), PHONE_NOT_ENROLLED);
+    assert_eq!(removal::pending(&db).await.expect("read"), None, "nothing recorded");
 }

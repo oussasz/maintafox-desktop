@@ -27,6 +27,7 @@ function status(overrides: Partial<PhoneRemovalStatus> = {}): PhoneRemovalStatus
     phase: "none",
     kind: null,
     uploaded_count: 0,
+    uploaded_by_kind: {},
     dropped_count: 0,
     dropped_by_kind: {},
     last_error: null,
@@ -177,6 +178,39 @@ describe("phone removal screen", () => {
     await emit(status({ phase: "uploading", kind: "removed" }));
     expect(screen.queryByText("ENROLMENT")).toBeNull();
     expect(screen.getAllByText("Téléphone retiré").length).toBeGreaterThan(0);
+  });
+
+  it("photos sent are counted next to the work sent", async () => {
+    await renderGate(
+      status({
+        phase: "uploading",
+        kind: "removed",
+        uploaded_count: 5,
+        uploaded_by_kind: { work_orders: 3, media_files: 2 },
+      }),
+    );
+    expect(screen.getByText("Travaux envoyés : 5")).toBeInTheDocument();
+    expect(screen.getByText("dont photos envoyées : 2")).toBeInTheDocument();
+  });
+
+  it("a phone refused without confirmation is locked with its data kept, and erases nothing", async () => {
+    await renderGate(status({ phase: "blocked", kind: "revoked_unconfirmed" }));
+    expect(
+      screen.getByText(
+        "Ce téléphone est bloqué : le serveur l'a refusé sans confirmation. Les données sont conservées. Contactez votre administrateur.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Téléphone bloqué").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Le serveur sera interrogé à nouveau régulièrement ; rien n'est effacé."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Effacement/)).toBeNull();
+    expect(screen.queryByText("ENROLMENT")).toBeNull();
+    expect(screen.queryAllByRole("button")).toEqual([]);
+
+    // The server accepts the phone again: the lock is lifted, the app comes back.
+    await emit(status());
+    expect(screen.getByText("ENROLMENT")).toBeInTheDocument();
   });
 
   it("releases the event subscription on unmount", async () => {

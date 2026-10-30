@@ -1,4 +1,4 @@
-import { CloudUpload, Eraser, PhoneOff, ShieldAlert } from "lucide-react";
+import { CloudUpload, Eraser, Lock, PhoneOff, ShieldAlert } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { RemovalNoticeContext } from "../hooks/removal-notice";
@@ -13,35 +13,46 @@ import { OnboardingScreen } from "../ui/OnboardingScreen";
 import { ErrorBanner } from "../ui/feedback";
 import { Banner, Hero, Progress, Row, Section } from "../ui/kit";
 
-type RemovalKind = "removed" | "unbound" | "revoked";
+type RemovalKind = "removed" | "unbound" | "revoked_unconfirmed" | "revoked";
 
 /** The engine reports no kind only before it has recorded one: read it as an administrator removal. */
 function kindOf(status: PhoneRemovalStatus): RemovalKind {
   return status.kind ?? "removed";
 }
 
-/** Files sent for a work order are counted under this key of `dropped_by_kind`. */
+/** Files (photos, documents) are counted under this key of `uploaded_by_kind` / `dropped_by_kind`. */
 const MEDIA_FILES = "media_files";
 
 /**
  * A phone removed by its administrator (or reported lost, or activated before enrolment existed)
  * uploads what it still holds, then erases itself. This screen only reports; it has no button
  * that could cancel or skip the upload, because the data must reach the server before it goes.
+ * A phone the server refused without saying it may be erased (`blocked`) is locked with its data
+ * kept, and says so.
  */
 export function PhoneRemovalScreen({ status }: { status: PhoneRemovalStatus }) {
   const { t } = useMobileT();
   const kind = kindOf(status);
+  const blocked = status.phase === "blocked" || kind === "revoked_unconfirmed";
   const waiting = status.phase === "waiting_to_upload";
   const erasing = status.phase === "erasing";
 
-  const text =
-    kind === "revoked"
+  const text = blocked
+    ? t("removal.text.revoked_unconfirmed")
+    : kind === "revoked"
       ? t("removal.text.revoked")
       : t(
           `removal.text.${kind}.${erasing ? "erasing" : waiting ? "waiting_to_upload" : "uploading"}`,
         );
-  const Icon =
-    kind === "revoked" ? ShieldAlert : erasing ? Eraser : waiting ? PhoneOff : CloudUpload;
+  const Icon = blocked
+    ? Lock
+    : kind === "revoked"
+      ? ShieldAlert
+      : erasing
+        ? Eraser
+        : waiting
+          ? PhoneOff
+          : CloudUpload;
 
   // The engine's technical failure is classified (and logged) once per failure, never shown as is.
   const lastError = status.last_error;
@@ -51,15 +62,19 @@ export function PhoneRemovalScreen({ status }: { status: PhoneRemovalStatus }) {
   );
 
   const photosDropped = status.dropped_by_kind[MEDIA_FILES] ?? 0;
-  const showCounts = kind !== "revoked" || status.dropped_count > 0;
+  const photosUploaded = status.uploaded_by_kind[MEDIA_FILES] ?? 0;
+  const showCounts = blocked
+    ? status.uploaded_count > 0
+    : kind !== "revoked" || status.dropped_count > 0;
+  const titleKind: RemovalKind = blocked ? "revoked_unconfirmed" : kind;
 
   return (
-    <OnboardingScreen title={t(`removal.title.${kind}`)}>
+    <OnboardingScreen title={t(`removal.title.${titleKind}`)}>
       <div role="status" aria-live="polite">
         <Hero
           icon={<Icon size={40} strokeWidth={2.2} aria-hidden />}
-          tone={kind === "revoked" || waiting ? "red" : "tint"}
-          title={t(`removal.title.${kind}`)}
+          tone={kind === "revoked" || waiting || blocked ? "red" : "tint"}
+          title={t(`removal.title.${titleKind}`)}
           text={text}
         />
       </div>
@@ -69,10 +84,14 @@ export function PhoneRemovalScreen({ status }: { status: PhoneRemovalStatus }) {
           <Banner tone="info">{t("removal.waiting")}</Banner>
         </>
       ) : null}
+      {blocked ? <Banner tone="info">{t("removal.blocked")}</Banner> : null}
       {showCounts ? (
         <Section>
           {kind !== "revoked" ? (
             <Row title={t("removal.uploaded", { n: status.uploaded_count })} />
+          ) : null}
+          {photosUploaded > 0 ? (
+            <Row title={t("removal.uploadedPhotos", { n: photosUploaded })} />
           ) : null}
           {status.dropped_count > 0 ? (
             <Row title={t("removal.dropped", { n: status.dropped_count })} />
@@ -82,7 +101,7 @@ export function PhoneRemovalScreen({ status }: { status: PhoneRemovalStatus }) {
           ) : null}
         </Section>
       ) : null}
-      <Banner tone="warning">{t("removal.locked")}</Banner>
+      {blocked ? null : <Banner tone="warning">{t("removal.locked")}</Banner>}
     </OnboardingScreen>
   );
 }
@@ -154,6 +173,7 @@ const NO_REMOVAL: PhoneRemovalStatus = {
   phase: "none",
   kind: null,
   uploaded_count: 0,
+  uploaded_by_kind: {},
   dropped_count: 0,
   dropped_by_kind: {},
   last_error: null,

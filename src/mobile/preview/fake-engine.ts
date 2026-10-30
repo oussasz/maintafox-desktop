@@ -45,14 +45,15 @@ function onboarding(complete: boolean) {
 
 /** The engine's removal status (`get_phone_removal_status`). */
 function removal(
-  phase: "none" | "uploading" | "waiting_to_upload" | "erasing" | "done",
-  kind: "removed" | "unbound" | "revoked" | null = null,
+  phase: "none" | "uploading" | "waiting_to_upload" | "blocked" | "erasing" | "done",
+  kind: "removed" | "unbound" | "revoked_unconfirmed" | "revoked" | null = null,
   extra: Record<string, unknown> = {},
 ) {
   return {
     phase,
     kind,
     uploaded_count: 0,
+    uploaded_by_kind: {},
     dropped_count: 0,
     dropped_by_kind: {},
     last_error: null,
@@ -201,7 +202,13 @@ export const SCENARIO_ANSWERS: Record<string, Answers> = {
   },
   "removal-uploading": {
     get_phone_removal_status: () =>
-      removal("uploading", "removed", { uploaded_count: 12, dropped_count: 0 }),
+      removal("uploading", "removed", {
+        uploaded_count: 12,
+        uploaded_by_kind: { work_orders: 9, media_files: 3 },
+      }),
+  },
+  "removal-blocked": {
+    get_phone_removal_status: () => removal("blocked", "revoked_unconfirmed"),
   },
   "removal-waiting": {
     get_phone_removal_status: () =>

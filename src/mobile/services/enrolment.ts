@@ -70,6 +70,7 @@ export const PHONE_SIGN_IN_ERROR_CODES = [
   "PHONE_ASSIGNED_TO_OTHER_PERSON",
   "PHONE_NOT_ENROLLED",
   "PHONE_REMOVAL_IN_PROGRESS",
+  "PHONE_LOCKED",
 ] as const;
 
 export type PhoneSignInErrorCode = (typeof PHONE_SIGN_IN_ERROR_CODES)[number];
@@ -94,6 +95,8 @@ const SyncWorkerErrorSchema = z.object({
  * - `none`: no removal.
  * - `uploading`: the pending work is being sent.
  * - `waiting_to_upload`: the upload failed (`last_error`); data kept, phone locked, retried.
+ * - `blocked`: the server refused the phone without saying it may be erased (`revoked_unconfirmed`):
+ *   phone locked, data kept, the server asked again; `last_error` when it could not be asked.
  * - `erasing`: the local data is being erased.
  * - `done`: erased; the phone shows "Scanner le QR code" again.
  */
@@ -101,21 +104,31 @@ export const PhoneRemovalPhaseSchema = z.enum([
   "none",
   "uploading",
   "waiting_to_upload",
+  "blocked",
   "erasing",
   "done",
 ]);
 
 /**
  * - `removed`: removed by its administrator (uploads, erases, confirms).
- * - `revoked`: reported lost, or removed too long ago: erases without uploading.
+ * - `revoked`: the server's erase marker (reported lost, or removed too long ago): erases
+ *   without uploading.
+ * - `revoked_unconfirmed`: refused without that marker: locked, data kept (phase `blocked`).
  * - `unbound`: activated with the licence key before enrolment existed: uploads, then resets.
  */
-export const PhoneRemovalKindSchema = z.enum(["unbound", "removed", "revoked"]);
+export const PhoneRemovalKindSchema = z.enum([
+  "unbound",
+  "removed",
+  "revoked_unconfirmed",
+  "revoked",
+]);
 
 const PhoneRemovalStatusSchema = z.object({
   phase: PhoneRemovalPhaseSchema,
   kind: PhoneRemovalKindSchema.nullable(),
   uploaded_count: z.number(),
+  /** Per entity type, plus `media_files` (photos and documents sent). */
+  uploaded_by_kind: z.record(z.string(), z.number()),
   dropped_count: z.number(),
   /** Per entity type, plus `media_files`. */
   dropped_by_kind: z.record(z.string(), z.number()),

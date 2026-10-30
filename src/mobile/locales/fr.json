@@ -180,6 +180,10 @@
     "phoneRemovalInProgress": {
       "title": "Téléphone en cours d'effacement",
       "text": "Ce téléphone envoie ses travaux en attente puis s'efface. Connexion impossible pour l'instant."
+    },
+    "phoneLocked": {
+      "title": "Téléphone bloqué",
+      "text": "Ce téléphone est bloqué : le serveur l'a refusé sans confirmation. Les données sont conservées. Contactez votre administrateur."
     }
   },
   "startup": {
@@ -252,7 +256,8 @@
     "passwordChangeTitle": "Changement de mot de passe requis",
     "passwordChangeBody": "Votre mot de passe doit être changé sur un PC Maintafox avant d'utiliser le téléphone.",
     "usernamePlaceholder": "Votre identifiant",
-    "passwordPlaceholder": "Votre mot de passe"
+    "passwordPlaceholder": "Votre mot de passe",
+    "phoneOf": "Téléphone de {{person}} — {{site}}"
   },
   "tabs": {
     "label": "Navigation",
@@ -418,7 +423,8 @@
     "title": {
       "removed": "Téléphone retiré",
       "unbound": "Téléphone à enrôler",
-      "revoked": "Téléphone déclaré perdu"
+      "revoked": "Téléphone déclaré perdu",
+      "revoked_unconfirmed": "Téléphone bloqué"
     },
     "text": {
       "removed": {
@@ -431,13 +437,16 @@
         "waiting_to_upload": "Connexion nécessaire pour envoyer les travaux en attente. Les données sont conservées.",
         "erasing": "Effacement des données…"
       },
-      "revoked": "Ce téléphone a été déclaré perdu ou retiré : ses données sont effacées sans envoi."
+      "revoked": "Ce téléphone a été déclaré perdu ou retiré : ses données sont effacées sans envoi.",
+      "revoked_unconfirmed": "Ce téléphone est bloqué : le serveur l'a refusé sans confirmation. Les données sont conservées. Contactez votre administrateur."
     },
     "locked": "Le téléphone est verrouillé jusqu'à la fin de l'opération. Elle ne peut pas être interrompue.",
     "uploaded": "Travaux envoyés : {{n}}",
     "dropped": "Non envoyés : {{n}} (enregistrés dans le journal)",
     "droppedPhotos": "dont photos non envoyées : {{n}}",
     "lastError": "Dernier échec d'envoi",
-    "waiting": "Nouvelle tentative dès que la connexion revient."
+    "waiting": "Nouvelle tentative dès que la connexion revient.",
+    "blocked": "Le serveur sera interrogé à nouveau régulièrement ; rien n'est effacé.",
+    "uploadedPhotos": "dont photos envoyées : {{n}}"
   }
 }

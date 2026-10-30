@@ -28,6 +28,8 @@ pub const PHONE_ASSIGNED_TO_OTHER_PERSON: &str = "PHONE_ASSIGNED_TO_OTHER_PERSON
 pub const PHONE_NOT_ENROLLED: &str = "PHONE_NOT_ENROLLED";
 /// The phone is uploading its work and erasing itself.
 pub const PHONE_REMOVAL_IN_PROGRESS: &str = "PHONE_REMOVAL_IN_PROGRESS";
+/// The licence server refused the phone without saying it may be erased: locked, data kept.
+pub const PHONE_LOCKED: &str = "PHONE_LOCKED";
 
 /// What an activated phone bound to nobody does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,20 +63,24 @@ pub enum PhoneSignIn {
     /// Activated, bound to nobody (see [`unbound_phone_policy`]).
     NotEnrolled,
     RemovalInProgress,
+    /// Refused by the server without the erase marker (`removal`, `RevokedUnconfirmed`).
+    Locked,
 }
 
 /// Whether the account with sync id `user_sync_id` may sign in on a phone. `activated`: the phone
 /// holds a valid activation (without one, sign-in is refused further on as on any device);
-/// `binding`: its enrolment; `removal_pending`: it is erasing itself. An account without a sync id
+/// `binding`: its enrolment; `removal`: the removal or lock recorded. An account without a sync id
 /// is never the enrolled person.
 pub fn phone_sign_in(
     activated: bool,
     binding: Option<&MobileEnrolmentBinding>,
-    removal_pending: bool,
+    removal: Option<RemovalKind>,
     user_sync_id: Option<&str>,
 ) -> PhoneSignIn {
-    if removal_pending {
-        return PhoneSignIn::RemovalInProgress;
+    match removal {
+        Some(RemovalKind::RevokedUnconfirmed) => return PhoneSignIn::Locked,
+        Some(_) => return PhoneSignIn::RemovalInProgress,
+        None => {}
     }
     if !activated {
         return PhoneSignIn::Allowed;
@@ -114,10 +120,20 @@ pub(crate) async fn unbound_phone_needs_removal(db: &DatabaseConnection) -> AppR
     let activated = crate::commands::product_license::get_activation_claim_tenant_id(db)
         .await?
         .is_some();
-    Ok(activated
-        && crate::commands::product_license::mobile_enrolment_binding(db)
+    if !activated
+        || crate::commands::product_license::mobile_enrolment_binding(db)
             .await?
-            .is_none())
+            .is_some()
+    {
+        return Ok(false);
+    }
+    // A record read only through the legacy fallback has lost any binding it held: whether this
+    // phone is bound is unknown, so it is never erased for it.
+    if crate::commands::product_license::licence_record_is_legacy(db).await? {
+        tracing::error!(target: "maintafox::sync", "licence record readable only in its legacy form: no unbound-phone removal");
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// [`enforce_phone_sign_in`] with the platform given (`is_phone`), for tests on any host.
@@ -129,9 +145,9 @@ pub(crate) async fn enforce_phone_sign_in_on(db: &DatabaseConnection, user_id: i
         .await?
         .is_some();
     let binding = crate::commands::product_license::mobile_enrolment_binding(db).await?;
-    let removal_pending = removal::pending(db).await?.is_some();
+    let pending = removal::pending(db).await?.map(|removal| removal.kind);
     let sync_id = user_sync_id(db, user_id).await?;
-    match phone_sign_in(activated, binding.as_ref(), removal_pending, sync_id.as_deref()) {
+    match phone_sign_in(activated, binding.as_ref(), pending, sync_id.as_deref()) {
         PhoneSignIn::Allowed => Ok(()),
         PhoneSignIn::AssignedToOther { person_label } => {
             tracing::warn!(user_id, "login::phone_assigned_to_other_person");
@@ -143,7 +159,10 @@ pub(crate) async fn enforce_phone_sign_in_on(db: &DatabaseConnection, user_id: i
         }
         PhoneSignIn::NotEnrolled => {
             if let Some(kind) = unbound_phone_removal() {
-                removal::record(db, kind).await?;
+                // Only when the binding is known to be absent (`unbound_phone_needs_removal`).
+                if unbound_phone_needs_removal(db).await? {
+                    removal::record(db, kind).await?;
+                }
             }
             tracing::warn!(user_id, "login::phone_not_enrolled");
             Err(phone_refusal(
@@ -155,6 +174,10 @@ pub(crate) async fn enforce_phone_sign_in_on(db: &DatabaseConnection, user_id: i
         PhoneSignIn::RemovalInProgress => Err(phone_refusal(
             PHONE_REMOVAL_IN_PROGRESS,
             "Ce téléphone envoie son travail en attente puis s'efface : la connexion est impossible.",
+        )),
+        PhoneSignIn::Locked => Err(phone_refusal(
+            PHONE_LOCKED,
+            "Ce téléphone est bloqué : le serveur l'a refusé sans confirmation. Les données sont conservées.              Contactez votre administrateur.",
         )),
     }
 }

@@ -21,9 +21,20 @@ function phoneRefusal(code: string, params: Record<string, string> = {}) {
   };
 }
 
+function bootstrap(phoneBinding: { person_label: string; site_label: string } | null) {
+  return () => ({
+    tenant_id: "tenant-1",
+    company_display_name: "Usine",
+    has_tenant_admin: true,
+    plant_join: "sign_in",
+    phone_binding: phoneBinding,
+  });
+}
+
 async function signIn(error: unknown, language: "fr" | "en" = "fr") {
   mockInvoke.mockImplementation(
     ipcAnswering({
+      get_activation_bootstrap_state: bootstrap(null),
       login: () => {
         throw error;
       },
@@ -94,6 +105,43 @@ describe("every refusal code has a text", () => {
       }
     },
   );
+});
+
+describe("the phone's person before sign-in", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("an enrolled phone names its person and site, never an id", async () => {
+    mockInvoke.mockImplementation(
+      ipcAnswering({
+        get_activation_bootstrap_state: bootstrap({
+          person_label: "Amina Benali",
+          site_label: "Usine Nord",
+        }),
+      }),
+    );
+    renderMobile(<SignInScreen onSignedIn={() => undefined} />);
+    expect(await screen.findByText("Téléphone de Amina Benali — Usine Nord")).toBeInTheDocument();
+  });
+
+  it("a phone without binding keeps the usual subtitle", async () => {
+    mockInvoke.mockImplementation(
+      ipcAnswering({ get_activation_bootstrap_state: bootstrap(null) }),
+    );
+    renderMobile(<SignInScreen onSignedIn={() => undefined} />);
+    expect(
+      await screen.findByText("Connectez-vous avec votre compte Maintafox."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Téléphone de/)).toBeNull();
+  });
+
+  it("a locked phone refuses sign-in and says the data is kept", async () => {
+    await signIn(phoneRefusal("PHONE_LOCKED"));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Ce téléphone est bloqué : le serveur l'a refusé sans confirmation. Les données sont conservées. Contactez votre administrateur.",
+    );
+  });
 });
 
 describe("typed enrolment code", () => {

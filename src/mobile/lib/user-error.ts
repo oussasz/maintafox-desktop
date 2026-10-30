@@ -43,6 +43,7 @@ export type UserErrorKind =
   | "phoneAssigned"
   | "phoneNotEnrolled"
   | "phoneRemovalInProgress"
+  | "phoneLocked"
   | "generic";
 
 export interface UserError {
@@ -122,6 +123,7 @@ const ENROLMENT_CODES: Record<string, UserErrorKind> = {
   PHONE_ASSIGNED_TO_OTHER_PERSON: "phoneAssigned",
   PHONE_NOT_ENROLLED: "phoneNotEnrolled",
   PHONE_REMOVAL_IN_PROGRESS: "phoneRemovalInProgress",
+  PHONE_LOCKED: "phoneLocked",
 };
 
 /** The first entry of the engine's `details` (its rule code and parameters), when there is one. */

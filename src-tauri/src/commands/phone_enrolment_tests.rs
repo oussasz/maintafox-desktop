@@ -228,7 +228,14 @@ async fn a_redeemed_qr_activates_the_phone_bound_to_its_person_without_a_licence
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].path, REDEEM_PATH);
     assert_eq!(requests[0].authorization, None);
-    let body: Value = serde_json::from_str(&requests[0].body).expect("body");
+    let mut body: Value = serde_json::from_str(&requests[0].body).expect("body");
+    let nonce = body
+        .as_object_mut()
+        .and_then(|b| b.remove("redeem_nonce"))
+        .and_then(|n| n.as_str().map(str::to_string))
+        .expect("redeem_nonce");
+    assert_eq!(nonce.len(), 43, "32 random bytes, base64url");
+    assert!(nonce.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     assert_eq!(
         body,
         json!({
@@ -405,4 +412,91 @@ async fn the_binding_survives_a_licence_refresh_and_goes_with_the_reset() {
     reset_to_first_run_in(&db, &session, "test").await.expect("reset");
     assert_eq!(mobile_enrolment_binding(&db).await.expect("binding"), None);
     assert!(load_state_record_from_db(&db).await.expect("load").is_none());
+}
+
+// ── A lost answer ───────────────────────────────────────────────────────────────────────────────
+
+fn sent_nonce(stub: &super::super::policy_refresh_tests::Stub) -> Vec<String> {
+    stub.requests()
+        .iter()
+        .map(|r| {
+            serde_json::from_str::<Value>(&r.body).expect("body")["redeem_nonce"]
+                .as_str()
+                .expect("nonce")
+                .to_string()
+        })
+        .collect()
+}
+
+async fn kept_nonce(db: &sea_orm::DatabaseConnection) -> Option<String> {
+    crate::settings::get_setting(db, REDEEM_NONCE_KEY, REDEEM_NONCE_SCOPE)
+        .await
+        .expect("read")
+        .map(|row| row.setting_value_json)
+}
+
+/// The answer is lost (no answer, then a server failure): nothing was recorded, so a retry of the
+/// same secret is allowed, sends the same nonce (the server's replay key), and completes normally.
+#[tokio::test]
+async fn a_retry_after_a_lost_answer_sends_the_same_secret_and_nonce_and_completes() {
+    let db = crate::db::test_db::seeded().await;
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
+    let unreachable = format!("http://{}", probe.local_addr().expect("addr"));
+    drop(probe);
+    let err = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &unreachable, &qr(&unreachable), &phone())
+        .await
+        .expect_err("offline");
+    assert_eq!(code_of(&err), ENROLMENT_OFFLINE);
+    assert!(kept_nonce(&db).await.is_some(), "nonce kept for the retry");
+
+    let failing = start_stub(503, json!({ "error": "internal_error" }).to_string()).await;
+    let err = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &failing.base_url, &qr(&failing.base_url), &phone())
+        .await
+        .expect_err("server failure");
+    assert_eq!(code_of(&err), ENROLMENT_SERVER_UNAVAILABLE);
+    assert!(
+        load_state_record_from_db(&db).await.expect("load").is_none(),
+        "nothing recorded"
+    );
+
+    let replay = start_stub(200, redeem_answer().to_string()).await;
+    let redeemed = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &replay.base_url, &qr(&replay.base_url), &phone())
+        .await
+        .expect("the replay completes");
+    assert_eq!(redeemed.person_label, "Amina Benali");
+    let first = sent_nonce(&failing);
+    let second = sent_nonce(&replay);
+    assert_eq!(first, second, "the same nonce on every retry of the same secret");
+    let body: Value = serde_json::from_str(&replay.requests()[0].body).expect("body");
+    assert_eq!(body["token"], TOKEN, "the same secret");
+    assert_eq!(kept_nonce(&db).await, None, "forgotten once enrolled");
+}
+
+#[tokio::test]
+async fn a_definitive_refusal_forgets_the_nonce_and_another_secret_gets_its_own() {
+    let db = crate::db::test_db::seeded().await;
+    let refused = start_stub(404, json!({ "error": "enrolment_invalid" }).to_string()).await;
+    let err = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &refused.base_url, &qr(&refused.base_url), &phone())
+        .await
+        .expect_err("refused");
+    assert_eq!(code_of(&err), ENROLMENT_INVALID);
+    assert_eq!(kept_nonce(&db).await, None);
+
+    let failing = start_stub(503, json!({ "error": "internal_error" }).to_string()).await;
+    let _ = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &failing.base_url, &qr(&failing.base_url), &phone()).await;
+    let _ = redeem_mobile_enrolment_in(&db, SIGNED_OUT, &failing.base_url, &typed("7K3M-9P2Q"), &phone()).await;
+    let nonces = sent_nonce(&failing);
+    assert_eq!(nonces.len(), 2);
+    assert_ne!(nonces[0], nonces[1], "each secret has its own nonce");
+    assert_ne!(sent_nonce(&refused)[0], nonces[0], "a new attempt after a refusal");
+}
+
+#[test]
+fn debug_never_shows_the_nonce() {
+    let kept = RedeemNonce {
+        secret_sha256: "h".into(),
+        nonce: "N0nce-value-never-shown".into(),
+        created_at: "2026-10-29T08:00:00Z".into(),
+    };
+    assert!(!format!("{kept:?}").contains("N0nce-value-never-shown"));
 }

@@ -41,6 +41,10 @@ pub enum TransportError {
         code: Option<String>,
         message: String,
         retry_after: Option<Duration>,
+        /// `403 activation_revoked` carrying the licence server's explicit erase marker
+        /// (`wipe: "without_upload"`): its `reason` (`removal::WIPE_REASONS`). `None` for every other
+        /// answer, a plain `activation_revoked` included (`sync::transport::removal`).
+        wipe_without_upload: Option<String>,
     },
     /// The server answered 2xx with a body that does not follow the contract.
     Contract(String),
@@ -142,7 +146,7 @@ fn map_send_error(err: &reqwest::Error) -> TransportError {
     }
 }
 
-fn http_error(status: u16, text: &str, retry_after: Option<Duration>) -> TransportError {
+pub(crate) fn http_error(status: u16, text: &str, retry_after: Option<Duration>) -> TransportError {
     let parsed: Option<ErrorBody> = serde_json::from_str(text).ok();
     let code = parsed
         .as_ref()
@@ -156,11 +160,13 @@ fn http_error(status: u16, text: &str, retry_after: Option<Duration>) -> Transpo
                 .or_else(|| b.details.as_ref().map(serde_json::Value::to_string))
         })
         .unwrap_or_else(|| text.chars().take(800).collect());
+    let wipe_without_upload = super::removal::wipe_marker_of_body(status, text);
     TransportError::Http {
         status,
         code,
         message,
         retry_after,
+        wipe_without_upload,
     }
 }
 
@@ -192,7 +198,11 @@ impl ControlPlaneClient {
                 .parse()
                 .map_err(|e| format!("{e}"))?,
         );
+        // No redirect is followed: a request (a redeem body with its one-time secret, a bearer
+        // token) is never resent to another address than the one it was built for. No control API
+        // route redirects, and presigned object storage URLs answer directly.
         let builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .default_headers(headers)
             .connect_timeout(timeouts.connect)
             .timeout(timeouts.request);
@@ -409,19 +419,24 @@ impl ControlPlaneClient {
             }),
             message: text.chars().take(800).collect(),
             retry_after,
+            wipe_without_upload: None,
         })
     }
 
-    /// Upload bytes to a presigned object storage URL (no bearer token: the URL is the credential).
-    pub async fn put_object(&self, url: &str, bytes: Vec<u8>) -> Result<(), TransportError> {
-        let response = self
-            .http
-            .put(url)
-            .timeout(self.media_transfer_timeout)
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| map_send_error(&e))?;
+    /// Upload bytes to a presigned object storage URL (no bearer token: the URL is the credential),
+    /// with exactly the `headers` the presign answer listed (signed with the URL; none for a
+    /// desktop).
+    pub async fn put_object(
+        &self,
+        url: &str,
+        bytes: Vec<u8>,
+        headers: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), TransportError> {
+        let mut request = self.http.put(url).timeout(self.media_transfer_timeout);
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let response = request.body(bytes).send().await.map_err(|e| map_send_error(&e))?;
         let status = response.status();
         if status.is_success() {
             return Ok(());
@@ -433,6 +448,7 @@ impl ControlPlaneClient {
             code: Some("object_storage_put_failed".to_string()),
             message: text.chars().take(800).collect(),
             retry_after,
+            wipe_without_upload: None,
         })
     }
 }
