@@ -1849,7 +1849,11 @@ pub async fn generate_budget_forecasts(
     let idempotency_key = required_trimmed("Idempotency key", &input.idempotency_key)?;
     let scope_signature = required_trimmed("Scope signature", &input.scope_signature)?;
 
-    if let Some(existing_row) = db
+    // The run and its forecast lines land together: a failure part-way never leaves a partial run
+    // that a retry with the same idempotency key would then return as if complete. The key lookup
+    // is inside the transaction too, so two identical requests reuse one run instead of colliding.
+    let txn = db.begin().await?;
+    if let Some(existing_row) = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM budget_forecast_runs WHERE idempotency_key = ?",
@@ -1858,6 +1862,8 @@ pub async fn generate_budget_forecasts(
         .await?
     {
         let run = map_forecast_run(&existing_row)?;
+        // Release the (single pooled) connection before reading through `db`.
+        txn.commit().await?;
         let forecasts = list_budget_forecasts(
             db,
             BudgetForecastFilter {
@@ -1884,9 +1890,6 @@ pub async fn generate_budget_forecasts(
         include_pm, include_backlog, include_shutdown, include_planning, include_burn_rate
     );
 
-    // The run and its forecast lines land together: a failure part-way never leaves a partial run
-    // that a retry with the same idempotency key would then return as if complete.
-    let txn = db.begin().await?;
     let insert_result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

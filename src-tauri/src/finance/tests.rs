@@ -975,6 +975,38 @@ async fn forecast_generation_is_idempotent_and_commitments_stay_separate() {
     .await
     .expect("list forecasts");
     assert!(!forecasts.is_empty());
+
+    // A forecast line that fails to save leaves no run behind (a retry would otherwise reuse it).
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER fail_forecast BEFORE INSERT ON budget_forecasts
+         BEGIN SELECT RAISE(ABORT, 'forced forecast failure'); END",
+    ))
+    .await
+    .expect("create failing trigger");
+    queries::generate_budget_forecasts(
+        &db,
+        1,
+        GenerateBudgetForecastInput {
+            budget_version_id: version.id,
+            idempotency_key: "fy29-full-v2".to_string(),
+            scope_signature: "fy29:all".to_string(),
+            period_month_start: None,
+            period_month_end: None,
+            include_pm_occurrence: Some(true),
+            include_backlog_demand: Some(true),
+            include_shutdown_demand: Some(true),
+            include_planning_demand: Some(true),
+            include_burn_rate: Some(false),
+            confidence_policy_json: None,
+        },
+    )
+    .await
+    .expect_err("a failed forecast line fails the run");
+    let runs = queries::list_forecast_runs(&db, Some(version.id))
+        .await
+        .expect("list runs");
+    assert_eq!(runs.len(), 1, "no partial run is left behind");
 }
 
 #[tokio::test]
@@ -1140,6 +1172,28 @@ async fn variance_review_lifecycle_enforces_driver_taxonomy_and_duplicate_scope_
     .await
     .expect("list variance reviews");
     assert_eq!(listed.len(), 1);
+
+    // The UPDATE matches no row (another writer won the race): refused, not reported as saved.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER lost_race BEFORE UPDATE ON budget_variance_reviews
+         BEGIN SELECT RAISE(IGNORE); END",
+    ))
+    .await
+    .expect("create lost-race trigger");
+    let err = queries::transition_budget_variance_review(
+        &db,
+        TransitionBudgetVarianceReviewInput {
+            review_id: reopened.id,
+            expected_row_version: reopened.row_version,
+            next_status: "in_review".to_string(),
+            review_commentary: None,
+            reopen_reason: None,
+        },
+    )
+    .await
+    .expect_err("an update that matched nothing is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
 }
 
 #[tokio::test]
@@ -1471,7 +1525,7 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
     .await
     .expect("freeze");
 
-    queries::create_budget_alert_config(
+    let config = queries::create_budget_alert_config(
         &db,
         CreateBudgetAlertConfigInput {
             budget_version_id: Some(version.id),
@@ -1537,6 +1591,27 @@ async fn budget_alert_threshold_dedupe_and_ack_flow_are_governed() {
     .await
     .expect("ack");
     assert!(acknowledged.acknowledged_at.is_some());
+
+    // The UPDATE matches no row (another writer won the race): refused and rolled back.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "CREATE TEMP TRIGGER lost_race BEFORE UPDATE ON budget_alert_configs
+         BEGIN SELECT RAISE(IGNORE); END",
+    ))
+    .await
+    .expect("create lost-race trigger");
+    let err = queries::update_budget_alert_config(
+        &db,
+        config.id,
+        config.row_version,
+        crate::finance::domain::UpdateBudgetAlertConfigInput {
+            threshold_pct: Some(90.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("an update that matched nothing is refused");
+    assert!(is_gate(&err, "GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
 }
 
 #[tokio::test]
