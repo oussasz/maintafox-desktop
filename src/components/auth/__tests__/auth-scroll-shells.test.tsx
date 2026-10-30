@@ -24,6 +24,9 @@ function expectScrollableCentred(className: string) {
   expect(classes).toContain("before:flex-1");
   expect(classes).toContain("after:flex-1");
   expect(classes).not.toContain("justify-center");
+  // A card with `overflow-hidden` would otherwise shrink to the window height and clip its own
+  // content (continue / revoke buttons out of reach) instead of letting the shell scroll.
+  expect(classes).toContain("[&>*]:shrink-0");
 }
 
 describe("pre-login full-screen shells", () => {

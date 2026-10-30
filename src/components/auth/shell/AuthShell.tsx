@@ -20,7 +20,7 @@ export interface AuthShellProps {
 /**
  * Page layout for sign-in and licence activation: an installer-style card with a navy brand band
  * (logo and product name), and a quiet footer (security note + language switch). The window itself
- * is compact and fixed-size while these screens are shown (`useCompactAuthWindow`). The page
+ * starts compact (and can be resized or maximised) while these screens are shown (`useCompactAuthWindow`). The page
  * still scrolls on short windows or large display zoom, and every control is at least 44 px tall.
  */
 export function AuthShell({ children, width = "sm", cardClassName }: AuthShellProps) {
