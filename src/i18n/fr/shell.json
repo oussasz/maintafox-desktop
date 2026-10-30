@@ -482,6 +482,8 @@
   },
   "startup": {
     "loading": "Démarrage en cours…",
+    "stalledTitle": "Le démarrage prend plus de temps que prévu",
+    "stalledBody": "Maintafox n’a pas encore terminé de démarrer. Une opération longue (par exemple une synchronisation volumineuse) peut occuper la base de données. Patientez, ou cliquez sur « Réessayer ».",
     "errorTitle": "Erreur de démarrage",
     "retry": "Réessayer",
     "dbRecovery": {

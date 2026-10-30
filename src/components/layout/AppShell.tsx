@@ -31,6 +31,7 @@ export function AppShell({ children }: AppShellProps) {
   const { t } = useTranslation("shell");
   const appStatus = useAppStore((s) => s.appStatus);
   const startupMsg = useAppStore((s) => s.startupMessage);
+  const startupStalled = useAppStore((s) => s.startupStalled);
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
   const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
@@ -71,6 +72,18 @@ export function AppShell({ children }: AppShellProps) {
   // Idle lock: real keyboard/mouse input keeps the session open; with none for the idle timeout
   // the lock screen shows, whatever background polls run.
   useIdleLock();
+
+  if (appStatus === "loading" && startupStalled) {
+    return (
+      <div className={mfAuth.startupShell} role="alert">
+        <p className="text-lg font-semibold text-text-primary">{t("startup.stalledTitle")}</p>
+        <p className="text-sm text-text-secondary max-w-md">{t("startup.stalledBody")}</p>
+        <button className="btn-primary mt-2" onClick={() => window.location.reload()}>
+          {t("startup.retry")}
+        </button>
+      </div>
+    );
+  }
 
   if (appStatus === "loading") {
     return (
