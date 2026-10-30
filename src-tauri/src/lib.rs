@@ -28,6 +28,8 @@ pub mod clock;
 pub mod commands;
 pub mod data_integrity;
 pub mod db;
+#[cfg(feature = "demo-company")]
+pub mod demo_company;
 pub mod di;
 pub mod diagnostics;
 pub mod entitlements;

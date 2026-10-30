@@ -82,6 +82,11 @@ webpki-roots = "1"
 name = "rams-readiness-eval"
 path = "src/bin/rams_readiness_eval.rs"
 
+[[bin]]
+name = "demo-company"
+path = "src/bin/demo_company.rs"
+required-features = ["demo-company"]
+
 [features]
 # Developer-only: the demo-company generator (src/bin/demo_company.rs) and the simulated clock it
 # drives (src/clock.rs). The shipped app is never built with it.
