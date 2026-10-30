@@ -303,8 +303,13 @@ pub(crate) fn same_company(a: &str, b: &str) -> bool {
 ///
 /// A stored checkpoint alone is accepted: with a licence that syncs, the first administrator can be
 /// created only after a complete pull confirmed that the organisation has no account on the server
-/// (`sync::plant_join`), so every onboarded database has one. Rows that such a pull applied land in
-/// the company tables, which [`ensure_no_business_data`] checks right after.
+/// (`sync::plant_join`), so every onboarded database has one.
+///
+/// What proves that nothing was received is the inbox: every received row is stored in
+/// `sync_inbox` (or `sync_conflicts` when invalid) and stays there once applied, deferred or
+/// rejected. [`ensure_no_business_data`] alone would not see every received row, since several
+/// synced tables (positions, lookup values, role permissions…) are in `SYSTEM_TABLES`. A future
+/// clean-up of applied inbox rows must come back to this guard.
 pub async fn ensure_no_received_sync_data(db: &DatabaseConnection) -> AppResult<()> {
     let mut found = Vec::new();
     for (table, label) in [
