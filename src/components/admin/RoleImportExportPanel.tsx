@@ -23,8 +23,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { gateSentenceText } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason, gateSentenceText } from "@/lib/app-error";
 import { usePermissionText } from "@/lib/permission-labels";
 import {
   exportRoleModel,
@@ -114,9 +114,10 @@ export function RoleImportExportPanel() {
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: t("importExport.export.success", "Export completed"), variant: "success" });
-    } catch {
+    } catch (err) {
       toast({
         title: t("importExport.errors.exportFailed", "Failed to export"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -198,9 +199,11 @@ export function RoleImportExportPanel() {
         variant: "success",
       });
       void fetchRoles();
-    } catch {
+    } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
         title: t("importExport.errors.importFailed", "Failed to import"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     } finally {
