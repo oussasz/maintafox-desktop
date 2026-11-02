@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { RoleEditorPanel } from "@/components/admin/RoleEditorPanel";
 import type { RoleEditorCatalog, RoleWithPermissions } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -88,5 +89,263 @@ describe("RoleEditorPanel unsaved changes", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "console.roleEditor.discardChanges" }));
     await waitFor(() => expect(router.state.location.search).toBe("?tab=users"));
+  });
+
+  it("asks before creating another role with unsaved ticks, and keeps them on Cancel", async () => {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.change(await screen.findByLabelText("roles.fields.description"), {
+      target: { value: "Plans and schedules the work" },
+    });
+    // The save bar is there while something is unsaved.
+    expect(screen.getByRole("region", { name: "console.roleEditor.saveBar" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /console\.roleEditor\.new/ }));
+    expect(await screen.findByText("console.roleEditor.unsavedNewBody")).toBeInTheDocument();
+    // The create dialog waits for the answer.
+    expect(screen.queryByText("roles.create.title")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByText("console.roleEditor.unsavedNewBody")).toBeNull());
+    expect(screen.getByLabelText("roles.fields.description")).toHaveValue(
+      "Plans and schedules the work",
+    );
+  });
+});
+
+describe("RoleEditorPanel whole-group switch", () => {
+  const PERMS: RoleEditorCatalog = {
+    permissions: [
+      {
+        id: 1,
+        name: P.DOC_VIEW,
+        description: "View docs",
+        category: "doc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 2,
+        name: P.DOC_MANAGE,
+        description: "Edit docs",
+        category: "doc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+    ],
+    dependencies: [],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(PERMS);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+    svc.updateRole.mockResolvedValue(undefined);
+  });
+
+  it("ticks every right of the group at once, saved as one change", async () => {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "console.roleEditor.wholeGroupToggle" }),
+    );
+
+    const switches = screen.getAllByRole("switch", { name: "roles.togglePermission" });
+    expect(switches.every((s) => s.getAttribute("aria-checked") === "true")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "console.roleEditor.save" }));
+    await waitFor(() => expect(svc.updateRole).toHaveBeenCalled());
+    const input = svc.updateRole.mock.calls[0]?.[0] as { add_permissions: string[] };
+    expect([...input.add_permissions].sort()).toEqual([P.DOC_MANAGE, P.DOC_VIEW]);
+  });
+});
+
+describe("RoleEditorPanel prerequisites (L5-06)", () => {
+  const perm = (id: number, name: string) => ({
+    id,
+    name,
+    description: name,
+    category: name.split(".")[0] ?? name,
+    is_dangerous: false,
+    requires_step_up: false,
+    is_system: true,
+  });
+  const CAT: RoleEditorCatalog = {
+    permissions: [
+      perm(1, P.DOC_VIEW),
+      perm(2, P.DOC_MANAGE),
+      perm(3, P.DI_VIEW),
+      perm(4, P.DI_REVIEW),
+      perm(5, P.DI_APPROVE),
+    ],
+    dependencies: [
+      {
+        id: 1,
+        permission_name: P.DOC_MANAGE,
+        required_permission_name: P.DOC_VIEW,
+        dependency_type: "hard",
+      },
+      {
+        id: 2,
+        permission_name: P.DI_APPROVE,
+        required_permission_name: P.DI_REVIEW,
+        dependency_type: "hard",
+      },
+    ],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(CAT);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+  });
+
+  async function openRole() {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    return await screen.findAllByRole("switch", { name: "roles.togglePermission" });
+  }
+
+  it("ticks the view right a right needs, says why, and never ticks an approval prerequisite", async () => {
+    await openRole();
+    const row = (name: string) =>
+      screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
+    const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
+
+    fireEvent.click(toggleOf(P.DOC_MANAGE));
+    expect(toggleOf(P.DOC_VIEW).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("console.roleEditor.autoAdded")).toBeInTheDocument();
+
+    fireEvent.click(toggleOf(P.DI_APPROVE));
+    expect(toggleOf(P.DI_REVIEW).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("console.roleEditor.notAddedTitle")).toBeInTheDocument();
+  });
+
+  it("warns when a prerequisite is unticked, and leaves the right that needs it ticked", async () => {
+    await openRole();
+    const row = (name: string) =>
+      screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
+    const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
+
+    fireEvent.click(toggleOf(P.DOC_MANAGE));
+    fireEvent.click(toggleOf(P.DOC_VIEW));
+    expect(toggleOf(P.DOC_VIEW).getAttribute("aria-checked")).toBe("false");
+    expect(toggleOf(P.DOC_MANAGE).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("console.roleEditor.dependentsTitle")).toBeInTheDocument();
+  });
+});
+
+describe("RoleEditorPanel whole-group switch and sensitive rights (SF-2)", () => {
+  const CAT: RoleEditorCatalog = {
+    permissions: [
+      {
+        id: 1,
+        name: P.ARC_VIEW,
+        description: "Browse",
+        category: "arc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 2,
+        name: P.ARC_EXPORT,
+        description: "Export",
+        category: "arc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 3,
+        name: P.ARC_PURGE,
+        description: "Purge",
+        category: "arc",
+        is_dangerous: true,
+        requires_step_up: true,
+        is_system: true,
+      },
+    ],
+    dependencies: [],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(CAT);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+  });
+
+  async function clickWholeGroup() {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "console.roleEditor.wholeGroupToggle" }),
+    );
+  }
+  const checked = () =>
+    screen
+      .getAllByRole("switch", { name: "roles.togglePermission", hidden: true })
+      .map((s) => s.getAttribute("aria-checked"));
+
+  it("ticks the others, leaves a flagged right unticked and asks for it", async () => {
+    await clickWholeGroup();
+    expect(checked()).toEqual(["true", "true", "false"]);
+    expect(await screen.findByText("console.roleEditor.sensitiveGroupTitle")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "console.roleEditor.sensitiveGroupKeepOut" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("console.roleEditor.sensitiveGroupTitle")).toBeNull(),
+    );
+    expect(checked()).toEqual(["true", "true", "false"]);
+  });
+
+  it("ticks the flagged right only when the user confirms", async () => {
+    await clickWholeGroup();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "console.roleEditor.sensitiveGroupConfirm" }),
+    );
+    await waitFor(() => expect(checked()).toEqual(["true", "true", "true"]));
   });
 });

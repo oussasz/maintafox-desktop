@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { mfAlert, mfInput, mfTable } from "@/design-system/tokens";
 import { i18n } from "@/i18n";
 import { appErrorReason } from "@/lib/app-error";
+import { roleLabel } from "@/lib/role-labels";
 import { cn } from "@/lib/utils";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -237,7 +238,7 @@ export function ProfileSettingsPanel() {
             {profile.display_name ?? profile.username}
           </h2>
           <p className="text-sm text-text-secondary">
-            {profile.role_name ?? "—"} · {profile.email ?? "—"}
+            {profile.role_name ? roleLabel(t, profile.role_name) : "—"} · {profile.email ?? "—"}
           </p>
           <p className="text-xs text-text-muted">
             {t("profile.memberSince", "Member since")} {formatDate(profile.created_at)}

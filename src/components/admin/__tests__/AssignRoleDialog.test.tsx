@@ -77,13 +77,13 @@ describe("AssignRoleDialog replacement warning (plant-wide, the default target)"
 
   it("names every plant-wide role, whatever reference each was recorded with", () => {
     renderDialog([
-      role("Administrator", "tenant", "plant-01"),
+      role("Plant lead", "tenant", "plant-01"),
       role("Reader", "tenant", null),
       role("Site tech", "org_node", "5"),
     ]);
     const status = screen.getByRole("status");
     expect(status.textContent).toContain("console.assign.replacesMany");
-    expect(status.textContent).toContain("Administrator, Reader");
+    expect(status.textContent).toContain("Plant lead, Reader");
     expect(status.textContent).not.toContain("Site tech");
   });
 
