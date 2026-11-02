@@ -125,7 +125,7 @@
       "capabilitiesLabel": "Capabilities",
       "noCaps": "No capabilities assigned",
       "noResponsibilities": "No active responsibilities",
-      "noBindings": "No external link. A link ties this unit to its code in another system (ERP, accounting, former CMMS) and is used for data exchange with it. Nothing to do here if you don't use one.",
+      "noBindings": "No external link. A link keeps the match between this unit and its code in another system (ERP, accounting, former CMMS). Nothing to do here if you don't use one.",
       "noEquipment": "No equipment assigned to this node",
       "equipSearchPlaceholder": "Search equipment to assign…",
       "searching": "Searching…",
