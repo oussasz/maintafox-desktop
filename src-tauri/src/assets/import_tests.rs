@@ -1147,5 +1147,7 @@ mod tests {
         // A comma inside quotes must not beat the real separator.
         assert_eq!(import::detect_csv_delimiter(b"\"a,b,c\";nom\n"), b';');
         assert_eq!(import::detect_csv_delimiter(b"code\nA\n"), b',');
+        // On a tie the French Excel separator wins.
+        assert_eq!(import::detect_csv_delimiter(b"a;b,c\n"), b';');
     }
 }
