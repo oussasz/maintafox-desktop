@@ -23,7 +23,7 @@ function text(value: string | null | undefined): string {
 export interface WorkOrderExportLabels {
   statusLabel: (code: string) => string;
   lifecycleLabel: (code: string) => string | null;
-  typeLabel: (code: string, fallback: string | null | undefined) => string;
+  typeLabel: (code: string | null | undefined, fallback: string | null | undefined) => string;
   /** ISO date to the date the screen shows. */
   formatDate: (iso: string) => string;
 }

@@ -42,7 +42,7 @@ describe("workOrderExportRows", () => {
       {
         statusLabel: (c) => ({ in_progress: "En cours", draft: "Brouillon" })[c] ?? c,
         lifecycleLabel: (c) => (c === "executing" ? "Exécution" : null),
-        typeLabel: (c, f) => f ?? (c === "preventive" ? "Préventive" : c),
+        typeLabel: (c, f) => f ?? (c === "preventive" ? "Préventive" : (c ?? "")),
         formatDate: () => "05/11/2026",
       },
     );
