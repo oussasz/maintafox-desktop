@@ -51,6 +51,17 @@ export function PositionCombobox({
     void loadPositions();
   }, [loadPositions]);
 
+  // The position's name is what people read; the code only tells apart two positions that share a name.
+  const duplicateNames = useMemo(() => {
+    const seen = new Set<string>();
+    const dup = new Set<string>();
+    for (const p of positions) {
+      if (seen.has(p.name)) dup.add(p.name);
+      seen.add(p.name);
+    }
+    return dup;
+  }, [positions]);
+
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return positions.slice(0, 150);
@@ -94,7 +105,7 @@ export function PositionCombobox({
             <option value="">—</option>
             {listWithSelected.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.code} — {p.name}
+                {duplicateNames.has(p.name) ? `${p.name} (${p.code})` : p.name}
               </option>
             ))}
           </select>

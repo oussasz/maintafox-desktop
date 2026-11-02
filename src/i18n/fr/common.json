@@ -180,7 +180,7 @@
     "clearSearch": "Effacer la recherche",
     "removeFilter": "Retirer le filtre {{label}}",
     "searchChip": "Recherche : {{query}}",
-    "addFilter": "Ajouter…",
+    "addFilter": "Choisir…",
     "noMoreOptions": "Plus d’options"
   },
   "assetPicker": {

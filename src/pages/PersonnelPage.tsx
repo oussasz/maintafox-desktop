@@ -277,7 +277,7 @@ export function PersonnelPage() {
               label: t("filters.position"),
               options: positions.map((p) => ({
                 value: String(p.id),
-                label: `${p.code} — ${p.name}`,
+                label: p.name,
               })),
               value: positionValue,
               onChange: handlePositionFilter,

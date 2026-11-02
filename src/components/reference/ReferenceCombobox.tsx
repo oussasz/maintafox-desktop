@@ -14,11 +14,11 @@ import { useTranslation } from "react-i18next";
 
 import { ReferenceCreateModal } from "@/components/reference/ReferenceCreateModal";
 import {
+  type ReferenceTypeId,
   addOptionLabel,
   createButtonLabel,
   emptyStateLabel,
   getReferenceTypeConfig,
-  type ReferenceTypeId,
 } from "@/components/reference/reference-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,7 +98,7 @@ export function ReferenceCombobox({
   const [caps, setCaps] = useState<ReferenceGovernanceCapabilities | null>(null);
   const [resolvedParentId, setResolvedParentId] = useState<number | null>(null);
   const [resolvedParentLabel, setResolvedParentLabel] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -182,6 +182,14 @@ export function ReferenceCombobox({
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
+
+  // A list that is still empty when opened is asked again (a first load that was dropped or
+  // answered before the values existed must not read as "nothing to choose").
+  const itemsEmptyRef = useRef(true);
+  itemsEmptyRef.current = items.length === 0;
+  useEffect(() => {
+    if (open && itemsEmptyRef.current) void loadItems();
+  }, [open, loadItems]);
 
   useEffect(() => {
     if (!open) return;
