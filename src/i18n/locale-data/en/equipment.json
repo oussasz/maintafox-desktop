@@ -488,7 +488,9 @@
       "title": "Upload a CSV File",
       "description": "Select a CSV file containing the equipment records to import.",
       "hint": "Drag a CSV file here or click to browse.",
-      "selectFile": "Choose File"
+      "selectFile": "Choose File",
+      "template": "Download the template (Excel/CSV)",
+      "columnsHelp": "Expected columns: {{columns}}. The \";\" (French Excel) or \",\" separator is detected automatically."
     },
     "validate": {
       "title": "Data Validation",
@@ -508,7 +510,8 @@
         "action": "Action",
         "messages": "Messages"
       },
-      "includeWarnings": "Include rows with warnings"
+      "includeWarnings": "Include rows with warnings",
+      "nothingToImport": "No row can be imported: fix the file following the messages above, then run the import again."
     },
     "apply": {
       "confirmTitle": "Apply the import?",

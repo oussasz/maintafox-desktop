@@ -488,7 +488,9 @@
       "title": "Téléverser un fichier CSV",
       "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
       "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
-      "selectFile": "Choisir un fichier"
+      "selectFile": "Choisir un fichier",
+      "template": "Télécharger le modèle (Excel/CSV)",
+      "columnsHelp": "Colonnes attendues : {{columns}}. Le séparateur « ; » (Excel français) ou « , » est reconnu automatiquement."
     },
     "validate": {
       "title": "Validation des données",
@@ -508,7 +510,8 @@
         "action": "Action",
         "messages": "Messages"
       },
-      "includeWarnings": "Inclure les lignes avec avertissements"
+      "includeWarnings": "Inclure les lignes avec avertissements",
+      "nothingToImport": "Aucune ligne ne peut être importée : corrigez le fichier selon les messages ci-dessus, puis relancez l'import."
     },
     "apply": {
       "confirmTitle": "Appliquer l'import ?",

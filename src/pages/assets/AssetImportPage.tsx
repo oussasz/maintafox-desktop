@@ -9,6 +9,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileUp,
   Loader2,
   Play,
@@ -43,8 +44,41 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Tone } from "@/design-system/tone";
+import { saveCsvWithDialog } from "@/export/csv";
 import { cn } from "@/lib/utils";
 import { useAssetImportStore, type ImportStep } from "@/stores/asset-import-store";
+
+// ── Template (French column names; the importer also reads the English ones) ──
+
+const ASSET_TEMPLATE_FILE = "modele-import-equipements.csv";
+const ASSET_TEMPLATE_HEADER = [
+  "code_equipement",
+  "nom",
+  "classe",
+  "famille",
+  "criticite",
+  "statut",
+  "emplacement",
+  "parent",
+  "fabricant",
+  "modele",
+  "numero_serie",
+  "date_mise_en_service",
+];
+const ASSET_TEMPLATE_EXAMPLE = [
+  "POMPE-001",
+  "Pompe de circulation",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+];
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
@@ -142,7 +176,7 @@ function UploadStep() {
           <input
             ref={inputRef}
             type="file"
-            accept=".csv"
+            accept=".csv,.txt"
             className="hidden"
             onChange={handleFileChange}
             data-testid="file-input"
@@ -151,6 +185,22 @@ function UploadStep() {
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {t("import.upload.selectFile")}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              void saveCsvWithDialog(ASSET_TEMPLATE_FILE, ASSET_TEMPLATE_HEADER, [
+                ASSET_TEMPLATE_EXAMPLE,
+              ])
+            }
+            data-testid="template-button"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {t("import.upload.template")}
+          </Button>
+          <p className="max-w-xl text-center text-xs text-text-muted">
+            {t("import.upload.columnsHelp", { columns: ASSET_TEMPLATE_HEADER.join(" ; ") })}
+          </p>
         </div>
         {error && (
           <p role="alert" className="mt-3 text-sm text-tone-danger-fg">
@@ -224,7 +274,8 @@ function PreviewStep() {
   const saving = useAssetImportStore((s) => s.saving);
   const error = useAssetImportStore((s) => s.error);
 
-  const canApply = batch?.status === "validated";
+  const importable = (batch?.valid_rows ?? 0) + (includeWarnings ? (batch?.warning_rows ?? 0) : 0);
+  const canApply = batch?.status === "validated" && importable > 0;
   const [confirmApply, setConfirmApply] = useState(false);
 
   return (
@@ -332,12 +383,7 @@ function PreviewStep() {
                                 defaultValue: t("import.category.other"),
                               })}
                             </span>
-                            <details className="text-text-muted">
-                              <summary className="cursor-pointer select-none">
-                                {t("import.messageDetail")}
-                              </summary>
-                              {msg.message}
-                            </details>
+                            <span className="block text-text-muted">{msg.message}</span>
                           </li>
                         ))}
                       </ul>
@@ -364,6 +410,11 @@ function PreviewStep() {
         {error && (
           <p role="alert" className="text-sm text-tone-danger-fg">
             {error}
+          </p>
+        )}
+        {batch?.status === "validated" && importable === 0 && (
+          <p className="text-sm text-tone-warning-fg" data-testid="nothing-to-import">
+            {t("import.preview.nothingToImport")}
           </p>
         )}
       </CardContent>

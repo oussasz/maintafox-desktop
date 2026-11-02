@@ -1137,4 +1137,15 @@ mod tests {
 
         assert!(!has_perm, "Operator should NOT have eq.import permission");
     }
+
+    #[test]
+    fn csv_delimiter_detects_semicolon_comma_tab_and_bom() {
+        assert_eq!(import::detect_csv_delimiter(b"code;nom;classe\nA;B;C\n"), b';');
+        assert_eq!(import::detect_csv_delimiter(b"code,nom,classe\nA,B,C\n"), b',');
+        assert_eq!(import::detect_csv_delimiter(b"code\tnom\nA\tB\n"), b'\t');
+        assert_eq!(import::detect_csv_delimiter(b"\xEF\xBB\xBFcode;nom\nA;B\n"), b';');
+        // A comma inside quotes must not beat the real separator.
+        assert_eq!(import::detect_csv_delimiter(b"\"a,b,c\";nom\n"), b';');
+        assert_eq!(import::detect_csv_delimiter(b"code\nA\n"), b',');
+    }
 }
