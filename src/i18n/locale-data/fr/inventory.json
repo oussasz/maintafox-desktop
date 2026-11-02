@@ -984,6 +984,15 @@
       "inStockUnit": "En unité de stock : {{received}} {{unit}} reçus, dont {{rejected}} {{unit}} refusés.",
       "converting": "Conversion en unité de stock…"
     },
+    "approval": {
+      "approvers": "À approuver par : {{roles}}",
+      "approversNone": "Aucun rôle ne peut approuver ce montant. L'administrateur doit définir un plafond suffisant dans « Plafonds d'approbation ».",
+      "approversLoading": "Recherche des approbateurs…",
+      "approversUnavailable": "Les approbateurs n'ont pas pu être affichés.",
+      "amountUnknown": "Le montant n'est pas connu (prix manquant ou taux de change absent) : seul un rôle sans plafond peut approuver.",
+      "noRight": "Vous n'avez pas le droit « Approuver les achats ».",
+      "ownDocument": "Vous avez créé ce document : une autre personne doit l'approuver."
+    },
     "poWorkspace": {
       "title": "Bon de commande",
       "loading": "Chargement du bon de commande…",
@@ -1877,15 +1886,15 @@
     },
     "limits": {
       "title": "Plafonds d'approbation",
-      "description": "Montant maximal (en {{currency}}) que chaque rôle peut approuver. Tant qu'aucun plafond n'est défini pour un type de document, tout utilisateur ayant le droit achats peut l'approuver. Dès qu'un plafond existe, seuls les rôles dotés d'un plafond peuvent approuver, dans sa limite.",
+      "description": "Montant maximal (en {{currency}}) que chaque rôle peut approuver. Seuls les rôles qui ont le droit « Approuver les achats » et un plafond peuvent approuver, dans la limite de ce plafond. Un rôle sans plafond ne peut pas approuver.",
+      "firstUse": "Aucun plafond n'est défini : seul l'administrateur peut approuver. Définissez les plafonds par rôle, en {{currency}}.",
       "sod": "Quels que soient les plafonds, l'auteur d'une demande d'achat ou d'une commande ne peut jamais l'approuver.",
       "loadError": "Les plafonds d'approbation n'ont pas pu être chargés",
       "rolesUnavailable": "La liste des rôles demande le droit d'administration des rôles ; seuls les rôles déjà dotés d'un plafond sont affichés.",
       "empty": "Aucun rôle à afficher.",
       "saved": "Plafond d'approbation enregistré.",
       "unlimited": "Sans plafond",
-      "notAllowed": "Non autorisé",
-      "noRule": "Aucun plafond",
+      "notAllowed": "Ne peut pas approuver",
       "edit": "Modifier",
       "editFor": "Modifier le plafond {{doc}} de {{role}}",
       "docTypes": {

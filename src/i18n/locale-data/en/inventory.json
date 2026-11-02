@@ -984,6 +984,15 @@
       "inStockUnit": "In the stock unit: {{received}} {{unit}} received, {{rejected}} {{unit}} of them rejected.",
       "converting": "Converting to the stock unit…"
     },
+    "approval": {
+      "approvers": "To be approved by: {{roles}}",
+      "approversNone": "No role may approve this amount. The administrator must set a high enough limit in \"Approval limits\".",
+      "approversLoading": "Looking up the approvers…",
+      "approversUnavailable": "The approvers could not be shown.",
+      "amountUnknown": "The amount is not known (missing price or exchange rate): only a role without a limit may approve.",
+      "noRight": "You do not have the \"Approve purchasing\" right.",
+      "ownDocument": "You created this document: another person must approve it."
+    },
     "poWorkspace": {
       "title": "Purchase order",
       "loading": "Loading purchase order…",
@@ -1877,15 +1886,15 @@
     },
     "limits": {
       "title": "Approval limits",
-      "description": "Highest amount (in {{currency}}) each role may approve. While no limit is set for a document type, any user with the purchasing permission may approve it. Once one is set, only roles with a limit may approve, up to that limit.",
+      "description": "Highest amount (in {{currency}}) each role may approve. Only roles with the \"Approve purchasing\" right and a limit may approve, up to that limit. A role without a limit cannot approve.",
+      "firstUse": "No limit is set: only the administrator can approve. Set the limits per role, in {{currency}}.",
       "sod": "Whatever the limits, the person who created a requisition or a purchase order can never approve it.",
       "loadError": "Approval limits could not be loaded",
       "rolesUnavailable": "The role list needs role administration rights; only roles that already have a limit are shown.",
       "empty": "No role to show.",
       "saved": "Approval limit saved.",
       "unlimited": "Unlimited",
-      "notAllowed": "Not allowed",
-      "noRule": "No limit set",
+      "notAllowed": "Cannot approve",
       "edit": "Edit",
       "editFor": "Edit the {{doc}} limit of {{role}}",
       "docTypes": {

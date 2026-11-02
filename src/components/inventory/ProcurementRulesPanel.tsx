@@ -267,9 +267,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
 
   const limitOf = (roleId: number, doc: ApprovalDocumentType) =>
     limits.find((l) => l.role_id === roleId && l.document_type === doc) ?? null;
-  const configured = (doc: ApprovalDocumentType) =>
-    limits.some((l) => l.document_type === doc && l.is_active === 1);
+  // First use: nothing but the seeded "Administrator: unlimited" rows, so only the administrator
+  // can approve until the limits per role are set.
+  const onlySeededLimits = limits.length > 0 && limits.every((l) => l.is_seeded_default);
 
+  // Limits fail closed: a role without an active limit cannot approve.
   const limitCell = (roleId: number, doc: ApprovalDocumentType) => {
     const limit = limitOf(roleId, doc);
     if (limit && limit.is_active === 1) {
@@ -279,11 +281,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
         <span className="tabular-nums">{formatCurrency(limit.max_amount)}</span>
       );
     }
-    return configured(doc) ? (
-      <StatusChip label={t("rules.limits.notAllowed")} tone="neutral" />
-    ) : (
-      <span className="text-text-muted">{t("rules.limits.noRule")}</span>
-    );
+    return <StatusChip label={t("rules.limits.notAllowed")} tone="neutral" />;
   };
 
   const openLimit = (role: RoleRow, doc: ApprovalDocumentType) => {
@@ -407,6 +405,14 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
           </p>
           <p className="mt-1 max-w-3xl text-sm font-medium">{t("rules.limits.sod")}</p>
         </div>
+        {!limitsError && !limitsLoading && onlySeededLimits ? (
+          <p
+            role="status"
+            className="mb-3 max-w-3xl rounded-md border border-status-warning/40 bg-status-warning/10 p-3 text-sm"
+          >
+            {t("rules.limits.firstUse", { currency: currencyCode })}
+          </p>
+        ) : null}
         {limitsError ? (
           <ErrorState
             error={limitsError}
