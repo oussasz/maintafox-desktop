@@ -45,6 +45,7 @@ import {
 import { WoRemainingHoursField, parseRemainingHours } from "@/components/wo/WoRemainingHoursField";
 import { useWoAccess } from "@/components/wo/WoSiteScope";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
@@ -126,6 +127,7 @@ function SuccessBanner({ message }: { message: string }) {
 
 export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps) {
   const { t } = useTranslation("ot");
+  const { currencyLabel } = useFormatters();
   const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
   // Reopen is offered from the user's rights at this work order's site.
@@ -822,7 +824,9 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="wo-service-cost">{t("closeout.serviceCost")}</Label>
+          <Label htmlFor="wo-service-cost">
+            {t("closeout.serviceCost", { currency: currencyLabel })}
+          </Label>
           <DecimalField
             id="wo-service-cost"
             decimals={2}

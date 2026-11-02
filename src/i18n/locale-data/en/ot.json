@@ -768,7 +768,7 @@
     "temporary": "Temporary",
     "permanent": "Permanent",
     "notApplicable": "N/A",
-    "serviceCost": "Service cost (€)",
+    "serviceCost": "Service cost ({{currency}})",
     "detailsSaved": "Details saved.",
     "saveDetails": "Save details",
     "sectionReturn": "Return to service",

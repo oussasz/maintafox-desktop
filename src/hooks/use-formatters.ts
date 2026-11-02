@@ -81,6 +81,8 @@ export interface Formatters {
   locale: string;
   /** Active tenant ISO 4217 currency code */
   currencyCode: string;
+  /** What the plant writes next to an amount: its symbol ("DA"), else the ISO code. */
+  currencyLabel: string;
 }
 
 export function useFormatters(): Formatters {
@@ -113,6 +115,7 @@ export function useFormatters(): Formatters {
       parseDecimal: (raw, opts) => parseDecimalInput(raw, opts),
       locale,
       currencyCode,
+      currencyLabel: currencySymbol?.trim() || currencyCode,
     }),
     [locale, currencyCode, currencySymbol, currencyMinorUnits],
   );
