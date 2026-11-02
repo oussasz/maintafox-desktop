@@ -2295,9 +2295,14 @@ export const ProcurementRepairablePanel = forwardRef<
               {/* ── REPAIRABLES ── */}
               {activeTab === "repairables" ? (
                 <section className="rounded-md border p-4">
-                  <h3 className="mb-2 text-sm font-semibold">
-                    {t("procurement.repairables.title")}
-                  </h3>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">{t("procurement.repairables.title")}</h3>
+                    {canProcure ? null : (
+                      <p className="text-xs text-text-muted" role="note">
+                        {t("procurement.repairables.noRightHint")}
+                      </p>
+                    )}
+                  </div>
                   <div className="mb-3">
                     <SmartFilterBar
                       searchPlaceholder={t("procurement.repairables.searchPlaceholder")}

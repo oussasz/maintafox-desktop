@@ -710,6 +710,7 @@ pub fn run() {
         commands::inventory::list_supplier_purchase_history,
         // ── Article equivalents ──────────────────────────────────────────────────────
         commands::inventory::list_inventory_article_equivalents,
+        commands::inventory::list_inventory_article_usage,
         commands::inventory::upsert_inventory_article_equivalent,
         commands::inventory::delete_inventory_article_equivalent,
         commands::inventory::list_inventory_article_purchase_history,
