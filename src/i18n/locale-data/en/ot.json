@@ -205,7 +205,8 @@
       "label": "Planned end"
     },
     "duration": {
-      "label": "Estimated duration (h)"
+      "label": "Estimated duration (h)",
+      "exceedsWindow": "Warning: the estimated duration ({{hours}} h) is longer than the time between the planned start and end ({{window}} h)."
     },
     "notes": {
       "label": "Notes"
@@ -218,7 +219,8 @@
       "typeRequired": "Work order type is required.",
       "urgencyRequired": "Priority is required.",
       "urgencyInvalid": "The selected priority is no longer valid.",
-      "equipmentRequired": "Equipment is required."
+      "equipmentRequired": "Equipment is required.",
+      "plannedEndBeforeStart": "The planned end cannot be before the planned start."
     }
   },
   "status": {
