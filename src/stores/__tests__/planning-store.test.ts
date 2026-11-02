@@ -231,6 +231,7 @@ function makeGantt(overrides: Partial<PlanningGanttSnapshot> = {}): PlanningGant
     capacity: [makeLoad()],
     assignee_lanes: [],
     crew_lanes: [],
+    proposed_work_orders: [],
     ...overrides,
   };
 }
