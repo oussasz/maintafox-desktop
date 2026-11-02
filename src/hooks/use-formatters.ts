@@ -28,6 +28,8 @@ import {
   formatDate,
   formatDateLong,
   formatDateTime,
+  formatDayMonth,
+  formatYearMonth,
   formatTime,
   formatRelativeTime,
   formatNumber,
@@ -45,6 +47,10 @@ export interface Formatters {
   formatDateLong: (value: Date | string | number | null | undefined) => string;
   /** "31/03/2026 14:30" (fr) or "03/31/2026, 2:30 PM" (en) */
   formatDateTime: (value: Date | string | number | null | undefined) => string;
+  /** "31/10" (fr) or "10/31" (en): a day without its year, for narrow cells */
+  formatDayMonth: (value: Date | string | number | null | undefined) => string;
+  /** "oct. 2026" (fr) from a "2026-10" text */
+  formatYearMonth: (value: string | null | undefined) => string;
   /** "14:30" (fr) or "2:30 PM" (en) */
   formatTime: (value: Date | string | number | null | undefined) => string;
   /** "il y a 5 minutes" (fr) or "5 minutes ago" (en) */
@@ -88,6 +94,8 @@ export function useFormatters(): Formatters {
       formatDate: (v) => formatDate(v, locale),
       formatDateLong: (v) => formatDateLong(v, locale),
       formatDateTime: (v) => formatDateTime(v, locale),
+      formatDayMonth: (v) => formatDayMonth(v, locale),
+      formatYearMonth: (v) => formatYearMonth(v, locale),
       formatTime: (v) => formatTime(v, locale),
       formatRelativeTime: (v) => formatRelativeTime(v, locale),
       formatNumber: (v, opts) => formatNumber(v, locale, opts),

@@ -44,6 +44,7 @@ import {
   RESOURCE_TIMELINE_STATE_CLASS,
 } from "@/design-system/resource-timeline-tokens";
 import { mfLayout } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { appErrorReason } from "@/lib/app-error";
 import { formatPersonLabel } from "@/lib/display";
@@ -113,6 +114,7 @@ export const AvailabilityCalendar = forwardRef<
   ref,
 ) {
   const { t } = useTranslation("personnel");
+  const { formatDayMonth } = useFormatters();
   // Absence types (and their behaviour tag) come from the plant's list (Données de référence).
   const lists = usePersonnelLists();
   // Filtering by absence type needs the sensitive-data right: without it the server sends no type.
@@ -718,7 +720,7 @@ export const AvailabilityCalendar = forwardRef<
                               CELL_STATE_CLASS[state],
                             )}
                           >
-                            {d.slice(5)} · {t(`availability.cell.${state}`)}
+                            {formatDayMonth(d)} · {t(`availability.cell.${state}`)}
                           </span>
                         );
                       })}
