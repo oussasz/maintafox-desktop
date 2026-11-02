@@ -593,6 +593,14 @@ pub async fn transition_inventory_procurement_requisition(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    if is_approval_outcome(&input.next_status) {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::INV_APPROVE,
+            PermissionScope::Global
+        );
+    }
     // Who did it comes from the session, never from the UI payload.
     input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_procurement_requisition(&state.db, input).await
@@ -656,9 +664,41 @@ pub async fn transition_inventory_purchase_order(
         crate::rbac::permissions::INV_PROCURE,
         PermissionScope::Global
     );
+    if is_approval_outcome(&input.next_status) {
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::INV_APPROVE,
+            PermissionScope::Global
+        );
+    }
     // Who did it comes from the session, never from the UI payload.
     input.actor_id = Some(i64::from(user.user_id));
     procurement::transition_purchase_order(&state.db, input).await
+}
+
+/// Approving and rejecting a requisition or a purchase order need `inv.approve` on top of
+/// `inv.procure` (which creates and manages the documents).
+fn is_approval_outcome(next_status: &str) -> bool {
+    matches!(next_status.trim(), "APPROVED" | "REJECTED")
+}
+
+/// Roles that may approve this requisition or purchase order (approval right and a limit
+/// covering its amount), shown after it is submitted.
+#[tauri::command]
+pub async fn list_inventory_procurement_approver_roles(
+    document_type: String,
+    document_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::ProcurementApproverRoles> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::approvals::approver_roles(&state.db, &document_type, document_id).await
 }
 
 #[tauri::command]
@@ -730,7 +770,7 @@ pub async fn receive_inventory_purchase_order_goods(
     require_permission!(
         state,
         &user,
-        crate::rbac::permissions::INV_PROCURE,
+        crate::rbac::permissions::INV_RECEIVE,
         PermissionScope::Global
     );
     // Who did it comes from the session, never from the UI payload.

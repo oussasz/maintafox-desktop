@@ -163,6 +163,7 @@ pub async fn build(ctx: &mut Ctx<'_>, _opts: &GenerationOptions, start_day: Naiv
     let (people, teams) = people(ctx, &nodes, schedule_id, admin_id, &admin, start_day).await?;
     let (stores, articles) = stock(ctx, admin_id, start_day).await?;
     let suppliers = suppliers(ctx).await?;
+    approval_limits(ctx, admin_id).await?;
     budgets(ctx, admin_id, start_day).await?;
     let mut company = Company {
         admin_id,
@@ -1031,6 +1032,38 @@ async fn suppliers(ctx: &mut Ctx<'_>) -> AppResult<Vec<i64>> {
     }
     ctx.count("fournisseurs", out.len() as i64);
     Ok(out)
+}
+
+// ── Purchase approval limits ─────────────────────────────────────────────────────────────────
+
+/// The demo's purchases are approved by the maintenance managers (`Duty::Manager`, role
+/// "Maintenance Supervisor"): the administrator gives that role a limit, as the "Plafonds
+/// d'approbation" screen does, since a role without one cannot approve. Unlimited, so the demo
+/// does not assert any particular amount.
+async fn approval_limits(ctx: &mut Ctx<'_>, admin: i64) -> AppResult<()> {
+    let role_id = scalar_i64(
+        ctx.db,
+        "SELECT id FROM roles WHERE name = 'Maintenance Supervisor' AND deleted_at IS NULL",
+        vec![],
+    )
+    .await?
+    .ok_or_else(|| AppError::ValidationFailed(vec!["Rôle « Maintenance Supervisor » introuvable.".into()]))?;
+    for document_type in crate::inventory::approvals::DOCUMENT_TYPES {
+        ctx.tick()?;
+        crate::inventory::approvals::upsert_limit(
+            ctx.db,
+            crate::inventory::domain::ProcurementApprovalLimitInput {
+                role_id,
+                document_type: document_type.to_string(),
+                max_amount: None,
+                is_active: Some(true),
+                actor_id: Some(admin),
+            },
+        )
+        .await?;
+    }
+    ctx.count("plafonds d'approbation", 2);
+    Ok(())
 }
 
 // ── Budgets ──────────────────────────────────────────────────────────────────────────────────

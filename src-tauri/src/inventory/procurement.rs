@@ -501,6 +501,8 @@ pub async fn transition_procurement_requisition(
                 "GATE_PROC_REJECTION_REASON: Rejection reason is required.".to_string(),
             ]));
         }
+        // Rejecting is the other approval outcome: same right as approving.
+        crate::inventory::approvals::ensure_approval_right(db, input.actor_id).await?;
     }
 
     if input.next_status == "APPROVED" {

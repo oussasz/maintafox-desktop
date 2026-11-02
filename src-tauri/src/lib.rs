@@ -744,6 +744,7 @@ pub fn run() {
         commands::inventory::close_inventory_valuation_period,
         commands::inventory::list_procurement_approval_limits,
         commands::inventory::upsert_procurement_approval_limit,
+        commands::inventory::list_inventory_procurement_approver_roles,
         commands::inventory::create_inventory_multi_line_requisition,
         commands::inventory::replace_inventory_requisition_lines,
         commands::inventory::set_inventory_purchase_order_line_price,

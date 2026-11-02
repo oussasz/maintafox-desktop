@@ -156,6 +156,43 @@ async fn role_for(db: &DatabaseConnection, role_name: &str, user_id: i64) -> i64
     role_id
 }
 
+/// Gives `role_id` the permission `permission` (a catalog name).
+async fn grant(db: &DatabaseConnection, role_id: i64, permission: &str) {
+    exec(
+        db,
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+         SELECT ?, id, strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM permissions WHERE name = ?",
+        vec![role_id.into(), permission.into()],
+    )
+    .await;
+}
+
+/// Assigns an existing role to a user, plant-wide.
+async fn assign(db: &DatabaseConnection, role_id: i64, user_id: i64) {
+    exec(
+        db,
+        "INSERT INTO user_scope_assignments (entity_sync_id, user_id, role_id, scope_type, scope_reference,
+             valid_from, valid_to, assigned_by_id, notes, created_at, updated_at)
+         VALUES (?, ?, ?, 'tenant', NULL, NULL, NULL, NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        vec![
+            format!("inv-usa-{role_id}-{user_id}").into(),
+            user_id.into(),
+            role_id.into(),
+        ],
+    )
+    .await;
+}
+
+/// A user holding the seeded Administrator role: the approval right and the seeded unlimited
+/// approval limit, the only approver of a fresh database.
+async fn administrator(db: &DatabaseConnection, username: &str) -> i64 {
+    let user_id = user(db, username).await;
+    let role_id = scalar_i64(db, "SELECT id FROM roles WHERE name = 'Administrator'", vec![]).await;
+    assign(db, role_id, user_id).await;
+    user_id
+}
+
 fn entry(article_id: i64, location_id: i64, qty: f64) -> InventoryStockAdjustInput {
     InventoryStockAdjustInput {
         article_id,
@@ -743,10 +780,22 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     let location_id = main_location_id(&db).await;
     let a = article(&db, "INV-APR-A", Tracking::default(), None).await;
     let b = article(&db, "INV-APR-B", Tracking::default(), None).await;
+    use crate::rbac::permissions::{INV_APPROVE, INV_PROCURE, INV_VIEW};
     let requester = user(&db, "req_user").await;
     let approver = user(&db, "approver_user").await;
     let outsider = user(&db, "outsider_user").await;
-    let buyer_role = role_for(&db, "inv_approver_role", approver).await;
+    let buyer = user(&db, "buyer_user").await;
+    let admin = administrator(&db, "admin_approver").await;
+    // Approvers: the right, and (later) a limit. The requester holds the same role, so that the
+    // separation of duties, not the missing right, is what refuses their own approval.
+    let approver_role = role_for(&db, "inv_approver_role", approver).await;
+    grant(&db, approver_role, INV_VIEW).await;
+    grant(&db, approver_role, INV_APPROVE).await;
+    assign(&db, approver_role, requester).await;
+    // A buyer creates and manages purchases but holds no approval right.
+    let buyer_role = role_for(&db, "inv_buyer_role", buyer).await;
+    grant(&db, buyer_role, INV_VIEW).await;
+    grant(&db, buyer_role, INV_PROCURE).await;
 
     let req = procurement::create_multi_line_requisition(
         &db,
@@ -790,10 +839,40 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
         "approval needs an approver"
     );
 
+    // Without the approval right: refused, whatever the limits.
+    let no_right = transition_req(&db, &req, "APPROVED", Some(buyer))
+        .await
+        .expect_err("buyer without inv.approve");
+    assert!(message(&no_right).contains("GATE_PROC_APPROVAL_RIGHT"), "{no_right:?}");
+    let outsider_refused = transition_req(&db, &req, "APPROVED", Some(outsider))
+        .await
+        .expect_err("no role at all");
+    assert!(
+        message(&outsider_refused).contains("GATE_PROC_APPROVAL_RIGHT"),
+        "{outsider_refused:?}"
+    );
+
+    // Fresh database: only the seeded "Administrator: unlimited" rows exist. An approver whose role
+    // has no limit is refused (fail closed), and only the Administrator is named as approver.
+    let limits = approvals::list_limits(&db).await.expect("limits");
+    assert_eq!(limits.len(), 2, "one seeded row per document type: {limits:?}");
+    assert!(limits
+        .iter()
+        .all(|l| l.is_seeded_default && l.role_name == "Administrator" && l.max_amount.is_none() && l.is_active == 1));
+    let unset = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect_err("no limit configured for the approver's role");
+    assert!(message(&unset).contains("GATE_PROC_NO_APPROVAL_LIMIT"), "{unset:?}");
+    let named = approvals::approver_roles(&db, approvals::DOC_REQUISITION, req.id)
+        .await
+        .expect("approver roles");
+    assert!(close(named.amount.expect("amount"), 70.0));
+    assert_eq!(named.role_names, vec!["Administrator".to_string()]);
+
     approvals::upsert_limit(
         &db,
         ProcurementApprovalLimitInput {
-            role_id: buyer_role,
+            role_id: approver_role,
             document_type: approvals::DOC_REQUISITION.to_string(),
             max_amount: Some(50.0),
             is_active: Some(true),
@@ -806,15 +885,45 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
         .await
         .expect_err("over limit");
     assert!(message(&over).contains("GATE_PROC_APPROVAL_LIMIT"), "{over:?}");
-    let none = transition_req(&db, &req, "APPROVED", Some(outsider))
+    let named = approvals::approver_roles(&db, approvals::DOC_REQUISITION, req.id)
         .await
-        .expect_err("no limit");
-    assert!(message(&none).contains("GATE_PROC_NO_APPROVAL_LIMIT"), "{none:?}");
+        .expect("approver roles");
+    assert_eq!(
+        named.role_names,
+        vec!["Administrator".to_string()],
+        "a limit below the amount does not name the role"
+    );
+    // A role with a limit but without the approval right is never named.
+    approvals::upsert_limit(
+        &db,
+        ProcurementApprovalLimitInput {
+            role_id: buyer_role,
+            document_type: approvals::DOC_REQUISITION.to_string(),
+            max_amount: None,
+            is_active: Some(true),
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("unlimited limit on a role without the right");
+    let still_refused = transition_req(&db, &req, "APPROVED", Some(buyer))
+        .await
+        .expect_err("a limit does not give the right");
+    assert!(message(&still_refused).contains("GATE_PROC_APPROVAL_RIGHT"));
+    // Nor does it widen the limit of an approver who also holds that role.
+    assign(&db, buyer_role, approver).await;
+    let not_widened = transition_req(&db, &req, "APPROVED", Some(approver))
+        .await
+        .expect_err("the unlimited limit of a role without the right does not count");
+    assert!(
+        message(&not_widened).contains("GATE_PROC_APPROVAL_LIMIT"),
+        "{not_widened:?}"
+    );
 
     let raised = approvals::upsert_limit(
         &db,
         ProcurementApprovalLimitInput {
-            role_id: buyer_role,
+            role_id: approver_role,
             document_type: approvals::DOC_REQUISITION.to_string(),
             max_amount: Some(100.0),
             is_active: Some(true),
@@ -824,11 +933,23 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     .await
     .expect("limit 100");
     assert_eq!(
-        approvals::list_limits(&db).await.expect("limits").len(),
+        approvals::list_limits(&db)
+            .await
+            .expect("limits")
+            .iter()
+            .filter(|l| l.role_id == approver_role)
+            .count(),
         1,
         "one limit per role and type"
     );
     assert!(close(raised.max_amount.expect("max"), 100.0));
+    let named = approvals::approver_roles(&db, approvals::DOC_REQUISITION, req.id)
+        .await
+        .expect("approver roles");
+    assert_eq!(
+        named.role_names,
+        vec!["Administrator".to_string(), "inv_approver_role".to_string()]
+    );
     let req = transition_req(&db, &req, "APPROVED", Some(approver))
         .await
         .expect("approved");
@@ -842,7 +963,7 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
             requisition_id: req.id,
             supplier_id: None,
             supplier_company_id: None,
-            actor_id: Some(outsider),
+            actor_id: Some(approver),
             currency_code: None,
         },
     )
@@ -850,16 +971,26 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     .expect("po");
     assert_eq!(po.line_count, 2);
     assert!(close(po.total_amount.expect("po total"), 70.0));
-    let po = transition_po(&db, &po, "SUBMITTED", Some(outsider))
+    let po = transition_po(&db, &po, "SUBMITTED", Some(approver))
         .await
         .expect("submit po");
-    let own_po = transition_po(&db, &po, "APPROVED", Some(outsider))
+    let own_po = transition_po(&db, &po, "APPROVED", Some(approver))
         .await
-        .expect_err("buyer approves own PO");
-    assert!(message(&own_po).contains("GATE_PROC_SELF_APPROVAL"));
-    let po = transition_po(&db, &po, "APPROVED", Some(approver))
+        .expect_err("approver approves the PO they created");
+    assert!(message(&own_po).contains("GATE_PROC_SELF_APPROVAL"), "{own_po:?}");
+    // The requisition limit does not cover purchase orders: the requester's role has none.
+    let no_po_limit = transition_po(&db, &po, "APPROVED", Some(requester))
         .await
-        .expect("approve po");
+        .expect_err("no purchase order limit");
+    assert!(
+        message(&no_po_limit).contains("GATE_PROC_NO_APPROVAL_LIMIT"),
+        "{no_po_limit:?}"
+    );
+    // The Administrator's seeded unlimited limit approves any amount.
+    let po = transition_po(&db, &po, "APPROVED", Some(admin))
+        .await
+        .expect("unlimited administrator approves the PO");
+    assert_eq!(po.approved_by_id, Some(admin));
 
     let lines = procurement::list_purchase_order_lines(&db, po.id).await.expect("lines");
     let line_a = lines.iter().find(|l| l.article_id == a).expect("line a");
@@ -963,7 +1094,7 @@ async fn foreign_currency_po_is_valued_in_tenant_currency_at_the_receipt_rate() 
     let location_id = main_location_id(&db).await;
     let article_id = article(&db, "INV-FX-001", Tracking::default(), None).await;
     let requester = user(&db, "fx_requester").await;
-    let approver = user(&db, "fx_approver").await;
+    let approver = administrator(&db, "fx_approver").await;
     let tenant = fx::tenant_currency(&db).await.expect("tenant currency");
     assert_ne!(tenant, "EUR");
 
@@ -1166,7 +1297,7 @@ async fn cement_is_bought_in_bags_stocked_in_kg_and_issued_in_grams_or_bags() {
     let gram = crate::reference::units::unit_id_by_code(&db, "G").await.expect("g");
     let kg = crate::reference::units::unit_id_by_code(&db, "KG").await.expect("kg");
     let requester = user(&db, "uom_requester").await;
-    let approver = user(&db, "uom_approver").await;
+    let approver = administrator(&db, "uom_approver").await;
 
     // A PO of 100 kg at 2.00 per kg.
     let req = procurement::create_procurement_requisition(
