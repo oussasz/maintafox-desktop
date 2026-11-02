@@ -71,7 +71,7 @@ export function ProcurementAlertCards({
         return t("procurement.alerts.messages.CRITICAL_STOCK", {
           code,
           name: p["name"] ?? "",
-          warehouse: p["warehouse_code"] ?? "",
+          warehouse: p["warehouse_name"] ?? p["warehouse_code"] ?? "",
           available: num(p["available_qty"]),
           threshold: num(p["threshold_qty"]),
         });

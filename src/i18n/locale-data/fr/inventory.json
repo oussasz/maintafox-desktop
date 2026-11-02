@@ -441,6 +441,8 @@
       "title": "Recommandations de réapprovisionnement",
       "refresh": "Actualiser",
       "loading": "Chargement…",
+      "tabTitle": "À commander",
+      "store": "Magasin :",
       "transfer": "Transfert",
       "purchase": "Achat",
       "suggestedQty": "Qté suggérée",

@@ -199,6 +199,7 @@ type ProcurementRepairablePanelProps = {
 };
 
 type SubTab =
+  | "reorder"
   | "requisitions"
   | "purchase-orders"
   | "goods-receipts"
@@ -1017,6 +1018,7 @@ export const ProcurementRepairablePanel = forwardRef<
 
   // ── Tabs ────────────────────────────────────────────────────────────────────
   const subTabs: Array<{ id: SubTab; label: string }> = [
+    { id: "reorder", label: t("procurement.recommendations.tabTitle") },
     { id: "requisitions", label: t("procurement.requisitions.title") },
     { id: "purchase-orders", label: t("procurement.purchaseOrders.title") },
     { id: "goods-receipts", label: t("procurement.goodsReceipts.title") },
@@ -2041,14 +2043,14 @@ export const ProcurementRepairablePanel = forwardRef<
         value={formatNumber(dashboard.low_stock_articles)}
         hint={t("procurement.dashboard.stockoutsHint")}
         {...(dashboard.low_stock_articles > 0 ? { tone: "warning" as const } : {})}
-        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
+        onOpen={() => openReorderSection()}
       />
       <KpiTile
         label={t("procurement.dashboard.criticalStockouts")}
         value={formatNumber(dashboard.critical_low_stock_articles)}
         hint={t("procurement.dashboard.criticalStockoutsHint")}
         {...(dashboard.critical_low_stock_articles > 0 ? { tone: "danger" as const } : {})}
-        onOpen={() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView()}
+        onOpen={() => openReorderSection()}
       />
       <KpiTile
         label={t("procurement.dashboard.repairablesInRepair")}
@@ -2062,6 +2064,12 @@ export const ProcurementRepairablePanel = forwardRef<
       />
     </div>
   ) : null;
+
+  /** The low-stock tiles open the "À commander" section and bring its list into view. */
+  const openReorderSection = () => {
+    setActiveTab("reorder");
+    window.setTimeout(() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView(), 0);
+  };
 
   /** Next step of the open requisition, shown next to its lifecycle buttons. */
   const requisitionStepHint = selectedRequisition
@@ -2092,20 +2100,6 @@ export const ProcurementRepairablePanel = forwardRef<
             }}
           />
 
-          <ProcurementRecommendationsPanel
-            id={RECOMMENDATIONS_ID}
-            onCreateRequisitionPrefill={(rec, reason) =>
-              openRequisitionForm({
-                articleId: rec.article_id,
-                quantity: rec.suggested_reorder_qty,
-                sourceType: "REORDER",
-                sourceRef: rec.warehouse_code,
-                reason,
-              })
-            }
-            onCreated={() => loadAll()}
-          />
-
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             {/* Sub-tab sidebar */}
             <nav className="rounded-md border p-2" aria-label={t("procurement.sectionsLabel")}>
@@ -2130,6 +2124,23 @@ export const ProcurementRepairablePanel = forwardRef<
             </nav>
 
             <div className="min-w-0 space-y-4">
+              {/* ── REORDER (À commander) ── */}
+              {activeTab === "reorder" ? (
+                <ProcurementRecommendationsPanel
+                  id={RECOMMENDATIONS_ID}
+                  onCreateRequisitionPrefill={(rec, reason) =>
+                    openRequisitionForm({
+                      articleId: rec.article_id,
+                      quantity: rec.suggested_reorder_qty,
+                      sourceType: "REORDER",
+                      sourceRef: rec.warehouse_code,
+                      reason,
+                    })
+                  }
+                  onCreated={() => loadAll()}
+                />
+              ) : null}
+
               {/* ── REQUISITIONS ── */}
               {activeTab === "requisitions" ? (
                 <section className="rounded-md border p-4">

@@ -3040,6 +3040,7 @@ export interface InventoryReorderRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
@@ -3711,6 +3712,7 @@ export interface InventoryReplenishmentRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
