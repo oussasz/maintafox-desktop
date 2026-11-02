@@ -354,14 +354,52 @@ const HEADER_ATTRIBUTES: &[&str] = &[
     "class", "style", "src", "alt", "width", "height", "align", "colspan", "rowspan",
 ];
 
+/// Largest header the engine stores, in bytes (the editor refuses a larger one before saving,
+/// `src/lib/document-header-sanitize.ts`).
+pub const HEADER_MAX_BYTES: usize = 200_000;
+
+/// A parameter value safe inside a coded refusal (`CODE:key=value`): no separator, no space.
+fn header_param(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .take(40)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "_".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Check the header HTML against the editor's allowlist: only listed tags and attributes, no
 /// comments, no script URLs or CSS expressions. The editor sanitizes before saving, so a header
-/// that fails here did not come from it.
+/// that fails here did not come from it. A refusal is a coded sentence
+/// (`GATE_SET_HEADER_*:param=value: english detail`) that the screen translates from its code.
 pub fn validate_header_html(html: &str) -> Result<(), String> {
+    if html.len() > HEADER_MAX_BYTES {
+        let size_kb = html.len().div_ceil(1000);
+        let max_kb = HEADER_MAX_BYTES / 1000;
+        return Err(format!(
+            "GATE_SET_HEADER_TOO_LARGE:size_kb={size_kb}:max_kb={max_kb}: the header is too large ({size_kb} KB, {max_kb} KB maximum)"
+        ));
+    }
     let lower = html.to_ascii_lowercase();
-    for forbidden in ["<!--", "javascript:", "vbscript:", "expression(", "<![cdata["] {
+    if lower.contains("<!--") {
+        return Err("GATE_SET_HEADER_COMMENT: the header contains a comment, which is not allowed".to_string());
+    }
+    for forbidden in ["javascript:", "vbscript:", "expression(", "<![cdata["] {
         if lower.contains(forbidden) {
-            return Err(format!("the header contains '{forbidden}', which is not allowed"));
+            return Err(format!(
+                "GATE_SET_HEADER_SCRIPT:content={}: the header contains '{forbidden}', which is not allowed",
+                header_param(forbidden)
+            ));
         }
     }
     let bytes = lower.as_bytes();
@@ -377,8 +415,14 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
             j += 1;
         }
         let name = &lower[name_start..j];
-        if name.is_empty() || !HEADER_TAGS.contains(&name) {
-            return Err(format!("the tag <{name}> is not allowed in the header"));
+        if name.is_empty() {
+            return Err("GATE_SET_HEADER_STRAY_BRACKET: the header contains a '<' that opens no tag".to_string());
+        }
+        if !HEADER_TAGS.contains(&name) {
+            return Err(format!(
+                "GATE_SET_HEADER_TAG_FORBIDDEN:tag={}: the tag <{name}> is not allowed in the header",
+                header_param(name)
+            ));
         }
         // Attributes until the closing '>'.
         loop {
@@ -386,7 +430,12 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
                 j += 1;
             }
             match bytes.get(j) {
-                None => return Err("the header has an unclosed tag".into()),
+                None => {
+                    return Err(format!(
+                        "GATE_SET_HEADER_UNCLOSED_TAG:tag={}: the header has an unclosed tag",
+                        header_param(name)
+                    ))
+                }
                 Some(b'>') => break,
                 _ => {}
             }
@@ -396,7 +445,11 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
             }
             let attr = &lower[attr_start..j];
             if !HEADER_ATTRIBUTES.contains(&attr) {
-                return Err(format!("the attribute '{attr}' is not allowed in the header"));
+                return Err(format!(
+                    "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN:attribute={}:tag={}: the attribute '{attr}' is not allowed in the header",
+                    header_param(attr),
+                    header_param(name)
+                ));
             }
             while j < bytes.len() && bytes[j].is_ascii_whitespace() {
                 j += 1;
@@ -409,7 +462,10 @@ pub fn validate_header_html(html: &str) -> Result<(), String> {
                 match bytes.get(j) {
                     Some(&q) if q == b'"' || q == b'\'' => {
                         let Some(end) = lower[j + 1..].find(q as char) else {
-                            return Err("the header has an unclosed attribute value".into());
+                            return Err(format!(
+                                "GATE_SET_HEADER_UNCLOSED_TAG:tag={}: the header has an unclosed attribute value",
+                                header_param(name)
+                            ));
                         };
                         j += end + 2;
                     }
@@ -524,14 +580,7 @@ pub fn validate_value(def: &SettingDefinition, value_json: &str) -> AppResult<St
                 ));
             }
             let html = obj.get("html").and_then(serde_json::Value::as_str).unwrap_or("");
-            if html.len() > 200_000 {
-                return Err(invalid(
-                    def.key,
-                    "GATE_SET_HEADER_INVALID",
-                    "the header is too large (200 KB maximum)",
-                ));
-            }
-            validate_header_html(html).map_err(|m| invalid(def.key, "GATE_SET_HEADER_INVALID", m))?;
+            validate_header_html(html).map_err(|coded| AppError::ValidationFailed(vec![coded]))?;
             Ok(serde_json::to_string(&value)?)
         }
         SettingKind::ModuleManaged => Err(invalid(
@@ -920,6 +969,44 @@ mod tests {
             "a bare '<' is refused"
         );
         assert!(validate_header_html("").is_ok());
+    }
+
+    /// The same sample as the editor's test (`src/lib/__tests__/document-header-sanitize.test.ts`):
+    /// text, formatting, a table and a pasted picture as the sanitizer writes them.
+    #[test]
+    fn header_sample_from_the_editor_is_accepted() {
+        let sample = concat!(
+            r#"<h2 style="text-align: center">Atelier Nord</h2>"#,
+            r#"<p><strong>Maintafox</strong> <em>GMAO</em> <u>usine</u> <s>x</s></p>"#,
+            r#"<ul><li>Ligne 1</li></ul><ol><li>Ligne 2</li></ol>"#,
+            r#"<table style="width: 100%"><thead><tr><th colspan="2">Site</th></tr></thead>"#,
+            r#"<tbody><tr><td rowspan="1" align="left">A &amp; B &lt; C</td><td>1</td></tr></tbody></table>"#,
+            r#"<p><br></p><img src="data:image/png;base64,iVBORw0KGgo=" alt="Logo" width="80" height="40">"#,
+        );
+        assert_eq!(validate_header_html(sample), Ok(()));
+    }
+
+    #[test]
+    fn header_refusals_carry_a_reason_code_and_parameters() {
+        let big = format!("<p>{}</p>", "a".repeat(HEADER_MAX_BYTES));
+        let err = validate_header_html(&big).unwrap_err();
+        assert!(
+            err.starts_with("GATE_SET_HEADER_TOO_LARGE:size_kb=201:max_kb=200:"),
+            "{err}"
+        );
+        let err = validate_header_html("<p>x</p><script>1</script>").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_TAG_FORBIDDEN:tag=script:"), "{err}");
+        let err = validate_header_html(r#"<p onclick="x">a</p>"#).unwrap_err();
+        assert!(
+            err.starts_with("GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN:attribute=onclick:tag=p:"),
+            "{err}"
+        );
+        let err = validate_header_html("<p>a</p><!-- note -->").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_COMMENT:"), "{err}");
+        let err = validate_header_html("<p>a</p><b").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_UNCLOSED_TAG:tag=b:"), "{err}");
+        let err = validate_header_html("3 < 4").unwrap_err();
+        assert!(err.starts_with("GATE_SET_HEADER_STRAY_BRACKET:"), "{err}");
     }
 
     #[test]

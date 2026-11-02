@@ -6,11 +6,11 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  ActivatePolicyPayload,
+  AppSetting,
   CurrencyOption,
   DocumentBrandingLogoPreview,
   DocumentBrandingLogoUploadResult,
-  ActivatePolicyPayload,
-  AppSetting,
   PolicySnapshot,
   PolicyTestResult,
   SavePolicyDraftPayload,
@@ -137,8 +137,12 @@ export async function listSettingsCategories(): Promise<string[]> {
  * Read a single setting by key and optional scope.
  * Any authenticated session may read settings.
  */
-export async function getSetting(key: string, scope?: string): Promise<AppSetting | null> {
-  const raw = await invoke<AppSetting | null>("get_setting", { key, scope });
+export async function getSetting(
+  key: string,
+  scope?: string,
+  options?: { notifyOnError?: boolean },
+): Promise<AppSetting | null> {
+  const raw = await invoke<AppSetting | null>("get_setting", { key, scope }, options);
   if (raw === null) return null;
   return AppSettingSchema.parse(raw);
 }
@@ -154,8 +158,11 @@ export interface SetSettingPayload {
  * Write a setting value. Requires `adm.settings` permission.
  * High-risk settings additionally require an active step-up session.
  */
-export async function setSetting(payload: SetSettingPayload): Promise<void> {
-  await invoke<void>("set_setting", { payload });
+export async function setSetting(
+  payload: SetSettingPayload,
+  options?: { notifyOnError?: boolean },
+): Promise<void> {
+  await invoke<void>("set_setting", { payload }, options);
 }
 
 /**
@@ -349,7 +356,10 @@ export async function clearDocumentBrandingLogo(): Promise<void> {
 
 /** Read tenant document branding logo preview for a `data:` URL. */
 export async function readDocumentBrandingLogoPreview(): Promise<DocumentBrandingLogoPreview | null> {
-  const raw = await invoke<unknown>("read_document_branding_logo_preview");
+  // Callers treat a failed preview as "no logo": no toast of its own.
+  const raw = await invoke<unknown>("read_document_branding_logo_preview", undefined, {
+    notifyOnError: false,
+  });
   if (raw === null) return null;
   return DocumentBrandingLogoPreviewSchema.parse(raw);
 }

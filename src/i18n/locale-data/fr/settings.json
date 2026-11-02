@@ -97,6 +97,8 @@
     "saveSuccess": "En-tête de document enregistré",
     "saveError": "Échec de l'enregistrement de l'en-tête",
     "loadError": "Échec du chargement de l'en-tête",
+    "imageRejectedTitle": "Image non ajoutée à l'en-tête",
+    "imageRejectedBody": "Cette image est trop lourde pour l'en-tête, même réduite (limite : {{max_kb}} Ko par image). Choisissez une image plus petite.",
     "logoUploadError": "Échec du téléversement du logo",
     "logoClearError": "Échec de la suppression du logo",
     "invalidShape": "La valeur d'en-tête stockée est invalide. Réinitialisation vers un modèle vide.",

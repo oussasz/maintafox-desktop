@@ -2,7 +2,7 @@ import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
+import { type Editor, EditorContent, type JSONContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   AlignCenter,
@@ -18,10 +18,11 @@ import {
   Underline as UnderlineIcon,
   Undo2,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { shrinkImageForHeader } from "@/lib/document-header-image";
 import { cn } from "@/lib/utils";
 
 export interface DocumentHeaderEditorProps {
@@ -32,6 +33,8 @@ export interface DocumentHeaderEditorProps {
   /** Insert a data-URL image (logo) into the letterhead. */
   insertImageSrc?: string | null;
   onInsertImageConsumed?: () => void;
+  /** A picture could not be shrunk enough to fit the header: it was not added. */
+  onImageRejected?: () => void;
 }
 
 function ToolbarButton({
@@ -70,8 +73,30 @@ export function DocumentHeaderEditor({
   className,
   insertImageSrc,
   onInsertImageConsumed,
+  onImageRejected,
 }: DocumentHeaderEditorProps) {
   const { t } = useTranslation("settings");
+  const editorRef = useRef<Editor | null>(null);
+  const rejectedRef = useRef(onImageRejected);
+  rejectedRef.current = onImageRejected;
+
+  /** Insert a picture re-encoded to fit the header; one message when it cannot fit. */
+  async function insertShrunk(source: Blob | string, alt: string): Promise<void> {
+    const shrunk = await shrinkImageForHeader(source);
+    if (!shrunk) {
+      rejectedRef.current?.();
+      return;
+    }
+    editorRef.current?.chain().focus().setImage({ src: shrunk, alt }).run();
+  }
+
+  /** True (event handled) when the clipboard or drop holds picture files. */
+  function takeImageFiles(files: FileList | null | undefined): boolean {
+    const images = Array.from(files ?? []).filter((f) => f.type.startsWith("image/"));
+    if (images.length === 0) return false;
+    for (const file of images) void insertShrunk(file, file.name);
+    return true;
+  }
 
   const editor = useEditor({
     extensions: [
@@ -97,6 +122,10 @@ export function DocumentHeaderEditor({
         class:
           "prose prose-sm max-w-none min-h-[9rem] px-3 py-2 focus:outline-none text-text-primary",
       },
+      // A pasted or dropped picture is shrunk before it is stored inline (the engine refuses a
+      // header over its size limit); it never reaches the document as the raw file.
+      handlePaste: (_view, event) => takeImageFiles(event.clipboardData?.files),
+      handleDrop: (_view, event) => takeImageFiles(event.dataTransfer?.files),
     },
     onUpdate: ({ editor: ed }) => {
       onChange({
@@ -107,18 +136,23 @@ export function DocumentHeaderEditor({
   });
 
   useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  useEffect(() => {
     if (!editor) return;
     editor.setEditable(!disabled);
   }, [disabled, editor]);
 
   useEffect(() => {
     if (!editor || !insertImageSrc) return;
-    editor
-      .chain()
-      .focus()
-      .setImage({ src: insertImageSrc, alt: t("documentHeader.logoLabel") })
-      .run();
-    onInsertImageConsumed?.();
+    let cancelled = false;
+    void insertShrunk(insertImageSrc, t("documentHeader.logoLabel")).then(() => {
+      if (!cancelled) onInsertImageConsumed?.();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [editor, insertImageSrc, onInsertImageConsumed, t]);
 
   if (!editor) return null;
