@@ -234,7 +234,7 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
   function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
     const { t } = useTranslation("ot");
-    const { formatCurrency } = useFormatters();
+    const { formatCurrency, formatDateTime } = useFormatters();
     // Teams come from the personnel module and parts from the inventory: lists the user may not
     // read are not requested, and the planning form says which right is missing.
     const lists = useReadableLists(["teams", "articles"] as const);
@@ -1287,7 +1287,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   <dt className="text-xs text-muted-foreground">{t("planning.slotLabel")}</dt>
                   <dd>
                     {wo.planned_start || wo.planned_end
-                      ? `${formatOrDash(wo.planned_start)} → ${formatOrDash(wo.planned_end)}`
+                      ? `${formatDateTime(wo.planned_start)} → ${formatDateTime(wo.planned_end)}`
                       : "—"}
                   </dd>
                 </div>

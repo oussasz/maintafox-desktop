@@ -8,6 +8,8 @@ import {
   formatDate,
   formatDateLong,
   formatDateTime,
+  formatDayMonth,
+  formatYearMonth,
   formatTime,
   formatRelativeTime,
   getLocaleDirection,
@@ -260,5 +262,18 @@ describe("date-only texts", () => {
     expect(formatDate("2026-10-22", "fr")).toBe("22/10/2026");
     expect(formatDate("2026-01-01", "fr")).toBe("01/01/2026");
     expect(formatDate("2026-10-22", "en")).toBe("10/22/2026");
+  });
+});
+
+describe("formatDayMonth() and formatYearMonth()", () => {
+  it("shows a day without the year in the language order, never as 10-31", () => {
+    expect(formatDayMonth("2026-10-31", "fr")).toBe("31/10");
+    expect(formatDayMonth("2026-10-31", "en")).toBe("10/31");
+    expect(formatDayMonth(null, "fr")).toBe("—");
+  });
+
+  it("names a month from a year-month text in the language", () => {
+    expect(formatYearMonth("2026-10", "fr")).toMatch(/oct/);
+    expect(formatYearMonth("bad", "fr")).toBe("—");
   });
 });

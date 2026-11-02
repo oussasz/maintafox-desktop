@@ -202,7 +202,32 @@ export function formatDateTime(
 }
 
 /**
- * Formats a time-only value.
+ * A day without its year, for narrow cells: "31/10" (fr), "10/31" (en). Never the raw
+ * "10-31" of an ISO date.
+ */
+export function formatDayMonth(
+  value: Date | string | number | null | undefined,
+  locale: string,
+): string {
+  if (value == null) return "—";
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(toIntlLocale(locale), {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(date);
+}
+
+/** A month and year from "2026-10": "oct. 2026" (fr), "Oct 2026" (en). */
+export function formatYearMonth(value: string | null | undefined, locale: string): string {
+  const m = value ? /^(\d{4})-(\d{2})/.exec(value) : null;
+  if (!m) return "—";
+  return new Intl.DateTimeFormat(toIntlLocale(locale), { month: "short", year: "numeric" }).format(
+    new Date(Number(m[1]), Number(m[2]) - 1, 1),
+  );
+}
+
+/** Formats a time-only value.
  *
  * French:  14:30
  * English: 2:30 PM

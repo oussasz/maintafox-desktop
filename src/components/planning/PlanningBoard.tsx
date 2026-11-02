@@ -87,7 +87,7 @@ export function PlanningBoard({
   maxZoom,
 }: PlanningBoardProps) {
   const { t } = useTranslation("planning");
-  const { formatDecimal } = useFormatters();
+  const { formatDecimal, formatDayMonth } = useFormatters();
   const absenceType = useAbsenceTypeLookup();
 
   const groups = useMemo<ResourceTimelineGroup[]>(() => {
@@ -229,7 +229,7 @@ export function PlanningBoard({
           key={day}
           className="shrink-0 rounded border border-surface-border px-2 py-1 text-[10px] text-text-muted"
         >
-          {day.slice(5)}
+          {formatDayMonth(day)}
         </div>
       );
     }
@@ -258,7 +258,7 @@ export function PlanningBoard({
           }) + (basisLabel ? ` · ${basisLabel}` : "")
         }
       >
-        <span className="font-medium">{day.slice(5)}</span>{" "}
+        <span className="font-medium">{formatDayMonth(day)}</span>{" "}
         <Badge variant="outline" className="h-4 px-1 text-[9px]">
           {row.utilization_ratio == null
             ? t("gantt.noCapacity")

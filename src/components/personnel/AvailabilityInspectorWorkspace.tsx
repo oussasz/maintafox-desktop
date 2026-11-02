@@ -99,7 +99,7 @@ export function AvailabilityInspectorWorkspace({
   onBlocksChanged,
 }: AvailabilityInspectorWorkspaceProps) {
   const { t } = useTranslation("personnel");
-  const { formatDateTime } = useFormatters();
+  const { formatDateTime, formatDayMonth } = useFormatters();
   const formatHorizonInstant = (iso: string) => formatDateTime(iso);
   const woOpenRuleText = useWoOpenRuleText();
   // Absence types are named from the plant's list (Données de référence), by exact code.
@@ -397,7 +397,7 @@ export function AvailabilityInspectorWorkspace({
                     title={t(`availability.cell.${state}`)}
                     onClick={() => onCreateBlock(person.personnel_id, d)}
                   >
-                    <span className="block font-medium">{d.slice(5)}</span>
+                    <span className="block font-medium">{formatDayMonth(d)}</span>
                     <span className="block opacity-80">{t(`availability.cell.${state}`)}</span>
                   </button>
                 );
