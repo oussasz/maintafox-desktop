@@ -221,12 +221,14 @@ export function PlanningPage() {
   // open work orders, everyone else reads what is there.
   const canRefreshBacklog = can(P.PLAN_EDIT);
   useEffect(() => {
+    if (rightsLoading) return;
     if (canRefreshBacklog) {
+      // A failed refresh is already shown as a toast by the IPC layer: show what the table holds.
       void refreshBacklog().catch(() => loadBacklog());
     } else {
       void loadBacklog();
     }
-  }, [canRefreshBacklog, refreshBacklog, loadBacklog]);
+  }, [rightsLoading, canRefreshBacklog, refreshBacklog, loadBacklog]);
 
   /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
   const deepLinkHandledRef = useRef<string | null>(null);

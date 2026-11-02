@@ -239,12 +239,6 @@
     "inserted": "Added to a frozen week:",
     "syncRefused": "refused (sync)"
   },
-  "freeze": {
-    "title": "Freeze schedule period",
-    "summary": "Freeze commitments from {{start}} to {{end}}.",
-    "reason": "Freeze reason",
-    "reasonPlaceholder": "Explain why this period must be frozen"
-  },
   "override": {
     "title": "Override double-booking",
     "description": "This move conflicts with an existing assignment. Provide an audit reason to continue.",
@@ -436,7 +430,6 @@
     "breakInRecorded": "Break-in recorded",
     "slotReleased": "Slot released",
     "commitmentCancelled": "Commitment cancelled",
-    "periodFrozen": "Period frozen",
     "teamsNotified": "Crews notified",
     "weekApproved": "Week approved",
     "weekFrozen": "Week frozen",

@@ -239,12 +239,6 @@
     "inserted": "Ajouté en semaine gelée :",
     "syncRefused": "refusé (sync)"
   },
-  "freeze": {
-    "title": "Geler la période de planning",
-    "summary": "Geler les engagements du {{start}} au {{end}}.",
-    "reason": "Motif de gel",
-    "reasonPlaceholder": "Expliquez pourquoi cette période doit être gelée"
-  },
   "override": {
     "title": "Déroger au double-booking",
     "description": "Ce déplacement entre en conflit avec une affectation existante. Indiquez un motif d'audit pour continuer.",
@@ -436,7 +430,6 @@
     "breakInRecorded": "Break-in enregistré",
     "slotReleased": "Créneau libéré",
     "commitmentCancelled": "Engagement annulé",
-    "periodFrozen": "Période gelée",
     "teamsNotified": "Équipes notifiées",
     "weekApproved": "Semaine approuvée",
     "weekFrozen": "Semaine gelée",
