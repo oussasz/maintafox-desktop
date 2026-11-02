@@ -604,6 +604,7 @@
       "searchPlaceholder": "Search order, article or serial number",
       "empty": "No repairable orders yet.",
       "emptyDescription": "Send a repairable part to a vendor to start tracking its repair cycle.",
+      "noRightHint": "Creating a repair order needs the “Manage purchasing” right. Ask your administrator.",
       "create": "New repairable order",
       "columns": {
         "order": "Order",

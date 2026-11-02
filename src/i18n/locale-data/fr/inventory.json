@@ -604,6 +604,7 @@
       "searchPlaceholder": "Rechercher un ordre, un article ou un numéro de série",
       "empty": "Aucun ordre de réparation.",
       "emptyDescription": "Envoyez une pièce réparable chez un prestataire pour suivre son cycle de réparation.",
+      "noRightHint": "La création d'un ordre de réparation demande le droit « Gérer les achats ». Demandez-le à votre administrateur.",
       "create": "Nouvel ordre de réparation",
       "columns": {
         "order": "Ordre",
