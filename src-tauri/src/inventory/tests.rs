@@ -1840,7 +1840,7 @@ async fn to_reorder_counts_articles_like_the_article_list() {
     let db = setup_db().await;
     let a = create_test_article(&db, "RO-ART-A").await; // reorder point 5, no stock
     let b = create_test_article(&db, "RO-ART-B").await;
-    // A second active store: each never-stocked article is short in both.
+    // A second active store; article A is stocked (at zero) in both stores, so it is short in both.
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) \
@@ -1849,6 +1849,25 @@ async fn to_reorder_counts_articles_like_the_article_list() {
     ))
     .await
     .expect("second store");
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_locations (warehouse_id, code, name, is_active) \
+         SELECT id, 'RO-BIN-2', 'Bin 2', 1 FROM warehouses WHERE code = 'RO-WH-2'"
+            .to_string(),
+    ))
+    .await
+    .expect("second store bin");
+    for wh in ["MAIN", "RO-WH-2"] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty) \
+             SELECT ?, w.id, (SELECT id FROM stock_locations WHERE warehouse_id = w.id LIMIT 1), 0, 0, 0 \
+             FROM warehouses w WHERE w.code = ?",
+            [a.into(), wh.into()],
+        ))
+        .await
+        .expect("zero balance");
+    }
 
     let listed = queries::list_articles(&db, InventoryArticleFilter::default())
         .await
@@ -1871,6 +1890,53 @@ async fn to_reorder_counts_articles_like_the_article_list() {
         i64::try_from(per_article.len()).unwrap(),
         list_count,
         "analytics overview count"
+    );
+}
+
+/// An empty extra store must not flag every article: an article is judged in the stores that stock
+/// it, and a never-stocked article once, in the main store (the one holding the most stock lines).
+#[tokio::test]
+async fn empty_extra_store_does_not_inflate_reorder_recommendations() {
+    let db = setup_db().await;
+    let stocked = create_test_article(&db, "EX-STOCKED").await; // reorder point 5
+    let never = create_test_article(&db, "EX-NEVER").await;
+    // The real store holds the stock; MAIN (the migration seed) stays empty.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) \
+         VALUES ('ex-wh-real', 'EX-REAL', 'Magasin central', 1, 1)"
+            .to_string(),
+    ))
+    .await
+    .expect("real store");
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_locations (warehouse_id, code, name, is_active) \
+         SELECT id, 'EX-BIN', 'Rayon 1', 1 FROM warehouses WHERE code = 'EX-REAL'"
+            .to_string(),
+    ))
+    .await
+    .expect("real bin");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO stock_balances (article_id, warehouse_id, location_id, on_hand_qty, reserved_qty, available_qty) \
+         SELECT ?, w.id, (SELECT id FROM stock_locations WHERE warehouse_id = w.id LIMIT 1), 1, 0, 1 \
+         FROM warehouses w WHERE w.code = 'EX-REAL'",
+        [stocked.into()],
+    ))
+    .await
+    .expect("stocked balance");
+
+    let recs = queries::evaluate_reorder(&db, None).await.expect("reorder");
+    let for_stocked: Vec<_> = recs.iter().filter(|r| r.article_id == stocked).collect();
+    assert_eq!(for_stocked.len(), 1, "judged only in the store that stocks it");
+    assert_eq!(for_stocked[0].warehouse_code, "EX-REAL");
+    assert_eq!(for_stocked[0].warehouse_name, "Magasin central");
+    let for_never: Vec<_> = recs.iter().filter(|r| r.article_id == never).collect();
+    assert_eq!(for_never.len(), 1, "a never-stocked article is judged once");
+    assert_eq!(
+        for_never[0].warehouse_code, "EX-REAL",
+        "in the main store, not the empty one"
     );
 }
 
