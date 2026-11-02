@@ -46,7 +46,12 @@ import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
-import { isShippedRole, useRoleText, withoutFormerRoles } from "@/lib/role-labels";
+import {
+  formerRoleMatches,
+  isShippedRole,
+  useRoleText,
+  withoutFormerRoles,
+} from "@/lib/role-labels";
 import { cn } from "@/lib/utils";
 import {
   cloneRole,
@@ -257,11 +262,14 @@ function CloneRoleDialog({
   onClose,
   onCloned,
   withStepUp,
+  matches,
 }: {
   source: RoleWithPermissions | null;
   onClose: () => void;
   onCloned: (id: number) => void;
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
+  /** How each former role's rights compare with the role it stands for. */
+  matches: ReadonlyMap<string, "same" | "different">;
 }) {
   const { t } = useTranslation("admin");
   const roleText = useRoleText();
@@ -272,9 +280,10 @@ function CloneRoleDialog({
   useEffect(() => {
     if (!source) return;
     // A copy of a shipped role starts from its shown name and description, never the internal key.
-    setName(t("console.roleEditor.copyName", { name: roleText.label(source.name) }));
-    setDescription(roleText.description(source.name, source.description) ?? "");
-  }, [source, t, roleText]);
+    const match = matches.get(source.name);
+    setName(t("console.roleEditor.copyName", { name: roleText.label(source.name, match) }));
+    setDescription(roleText.description(source.name, source.description, match) ?? "");
+  }, [source, t, roleText, matches]);
 
   const submit = async () => {
     if (!source || !name.trim()) return;
@@ -302,7 +311,7 @@ function CloneRoleDialog({
         <DialogHeader>
           <DialogTitle>
             {t("console.roleEditor.cloneTitle", {
-              name: source ? roleText.label(source.name) : "",
+              name: source ? roleText.label(source.name, matches.get(source.name)) : "",
             })}
           </DialogTitle>
           <DialogDescription>
@@ -354,6 +363,8 @@ function CompareRolesDialog({
   const moduleLabel = useModuleLabel();
   const text = usePermissionText();
   const roleText = useRoleText();
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
+  const roleName = (name: string) => roleText.label(name, matches.get(name));
   const shown = useMemo(
     () => new Map((catalog?.permissions ?? []).map((p) => [p.name, p.description] as const)),
     [catalog],
@@ -384,7 +395,7 @@ function CompareRolesDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {t("console.roleEditor.compareTitle", { name: base ? roleText.label(base.name) : "" })}
+            {t("console.roleEditor.compareTitle", { name: base ? roleName(base.name) : "" })}
           </DialogTitle>
           <DialogDescription>{t("console.roleEditor.compareBody")}</DialogDescription>
         </DialogHeader>
@@ -399,7 +410,7 @@ function CompareRolesDialog({
                 .filter((r) => r.id !== base?.id)
                 .map((r) => (
                   <SelectItem key={r.id} value={String(r.id)}>
-                    {roleText.label(r.name)}
+                    {roleName(r.name)}
                   </SelectItem>
                 ))}
             </SelectContent>
@@ -411,11 +422,11 @@ function CompareRolesDialog({
               <tr>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.module")}</th>
                 <th className="py-1.5 pr-2 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: roleText.label(base.name) })}
+                  {t("console.roleEditor.onlyIn", { name: roleName(base.name) })}
                 </th>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.common")}</th>
                 <th className="py-1.5 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: roleText.label(other.name) })}
+                  {t("console.roleEditor.onlyIn", { name: roleName(other.name) })}
                 </th>
               </tr>
             </thead>
@@ -842,11 +853,50 @@ export function RoleEditorPanel() {
     : 0;
   const holderCount = selected ? (holders.get(selected.id) ?? 0) : 0;
   const roleText = useRoleText();
-  /** A former shipped role stays out of the list unless it is the one open (L5-03). */
-  const listedRoles = useMemo(() => withoutFormerRoles(roles, selectedId), [roles, selectedId]);
-  const selectedLabel = selected ? roleText.label(selected.name) : "";
+  /** How each former shipped role's rights compare with the role it stands for (L5-03). */
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
+  const roleName = (name: string) => roleText.label(name, matches.get(name));
+  /** Former shipped roles are listed apart, in "Anciens rôles", to open and check them. */
+  const listedRoles = useMemo(() => withoutFormerRoles(roles), [roles]);
+  const formerRoles = useMemo(
+    () => roles.filter((r) => !listedRoles.includes(r)),
+    [roles, listedRoles],
+  );
+  const selectedIsFormer = selected != null && formerRoles.includes(selected);
+  const selectedLabel = selected ? roleName(selected.name) : "";
   /** A shipped role is described by the application (translated), not by its stored text. */
   const shipped = selected ? isShippedRole(selected.name) : false;
+
+  const renderRole = (role: RoleWithPermissions) => (
+    <li key={role.id}>
+      <button
+        type="button"
+        onClick={() => requestSelect(role.id)}
+        aria-current={selectedId === role.id ? "true" : undefined}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+          selectedId === role.id
+            ? "bg-primary/10 text-primary"
+            : "text-text-primary hover:bg-surface-2",
+        )}
+      >
+        {role.is_system ? (
+          <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden />
+        ) : null}
+        <span className="min-w-0 flex-1 truncate" title={roleName(role.name)}>
+          {roleName(role.name)}
+        </span>
+        <span
+          className="flex items-center gap-0.5 text-[11px] text-text-secondary"
+          title={t("console.roleEditor.holders")}
+        >
+          <Users className="h-3 w-3" aria-hidden />
+          {holders.get(role.id) ?? 0}
+        </span>
+        <span className="text-[11px] text-text-secondary">· {role.permissions.length}</span>
+      </button>
+    </li>
+  );
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -869,38 +919,21 @@ export function RoleEditorPanel() {
             retrying={loading}
           />
         ) : null}
-        <ul className="space-y-1">
-          {listedRoles.map((role) => (
-            <li key={role.id}>
-              <button
-                type="button"
-                onClick={() => requestSelect(role.id)}
-                aria-current={selectedId === role.id ? "true" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
-                  selectedId === role.id
-                    ? "bg-primary/10 text-primary"
-                    : "text-text-primary hover:bg-surface-2",
-                )}
-              >
-                {role.is_system ? (
-                  <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden />
-                ) : null}
-                <span className="min-w-0 flex-1 truncate" title={roleText.label(role.name)}>
-                  {roleText.label(role.name)}
-                </span>
-                <span
-                  className="flex items-center gap-0.5 text-[11px] text-text-secondary"
-                  title={t("console.roleEditor.holders")}
-                >
-                  <Users className="h-3 w-3" aria-hidden />
-                  {holders.get(role.id) ?? 0}
-                </span>
-                <span className="text-[11px] text-text-secondary">· {role.permissions.length}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <ul className="space-y-1">{listedRoles.map(renderRole)}</ul>
+        {formerRoles.length > 0 ? (
+          <details
+            className="rounded-md border border-surface-border"
+            open={selectedIsFormer || undefined}
+          >
+            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text-secondary">
+              {t("console.roleEditor.formerRoles", { count: formerRoles.length })}
+            </summary>
+            <p className="px-3 pb-2 text-[11px] text-text-secondary">
+              {t("console.roleEditor.formerRolesHint")}
+            </p>
+            <ul className="space-y-1 px-1 pb-1">{formerRoles.map(renderRole)}</ul>
+          </details>
+        ) : null}
       </aside>
 
       <section className="min-w-0 flex-1 rounded-lg border border-surface-border bg-surface-0 p-4">
@@ -954,7 +987,11 @@ export function RoleEditorPanel() {
 
             {shipped ? (
               <p className="text-sm text-text-secondary">
-                {roleText.description(selected.name, selected.description)}
+                {roleText.description(
+                  selected.name,
+                  selected.description,
+                  matches.get(selected.name),
+                )}
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -1155,6 +1192,7 @@ export function RoleEditorPanel() {
           void load().then(() => setSelectedId(id));
         }}
         withStepUp={withStepUp}
+        matches={matches}
       />
       <CompareRolesDialog
         base={compareBase}
@@ -1166,7 +1204,7 @@ export function RoleEditorPanel() {
         open={retireTarget !== null}
         onOpenChange={(v) => !v && setRetireTarget(null)}
         title={t("console.roleEditor.retireTitle", {
-          name: retireTarget ? roleText.label(retireTarget.name) : "",
+          name: retireTarget ? roleName(retireTarget.name) : "",
         })}
         description={t("console.roleEditor.retireBody")}
         confirmLabel={t("console.roleEditor.retire")}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import fr from "@/i18n/locale-data/fr/admin.json";
 import {
+  formerRoleMatches,
   formerRoleOf,
   isShippedRole,
   roleDescription,
@@ -35,16 +36,31 @@ describe("shipped role names (L5-03)", () => {
     expect(roleLabel(t, "Finance Manager")).toBe("Responsable financier");
   });
 
-  it("labels a former duplicate role with the role it is identical to", () => {
-    expect(roleLabel(t, "Superadmin")).toBe("Ancien rôle, identique à Administrateur");
-    expect(roleLabel(t, "Maintenance Supervisor")).toBe(
-      "Ancien rôle, identique à Superviseur maintenance",
+  it("says 'identique' for a former role only when its rights were compared and are equal", () => {
+    expect(roleLabel(t, "Superadmin", "same")).toBe("Ancien rôle, identique à Administrateur");
+    expect(roleLabel(t, "Maintenance Supervisor", "different")).toBe(
+      "Ancien rôle, proche de Superviseur maintenance : vérifiez ses droits",
     );
+    // Not compared (the screen has no rights): never claims they are the same.
     expect(roleLabel(t, "Maintenance Technician")).toBe(
-      "Ancien rôle, identique à Technicien de maintenance",
+      "Ancien rôle, proche de Technicien de maintenance",
     );
-    expect(roleLabel(t, "Read Only Observer")).toBe("Ancien rôle, identique à Consultation seule");
+    expect(roleLabel(t, "Read Only Observer")).toBe("Ancien rôle, proche de Consultation seule");
     expect(formerRoleOf("Superadmin")).toBe("Administrator");
+  });
+
+  it("compares each former role with the role it stands for, by rights", () => {
+    const matches = formerRoleMatches([
+      { name: "Administrator", permissions: ["a.view", "a.edit"] },
+      { name: "Superadmin", permissions: ["a.edit", "a.view"] },
+      { name: "Supervisor", permissions: ["a.view", "a.edit"] },
+      { name: "Maintenance Supervisor", permissions: ["a.view"] },
+      // Its twin is not in the list: not compared.
+      { name: "Read Only Observer", permissions: [] },
+    ]);
+    expect(matches.get("Superadmin")).toBe("same");
+    expect(matches.get("Maintenance Supervisor")).toBe("different");
+    expect(matches.has("Read Only Observer")).toBe(false);
   });
 
   it("keeps a role created by the plant under its own name and description", () => {

@@ -78,8 +78,12 @@
         "name": "Finance manager",
         "description": "Prepares and follows maintenance budgets, approves and exports costs."
       },
-      "formerRole": "Former role, same as {{role}}",
-      "formerRoleDescription": "Role from an earlier version, with the same rights as \"{{role}}\". Accounts that hold it keep it; for a new account, choose \"{{role}}\"."
+      "formerRoleSame": "Former role, same as {{role}}",
+      "formerRoleDifferent": "Former role, close to {{role}}: check its rights",
+      "formerRoleUnknown": "Former role, close to {{role}}",
+      "formerRoleDescriptionSame": "Role from an earlier version, with the same rights as \"{{role}}\". Accounts that hold it keep it; for a new account, choose \"{{role}}\".",
+      "formerRoleDescriptionDifferent": "Role from an earlier version, meant for the same job as \"{{role}}\", but its rights are no longer the same: compare them before deciding. Accounts that hold it keep it; for a new account, choose \"{{role}}\" or a plant role.",
+      "formerRoleDescriptionUnknown": "Role from an earlier version, meant for the same job as \"{{role}}\". Its rights are shown under Roles, in \"Former roles\". Accounts that hold it keep it."
     },
     "templates": {
       "supervisor": {
@@ -1253,6 +1257,9 @@
       "unsavedSummary": "Unsaved changes: {{added}} right(s) added, {{removed}} removed",
       "saveBar": "Save the role changes",
       "wholeGroup": "Whole group",
+      "formerRoles_one": "Former role ({{count}})",
+      "formerRoles_other": "Former roles ({{count}})",
+      "formerRolesHint": "Roles from an earlier version, kept for the accounts that hold them. They are no longer offered when a role is given. Open them to see their rights and who holds them.",
       "autoAdded": "Added because {{perms}} needs it",
       "needs": "\"{{perm}}\" needs \"{{required}}\"",
       "notAddedTitle": "Required rights not ticked for you",

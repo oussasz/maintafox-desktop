@@ -26,7 +26,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { gateSentenceText } from "@/lib/app-error";
 import { usePermissionText } from "@/lib/permission-labels";
-import { roleDescription, roleLabel } from "@/lib/role-labels";
+import { formerRoleMatches, roleDescription, roleLabel } from "@/lib/role-labels";
 import {
   exportRoleModel,
   importRoleModel,
@@ -59,6 +59,7 @@ export function RoleImportExportPanel() {
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
+  const matches = useMemo(() => formerRoleMatches(roles), [roles]);
   const [loading, setLoading] = useState(true);
 
   // Export state
@@ -270,9 +271,12 @@ export function RoleImportExportPanel() {
                           onCheckedChange={() => toggleExportRole(role.id)}
                         />
                       </TableCell>
-                      <TableCell className="font-medium">{roleLabel(t, role.name)}</TableCell>
+                      <TableCell className="font-medium">
+                        {roleLabel(t, role.name, matches.get(role.name))}
+                      </TableCell>
                       <TableCell className="text-xs text-text-muted">
-                        {roleDescription(t, role.name, role.description) ?? "—"}
+                        {roleDescription(t, role.name, role.description, matches.get(role.name)) ??
+                          "—"}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant="secondary" className="text-[10px]">

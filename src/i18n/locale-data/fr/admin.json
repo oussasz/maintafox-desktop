@@ -78,8 +78,12 @@
         "name": "Responsable financier",
         "description": "Prépare et suit les budgets de maintenance, valide les coûts et les exporte."
       },
-      "formerRole": "Ancien rôle, identique à {{role}}",
-      "formerRoleDescription": "Rôle d'une version précédente, avec les mêmes droits que « {{role}} ». Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} »."
+      "formerRoleSame": "Ancien rôle, identique à {{role}}",
+      "formerRoleDifferent": "Ancien rôle, proche de {{role}} : vérifiez ses droits",
+      "formerRoleUnknown": "Ancien rôle, proche de {{role}}",
+      "formerRoleDescriptionSame": "Rôle d'une version précédente, avec les mêmes droits que « {{role}} ». Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} ».",
+      "formerRoleDescriptionDifferent": "Rôle d'une version précédente, prévu pour le même métier que « {{role}} », mais ses droits ne sont plus les mêmes : comparez-les avant de décider. Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} » ou un rôle de l'usine.",
+      "formerRoleDescriptionUnknown": "Rôle d'une version précédente, prévu pour le même métier que « {{role}} ». Ses droits sont visibles dans Rôles, rubrique « Anciens rôles ». Les comptes qui l'ont le gardent."
     },
     "templates": {
       "supervisor": {
@@ -1253,6 +1257,9 @@
       "unsavedSummary": "Modifications non enregistrées : {{added}} droit(s) ajouté(s), {{removed}} retiré(s)",
       "saveBar": "Enregistrer les modifications du rôle",
       "wholeGroup": "Tout le groupe",
+      "formerRoles_one": "Ancien rôle ({{count}})",
+      "formerRoles_other": "Anciens rôles ({{count}})",
+      "formerRolesHint": "Rôles d'une version précédente, gardés pour les comptes qui les ont. Ils ne sont plus proposés quand on donne un rôle. Ouvrez-les pour voir leurs droits et qui les a.",
       "autoAdded": "Ajouté car nécessaire à {{perms}}",
       "needs": "« {{perm}} » a besoin de « {{required}} »",
       "notAddedTitle": "Droits nécessaires non cochés à votre place",
