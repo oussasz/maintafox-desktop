@@ -79,6 +79,10 @@ export function DocumentHeaderEditor({
   const editorRef = useRef<Editor | null>(null);
   const rejectedRef = useRef(onImageRejected);
   rejectedRef.current = onImageRejected;
+  const consumedRef = useRef(onInsertImageConsumed);
+  consumedRef.current = onInsertImageConsumed;
+  const altRef = useRef(t("documentHeader.logoLabel"));
+  altRef.current = t("documentHeader.logoLabel");
 
   /** Insert a picture re-encoded to fit the header; one message when it cannot fit. */
   async function insertShrunk(source: Blob | string, alt: string): Promise<void> {
@@ -147,13 +151,20 @@ export function DocumentHeaderEditor({
   useEffect(() => {
     if (!editor || !insertImageSrc) return;
     let cancelled = false;
-    void insertShrunk(insertImageSrc, t("documentHeader.logoLabel")).then(() => {
-      if (!cancelled) onInsertImageConsumed?.();
+    void shrinkImageForHeader(insertImageSrc).then((shrunk) => {
+      // A restarted effect (cancelled) never inserts: only the latest run does, once.
+      if (cancelled) return;
+      if (shrunk) {
+        editor.chain().focus().setImage({ src: shrunk, alt: altRef.current }).run();
+      } else {
+        rejectedRef.current?.();
+      }
+      consumedRef.current?.();
     });
     return () => {
       cancelled = true;
     };
-  }, [editor, insertImageSrc, onInsertImageConsumed, t]);
+  }, [editor, insertImageSrc]);
 
   if (!editor) return null;
 

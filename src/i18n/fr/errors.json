@@ -953,7 +953,7 @@
     "GATE_SET_HEADER_TAG_FORBIDDEN": "En-tête refusé : la balise « {{tag}} » n'est pas autorisée. Supprimez le contenu collé qui la contient (collez plutôt en texte brut).",
     "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN": "En-tête refusé : l'attribut « {{attribute}} » (balise « {{tag}} ») n'est pas autorisé. Supprimez le contenu collé qui le contient (collez plutôt en texte brut).",
     "GATE_SET_HEADER_COMMENT": "En-tête refusé : il contient un commentaire caché, qui n'est pas autorisé. Supprimez le contenu collé (collez plutôt en texte brut).",
-    "GATE_SET_HEADER_SCRIPT": "En-tête refusé : il contient du code actif (« {{content}} »), qui n'est pas autorisé. Supprimez le contenu collé qui le contient.",
+    "GATE_SET_HEADER_SCRIPT": "En-tête refusé : il contient un lien ou du code qui n'est pas autorisé. Supprimez le contenu collé qui le contient.",
     "GATE_SET_HEADER_UNCLOSED_TAG": "En-tête refusé : la balise « {{tag}} » n'est pas fermée. Supprimez le contenu collé qui la contient.",
     "GATE_SET_HEADER_STRAY_BRACKET": "En-tête refusé : il contient un signe « < » qui n'ouvre aucune balise. Supprimez-le ou remplacez-le par un autre texte.",
     "GATE_SET_NOT_IN_USE": "Paramètre refusé : il n'est pas utilisé par l'application et ne peut pas être modifié.",

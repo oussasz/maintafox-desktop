@@ -8,11 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cloneRole,
   deactivateUser,
-  getLockoutPolicy,
-  setLockoutPolicy,
-  getPasswordPolicy,
-  setPasswordPolicy,
   exportAdminEventsCsv,
+  getLockoutPolicy,
+  getPasswordPolicy,
   getRoleEditorCatalog,
   listActiveSessions,
   listAdminEventFacets,
@@ -21,6 +19,8 @@ import {
   reactivateUser,
   revokeEmergencyElevation,
   revokeRoleScope,
+  setLockoutPolicy,
+  setPasswordPolicy,
 } from "@/services/rbac-service";
 import {
   getSetting,

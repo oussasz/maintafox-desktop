@@ -954,7 +954,7 @@
     "GATE_SET_HEADER_TAG_FORBIDDEN": "Header refused: the tag \"{{tag}}\" is not allowed. Remove the pasted content that contains it (paste as plain text instead).",
     "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN": "Header refused: the attribute \"{{attribute}}\" (tag \"{{tag}}\") is not allowed. Remove the pasted content that contains it (paste as plain text instead).",
     "GATE_SET_HEADER_COMMENT": "Header refused: it contains a hidden comment, which is not allowed. Remove the pasted content (paste as plain text instead).",
-    "GATE_SET_HEADER_SCRIPT": "Header refused: it contains active code (\"{{content}}\"), which is not allowed. Remove the pasted content that contains it.",
+    "GATE_SET_HEADER_SCRIPT": "Header refused: it contains a link or code that is not allowed. Remove the pasted content that contains it.",
     "GATE_SET_HEADER_UNCLOSED_TAG": "Header refused: the tag \"{{tag}}\" is not closed. Remove the pasted content that contains it.",
     "GATE_SET_HEADER_STRAY_BRACKET": "Header refused: it contains a \"<\" sign that opens no tag. Remove it or replace it with other text.",
     "GATE_SET_NOT_IN_USE": "Setting refused: it is not used by the application and cannot be changed.",
