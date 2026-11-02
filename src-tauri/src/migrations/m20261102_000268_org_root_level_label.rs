@@ -152,7 +152,9 @@ mod tests {
         add_model(&db, 903, "archived").await;
         // Capture triggers are installed at start-up, not by the migrations: install them so the
         // rows below are journalled as on a real PC.
-        crate::sync::capture::install_capture(&db).await.expect("install capture");
+        crate::sync::capture::install_capture(&db)
+            .await
+            .expect("install capture");
         let active_root = add_level(&db, 901, "ROOT", "Root Organization").await;
         let draft_root = add_level(&db, 902, "ROOT", "Root Organization").await;
         let renamed_root = add_level(&db, 903, "ROOT", "Groupe Tellmétal").await;
