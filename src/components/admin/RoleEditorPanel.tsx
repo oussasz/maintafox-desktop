@@ -456,6 +456,11 @@ function CompareRolesDialog({
 
 // ── Permission matrix of one role, grouped by module ────────────────────────
 
+/** A right the registry flags as dangerous or as needing a step-up: never ticked by one click. */
+function isSensitive(p: Pick<PermissionWithSystem, "is_dangerous" | "requires_step_up">) {
+  return p.is_dangerous || p.requires_step_up;
+}
+
 function PermissionMatrix({
   catalog,
   active,
@@ -463,6 +468,7 @@ function PermissionMatrix({
   onToggle,
   filter,
   autoAdded,
+  onSensitiveGroup,
 }: {
   catalog: RoleEditorCatalog;
   active: Set<string>;
@@ -471,6 +477,11 @@ function PermissionMatrix({
   autoAdded: ReadonlyMap<string, readonly string[]>;
   /** Ticks or unticks the given permissions (one, or a whole group). */
   onToggle: (permissions: string[], enabled: boolean) => void;
+  /**
+   * The whole-group switch left these sensitive rights unticked (flagged dangerous or needing a
+   * step-up in the registry): the panel asks before ticking them (SF-2).
+   */
+  onSensitiveGroup: (group: string, permissions: string[]) => void;
   filter: string;
 }) {
   const { t } = useTranslation("admin");
@@ -543,12 +554,25 @@ function PermissionMatrix({
                   </span>
                   <Switch
                     checked={allGranted}
-                    onCheckedChange={(checked) =>
+                    onCheckedChange={(checked) => {
+                      if (!checked) {
+                        onToggle(
+                          perms.map((p) => p.name),
+                          false,
+                        );
+                        return;
+                      }
+                      // One click never ticks a right the registry flags as sensitive: the others
+                      // are ticked, the sensitive ones are listed and asked for.
+                      const sensitive = perms
+                        .filter((p) => isSensitive(p) && !active.has(p.name))
+                        .map((p) => p.name);
                       onToggle(
-                        perms.map((p) => p.name),
-                        checked,
-                      )
-                    }
+                        perms.filter((p) => !sensitive.includes(p.name)).map((p) => p.name),
+                        true,
+                      );
+                      if (sensitive.length > 0) onSensitiveGroup(groupLabel, sensitive);
+                    }}
                     aria-label={t("console.roleEditor.wholeGroupToggle", { group: groupLabel })}
                   />
                 </li>
@@ -788,6 +812,12 @@ export function RoleEditorPanel() {
     setAutoAdded(new Map());
     setRuleNotice(null);
   }, [permsChanged, selected]);
+
+  /** Sensitive rights of a group the whole-group switch left for the user to confirm (SF-2). */
+  const [sensitiveAsk, setSensitiveAsk] = useState<{
+    group: string;
+    permissions: string[];
+  } | null>(null);
 
   const toggle = (perms: string[], enabled: boolean) => {
     const plan = planToggle(perms, enabled, active, hardRequires, offered);
@@ -1132,6 +1162,7 @@ export function RoleEditorPanel() {
               onToggle={toggle}
               filter={permissionFilter}
               autoAdded={autoAdded}
+              onSensitiveGroup={(group, permissions) => setSensitiveAsk({ group, permissions })}
             />
 
             {canEdit && dirty ? (
@@ -1224,6 +1255,28 @@ export function RoleEditorPanel() {
         description={t("console.roleEditor.unsavedLeaveBody", { name: selectedLabel })}
         confirmLabel={t("console.roleEditor.discardChanges")}
       />
+      <ConfirmDialog
+        open={sensitiveAsk !== null}
+        onOpenChange={(v) => !v && setSensitiveAsk(null)}
+        title={t("console.roleEditor.sensitiveGroupTitle", { group: sensitiveAsk?.group ?? "" })}
+        description={t("console.roleEditor.sensitiveGroupBody", {
+          count: sensitiveAsk?.permissions.length ?? 0,
+        })}
+        confirmLabel={t("console.roleEditor.sensitiveGroupConfirm")}
+        dismissLabel={t("console.roleEditor.sensitiveGroupKeepOut")}
+        onConfirm={() => {
+          if (sensitiveAsk) toggle(sensitiveAsk.permissions, true);
+          setSensitiveAsk(null);
+        }}
+      >
+        <ul className="list-inside list-disc text-sm text-text-primary">
+          {(sensitiveAsk?.permissions ?? []).map((perm) => (
+            <li key={perm} title={perm}>
+              {text.label(perm, catalogDescriptions.get(perm))}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
       <ConfirmDialog
         open={pendingLeave !== null}
         onOpenChange={(v) => !v && setPendingLeave(null)}

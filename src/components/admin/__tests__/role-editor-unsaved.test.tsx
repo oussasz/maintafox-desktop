@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Role editor: unsaved changes are not lost by switching Administration tab (a change of the
  * `?tab=` query) — the shared guard asks first; "Cancel" stays, "Discard" goes on.
  */
@@ -261,5 +261,91 @@ describe("RoleEditorPanel prerequisites (L5-06)", () => {
     expect(toggleOf(P.DOC_VIEW).getAttribute("aria-checked")).toBe("false");
     expect(toggleOf(P.DOC_MANAGE).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("console.roleEditor.dependentsTitle")).toBeInTheDocument();
+  });
+});
+
+describe("RoleEditorPanel whole-group switch and sensitive rights (SF-2)", () => {
+  const CAT: RoleEditorCatalog = {
+    permissions: [
+      {
+        id: 1,
+        name: P.ARC_VIEW,
+        description: "Browse",
+        category: "arc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 2,
+        name: P.ARC_EXPORT,
+        description: "Export",
+        category: "arc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 3,
+        name: P.ARC_PURGE,
+        description: "Purge",
+        category: "arc",
+        is_dangerous: true,
+        requires_step_up: true,
+        is_system: true,
+      },
+    ],
+    dependencies: [],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(CAT);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+  });
+
+  async function clickWholeGroup() {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "console.roleEditor.wholeGroupToggle" }),
+    );
+  }
+  const checked = () =>
+    screen
+      .getAllByRole("switch", { name: "roles.togglePermission", hidden: true })
+      .map((s) => s.getAttribute("aria-checked"));
+
+  it("ticks the others, leaves a flagged right unticked and asks for it", async () => {
+    await clickWholeGroup();
+    expect(checked()).toEqual(["true", "true", "false"]);
+    expect(await screen.findByText("console.roleEditor.sensitiveGroupTitle")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "console.roleEditor.sensitiveGroupKeepOut" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("console.roleEditor.sensitiveGroupTitle")).toBeNull(),
+    );
+    expect(checked()).toEqual(["true", "true", "false"]);
+  });
+
+  it("ticks the flagged right only when the user confirms", async () => {
+    await clickWholeGroup();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "console.roleEditor.sensitiveGroupConfirm" }),
+    );
+    await waitFor(() => expect(checked()).toEqual(["true", "true", "true"]));
   });
 });
