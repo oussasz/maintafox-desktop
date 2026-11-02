@@ -43,15 +43,17 @@ export function BudgetVersionCompare({
   const [leftLines, setLeftLines] = useState<BudgetLine[]>([]);
   const [rightLines, setRightLines] = useState<BudgetLine[]>([]);
   const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setLeftId((cur) => cur ?? referenceVersionId);
   }, [referenceVersionId]);
 
   useEffect(() => {
-    if (leftId == null || rightId == null) return;
+    if (leftId == null || rightId == null || leftId === rightId) return;
     let cancelled = false;
     setError(null);
+    setLoading(true);
     // Never show the previous pair's amounts under the new version names.
     setLeftLines([]);
     setRightLines([]);
@@ -63,12 +65,14 @@ export function BudgetVersionCompare({
         if (cancelled) return;
         setLeftLines(l);
         setRightLines(r);
+        setLoading(false);
       })
       .catch((err) => {
         if (cancelled) return;
         setLeftLines([]);
         setRightLines([]);
         setError(err);
+        setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -126,14 +130,19 @@ export function BudgetVersionCompare({
         {picker(t("compare.versionA"), leftId, setLeftId)}
         {picker(t("compare.versionB"), rightId, setRightId)}
       </div>
-      {sameVersion ? <p className="text-xs text-text-muted">{t("compare.sameVersion")}</p> : null}
+      {sameVersion ? (
+        <p role="status" className="text-xs text-text-muted">
+          {t("compare.sameVersion")}
+        </p>
+      ) : null}
+      {loading ? <p className="text-xs text-text-muted">{t("compare.loading")}</p> : null}
       {left && right && !sameVersion && !sameCurrency ? (
         <p role="status" className="text-xs text-text-muted">
           {t("compare.differentCurrencies")}
         </p>
       ) : null}
       {error ? <ErrorState error={error} title={t("planning.loadError")} /> : null}
-      {left && right && !sameVersion && !error ? (
+      {left && right && !sameVersion && !error && !loading ? (
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full text-sm">
             <caption className="sr-only">{t("compare.title")}</caption>

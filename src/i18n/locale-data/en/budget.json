@@ -358,8 +358,9 @@
     "choose": "Choose a version",
     "gap": "Gap (B − A)",
     "total": "Total",
+    "loading": "Loading the versions…",
     "sameVersion": "Choose two different versions to compare them.",
-    "differentCurrencies": "The two versions use different currencies: amounts are shown in their own currency and the gap is not calculated.",
+    "differentCurrencies": "The two versions use different currencies: amounts are shown in their own currency and the gaps are not calculated.",
     "noLines": "No budget line in these two versions."
   },
   "planning": {

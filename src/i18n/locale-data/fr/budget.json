@@ -358,8 +358,9 @@
     "choose": "Choisir une version",
     "gap": "Écart (B − A)",
     "total": "Total",
+    "loading": "Chargement des versions…",
     "sameVersion": "Choisissez deux versions différentes pour les comparer.",
-    "differentCurrencies": "Les deux versions n'ont pas la même devise : les montants sont affichés dans leur devise, l'écart et le total des écarts ne sont pas calculés.",
+    "differentCurrencies": "Les deux versions n'ont pas la même devise : les montants sont affichés dans leur devise, les écarts ne sont pas calculés.",
     "noLines": "Aucune ligne de budget dans ces deux versions."
   },
   "planning": {
