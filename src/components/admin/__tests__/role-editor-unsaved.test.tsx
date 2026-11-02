@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { RoleEditorPanel } from "@/components/admin/RoleEditorPanel";
 import type { RoleEditorCatalog, RoleWithPermissions } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string) => key,
@@ -121,7 +122,7 @@ describe("RoleEditorPanel whole-group switch", () => {
     permissions: [
       {
         id: 1,
-        name: "doc.view",
+        name: P.DOC_VIEW,
         description: "View docs",
         category: "doc",
         is_dangerous: false,
@@ -130,7 +131,7 @@ describe("RoleEditorPanel whole-group switch", () => {
       },
       {
         id: 2,
-        name: "doc.manage",
+        name: P.DOC_MANAGE,
         description: "Edit docs",
         category: "doc",
         is_dangerous: false,
@@ -173,7 +174,7 @@ describe("RoleEditorPanel whole-group switch", () => {
     fireEvent.click(screen.getByRole("button", { name: "console.roleEditor.save" }));
     await waitFor(() => expect(svc.updateRole).toHaveBeenCalled());
     const input = svc.updateRole.mock.calls[0]?.[0] as { add_permissions: string[] };
-    expect([...input.add_permissions].sort()).toEqual(["doc.manage", "doc.view"]);
+    expect([...input.add_permissions].sort()).toEqual([P.DOC_MANAGE, P.DOC_VIEW]);
   });
 });
 
@@ -189,23 +190,23 @@ describe("RoleEditorPanel prerequisites (L5-06)", () => {
   });
   const CAT: RoleEditorCatalog = {
     permissions: [
-      perm(1, "doc.view"),
-      perm(2, "doc.manage"),
-      perm(3, "di.view"),
-      perm(4, "di.review"),
-      perm(5, "di.approve"),
+      perm(1, P.DOC_VIEW),
+      perm(2, P.DOC_MANAGE),
+      perm(3, P.DI_VIEW),
+      perm(4, P.DI_REVIEW),
+      perm(5, P.DI_APPROVE),
     ],
     dependencies: [
       {
         id: 1,
-        permission_name: "doc.manage",
-        required_permission_name: "doc.view",
+        permission_name: P.DOC_MANAGE,
+        required_permission_name: P.DOC_VIEW,
         dependency_type: "hard",
       },
       {
         id: 2,
-        permission_name: "di.approve",
-        required_permission_name: "di.review",
+        permission_name: P.DI_APPROVE,
+        required_permission_name: P.DI_REVIEW,
         dependency_type: "hard",
       },
     ],
@@ -240,12 +241,12 @@ describe("RoleEditorPanel prerequisites (L5-06)", () => {
       screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
     const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
 
-    fireEvent.click(toggleOf("doc.manage"));
-    expect(toggleOf("doc.view").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggleOf(P.DOC_MANAGE));
+    expect(toggleOf(P.DOC_VIEW).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("console.roleEditor.autoAdded")).toBeInTheDocument();
 
-    fireEvent.click(toggleOf("di.approve"));
-    expect(toggleOf("di.review").getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggleOf(P.DI_APPROVE));
+    expect(toggleOf(P.DI_REVIEW).getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText("console.roleEditor.notAddedTitle")).toBeInTheDocument();
   });
 
@@ -255,10 +256,10 @@ describe("RoleEditorPanel prerequisites (L5-06)", () => {
       screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
     const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
 
-    fireEvent.click(toggleOf("doc.manage"));
-    fireEvent.click(toggleOf("doc.view"));
-    expect(toggleOf("doc.view").getAttribute("aria-checked")).toBe("false");
-    expect(toggleOf("doc.manage").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggleOf(P.DOC_MANAGE));
+    fireEvent.click(toggleOf(P.DOC_VIEW));
+    expect(toggleOf(P.DOC_VIEW).getAttribute("aria-checked")).toBe("false");
+    expect(toggleOf(P.DOC_MANAGE).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("console.roleEditor.dependentsTitle")).toBeInTheDocument();
   });
 });
