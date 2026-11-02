@@ -6,8 +6,9 @@
 //! [`ROLE_TEMPLATES`]), the one list the screens also read. This migration:
 //! - adds the rows of the models not stored yet (the six new models and the Finance Manager
 //!   template, which was in the registry only), with the same identity on every PC;
-//! - stores the trimmed lists of the Supervisor and Technician templates (least privilege, Advisor
-//!   answer 8). Only template rows change: no role, no grant is touched.
+//! - stores the trimmed lists of the Supervisor, Technician (least privilege, Advisor answer 8)
+//!   and Planner templates (Advisor, option a: no emergency reassignment, purchasing or stock
+//!   movements). Only template rows change: no role, no grant is touched.
 //!
 //! Made by this migration on every PC with the same result: nothing is sent to the sync.
 
@@ -50,7 +51,7 @@ pub(crate) const ADDED_TEMPLATES: &[(&str, &str)] = &[
 ];
 
 /// Stored templates whose list is replaced by the registry's (trimmed to least privilege).
-pub(crate) const TRIMMED_TEMPLATES: &[&str] = &["Supervisor Template", "Technician Template"];
+pub(crate) const TRIMMED_TEMPLATES: &[&str] = &["Supervisor Template", "Technician Template", "Planner Template"];
 
 /// The registry's rights of a template, as stored in `module_set_json`.
 fn stored_rights(name: &str) -> Result<String, DbErr> {
@@ -132,7 +133,8 @@ impl MigrationTrait for Migration {
 mod tests {
     use super::*;
     use crate::rbac::permissions::{
-        DI_CREATE_OWN, DI_VIEW, EQ_VIEW, INV_PROCURE, OT_EMERGENCY_ASSIGN, PTW_CLOSE, PTW_ISSUE, PTW_VIEW,
+        DI_CREATE_OWN, DI_VIEW, EQ_VIEW, INV_MANAGE, INV_PROCURE, INV_VIEW, OT_EDIT, OT_EMERGENCY_ASSIGN, PLAN_EDIT,
+        PTW_CLOSE, PTW_ISSUE, PTW_VIEW,
     };
 
     fn rights(name: &str) -> &'static [&'static str] {
@@ -189,5 +191,19 @@ mod tests {
         // Goods receipt needs the purchasing right: the storekeeper does not get it (Advisor 1).
         assert!(!rights("Storekeeper Template").contains(&INV_PROCURE));
         assert!(rights("Buyer Template").contains(&INV_PROCURE));
+    }
+
+    #[test]
+    fn planner_plans_without_purchasing_or_stock_movements() {
+        // CMMS Advisor, option a. Reserving a work order's parts goes through the work order
+        // (`add_part`, ot.edit), so it needs no stock right.
+        let planner = rights("Planner Template");
+        for kept_out in [OT_EMERGENCY_ASSIGN, INV_PROCURE, INV_MANAGE] {
+            assert!(!planner.contains(&kept_out), "Planner holds {kept_out}");
+        }
+        for kept in [PLAN_EDIT, OT_EDIT, INV_VIEW] {
+            assert!(planner.contains(&kept), "Planner lacks {kept}");
+        }
+        assert!(TRIMMED_TEMPLATES.contains(&"Planner Template"));
     }
 }

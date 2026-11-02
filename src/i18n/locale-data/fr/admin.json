@@ -96,7 +96,7 @@
       },
       "planner": {
         "name": "Planificateur",
-        "description": "Planifie les ordres de travail et le préventif, prépare les pièces et les achats."
+        "description": "Planifie les ordres de travail et le préventif, et réserve leurs pièces en préparant les ordres de travail. Ne passe pas d'achats et ne fait pas de mouvements de stock."
       },
       "observer": {
         "name": "Consultation seule",

@@ -1208,23 +1208,19 @@
       "trn.view"
     ],
     "Planner Template": [
-      "ot.view",
-      "ot.create",
-      "ot.edit",
-      "ot.emergency_assign",
-      "di.view",
-      "di.create",
-      "di.screen",
-      "pm.view",
-      "pm.create",
-      "pm.edit",
       "plan.view",
       "plan.edit",
       "plan.confirm",
       "plan.windows",
-      "inv.view",
-      "inv.manage",
-      "inv.procure"
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "di.view",
+      "di.screen",
+      "pm.view",
+      "pm.create",
+      "pm.edit",
+      "inv.view"
     ],
     "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"],
     "Finance Manager Template": [
