@@ -14,9 +14,9 @@ use super::domain::{
     CapacityWindow, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
     CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
     NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningCrewLane, PlanningGanttFilter,
-    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn,
-    ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter, ProposedWorkOrder, RescheduleCommitmentInput,
+    ScheduleBreakIn, ScheduleBreakInFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter,
+    TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use super::load;
 use super::person_load;
@@ -2573,6 +2573,73 @@ pub async fn freeze_schedule_period(
     Ok(updated.rows_affected() as i64)
 }
 
+/// OTs planned on their form (start and end) in a period that no commitment holds: drawn on the
+/// board as "to commit". Same statuses as the backlog; a cancelled OT is left out; an OT whose
+/// commitment is held or done is already a bar. `team_id` keeps the OTs assigned to that crew.
+pub(crate) async fn list_proposed_work_orders(
+    db: &DatabaseConnection,
+    period_start: &str,
+    period_end: &str,
+    team_id: Option<i64>,
+) -> AppResult<Vec<ProposedWorkOrder>> {
+    let mut values: Vec<sea_orm::Value> = vec![period_end.to_string().into(), period_start.to_string().into()];
+    let team_sql = match team_id {
+        Some(team_id) => {
+            values.push(team_id.into());
+            " AND wo.assigned_team_id = ?"
+        }
+        None => "",
+    };
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id, wo.code, wo.title, wo.planned_start, wo.planned_end,
+                        t.id AS team_id, t.name AS team_name, ar.name AS equipment_label
+                 FROM work_orders wo
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id
+                 LEFT JOIN teams t ON t.id = wo.assigned_team_id AND t.deleted_at IS NULL
+                 LEFT JOIN equipment ar ON ar.id = wo.equipment_id
+                 WHERE wos.code IN ({})
+                   AND wo.cancelled_at IS NULL
+                   AND wo.planned_start IS NOT NULL
+                   AND wo.planned_end IS NOT NULL
+                   AND julianday(wo.planned_start) <= julianday(?)
+                   AND julianday(wo.planned_end) >= julianday(?)
+                   {team_sql}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM schedule_commitments sc
+                       WHERE sc.source_type = 'work_order'
+                         AND sc.source_id = wo.id
+                         AND sc.status IN ('committed', 'closed'))
+                 ORDER BY wo.planned_start ASC, wo.id ASC",
+                super::queries::WO_SCHEDULE_CANDIDATE_STATUS_SQL
+            ),
+            values,
+        ))
+        .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(ProposedWorkOrder {
+                work_order_id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
+                code: row.try_get("", "code").map_err(|e| decode_err("code", e))?,
+                title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
+                planned_start: row
+                    .try_get("", "planned_start")
+                    .map_err(|e| decode_err("planned_start", e))?,
+                planned_end: row
+                    .try_get("", "planned_end")
+                    .map_err(|e| decode_err("planned_end", e))?,
+                assigned_team_id: row.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?,
+                assigned_team_name: row.try_get("", "team_name").map_err(|e| decode_err("team_name", e))?,
+                equipment_label: row
+                    .try_get("", "equipment_label")
+                    .map_err(|e| decode_err("equipment_label", e))?,
+            })
+        })
+        .collect()
+}
+
 /// The planning board over a period. `access` is what the caller may read of each assignee's
 /// absences (`personnel::absence_access`, loaded by the IPC command).
 pub async fn get_planning_gantt_snapshot(
@@ -2808,6 +2875,9 @@ pub async fn get_planning_gantt_snapshot(
         .await?;
     let locked_windows: Vec<PlanningWindow> = locked_rows.iter().map(map_planning_window).collect::<AppResult<_>>()?;
 
+    let proposed_work_orders =
+        list_proposed_work_orders(db, &filter.period_start, &filter.period_end, filter.team_id).await?;
+
     Ok(PlanningGanttSnapshot {
         period_start: filter.period_start,
         period_end: filter.period_end,
@@ -2816,6 +2886,7 @@ pub async fn get_planning_gantt_snapshot(
         capacity: capacity_by_team_day.into_values().collect(),
         assignee_lanes,
         crew_lanes,
+        proposed_work_orders,
     })
 }
 

@@ -1,7 +1,8 @@
 {
   "page": {
     "title": "Planning",
-    "committedCount": "{{count}} OT engagé(s) sur la période affichée"
+    "counter": "engagés {{committed}} · à engager {{proposed}}",
+    "counterTitle": "{{committed}} OT engagé(s) et {{proposed}} OT planifié(s) mais pas encore engagé(s) sur la période affichée"
   },
   "views": {
     "gantt": "Tableau Gantt",
@@ -279,6 +280,12 @@
   "dialogs": {
     "cancel": "Annuler",
     "close": "Fermer"
+  },
+  "proposed": {
+    "label": "À engager",
+    "tooltip": "OT planifié mais pas encore engagé : cliquez pour l'engager",
+    "tooltipWithTeam": "OT planifié mais pas encore engagé (équipe : {{team}}) : cliquez pour l'engager",
+    "noRight": "Vous n'avez pas le droit d'engager un OT."
   },
   "deepLink": {
     "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",

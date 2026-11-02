@@ -6347,3 +6347,110 @@ async fn a_frozen_week_still_holds_its_site_after_a_publish_replaced_the_site() 
     .expect_err("frozen week of the new site");
     assert!(format!("{refused:?}").contains("PLANNING_WEEK_FROZEN"), "{refused:?}");
 }
+
+async fn proposed_ids(db: &DatabaseConnection, from: &str, to: &str, team_id: Option<i64>) -> Vec<i64> {
+    scheduling::get_planning_gantt_snapshot(
+        db,
+        PlanningGanttFilter {
+            period_start: format!("{from}T00:00:00Z"),
+            period_end: format!("{to}T23:59:59Z"),
+            team_id,
+        },
+        &crate::planning::domain::AbsenceAccess::full_for_tests(),
+    )
+    .await
+    .expect("snapshot")
+    .proposed_work_orders
+    .iter()
+    .map(|p| p.work_order_id)
+    .collect()
+}
+
+#[tokio::test]
+async fn a_planned_work_order_without_commitment_is_proposed_on_the_board() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    // Planned 2026-10-01 08:00-10:00 on its form, in the planning phase.
+    let (wo_id, _) = create_planning_wo(&db, "Planned only").await;
+
+    assert_eq!(proposed_ids(&db, "2026-10-01", "2026-10-02", None).await, vec![wo_id]);
+    let snapshot = scheduling::get_planning_gantt_snapshot(
+        &db,
+        PlanningGanttFilter {
+            period_start: "2026-10-01T00:00:00Z".into(),
+            period_end: "2026-10-02T23:59:59Z".into(),
+            team_id: None,
+        },
+        &crate::planning::domain::AbsenceAccess::full_for_tests(),
+    )
+    .await
+    .expect("snapshot");
+    let bar = &snapshot.proposed_work_orders[0];
+    assert_eq!(bar.planned_start, "2026-10-01T08:00:00Z");
+    assert_eq!(bar.planned_end, "2026-10-01T10:00:00Z");
+    assert!(bar.assigned_team_id.is_none());
+    assert!(snapshot.commitments.is_empty(), "a proposed OT is not a commitment");
+    assert!(
+        snapshot.capacity.iter().all(|c| c.committed_hours == 0.0),
+        "a proposed OT adds no committed load"
+    );
+
+    // Outside the period: not shown.
+    assert!(proposed_ids(&db, "2026-11-01", "2026-11-05", None).await.is_empty());
+
+    // Crew filter: only the OTs assigned to that crew.
+    assert!(proposed_ids(&db, "2026-10-01", "2026-10-02", Some(team_id))
+        .await
+        .is_empty());
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET assigned_team_id = ? WHERE id = ?",
+        [team_id.into(), wo_id.into()],
+    ))
+    .await
+    .expect("assign crew");
+    assert_eq!(
+        proposed_ids(&db, "2026-10-01", "2026-10-02", Some(team_id)).await,
+        vec![wo_id]
+    );
+}
+
+#[tokio::test]
+async fn a_committed_closed_or_cancelled_work_order_is_not_proposed() {
+    let db = setup_db().await;
+    let team_id = get_any_team_id(&db).await;
+    let (committed, _) = create_planning_wo(&db, "Committed").await;
+    let (closed, _) = create_planning_wo(&db, "Closed").await;
+    let (cancelled, _) = create_planning_wo(&db, "Cancelled").await;
+    let (open, _) = create_planning_wo(&db, "Still open").await;
+    assert_eq!(
+        proposed_ids(&db, "2026-10-01", "2026-10-02", None).await.len(),
+        4,
+        "all four are planned without a commitment"
+    );
+
+    let candidate = insert_candidate(&db, "work_order", committed, "ready", 100.0).await;
+    scheduling::create_schedule_commitment(
+        &db,
+        1,
+        commit_input(candidate, team_id, "2026-10-01T08:00", "2026-10-01T10:00"),
+    )
+    .await
+    .expect("commit");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = 'closed') WHERE id = ?",
+        [closed.into()],
+    ))
+    .await
+    .expect("close");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET cancelled_at = '2026-09-01T00:00:00Z' WHERE id = ?",
+        [cancelled.into()],
+    ))
+    .await
+    .expect("cancel");
+
+    assert_eq!(proposed_ids(&db, "2026-10-01", "2026-10-02", None).await, vec![open]);
+}
