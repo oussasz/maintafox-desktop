@@ -36,7 +36,7 @@ impl Default for WindowState {
 /// administrator setup and sign-in are on screen. It can be resized and maximised (a small screen
 /// or a large display zoom must never hide a button); the page inside scrolls.
 pub const COMPACT_WIDTH: f64 = 560.0;
-pub const COMPACT_HEIGHT: f64 = 640.0;
+pub const COMPACT_HEIGHT: f64 = 700.0;
 /// Smallest size the compact window can be dragged to.
 const COMPACT_MIN_WIDTH: f64 = 480.0;
 const COMPACT_MIN_HEIGHT: f64 = 420.0;

@@ -60,6 +60,13 @@ export const mfAuth = {
    */
   shell:
     "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-[''] [&>*]:shrink-0",
+  /**
+   * Sign-in, activation, first administrator, password change: the Windows window IS the screen.
+   * One flat surface (no inner card, border, shadow or backdrop margin): brand band edge to edge
+   * under the title bar, then the form and the footer. Scrolls only when the window is too short.
+   */
+  windowShell:
+    "mf-auth flex h-[100dvh] w-full flex-col overflow-y-auto bg-surface-1 [&>*]:shrink-0",
   /** Lock screen — same canvas as auth, no card */
   lockShell:
     "mf-auth mf-auth-backdrop flex h-[100dvh] w-full flex-col items-center overflow-y-auto px-4 py-8 sm:px-6 before:flex-1 before:content-[''] after:flex-1 after:content-[''] [&>*]:shrink-0",

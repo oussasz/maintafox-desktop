@@ -18,32 +18,29 @@ export interface AuthShellProps {
 }
 
 /**
- * Page layout for sign-in and licence activation: an installer-style card with a navy brand band
- * (logo and product name), and a quiet footer (security note + language switch). The window itself
- * starts compact (and can be resized or maximised) while these screens are shown (`useCompactAuthWindow`). The page
- * still scrolls on short windows or large display zoom, and every control is at least 44 px tall.
+ * Page layout for sign-in and licence activation: the window itself is the screen. A navy brand
+ * band (logo and product name) runs edge to edge under the title bar, the form follows, and a quiet
+ * footer (security note + language switch) closes the same surface: no inner card or margin. The
+ * window starts compact (and can be resized or maximised) while these screens are shown
+ * (`useCompactAuthWindow`). The page still scrolls on short windows or large display zoom, and
+ * every control is at least 44 px tall.
  */
 export function AuthShell({ children, width = "sm", cardClassName }: AuthShellProps) {
   const { t } = useTranslation("auth");
   useCompactAuthWindow();
+  const column = width === "md" ? "max-w-[480px]" : "max-w-[400px]";
   return (
-    <div className={mfAuth.shell}>
-      <main
-        className={cn(
-          width === "md" ? mfAuth.cardCompact : mfAuth.card,
-          "overflow-hidden !p-0",
-          cardClassName,
-        )}
-      >
-        <div className={mfAuth.cardBrandBand}>
-          <MaintafoxWordmark size="lg" tone="onDark" align="center" />
-        </div>
-        <div className="p-6 sm:p-8">{children}</div>
+    <div className={mfAuth.windowShell}>
+      <div className={mfAuth.cardBrandBand}>
+        <MaintafoxWordmark size="lg" tone="onDark" align="center" />
+      </div>
+      <main className={cn("mx-auto w-full flex-1 px-6 py-6 sm:px-8", column, cardClassName)}>
+        {children}
       </main>
       <footer
         className={cn(
-          "mt-5 flex w-full flex-col items-center gap-3 sm:flex-row sm:justify-between",
-          width === "md" ? "max-w-[480px]" : "max-w-[400px]",
+          "mx-auto flex w-full flex-col items-center gap-3 px-6 pb-5 sm:flex-row sm:justify-between sm:px-8",
+          column,
         )}
       >
         <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
