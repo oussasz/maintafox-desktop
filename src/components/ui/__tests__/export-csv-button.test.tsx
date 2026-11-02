@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAppToastStore } from "@/store/app-toast-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -43,7 +44,7 @@ describe("ExportCsvButton", () => {
     saveCsvWithDialog.mockResolvedValue("C:/exports/ot.csv");
     render(
       <ExportCsvButton
-        permission="ot.view"
+        permission={P.OT_VIEW}
         fileName="ot.csv"
         header={header}
         getRows={() => rows}
@@ -63,7 +64,7 @@ describe("ExportCsvButton", () => {
     saveCsvWithDialog.mockResolvedValue("C:/exports/ot.csv");
     render(
       <ExportCsvButton
-        permission="ot.view"
+        permission={P.OT_VIEW}
         fileName="ot.csv"
         header={header}
         getRows={() => rows}
@@ -79,7 +80,12 @@ describe("ExportCsvButton", () => {
 
   it("does not open the save dialog for an empty list", () => {
     render(
-      <ExportCsvButton permission="ot.view" fileName="ot.csv" header={header} getRows={() => []} />,
+      <ExportCsvButton
+        permission={P.OT_VIEW}
+        fileName="ot.csv"
+        header={header}
+        getRows={() => []}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "listExport.button" }));
     expect(saveCsvWithDialog).not.toHaveBeenCalled();
@@ -90,7 +96,7 @@ describe("ExportCsvButton", () => {
     saveCsvWithDialog.mockRejectedValueOnce({ code: "EXPORT_CANCELLED" });
     render(
       <ExportCsvButton
-        permission="ot.view"
+        permission={P.OT_VIEW}
         fileName="ot.csv"
         header={header}
         getRows={() => rows}
@@ -112,7 +118,7 @@ describe("ExportCsvButton", () => {
     allowed.value = false;
     render(
       <ExportCsvButton
-        permission="ot.view"
+        permission={P.OT_VIEW}
         fileName="ot.csv"
         header={header}
         getRows={() => rows}
