@@ -357,6 +357,15 @@ export async function setWorkPermitStatus(input: WorkPermitStatusInput): Promise
   return WorkPermitSchema.parse(raw);
 }
 
+/**
+ * Resolves when the session user may approve the permit now (four-eyes); rejects with the
+ * server's refusal otherwise. Nothing is written: the approval is checked again when made.
+ */
+export async function checkWorkPermitApproval(permitId: number): Promise<void> {
+  // The screen shows the refusal next to the step: no toast for a check the user did not ask for.
+  await invoke<unknown>("check_work_permit_approval", { permitId }, { notifyOnError: false });
+}
+
 export async function suspendWorkPermit(
   input: PermitSuspendInput,
 ): Promise<{ permit: WorkPermitRecord; suspension: PermitSuspensionRecord }> {

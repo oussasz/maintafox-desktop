@@ -40,8 +40,8 @@
     "openHint": "Ni clôturés, ni levés, ni annulés, ni expirés",
     "activated": "Permis activés",
     "period30d": "30 derniers jours",
-    "onTimeRate": "Mainlevées à temps",
-    "onTimeHint": "{{onTime}} sur {{activated}} permis activés, 30 derniers jours"
+    "onTimeRate": "Mainlevées avant expiration",
+    "onTimeHint": "{{onTime}} des {{activated}} permis activés ces 30 derniers jours ont eu leur mainlevée avant leur heure d’expiration"
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
@@ -104,17 +104,25 @@
     "linkError": "Ce permis n’a pas pu être ouvert"
   },
   "transition": {
-    "submitReview": "Soumettre en revue",
-    "approve": "Approuver",
-    "issue": "Délivrer",
-    "activate": "Activer",
+    "submitReview": "Soumettre pour approbation",
+    "approve": "Approuver (seconde personne)",
+    "issue": "Délivrer le permis à l’équipe",
+    "activate": "Autoriser le début des travaux",
     "revalidate": "Demander la revalidation",
     "reinstate": "Réactiver",
     "close": "Clôturer le permis",
     "handBack": "Faire la mainlevée",
     "cancel": "Annuler le permis",
     "suspend": "Suspendre",
-    "confirmCancel": "Annuler ce permis ? Cette action est irréversible."
+    "confirmCancel": "Annuler ce permis ? Cette action est irréversible.",
+    "keep": "Garder le permis",
+    "next": {
+      "pending_review": "Étape suivante : le rédacteur soumet le permis, une autre personne le relira.",
+      "approved": "Étape suivante : une seconde personne, qui n’a ni rédigé ni soumis le permis, le vérifie et l’approuve.",
+      "issued": "Étape suivante : le permis approuvé est délivré à l’équipe qui va intervenir.",
+      "active": "Étape suivante : une fois les isolations posées et vérifiées, le début des travaux est autorisé.",
+      "approvalChecking": "Vérification de la règle des quatre yeux…"
+    }
   },
   "gate": {
     "noIsolation": "Ce type de permis exige au moins une isolation d’énergie avant activation.",
@@ -136,9 +144,9 @@
     "apply": "Marquer posée",
     "verify": "Vérifier",
     "verifyRemoval": "Vérifier le retrait",
-    "appliedBy": "Posée par {{name}}",
-    "verifiedBy": "Vérifiée par {{name}}",
-    "removalVerifiedBy": "Retrait vérifié par {{name}}",
+    "appliedBy": "Posée par {{name}} le {{date}}",
+    "verifiedBy": "Vérifiée par {{name}} le {{date}}",
+    "removalVerifiedBy": "Retrait vérifié par {{name}} le {{date}}",
     "twoPersonHint": "Règle des deux personnes : la personne qui a posé une isolation ne peut ni la vérifier ni vérifier son retrait.",
     "selfBlocked": "Vous avez posé cette isolation — une autre personne doit vérifier.",
     "state": {
@@ -215,8 +223,8 @@
   "handover": {
     "handedTo": "remis à",
     "rolesHint": "Choisissez la fonction de la personne qui remet et de celle qui reçoit parmi les rôles de passation de l’usine.",
-    "onlyWhenClosed": "La remise se consigne une fois le permis clôturé.",
-    "title": "Mainlevées / passations",
+    "onlyWhenClosed": "Quand le permis est clôturé, consignez ici la remise de l’installation : qui la rend et qui la reprend.",
+    "title": "Remise de l’installation (après clôture)",
     "empty": "Aucune passation enregistrée.",
     "add": "Enregistrer une passation",
     "from": "Remis par (rôle)",
@@ -253,7 +261,13 @@
     "expiresAt": "Expire le",
     "expiresHint": "Par défaut : durée maximale du type de permis.",
     "submit": "Créer le permis",
-    "assetSearchError": "La recherche d’équipement a échoué : {{message}}"
+    "assetSearchError": "La recherche d’équipement a échoué : {{message}}",
+    "workOrderPick": "Ordre de travail couvert par ce permis",
+    "workOrderNone": "Aucun (permis sans OT)",
+    "workOrderHint": "Les OT encore ouverts de l’équipement choisi.",
+    "workOrderChooseAsset": "Choisissez d’abord l’équipement.",
+    "workOrderEmpty": "Aucun OT ouvert sur cet équipement.",
+    "workOrderLoadError": "Les OT de l’équipement n’ont pas pu être lus : {{message}}"
   },
   "edit": {
     "title": "Modifier le permis",
