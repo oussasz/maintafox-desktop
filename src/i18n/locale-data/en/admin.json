@@ -96,7 +96,7 @@
       },
       "planner": {
         "name": "Planner",
-        "description": "Plans work orders and preventive maintenance, and reserves their parts while preparing the work orders. Makes no purchases and no stock adjustments."
+        "description": "Plans work orders and preventive maintenance, and reserves their parts while preparing the work orders. Makes no purchases and no stock adjustments; can take the parts of its work orders out of stock."
       },
       "observer": {
         "name": "Read only",
