@@ -211,7 +211,7 @@
       "unitCost": "Saisissez le coût unitaire (zéro ou plus)."
     },
     "cost": {
-      "entryHint": "Met à jour le coût unitaire moyen pondéré (CUMP) de cet emplacement (actuellement {{average}}). Vide : valorisé au coût moyen actuel.",
+      "entryHint": "Met à jour le coût moyen pondéré de cet emplacement (actuellement {{average}}). Vide : valorisé au coût moyen actuel.",
       "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son coût moyen.",
       "valuedAtAverage": "Valorisé au coût moyen de {{average}} ({{value}}).",
       "notValued": "Cet emplacement n'a pas encore de coût : le mouvement n'est pas valorisé."

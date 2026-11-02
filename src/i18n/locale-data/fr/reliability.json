@@ -244,7 +244,7 @@
   "foundation": {
     "title": "Socle données",
     "hint": "Taxonomie, exposition, jobs KPI et drill-throughs qualité.",
-    "kpiRefresh": "Recalculer le snapshot KPI",
+    "kpiRefresh": "Recalculer l'instantané des indicateurs",
     "kpiRefreshing": "Recalcul en cours…",
     "kpiRefreshDone": "Instantané des indicateurs recalculé ({{events}} événements, exposition {{hours}} h)."
   },
@@ -383,7 +383,7 @@
       "exportPng": "Export PNG",
       "exportSvg": "Export SVG",
       "hash": "SHA-256 (plot) : {{hash}}",
-      "empty": "Aucune donnée graphique dans ce snapshot (recalculez le KPI pour générer le payload)."
+      "empty": "Aucune donnée de graphique dans cet instantané : recalculez les indicateurs pour la produire."
     },
     "errors": {
       "runtimeNumeric": "Équipement et valeur numériques requis.",
@@ -472,7 +472,7 @@
       "colRepeat": "rép.",
       "colQuality": "qualité",
       "colFingerprint": "empreinte",
-      "clickRowHint": "Cliquez une ligne pour recharger le snapshot et afficher le graphique."
+      "clickRowHint": "Cliquez une ligne pour recharger l'instantané et afficher le graphique."
     },
     "weibull": {
       "title": "Weibull — ajustement (inter-arrivées)",

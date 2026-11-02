@@ -58,7 +58,7 @@
       },
       "badActors": {
         "title": "Top 5 équipements à risque",
-        "empty": "Aucun snapshot sur l’horizon",
+        "empty": "Aucun instantané sur la période",
         "asset": "Équipement",
         "events": "Événements"
       },
