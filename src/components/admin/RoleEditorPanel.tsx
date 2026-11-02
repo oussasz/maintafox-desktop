@@ -14,6 +14,11 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  type DependencyLink,
+  hardRequirements,
+  planToggle,
+} from "@/components/admin/role-permission-rules";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -415,10 +420,13 @@ function PermissionMatrix({
   readOnly,
   onToggle,
   filter,
+  autoAdded,
 }: {
   catalog: RoleEditorCatalog;
   active: Set<string>;
   readOnly: boolean;
+  /** View right ticked automatically → the rights that needed it (L5-06). */
+  autoAdded: ReadonlyMap<string, readonly string[]>;
   /** Ticks or unticks the given permissions (one, or a whole group). */
   onToggle: (permissions: string[], enabled: boolean) => void;
   filter: string;
@@ -535,6 +543,13 @@ function PermissionMatrix({
                       </div>
                       {description && description !== label ? (
                         <p className="text-xs text-text-secondary">{description}</p>
+                      ) : null}
+                      {enabled && autoAdded.has(p.name) ? (
+                        <p className="text-[11px] font-medium text-tone-info-fg">
+                          {t("console.roleEditor.autoAdded", {
+                            perms: (autoAdded.get(p.name) ?? []).map(labelOf).join(", "),
+                          })}
+                        </p>
                       ) : null}
                       {deps.length > 0 ? (
                         <p className="flex flex-wrap items-center gap-1 text-[11px] text-text-secondary">
@@ -712,22 +727,54 @@ export function RoleEditorPanel() {
     };
   }, [active, selected, permsChanged, validationRun]);
 
+  const hardRequires = useMemo(() => hardRequirements(catalog?.dependencies ?? []), [catalog]);
+  const offered = useMemo(
+    () => new Set((catalog?.permissions ?? []).map((p) => p.name)),
+    [catalog],
+  );
+  /** View rights ticked as a prerequisite → the rights that needed them (L5-06). */
+  const [autoAdded, setAutoAdded] = useState<Map<string, string[]>>(new Map());
+  /** What the last tick left for the user to decide: never ticked or unticked for them. */
+  const [ruleNotice, setRuleNotice] = useState<{
+    notAdded: DependencyLink[];
+    dependents: DependencyLink[];
+  } | null>(null);
+
+  useEffect(() => {
+    // Nothing pending (another role, discarded or saved): the notes have nothing left to explain.
+    if (permsChanged) return;
+    setAutoAdded(new Map());
+    setRuleNotice(null);
+  }, [permsChanged, selected]);
+
   const toggle = (perms: string[], enabled: boolean) => {
+    const plan = planToggle(perms, enabled, active, hardRequires, offered);
     const original = new Set(selected?.permissions ?? []);
     const add = new Set(pendingAdd);
     const remove = new Set(pendingRemove);
-    for (const perm of perms) {
-      if (enabled) {
-        if (original.has(perm)) remove.delete(perm);
-        else add.add(perm);
-      } else if (original.has(perm)) {
-        remove.add(perm);
-      } else {
-        add.delete(perm);
-      }
+    for (const perm of plan.tick) {
+      if (original.has(perm)) remove.delete(perm);
+      else add.add(perm);
+    }
+    for (const perm of plan.untick) {
+      if (original.has(perm)) remove.add(perm);
+      else add.delete(perm);
     }
     setPendingAdd(add);
     setPendingRemove(remove);
+    setAutoAdded((prev) => {
+      const next = new Map(prev);
+      for (const perm of plan.untick) next.delete(perm);
+      for (const [perm, neededBy] of plan.autoAdded) {
+        next.set(perm, [...new Set([...(next.get(perm) ?? []), ...neededBy])]);
+      }
+      return next;
+    });
+    setRuleNotice(
+      plan.notAdded.length > 0 || plan.dependents.length > 0
+        ? { notAdded: plan.notAdded, dependents: plan.dependents }
+        : null,
+    );
   };
 
   const save = async () => {
@@ -906,6 +953,60 @@ export function RoleEditorPanel() {
               />
             ) : null}
 
+            {ruleNotice ? (
+              <div
+                className="rounded-md border border-tone-attention-border bg-tone-attention-bg p-3 text-sm text-tone-attention-fg"
+                role="status"
+              >
+                {ruleNotice.notAdded.length > 0 ? (
+                  <>
+                    <p className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("console.roleEditor.notAddedTitle")}
+                    </p>
+                    <ul className="mt-1 list-inside list-disc text-xs">
+                      {ruleNotice.notAdded.map((l) => (
+                        <li key={`${l.perm}-${l.required}`}>
+                          {t("console.roleEditor.needs", {
+                            perm: text.label(l.perm, catalogDescriptions.get(l.perm)),
+                            required: text.label(l.required, catalogDescriptions.get(l.required)),
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">{t("console.roleEditor.notAddedHint")}</p>
+                  </>
+                ) : null}
+                {ruleNotice.dependents.length > 0 ? (
+                  <>
+                    <p className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("console.roleEditor.dependentsTitle")}
+                    </p>
+                    <ul className="mt-1 list-inside list-disc text-xs">
+                      {ruleNotice.dependents.map((l) => (
+                        <li key={`${l.perm}-${l.required}`}>
+                          {t("console.roleEditor.needs", {
+                            perm: text.label(l.perm, catalogDescriptions.get(l.perm)),
+                            required: text.label(l.required, catalogDescriptions.get(l.required)),
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">{t("console.roleEditor.dependentsHint")}</p>
+                  </>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 h-7 px-2 text-xs"
+                  onClick={() => setRuleNotice(null)}
+                >
+                  {t("console.roleEditor.noticeDismiss")}
+                </Button>
+              </div>
+            ) : null}
+
             {hardMissing.length > 0 ? (
               <div
                 className="rounded-md border border-tone-danger-border bg-tone-danger-bg p-3 text-sm text-tone-danger-fg"
@@ -962,6 +1063,7 @@ export function RoleEditorPanel() {
               readOnly={selected.is_system || !canEdit}
               onToggle={toggle}
               filter={permissionFilter}
+              autoAdded={autoAdded}
             />
 
             {canEdit && dirty ? (

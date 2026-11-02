@@ -176,3 +176,89 @@ describe("RoleEditorPanel whole-group switch", () => {
     expect([...input.add_permissions].sort()).toEqual(["doc.manage", "doc.view"]);
   });
 });
+
+describe("RoleEditorPanel prerequisites (L5-06)", () => {
+  const perm = (id: number, name: string) => ({
+    id,
+    name,
+    description: name,
+    category: name.split(".")[0] ?? name,
+    is_dangerous: false,
+    requires_step_up: false,
+    is_system: true,
+  });
+  const CAT: RoleEditorCatalog = {
+    permissions: [
+      perm(1, "doc.view"),
+      perm(2, "doc.manage"),
+      perm(3, "di.view"),
+      perm(4, "di.review"),
+      perm(5, "di.approve"),
+    ],
+    dependencies: [
+      {
+        id: 1,
+        permission_name: "doc.manage",
+        required_permission_name: "doc.view",
+        dependency_type: "hard",
+      },
+      {
+        id: 2,
+        permission_name: "di.approve",
+        required_permission_name: "di.review",
+        dependency_type: "hard",
+      },
+    ],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(CAT);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+  });
+
+  async function openRole() {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    return await screen.findAllByRole("switch", { name: "roles.togglePermission" });
+  }
+
+  it("ticks the view right a right needs, says why, and never ticks an approval prerequisite", async () => {
+    await openRole();
+    const row = (name: string) =>
+      screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
+    const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
+
+    fireEvent.click(toggleOf("doc.manage"));
+    expect(toggleOf("doc.view").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("console.roleEditor.autoAdded")).toBeInTheDocument();
+
+    fireEvent.click(toggleOf("di.approve"));
+    expect(toggleOf("di.review").getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("console.roleEditor.notAddedTitle")).toBeInTheDocument();
+  });
+
+  it("warns when a prerequisite is unticked, and leaves the right that needs it ticked", async () => {
+    await openRole();
+    const row = (name: string) =>
+      screen.getAllByRole("listitem").find((li) => li.querySelector(`[title="${name}"]`));
+    const toggleOf = (name: string) => row(name)?.querySelector('[role="switch"]') as HTMLElement;
+
+    fireEvent.click(toggleOf("doc.manage"));
+    fireEvent.click(toggleOf("doc.view"));
+    expect(toggleOf("doc.view").getAttribute("aria-checked")).toBe("false");
+    expect(toggleOf("doc.manage").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("console.roleEditor.dependentsTitle")).toBeInTheDocument();
+  });
+});
