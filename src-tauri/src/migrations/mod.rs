@@ -245,8 +245,8 @@ mod m20261026_000263_availability_block_version;
 pub(crate) mod m20261026_000264_reliability_decision_seal;
 mod m20261026_000265_retired_equipment_reviews;
 mod m20261029_000266_mobile_phone_enrolled_notice;
-pub(crate) mod m20261102_000268_org_root_level_label;
 mod m20261101_000036_activity_audit_log;
+pub(crate) mod m20261102_000268_org_root_level_label;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
