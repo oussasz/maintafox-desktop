@@ -97,8 +97,12 @@ pub const REF_PUBLISH: &str = "ref.publish";
 pub const INV_VIEW: &str = "inv.view";
 /// Issue, return, adjust, and transfer stock
 pub const INV_MANAGE: &str = "inv.manage";
-/// Create and approve purchase requisitions and orders
+/// Create and manage purchase requisitions and orders
 pub const INV_PROCURE: &str = "inv.procure";
+/// Approve or reject purchase requisitions and orders, within the role's approval limit
+pub const INV_APPROVE: &str = "inv.approve";
+/// Record goods receipts against purchase orders
+pub const INV_RECEIVE: &str = "inv.receive";
 /// Execute and post stock count sessions
 pub const INV_COUNT: &str = "inv.count";
 /// View PM plans and occurrences
@@ -574,12 +578,30 @@ pub const CATALOG: &[PermissionMeta] = &[
     },
     PermissionMeta {
         name: INV_PROCURE,
-        description: "Create and approve purchase requisitions and orders",
+        description: "Create and manage purchase requisitions and orders",
         category: "inv",
         is_dangerous: true,
         requires_step_up: false,
         usage: "both",
         aliases: &["inv.order"],
+    },
+    PermissionMeta {
+        name: INV_APPROVE,
+        description: "Approve or reject purchase requisitions and orders, within the role's approval limit",
+        category: "inv",
+        is_dangerous: true,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
+        name: INV_RECEIVE,
+        description: "Record goods receipts against purchase orders",
+        category: "inv",
+        is_dangerous: false,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
     },
     PermissionMeta {
         name: INV_COUNT,
@@ -1343,6 +1365,16 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: INV_APPROVE,
+        requires: INV_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
+        permission: INV_RECEIVE,
+        requires: INV_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: INV_COUNT,
         requires: INV_VIEW,
         dep_type: "hard",
@@ -1601,6 +1633,7 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     INV_VIEW,
     INV_MANAGE,
     INV_PROCURE,
+    INV_RECEIVE,
     ORG_VIEW,
     PER_VIEW,
     PER_REPORT,

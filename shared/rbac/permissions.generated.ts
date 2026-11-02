@@ -40,6 +40,8 @@ export const P = {
   INV_VIEW: "inv.view",
   INV_MANAGE: "inv.manage",
   INV_PROCURE: "inv.procure",
+  INV_APPROVE: "inv.approve",
+  INV_RECEIVE: "inv.receive",
   INV_COUNT: "inv.count",
   PM_VIEW: "pm.view",
   PM_CREATE: "pm.create",
@@ -457,12 +459,30 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
   },
   {
     name: P.INV_PROCURE,
-    description: "Create and approve purchase requisitions and orders",
+    description: "Create and manage purchase requisitions and orders",
     category: "inv",
     isDangerous: true,
     requiresStepUp: false,
     usage: "both",
     aliases: ["inv.order"] as const,
+  },
+  {
+    name: P.INV_APPROVE,
+    description: "Approve or reject purchase requisitions and orders, within the role's approval limit",
+    category: "inv",
+    isDangerous: true,
+    requiresStepUp: false,
+    usage: "both",
+    aliases: [] as const,
+  },
+  {
+    name: P.INV_RECEIVE,
+    description: "Record goods receipts against purchase orders",
+    category: "inv",
+    isDangerous: false,
+    requiresStepUp: false,
+    usage: "both",
+    aliases: [] as const,
   },
   {
     name: P.INV_COUNT,
@@ -1187,9 +1207,9 @@ export function isShownInPlantRoleScreens(name: string): boolean {
 }
 
 export const ROLE_TEMPLATES: Readonly<Record<string, readonly PermissionName[]>> = {
-  "Supervisor Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.OT_APPROVE, P.OT_CLOSE, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.DI_REVIEW, P.DI_APPROVE, P.DI_CONVERT, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PM_APPROVE, P.PER_VIEW, P.PER_MANAGE, P.PER_REPORT, P.PER_POSITION_VIEW, P.PER_POSITION_MANAGE, P.EQ_VIEW, P.EQ_MANAGE, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
+  "Supervisor Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.OT_APPROVE, P.OT_CLOSE, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.DI_REVIEW, P.DI_APPROVE, P.DI_CONVERT, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PM_APPROVE, P.PER_VIEW, P.PER_MANAGE, P.PER_REPORT, P.PER_POSITION_VIEW, P.PER_POSITION_MANAGE, P.EQ_VIEW, P.EQ_MANAGE, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE, P.INV_APPROVE, P.INV_RECEIVE],
   "Technician Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_CREATE_OWN, P.EQ_VIEW, P.EQ_MANAGE],
-  "Planner Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PLAN_VIEW, P.PLAN_EDIT, P.PLAN_CONFIRM, P.PLAN_WINDOWS, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
+  "Planner Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PLAN_VIEW, P.PLAN_EDIT, P.PLAN_CONFIRM, P.PLAN_WINDOWS, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE, P.INV_RECEIVE],
   "Observer Template": [P.OT_VIEW, P.DI_VIEW, P.PM_VIEW, P.EQ_VIEW],
   "Finance Manager Template": [P.FIN_VIEW, P.FIN_BUDGET, P.FIN_REPORT, P.FIN_POST, P.FIN_APPROVE, P.ORG_VIEW, P.REF_VIEW, P.EQ_VIEW, P.OT_VIEW, P.INV_VIEW, P.PM_VIEW, P.PLAN_VIEW, P.REP_VIEW, P.REP_EXPORT, P.DOC_VIEW],
 };

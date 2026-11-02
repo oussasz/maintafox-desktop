@@ -330,12 +330,30 @@
     },
     {
       "name": "inv.procure",
-      "description": "Create and approve purchase requisitions and orders",
+      "description": "Create and manage purchase requisitions and orders",
       "category": "inv",
       "is_dangerous": true,
       "requires_step_up": false,
       "usage": "both",
       "aliases": ["inv.order"]
+    },
+    {
+      "name": "inv.approve",
+      "description": "Approve or reject purchase requisitions and orders, within the role's approval limit",
+      "category": "inv",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "inv.receive",
+      "description": "Record goods receipts against purchase orders",
+      "category": "inv",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
     },
     {
       "name": "inv.count",
@@ -1027,6 +1045,8 @@
     { "permission": "pm.delete", "requires": "pm.edit", "dep_type": "warn" },
     { "permission": "inv.manage", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.procure", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "inv.approve", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "inv.receive", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.count", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "org.manage", "requires": "org.view", "dep_type": "hard" },
     { "permission": "org.admin", "requires": "org.manage", "dep_type": "warn" },
@@ -1134,6 +1154,7 @@
       "inv.view",
       "inv.manage",
       "inv.procure",
+      "inv.receive",
       "org.view",
       "per.view",
       "per.report",
@@ -1193,7 +1214,9 @@
       "eq.manage",
       "inv.view",
       "inv.manage",
-      "inv.procure"
+      "inv.procure",
+      "inv.approve",
+      "inv.receive"
     ],
     "Technician Template": [
       "ot.view",
@@ -1223,7 +1246,8 @@
       "plan.windows",
       "inv.view",
       "inv.manage",
-      "inv.procure"
+      "inv.procure",
+      "inv.receive"
     ],
     "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"],
     "Finance Manager Template": [

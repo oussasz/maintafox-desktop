@@ -555,7 +555,15 @@
       },
       "inv_procure": {
         "label": "Gérer les achats",
-        "description": "Créer et approuver les demandes d'achat et les commandes. Action sensible."
+        "description": "Créer et suivre les demandes d'achat et les commandes. Action sensible."
+      },
+      "inv_approve": {
+        "label": "Approuver les achats",
+        "description": "Approuver ou refuser les demandes d'achat et les commandes, dans la limite du plafond du rôle. Action sensible."
+      },
+      "inv_receive": {
+        "label": "Réceptionner les marchandises",
+        "description": "Enregistrer les réceptions des commandes fournisseurs."
       },
       "inv_count": {
         "label": "Réaliser les inventaires",

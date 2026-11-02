@@ -555,7 +555,15 @@
       },
       "inv_procure": {
         "label": "Manage purchasing",
-        "description": "Create and approve purchase requisitions and orders. Sensitive action."
+        "description": "Create and follow up purchase requisitions and orders. Sensitive action."
+      },
+      "inv_approve": {
+        "label": "Approve purchasing",
+        "description": "Approve or reject purchase requisitions and orders, within the role's approval limit. Sensitive action."
+      },
+      "inv_receive": {
+        "label": "Receive goods",
+        "description": "Record goods receipts against purchase orders."
       },
       "inv_count": {
         "label": "Run stock counts",
