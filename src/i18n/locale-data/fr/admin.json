@@ -1286,7 +1286,7 @@
     "MOBILE_ENROL_NO_FREE_SLOT": "Tous les téléphones de la licence sont utilisés : révoquez un téléphone, ou demandez-en davantage à votre fournisseur.",
     "MOBILE_ENROL_NOT_FOUND": "Le serveur de licence ne connaît pas cet enrôlement ou ce téléphone.",
     "MOBILE_ENROL_SERVER_REFUSED": "Le serveur de licence a refusé la demande. Vérifiez que l’application est à jour, puis réessayez ; si le refus continue, contactez votre fournisseur.",
-    "MOBILE_ENROL_SERVER_PC_REFUSED": "Le serveur de licence ne reconnaît pas ce poste. Vérifiez que sa licence est active (Paramètres › Licence) ; si elle l’est, contactez votre fournisseur.",
+    "MOBILE_ENROL_SERVER_PC_REFUSED": "Le serveur de licence ne reconnaît pas ce poste. Vérifiez que sa licence est active (Paramètres › Système & Sync › Licence, ou demandez à un administrateur) ; si elle l’est, contactez votre fournisseur.",
     "MOBILE_ENROL_SERVER_FAULT": "Le serveur de licence a un problème passager. Réessayez dans quelques minutes ; si cela continue, contactez votre fournisseur.",
     "MOBILE_ENROL_OFFLINE": "Le serveur de licence est injoignable. Les téléphones se gèrent en ligne : vérifiez la connexion puis réessayez.",
     "MOBILE_ENROL_PC_NOT_ACTIVATED": "Ce poste n'a pas de licence active : les téléphones ne peuvent pas y être gérés.",
