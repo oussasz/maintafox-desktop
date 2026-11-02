@@ -376,6 +376,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
         return;
       }
       let cancelled = false;
+      setLaborRate(null);
       previewWoLaborRate(Number(laborTechId), laborDate)
         .then((rate) => {
           if (!cancelled) setLaborRate({ normal: rate.normal_rate, overtime: rate.overtime_rate });
