@@ -81,11 +81,59 @@
       "formerRole": "Former role, same as {{role}}",
       "formerRoleDescription": "Role from an earlier version, with the same rights as \"{{role}}\". Accounts that hold it keep it; for a new account, choose \"{{role}}\"."
     },
+    "templates": {
+      "supervisor": {
+        "name": "Supervisor",
+        "description": "Runs the crew: sorts and approves requests, turns them into work orders, assigns, approves and closes the work. Sees preventive maintenance, planning, stock, permits and training."
+      },
+      "technician": {
+        "name": "Technician",
+        "description": "Carries out his work orders (times, parts, findings), reports what he finds, runs inspection rounds. Sees the permit and lockout card he works under, without issuing permits."
+      },
+      "planner": {
+        "name": "Planner",
+        "description": "Plans work orders and preventive maintenance, prepares parts and purchases."
+      },
+      "observer": {
+        "name": "Read only",
+        "description": "Sees work orders, requests, preventive maintenance and equipment, without changing anything."
+      },
+      "financeManager": {
+        "name": "Finance manager",
+        "description": "Prepares and follows maintenance budgets, approves and posts costs, exports reports."
+      },
+      "storekeeper": {
+        "name": "Storekeeper",
+        "description": "Store work: issues, returns, transfers and stock counts. Recording supplier deliveries is not included: today it needs the purchasing right. A separate goods-receipt right is due before production use, so that purchasing and receiving stay with different people."
+      },
+      "buyer": {
+        "name": "Buyer",
+        "description": "Purchase requisitions and orders, goods receipts. Nobody approves their own requisition or order; set amount limits in \"Approval limits\", otherwise a buyer can approve a colleague's request of any amount."
+      },
+      "hseManager": {
+        "name": "HSE manager",
+        "description": "Issues, follows and closes work permits and lockouts, reports hazards. Step-up and \"different person\" rules on permits still apply."
+      },
+      "maintenanceManager": {
+        "name": "Maintenance manager",
+        "description": "Runs maintenance: requests, work orders (including emergency reassignment and reopening), preventive programme, planning, equipment, reliability and reports. No purchasing, budget or administration rights."
+      },
+      "costController": {
+        "name": "Cost controller",
+        "description": "Reads and exports maintenance costs and budgets. Changes, approves and posts nothing."
+      },
+      "productionOperator": {
+        "name": "Production operator",
+        "description": "Reports a problem on a machine of his area and follows his requests. Nothing else."
+      }
+    },
     "create": {
       "title": "Create role",
-      "description": "Define a name and optionally select a template.",
-      "template": "Template",
-      "noTemplate": "No template",
+      "description": "Start from a job model or an empty role, then adapt its rights.",
+      "template": "Create from a model",
+      "noTemplate": "No model (empty role)",
+      "templateRights_one": "The new role takes {{count}} right from this model; you can adapt it afterwards.",
+      "templateRights_other": "The new role takes the {{count}} rights of this model; you can adapt them afterwards.",
       "confirm": "Create",
       "namePlaceholder": "Field technician"
     },

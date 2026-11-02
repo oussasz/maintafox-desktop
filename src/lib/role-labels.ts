@@ -91,6 +91,40 @@ export function withoutFormerRoles<T extends { id: number; name: string }>(
   });
 }
 
+/**
+ * Translation key of each role model shipped with the application (L5-04), by its unchanged
+ * stored name (`role_templates.name`, the key of the registry's `role_templates`).
+ */
+const SHIPPED_TEMPLATE_KEYS: Readonly<Record<string, string>> = {
+  "Supervisor Template": "supervisor",
+  "Technician Template": "technician",
+  "Planner Template": "planner",
+  "Observer Template": "observer",
+  "Finance Manager Template": "financeManager",
+  "Storekeeper Template": "storekeeper",
+  "Buyer Template": "buyer",
+  "HSE Manager Template": "hseManager",
+  "Maintenance Manager Template": "maintenanceManager",
+  "Cost Controller Template": "costController",
+  "Production Operator Template": "productionOperator",
+};
+
+/** Name shown for a role model: translated for a shipped one, its own name otherwise. */
+export function templateLabel(t: AdminT, name: string): string {
+  const key = SHIPPED_TEMPLATE_KEYS[name];
+  if (!key) return name;
+  return String(t(`roles.templates.${key}.name`, { ns: "admin", defaultValue: name }));
+}
+
+/** Description shown for a role model: translated for a shipped one, the stored one otherwise. */
+export function templateDescription(t: AdminT, name: string, stored: string | null): string | null {
+  const key = SHIPPED_TEMPLATE_KEYS[name];
+  if (!key) return stored;
+  return String(
+    t(`roles.templates.${key}.description`, { ns: "admin", defaultValue: stored ?? "" }),
+  );
+}
+
 /** The role helpers bound to the admin namespace of the current language. */
 export function useRoleText() {
   const { t } = useTranslation("admin");
@@ -98,6 +132,9 @@ export function useRoleText() {
     () => ({
       label: (name: string) => roleLabel(t, name),
       description: (name: string, stored: string | null) => roleDescription(t, name, stored),
+      templateLabel: (name: string) => templateLabel(t, name),
+      templateDescription: (name: string, stored: string | null) =>
+        templateDescription(t, name, stored),
     }),
     [t],
   );

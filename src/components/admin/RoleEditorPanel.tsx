@@ -107,9 +107,32 @@ function CreateRoleDialog({
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
 }) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState("__none__");
+  /** Role models by their shown name; the rights a model gives come from the registry. */
+  const sortedTemplates = useMemo(
+    () =>
+      [...templates].sort((a, b) =>
+        roleText.templateLabel(a.name).localeCompare(roleText.templateLabel(b.name)),
+      ),
+    [templates, roleText],
+  );
+  const chosen = templates.find((tmpl) => String(tmpl.id) === templateId) ?? null;
+  const chosenRights = chosen ? (ROLE_TEMPLATES[chosen.name] ?? templatePermissions(chosen)) : null;
+  const chooseTemplate = (id: string) => {
+    const previous = templates.find((tmpl) => String(tmpl.id) === templateId) ?? null;
+    const next = templates.find((tmpl) => String(tmpl.id) === id) ?? null;
+    setTemplateId(id);
+    // The model's name is a starting point for the role's name, never over a name typed in.
+    if (
+      next &&
+      (name.trim() === "" || (previous && name === roleText.templateLabel(previous.name)))
+    ) {
+      setName(roleText.templateLabel(next.name));
+    }
+  };
   const [submitting, setSubmitting] = useState(false);
   const [templateUnreadable, setTemplateUnreadable] = useState(false);
 
@@ -125,7 +148,7 @@ function CreateRoleDialog({
     if (!name.trim()) return;
     setTemplateUnreadable(false);
     let permissionNames: string[] = [];
-    const template = templates.find((tmpl) => String(tmpl.id) === templateId);
+    const template = chosen;
     if (template) {
       const fromGenerated = ROLE_TEMPLATES[template.name];
       const fromStored = fromGenerated ? [...fromGenerated] : templatePermissions(template);
@@ -162,6 +185,32 @@ function CreateRoleDialog({
           <DialogDescription>{t("roles.create.description")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
+          {templates.length > 0 ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="new-role-template">{t("roles.create.template")}</Label>
+              <Select value={templateId} onValueChange={chooseTemplate}>
+                <SelectTrigger id="new-role-template">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t("roles.create.noTemplate")}</SelectItem>
+                  {sortedTemplates.map((tmpl) => (
+                    <SelectItem key={tmpl.id} value={String(tmpl.id)}>
+                      {roleText.templateLabel(tmpl.name)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {chosen ? (
+                <div className="space-y-1 rounded-md border border-surface-border bg-surface-1 px-3 py-2 text-xs text-text-secondary">
+                  <p>{roleText.templateDescription(chosen.name, chosen.description)}</p>
+                  {chosenRights ? (
+                    <p>{t("roles.create.templateRights", { count: chosenRights.length })}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="space-y-1.5">
             <Label htmlFor="new-role-name">{t("roles.fields.name")}</Label>
             <Input
@@ -179,24 +228,6 @@ function CreateRoleDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          {templates.length > 0 ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="new-role-template">{t("roles.create.template")}</Label>
-              <Select value={templateId} onValueChange={setTemplateId}>
-                <SelectTrigger id="new-role-template">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t("roles.create.noTemplate")}</SelectItem>
-                  {templates.map((tmpl) => (
-                    <SelectItem key={tmpl.id} value={String(tmpl.id)}>
-                      {tmpl.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
           {templateUnreadable ? (
             <p
               role="alert"

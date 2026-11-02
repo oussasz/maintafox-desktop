@@ -7,8 +7,11 @@ import {
   isShippedRole,
   roleDescription,
   roleLabel,
+  templateDescription,
+  templateLabel,
   withoutFormerRoles,
 } from "@/lib/role-labels";
+import { ROLE_TEMPLATES } from "@shared/rbac/permissions.generated";
 
 /** `t` reading the French admin file, with i18next's `{{x}}` interpolation and defaultValue. */
 const t = ((key: string, opts?: Record<string, unknown>) => {
@@ -66,5 +69,28 @@ describe("shipped role names (L5-03)", () => {
     expect(withoutFormerRoles(roles).map((r) => r.id)).toEqual([1, 3, 4]);
     // The role a screen has open stays, whatever it is.
     expect(withoutFormerRoles(roles, 2).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("role models (L5-04)", () => {
+  it("names and describes every model of the registry in French", () => {
+    const names = Object.keys(ROLE_TEMPLATES);
+    expect(names).toHaveLength(11);
+    for (const name of names) {
+      expect(templateLabel(t, name)).not.toBe(name);
+      expect(templateDescription(t, name, null)).not.toBe("");
+    }
+    expect(templateLabel(t, "Storekeeper Template")).toBe("Magasinier");
+    expect(templateLabel(t, "Production Operator Template")).toBe("Opérateur de production");
+  });
+
+  it("keeps a model made by the plant under its own name", () => {
+    expect(templateLabel(t, "Modèle atelier")).toBe("Modèle atelier");
+    expect(templateDescription(t, "Modèle atelier", "Notre modèle")).toBe("Notre modèle");
+  });
+
+  it("says in the storekeeper and buyer models what the rights do not separate", () => {
+    expect(templateDescription(t, "Storekeeper Template", null)).toContain("réception séparé");
+    expect(templateDescription(t, "Buyer Template", null)).toContain("Plafonds d'approbation");
   });
 });
