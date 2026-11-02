@@ -88,7 +88,7 @@
       },
       "technician": {
         "name": "Technicien",
-        "description": "Réalise ses ordres de travail (temps, pièces, constats), signale ce qu'il trouve, fait les rondes d'inspection. Voit le permis et la fiche de consignation sous lesquels il travaille, sans délivrer de permis."
+        "description": "Réalise ses ordres de travail (temps, pièces, constats), signale ce qu'il trouve, fait les rondes d'inspection. Voit le permis et la fiche de consignation sous lesquels il travaille, sans délivrer de permis. Si vos techniciens posent eux-mêmes leur cadenas, ajoutez « Délivrer des permis de travail » jusqu’à la version suivante."
       },
       "planner": {
         "name": "Planificateur",

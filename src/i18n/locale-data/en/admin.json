@@ -88,7 +88,7 @@
       },
       "technician": {
         "name": "Technician",
-        "description": "Carries out his work orders (times, parts, findings), reports what he finds, runs inspection rounds. Sees the permit and lockout card he works under, without issuing permits."
+        "description": "Carries out his work orders (times, parts, findings), reports what he finds, runs inspection rounds. Sees the permit and lockout card he works under, without issuing permits. If your technicians apply their own locks, add “Issue work permits” until the next version."
       },
       "planner": {
         "name": "Planner",
