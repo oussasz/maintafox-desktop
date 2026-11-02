@@ -33,28 +33,28 @@ import { PlanningWindowDetailDialog } from "@/components/planning/PlanningWindow
 import { ProductionWindowDialog } from "@/components/planning/ProductionWindowDialog";
 import { WeeklySchedulePanel } from "@/components/planning/WeeklySchedulePanel";
 import {
+  PLANNING_DEFAULT_HORIZON_DAYS,
+  PLANNING_HORIZON_PRESETS,
+  PLANNING_TIMELINE_MAX_ZOOM_MS,
+  type PlanningBoardScope,
+  type PlanningPageView,
   addDaysIso,
   candidateDisplayCode,
   candidateDisplayTitle,
   clampVisibleToHorizon,
   filterCommitmentsForBoardScope,
+  isAssigneeOverridableError,
   localDateEndIso,
   localDateEndMs,
   localDateStartIso,
   localDateStartMs,
+  overridableCodes,
   parseMs,
-  PLANNING_DEFAULT_HORIZON_DAYS,
-  PLANNING_HORIZON_PRESETS,
-  PLANNING_TIMELINE_MAX_ZOOM_MS,
   readStoredBoardScope,
   readStoredPageView,
   toLocalIsoDate,
   writeStoredBoardScope,
   writeStoredPageView,
-  type PlanningBoardScope,
-  type PlanningPageView,
-  isAssigneeOverridableError,
-  overridableCodes,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
@@ -88,9 +88,9 @@ import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
 import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
+  CreatePlanningWindowInput,
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
-  CreatePlanningWindowInput,
   PlanningWindow,
   RescheduleCommitmentInput,
   ScheduleCandidate,
@@ -223,9 +223,16 @@ export function PlanningPage() {
     setVisibleEnd(next.end);
   }, [horizonStart, horizonEnd]);
 
+  // The backlog is a table filled by a refresh: a planner opening the page gets it filled from the
+  // open work orders, everyone else reads what is there.
+  const canRefreshBacklog = can(P.PLAN_EDIT);
   useEffect(() => {
-    void loadBacklog();
-  }, [loadBacklog]);
+    if (canRefreshBacklog) {
+      void refreshBacklog().catch(() => loadBacklog());
+    } else {
+      void loadBacklog();
+    }
+  }, [canRefreshBacklog, refreshBacklog, loadBacklog]);
 
   /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
   const deepLinkHandledRef = useRef<string | null>(null);
@@ -630,8 +637,12 @@ export function PlanningPage() {
         <div className={mfLayout.moduleTitleRow}>
           <CalendarRange className={mfLayout.moduleHeaderIcon} aria-hidden />
           <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {backlog?.candidate_count ?? commitments.length}
+          <Badge
+            variant="secondary"
+            className="text-xs"
+            title={t("page.committedCount", { count: commitments.length })}
+          >
+            {commitments.length}
           </Badge>
         </div>
 

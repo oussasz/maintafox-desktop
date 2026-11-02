@@ -1,6 +1,7 @@
 {
   "page": {
-    "title": "Planning"
+    "title": "Planning",
+    "committedCount": "{{count}} work order(s) committed in the period shown"
   },
   "views": {
     "gantt": "Gantt board",
@@ -59,7 +60,7 @@
     "commit": "Create commitment",
     "notifyTeams": "Notify teams",
     "plannerTools": "Planner tools",
-    "requiresCommitments": "Available once work is committed on this board"
+    "requiresCommitments": "No work order is committed in the From–To period: commit one from the backlog, or widen the dates, to use this tool."
   },
   "state": {
     "loading": "Loading planning data..."
@@ -70,7 +71,7 @@
     "readinessScore": "Readiness",
     "skillMatch": "Skill match",
     "risk": "Risk",
-    "emptyReady": "No ready candidates.",
+    "emptyReady": "No work order ready to plan. Only work orders at status 'Ready to plan' (or planned, assigned) appear here; a draft or in-progress one does not.",
     "emptyBlocked": "No blocked candidates.",
     "readyHint": "Click a Ready card to commit it to the schedule.",
     "blockedHint": "Open a blocked item to clear its blockers in the work order or request.",
