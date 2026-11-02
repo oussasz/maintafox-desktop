@@ -62,7 +62,7 @@
     "fromSafetyDi": "Activé automatiquement : la demande d'origine signalait un risque sécurité."
   },
   "woPeople": {
-    "none": "Aucun membre du personnel actif n'a de compte utilisateur : reliez le personnel à un compte dans Personnel.",
+    "none": "Votre compte n'est relié à aucune fiche du personnel : demandez à l'administrateur de la relier dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
   "page": {
@@ -527,6 +527,11 @@
       "hint": "Saisissez le temps technicien pour cette intervention. Les heures travaillées sont calculées automatiquement.",
       "rateHint": "Le coût utilise la grille de taux active du technicien lorsqu'elle existe ; sinon l'entrée est enregistrée avec un avertissement « taux manquant ».",
       "technician": "Technicien",
+      "technicianPlaceholder": "Choisir un technicien",
+      "team": "Équipe",
+      "allTeams": "Toutes les équipes",
+      "rateShown": "Taux horaire appliqué : {{rate}}",
+      "rateUnknown": "Aucun taux horaire défini pour cette personne : l'entrée sera enregistrée sans coût.",
       "date": "Date",
       "startTime": "Heure de début",
       "endTime": "Heure de fin",

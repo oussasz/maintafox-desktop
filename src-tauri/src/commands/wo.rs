@@ -1056,17 +1056,72 @@ pub async fn add_personnel_labor(
 ) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // Without the right to see the staff register, a user books his own hours only.
+    if !can_see_staff_register(&state, &user).await? {
+        let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
+        if own != Some(input.personnel_id) {
+            return Err(AppError::PermissionDenied(
+                "Vous ne pouvez saisir que vos propres heures.".to_string(),
+            ));
+        }
+    }
     labor::add_personnel_labor_entry(&state.db, input).await
 }
 
-/// Everyone who can be booked for labour (active personnel, with or without a login).
+/// Whether the user may see people other than himself (training or personnel view right).
+async fn can_see_staff_register(
+    state: &State<'_, AppState>,
+    user: &crate::auth::session_manager::AuthenticatedUser,
+) -> AppResult<bool> {
+    match crate::commands::qualification::require_any_permission(
+        state,
+        user,
+        crate::commands::qualification::PEOPLE_VIEW,
+    )
+    .await
+    {
+        Ok(()) => Ok(true),
+        Err(AppError::PermissionDenied(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Everyone who can be booked for labour (active personnel, with or without a login). A user
+/// without the right to see the staff register gets his own personnel card only, so a
+/// technician can always book his hours.
 #[tauri::command]
 pub async fn list_wo_labor_people(state: State<'_, AppState>) -> AppResult<Vec<labor::WoLaborPerson>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    crate::commands::qualification::require_any_permission(&state, &user, crate::commands::qualification::PEOPLE_VIEW)
-        .await?;
-    labor::list_labor_people(&state.db).await
+    let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
+    if can_see_staff_register(&state, &user).await? {
+        labor::list_labor_people(&state.db, None, own).await
+    } else {
+        match own {
+            Some(pid) => labor::list_labor_people(&state.db, Some(pid), own).await,
+            None => Ok(Vec::new()),
+        }
+    }
+}
+
+/// Hourly rates that a labour entry for this person and day will be priced at.
+#[tauri::command]
+pub async fn preview_wo_labor_rate(
+    personnel_id: i64,
+    day: String,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoLaborRatePreview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    if !can_see_staff_register(&state, &user).await? {
+        let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
+        if own != Some(personnel_id) {
+            return Err(AppError::PermissionDenied(
+                "Vous ne pouvez consulter que votre propre taux.".to_string(),
+            ));
+        }
+    }
+    labor::preview_labor_rate(&state.db, personnel_id, &day).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

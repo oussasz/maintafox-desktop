@@ -1226,6 +1226,7 @@ pub fn run() {
         commands::personnel::update_external_company,
         commands::wo::add_personnel_labor,
         commands::wo::list_wo_labor_people,
+        commands::wo::preview_wo_labor_rate,
         commands::personnel::list_schedule_class_versions,
         commands::personnel::upsert_schedule_class_version,
         commands::personnel::get_schedule_class_version_impact,

@@ -87,6 +87,7 @@ import {
   markWoToolNotUsed,
   markWoToolUsed,
   openDowntime,
+  previewWoLaborRate,
   recordPartUsage,
   reopenTask,
   unconfirmNoParts,
@@ -364,6 +365,48 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
       };
     }, [showLaborDialog, laborTechId, wo.id]);
 
+    // The hourly rate the entry will be priced at, shown before saving.
+    const [laborRate, setLaborRate] = useState<{
+      normal: number | null;
+      overtime: number | null;
+    } | null>(null);
+    useEffect(() => {
+      if (!showLaborDialog || !laborTechId || !laborDate) {
+        setLaborRate(null);
+        return;
+      }
+      let cancelled = false;
+      previewWoLaborRate(Number(laborTechId), laborDate)
+        .then((rate) => {
+          if (!cancelled) setLaborRate({ normal: rate.normal_rate, overtime: rate.overtime_rate });
+        })
+        .catch(() => {
+          if (!cancelled) setLaborRate(null);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [showLaborDialog, laborTechId, laborDate]);
+
+    // Team filter of the staff list in the labour dialog ("" = everyone).
+    const [laborTeamFilter, setLaborTeamFilter] = useState("");
+    const laborTeams = useMemo(() => {
+      const teams = new Map<string, string>();
+      for (const opt of intervenerOptions) {
+        if (opt.teamId != null && opt.teamName) teams.set(String(opt.teamId), opt.teamName);
+      }
+      return [...teams.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    }, [intervenerOptions]);
+    const shownIntervenerOptions = useMemo(
+      () =>
+        laborTeamFilter
+          ? intervenerOptions.filter(
+              (opt) => String(opt.teamId ?? "") === laborTeamFilter || opt.value === laborTechId,
+            )
+          : intervenerOptions,
+      [intervenerOptions, laborTeamFilter, laborTechId],
+    );
+
     // ── Load data ──────────────────────────────────────────────────────────
 
     const loadData = useCallback(async () => {
@@ -517,10 +560,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     }, [laborDate, laborStart, laborEnd, laborBreakMin]);
 
     const openLaborDialog = useCallback(() => {
-      setLaborTechId(intervenerOptions[0]?.value ?? "");
+      // The signed-in person first (a technician books himself); planners can pick anyone.
+      const self = intervenerOptions.find((opt) => opt.isSelf);
+      const only = intervenerOptions.length === 1 ? intervenerOptions[0] : undefined;
+      setLaborTechId(self?.value ?? only?.value ?? "");
+      setLaborTeamFilter("");
+      // Work just done: ends now, starts an hour earlier on the same day (never before midnight).
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const endMinutes = now.getHours() * 60 + now.getMinutes();
+      const startMinutes = Math.max(0, endMinutes - 60);
       setLaborDate(todayLocalDate());
-      setLaborStart("08:00");
-      setLaborEnd("10:00");
+      setLaborStart(`${pad(Math.floor(startMinutes / 60))}:${pad(startMinutes % 60)}`);
+      setLaborEnd(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
       setLaborBreakMin("");
       setLaborNotes("");
       setLaborOvertime(false);
@@ -1039,15 +1091,6 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           {laborEntries.length === 0 ? (
             <div className="rounded-md border border-dashed px-4 py-6 text-center">
               <p className="text-sm text-muted-foreground">{t("execution.emptyLabor")}</p>
-              <Button
-                className="mt-3"
-                size="sm"
-                variant="outline"
-                onClick={openLaborDialog}
-                disabled={recordingDisabled || !actorId}
-              >
-                {t("execution.addLabor")}
-              </Button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1838,6 +1881,27 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3">
+              {laborTeams.length > 0 ? (
+                <div className="space-y-1">
+                  <Label>{t("execution.laborDialog.team")}</Label>
+                  <Select
+                    value={laborTeamFilter || "__all"}
+                    onValueChange={(v) => setLaborTeamFilter(v === "__all" ? "" : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all">{t("execution.laborDialog.allTeams")}</SelectItem>
+                      {laborTeams.map(([id, name]) => (
+                        <SelectItem key={id} value={id}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.technician")}</Label>
                 <Select
@@ -1845,11 +1909,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   onValueChange={(v) => setLaborTechId(v === "__none" ? "" : v)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={t("execution.intervenerId")} />
+                    <SelectValue placeholder={t("execution.laborDialog.technicianPlaceholder")} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">—</SelectItem>
-                    {intervenerOptions.map((opt) => (
+                    {shownIntervenerOptions.map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>
                         {opt.label}
                       </SelectItem>
@@ -1881,6 +1945,16 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 />
                 {t("execution.laborDialog.overtime")}
               </label>
+              {laborTechId ? (
+                <p className="text-xs text-muted-foreground">
+                  {(() => {
+                    const rate = laborOvertime ? laborRate?.overtime : laborRate?.normal;
+                    return rate != null
+                      ? t("execution.laborDialog.rateShown", { rate: formatCurrency(rate) })
+                      : t("execution.laborDialog.rateUnknown");
+                  })()}
+                </p>
+              ) : null}
               <div className="space-y-1">
                 <Label>{t("execution.laborDialog.date")}</Label>
                 <DateField value={laborDate} onChange={(v) => setLaborDate(v)} />
