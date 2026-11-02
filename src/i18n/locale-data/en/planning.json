@@ -55,7 +55,7 @@
   },
   "actions": {
     "refreshBacklog": "Refresh backlog",
-    "freezePeriod": "Freeze period",
+    "lockPeriod": "Lock a period (window / shutdown)",
     "exportPdf": "Export Gantt PDF",
     "commit": "Create commitment",
     "notifyTeams": "Notify teams",

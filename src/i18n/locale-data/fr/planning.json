@@ -55,7 +55,7 @@
   },
   "actions": {
     "refreshBacklog": "Rafraîchir le backlog",
-    "freezePeriod": "Geler la période",
+    "lockPeriod": "Verrouiller une période (fenêtre / arrêt)",
     "exportPdf": "Exporter le Gantt PDF",
     "commit": "Créer l'engagement",
     "notifyTeams": "Notifier les équipes",

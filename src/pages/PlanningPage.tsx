@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Download,
   GanttChart,
-  Lock,
   RefreshCw,
   Siren,
   SquareStack,
@@ -24,7 +23,6 @@ import { BreakInDialog } from "@/components/planning/BreakInDialog";
 import { CommitDialog } from "@/components/planning/CommitDialog";
 import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
 import { CrewsWithoutSiteBanner } from "@/components/planning/CrewsWithoutSiteBanner";
-import { FreezeConfirmDialog } from "@/components/planning/FreezeConfirmDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { PlanningBacklogRail } from "@/components/planning/PlanningBacklogRail";
 import { PlanningBoard } from "@/components/planning/PlanningBoard";
@@ -77,7 +75,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
-import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
@@ -119,7 +116,6 @@ export function PlanningPage() {
   const readable = useReadableLists(["teams", "people"] as const);
   const rightsLoading = usePermissionsLoading();
   const { toast } = useToast();
-  const { formatDateTime } = useFormatters();
   /** Confirms a planning action that went through (failures already have their toast). */
   const done = (key: string) => toast({ title: t(`feedback.${key}`), variant: "success" });
 
@@ -145,7 +141,6 @@ export function PlanningPage() {
   const rescheduleCommitment = usePlanningStore((s) => s.rescheduleCommitment);
   const createPlanningWindow = usePlanningStore((s) => s.createPlanningWindow);
   const createBreakIn = usePlanningStore((s) => s.createBreakIn);
-  const freezeSchedule = usePlanningStore((s) => s.freezeSchedule);
   const notifyTeams = usePlanningStore((s) => s.notifyTeams);
   const exportGanttPdf = usePlanningStore((s) => s.exportGanttPdf);
   const [pdfPaper, setPdfPaper] = useState<"A4" | "A3">("A4");
@@ -199,7 +194,6 @@ export function PlanningPage() {
   const [windowDetailOpen, setWindowDetailOpen] = useState(false);
   const [breakInOpen, setBreakInOpen] = useState(false);
   const [breakInCommitmentId, setBreakInCommitmentId] = useState<number | null>(null);
-  const [freezeOpen, setFreezeOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const pendingRescheduleRef = useRef<PendingReschedule | null>(null);
@@ -603,20 +597,6 @@ export function PlanningPage() {
     await Promise.all([loadBacklog(), reloadBoard()]);
   }
 
-  async function handleFreeze(reason: string) {
-    try {
-      await freezeSchedule({
-        period_start: periodStartIso,
-        period_end: periodEndIso,
-        reason,
-      });
-      done("periodFrozen");
-      await reloadBoard();
-    } catch (err) {
-      throw err;
-    }
-  }
-
   async function handleNotifyTeams() {
     try {
       await notifyTeams({
@@ -673,17 +653,7 @@ export function PlanningPage() {
                 <PermissionGate permission={P.PLAN_WINDOWS}>
                   <DropdownMenuItem onClick={() => setWindowOpen(true)}>
                     <SquareStack className="mr-2 h-3.5 w-3.5" />
-                    {t("windows.title")}
-                  </DropdownMenuItem>
-                </PermissionGate>
-                <PermissionGate permission={P.PLAN_CONFIRM}>
-                  <DropdownMenuItem
-                    disabled={commitments.length === 0 || saving}
-                    title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
-                    onClick={() => setFreezeOpen(true)}
-                  >
-                    <Lock className="mr-2 h-3.5 w-3.5" />
-                    {t("actions.freezePeriod")}
+                    {t("actions.lockPeriod")}
                   </DropdownMenuItem>
                 </PermissionGate>
                 <PermissionGate permission={P.PLAN_CONFIRM}>
@@ -1040,14 +1010,6 @@ export function PlanningPage() {
         personnel={personnel}
         saving={saving}
         onSubmit={handleCreateBreakIn}
-      />
-      <FreezeConfirmDialog
-        open={freezeOpen}
-        onOpenChange={setFreezeOpen}
-        periodStartLabel={formatDateTime(periodStartIso)}
-        periodEndLabel={formatDateTime(periodEndIso)}
-        saving={saving}
-        onConfirm={handleFreeze}
       />
       <CommitmentInspectorDialog
         open={inspectorOpen}
