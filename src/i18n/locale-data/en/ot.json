@@ -82,7 +82,6 @@
     "empty": "No open issues. Run the check to review work orders and their lines.",
     "runDetectors": "Run the check",
     "waiverDefaultReason": "Waived via operator workbench",
-    "approverId": "Approver",
     "approverPlaceholder": "Required for error findings",
     "waiverReason": "Waiver reason",
     "waiverReasonPlaceholder": "Justification",
@@ -876,6 +875,7 @@
   "detail": {
     "close": "Close",
     "loading": "Loading work order…",
+    "backToOrigin": "Back",
     "loadingHint": "Fetching the latest work order details.",
     "cancelledBanner": "This work order was cancelled",
     "sections": {

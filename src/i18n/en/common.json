@@ -54,6 +54,12 @@
     "loadingModule": "Loading module...",
     "error": "An error occurred"
   },
+  "discardGuard": {
+    "title": "Leave without saving?",
+    "description": "What you typed in this window will be lost.",
+    "keep": "Keep editing",
+    "leave": "Leave without saving"
+  },
   "action": {
     "save": "Save",
     "cancel": "Cancel",

@@ -98,6 +98,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="top-[20%] translate-y-0 p-0 gap-0 max-w-lg"
+        confirmDiscard={false}
         onKeyDown={handleKeyDown}
       >
         {/* Accessible but visually hidden title */}
