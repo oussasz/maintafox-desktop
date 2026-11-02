@@ -15,6 +15,13 @@
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
     "rightRequired": "Droit requis : {{right}}"
   },
+  "licence": {
+    "notInForceTitle": "Licence pas en vigueur",
+    "moduleOffTitle": "Module non inclus dans votre licence",
+    "moduleOff": "Le module « {{module}} » n'est pas inclus dans la licence de cette installation. Demandez à votre fournisseur Maintafox de l'ajouter à votre offre.",
+    "licenceNotInForce": "Votre licence n'est pas en vigueur pour le moment (suspendue, expirée ou en période de grâce) : le module « {{module}} » est arrêté. Contactez votre fournisseur Maintafox.",
+    "moduleUnknown": "ce module"
+  },
   "permission": {
     "cannotGrantOwnRole": "Vous ne pouvez pas vous donner un rôle à vous-même : un autre administrateur doit le faire."
   },

@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { LicenceModuleOffNote } from "@/components/ui/licence-module-off-note";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import {
   Select,
@@ -32,6 +33,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Switch } from "@/components/ui/switch";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useModuleLicensed } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { useCanReadList, usePermissionsLoading } from "@/lib/list-access";
@@ -113,8 +115,11 @@ export function PersonQualificationSheet({
   const { can } = usePermissions();
   // Certifications and their types are training lists (trn.view); skills are personnel data.
   // Each part loads on its own, so one refused or failed list does not empty the other.
-  const canReadCerts = useCanReadList("certificationTypes");
-  const permissionsLoading = usePermissionsLoading();
+  // Training outside the licence: its lists are not asked for (each refusal was one more red
+  // banner) and one note says why, in place of the certifications.
+  const trainingLicence = useModuleLicensed(P.TRN_VIEW);
+  const canReadCerts = useCanReadList("certificationTypes") && trainingLicence.licensed;
+  const permissionsLoading = usePermissionsLoading() || trainingLicence.loading;
   // Recording or verifying a certification also needs the certification list (trn.view).
   const canCertify = can(P.TRN_CERTIFY) && canReadCerts;
   // Validating a skill is `upsert_personnel_skill` (per.manage + trn.certify): no trn.view.
@@ -350,7 +355,9 @@ export function PersonQualificationSheet({
           ) : null}
         </div>
 
-        {!canReadCerts ? (
+        {!trainingLicence.licensed ? (
+          <LicenceModuleOffNote permission={P.TRN_VIEW} />
+        ) : !canReadCerts ? (
           <ListAccessNote list="certificationTypes" />
         ) : certError ? (
           <ErrorState error={certError} onRetry={() => void load()} />

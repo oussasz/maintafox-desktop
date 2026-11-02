@@ -5,7 +5,9 @@ import { useNavigate } from "react-router-dom";
 
 import { canSeeNavItem, type NavItem } from "@/components/layout/Sidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
+import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
 
@@ -21,14 +23,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t } = useTranslation("shell");
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const { capabilityMap } = useModuleCapabilities();
 
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Permission-filtered items (same logic as Sidebar)
-  const permittedItems = navigableItems.filter((item) => canSeeNavItem(item, can));
+  // Same filter as the Sidebar: the user's rights and the modules the licence includes. A module
+  // outside the licence is not offered here either (it used to open and refuse every list).
+  const permittedItems = navigableItems.filter(
+    (item) =>
+      canSeeNavItem(item, can) && isModuleCapabilityAllowed(capabilityMap, item.requiredPermission),
+  );
 
   // Search filter — match against translated label
   const filtered = query.trim()

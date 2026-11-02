@@ -18,6 +18,7 @@ import { ZodError } from "zod";
 import { i18n } from "@/i18n/config";
 import { ACCOUNT_LOCKED, accountLockedErrorText } from "@/lib/account-lockout";
 import { displayParams, formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
+import { moduleLabelKey } from "@/lib/module-capability";
 import { permissionLabel } from "@/lib/permission-labels";
 import { STEP_UP_CANCELLED_MESSAGE } from "@/lib/step-up-bridge";
 import {
@@ -50,6 +51,38 @@ function missingRight(message: string): string | null {
   // generic reason stands in instead.
   if (!i18n.hasLoadedNamespace("admin")) return null;
   return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
+}
+
+/**
+ * Licence states that stop a module whatever the plan includes (in grace only the essential
+ * modules run; `entitlements::queries::check_entitlement_capability`).
+ */
+const LICENCE_NOT_IN_FORCE_STATES = new Set(["suspended", "revoked", "expired", "grace"]);
+
+/**
+ * A refusal because the licence does not allow the module now (`LICENCE_MODULE_OFF:module=…,
+ * state=…`, `entitlements::queries::enforce_capability_for_permission`): it says so, naming the
+ * module, instead of a bare "permission refused" an administrator cannot act on.
+ */
+function licenceModuleOff(message: string): { title: string; description: string } | null {
+  const match = message.match(/LICENCE_MODULE_OFF:module=([a-z_.]+),state=([a-z_]+)/);
+  if (!match) return null;
+  const [, moduleKey = "", state = ""] = match;
+  const labelKey = moduleLabelKey(moduleKey);
+  const module = labelKey
+    ? String(i18n.t(`shell:${labelKey}` as never))
+    : String(i18n.t("errors:licence.moduleUnknown"));
+  const notInForce = LICENCE_NOT_IN_FORCE_STATES.has(state);
+  return {
+    title: String(
+      i18n.t(notInForce ? "errors:licence.notInForceTitle" : "errors:licence.moduleOffTitle"),
+    ),
+    description: String(
+      i18n.t(notInForce ? "errors:licence.licenceNotInForce" : "errors:licence.moduleOff", {
+        module,
+      }),
+    ),
+  };
 }
 
 export function describeAppError(err: unknown): AppErrorDescription {
@@ -88,6 +121,10 @@ export function describeAppError(err: unknown): AppErrorDescription {
   // The server's sentence names the missing right ("Permission requise : ot.close"); it is shown
   // by its readable name (`permission-labels.ts`), the generic reason when no right can be read.
   if (code === "PERMISSION_DENIED") {
+    const licence = licenceModuleOff(rawMsg);
+    if (licence) {
+      return { ...licence, code, technical: rawMsg.trim() || null };
+    }
     const right = missingRight(rawMsg);
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
