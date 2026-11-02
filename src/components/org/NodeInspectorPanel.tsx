@@ -20,6 +20,7 @@ import {
   Info,
   Link2,
   Package,
+  PenLine,
   ShieldAlert,
   Users,
   X,
@@ -31,6 +32,7 @@ import { Link } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { MoveNodeDialog } from "@/components/org/MoveNodeDialog";
+import { OrgStructureDraftDialog } from "@/components/org/OrgStructureDraftDialog";
 import { ResponsibilityAssignDialog } from "@/components/org/ResponsibilityAssignDialog";
 import { orgNodePathLabel, orgNodeStatusLabel } from "@/components/org/org-display";
 import { useResponsibilityTypes } from "@/components/org/use-responsibility-types";
@@ -100,6 +102,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
   const workspaceMode = useOrgDesignerStore((s) => s.workspaceMode);
   const openPreview = useOrgDesignerStore((s) => s.openPreview);
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
+  const setWorkspaceMode = useOrgDesignerStore((s) => s.setWorkspaceMode);
 
   const responsibilities = useOrgNodeStore((s) => s.responsibilities);
   const bindings = useOrgNodeStore((s) => s.bindings);
@@ -234,6 +237,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
 
   // ── Structure actions ────────────────────────────────────────────────────
   const [moveOpen, setMoveOpen] = useState(false);
+  const [forkOpen, setForkOpen] = useState(false);
 
   // ── Details form ─────────────────────────────────────────────────────────
   const [metaName, setMetaName] = useState("");
@@ -826,9 +830,32 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
               {t("designer.inspector.actionsDescription")}
             </p>
             {readOnly && (
-              <p className="rounded-md border border-surface-border px-3 py-2 text-sm text-text-secondary">
-                {t("designer.inspector.actionsNeedDraft")}
-              </p>
+              <div className="space-y-2 rounded-md border border-surface-border px-3 py-2">
+                <p className="text-sm text-text-secondary">
+                  {t("designer.inspector.actionsNeedDraft")}
+                </p>
+                <PermissionGate permission={P.ORG_ADMIN}>
+                  {snapshot?.draft_model_id != null ? (
+                    <Button
+                      variant="outline"
+                      className="h-10 gap-1.5"
+                      onClick={() => setWorkspaceMode("draft")}
+                    >
+                      <PenLine className="h-4 w-4" aria-hidden />
+                      {t("lifecycle.openDraft")}
+                    </Button>
+                  ) : snapshot?.active_model_id != null ? (
+                    <Button
+                      variant="outline"
+                      className="h-10 gap-1.5"
+                      onClick={() => setForkOpen(true)}
+                    >
+                      <PenLine className="h-4 w-4" aria-hidden />
+                      {t("lifecycle.startVersionFromPublished")}
+                    </Button>
+                  ) : null}
+                </PermissionGate>
+              </div>
             )}
             <PermissionGate permission={P.ORG_ADMIN}>
               <Button
@@ -869,6 +896,13 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
       </Tabs>
 
       {moveOpen && <MoveNodeDialog open={moveOpen} onOpenChange={setMoveOpen} node={selectedRow} />}
+
+      <OrgStructureDraftDialog
+        open={forkOpen}
+        onOpenChange={setForkOpen}
+        variant="fork"
+        onSuccess={() => void loadSnapshot()}
+      />
 
       {assignOpen && canEditOps && opsNodeId != null && (
         <ResponsibilityAssignDialog

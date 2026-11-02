@@ -211,13 +211,51 @@ describe("org-designer-store", () => {
       expect(useOrgDesignerStore.getState().workspaceMode).toBe("published");
     });
 
-    it("switches to draft when a draft appears after a previous draft-less snapshot", async () => {
+    it("switches to draft and loads the draft tree when a draft appears", async () => {
+      // L5-01: after "Nouveau brouillon", the first reload is still the published tree. Draft
+      // mode must show the draft tree, or "+ Enfant" matches a published parent against the
+      // draft's types and offers no type at all.
       useOrgDesignerStore.setState({ workspaceMode: "published", snapshot: makeSnapshot() });
-      mockGetSnapshot.mockResolvedValueOnce(makeBothSnapshot());
+      const draftTree = makeBothSnapshot({
+        display_model_id: 2,
+        nodes: [makeNode({ node_id: 101, node_type_id: 20, origin_node_id: 1 })],
+      });
+      mockGetSnapshot.mockResolvedValueOnce(makeBothSnapshot()).mockResolvedValueOnce(draftTree);
 
       await useOrgDesignerStore.getState().loadSnapshot();
 
-      expect(useOrgDesignerStore.getState().workspaceMode).toBe("draft");
+      const s = useOrgDesignerStore.getState();
+      expect(mockGetSnapshot).toHaveBeenNthCalledWith(1, false);
+      expect(mockGetSnapshot).toHaveBeenNthCalledWith(2, true);
+      expect(s.workspaceMode).toBe("draft");
+      expect(s.snapshot).toEqual(draftTree);
+    });
+
+    it("keeps the selected unit on its draft copy when the draft tree replaces the published one", async () => {
+      useOrgDesignerStore.setState({
+        workspaceMode: "published",
+        snapshot: makeSnapshot(),
+        selectedNodeId: 1,
+      });
+      mockGetSnapshot.mockResolvedValueOnce(makeBothSnapshot()).mockResolvedValueOnce(
+        makeBothSnapshot({
+          display_model_id: 2,
+          nodes: [makeNode({ node_id: 101, node_type_id: 20, origin_node_id: 1 })],
+        }),
+      );
+
+      await useOrgDesignerStore.getState().loadSnapshot();
+
+      expect(useOrgDesignerStore.getState().selectedNodeId).toBe(101);
+    });
+
+    it("does not reload when the tree already matches the mode", async () => {
+      useOrgDesignerStore.setState({ workspaceMode: "draft", snapshot: makeBothSnapshot() });
+      mockGetSnapshot.mockResolvedValueOnce(makeBothSnapshot({ display_model_id: 2 }));
+
+      await useOrgDesignerStore.getState().loadSnapshot();
+
+      expect(mockGetSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it("keeps the current mode when both models existed before and still exist", async () => {
@@ -259,7 +297,7 @@ describe("org-designer-store", () => {
   });
 
   describe("setWorkspaceMode", () => {
-    it("sets the mode, clears selection and reloads with the new preference", async () => {
+    it("sets the mode, reloads with the new preference and drops a selection with no copy", async () => {
       useOrgDesignerStore.setState({ snapshot: makeBothSnapshot(), selectedNodeId: 9 });
       const d = deferred<OrgDesignerSnapshot>();
       mockGetSnapshot.mockReturnValueOnce(d.promise);
@@ -268,7 +306,6 @@ describe("org-designer-store", () => {
 
       let s = useOrgDesignerStore.getState();
       expect(s.workspaceMode).toBe("draft");
-      expect(s.selectedNodeId).toBeNull();
       expect(s.loading).toBe(true);
       expect(mockGetSnapshot).toHaveBeenCalledWith(true);
 
@@ -278,6 +315,24 @@ describe("org-designer-store", () => {
       s = useOrgDesignerStore.getState();
       expect(s.workspaceMode).toBe("draft");
       expect(s.snapshot?.display_model_id).toBe(2);
+      expect(s.selectedNodeId).toBeNull();
+    });
+
+    it("keeps the selected unit on its published original when going back to published", async () => {
+      useOrgDesignerStore.setState({
+        workspaceMode: "draft",
+        snapshot: makeBothSnapshot({
+          display_model_id: 2,
+          nodes: [makeNode({ node_id: 101, origin_node_id: 1 })],
+        }),
+        selectedNodeId: 101,
+      });
+      mockGetSnapshot.mockResolvedValueOnce(makeBothSnapshot());
+
+      useOrgDesignerStore.getState().setWorkspaceMode("published");
+
+      await vi.waitFor(() => expect(useOrgDesignerStore.getState().loading).toBe(false));
+      expect(useOrgDesignerStore.getState().selectedNodeId).toBe(1);
     });
 
     it("reverts to published when the reload shows no draft", async () => {
