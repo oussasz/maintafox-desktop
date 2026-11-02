@@ -62,6 +62,8 @@ const COMMON_TOP_KEYS = [
   "decimalField",
   // "Leave without saving?" question of every dialog (src/components/ui/dialog.tsx).
   "discardGuard",
+  // "Exporter (Excel/CSV)" button of the main lists (src/components/ui/ExportCsvButton.tsx).
+  "listExport",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

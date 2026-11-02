@@ -2,6 +2,15 @@
   "toast": {
     "dismiss": "Fermer le message"
   },
+  "listExport": {
+    "button": "Exporter (Excel/CSV)",
+    "title": "Exporter la liste affichée",
+    "saved": "Liste exportée",
+    "failed": "L'export a échoué",
+    "empty": "Aucune ligne à exporter",
+    "truncatedUnknown": "Seules les {{shown}} lignes chargées sont exportées : il en reste d'autres. Chargez la suite avant d'exporter pour tout avoir.",
+    "truncated": "Seules les {{shown}} lignes chargées sur {{total}} sont exportées. Chargez la suite avant d'exporter pour tout avoir."
+  },
   "decimalField": {
     "dotHint": "Le point sert de séparateur décimal (1.250 = 1,25)."
   },

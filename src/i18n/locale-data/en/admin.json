@@ -18,7 +18,7 @@
     "sessions": "Sessions",
     "delegation": "Delegation",
     "emergency": "Emergency",
-    "importExport": "Import / Export",
+    "importExport": "Role import / export",
     "audit": "Audit",
     "phones": "Phones"
   },
@@ -930,7 +930,8 @@
     }
   },
   "importExport": {
-    "title": "Role Import / Export",
+    "title": "Role import / export",
+    "description": "Back up or transfer roles and their permissions (JSON file). To export a list to Excel, use the \"Export (Excel/CSV)\" button on that list.",
     "export": {
       "title": "Export Roles",
       "selectRoles": "Select roles to export",

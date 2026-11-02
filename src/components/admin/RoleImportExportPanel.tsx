@@ -233,8 +233,9 @@ export function RoleImportExportPanel() {
   return (
     <div className="space-y-6">
       <h2 className="text-lg font-semibold text-text-primary">
-        {t("importExport.title", "Role Import / Export")}
+        {t("importExport.title", "Role import / export")}
       </h2>
+      <p className="text-sm text-text-muted">{t("importExport.description")}</p>
 
       {/* ═══════════ Export Section ═══════════ */}
       <div className="rounded-lg border border-surface-border bg-surface-1 p-4 space-y-3">
