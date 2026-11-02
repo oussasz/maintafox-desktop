@@ -357,7 +357,10 @@
     "versionB": "Version B",
     "choose": "Choisir une version",
     "gap": "Écart (B − A)",
-    "total": "Total"
+    "total": "Total",
+    "sameVersion": "Choisissez deux versions différentes pour les comparer.",
+    "differentCurrencies": "Les deux versions n'ont pas la même devise : les montants sont affichés dans leur devise, l'écart et le total des écarts ne sont pas calculés.",
+    "noLines": "Aucune ligne de budget dans ces deux versions."
   },
   "planning": {
     "sameScenarioExists": "{{count}} version « {{scenario}} » est déjà ouverte pour {{year}}. Une seconde est rarement voulue : vérifiez avant de créer.",

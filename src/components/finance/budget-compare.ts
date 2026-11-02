@@ -6,6 +6,8 @@
 import type { BudgetLine } from "@shared/ipc-types";
 
 export interface BudgetCompareRow {
+  /** Unique per cost centre and category (two cost centres may share a code by mistake). */
+  key: string;
   costCenterCode: string;
   costCenterName: string;
   bucket: string;
@@ -15,6 +17,11 @@ export interface BudgetCompareRow {
   delta: number;
 }
 
+/** Rounds to 2 decimals so sums of floats compare cleanly with 0. */
+export function roundCents(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 export function compareBudgetLines(left: BudgetLine[], right: BudgetLine[]): BudgetCompareRow[] {
   const rows = new Map<string, BudgetCompareRow>();
   const touch = (l: BudgetLine): BudgetCompareRow => {
@@ -22,6 +29,7 @@ export function compareBudgetLines(left: BudgetLine[], right: BudgetLine[]): Bud
     let row = rows.get(key);
     if (!row) {
       row = {
+        key,
         costCenterCode: l.cost_center_code,
         costCenterName: l.cost_center_name,
         bucket: l.budget_bucket,
@@ -36,7 +44,11 @@ export function compareBudgetLines(left: BudgetLine[], right: BudgetLine[]): Bud
   for (const l of left) touch(l).left += l.planned_amount;
   for (const l of right) touch(l).right += l.planned_amount;
   const out = [...rows.values()];
-  for (const r of out) r.delta = r.right - r.left;
+  for (const r of out) {
+    r.left = roundCents(r.left);
+    r.right = roundCents(r.right);
+    r.delta = roundCents(r.right - r.left);
+  }
   return out.sort(
     (a, b) => a.costCenterCode.localeCompare(b.costCenterCode) || a.bucket.localeCompare(b.bucket),
   );

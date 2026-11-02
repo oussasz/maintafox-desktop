@@ -26,4 +26,23 @@ describe("compareBudgetLines", () => {
       expect.objectContaining({ costCenterCode: "CC3", left: 0, right: 70, delta: 70 }),
     ]);
   });
+
+  it("rounds float sums so equal budgets show no gap", () => {
+    const rows = compareBudgetLines(
+      [line(1, "labor", 1, 0.1), line(1, "labor", 2, 0.2)],
+      [line(1, "labor", null, 0.3)],
+    );
+    expect(rows[0]?.delta).toBe(0);
+  });
+
+  it("keeps two cost centres that share a code apart", () => {
+    const a = { ...line(1, "labor", null, 10), cost_center_code: "X" } as BudgetLine;
+    const b = { ...line(2, "labor", null, 20), cost_center_code: "X" } as BudgetLine;
+    const rows = compareBudgetLines([a, b], []);
+    expect(rows.map((r) => r.key)).toEqual(["1|labor", "2|labor"]);
+  });
+
+  it("handles empty versions", () => {
+    expect(compareBudgetLines([], [])).toEqual([]);
+  });
 });

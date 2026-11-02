@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { compareBudgetLines } from "@/components/finance/budget-compare";
+import { compareBudgetLines, roundCents } from "@/components/finance/budget-compare";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
 import { ErrorState } from "@/components/ui/data-state";
 import { Label } from "@/components/ui/label";
@@ -22,6 +22,7 @@ import { listBudgetLines } from "@/services/budget-service";
 import type { BudgetLine, BudgetVersion } from "@shared/ipc-types";
 
 const TH = "px-3 py-2 text-start font-semibold";
+const NUM = "px-3 py-2 text-end font-mono tabular-nums";
 
 function versionName(v: BudgetVersion, untitled: string): string {
   return `${v.title ?? untitled} · v${v.version_no}`;
@@ -51,6 +52,9 @@ export function BudgetVersionCompare({
     if (leftId == null || rightId == null) return;
     let cancelled = false;
     setError(null);
+    // Never show the previous pair's amounts under the new version names.
+    setLeftLines([]);
+    setRightLines([]);
     void Promise.all([
       listBudgetLines({ budget_version_id: leftId }),
       listBudgetLines({ budget_version_id: rightId }),
@@ -61,7 +65,10 @@ export function BudgetVersionCompare({
         setRightLines(r);
       })
       .catch((err) => {
-        if (!cancelled) setError(err);
+        if (cancelled) return;
+        setLeftLines([]);
+        setRightLines([]);
+        setError(err);
       });
     return () => {
       cancelled = true;
@@ -74,10 +81,20 @@ export function BudgetVersionCompare({
   );
   const left = versions.find((v) => v.id === leftId) ?? null;
   const right = versions.find((v) => v.id === rightId) ?? null;
-  const currency = left?.currency_code ?? right?.currency_code ?? "";
-  const totalLeft = rows.reduce((s, r) => s + r.left, 0);
-  const totalRight = rows.reduce((s, r) => s + r.right, 0);
+  const currencyLeft = left?.currency_code ?? "";
+  const currencyRight = right?.currency_code ?? "";
+  // Amounts in two currencies can sit side by side but are never added or subtracted.
+  const sameCurrency = currencyLeft === currencyRight;
+  const sameVersion = leftId != null && leftId === rightId;
+  const totalLeft = roundCents(rows.reduce((s, r) => s + r.left, 0));
+  const totalRight = roundCents(rows.reduce((s, r) => s + r.right, 0));
+  const totalGap = roundCents(totalRight - totalLeft);
   const untitled = t("planning.untitled");
+
+  const gap = (value: number): string =>
+    !sameCurrency || value === 0
+      ? "—"
+      : `${value > 0 ? "+" : ""}${formatCurrency(value, currencyLeft)}`;
 
   const picker = (label: string, value: number | null, onChange: (id: number) => void) => (
     <div className="space-y-1">
@@ -109,10 +126,17 @@ export function BudgetVersionCompare({
         {picker(t("compare.versionA"), leftId, setLeftId)}
         {picker(t("compare.versionB"), rightId, setRightId)}
       </div>
+      {sameVersion ? <p className="text-xs text-text-muted">{t("compare.sameVersion")}</p> : null}
+      {left && right && !sameVersion && !sameCurrency ? (
+        <p role="status" className="text-xs text-text-muted">
+          {t("compare.differentCurrencies")}
+        </p>
+      ) : null}
       {error ? <ErrorState error={error} title={t("planning.loadError")} /> : null}
-      {leftId != null && rightId != null && !error ? (
+      {left && right && !sameVersion && !error ? (
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full text-sm">
+            <caption className="sr-only">{t("compare.title")}</caption>
             <thead className="bg-surface-2 text-xs uppercase tracking-wide text-text-secondary">
               <tr>
                 <th scope="col" className={TH}>
@@ -122,10 +146,10 @@ export function BudgetVersionCompare({
                   {t("planning.col.category")}
                 </th>
                 <th scope="col" className="px-3 py-2 text-end font-semibold">
-                  {left ? versionName(left, untitled) : t("compare.versionA")}
+                  {versionName(left, untitled)}
                 </th>
                 <th scope="col" className="px-3 py-2 text-end font-semibold">
-                  {right ? versionName(right, untitled) : t("compare.versionB")}
+                  {versionName(right, untitled)}
                 </th>
                 <th scope="col" className="px-3 py-2 text-end font-semibold">
                   {t("compare.gap")}
@@ -133,41 +157,32 @@ export function BudgetVersionCompare({
               </tr>
             </thead>
             <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-3 text-text-muted" colSpan={5}>
+                    {t("compare.noLines")}
+                  </td>
+                </tr>
+              ) : null}
               {rows.map((r) => (
-                <tr
-                  key={`${r.costCenterCode}|${r.bucket}`}
-                  className="border-t border-surface-border"
-                >
-                  <td className="px-3 py-2">{r.costCenterCode}</td>
+                <tr key={r.key} className="border-t border-surface-border">
+                  <td className="px-3 py-2">
+                    {r.costCenterCode}
+                    <span className="ms-2 text-xs text-text-muted">{r.costCenterName}</span>
+                  </td>
                   <td className="px-3 py-2">{categoryLabel(r.bucket)}</td>
-                  <td className="px-3 py-2 text-end font-mono tabular-nums">
-                    {formatCurrency(r.left, currency)}
-                  </td>
-                  <td className="px-3 py-2 text-end font-mono tabular-nums">
-                    {formatCurrency(r.right, currency)}
-                  </td>
-                  <td className="px-3 py-2 text-end font-mono tabular-nums">
-                    {r.delta === 0
-                      ? "—"
-                      : `${r.delta > 0 ? "+" : ""}${formatCurrency(r.delta, currency)}`}
-                  </td>
+                  <td className={NUM}>{formatCurrency(r.left, currencyLeft)}</td>
+                  <td className={NUM}>{formatCurrency(r.right, currencyRight)}</td>
+                  <td className={NUM}>{gap(r.delta)}</td>
                 </tr>
               ))}
               <tr className="border-t border-surface-border bg-surface-2 font-semibold">
                 <td className="px-3 py-2" colSpan={2}>
                   {t("compare.total")}
                 </td>
-                <td className="px-3 py-2 text-end font-mono tabular-nums">
-                  {formatCurrency(totalLeft, currency)}
-                </td>
-                <td className="px-3 py-2 text-end font-mono tabular-nums">
-                  {formatCurrency(totalRight, currency)}
-                </td>
-                <td className="px-3 py-2 text-end font-mono tabular-nums">
-                  {totalRight - totalLeft === 0
-                    ? "—"
-                    : `${totalRight > totalLeft ? "+" : ""}${formatCurrency(totalRight - totalLeft, currency)}`}
-                </td>
+                <td className={NUM}>{formatCurrency(totalLeft, currencyLeft)}</td>
+                <td className={NUM}>{formatCurrency(totalRight, currencyRight)}</td>
+                <td className={NUM}>{gap(totalGap)}</td>
               </tr>
             </tbody>
           </table>
