@@ -50,7 +50,10 @@ export function BudgetVersionCompare({
   }, [referenceVersionId]);
 
   useEffect(() => {
-    if (leftId == null || rightId == null || leftId === rightId) return;
+    if (leftId == null || rightId == null || leftId === rightId) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setError(null);
     setLoading(true);
@@ -135,7 +138,11 @@ export function BudgetVersionCompare({
           {t("compare.sameVersion")}
         </p>
       ) : null}
-      {loading ? <p className="text-xs text-text-muted">{t("compare.loading")}</p> : null}
+      {loading ? (
+        <p role="status" className="text-xs text-text-muted">
+          {t("compare.loading")}
+        </p>
+      ) : null}
       {left && right && !sameVersion && !sameCurrency ? (
         <p role="status" className="text-xs text-text-muted">
           {t("compare.differentCurrencies")}
