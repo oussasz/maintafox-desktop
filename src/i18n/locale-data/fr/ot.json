@@ -82,7 +82,6 @@
     "empty": "Aucune anomalie ouverte. Lancez la vérification pour contrôler les ordres de travail et leurs lignes.",
     "runDetectors": "Lancer la vérification",
     "waiverDefaultReason": "Levée depuis l'écran d'intégrité des données",
-    "approverId": "Approbateur",
     "approverPlaceholder": "Obligatoire pour les erreurs",
     "waiverReason": "Motif de la levée",
     "waiverReasonPlaceholder": "Justification",
@@ -876,6 +875,7 @@
   "detail": {
     "close": "Fermer",
     "loading": "Chargement de l'OT…",
+    "backToOrigin": "Retour",
     "loadingHint": "Récupération des derniers détails de l'ordre de travail.",
     "cancelledBanner": "Cet ordre de travail a été annulé",
     "sections": {
