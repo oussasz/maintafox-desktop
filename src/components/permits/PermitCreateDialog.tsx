@@ -145,7 +145,8 @@ export function PermitCreateDialog({
       const created = await createWorkPermit({
         permit_type_id: Number(typeId),
         asset_id: asset?.id ?? null,
-        entity_id: asset?.org_node_id ?? null,
+        // A chosen work order gives the permit its site (the server reads it from the work order).
+        entity_id: chosenWoId != null ? null : (asset?.org_node_id ?? null),
         linked_work_order_id: workOrder?.id ?? chosenWoId,
         expires_at: localInputToIso(expiresAt),
       });
