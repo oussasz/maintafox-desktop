@@ -595,32 +595,48 @@ pub struct WoLaborPerson {
     pub employment_type: String,
     pub company_name: Option<String>,
     pub availability_status: String,
+    /// The signed-in user's own personnel card.
+    pub is_self: bool,
+    pub team_id: Option<i64>,
+    pub team_name: Option<String>,
 }
 
-pub async fn list_labor_people(db: &DatabaseConnection) -> AppResult<Vec<WoLaborPerson>> {
+/// `only_personnel`: when set, the list holds that person alone (a technician without the
+/// right to see the staff register books himself only). `viewer_personnel` marks `is_self`.
+pub async fn list_labor_people(
+    db: &DatabaseConnection,
+    only_personnel: Option<i64>,
+    viewer_personnel: Option<i64>,
+) -> AppResult<Vec<WoLaborPerson>> {
     let rows = db
-        .query_all(Statement::from_string(
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT p.id AS personnel_id, \
                     (SELECT ua.id FROM user_accounts ua \
                       WHERE ua.personnel_id = p.id AND ua.deleted_at IS NULL AND ua.is_active = 1 \
                       ORDER BY ua.id LIMIT 1) AS user_id, \
                     p.employee_code, p.full_name, pos.name AS position_name, p.employment_type, \
-                    ec.name AS company_name, p.availability_status \
+                    ec.name AS company_name, p.availability_status, \
+                    p.primary_team_id AS team_id, t.name AS team_name \
              FROM personnel p \
              LEFT JOIN positions pos ON pos.id = p.position_id \
              LEFT JOIN external_companies ec ON ec.id = p.external_company_id \
-             WHERE p.employment_status = 'active' \
-             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC"
-                .to_string(),
+             LEFT JOIN teams t ON t.id = p.primary_team_id \
+             WHERE p.employment_status = 'active' AND (?1 IS NULL OR p.id = ?1) \
+             ORDER BY p.full_name COLLATE NOCASE ASC, p.id ASC",
+            [only_personnel.into()],
         ))
         .await?;
     rows.iter()
         .map(|row| {
+            let personnel_id = row
+                .try_get::<i64>("", "personnel_id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?;
             Ok(WoLaborPerson {
-                personnel_id: row
-                    .try_get::<i64>("", "personnel_id")
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("personnel_id decode: {e}")))?,
+                personnel_id,
+                is_self: viewer_personnel == Some(personnel_id),
+                team_id: row.try_get::<Option<i64>>("", "team_id").unwrap_or(None),
+                team_name: row.try_get::<Option<String>>("", "team_name").unwrap_or(None),
                 user_id: row.try_get::<Option<i64>>("", "user_id").unwrap_or(None),
                 employee_code: row.try_get::<String>("", "employee_code").unwrap_or_default(),
                 full_name: row.try_get::<String>("", "full_name").unwrap_or_default(),
@@ -635,6 +651,25 @@ pub async fn list_labor_people(db: &DatabaseConnection) -> AppResult<Vec<WoLabor
             })
         })
         .collect()
+}
+
+/// Hourly rates that will be frozen on a labour entry booked for `day` (`YYYY-MM-DD`).
+#[derive(Debug, Clone, Serialize)]
+pub struct WoLaborRatePreview {
+    pub normal_rate: Option<f64>,
+    pub overtime_rate: Option<f64>,
+}
+
+pub async fn preview_labor_rate(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+    day: &str,
+) -> AppResult<WoLaborRatePreview> {
+    let pair = crate::personnel::queries::resolve_rate_pair_on(db, personnel_id, day).await?;
+    Ok(WoLaborRatePreview {
+        normal_rate: pair.map(|p| p.0),
+        overtime_rate: pair.map(|p| p.1),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

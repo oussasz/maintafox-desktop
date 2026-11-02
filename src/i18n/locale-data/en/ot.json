@@ -62,7 +62,7 @@
     "fromSafetyDi": "Set automatically: the originating request reported a safety risk."
   },
   "woPeople": {
-    "none": "No active staff member has a user account: link personnel to an account in Personnel.",
+    "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
   },
   "page": {
@@ -528,6 +528,11 @@
       "hint": "Enter technician time for this intervention. Worked hours are calculated automatically.",
       "rateHint": "Labor cost uses the technician’s active hourly rate card when available; otherwise the entry is saved with a missing-rate warning.",
       "technician": "Technician",
+      "technicianPlaceholder": "Choose a technician",
+      "team": "Team",
+      "allTeams": "All teams",
+      "rateShown": "Hourly rate applied: {{rate}}",
+      "rateUnknown": "No hourly rate is set for this person: the entry will be saved without cost.",
       "date": "Date",
       "startTime": "Start time",
       "endTime": "End time",

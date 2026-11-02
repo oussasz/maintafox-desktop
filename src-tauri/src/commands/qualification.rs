@@ -68,7 +68,7 @@ pub(crate) async fn first_held_permission<'p>(
 /// Training or personnel view: who holds what.
 pub(crate) const PEOPLE_VIEW: &[&str] = &[crate::rbac::permissions::TRN_VIEW, crate::rbac::permissions::PER_VIEW];
 
-async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
+pub(crate) async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppResult<Option<i64>> {
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -488,7 +488,10 @@ pub async fn check_person_for_work_order(
 ) -> AppResult<PersonQualificationCheck> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    require_any_permission(&state, &user, PEOPLE_VIEW).await?;
+    // Anyone may check himself (a technician booking his own hours); others need a people view right.
+    if linked_personnel_id(&state, user.user_id).await? != Some(personnel_id) {
+        require_any_permission(&state, &user, PEOPLE_VIEW).await?;
+    }
     gate::check_person_for_work_order(&state.db, personnel_id, wo_id).await
 }
 
