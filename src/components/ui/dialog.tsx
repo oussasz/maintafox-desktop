@@ -41,6 +41,15 @@ function isTypedField(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
+/** True while a typed field inside this dialog (not in a popup it opened) holds text. */
+function hasTypedText(root: HTMLElement): boolean {
+  return Array.from(root.querySelectorAll<HTMLElement>("input, textarea, [contenteditable]")).some(
+    (el) =>
+      isTypedField(el) &&
+      ((el as HTMLInputElement).value ?? el.textContent ?? "").trim().length > 0,
+  );
+}
+
 type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   /**
    * Ask before Escape, a click outside or the cross close the dialog while the user has typed
@@ -71,12 +80,42 @@ const DialogContent = React.forwardRef<
     const [dirty, setDirty] = React.useState(false);
     const [asking, setAsking] = React.useState(false);
     const guarded = confirmDiscard && dirty;
+    const contentEl = React.useRef<HTMLDivElement | null>(null);
+    const descriptionId = React.useId();
+    const setRefs = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        contentEl.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
+
+    // While the question shows, the fields behind it cannot be reached by keyboard or reader.
+    React.useEffect(() => {
+      const root = contentEl.current;
+      if (!asking || !root) return;
+      const behind = Array.from(root.children).filter((el) => !el.hasAttribute("data-discard-ask"));
+      for (const el of behind) el.setAttribute("inert", "");
+      return () => {
+        for (const el of behind) el.removeAttribute("inert");
+      };
+    }, [asking]);
+
+    const keepEditing = () => {
+      setAsking(false);
+      requestAnimationFrame(() =>
+        contentEl.current
+          ?.querySelector<HTMLElement>("input:not([type=search]), textarea")
+          ?.focus(),
+      );
+    };
 
     return (
       <DialogPortal>
         <DialogOverlay />
         <DialogPrimitive.Content
-          ref={ref}
+          ref={setRefs}
           className={cn(
             "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
             mfModal.content,
@@ -85,10 +124,19 @@ const DialogContent = React.forwardRef<
           {...props}
           onInputCapture={(e) => {
             onInputCapture?.(e);
-            if (confirmDiscard && isTypedField(e.target)) setDirty(true);
+            const root = e.currentTarget;
+            // Typing in a popup this dialog opened (a list filter, a second dialog) bubbles here
+            // through the React tree but is not in this dialog.
+            if (!confirmDiscard || !(e.target instanceof Node) || !root.contains(e.target)) return;
+            if (isTypedField(e.target)) setDirty(hasTypedText(root));
           }}
           onEscapeKeyDown={(e) => {
             onEscapeKeyDown?.(e);
+            if (asking) {
+              e.preventDefault();
+              keepEditing();
+              return;
+            }
             if (e.defaultPrevented || !guarded) return;
             e.preventDefault();
             setAsking(true);
@@ -125,17 +173,21 @@ const DialogContent = React.forwardRef<
               role="alertdialog"
               aria-modal="true"
               aria-label={t("discardGuard.title")}
+              aria-describedby={descriptionId}
+              data-discard-ask=""
               className="absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-background/90 p-6"
             >
               <div className="max-w-sm space-y-4 text-center">
                 <p className="text-base font-semibold">{t("discardGuard.title")}</p>
-                <p className="text-sm text-text-muted">{t("discardGuard.description")}</p>
+                <p id={descriptionId} className="text-sm text-text-muted">
+                  {t("discardGuard.description")}
+                </p>
                 <div className="flex justify-center gap-2">
                   <button
                     type="button"
                     autoFocus
                     className="inline-flex h-9 items-center rounded-md border border-surface-border px-4 text-sm hover:bg-surface-2"
-                    onClick={() => setAsking(false)}
+                    onClick={keepEditing}
                   >
                     {t("discardGuard.keep")}
                   </button>

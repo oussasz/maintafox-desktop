@@ -59,4 +59,23 @@ describe("Dialog discard guard", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("stops asking once the field is emptied again", () => {
+    render(<Harness />);
+    const field = screen.getByLabelText("motif") as HTMLInputElement;
+    fireEvent.input(field, { target: { value: "x" } });
+    fireEvent.input(field, { target: { value: "" } });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Escape on the question goes back to the field instead of closing", () => {
+    render(<Harness />);
+    fireEvent.input(screen.getByLabelText("motif"), { target: { value: "x" } });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
 });
