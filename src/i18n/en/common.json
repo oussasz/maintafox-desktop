@@ -8,6 +8,7 @@
     "saved": "List exported",
     "failed": "The export failed",
     "empty": "No rows to export",
+    "truncatedUnknown": "Only the {{shown}} loaded rows are exported: more rows exist. Load the rest before exporting to get everything.",
     "truncated": "Only the {{shown}} rows loaded out of {{total}} are exported. Load the rest before exporting to get everything."
   },
   "decimalField": {

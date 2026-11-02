@@ -444,6 +444,7 @@ export function PermitsPage() {
             fileName="permis-de-travail.csv"
             header={exportHeader}
             getRows={getExportRows}
+            moreAvailable={hasMore}
           />
           {/* Permit types live in Données de référence; a permit issuer without access to it
               edits them here, in the same editor. */}

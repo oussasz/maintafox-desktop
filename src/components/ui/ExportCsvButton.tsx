@@ -28,6 +28,8 @@ export interface ExportCsvButtonProps {
   permission: PermissionName;
   /** Rows the list holds in all, when the screen loaded only part of them. */
   total?: number;
+  /** True when more rows exist than the screen loaded (no total known). */
+  moreAvailable?: boolean;
 }
 
 export function ExportCsvButton({
@@ -36,6 +38,7 @@ export function ExportCsvButton({
   getRows,
   permission,
   total,
+  moreAvailable = false,
 }: ExportCsvButtonProps) {
   const { t } = useTranslation("common");
   const [busy, setBusy] = useState(false);
@@ -49,12 +52,15 @@ export function ExportCsvButton({
     setBusy(true);
     try {
       const path = await saveCsvWithDialog(fileName, header, rows, t("listExport.title"));
-      const partial = total != null && total > rows.length;
+      const partialOfTotal = total != null && total > rows.length;
+      const partialText = partialOfTotal
+        ? t("listExport.truncated", { shown: rows.length, total })
+        : moreAvailable
+          ? t("listExport.truncatedUnknown", { shown: rows.length })
+          : null;
       pushAppToast({
         title: t("listExport.saved"),
-        description: partial
-          ? `${path} — ${t("listExport.truncated", { shown: rows.length, total })}`
-          : path,
+        description: partialText ? `${path}. ${partialText}` : path,
         variant: "success",
       });
     } catch (err) {
@@ -67,7 +73,7 @@ export function ExportCsvButton({
     } finally {
       setBusy(false);
     }
-  }, [fileName, getRows, header, t, total]);
+  }, [fileName, getRows, header, moreAvailable, t, total]);
 
   return (
     <PermissionGate permission={permission}>
