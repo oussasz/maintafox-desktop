@@ -230,6 +230,34 @@ export function PlanningPage() {
     }
   }, [rightsLoading, canRefreshBacklog, refreshBacklog, loadBacklog]);
 
+  /** Planned OTs without a commitment in the period: counted apart, never as committed load. */
+  const proposedCount = ganttSnapshot?.proposed_work_orders?.length ?? 0;
+
+  /**
+   * A "to commit" bar was clicked: open the commit dialog of that OT, as a click on its backlog
+   * card does. An OT that is not a ready backlog candidate cannot be committed: say so (the
+   * notice also offers to open the OT).
+   */
+  const handleSelectProposed = useCallback(
+    (workOrderId: number) => {
+      if (!can(P.PLAN_CONFIRM)) {
+        toast({ title: t("proposed.noRight") });
+        return;
+      }
+      const candidate = backlog?.candidates.find(
+        (c) => c.source_type === "work_order" && c.source_id === workOrderId,
+      );
+      if (!candidate || candidate.readiness_status !== "ready") {
+        setDeepLinkMissWoId(workOrderId);
+        return;
+      }
+      setDeepLinkMissWoId(null);
+      setSelectedCandidate(candidate);
+      setCommitOpen(true);
+    },
+    [backlog, can, toast, t],
+  );
+
   /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
   const deepLinkHandledRef = useRef<string | null>(null);
   /** OT id from a `?woId=` link that is not in the planning backlog (shown as a notice). */
@@ -622,9 +650,12 @@ export function PlanningPage() {
           <Badge
             variant="secondary"
             className="text-xs"
-            title={t("page.committedCount", { count: commitments.length })}
+            title={t("page.counterTitle", {
+              committed: commitments.length,
+              proposed: proposedCount,
+            })}
           >
-            {commitments.length}
+            {t("page.counter", { committed: commitments.length, proposed: proposedCount })}
           </Badge>
         </div>
 
@@ -936,6 +967,7 @@ export function PlanningPage() {
                   setSelectedCommitmentId(id);
                   setInspectorOpen(true);
                 }}
+                onSelectProposed={handleSelectProposed}
                 onReschedule={handleBoardReschedule}
                 loading={loading && !ganttSnapshot}
                 error={null}

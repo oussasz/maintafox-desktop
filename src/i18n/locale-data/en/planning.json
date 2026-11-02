@@ -1,7 +1,8 @@
 {
   "page": {
     "title": "Planning",
-    "committedCount": "{{count}} work order(s) committed in the period shown"
+    "counter": "committed {{committed}} · to commit {{proposed}}",
+    "counterTitle": "{{committed}} work order(s) committed and {{proposed}} planned but not yet committed in the period shown"
   },
   "views": {
     "gantt": "Gantt board",
@@ -279,6 +280,12 @@
   "dialogs": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "proposed": {
+    "label": "To commit",
+    "tooltip": "Work order planned but not yet committed: click to commit it",
+    "tooltipWithTeam": "Work order planned but not yet committed (crew: {{team}}): click to commit it",
+    "noRight": "You do not have the right to commit a work order."
   },
   "deepLink": {
     "woNotInBacklog": "This work order is not in the planning backlog (not ready to plan yet, already committed or filtered out).",

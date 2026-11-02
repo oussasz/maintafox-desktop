@@ -720,6 +720,17 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "node not found after apply"))?;
             recompute_org_paths(conn, id).await
         }
+        // A top level still carrying the old English default, sent by a PC that has not upgraded
+        // (or pulled on a new PC after the migration ran), reads like the local one
+        // (`migrations::m20261102_000268_org_root_level_label`). A label the plant chose is kept.
+        "org_node_types" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "level not found after apply"))?;
+            crate::migrations::m20261102_000268_org_root_level_label::rename_default_root_label(conn, Some(id))
+                .await
+                .map_err(|e| hook_err(layout.table(), e))
+        }
         // A received count line's "above the tolerance" flag is this PC's judgement (CMMS Advisor
         // Q14, `inventory::count_four_eyes::store_judged_critique`): the derived auto-approbation
         // and the "critique" badge read it. A version already judged here keeps the flag held.
