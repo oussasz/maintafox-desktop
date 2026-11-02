@@ -419,7 +419,8 @@ function PermissionMatrix({
   catalog: RoleEditorCatalog;
   active: Set<string>;
   readOnly: boolean;
-  onToggle: (permission: string, enabled: boolean) => void;
+  /** Ticks or unticks the given permissions (one, or a whole group). */
+  onToggle: (permissions: string[], enabled: boolean) => void;
   filter: string;
 }) {
   const { t } = useTranslation("admin");
@@ -468,6 +469,8 @@ function PermissionMatrix({
     <div className="space-y-3">
       {groups.map(([module, perms]) => {
         const granted = perms.filter((p) => active.has(p.name)).length;
+        const allGranted = granted === perms.length;
+        const groupLabel = moduleLabel(module);
         return (
           <details
             key={module}
@@ -475,12 +478,31 @@ function PermissionMatrix({
             open={filter.trim() !== "" || granted > 0}
           >
             <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-text-primary">
-              <span>{moduleLabel(module)}</span>
+              <span>{groupLabel}</span>
               <span className="text-xs font-normal text-text-secondary">
                 {t("console.roleEditor.grantedOf", { granted, total: perms.length })}
               </span>
             </summary>
             <ul className="divide-y divide-surface-border border-t border-surface-border">
+              {readOnly ? null : (
+                // The whole group at once (only the rights the filter shows); each right still goes
+                // through the same rules as a single tick.
+                <li className="flex items-center justify-between gap-3 bg-surface-1 px-3 py-2">
+                  <span className="text-xs font-medium text-text-secondary">
+                    {t("console.roleEditor.wholeGroup")}
+                  </span>
+                  <Switch
+                    checked={allGranted}
+                    onCheckedChange={(checked) =>
+                      onToggle(
+                        perms.map((p) => p.name),
+                        checked,
+                      )
+                    }
+                    aria-label={t("console.roleEditor.wholeGroupToggle", { group: groupLabel })}
+                  />
+                </li>
+              )}
               {perms.map((p) => {
                 const deps = requires.get(p.name) ?? [];
                 const enabled = active.has(p.name);
@@ -546,7 +568,7 @@ function PermissionMatrix({
                     ) : (
                       <Switch
                         checked={enabled}
-                        onCheckedChange={(checked) => onToggle(p.name, checked)}
+                        onCheckedChange={(checked) => onToggle([p.name], checked)}
                         aria-label={t("roles.togglePermission", { perm: label })}
                       />
                     )}
@@ -645,13 +667,26 @@ export function RoleEditorPanel() {
     selected != null && description.trim() !== (selected.description ?? "");
   const dirty = permsChanged || descriptionChanged;
 
-  /** Role the user clicked while the open one has unsaved changes (asks before dropping them). */
-  const [pendingSwitchId, setPendingSwitchId] = useState<number | null>(null);
-  const requestSelect = (id: number) => {
-    if (id === selectedId) return;
-    if (dirty) setPendingSwitchId(id);
-    else setSelectedId(id);
+  /**
+   * What the user asked for while the open role has unsaved changes: another role, a new role or
+   * a copy (each opens another role, which drops the ticks). Asked before anything is dropped.
+   */
+  type PendingLeave =
+    | { kind: "select"; id: number }
+    | { kind: "create" }
+    | { kind: "clone"; source: RoleWithPermissions };
+  const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
+  const runLeave = (action: PendingLeave) => {
+    if (action.kind === "select") setSelectedId(action.id);
+    else if (action.kind === "create") setShowCreate(true);
+    else setCloneSource(action.source);
   };
+  const requestLeave = (action: PendingLeave) => {
+    if (action.kind === "select" && action.id === selectedId) return;
+    if (dirty) setPendingLeave(action);
+    else runLeave(action);
+  };
+  const requestSelect = (id: number) => requestLeave({ kind: "select", id });
 
   useEffect(() => {
     if (!selected || selected.is_system || !permsChanged) {
@@ -677,22 +712,22 @@ export function RoleEditorPanel() {
     };
   }, [active, selected, permsChanged, validationRun]);
 
-  const toggle = (perm: string, enabled: boolean) => {
+  const toggle = (perms: string[], enabled: boolean) => {
     const original = new Set(selected?.permissions ?? []);
-    const edit = (set: Set<string>, add: boolean) => {
-      const n = new Set(set);
-      if (add) n.add(perm);
-      else n.delete(perm);
-      return n;
-    };
-    if (enabled) {
-      if (original.has(perm)) setPendingRemove((s) => edit(s, false));
-      else setPendingAdd((s) => edit(s, true));
-    } else if (original.has(perm)) {
-      setPendingRemove((s) => edit(s, true));
-    } else {
-      setPendingAdd((s) => edit(s, false));
+    const add = new Set(pendingAdd);
+    const remove = new Set(pendingRemove);
+    for (const perm of perms) {
+      if (enabled) {
+        if (original.has(perm)) remove.delete(perm);
+        else add.add(perm);
+      } else if (original.has(perm)) {
+        remove.add(perm);
+      } else {
+        add.delete(perm);
+      }
     }
+    setPendingAdd(add);
+    setPendingRemove(remove);
   };
 
   const save = async () => {
@@ -741,7 +776,7 @@ export function RoleEditorPanel() {
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-text-primary">{t("roles.list")}</h3>
           {canEdit ? (
-            <Button variant="outline" size="sm" onClick={() => setShowCreate(true)}>
+            <Button variant="outline" size="sm" onClick={() => requestLeave({ kind: "create" })}>
               <Plus className="mr-1 h-3.5 w-3.5" aria-hidden />
               {t("console.roleEditor.new")}
             </Button>
@@ -815,7 +850,11 @@ export function RoleEditorPanel() {
                   {t("console.roleEditor.compare")}
                 </Button>
                 {canEdit ? (
-                  <Button variant="outline" size="sm" onClick={() => setCloneSource(selected)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => requestLeave({ kind: "clone", source: selected })}
+                  >
                     <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("console.roleEditor.clone")}
                   </Button>
@@ -909,7 +948,35 @@ export function RoleEditorPanel() {
                   className="pl-8"
                 />
               </div>
-              {canEdit && dirty ? (
+            </div>
+
+            {hiddenHeld > 0 ? (
+              <p className="text-xs text-text-secondary">
+                {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
+              </p>
+            ) : null}
+
+            <PermissionMatrix
+              catalog={catalog}
+              active={active}
+              readOnly={selected.is_system || !canEdit}
+              onToggle={toggle}
+              filter={permissionFilter}
+            />
+
+            {canEdit && dirty ? (
+              // Stays in view at the bottom while the long list of groups scrolls.
+              <div
+                role="region"
+                aria-label={t("console.roleEditor.saveBar")}
+                className="sticky bottom-0 z-10 -mx-4 -mb-4 flex flex-wrap items-center justify-between gap-2 rounded-b-lg border-t border-surface-border bg-surface-0 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]"
+              >
+                <span className="text-sm text-text-secondary">
+                  {t("console.roleEditor.unsavedSummary", {
+                    added: pendingAdd.size,
+                    removed: pendingRemove.size,
+                  })}
+                </span>
                 <div className="flex gap-2">
                   <Button
                     variant="ghost"
@@ -933,22 +1000,8 @@ export function RoleEditorPanel() {
                     })}
                   </Button>
                 </div>
-              ) : null}
-            </div>
-
-            {hiddenHeld > 0 ? (
-              <p className="text-xs text-text-secondary">
-                {t("console.roleEditor.hiddenRetained", { count: hiddenHeld })}
-              </p>
+              </div>
             ) : null}
-
-            <PermissionMatrix
-              catalog={catalog}
-              active={active}
-              readOnly={selected.is_system || !canEdit}
-              onToggle={toggle}
-              filter={permissionFilter}
-            />
           </div>
         ) : null}
       </section>
@@ -1001,15 +1054,26 @@ export function RoleEditorPanel() {
         confirmLabel={t("console.roleEditor.discardChanges")}
       />
       <ConfirmDialog
-        open={pendingSwitchId !== null}
-        onOpenChange={(v) => !v && setPendingSwitchId(null)}
+        open={pendingLeave !== null}
+        onOpenChange={(v) => !v && setPendingLeave(null)}
         title={t("console.roleEditor.unsavedTitle")}
-        description={t("console.roleEditor.unsavedBody", { name: selectedLabel })}
+        description={t(
+          pendingLeave?.kind === "select"
+            ? "console.roleEditor.unsavedBody"
+            : "console.roleEditor.unsavedNewBody",
+          { name: selectedLabel },
+        )}
         confirmLabel={t("console.roleEditor.discardChanges")}
         destructive
         onConfirm={() => {
-          if (pendingSwitchId !== null) setSelectedId(pendingSwitchId);
-          setPendingSwitchId(null);
+          if (pendingLeave) {
+            // Drop the changes first, so the guard does not ask a second time.
+            setPendingAdd(new Set());
+            setPendingRemove(new Set());
+            setDescription(selected?.description ?? "");
+            runLeave(pendingLeave);
+          }
+          setPendingLeave(null);
         }}
       />
       {StepUpDialogElement}

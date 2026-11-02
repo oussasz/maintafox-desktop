@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Role editor: unsaved changes are not lost by switching Administration tab (a change of the
  * `?tab=` query) — the shared guard asks first; "Cancel" stays, "Discard" goes on.
  */
@@ -88,5 +88,91 @@ describe("RoleEditorPanel unsaved changes", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "console.roleEditor.discardChanges" }));
     await waitFor(() => expect(router.state.location.search).toBe("?tab=users"));
+  });
+
+  it("asks before creating another role with unsaved ticks, and keeps them on Cancel", async () => {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.change(await screen.findByLabelText("roles.fields.description"), {
+      target: { value: "Plans and schedules the work" },
+    });
+    // The save bar is there while something is unsaved.
+    expect(screen.getByRole("region", { name: "console.roleEditor.saveBar" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /console\.roleEditor\.new/ }));
+    expect(await screen.findByText("console.roleEditor.unsavedNewBody")).toBeInTheDocument();
+    // The create dialog waits for the answer.
+    expect(screen.queryByText("roles.create.title")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "ds.confirm.cancel" }));
+    await waitFor(() => expect(screen.queryByText("console.roleEditor.unsavedNewBody")).toBeNull());
+    expect(screen.getByLabelText("roles.fields.description")).toHaveValue(
+      "Plans and schedules the work",
+    );
+  });
+});
+
+describe("RoleEditorPanel whole-group switch", () => {
+  const PERMS: RoleEditorCatalog = {
+    permissions: [
+      {
+        id: 1,
+        name: "doc.view",
+        description: "View docs",
+        category: "doc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+      {
+        id: 2,
+        name: "doc.manage",
+        description: "Edit docs",
+        category: "doc",
+        is_dangerous: false,
+        requires_step_up: false,
+        is_system: true,
+      },
+    ],
+    dependencies: [],
+    role_holders: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    svc.listRoles.mockResolvedValue([ROLE]);
+    svc.listRoleTemplates.mockResolvedValue([]);
+    svc.getRoleEditorCatalog.mockResolvedValue(PERMS);
+    svc.validateRolePermissions.mockResolvedValue({
+      missing_hard_deps: [],
+      warn_deps: [],
+      unknown_permissions: [],
+      is_valid: true,
+    });
+    svc.updateRole.mockResolvedValue(undefined);
+  });
+
+  it("ticks every right of the group at once, saved as one change", async () => {
+    const router = createMemoryRouter([{ path: "/admin", element: <RoleEditorPanel /> }], {
+      initialEntries: ["/admin?tab=roles"],
+    });
+    render(<RouterProvider router={router} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Planner/ }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "console.roleEditor.wholeGroupToggle" }),
+    );
+
+    const switches = screen.getAllByRole("switch", { name: "roles.togglePermission" });
+    expect(switches.every((s) => s.getAttribute("aria-checked") === "true")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "console.roleEditor.save" }));
+    await waitFor(() => expect(svc.updateRole).toHaveBeenCalled());
+    const input = svc.updateRole.mock.calls[0]?.[0] as { add_permissions: string[] };
+    expect([...input.add_permissions].sort()).toEqual(["doc.manage", "doc.view"]);
   });
 });
