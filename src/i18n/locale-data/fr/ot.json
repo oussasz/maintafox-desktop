@@ -205,7 +205,8 @@
       "label": "Fin prévue"
     },
     "duration": {
-      "label": "Durée estimée (h)"
+      "label": "Durée estimée (h)",
+      "exceedsWindow": "Attention : la durée estimée ({{hours}} h) est plus longue que le temps entre le début et la fin prévus ({{window}} h)."
     },
     "notes": {
       "label": "Remarques"
@@ -218,7 +219,8 @@
       "typeRequired": "Le type d'ordre de travail est obligatoire.",
       "urgencyRequired": "La priorité est obligatoire.",
       "urgencyInvalid": "La priorité sélectionnée n'est plus valide.",
-      "equipmentRequired": "Équipement obligatoire."
+      "equipmentRequired": "Équipement obligatoire.",
+      "plannedEndBeforeStart": "La fin prévue ne peut pas être avant le début prévu."
     }
   },
   "status": {

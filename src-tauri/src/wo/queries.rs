@@ -633,6 +633,7 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
     )?;
     input.planned_end =
         super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
+    super::time::ensure_planned_end_not_before_start(input.planned_start.as_deref(), input.planned_end.as_deref())?;
     ensure_work_order_statuses_if_needed(txn).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(txn).await?;
 
@@ -1092,6 +1093,12 @@ pub async fn update_wo_draft_fields(
     if let Some(ref description) = input.description {
         sets.push("description = ?".into());
         values.push(description.clone().into());
+    }
+    // The dates as they will be stored: a side not sent stays as it is on the work order.
+    if input.planned_start.is_some() || input.planned_end.is_some() {
+        let start = input.planned_start.as_deref().or(current.planned_start.as_deref());
+        let end = input.planned_end.as_deref().or(current.planned_end.as_deref());
+        super::time::ensure_planned_end_not_before_start(start, end)?;
     }
     if let Some(ref planned_start) = input.planned_start {
         sets.push("planned_start = ?".into());
