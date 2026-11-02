@@ -374,6 +374,7 @@
     "active": "Actif",
     "inactive": "Inactif",
     "versions": "Versions budgétaires {{year}}",
+    "notReference": "« {{title}} » n'est pas la version affichée dans Pilotage : l'ouvrir ou la modifier ici ne change pas le budget de référence.",
     "versionsHint": "Brouillon → soumise → approuvée → figée. Seule une version approuvée ou figée reçoit les coûts des OT.",
     "newVersion": "Nouvelle version",
     "newVersionHint": "Exercice {{year}}, en {{currency}} (devise de l'entreprise).",
