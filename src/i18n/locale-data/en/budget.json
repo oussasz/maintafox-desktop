@@ -374,6 +374,7 @@
     "active": "Active",
     "inactive": "Inactive",
     "versions": "{{year}} budget versions",
+    "notReference": "\"{{title}}\" is not the reference version: it does not replace the budget shown in Pilotage and receives no work order costs until it is approved.",
     "versionsHint": "Draft → submitted → approved → frozen. Only an approved or frozen version receives work order costs.",
     "newVersion": "New version",
     "newVersionHint": "Fiscal year {{year}}, in {{currency}} (company currency).",
