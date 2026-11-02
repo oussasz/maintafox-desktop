@@ -22,6 +22,7 @@ import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { CriticalityReviewMark } from "@/components/assets/CriticalityReviewMark";
 import { EquipmentRegistryMetricCards } from "@/components/assets/EquipmentRegistryMetricCards";
+import { criticalityLabelKey, findStatus, statusLabelKey } from "@/components/assets/asset-tones";
 import { DataTable } from "@/components/data/DataTable";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import {
@@ -31,14 +32,17 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { mfLayout } from "@/design-system/tokens";
+import { assetExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, textParam, withoutParams } from "@/lib/list-links";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -252,6 +256,40 @@ export function AssetRegistryPage() {
     [t, formatDecimal, selectAsset],
   );
 
+  // Export: the rows the list holds now, with the labels the screen shows.
+  const { catalog } = useEquipmentTaxonomy();
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.code"),
+      t("list.columns.name"),
+      t("list.columns.class"),
+      t("list.columns.criticality"),
+      t("list.columns.status"),
+      t("list.columns.site"),
+      t("list.columns.parentName"),
+      t("list.columns.primaryMeter"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      assetExportRows(results, {
+        statusLabel: (code) => {
+          const key = statusLabelKey(code);
+          return key ? t(key as never) : (findStatus(catalog, code)?.label ?? code);
+        },
+        criticalityLabel: (code) => {
+          const key = criticalityLabelKey(code);
+          const option = catalog?.criticalities.find(
+            (c) => c.code.toUpperCase() === code.toUpperCase(),
+          );
+          return `${code} — ${key ? t(key as never) : (option?.label ?? code)}`;
+        },
+        formatReading: (value, unit) => `${formatDecimal(value, 1)} ${unit ?? ""}`.trim(),
+      }),
+    [results, t, catalog, formatDecimal],
+  );
+
   const showError = error != null && results.length === 0;
 
   return (
@@ -278,6 +316,13 @@ export function AssetRegistryPage() {
               {t("registry.import")}
             </Button>
           </PermissionGate>
+          <ExportCsvButton
+            permission={P.EQ_VIEW}
+            fileName="equipements.csv"
+            header={exportHeader}
+            getRows={getExportRows}
+            total={total}
+          />
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
           <FilterToggleButton
             open={showFilters}

@@ -43,6 +43,7 @@ import {
   formatAssetLabel,
 } from "@/components/permits/permit-rules";
 import { usePermitTypeName } from "@/components/permits/permit-type-name";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -55,6 +56,7 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { permitExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { i18n } from "@/i18n";
@@ -356,6 +358,29 @@ export function PermitsPage() {
     [t, statusLabel, formatDateTime, typeName],
   );
 
+  // Export: the permits the list holds now, with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("columns.code"),
+      t("columns.status"),
+      t("columns.type"),
+      t("columns.asset"),
+      t("columns.workOrder"),
+      t("columns.expires"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      permitExportRows(permits, {
+        statusLabel,
+        typeLabel: typeName,
+        assetLabel: formatAssetLabel,
+        formatDateTime: (iso) => formatDateTime(iso),
+      }),
+    [permits, statusLabel, typeName, formatDateTime],
+  );
+
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
       {
@@ -414,6 +439,12 @@ export function PermitsPage() {
               {t("actions.newPermit")}
             </Button>
           </PermissionGate>
+          <ExportCsvButton
+            permission={P.PTW_VIEW}
+            fileName="permis-de-travail.csv"
+            header={exportHeader}
+            getRows={getExportRows}
+          />
           {/* Permit types live in Données de référence; a permit issuer without access to it
               edits them here, in the same editor. */}
           {can(P.REF_VIEW) ? (

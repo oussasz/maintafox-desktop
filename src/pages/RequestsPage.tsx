@@ -54,6 +54,7 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
@@ -63,6 +64,7 @@ import { WoRetiredEquipmentReviewPanel } from "@/components/wo/WoRetiredEquipmen
 import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { mfLayout } from "@/design-system/tokens";
 import { DI_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { requestExportRows } from "@/export/list-exports";
 import { useAccessAtNodes } from "@/hooks/use-access-at";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
@@ -743,6 +745,34 @@ export function RequestsPage() {
     printOne,
   ]);
 
+  // Export: the rows the list holds now, with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.number"),
+      t("list.columns.subject"),
+      t("list.columns.equipment"),
+      t("list.columns.status"),
+      t("list.columns.priority"),
+      t("list.columns.sla"),
+      t("list.columns.reportedBy"),
+      t("list.columns.reportedAt"),
+      t("print.convertedToWo"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      requestExportRows(items, {
+        statusLabel: (status) => t(`status.${diStatusToI18nKey(status)}` as const),
+        urgencyLabel: urgencyLabel,
+        slaLabel: (state) => t(`sla.status.${state}` as never),
+        personLabel: (name) => formatPersonLabel(name),
+        formatDate: (iso) =>
+          formatDiDate(iso, dateLocale, { day: "2-digit", month: "2-digit", year: "numeric" }),
+      }),
+    [items, t, urgencyLabel, dateLocale],
+  );
+
   const viewOptions: ViewOption<ViewMode>[] = [
     { value: "list", label: t("page.viewList"), icon: List },
     { value: "kanban", label: t("page.viewKanban"), icon: Columns3 },
@@ -771,6 +801,15 @@ export function RequestsPage() {
               {t("action.create")}
             </Button>
           </PermissionGate>
+          {recordView ? (
+            <ExportCsvButton
+              permission={P.DI_VIEW}
+              fileName="demandes-intervention.csv"
+              header={exportHeader}
+              getRows={getExportRows}
+              total={total}
+            />
+          ) : null}
           <ViewToggle value={view} options={viewOptions} onChange={switchView} />
           {recordView ? (
             <FilterToggleButton

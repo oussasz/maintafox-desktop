@@ -2,6 +2,14 @@
   "toast": {
     "dismiss": "Dismiss the message"
   },
+  "listExport": {
+    "button": "Export (Excel/CSV)",
+    "title": "Export the list as shown",
+    "saved": "List exported",
+    "failed": "The export failed",
+    "empty": "No rows to export",
+    "truncated": "Only the {{shown}} rows loaded out of {{total}} are exported. Load the rest before exporting to get everything."
+  },
   "decimalField": {
     "dotHint": "A point is the decimal mark (1.250 = 1.25)."
   },
