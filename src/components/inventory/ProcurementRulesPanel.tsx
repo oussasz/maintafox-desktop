@@ -2,7 +2,9 @@
  * Purchasing rules: stored exchange rates (supplier currency → tenant currency, used at receipt
  * when no rate is entered) and per-role approval limits for requisitions and purchase orders.
  * Separation of duties (the requester never approves their own document) is enforced by the
- * backend on every approval; this panel only states it.
+ * backend on every approval; this panel only states it. Rates convert foreign-currency orders
+ * into the currency the limits are measured in, so they are maintained with the same right as the
+ * limits (P.ADM_ROLES), never by buyers or purchase approvers.
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { Plus } from "lucide-react";
@@ -238,7 +240,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
         header: () => <span className="sr-only">{t("rules.fx.columns.actions")}</span>,
         cell: ({ row }) =>
           row.original.is_active === 1 ? (
-            <PermissionGate permission={P.INV_PROCURE}>
+            <PermissionGate permission={P.ADM_ROLES}>
               <Button
                 variant="ghost"
                 className="h-11"
@@ -367,7 +369,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
               {t("rules.fx.description", { currency: currencyCode })}
             </p>
           </div>
-          <PermissionGate permission={P.INV_PROCURE}>
+          <PermissionGate permission={P.ADM_ROLES}>
             <Button className="h-11" onClick={openRateForm}>
               <Plus className="mr-1 h-4 w-4" aria-hidden />
               {t("rules.fx.add")}

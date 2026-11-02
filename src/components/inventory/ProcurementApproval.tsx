@@ -5,7 +5,7 @@
  * these helpers only make the rule visible: the roles named are those holding the approval right
  * with a limit covering the document amount (`list_inventory_procurement_approver_roles`).
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { usePermissions } from "@/hooks/use-permissions";
@@ -23,14 +23,35 @@ import { P } from "@shared/rbac/permissions.generated";
  * checks the approval limit).
  */
 export function useApprovalBlocker(authorId: number | null): string | null {
+  return useApprovalBlockerFor()(authorId);
+}
+
+/**
+ * The same rule for many documents at once (list row menus): returns a function from a document's
+ * author to the reason the signed-in user cannot approve / reject it, or null.
+ * - `requireAuthorDiffers`: false for rejecting, which only needs the rights.
+ */
+export function useApprovalBlockerFor(): (
+  authorId: number | null,
+  requireAuthorDiffers?: boolean,
+) => string | null {
   const { t } = useTranslation("inventory");
   const { can } = usePermissions();
   const userId = useSessionStore((s) => s.info?.user_id ?? null);
-  if (!can(P.INV_APPROVE)) return t("procurement.approval.noRight");
-  if (authorId != null && userId != null && authorId === userId) {
-    return t("procurement.approval.ownDocument");
-  }
-  return null;
+  const canProcure = can(P.INV_PROCURE);
+  const canApprove = can(P.INV_APPROVE);
+  return useCallback(
+    (authorId: number | null, requireAuthorDiffers = true) => {
+      // The procurement commands need inv.procure before inv.approve.
+      if (!canProcure) return t("procurement.approval.noProcure");
+      if (!canApprove) return t("procurement.approval.noRight");
+      if (requireAuthorDiffers && authorId != null && userId != null && authorId === userId) {
+        return t("procurement.approval.ownDocument");
+      }
+      return null;
+    },
+    [canApprove, canProcure, t, userId],
+  );
 }
 
 /** "À approuver par : …" for a submitted document; reloads when `reloadKey` changes. */

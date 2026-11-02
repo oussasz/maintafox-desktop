@@ -991,6 +991,7 @@
       "approversUnavailable": "Les approbateurs n'ont pas pu être affichés.",
       "amountUnknown": "Le montant n'est pas connu (prix manquant ou taux de change absent) : seul un rôle sans plafond peut approuver.",
       "noRight": "Vous n'avez pas le droit « Approuver les achats ».",
+      "noProcure": "Vous n'avez pas le droit « Gérer les achats », nécessaire pour décider d'un achat.",
       "ownDocument": "Vous avez créé ce document : une autre personne doit l'approuver."
     },
     "poWorkspace": {

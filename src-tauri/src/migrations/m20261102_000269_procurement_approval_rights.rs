@@ -69,6 +69,16 @@ impl MigrationTrait for Migration {
             ))
             .await?;
         }
+        // Approving goes through the procurement commands, which need inv.procure first: an
+        // approver role without it would be a dead role, so the role editor refuses it.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT OR IGNORE INTO permission_dependencies
+                   (permission_name, required_permission_name, dependency_type, created_at)
+               VALUES (?, ?, 'hard', ?)",
+            [INV_APPROVE.into(), INV_PROCURE.into(), now.clone().into()],
+        ))
+        .await?;
 
         let receivers = db
             .execute(Statement::from_sql_and_values(
@@ -206,6 +216,21 @@ mod tests {
             .unwrap()
             .and_then(|row| row.try_get::<i64>("", "n").ok());
         assert_eq!(deps, Some(2));
+        let approve_needs_procure = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM permission_dependencies
+                  WHERE permission_name = ? AND required_permission_name = ? AND dependency_type = 'hard'",
+                [INV_APPROVE.into(), INV_PROCURE.into()],
+            ))
+            .await
+            .unwrap()
+            .and_then(|row| row.try_get::<i64>("", "n").ok());
+        assert_eq!(approve_needs_procure, Some(1), "no dead approver role");
+        // Every seeded holder of the approval right also holds the purchasing right.
+        for role in APPROVER_ROLES {
+            assert!(role_has(&db, role, INV_PROCURE).await, "{role} holds inv.procure");
+        }
     }
 
     #[tokio::test]

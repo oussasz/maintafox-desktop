@@ -1370,6 +1370,11 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: INV_APPROVE,
+        requires: INV_PROCURE,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: INV_RECEIVE,
         requires: INV_VIEW,
         dep_type: "hard",

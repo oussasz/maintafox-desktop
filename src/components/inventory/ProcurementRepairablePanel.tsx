@@ -16,7 +16,11 @@ import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { ProcurementAlertCards } from "@/components/inventory/ProcurementAlertCards";
-import { ApproverRolesLine, useApprovalBlocker } from "@/components/inventory/ProcurementApproval";
+import {
+  ApproverRolesLine,
+  useApprovalBlocker,
+  useApprovalBlockerFor,
+} from "@/components/inventory/ProcurementApproval";
 import { ProcurementArchivePanel } from "@/components/inventory/ProcurementArchivePanel";
 import { ProcurementContextMenu } from "@/components/inventory/ProcurementContextMenu";
 import type { ProcurementContextMenuAction } from "@/components/inventory/ProcurementContextMenu";
@@ -329,6 +333,8 @@ export const ProcurementRepairablePanel = forwardRef<
     useFormatters();
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
+  /** Same approval blockers in row menus as in the detail panes (right, own document). */
+  const approvalBlockerFor = useApprovalBlockerFor();
   const demandSources = useLookupOptions("inventory.demand_source_type");
   const purchasePriorities = useLookupOptions("inventory.purchase_priority");
   const documentPurposes = useLookupOptions("inventory.document_link_purpose");
@@ -1068,16 +1074,22 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.requested_by_id);
+        const rejectBlocker = approvalBlockerFor(row.requested_by_id, false);
         actions.push({
           id: "approve",
           label: t("procurement.requisitions.actions.approve"),
-          permission: P.INV_APPROVE,
+          permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runRequisitionTransition(row, "APPROVED"),
         });
         actions.push({
           id: "reject",
           label: t("procurement.requisitions.actions.reject"),
-          permission: P.INV_APPROVE,
+          permission: P.INV_PROCURE,
+          disabled: rejectBlocker !== null,
+          disabledReason: rejectBlocker,
           destructive: true,
           onClick: () => {
             openRequisitionDetails(row.id);
@@ -1111,6 +1123,7 @@ export const ProcurementRepairablePanel = forwardRef<
       return actions;
     },
     [
+      approvalBlockerFor,
       confirmRequisitionDecline,
       openCreatePoForm,
       openRequisitionDetails,
@@ -1137,10 +1150,13 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.ordered_by_id);
         actions.push({
           id: "approve",
           label: t("procurement.purchaseOrders.actions.approve"),
-          permission: P.INV_APPROVE,
+          permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runPurchaseOrderTransition(row, "APPROVED"),
         });
       }
@@ -1164,7 +1180,14 @@ export const ProcurementRepairablePanel = forwardRef<
       }
       return actions;
     },
-    [confirmPurchaseOrderCancel, openPoDetails, openReceiveForPo, runPurchaseOrderTransition, t],
+    [
+      approvalBlockerFor,
+      confirmPurchaseOrderCancel,
+      openPoDetails,
+      openReceiveForPo,
+      runPurchaseOrderTransition,
+      t,
+    ],
   );
 
   const repairableRowActions = useCallback(
@@ -3188,8 +3211,8 @@ export const ProcurementRepairablePanel = forwardRef<
                       variant="destructive"
                       className="h-11"
                       // Rejecting needs the approval right too (not the separation of duties).
-                      title={can(P.INV_APPROVE) ? undefined : t("procurement.approval.noRight")}
-                      disabled={saving || !can(P.INV_APPROVE)}
+                      title={approvalBlockerFor(null, false) ?? undefined}
+                      disabled={saving || approvalBlockerFor(null, false) !== null}
                       onClick={() => {
                         setRejectReason("");
                         setRejectOpen(true);

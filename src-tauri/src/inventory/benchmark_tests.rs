@@ -790,6 +790,7 @@ async fn approvals_enforce_separation_of_duties_and_role_limits() {
     // separation of duties, not the missing right, is what refuses their own approval.
     let approver_role = role_for(&db, "inv_approver_role", approver).await;
     grant(&db, approver_role, INV_VIEW).await;
+    grant(&db, approver_role, INV_PROCURE).await;
     grant(&db, approver_role, INV_APPROVE).await;
     assign(&db, approver_role, requester).await;
     // A buyer creates and manages purchases but holds no approval right.

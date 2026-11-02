@@ -991,6 +991,7 @@
       "approversUnavailable": "The approvers could not be shown.",
       "amountUnknown": "The amount is not known (missing price or exchange rate): only a role without a limit may approve.",
       "noRight": "You do not have the \"Approve purchasing\" right.",
+      "noProcure": "You do not have the \"Manage purchasing\" right, needed to decide on a purchase.",
       "ownDocument": "You created this document: another person must approve it."
     },
     "poWorkspace": {

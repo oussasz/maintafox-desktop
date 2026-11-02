@@ -1046,6 +1046,7 @@
     { "permission": "inv.manage", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.procure", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.approve", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "inv.approve", "requires": "inv.procure", "dep_type": "hard" },
     { "permission": "inv.receive", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.count", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "org.manage", "requires": "org.view", "dep_type": "hard" },

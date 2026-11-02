@@ -7,7 +7,11 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApproverRolesLine, useApprovalBlocker } from "@/components/inventory/ProcurementApproval";
+import {
+  ApproverRolesLine,
+  useApprovalBlocker,
+  useApprovalBlockerFor,
+} from "@/components/inventory/ProcurementApproval";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
 import type * as InventoryService from "@/services/inventory-service";
 import { P } from "@shared/rbac/permissions.generated";
@@ -66,6 +70,22 @@ describe("purchase approval visibility", () => {
   it("greys out approval for the person who created the document", () => {
     const { result } = renderHook(() => useApprovalBlocker(7));
     expect(result.current).toBe("You created this document: another person must approve it.");
+  });
+
+  it("greys out approval without the purchasing right the commands need first", () => {
+    held = [P.INV_VIEW, P.INV_APPROVE];
+    const { result } = renderHook(() => useApprovalBlocker(3));
+    expect(result.current).toMatch(/"Manage purchasing" right/);
+  });
+
+  it("row menus: rejecting one's own document needs only the rights", () => {
+    const { result } = renderHook(() => useApprovalBlockerFor());
+    expect(result.current(7)).toMatch(/You created this document/);
+    expect(result.current(7, false)).toBeNull();
+    held = [P.INV_VIEW, P.INV_PROCURE];
+    expect(renderHook(() => useApprovalBlockerFor()).result.current(3, false)).toMatch(
+      /"Approve purchasing" right/,
+    );
   });
 
   it("lets another approver try (limits are checked by the backend)", () => {
