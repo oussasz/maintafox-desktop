@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
@@ -133,12 +133,19 @@ export function WorkOrdersPage() {
   const [dashboardTick, setDashboardTick] = useState(0);
   const [integrityTick, setIntegrityTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open work order came from a link on another screen (a study, a request, the
+  // home page): the detail then offers "Retour" to that screen, with its filters and scroll.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
 
   useEffect(() => {
     const raw = searchParams.get("openWo");
     if (!raw) return;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return;
+    // react-router numbers its history entries; above 0 the user has a screen to return to.
+    const historyIndex = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    setOpenedFromLink(historyIndex > 0);
     void openWo(id);
     setSearchParams(
       (prev) => {
@@ -810,7 +817,19 @@ export function WorkOrdersPage() {
         wo={activeWo?.wo ?? null}
         open={activeWo !== null || detailLoading}
         loading={detailLoading && !activeWo}
-        onClose={closeWo}
+        onClose={() => {
+          setOpenedFromLink(false);
+          closeWo();
+        }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                closeWo();
+                void navigate(-1);
+              },
+            }
+          : {})}
       />
 
       <WoCancelDialog

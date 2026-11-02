@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
@@ -70,6 +71,16 @@ interface FormErrors {
   typeCode?: string;
   urgencyId?: string;
   equipment?: string;
+  plannedEnd?: string;
+}
+
+/** Hours between two `datetime-local` values; null when one is empty or unreadable. */
+function hoursBetween(start: string, end: string): number | null {
+  if (!start || !end) return null;
+  const from = new Date(start).getTime();
+  const to = new Date(end).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  return (to - from) / 3_600_000;
 }
 
 function validate(
@@ -79,6 +90,8 @@ function validate(
     urgencyId: string;
     urgencyIdValid: boolean;
     equipmentId: number | null;
+    plannedStart: string;
+    plannedEnd: string;
   },
   opts: { requireType: boolean; requireUrgency: boolean; requireEquipment: boolean },
   t: (key: string) => string,
@@ -95,6 +108,10 @@ function validate(
   if (opts.requireEquipment && fields.equipmentId == null) {
     errors.equipment = t("form.validation.equipmentRequired");
   }
+  const plannedHours = hoursBetween(fields.plannedStart, fields.plannedEnd);
+  if (plannedHours != null && plannedHours < 0) {
+    errors.plannedEnd = t("form.validation.plannedEndBeforeStart");
+  }
   return errors;
 }
 
@@ -108,6 +125,7 @@ export function WoCreateForm({
   onCancel,
 }: WoCreateFormProps) {
   const { t, i18n } = useTranslation("ot");
+  const { formatNumber } = useFormatters();
   const { info } = useSession();
   const saving = useWoStore((s) => s.saving);
   const storeError = useWoStore((s) => s.error);
@@ -264,11 +282,21 @@ export function WoCreateForm({
   const currentErrors = useMemo(
     () =>
       validate(
-        { title, typeCode, urgencyId, urgencyIdValid, equipmentId: selectedEquipmentId },
+        {
+          title,
+          typeCode,
+          urgencyId,
+          urgencyIdValid,
+          equipmentId: selectedEquipmentId,
+          plannedStart,
+          plannedEnd,
+        },
         { requireType, requireUrgency, requireEquipment },
         t,
       ),
     [
+      plannedStart,
+      plannedEnd,
       title,
       typeCode,
       urgencyId,
@@ -280,6 +308,16 @@ export function WoCreateForm({
       t,
     ],
   );
+  // Not blocking: an estimate longer than the time between the planned start and end.
+  const plannedWindowHours = hoursBetween(plannedStart, plannedEnd);
+  const durationExceedsWindow =
+    plannedWindowHours != null &&
+    plannedWindowHours >= 0 &&
+    expectedDuration != null &&
+    expectedDuration > plannedWindowHours
+      ? plannedWindowHours
+      : null;
+  const formatHours = (hours: number) => formatNumber(hours, { maximumFractionDigits: 1 });
   const isValid = Object.keys(currentErrors).length === 0;
   const catalogsReady = !typesLoading && !prioritiesLoading;
 
@@ -295,7 +333,7 @@ export function WoCreateForm({
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
-    setTouched(new Set(["title", "typeCode", "urgencyId", "equipment"]));
+    setTouched(new Set(["title", "typeCode", "urgencyId", "equipment", "plannedEnd"]));
     setSubmitError(null);
     if (!isValid || !catalogsReady || !info?.user_id) return;
 
@@ -527,7 +565,11 @@ export function WoCreateForm({
           </FormField>
 
           {/* Planned End */}
-          <FormField name="plannedEnd" label={t("form.plannedEnd.label")}>
+          <FormField
+            name="plannedEnd"
+            label={t("form.plannedEnd.label")}
+            error={currentErrors.plannedEnd}
+          >
             <DateTimeField
               id="wo-planned-end"
               value={plannedEnd}
@@ -545,6 +587,14 @@ export function WoCreateForm({
             value={expectedDuration}
             onValueChange={setExpectedDuration}
           />
+          {durationExceedsWindow != null ? (
+            <p className="mt-1 text-xs text-status-warning">
+              {t("form.duration.exceedsWindow", {
+                hours: formatHours(expectedDuration ?? 0),
+                window: formatHours(durationExceedsWindow),
+              })}
+            </p>
+          ) : null}
         </FormField>
 
         {/* Notes */}

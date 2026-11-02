@@ -132,10 +132,27 @@ export interface WoLaborPerson {
   employment_type: string;
   company_name: string | null;
   availability_status: string;
+  /** The signed-in user's own personnel card. */
+  is_self: boolean;
+  team_id: number | null;
+  team_name: string | null;
 }
 
 export async function listWoLaborPeople(): Promise<WoLaborPerson[]> {
   return invoke<WoLaborPerson[]>("list_wo_labor_people");
+}
+
+/** Hourly rates a labour entry for this person and day will be priced at. */
+export interface WoLaborRatePreview {
+  normal_rate: number | null;
+  overtime_rate: number | null;
+}
+
+export async function previewWoLaborRate(
+  personnelId: number,
+  day: string,
+): Promise<WoLaborRatePreview> {
+  return invoke<WoLaborRatePreview>("preview_wo_labor_rate", { personnelId, day });
 }
 
 export async function closeLabor(

@@ -78,6 +78,7 @@ import type {
   SupplierPurchaseHistoryRow,
   SupplierScorecard,
   // Article / procurement analytics
+  ArticleAssetUsage,
   ArticleEquivalent,
   ArticleEquivalentInput,
   ArticlePurchaseHistoryRow,
@@ -442,6 +443,7 @@ const InventoryReorderRecommendationSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string(),
   min_stock: z.number(),
   reorder_point: z.number(),
   max_stock: z.number().nullable(),
@@ -595,6 +597,7 @@ const InventoryReplenishmentRecommendationSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string(),
   min_stock: z.number(),
   reorder_point: z.number(),
   max_stock: z.number().nullable(),
@@ -1746,6 +1749,22 @@ export function listInventoryArticleEquivalents(articleId: number): Promise<Arti
     "list_inventory_article_equivalents",
     { articleId },
     z.array(ArticleEquivalentSchema),
+  );
+}
+
+export function listInventoryArticleUsage(articleId: number): Promise<ArticleAssetUsage[]> {
+  return invokeParsed(
+    "list_inventory_article_usage",
+    { articleId },
+    z.array(
+      z.object({
+        asset_id: z.number(),
+        asset_code: z.string(),
+        asset_name: z.string(),
+        quantity: z.number(),
+        is_critical_spare: z.boolean(),
+      }),
+    ),
   );
 }
 

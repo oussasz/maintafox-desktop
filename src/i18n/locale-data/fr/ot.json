@@ -62,7 +62,7 @@
     "fromSafetyDi": "Activé automatiquement : la demande d'origine signalait un risque sécurité."
   },
   "woPeople": {
-    "none": "Aucun membre du personnel actif n'a de compte utilisateur : reliez le personnel à un compte dans Personnel.",
+    "none": "Aucune personne à proposer. Si vous ne voyez pas le registre du personnel, demandez à l'administrateur de relier votre compte à votre fiche dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
   "page": {
@@ -82,7 +82,6 @@
     "empty": "Aucune anomalie ouverte. Lancez la vérification pour contrôler les ordres de travail et leurs lignes.",
     "runDetectors": "Lancer la vérification",
     "waiverDefaultReason": "Levée depuis l'écran d'intégrité des données",
-    "approverId": "Approbateur",
     "approverPlaceholder": "Obligatoire pour les erreurs",
     "waiverReason": "Motif de la levée",
     "waiverReasonPlaceholder": "Justification",
@@ -206,7 +205,8 @@
       "label": "Fin prévue"
     },
     "duration": {
-      "label": "Durée estimée (h)"
+      "label": "Durée estimée (h)",
+      "exceedsWindow": "Attention : la durée estimée ({{hours}} h) est plus longue que le temps entre le début et la fin prévus ({{window}} h)."
     },
     "notes": {
       "label": "Remarques"
@@ -219,7 +219,8 @@
       "typeRequired": "Le type d'ordre de travail est obligatoire.",
       "urgencyRequired": "La priorité est obligatoire.",
       "urgencyInvalid": "La priorité sélectionnée n'est plus valide.",
-      "equipmentRequired": "Équipement obligatoire."
+      "equipmentRequired": "Équipement obligatoire.",
+      "plannedEndBeforeStart": "La fin prévue ne peut pas être avant le début prévu."
     }
   },
   "status": {
@@ -308,7 +309,7 @@
     "plannedCrewSizeInvalid": "L'effectif est un nombre entier de personnes, de 1 à {{max}}.",
     "urgency": "Urgence",
     "selectUrgency": "Sélectionner l'urgence",
-    "assignment": "Planning & équipe (SSOT Planning)",
+    "assignment": "Planning et équipe",
     "assignedTeamId": "Équipe",
     "primaryResponsibleId": "Technicien (responsable principal)",
     "scheduledAt": "Planifié le",
@@ -320,7 +321,7 @@
     "emergencyReassign": "Réaffectation d'urgence",
     "emergencyReassignHint": "Met à jour uniquement l'équipe/le technicien. Ne change pas les dates. Ignore capacité, fenêtres verrouillées et double-booking — une surcharge peut apparaître sur le tableau.",
     "emergencyOverrideTitle": "Réaffectation d'urgence",
-    "emergencyOverrideDescription": "Indiquez un motif. Ce contournement des portes Planning est audité.",
+    "emergencyOverrideDescription": "Indiquez un motif. Ce contournement des contrôles du planning est tracé dans l'historique.",
     "crewLabel": "Équipe",
     "technicianLabel": "Technicien",
     "slotLabel": "Créneau engagé",
@@ -355,7 +356,7 @@
     "draftSubmitHint": "Cet ordre de travail est encore un brouillon. Modifiez l'identification si besoin, puis soumettez-le pour planification. Timing, assignation, tâches et pièces se configurent après soumission.",
     "draftIdentification": "Identification",
     "cancelledStubHint": "Cet ordre de travail a été annulé. Les champs de planification ne sont plus modifiables. Consultez l'onglet Audit pour l'historique.",
-    "readinessChecklist": "Contrôle de prêt",
+    "readinessChecklist": "Vérification avant lancement",
     "readinessRecommended": "recommandé",
     "readinessRule": {
       "approval_required": "Validation de la préparation",
@@ -527,6 +528,11 @@
       "hint": "Saisissez le temps technicien pour cette intervention. Les heures travaillées sont calculées automatiquement.",
       "rateHint": "Le coût utilise la grille de taux active du technicien lorsqu'elle existe ; sinon l'entrée est enregistrée avec un avertissement « taux manquant ».",
       "technician": "Technicien",
+      "technicianPlaceholder": "Choisir un technicien",
+      "team": "Équipe",
+      "allTeams": "Toutes les équipes",
+      "rateShown": "Taux horaire appliqué : {{rate}}",
+      "rateUnknown": "Aucun taux horaire défini pour cette personne : l'entrée sera enregistrée sans coût.",
       "date": "Date",
       "startTime": "Heure de début",
       "endTime": "Heure de fin",
@@ -762,7 +768,7 @@
     "temporary": "Temporaire",
     "permanent": "Permanente",
     "notApplicable": "S/O",
-    "serviceCost": "Coût de service (€)",
+    "serviceCost": "Coût de service ({{currency}})",
     "detailsSaved": "Détails enregistrés.",
     "saveDetails": "Enregistrer les détails",
     "sectionReturn": "Retour en service",
@@ -876,6 +882,7 @@
   "detail": {
     "close": "Fermer",
     "loading": "Chargement de l'OT…",
+    "backToOrigin": "Retour",
     "loadingHint": "Récupération des derniers détails de l'ordre de travail.",
     "cancelledBanner": "Cet ordre de travail a été annulé",
     "sections": {

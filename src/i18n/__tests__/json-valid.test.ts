@@ -60,6 +60,8 @@ const COMMON_TOP_KEYS = [
   "dateField",
   // Hint of the decimal entry field (src/components/ui/decimal-field.tsx).
   "decimalField",
+  // "Leave without saving?" question of every dialog (src/components/ui/dialog.tsx).
+  "discardGuard",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

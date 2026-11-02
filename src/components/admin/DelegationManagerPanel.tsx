@@ -1,4 +1,4 @@
-import { type ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,8 +25,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useStepUp } from "@/hooks/use-step-up";
-import { describeAppError } from "@/lib/app-error";
+import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { appErrorReason } from "@/lib/app-error";
 import { roleLabel } from "@/lib/role-labels";
 import {
   createDelegationPolicy,
@@ -129,7 +129,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: describeAppError(err).title,
+        title: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -171,7 +171,7 @@ export function DelegationManagerPanel() {
       void fetchData();
     } catch (err) {
       toast({
-        title: describeAppError(err).title,
+        title: appErrorReason(err),
         variant: "destructive",
       });
     }
@@ -186,9 +186,11 @@ export function DelegationManagerPanel() {
       toast({ title: t("delegation.deleted", "Policy deleted"), variant: "success" });
       setDeleteTarget(null);
       void fetchData();
-    } catch {
+    } catch (err) {
+      if (isStepUpCancelled(err)) return;
       toast({
         title: t("delegation.errors.deleteFailed", "Failed to delete policy"),
+        description: appErrorReason(err),
         variant: "destructive",
       });
     }

@@ -97,6 +97,8 @@
     "saveSuccess": "Document header saved",
     "saveError": "Failed to save document header",
     "loadError": "Failed to load document header",
+    "imageRejectedTitle": "Image not added to the header",
+    "imageRejectedBody": "This image is too heavy for the header, even shrunk (limit: {{max_kb}} KB per image). Choose a smaller image.",
     "logoUploadError": "Failed to upload logo",
     "logoClearError": "Failed to remove logo",
     "invalidShape": "Stored header value is invalid. Resetting to an empty template.",

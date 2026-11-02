@@ -20,7 +20,6 @@ import type {
   CreateDelegationInput,
   CreateRoleInput,
   CreateUserInput,
-  MyAccess,
   DelegationPolicyView,
   EmergencyGrantView,
   GrantEmergencyElevationInput,
@@ -28,6 +27,7 @@ import type {
   ImportResult,
   LockoutPolicySettings,
   MissingTenantScopeUser,
+  MyAccess,
   PasswordPolicySettings,
   PermissionDependencyRow,
   PermissionListFilter,
@@ -135,7 +135,8 @@ const AdminStatsSchema = z.object({
 });
 
 export async function getAdminStats(): Promise<AdminStatsPayload> {
-  const raw = await invoke<unknown>("get_admin_stats");
+  // Shown inline by the metric cards: no global toast.
+  const raw = await invoke<unknown>("get_admin_stats", undefined, { notifyOnError: false });
   return AdminStatsSchema.parse(raw);
 }
 
@@ -223,7 +224,8 @@ const TenantScopeBackfillResultSchema = z.object({
 });
 
 export async function listUsers(filter: UserListFilter): Promise<UserWithRoles[]> {
-  const raw = await invoke<unknown[]>("list_users", { filter });
+  // Both screens that list users show a failed read inline: no global toast.
+  const raw = await invoke<unknown[]>("list_users", { filter }, { notifyOnError: false });
   return z.array(UserWithRolesSchema).parse(raw);
 }
 
@@ -263,7 +265,8 @@ export async function getUser(userId: number): Promise<UserDetail> {
 }
 
 export async function createUser(input: CreateUserInput): Promise<IdPayload> {
-  const raw = await invoke<unknown>("create_user", { input });
+  // The dialog shows the failure itself: no global toast.
+  const raw = await invoke<unknown>("create_user", { input }, { notifyOnError: false });
   return IdPayloadSchema.parse(raw);
 }
 
@@ -278,7 +281,8 @@ export async function backfillUsersMissingTenantScope(): Promise<TenantScopeBack
 }
 
 export async function updateUser(input: UpdateUserInput): Promise<void> {
-  await invoke<void>("update_user", { input });
+  // The dialog shows the failure itself: no global toast.
+  await invoke<void>("update_user", { input }, { notifyOnError: false });
 }
 
 /** Disable an account (step-up + reason; the account and its history are kept). */
@@ -415,7 +419,8 @@ const PasswordPolicySchema = z.object({
 });
 
 export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {
-  const raw = await invoke<unknown>("get_password_policy");
+  // Shown inline by the policy panel: no global toast.
+  const raw = await invoke<unknown>("get_password_policy", undefined, { notifyOnError: false });
   return PasswordPolicySchema.parse(raw);
 }
 
@@ -432,7 +437,7 @@ const LockoutPolicySchema = z.object({
 
 /** Sign-in lockout thresholds the login applies. */
 export async function getLockoutPolicy(): Promise<LockoutPolicySettings> {
-  const raw = await invoke<unknown>("get_lockout_policy");
+  const raw = await invoke<unknown>("get_lockout_policy", undefined, { notifyOnError: false });
   return LockoutPolicySchema.parse(raw);
 }
 
@@ -569,16 +574,21 @@ export async function listDelegationPolicies(): Promise<DelegationPolicyView[]> 
 export async function createDelegationPolicy(
   input: CreateDelegationInput,
 ): Promise<DelegationPolicyView> {
-  const raw = await invoke<unknown>("create_delegation_policy", { input });
+  // The delegation panel shows the failure itself: no global toast.
+  const raw = await invoke<unknown>(
+    "create_delegation_policy",
+    { input },
+    { notifyOnError: false },
+  );
   return DelegationPolicyViewSchema.parse(raw);
 }
 
 export async function updateDelegationPolicy(input: UpdateDelegationInput): Promise<void> {
-  await invoke<void>("update_delegation_policy", { input });
+  await invoke<void>("update_delegation_policy", { input }, { notifyOnError: false });
 }
 
 export async function deleteDelegationPolicy(policyId: number): Promise<void> {
-  await invoke<void>("delete_delegation_policy", { policyId });
+  await invoke<void>("delete_delegation_policy", { policyId }, { notifyOnError: false });
 }
 
 // â”€â”€ Admin Governance â€” Emergency Grants (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -630,12 +640,17 @@ const ImportResultSchema = z.object({
 });
 
 export async function exportRoleModel(roleIds: number[]): Promise<RoleExportPayload> {
-  const raw = await invoke<unknown>("export_role_model", { roleIds });
+  // The import/export panel shows the failure itself: no global toast.
+  const raw = await invoke<unknown>("export_role_model", { roleIds }, { notifyOnError: false });
   return RoleExportPayloadSchema.parse(raw);
 }
 
 export async function importRoleModel(payload: RoleImportPayload): Promise<ImportResult> {
-  const raw = await invoke<unknown>("import_role_model", { input: payload });
+  const raw = await invoke<unknown>(
+    "import_role_model",
+    { input: payload },
+    { notifyOnError: false },
+  );
   return ImportResultSchema.parse(raw);
 }
 
@@ -662,7 +677,8 @@ const AdminChangeEventDetailSchema = z.object({
 });
 
 export async function listAdminEvents(filter: AdminEventFilter): Promise<AdminChangeEventDetail[]> {
-  const raw = await invoke<unknown[]>("list_admin_events", { filter });
+  // Shown inline by the audit timeline: no global toast.
+  const raw = await invoke<unknown[]>("list_admin_events", { filter }, { notifyOnError: false });
   return z.array(AdminChangeEventDetailSchema).parse(raw);
 }
 
@@ -682,7 +698,9 @@ const AdminEventFacetsSchema = z.object({
 
 /** Filter choices (actions, actors, targets, results) present in the visible ledger. */
 export async function listAdminEventFacets(): Promise<AdminEventFacets> {
-  const raw = await invoke<unknown>("list_admin_event_facets");
+  const raw = await invoke<unknown>("list_admin_event_facets", undefined, {
+    notifyOnError: false,
+  });
   return AdminEventFacetsSchema.parse(raw);
 }
 

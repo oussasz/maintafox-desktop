@@ -231,6 +231,29 @@ describe("a GATE refusal's title uses the parameters the backend sent", () => {
   });
 });
 
+describe("describeAppError (module outside the licence)", () => {
+  const off = (state: string) => ({
+    code: "PERMISSION_DENIED",
+    message: `Permission denied: LICENCE_MODULE_OFF:module=training,state=${state}: Entitlement capability blocked: training (x)`,
+  });
+
+  it("names the module and says it is not in the licence, not a bare refusal", async () => {
+    await i18n.changeLanguage("fr");
+    const d = describeAppError(off("active"));
+    expect(d.title).toBe("Module non inclus dans votre licence");
+    expect(d.description).toContain("« Formations & habilitations »");
+    expect(d.title).not.toBe(String(i18n.t("errors:appError.PERMISSION_DENIED")));
+    expect(d.technical).toContain("LICENCE_MODULE_OFF");
+  });
+
+  it("says the licence is not in force when it is suspended or expired", async () => {
+    await i18n.changeLanguage("fr");
+    for (const state of ["suspended", "expired", "revoked"]) {
+      expect(describeAppError(off(state)).title).toBe("Licence pas en vigueur");
+    }
+  });
+});
+
 describe("describeAppError (refused right)", () => {
   const refused = {
     code: "PERMISSION_DENIED",

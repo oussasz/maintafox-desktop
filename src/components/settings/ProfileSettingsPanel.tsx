@@ -708,8 +708,8 @@ function ChangePasswordDialog({
     try {
       await changePassword({ current_password: current, new_password: next });
       onSuccess();
-    } catch {
-      setError(t("profile.passwordError", "Password change failed."));
+    } catch (err) {
+      setError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }
@@ -793,8 +793,8 @@ function PinSetupDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
     try {
       await setPin({ new_pin: pin, current_password: password });
       onSuccess();
-    } catch {
-      setError(t("profile.pinError", "PIN setup failed."));
+    } catch (err) {
+      setError(appErrorReason(err));
     } finally {
       setSubmitting(false);
     }

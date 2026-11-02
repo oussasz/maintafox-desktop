@@ -211,9 +211,9 @@
       "unitCost": "Saisissez le coût unitaire (zéro ou plus)."
     },
     "cost": {
-      "entryHint": "Met à jour le coût unitaire moyen pondéré (CUMP) de cet emplacement (actuellement {{average}}). Vide : valorisé au CUMP actuel.",
-      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son CUMP.",
-      "valuedAtAverage": "Valorisé au CUMP de {{average}} ({{value}}).",
+      "entryHint": "Met à jour le coût moyen pondéré de cet emplacement (actuellement {{average}}). Vide : valorisé au coût moyen actuel.",
+      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son coût moyen.",
+      "valuedAtAverage": "Valorisé au coût moyen de {{average}} ({{value}}).",
       "notValued": "Cet emplacement n'a pas encore de coût : le mouvement n'est pas valorisé."
     },
     "lots": {
@@ -265,7 +265,7 @@
       "available": "Disponible",
       "locations": "Emplacements",
       "movements30d": "Mouvements (30j)",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "sections": {
@@ -441,6 +441,8 @@
       "title": "Recommandations de réapprovisionnement",
       "refresh": "Actualiser",
       "loading": "Chargement…",
+      "tabTitle": "À commander",
+      "store": "Magasin :",
       "transfer": "Transfert",
       "purchase": "Achat",
       "suggestedQty": "Qté suggérée",
@@ -602,6 +604,7 @@
       "searchPlaceholder": "Rechercher un ordre, un article ou un numéro de série",
       "empty": "Aucun ordre de réparation.",
       "emptyDescription": "Envoyez une pièce réparable chez un prestataire pour suivre son cycle de réparation.",
+      "noRightHint": "La création d'un ordre de réparation demande le droit « Gérer les achats ». Demandez-le à votre administrateur.",
       "create": "Nouvel ordre de réparation",
       "columns": {
         "order": "Ordre",
@@ -1259,6 +1262,7 @@
       "equivalents": "Équivalents",
       "repairableHistory": "Historique réparable",
       "purchaseHistory": "Historique d'achat",
+      "usedOn": "Utilisé sur",
       "documents": "Documents"
     },
     "consumption": {
@@ -1274,9 +1278,9 @@
     "fields": {
       "manufacturerName": "Fabricant",
       "manufacturerPartNumber": "Référence fabricant",
-      "oemPartNumber": "Référence OEM",
+      "oemPartNumber": "Référence constructeur",
       "replenishmentPolicy": "Politique de réapprovisionnement",
-      "eoq": "QEC",
+      "eoq": "Quantité économique de commande",
       "moq": "Qté min commande",
       "maxOrder": "Qté max commande",
       "orderMultiple": "Multiple de commande",
@@ -1298,6 +1302,16 @@
       "addEquivalent": "Ajouter un équivalent",
       "addDocumentLink": "Ajouter un lien documentaire",
       "createRequisitionForShortage": "Créer une demande d'achat"
+    },
+    "usedOn": {
+      "empty": "Cette pièce n'est dans la liste des pièces d'aucun équipement.",
+      "hint": "Équipements dont la liste de pièces contient cet article.",
+      "columns": {
+        "equipment": "Équipement",
+        "quantity": "Quantité par équipement",
+        "critical": "Pièce critique"
+      },
+      "critical": "Critique"
     },
     "equivalents": {
       "empty": "Aucun équivalent configuré.",
@@ -1527,7 +1541,7 @@
       "available": "Disponible",
       "reorderPoint": "Point de commande",
       "status": "Statut",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "belowReorder": "À commander",
@@ -1739,6 +1753,16 @@
       "tooMuch": "Seulement {{qty}} {{unit}} peuvent sortir d'ici.",
       "unitRefused": "Cette unité ne se convertit pas dans l'unité de stock de l'article (aucune conversion, autre grandeur ou unité à revoir).",
       "converting": "Conversion en unité de stock…"
+    },
+    "return": {
+      "title": "Retourner des pièces non utilisées à cet OT",
+      "hint": "Déjà sorties pour {{wo}} : {{qty}} {{unit}}. Saisissez la quantité à rendre : elle revient en stock à l'emplacement de la sortie.",
+      "select": "Sortie à rendre",
+      "option": "{{qty}} {{unit}} sorties depuis {{location}}",
+      "submit": "Retourner en stock",
+      "submitting": "Retour en cours…",
+      "tooMuch": "Vous ne pouvez rendre que {{qty}} {{unit}} (la quantité déjà sortie pour cet OT).",
+      "toast": "{{qty}} {{unit}} de {{code}} remis en stock (retour de {{wo}})"
     },
     "outcome": {
       "title": "{{code}} sorti vers {{wo}}",

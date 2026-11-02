@@ -126,6 +126,55 @@ describe("WoCreateForm planned dates", () => {
   });
 });
 
+describe("WoCreateForm planned end before the planned start", () => {
+  const dated = (start: string, end: string, hours: number | null) =>
+    ({
+      id: 6,
+      row_version: 1,
+      title: "Remplacer le palier",
+      description: null,
+      type_code: "",
+      subtype_code: "",
+      urgency_code: "",
+      equipment_id: null,
+      planned_start: start,
+      planned_end: end,
+      expected_duration_hours: hours,
+      notes: null,
+      requires_permit: false,
+    }) as unknown as WorkOrder;
+
+  it("shows a message under the end field and refuses to save", async () => {
+    const updateDraft = vi.fn(() => Promise.resolve());
+    useWoStore.setState({ updateDraft } as unknown as Partial<
+      ReturnType<typeof useWoStore.getState>
+    >);
+    const { getByText, queryByText } = render(
+      <WoCreateForm
+        initial={dated("2026-10-20T10:00:00Z", "2026-10-20T06:00:00Z", null)}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByText("form.validation.plannedEndBeforeStart")).toBeInTheDocument();
+    fireEvent.click(getByText("form.update").closest("button") as HTMLButtonElement);
+    expect(updateDraft).not.toHaveBeenCalled();
+    expect(queryByText("form.duration.exceedsWindow")).toBeNull();
+  });
+
+  it("warns, without blocking, when the estimated duration is longer than the planned window", () => {
+    const { getByText, queryByText } = render(
+      <WoCreateForm
+        initial={dated("2026-10-20T06:00:00Z", "2026-10-20T14:00:00Z", 30)}
+        onSubmitted={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(getByText("form.duration.exceedsWindow")).toBeInTheDocument();
+    expect(queryByText("form.validation.plannedEndBeforeStart")).toBeNull();
+  });
+});
+
 describe("WoCreateForm permit box in edit mode", () => {
   const draft = (overrides: Partial<WorkOrder>) =>
     ({

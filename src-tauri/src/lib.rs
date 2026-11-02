@@ -710,6 +710,7 @@ pub fn run() {
         commands::inventory::list_supplier_purchase_history,
         // ── Article equivalents ──────────────────────────────────────────────────────
         commands::inventory::list_inventory_article_equivalents,
+        commands::inventory::list_inventory_article_usage,
         commands::inventory::upsert_inventory_article_equivalent,
         commands::inventory::delete_inventory_article_equivalent,
         commands::inventory::list_inventory_article_purchase_history,
@@ -1226,6 +1227,7 @@ pub fn run() {
         commands::personnel::update_external_company,
         commands::wo::add_personnel_labor,
         commands::wo::list_wo_labor_people,
+        commands::wo::preview_wo_labor_rate,
         commands::personnel::list_schedule_class_versions,
         commands::personnel::upsert_schedule_class_version,
         commands::personnel::get_schedule_class_version_impact,

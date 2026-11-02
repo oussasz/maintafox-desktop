@@ -52,13 +52,13 @@
         "mttr": "MTTR parc (h)",
         "availability": "Disponibilité opérationnelle parc (A_o)",
         "dataQuality": "Qualité des données",
-        "snapshots": "Snapshots",
+        "snapshots": "Instantanés",
         "failureEvents": "Événements de défaillance",
         "maintenanceCost": "Coût OT valorisé au budget"
       },
       "badActors": {
         "title": "Top 5 équipements à risque",
-        "empty": "Aucun snapshot sur l’horizon",
+        "empty": "Aucun instantané sur la période",
         "asset": "Équipement",
         "events": "Événements"
       },

@@ -3507,7 +3507,7 @@ pub async fn evaluate_reorder(
 ) -> AppResult<Vec<InventoryReorderRecommendation>> {
     let mut sql = String::from(
         "SELECT a.id AS article_id, a.article_code, a.article_name,
-                w.id AS warehouse_id, w.code AS warehouse_code,
+                w.id AS warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
                 a.min_stock, a.reorder_point, a.max_stock,
                 COALESCE(SUM(sb.on_hand_qty), 0.0) AS on_hand_qty,
                 COALESCE(SUM(sb.reserved_qty), 0.0) AS reserved_qty,
@@ -3515,7 +3515,26 @@ pub async fn evaluate_reorder(
          FROM articles a
          JOIN warehouses w ON w.is_active = 1
          LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.warehouse_id = w.id
-         WHERE a.is_active = 1",
+         WHERE a.is_active = 1
+           AND (
+             -- An article is judged in the stores that stock it (a balance row), so an empty
+             -- extra store does not flag every article.
+             EXISTS (SELECT 1 FROM stock_balances x WHERE x.article_id = a.id AND x.warehouse_id = w.id)
+             -- A never-stocked article is judged once, in the main store (the active store that
+             -- holds the most stock lines, else the oldest active store).
+             OR (
+               NOT EXISTS (
+                 SELECT 1 FROM stock_balances y JOIN warehouses wy ON wy.id = y.warehouse_id AND wy.is_active = 1
+                 WHERE y.article_id = a.id
+               )
+               AND w.id = (
+                 SELECT wm.id FROM warehouses wm
+                 WHERE wm.is_active = 1
+                 ORDER BY (SELECT COUNT(*) FROM stock_balances z WHERE z.warehouse_id = wm.id) DESC, wm.id ASC
+                 LIMIT 1
+               )
+             )
+           )",
     );
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(warehouse_id) = warehouse_id {
@@ -3523,7 +3542,7 @@ pub async fn evaluate_reorder(
         values.push(warehouse_id.into());
     }
     sql.push_str(
-        " GROUP BY a.id, a.article_code, a.article_name, w.id, w.code,
+        " GROUP BY a.id, a.article_code, a.article_name, w.id, w.code, w.name,
                   a.min_stock, a.reorder_point, a.max_stock
           ORDER BY a.article_code ASC, w.code ASC, a.id ASC",
     );
@@ -3565,6 +3584,7 @@ pub async fn evaluate_reorder(
             article_name: row.try_get("", "article_name")?,
             warehouse_id: row.try_get("", "warehouse_id")?,
             warehouse_code: row.try_get("", "warehouse_code")?,
+            warehouse_name: row.try_get("", "warehouse_name")?,
             min_stock,
             reorder_point,
             max_stock,
@@ -3644,6 +3664,7 @@ pub async fn evaluate_replenishment(
             article_name: r.article_name,
             warehouse_id: r.warehouse_id,
             warehouse_code: r.warehouse_code,
+            warehouse_name: r.warehouse_name,
             min_stock: r.min_stock,
             reorder_point: r.reorder_point,
             max_stock: r.max_stock,
@@ -4091,6 +4112,7 @@ pub async fn get_procurement_alerts(
             params: alert_params(&[
                 ("name", r.article_name.clone()),
                 ("warehouse_code", r.warehouse_code.clone()),
+                ("warehouse_name", r.warehouse_name.clone()),
                 ("available_qty", r.available_qty.to_string()),
                 ("threshold_qty", threshold.to_string()),
                 ("trigger", r.trigger_type.clone()),

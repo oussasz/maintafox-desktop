@@ -835,7 +835,10 @@ export function InventoryPage() {
       >
         {/* Daily work first, then periodic / setup screens, with a visible separation. */}
         <TabsList className="h-auto w-fit flex-wrap gap-y-1">
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.daily")}
           </span>
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
@@ -843,7 +846,10 @@ export function InventoryPage() {
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
           <span className="mx-1 h-6 w-px bg-surface-border" aria-hidden />
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.setup")}
           </span>
           <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>

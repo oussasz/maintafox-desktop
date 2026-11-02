@@ -439,7 +439,7 @@
       "failure": "Événements de panne",
       "document": "Documents",
       "iot": "Signaux IoT",
-      "erp": "Mapping ERP"
+      "erp": "Correspondance avec l'ERP"
     }
   },
   "import": {
@@ -657,7 +657,7 @@
     "title": "Profil de fiabilité",
     "schedule": "Régime de fonctionnement",
     "scheduleNone": "Non défini (24 h/24 supposé)",
-    "utilization": "Facteur d’utilisation (K_u)",
+    "utilization": "Facteur d’utilisation",
     "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
   },
   "structure": {

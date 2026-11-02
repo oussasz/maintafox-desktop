@@ -54,6 +54,12 @@
     "loadingModule": "Chargement du module...",
     "error": "Une erreur est survenue"
   },
+  "discardGuard": {
+    "title": "Quitter sans enregistrer ?",
+    "description": "Ce que vous avez saisi dans cette fenêtre sera perdu.",
+    "keep": "Continuer la saisie",
+    "leave": "Quitter sans enregistrer"
+  },
   "action": {
     "save": "Enregistrer",
     "cancel": "Annuler",

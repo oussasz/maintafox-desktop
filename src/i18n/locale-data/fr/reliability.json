@@ -45,12 +45,12 @@
     "events": "Événements",
     "exposureTitle": "Provenance de l'exposition",
     "exposureSource": "Source d'exposition",
-    "exposureKu": "Facteur d'utilisation (K_u)",
+    "exposureKu": "Facteur d'utilisation",
     "exposureSchedule": "Classe horaire",
     "exposureLastWo": "Dernière clôture OT",
     "exposureFallback": "Raison du repli",
     "ramsScheduleField": "Classe horaire d'exploitation",
-    "ramsKuField": "Facteur d'utilisation (K_u)",
+    "ramsKuField": "Facteur d'utilisation",
     "noSnapshot": "Aucun instantané pour ce filtre. Lancez une analyse depuis le socle données ou actualisez.",
     "weibullTitle": "Courbe de fiabilité Weibull R(t)",
     "weibullHint": "Courbe R(t) = exp(−(t/η)^β) issue du dernier ajustement Weibull en heures d'exposition (MLE avec censure à droite).",
@@ -244,9 +244,9 @@
   "foundation": {
     "title": "Socle données",
     "hint": "Taxonomie, exposition, jobs KPI et drill-throughs qualité.",
-    "kpiRefresh": "Recalculer le snapshot KPI",
+    "kpiRefresh": "Recalculer l'instantané des indicateurs",
     "kpiRefreshing": "Recalcul en cours…",
-    "kpiRefreshDone": "Snapshot KPI recalculé ({{events}} événements, exposition {{hours}} h)."
+    "kpiRefreshDone": "Instantané des indicateurs recalculé ({{events}} événements, exposition {{hours}} h)."
   },
   "rcmLoop": {
     "openLogic": "Logique RCM",
@@ -383,7 +383,7 @@
       "exportPng": "Export PNG",
       "exportSvg": "Export SVG",
       "hash": "SHA-256 (plot) : {{hash}}",
-      "empty": "Aucune donnée graphique dans ce snapshot (recalculez le KPI pour générer le payload)."
+      "empty": "Aucune donnée de graphique dans cet instantané : recalculez les indicateurs pour la produire."
     },
     "errors": {
       "runtimeNumeric": "Équipement et valeur numériques requis.",
@@ -472,7 +472,7 @@
       "colRepeat": "rép.",
       "colQuality": "qualité",
       "colFingerprint": "empreinte",
-      "clickRowHint": "Cliquez une ligne pour recharger le snapshot et afficher le graphique."
+      "clickRowHint": "Cliquez une ligne pour recharger l'instantané et afficher le graphique."
     },
     "weibull": {
       "title": "Weibull — ajustement (inter-arrivées)",

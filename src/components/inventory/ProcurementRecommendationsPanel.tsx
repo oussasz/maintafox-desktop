@@ -163,7 +163,9 @@ export function ProcurementRecommendationsPanel({
                         ? t("procurement.recommendations.transfer")
                         : t("procurement.recommendations.purchase")}
                     </Badge>
-                    <span className="text-xs text-text-muted">{rec.warehouse_code}</span>
+                    <span className="text-xs text-text-muted">
+                      {t("procurement.recommendations.store")} {rec.warehouse_name}
+                    </span>
                   </div>
                   <p className="text-xs text-text-muted">
                     {reasonOf(rec)} · {t("procurement.recommendations.suggestedQty")}:{" "}

@@ -1312,6 +1312,23 @@ pub async fn list_inventory_article_equivalents(
     queries::list_article_equivalents(&state.db, article_id).await
 }
 
+/// Where-used list of an article: the equipment whose parts list contains it. Read with the
+/// inventory view right (the storekeeper needs it without the equipment right).
+#[tauri::command]
+pub async fn list_inventory_article_usage(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::spare_parts::ArticleAssetUsage>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::assets::spare_parts::list_article_asset_usage(&state.db, article_id).await
+}
+
 #[tauri::command]
 pub async fn upsert_inventory_article_equivalent(
     input: ArticleEquivalentInput,

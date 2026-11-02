@@ -1,6 +1,7 @@
 {
   "page": {
-    "title": "Planning"
+    "title": "Planning",
+    "committedCount": "{{count}} OT engagé(s) sur la période affichée"
   },
   "views": {
     "gantt": "Tableau Gantt",
@@ -54,12 +55,12 @@
   },
   "actions": {
     "refreshBacklog": "Rafraîchir le backlog",
-    "freezePeriod": "Geler la période",
+    "lockPeriod": "Verrouiller une période (fenêtre / arrêt)",
     "exportPdf": "Exporter le Gantt PDF",
     "commit": "Créer l'engagement",
     "notifyTeams": "Notifier les équipes",
     "plannerTools": "Outils planificateur",
-    "requiresCommitments": "Disponible une fois du travail engagé sur ce tableau"
+    "requiresCommitments": "Aucun OT engagé sur la période Du–Au : engagez un OT du backlog, ou élargissez les dates, pour utiliser cet outil."
   },
   "state": {
     "loading": "Chargement des données planning..."
@@ -70,7 +71,7 @@
     "readinessScore": "Disponibilité",
     "skillMatch": "Adéquation compétences",
     "risk": "Risque",
-    "emptyReady": "Aucun candidat prêt.",
+    "emptyReady": "Aucun OT prêt à planifier. Seuls les OT au statut « Prêt à planifier » (ou planifiés, assignés) apparaissent ici ; un OT en brouillon ou en cours n'y figure pas.",
     "emptyBlocked": "Aucun candidat bloqué.",
     "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
     "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
@@ -237,12 +238,6 @@
     "noApprovers": "Personne d'autre ne détient plan.confirm sur le site de cette équipe : un break-in urgent ne peut pas être signé. Un travail d'urgence passe par un OT non planifié.",
     "inserted": "Ajouté en semaine gelée :",
     "syncRefused": "refusé (sync)"
-  },
-  "freeze": {
-    "title": "Geler la période de planning",
-    "summary": "Geler les engagements du {{start}} au {{end}}.",
-    "reason": "Motif de gel",
-    "reasonPlaceholder": "Expliquez pourquoi cette période doit être gelée"
   },
   "override": {
     "title": "Déroger au double-booking",
@@ -435,7 +430,6 @@
     "breakInRecorded": "Break-in enregistré",
     "slotReleased": "Créneau libéré",
     "commitmentCancelled": "Engagement annulé",
-    "periodFrozen": "Période gelée",
     "teamsNotified": "Équipes notifiées",
     "weekApproved": "Semaine approuvée",
     "weekFrozen": "Semaine gelée",

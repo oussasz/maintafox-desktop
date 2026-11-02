@@ -39,7 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { describeAppError } from "@/lib/app-error";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
   exportAdminEventsCsv,
@@ -195,7 +195,7 @@ export function AdminAuditTimeline({ fixedFilter, compact = false }: AdminAuditT
       setError(null);
       setEvents(await listAdminEvents({ ...query, limit: PAGE_SIZE }));
     } catch (err) {
-      setError(describeAppError(err).title);
+      setError(appErrorReason(err));
     } finally {
       setLoading(false);
     }
