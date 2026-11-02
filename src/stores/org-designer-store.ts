@@ -73,11 +73,13 @@ function carrySelection(
 ): number | null {
   if (selectedNodeId == null) return null;
   if (prev == null || prev.display_model_id === next.display_model_id) return selectedNodeId;
-  const copy = next.nodes.find((n) => n.origin_node_id === selectedNodeId);
-  if (copy) return copy.node_id;
+  if (next.display_model_id === next.draft_model_id) {
+    // Published → draft: the draft copy points back at the published unit.
+    return next.nodes.find((n) => n.origin_node_id === selectedNodeId)?.node_id ?? null;
+  }
+  // Draft → published: only the draft row knows its published unit.
   const origin = prev.nodes.find((n) => n.node_id === selectedNodeId)?.origin_node_id;
-  if (origin != null && next.nodes.some((n) => n.node_id === origin)) return origin;
-  return null;
+  return origin != null && next.nodes.some((n) => n.node_id === origin) ? origin : null;
 }
 
 interface OrgDesignerStoreState {

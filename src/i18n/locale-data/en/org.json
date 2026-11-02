@@ -49,7 +49,7 @@
     "startVersionFromPublished": "Start changes (draft)…",
     "abandonDraft": "Abandon draft",
     "bootstrapDialogTitle": "Create first structure draft",
-    "bootstrapDialogBody": "This creates a new empty draft (versioned). You will add node types and relationship rules, then publish when ready. This path is only for the first model — when a published model already exists, use “New draft from published” instead.",
+    "bootstrapDialogBody": "This creates a new empty draft (versioned). You will add node types and relationship rules, then publish when ready. This path is only for the first model — when a published model already exists, use “Start changes (draft)” instead.",
     "forkDialogTitle": "New draft from published model",
     "forkDialogBody": "This creates a new draft and copies organization levels, relationship rules, and the full tree from the published model. Live production stays unchanged until you publish and pass validation. You can describe this draft in the optional field below.",
     "draftDescriptionLabel": "Description (optional)",

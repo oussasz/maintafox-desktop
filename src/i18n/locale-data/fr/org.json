@@ -49,7 +49,7 @@
     "startVersionFromPublished": "Commencer des modifications (brouillon)…",
     "abandonDraft": "Abandonner le brouillon",
     "bootstrapDialogTitle": "Créer le premier brouillon de structure",
-    "bootstrapDialogBody": "Crée un nouveau brouillon vide (versionné). Vous y ajoutez types et règles, puis publiez quand c’est prêt. Réservé à la toute première structure — s’il existe déjà un modèle publié, utilisez « Nouveau brouillon à partir du publié ».",
+    "bootstrapDialogBody": "Crée un nouveau brouillon vide (versionné). Vous y ajoutez types et règles, puis publiez quand c’est prêt. Réservé à la toute première structure — s’il existe déjà un modèle publié, utilisez « Commencer des modifications (brouillon) ».",
     "forkDialogTitle": "Nouveau brouillon d’après le modèle publié",
     "forkDialogBody": "Crée un nouveau brouillon en copiant les niveaux d’organisation, les règles de relation et l’arbre complet du modèle publié. La production reste inchangée tant que vous n’avez pas publié après validation. Vous pouvez décrire le brouillon dans le champ ci-dessous (optionnel).",
     "draftDescriptionLabel": "Description (facultative)",
