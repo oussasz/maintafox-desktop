@@ -1261,6 +1261,7 @@
       "equivalents": "Équivalents",
       "repairableHistory": "Historique réparable",
       "purchaseHistory": "Historique d'achat",
+      "usedOn": "Utilisé sur",
       "documents": "Documents"
     },
     "consumption": {
@@ -1300,6 +1301,16 @@
       "addEquivalent": "Ajouter un équivalent",
       "addDocumentLink": "Ajouter un lien documentaire",
       "createRequisitionForShortage": "Créer une demande d'achat"
+    },
+    "usedOn": {
+      "empty": "Cette pièce n'est dans la liste des pièces d'aucun équipement.",
+      "hint": "Équipements dont la liste de pièces contient cet article.",
+      "columns": {
+        "equipment": "Équipement",
+        "quantity": "Quantité par équipement",
+        "critical": "Pièce critique"
+      },
+      "critical": "Critique"
     },
     "equivalents": {
       "empty": "Aucun équivalent configuré.",
@@ -1741,6 +1752,16 @@
       "tooMuch": "Seulement {{qty}} {{unit}} peuvent sortir d'ici.",
       "unitRefused": "Cette unité ne se convertit pas dans l'unité de stock de l'article (aucune conversion, autre grandeur ou unité à revoir).",
       "converting": "Conversion en unité de stock…"
+    },
+    "return": {
+      "title": "Retourner des pièces non utilisées à cet OT",
+      "hint": "Déjà sorties pour {{wo}} : {{qty}} {{unit}}. Saisissez la quantité à rendre : elle revient en stock à l'emplacement de la sortie.",
+      "select": "Sortie à rendre",
+      "option": "{{qty}} {{unit}} sorties depuis {{location}}",
+      "submit": "Retourner en stock",
+      "submitting": "Retour en cours…",
+      "tooMuch": "Vous ne pouvez rendre que {{qty}} {{unit}} (la quantité déjà sortie pour cet OT).",
+      "toast": "{{qty}} {{unit}} de {{code}} remis en stock (retour de {{wo}})"
     },
     "outcome": {
       "title": "{{code}} sorti vers {{wo}}",

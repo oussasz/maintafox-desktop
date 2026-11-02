@@ -1261,6 +1261,7 @@
       "equivalents": "Equivalents",
       "repairableHistory": "Repairable history",
       "purchaseHistory": "Purchase history",
+      "usedOn": "Used on",
       "documents": "Documents"
     },
     "consumption": {
@@ -1300,6 +1301,16 @@
       "addEquivalent": "Add equivalent",
       "addDocumentLink": "Add document link",
       "createRequisitionForShortage": "Create purchase requisition"
+    },
+    "usedOn": {
+      "empty": "This part is not in any equipment's parts list.",
+      "hint": "Equipment whose parts list contains this item.",
+      "columns": {
+        "equipment": "Equipment",
+        "quantity": "Quantity per equipment",
+        "critical": "Critical spare"
+      },
+      "critical": "Critical"
     },
     "equivalents": {
       "empty": "No equivalents configured.",
@@ -1741,6 +1752,16 @@
       "tooMuch": "Only {{qty}} {{unit}} can be issued from here.",
       "unitRefused": "This unit does not convert to the article's stock unit (no conversion, other dimension or unit to review).",
       "converting": "Converting to the stock unit…"
+    },
+    "return": {
+      "title": "Return unused parts from this work order",
+      "hint": "Already issued for {{wo}}: {{qty}} {{unit}}. Enter the quantity to give back: it returns to stock at the issue location.",
+      "select": "Issue to return",
+      "option": "{{qty}} {{unit}} issued from {{location}}",
+      "submit": "Return to stock",
+      "submitting": "Returning…",
+      "tooMuch": "You can only return {{qty}} {{unit}} (the quantity already issued for this work order).",
+      "toast": "{{qty}} {{unit}} of {{code}} put back in stock (return from {{wo}})"
     },
     "outcome": {
       "title": "{{code}} issued to {{wo}}",

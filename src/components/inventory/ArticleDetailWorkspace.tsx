@@ -74,6 +74,7 @@ import {
   getInventoryArticleRepairableHistory,
   isBelowReorderPoint,
   listInventoryArticleEquivalents,
+  listInventoryArticleUsage,
   listInventoryArticlePurchaseHistory,
   listInventoryDocumentLinks,
   listInventoryReservations,
@@ -94,6 +95,7 @@ export type ArticleDetailView =
   | "stock_positions"
   | "reservations"
   | "purchase_history"
+  | "used_on"
   | "equivalents"
   | "repairable_history"
   | "documents";
@@ -211,6 +213,7 @@ export function ArticleDetailWorkspace({
     [],
     articleId,
   );
+  const usedOn = useSection(() => listInventoryArticleUsage(articleId), [], articleId);
   const equivalents = useSection(() => listInventoryArticleEquivalents(articleId), [], articleId);
   const repairableHistory = useSection(
     () => getInventoryArticleRepairableHistory(articleId),
@@ -313,6 +316,7 @@ export function ArticleDetailWorkspace({
       { id: "stock_positions", label: t("detail.tabs.stockPositions") },
       { id: "reservations", label: t("detail.tabs.reservations") },
       { id: "purchase_history", label: t("article.sections.purchaseHistory") },
+      { id: "used_on", label: t("article.sections.usedOn") },
       { id: "equivalents", label: t("article.sections.equivalents") },
       { id: "repairable_history", label: t("article.sections.repairableHistory") },
       { id: "documents", label: t("article.sections.documents") },
@@ -689,6 +693,54 @@ export function ArticleDetailWorkspace({
                     </div>
                   ))}
                 </div>
+              )}
+            </SectionBody>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* ── USED ON (where-used list from the equipment parts lists) ── */}
+      {activeView === "used_on" ? (
+        <Card>
+          <CardContent className="space-y-3 pt-4">
+            <p className="text-sm text-text-muted">{t("article.usedOn.hint")}</p>
+            <SectionBody section={usedOn}>
+              {usedOn.data.length === 0 ? (
+                <p className="text-sm text-text-muted">{t("article.usedOn.empty")}</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-border text-left text-text-muted">
+                      <th className="py-2 pr-3 font-medium">
+                        {t("article.usedOn.columns.equipment")}
+                      </th>
+                      <th className="py-2 pr-3 text-right font-medium">
+                        {t("article.usedOn.columns.quantity")}
+                      </th>
+                      <th className="py-2 font-medium">{t("article.usedOn.columns.critical")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usedOn.data.map((u) => (
+                      <tr key={u.asset_id} className="border-b border-surface-border last:border-0">
+                        <td className="py-2 pr-3">
+                          <span className="font-medium">{u.asset_code}</span>{" "}
+                          <span className="text-text-secondary">{u.asset_name}</span>
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">
+                          {formatNumber(u.quantity)}
+                        </td>
+                        <td className="py-2">
+                          {u.is_critical_spare ? (
+                            <Badge variant="destructive">{t("article.usedOn.critical")}</Badge>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </SectionBody>
           </CardContent>
