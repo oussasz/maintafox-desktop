@@ -40,8 +40,8 @@
     "openHint": "Not closed, handed back, cancelled or expired",
     "activated": "Permits activated",
     "period30d": "Last 30 days",
-    "onTimeRate": "Handed back on time",
-    "onTimeHint": "{{onTime}} of {{activated}} activated permits, last 30 days"
+    "onTimeRate": "Hand-backs before expiry",
+    "onTimeHint": "{{onTime}} of the {{activated}} permits activated in the last 30 days were handed back before their expiry time"
   },
   "open": {
     "title": "Open permits (not expired)",
@@ -104,17 +104,25 @@
     "linkError": "This permit could not be opened"
   },
   "transition": {
-    "submitReview": "Submit for review",
-    "approve": "Approve",
-    "issue": "Issue",
-    "activate": "Activate",
+    "submitReview": "Submit for approval",
+    "approve": "Approve (second person)",
+    "issue": "Issue the permit to the team",
+    "activate": "Authorise work to start",
     "revalidate": "Request revalidation",
     "reinstate": "Reinstate",
     "close": "Close permit",
     "handBack": "Hand back",
     "cancel": "Cancel permit",
     "suspend": "Suspend",
-    "confirmCancel": "Cancel this permit? This cannot be undone."
+    "confirmCancel": "Cancel this permit? This cannot be undone.",
+    "keep": "Keep the permit",
+    "next": {
+      "pending_review": "Next step: the writer submits the permit; another person will review it.",
+      "approved": "Next step: a second person, who neither wrote nor submitted the permit, checks and approves it.",
+      "issued": "Next step: the approved permit is issued to the team who will do the work.",
+      "active": "Next step: once the isolations are applied and verified, work is authorised to start.",
+      "approvalChecking": "Checking the four-eyes rule…"
+    }
   },
   "gate": {
     "noIsolation": "This permit type requires at least one energy isolation before activation.",
@@ -136,9 +144,9 @@
     "apply": "Mark applied",
     "verify": "Verify",
     "verifyRemoval": "Verify removal",
-    "appliedBy": "Applied by {{name}}",
-    "verifiedBy": "Verified by {{name}}",
-    "removalVerifiedBy": "Removal verified by {{name}}",
+    "appliedBy": "Applied by {{name}} on {{date}}",
+    "verifiedBy": "Verified by {{name}} on {{date}}",
+    "removalVerifiedBy": "Removal verified by {{name}} on {{date}}",
     "twoPersonHint": "Two-person rule: the person who applied an isolation cannot verify it or its removal.",
     "selfBlocked": "You applied this isolation — another person must verify.",
     "state": {
@@ -215,8 +223,8 @@
   "handover": {
     "handedTo": "handed to",
     "rolesHint": "Pick the role of the person handing over and of the one receiving, from the plant's hand-over roles.",
-    "onlyWhenClosed": "The hand-over is recorded once the permit is closed.",
-    "title": "Handovers",
+    "onlyWhenClosed": "Once the permit is closed, record here the hand-back of the installation: who hands it back and who takes it over.",
+    "title": "Hand-back of the installation (after closing)",
     "empty": "No handover recorded.",
     "add": "Record handover",
     "from": "Handed from (role)",
@@ -253,7 +261,13 @@
     "expiresAt": "Expires at",
     "expiresHint": "Defaults to the permit type's maximum duration.",
     "submit": "Create permit",
-    "assetSearchError": "Asset search failed: {{message}}"
+    "assetSearchError": "Asset search failed: {{message}}",
+    "workOrderPick": "Work order covered by this permit",
+    "workOrderNone": "None (permit without a work order)",
+    "workOrderHint": "The chosen equipment's work orders that are still open.",
+    "workOrderChooseAsset": "Choose the equipment first.",
+    "workOrderEmpty": "No open work order on this equipment.",
+    "workOrderLoadError": "The equipment's work orders could not be read: {{message}}"
   },
   "edit": {
     "title": "Edit permit",

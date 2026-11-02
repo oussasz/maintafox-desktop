@@ -986,6 +986,7 @@ pub fn run() {
         commands::permit::create_work_permit,
         commands::permit::update_work_permit,
         commands::permit::set_work_permit_status,
+        commands::permit::check_work_permit_approval,
         commands::permit::list_permit_isolation_options,
         commands::permit::list_permit_isolations,
         commands::permit::upsert_permit_isolation,

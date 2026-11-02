@@ -46,6 +46,7 @@ import {
   recordLotoCardPrint,
   recordPermitIsolationRemoved,
   setWorkPermitStatus,
+  checkWorkPermitApproval,
   suspendWorkPermit,
   updateWorkPermit,
   upsertPermitIsolation,
@@ -88,6 +89,14 @@ interface PermitDetailPanelProps {
 /** Energy type and method are ids of the governed lists (`permit::energy_reference`). */
 const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
+/** Steps whose meaning is spelled out under the buttons (`transition.next.*`). */
+const NEXT_STEP_HINTS: ReadonlySet<string> = new Set([
+  "pending_review",
+  "approved",
+  "issued",
+  "active",
+]);
+
 export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps) {
   const { t, i18n } = useTranslation("permits");
   const typeName = usePermitTypeName();
@@ -128,6 +137,31 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   /** The forced removal whose worker is being recorded as told. */
   const [informFor, setInformFor] = useState<PermitIsolationRecord | null>(null);
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
+
+  /**
+   * Four-eyes for the session user, asked of the server without approving (L4-14): the approve
+   * step is greyed with the server's own reason instead of failing after the click. `undefined`
+   * while it is asked; the approval itself is checked again when made.
+   */
+  const [approvalRefusal, setApprovalRefusal] = useState<string | null | undefined>(null);
+  useEffect(() => {
+    if (permit.status !== "pending_review" || !canIssue) {
+      setApprovalRefusal(null);
+      return;
+    }
+    let cancelled = false;
+    setApprovalRefusal(undefined);
+    checkWorkPermitApproval(permit.id)
+      .then(() => {
+        if (!cancelled) setApprovalRefusal(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setApprovalRefusal(appErrorReason(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [permit.id, permit.status, permit.row_version, canIssue]);
 
   const fmt = (v: string | null) => (v ? formatDateTime(v, i18n.language) : t("detail.none"));
   /** Who did a step and when (four-eyes record); a person no longer readable is named as such. */
@@ -443,12 +477,19 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             const allowed = tr.permission === P.PTW_CLOSE ? canClose : canIssue;
             if (!allowed) return null;
             const blocker = blockerFor(tr.to);
+            const approvalBlocked = tr.to === "approved" && approvalRefusal !== null;
             return (
               <Button
                 key={tr.to}
                 size="sm"
-                disabled={busy || blocker != null}
-                title={blocker ? t(blocker) : undefined}
+                disabled={busy || blocker != null || approvalBlocked}
+                title={
+                  blocker
+                    ? t(blocker)
+                    : tr.to === "approved" && approvalRefusal !== null
+                      ? (approvalRefusal ?? t("transition.next.approvalChecking"))
+                      : undefined
+                }
                 onClick={() => void transition(tr.to)}
               >
                 {t(tr.labelKey)}
@@ -481,6 +522,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             {t(b)}
           </p>
         ))}
+        {transitions.some((tr) => tr.to === "approved") && canIssue && approvalRefusal ? (
+          <p className="text-xs text-tone-warning-fg" data-testid="permit-approval-refusal">
+            {approvalRefusal}
+          </p>
+        ) : null}
+        {/* What the next step means: the steps' names alone read alike (L4-14). */}
+        {transitions
+          .filter((tr) => (tr.permission === P.PTW_CLOSE ? canClose : canIssue))
+          .map((tr) =>
+            NEXT_STEP_HINTS.has(tr.to) ? (
+              <p key={`next-${tr.to}`} className="text-xs text-text-muted">
+                {t(`transition.next.${tr.to}` as never)}
+              </p>
+            ) : null,
+          )}
       </div>
 
       {error ? (
@@ -585,14 +641,27 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                   ) : null}
                   <div className="flex flex-wrap gap-x-4 text-xs text-text-muted">
                     {iso.applied_by_name ? (
-                      <span>{t("isolation.appliedBy", { name: iso.applied_by_name })}</span>
+                      <span>
+                        {t("isolation.appliedBy", {
+                          name: iso.applied_by_name,
+                          date: fmt(iso.applied_at),
+                        })}
+                      </span>
                     ) : null}
                     {iso.verified_by_name ? (
-                      <span>{t("isolation.verifiedBy", { name: iso.verified_by_name })}</span>
+                      <span>
+                        {t("isolation.verifiedBy", {
+                          name: iso.verified_by_name,
+                          date: fmt(iso.verified_at),
+                        })}
+                      </span>
                     ) : null}
                     {iso.removal_verified_by_name ? (
                       <span>
-                        {t("isolation.removalVerifiedBy", { name: iso.removal_verified_by_name })}
+                        {t("isolation.removalVerifiedBy", {
+                          name: iso.removal_verified_by_name,
+                          date: fmt(iso.removal_verified_at),
+                        })}
                       </span>
                     ) : null}
                     {iso.removed_at ? (
@@ -1103,6 +1172,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         title={t("transition.cancel")}
         description={t("transition.confirmCancel")}
         confirmLabel={t("transition.cancel")}
+        dismissLabel={t("transition.keep")}
         destructive
         onConfirm={async () => {
           const ok = await transition("cancelled");

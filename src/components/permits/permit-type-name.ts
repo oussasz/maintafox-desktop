@@ -29,6 +29,21 @@ export function shippedPermitTypeNameKey(
   return seeded !== undefined && storedName.trim() === seeded ? `types.shipped.${code}` : null;
 }
 
+/**
+ * Whether `text` is the seeded English text of a shipped type (its description was seeded with the
+ * same words as its name, "Hot work"): not shown, the translated name already says it.
+ */
+export function isSeededPermitTypeText(
+  code: string | null | undefined,
+  text: string | null | undefined,
+): boolean {
+  if (!code || text == null) return false;
+  const seeded = Object.prototype.hasOwnProperty.call(SEEDED_PERMIT_TYPE_NAMES, code)
+    ? SEEDED_PERMIT_TYPE_NAMES[code]
+    : undefined;
+  return seeded !== undefined && text.trim() === seeded;
+}
+
 /** Returns a function giving the name to show for a permit type (code + stored name). */
 export function usePermitTypeName(): (
   code: string | null | undefined,

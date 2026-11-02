@@ -7,6 +7,7 @@ import enPermits from "@/i18n/locale-data/en/permits.json";
 import frPermits from "@/i18n/locale-data/fr/permits.json";
 
 import {
+  isSeededPermitTypeText,
   SEEDED_PERMIT_TYPE_NAMES,
   shippedPermitTypeNameKey,
   usePermitTypeName,
@@ -69,5 +70,15 @@ describe("shipped permit type names", () => {
     expect(result.current("my_type", "Hot work")).toBe("Hot work");
     expect(shippedPermitTypeNameKey("toString", "Hot work")).toBeNull();
     expect(shippedPermitTypeNameKey(null, "Hot work")).toBeNull();
+  });
+});
+
+describe("isSeededPermitTypeText (L4-07)", () => {
+  it("recognises the seeded English description of a shipped type, never a plant's own text", () => {
+    expect(isSeededPermitTypeText("hot_work", "Hot work")).toBe(true);
+    expect(isSeededPermitTypeText("hot_work", " Hot work ")).toBe(true);
+    expect(isSeededPermitTypeText("hot_work", "Soudure sur la ligne 2")).toBe(false);
+    expect(isSeededPermitTypeText("plant_type", "Hot work")).toBe(false);
+    expect(isSeededPermitTypeText(null, "Hot work")).toBe(false);
   });
 });

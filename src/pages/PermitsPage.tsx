@@ -492,9 +492,10 @@ export function PermitsPage() {
                   hint={t("kpi.period30d")}
                   icon={CalendarCheck}
                 />
+                {/* The server sends a share (0 to 1); `formatPercent` takes a percentage. */}
                 <KpiTile
                   label={t("kpi.onTimeRate")}
-                  value={kpi30d?.rate != null ? formatPercent(kpi30d.rate) : "—"}
+                  value={kpi30d?.rate != null ? formatPercent(kpi30d.rate * 100) : "—"}
                   hint={
                     kpi30d
                       ? t("kpi.onTimeHint", {
