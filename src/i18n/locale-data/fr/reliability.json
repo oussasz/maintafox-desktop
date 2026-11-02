@@ -45,12 +45,12 @@
     "events": "Événements",
     "exposureTitle": "Provenance de l'exposition",
     "exposureSource": "Source d'exposition",
-    "exposureKu": "Facteur d'utilisation (K_u)",
+    "exposureKu": "Facteur d'utilisation",
     "exposureSchedule": "Classe horaire",
     "exposureLastWo": "Dernière clôture OT",
     "exposureFallback": "Raison du repli",
     "ramsScheduleField": "Classe horaire d'exploitation",
-    "ramsKuField": "Facteur d'utilisation (K_u)",
+    "ramsKuField": "Facteur d'utilisation",
     "noSnapshot": "Aucun instantané pour ce filtre. Lancez une analyse depuis le socle données ou actualisez.",
     "weibullTitle": "Courbe de fiabilité Weibull R(t)",
     "weibullHint": "Courbe R(t) = exp(−(t/η)^β) issue du dernier ajustement Weibull en heures d'exposition (MLE avec censure à droite).",
@@ -246,7 +246,7 @@
     "hint": "Taxonomie, exposition, jobs KPI et drill-throughs qualité.",
     "kpiRefresh": "Recalculer le snapshot KPI",
     "kpiRefreshing": "Recalcul en cours…",
-    "kpiRefreshDone": "Snapshot KPI recalculé ({{events}} événements, exposition {{hours}} h)."
+    "kpiRefreshDone": "Instantané des indicateurs recalculé ({{events}} événements, exposition {{hours}} h)."
   },
   "rcmLoop": {
     "openLogic": "Logique RCM",

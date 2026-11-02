@@ -211,9 +211,9 @@
       "unitCost": "Saisissez le coût unitaire (zéro ou plus)."
     },
     "cost": {
-      "entryHint": "Met à jour le coût unitaire moyen pondéré (CUMP) de cet emplacement (actuellement {{average}}). Vide : valorisé au CUMP actuel.",
-      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son CUMP.",
-      "valuedAtAverage": "Valorisé au CUMP de {{average}} ({{value}}).",
+      "entryHint": "Met à jour le coût unitaire moyen pondéré (CUMP) de cet emplacement (actuellement {{average}}). Vide : valorisé au coût moyen actuel.",
+      "entryHintNoAverage": "Cet emplacement n'a pas encore de coût : le coût saisi devient son coût moyen.",
+      "valuedAtAverage": "Valorisé au coût moyen de {{average}} ({{value}}).",
       "notValued": "Cet emplacement n'a pas encore de coût : le mouvement n'est pas valorisé."
     },
     "lots": {
@@ -265,7 +265,7 @@
       "available": "Disponible",
       "locations": "Emplacements",
       "movements30d": "Mouvements (30j)",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "sections": {
@@ -1274,9 +1274,9 @@
     "fields": {
       "manufacturerName": "Fabricant",
       "manufacturerPartNumber": "Référence fabricant",
-      "oemPartNumber": "Référence OEM",
+      "oemPartNumber": "Référence constructeur",
       "replenishmentPolicy": "Politique de réapprovisionnement",
-      "eoq": "QEC",
+      "eoq": "Quantité économique de commande",
       "moq": "Qté min commande",
       "maxOrder": "Qté max commande",
       "orderMultiple": "Multiple de commande",
@@ -1527,7 +1527,7 @@
       "available": "Disponible",
       "reorderPoint": "Point de commande",
       "status": "Statut",
-      "avgCost": "CUMP",
+      "avgCost": "Coût moyen",
       "stockValue": "Valeur du stock"
     },
     "belowReorder": "À commander",

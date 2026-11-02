@@ -52,7 +52,7 @@
         "mttr": "MTTR parc (h)",
         "availability": "Disponibilité opérationnelle parc (A_o)",
         "dataQuality": "Qualité des données",
-        "snapshots": "Snapshots",
+        "snapshots": "Instantanés",
         "failureEvents": "Événements de défaillance",
         "maintenanceCost": "Coût OT valorisé au budget"
       },

@@ -465,7 +465,7 @@
       "cost12m": "Coût de maintenance",
       "cost12mHint": "12 mois, équipements valorisés",
       "costRav": "Coût / valeur de remplacement",
-      "costRavHint": "Indicateur SMRP",
+      "costRavHint": "Indicateur standard de maintenance",
       "withoutRav": "Sans valeur de remplacement",
       "withoutRavHint": "À renseigner sur la fiche équipement"
     }
