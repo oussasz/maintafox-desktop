@@ -62,7 +62,7 @@
     "fromSafetyDi": "Set automatically: the originating request reported a safety risk."
   },
   "woPeople": {
-    "none": "Your account is not linked to a personnel record: ask the administrator to link it in Personnel so you can book your hours.",
+    "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
   },
   "page": {

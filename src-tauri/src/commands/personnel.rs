@@ -89,13 +89,13 @@ async fn skills_matrix_single_record_allowed(
 
 /// Who may see `per.sensitiveview` fields (contact, contract/HR data, pay rates, absence reasons):
 /// holders of the permission see every record; everyone else sees only their own record.
-struct SensitiveAccess {
+pub(crate) struct SensitiveAccess {
     has_permission: bool,
     own_personnel_id: Option<i64>,
 }
 
 impl SensitiveAccess {
-    async fn load(state: &State<'_, AppState>, user_id: i32) -> AppResult<Self> {
+    pub(crate) async fn load(state: &State<'_, AppState>, user_id: i32) -> AppResult<Self> {
         let has_permission = crate::auth::rbac::check_permission_cached(
             &state.db,
             &state.permission_cache,
@@ -115,7 +115,7 @@ impl SensitiveAccess {
         })
     }
 
-    fn can_view(&self, personnel_id: i64) -> bool {
+    pub(crate) fn can_view(&self, personnel_id: i64) -> bool {
         self.has_permission || self.own_personnel_id == Some(personnel_id)
     }
 }

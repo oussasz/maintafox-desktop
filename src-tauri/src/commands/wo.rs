@@ -1113,13 +1113,14 @@ pub async fn preview_wo_labor_rate(
 ) -> AppResult<labor::WoLaborRatePreview> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
-    if !can_see_staff_register(&state, &user).await? {
-        let own = crate::commands::qualification::linked_personnel_id(&state, user.user_id).await?;
-        if own != Some(personnel_id) {
-            return Err(AppError::PermissionDenied(
-                "Vous ne pouvez consulter que votre propre taux.".to_string(),
-            ));
-        }
+    // Pay rates follow the one sensitive-data rule (per.sensitiveview, or the person's own card).
+    if !crate::commands::personnel::SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(AppError::PermissionDenied(
+            "Vous ne pouvez consulter que votre propre taux.".to_string(),
+        ));
     }
     labor::preview_labor_rate(&state.db, personnel_id, &day).await
 }

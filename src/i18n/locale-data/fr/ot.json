@@ -62,7 +62,7 @@
     "fromSafetyDi": "Activé automatiquement : la demande d'origine signalait un risque sécurité."
   },
   "woPeople": {
-    "none": "Votre compte n'est relié à aucune fiche du personnel : demandez à l'administrateur de la relier dans Personnel pour pouvoir saisir vos heures.",
+    "none": "Aucune personne à proposer. Si vous ne voyez pas le registre du personnel, demandez à l'administrateur de relier votre compte à votre fiche dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
   "page": {

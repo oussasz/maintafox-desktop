@@ -381,6 +381,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           if (!cancelled) setLaborRate({ normal: rate.normal_rate, overtime: rate.overtime_rate });
         })
         .catch(() => {
+          // Refused (rates of other people are restricted): show no rate line rather than "no rate".
           if (!cancelled) setLaborRate(null);
         });
       return () => {
@@ -1945,10 +1946,10 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 />
                 {t("execution.laborDialog.overtime")}
               </label>
-              {laborTechId ? (
+              {laborTechId && laborRate ? (
                 <p className="text-xs text-muted-foreground">
                   {(() => {
-                    const rate = laborOvertime ? laborRate?.overtime : laborRate?.normal;
+                    const rate = laborOvertime ? laborRate.overtime : laborRate.normal;
                     return rate != null
                       ? t("execution.laborDialog.rateShown", { rate: formatCurrency(rate) })
                       : t("execution.laborDialog.rateUnknown");
