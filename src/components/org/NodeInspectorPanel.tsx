@@ -34,7 +34,11 @@ import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { MoveNodeDialog } from "@/components/org/MoveNodeDialog";
 import { OrgStructureDraftDialog } from "@/components/org/OrgStructureDraftDialog";
 import { ResponsibilityAssignDialog } from "@/components/org/ResponsibilityAssignDialog";
-import { orgNodePathLabel, orgNodeStatusLabel } from "@/components/org/org-display";
+import {
+  isTechnicalRootCode,
+  orgNodePathLabel,
+  orgNodeStatusLabel,
+} from "@/components/org/org-display";
 import { useResponsibilityTypes } from "@/components/org/use-responsibility-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -369,7 +373,9 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
       {/* Header */}
       <div className="p-4 border-b border-surface-border">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-text-muted">{selectedRow.code}</span>
+          {!isTechnicalRootCode(selectedRow) && (
+            <span className="font-mono text-xs text-text-muted">{selectedRow.code}</span>
+          )}
           <StatusChip
             label={orgNodeStatusLabel(t, selectedRow.status)}
             tone={toneOf(ORG_NODE_STATUS_TONE, selectedRow.status)}

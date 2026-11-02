@@ -90,12 +90,10 @@
     "noResults": "No nodes match your search",
     "emptyTree": "No nodes in this model",
     "childCount": "Child count",
-    "children": "children",
     "responsibilityCount": "Active responsibilities",
     "resp": "resp.",
     "bindingCount": "Active bindings",
-    "bindings": "bindings",
-    "manageTypes": "Manage Types",
+    "manageTypes": "Manage levels",
     "manageTypesNoDraftHint": "Create a draft and switch to Draft (editing) mode first.",
     "manageTypesReadOnlyHint": "Switch to Draft (editing) mode to change node types.",
     "manageHierarchyRules": "Hierarchy rules",
@@ -127,7 +125,7 @@
       "capabilitiesLabel": "Capabilities",
       "noCaps": "No capabilities assigned",
       "noResponsibilities": "No active responsibilities",
-      "noBindings": "No external bindings",
+      "noBindings": "No external link. A link keeps the match between this unit and its code in another system (ERP, accounting, former CMMS). Nothing to do here if you don't use one.",
       "noEquipment": "No equipment assigned to this node",
       "equipSearchPlaceholder": "Search equipment to assign…",
       "searching": "Searching…",
@@ -173,7 +171,11 @@
     "loading": "Loading the organization…",
     "expandUnit": "Show the sub-units of {{name}}",
     "collapseUnit": "Hide the sub-units of {{name}}",
-    "refreshFailed": "The structure could not be refreshed — the tree shown may be out of date"
+    "refreshFailed": "The structure could not be refreshed — the tree shown may be out of date",
+    "childrenCount_one": "{{n}} sub-unit",
+    "childrenCount_other": "{{n}} sub-units",
+    "bindingsCount_one": "{{n}} link",
+    "bindingsCount_other": "{{n}} links"
   },
   "nodeTypes": {
     "title": "Node Type Manager",
@@ -217,7 +219,8 @@
     "deactivate": "Deactivate type",
     "deactivateNamed": "Deactivate type {{label}}",
     "deactivateConfirmTitle": "Deactivate this node type?",
-    "deactivateConfirmBody": "The type \"{{label}}\" can no longer be chosen for new nodes in this draft. No node uses it today."
+    "deactivateConfirmBody": "The type \"{{label}}\" can no longer be chosen for new nodes in this draft. No node uses it today.",
+    "structureHint": "Need a “Zone” level? Add it here, then allow it in “Hierarchy rules”. Teams are managed in Personnel › Teams; the cost centre is entered on each unit of a level marked “Costs”."
   },
   "export": {
     "title": "Export",
@@ -372,11 +375,11 @@
     "retryValidation": "Run the check again"
   },
   "capabilities": {
-    "asset": "ASSET",
-    "work": "WORK",
-    "cost": "COST",
-    "kpi": "KPI",
-    "permit": "PERMIT",
+    "asset": "Equipment",
+    "work": "Work",
+    "cost": "Costs",
+    "kpi": "Indicators",
+    "permit": "Permits",
     "long": {
       "asset": "Hosts equipment",
       "work": "Owns work",

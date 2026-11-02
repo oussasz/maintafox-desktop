@@ -113,8 +113,14 @@ fn server_refusal(status: u16, body: &str) -> AppError {
                 code = code.as_str(),
                 "mobile enrolment: licence server refused the call"
             );
+            // The screens say what to check by kind of refusal (UX fix list L5-15).
+            let kind = match status {
+                401 | 403 => "MOBILE_ENROL_SERVER_PC_REFUSED",
+                500..=599 => "MOBILE_ENROL_SERVER_FAULT",
+                _ => "MOBILE_ENROL_SERVER_REFUSED",
+            };
             refused(
-                "MOBILE_ENROL_SERVER_REFUSED",
+                kind,
                 &format!("The licence server refused the request (HTTP {status} {code})."),
             )
         }
@@ -1880,7 +1886,10 @@ mod tests {
         assert!(code(403, r#"{"error":"mobile_not_licensed"}"#).contains("MOBILE_ENROL_NOT_LICENSED"));
         assert!(code(409, r#"{"error":"slot_limit_reached"}"#).contains("MOBILE_ENROL_NO_FREE_SLOT"));
         assert!(code(404, r#"{"error":"device_not_found"}"#).contains("MOBILE_ENROL_NOT_FOUND"));
-        assert!(code(500, "not json").contains("MOBILE_ENROL_SERVER_REFUSED"));
+        assert!(code(500, "not json").contains("MOBILE_ENROL_SERVER_FAULT"));
+        assert!(code(401, "{}").contains("MOBILE_ENROL_SERVER_PC_REFUSED"));
+        assert!(code(403, r#"{"error":"other"}"#).contains("MOBILE_ENROL_SERVER_PC_REFUSED"));
+        assert!(code(400, r#"{"error":"bad_request"}"#).contains("MOBILE_ENROL_SERVER_REFUSED"));
         assert!(has_code(
             &server_refusal(404, r#"{"error":"enrolment_not_found"}"#),
             NOT_FOUND
