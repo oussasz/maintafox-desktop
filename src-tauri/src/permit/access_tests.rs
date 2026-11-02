@@ -348,6 +348,53 @@ async fn a_site_user_lists_their_sites_permits_only_and_is_told_how_many_are_hid
     assert_eq!(ids(&unscoped), ids(&plant_page));
 }
 
+/// L4-08: an open permit past its expiry leaves the open report for the overdue one (isolations
+/// possibly still in place), in the reader's scope only; a handed-back permit is in neither.
+#[tokio::test]
+async fn an_expired_open_permit_is_reported_overdue_in_the_users_sites_only() {
+    let f = fixture().await;
+    let site_scope = scope::access_scope(&f.db, f.site, PTW_VIEW).await.expect("scope");
+    let p_a = activate(&f.db, f.p_a.clone()).await;
+    let p_b = activate(&f.db, f.p_b.clone()).await;
+    let none_before = queries::list_overdue_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("overdue");
+    assert!(none_before.items.is_empty(), "nothing is overdue before the expiry");
+
+    for id in [p_a.id, p_b.id] {
+        exec(
+            &f.db,
+            &format!("UPDATE work_permits SET expires_at = '2000-01-01T00:00:00Z' WHERE id = {id}"),
+        )
+        .await;
+    }
+    let overdue = queries::list_overdue_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("overdue");
+    assert_eq!(ids(&overdue), vec![p_a.id], "site A's expired permit only");
+    assert_eq!(
+        overdue.hidden_outside_scope, 1,
+        "site B's expired permit is counted, not shown"
+    );
+    let open = queries::list_open_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("open");
+    assert!(
+        !ids(&open).contains(&p_a.id),
+        "an expired permit is not counted as open"
+    );
+
+    exec(
+        &f.db,
+        &format!("UPDATE work_permits SET status = 'handed_back' WHERE id = {}", p_a.id),
+    )
+    .await;
+    let after = queries::list_overdue_permits_report_in_scope(&f.db, &site_scope)
+        .await
+        .expect("overdue");
+    assert!(after.items.is_empty(), "a handed-back permit is no longer overdue");
+}
+
 #[tokio::test]
 async fn the_open_permits_report_and_the_compliance_figure_cover_the_users_sites_only() {
     let f = fixture().await;

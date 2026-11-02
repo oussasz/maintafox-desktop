@@ -41,7 +41,14 @@
     "activated": "Permits activated",
     "period30d": "Last 30 days",
     "onTimeRate": "Hand-backs before expiry",
+    "overdue": "Expired permits, isolation in place",
+    "overdueHint": "Open permits past their expiry time: stop the work, remove the locks, close and hand back.",
     "onTimeHint": "{{onTime}} of the {{activated}} permits activated in the last 30 days were handed back before their expiry time"
+  },
+  "overdue": {
+    "chip": "Expired",
+    "title": "Permit expired — isolation still in place",
+    "body": "The expiry time ({{date}}) has passed: this permit no longer covers the work. Stop it, have every lock removed and verified, then close the permit and hand it back."
   },
   "open": {
     "title": "Open permits (not expired)",
