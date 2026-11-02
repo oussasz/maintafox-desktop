@@ -67,7 +67,7 @@ describe("PersonQualificationSheet with training outside the licence (L4-01)", (
         proficiency_level: 3,
         valid_to: null,
         is_primary: false,
-        is_validated: true,
+        is_validated: false,
         verified_by_name: null,
         verified_at: null,
       },
@@ -80,6 +80,8 @@ describe("PersonQualificationSheet with training outside the licence (L4-01)", (
     expect(await screen.findByText("Soudure")).toBeInTheDocument();
     expect(screen.getByTestId("licence-module-off")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "sheet.recordCertification" })).toBeNull();
+    // Validating a skill is a training right (trn.certify): not offered while training is off.
+    expect(screen.queryByRole("button", { name: "sheet.validate" })).toBeNull();
     expect(qual.listCertificationTypes).not.toHaveBeenCalled();
     expect(qual.listPersonnelCertifications).not.toHaveBeenCalled();
   });

@@ -124,7 +124,8 @@ export function PersonQualificationSheet({
   const canCertify = can(P.TRN_CERTIFY) && canReadCerts;
   // Validating a skill is `upsert_personnel_skill` (per.manage + trn.certify): no trn.view.
   const canManageSkills = can(P.PER_MANAGE);
-  const canValidateSkills = canManageSkills && can(P.TRN_CERTIFY);
+  // trn.certify is a training right: refused by the server while training is outside the licence.
+  const canValidateSkills = canManageSkills && can(P.TRN_CERTIFY) && trainingLicence.licensed;
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
   const [certs, setCerts] = useState<PersonnelCertification[]>([]);
