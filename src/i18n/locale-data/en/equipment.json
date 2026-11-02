@@ -489,8 +489,10 @@
       "description": "Select a CSV file containing the equipment records to import.",
       "hint": "Drag a CSV file here or click to browse.",
       "selectFile": "Choose File",
+      "templateSaved": "Template saved",
+      "templateFailed": "The template could not be saved",
       "template": "Download the template (Excel/CSV)",
-      "columnsHelp": "Expected columns: {{columns}}. The \";\" (French Excel) or \",\" separator is detected automatically."
+      "columnsHelp": "Columns: {{columns}}. Required: code_equipement, nom, classe, criticite, statut (class, family, criticality and status use the codes of Reference data). The \";\" (French Excel) or \",\" separator is detected automatically."
     },
     "validate": {
       "title": "Data Validation",
@@ -511,6 +513,7 @@
         "messages": "Messages"
       },
       "includeWarnings": "Include rows with warnings",
+      "onlyWarnings": "Only rows with warnings are available: tick \"Include rows with warnings\" to import them, or fix the file.",
       "nothingToImport": "No row can be imported: fix the file following the messages above, then run the import again."
     },
     "apply": {

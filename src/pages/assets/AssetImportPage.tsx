@@ -45,7 +45,10 @@ import {
 } from "@/components/ui/table";
 import type { Tone } from "@/design-system/tone";
 import { saveCsvWithDialog } from "@/export/csv";
+import { isExportCancelled } from "@/export/types";
+import { appErrorReason } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
+import { pushAppToast } from "@/store/app-toast-store";
 import { useAssetImportStore, type ImportStep } from "@/stores/asset-import-store";
 
 // ── Template (French column names; the importer also reads the English ones) ──
@@ -58,26 +61,10 @@ const ASSET_TEMPLATE_HEADER = [
   "famille",
   "criticite",
   "statut",
-  "emplacement",
-  "parent",
   "fabricant",
   "modele",
   "numero_serie",
   "date_mise_en_service",
-];
-const ASSET_TEMPLATE_EXAMPLE = [
-  "POMPE-001",
-  "Pompe de circulation",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
 ];
 
 // ── Step indicator ────────────────────────────────────────────────────────────
@@ -152,6 +139,24 @@ function UploadStep() {
   const uploadAndCreateBatch = useAssetImportStore((s) => s.uploadAndCreateBatch);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const downloadTemplate = useCallback(async () => {
+    try {
+      const path = await saveCsvWithDialog(ASSET_TEMPLATE_FILE, ASSET_TEMPLATE_HEADER, []);
+      pushAppToast({
+        title: t("import.upload.templateSaved"),
+        description: path,
+        variant: "success",
+      });
+    } catch (err) {
+      if (isExportCancelled(err)) return;
+      pushAppToast({
+        title: t("import.upload.templateFailed"),
+        description: appErrorReason(err),
+        variant: "destructive",
+      });
+    }
+  }, [t]);
+
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -188,11 +193,7 @@ function UploadStep() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              void saveCsvWithDialog(ASSET_TEMPLATE_FILE, ASSET_TEMPLATE_HEADER, [
-                ASSET_TEMPLATE_EXAMPLE,
-              ])
-            }
+            onClick={() => void downloadTemplate()}
             data-testid="template-button"
           >
             <Download className="mr-2 h-4 w-4" />
@@ -414,7 +415,9 @@ function PreviewStep() {
         )}
         {batch?.status === "validated" && importable === 0 && (
           <p className="text-sm text-tone-warning-fg" data-testid="nothing-to-import">
-            {t("import.preview.nothingToImport")}
+            {(batch.warning_rows ?? 0) > 0 && !includeWarnings
+              ? t("import.preview.onlyWarnings")
+              : t("import.preview.nothingToImport")}
           </p>
         )}
       </CardContent>

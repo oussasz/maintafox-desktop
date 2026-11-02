@@ -191,12 +191,14 @@ pub(crate) fn detect_csv_delimiter(bytes: &[u8]) -> u8 {
             }
         }
     }
-    counts
-        .iter()
-        .filter(|(_, n)| *n > 0)
-        .max_by_key(|(_, n)| *n)
-        .map(|(sep, _)| *sep)
-        .unwrap_or(b',')
+    // Strict ">" keeps the earlier entry on a tie, so ";" wins over "," (French Excel).
+    let mut best = (b',', 0usize);
+    for (sep, n) in counts {
+        if n > best.1 {
+            best = (sep, n);
+        }
+    }
+    best.0
 }
 
 // ─── CSV field normalization ──────────────────────────────────────────────────

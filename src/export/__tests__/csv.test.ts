@@ -16,5 +16,10 @@ describe("buildCsv", () => {
 
   it("defuses formulas typed into text cells", () => {
     expect(buildCsv(["x"], [["=SUM(A1)"]])).toBe("x\r\n'=SUM(A1)");
+    expect(buildCsv(["x"], [["-2+3"]])).toBe("x\r\n'-2+3");
+  });
+
+  it("keeps negative numbers as numbers", () => {
+    expect(buildCsv(["x"], [[-5]])).toBe("x\r\n-5");
   });
 });

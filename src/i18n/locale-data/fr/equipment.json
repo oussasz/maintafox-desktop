@@ -489,8 +489,10 @@
       "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
       "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
       "selectFile": "Choisir un fichier",
+      "templateSaved": "Modèle enregistré",
+      "templateFailed": "Le modèle n'a pas pu être enregistré",
       "template": "Télécharger le modèle (Excel/CSV)",
-      "columnsHelp": "Colonnes attendues : {{columns}}. Le séparateur « ; » (Excel français) ou « , » est reconnu automatiquement."
+      "columnsHelp": "Colonnes : {{columns}}. Obligatoires : code_equipement, nom, classe, criticite, statut (classe, famille, criticite et statut reprennent les codes de Données de référence). Le séparateur « ; » (Excel français) ou « , » est reconnu automatiquement."
     },
     "validate": {
       "title": "Validation des données",
@@ -511,6 +513,7 @@
         "messages": "Messages"
       },
       "includeWarnings": "Inclure les lignes avec avertissements",
+      "onlyWarnings": "Seules des lignes avec avertissement sont disponibles : cochez « Inclure les lignes avec avertissements » pour les importer, ou corrigez le fichier.",
       "nothingToImport": "Aucune ligne ne peut être importée : corrigez le fichier selon les messages ci-dessus, puis relancez l'import."
     },
     "apply": {
