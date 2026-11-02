@@ -33,6 +33,7 @@ import {
 import { WorkCalendarPanel } from "@/components/personnel/WorkCalendarPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
+import { positionLabels } from "@/components/personnel/position-label";
 import { usePersonnelLists } from "@/components/personnel/use-personnel-lists";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
@@ -255,6 +256,7 @@ export function PersonnelPage() {
 
   const entityValue = filter.entity_id != null ? String(filter.entity_id) : null;
   const positionValue = filter.position_id != null ? String(filter.position_id) : null;
+  const positionLabelById = useMemo(() => positionLabels(positions), [positions]);
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -277,7 +279,7 @@ export function PersonnelPage() {
               label: t("filters.position"),
               options: positions.map((p) => ({
                 value: String(p.id),
-                label: p.name,
+                label: positionLabelById.get(p.id) ?? p.name,
               })),
               value: positionValue,
               onChange: handlePositionFilter,
@@ -339,6 +341,7 @@ export function PersonnelPage() {
       canViewPositions,
       entityNodes,
       positions,
+      positionLabelById,
       entityValue,
       positionValue,
       selectedStatuses,

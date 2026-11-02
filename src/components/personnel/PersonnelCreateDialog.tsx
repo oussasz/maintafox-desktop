@@ -85,6 +85,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function PersonnelCreateDialog() {
   const { t } = useTranslation("personnel");
+  const { t: tTraining } = useTranslation("training");
   const { currencyCode } = useFormatters();
   const { toast } = useToast();
   const { can } = usePermissions();
@@ -387,21 +388,23 @@ export function PersonnelCreateDialog() {
               })),
           ];
         });
-        setCerts((prev) => {
-          const have = new Set(prev.map((c) => c.certTypeId));
-          return [
-            ...prev,
-            ...seed.certification_type_ids
-              .filter((certId) => !have.has(certId))
-              .map((certId) => ({ key: nextKey(), certTypeId: certId })),
-          ];
-        });
+        // Certifications belong to the training module: not seeded (nor sent) when it is not licensed.
+        if (trainingLicensed)
+          setCerts((prev) => {
+            const have = new Set(prev.map((c) => c.certTypeId));
+            return [
+              ...prev,
+              ...seed.certification_type_ids
+                .filter((certId) => !have.has(certId))
+                .map((certId) => ({ key: nextKey(), certTypeId: certId })),
+            ];
+          });
       } catch (err) {
         // Said, not swallowed: the form still works, the requirements are added by hand.
         setLocalError(t("create.positionSeedFailed", { msg: appErrorReason(err) }));
       }
     },
-    [t],
+    [t, trainingLicensed],
   );
 
   // ── Photo picker ──────────────────────────────────────────────────────────
@@ -503,7 +506,7 @@ export function PersonnelCreateDialog() {
         source_type: s.sourceType,
       }));
 
-    const certDrafts: PersonnelCertDraft[] = certs
+    const certDrafts: PersonnelCertDraft[] = (trainingLicensed ? certs : [])
       .filter((c): c is typeof c & { certTypeId: number } => c.certTypeId !== null)
       .map((c) => ({ certification_type_id: c.certTypeId }));
 
@@ -943,7 +946,7 @@ export function PersonnelCreateDialog() {
                         >
                           {[1, 2, 3, 4, 5].map((lvl) => (
                             <option key={lvl} value={lvl}>
-                              {t(`level.${lvl}`, { ns: "training" })}
+                              {tTraining(`level.${lvl}`)}
                             </option>
                           ))}
                         </select>
