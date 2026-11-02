@@ -350,6 +350,15 @@
     "lateBooked_other": "Late costs settled on {{count}} work orders.",
     "lateNone": "No late cost to settle."
   },
+  "compare": {
+    "title": "Compare two versions",
+    "hint": "Pick two versions of the year: amounts are added up per cost centre and category.",
+    "versionA": "Version A",
+    "versionB": "Version B",
+    "choose": "Choose a version",
+    "gap": "Gap (B − A)",
+    "total": "Total"
+  },
   "planning": {
     "sameScenarioExists": "{{count}} \"{{scenario}}\" version is already open for {{year}}. A second one is rarely intended: check before creating.",
     "confirmMoveTitle": "{{action}} this version?",
