@@ -21,8 +21,10 @@ import { QualificationMatrixView } from "@/components/personnel/qualification/Qu
 import { QualificationRequirementsPanel } from "@/components/personnel/qualification/QualificationRequirementsPanel";
 import { TrainingSessionsPanel } from "@/components/personnel/qualification/TrainingSessionsPanel";
 import { useQualificationLookups } from "@/components/personnel/qualification/use-qualification-lookups";
-import { ErrorState } from "@/components/ui/data-state";
+import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { LicenceModuleOffNote } from "@/components/ui/licence-module-off-note";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useModuleLicensed } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -36,6 +38,26 @@ type TrainingTab =
   | "mine";
 
 export function TrainingPage() {
+  const { t } = useTranslation("training");
+  // Outside the licence the screen says so once and asks the server for none of its lists
+  // (each refused list used to show "Permission refusée", even to an administrator).
+  const licence = useModuleLicensed(P.TRN_VIEW);
+  if (licence.loading || !licence.licensed) {
+    return (
+      <ModulePageShell
+        icon={GraduationCap}
+        title={t("page.title")}
+        description={t("page.description")}
+        bodyClassName="space-y-4 overflow-auto p-4"
+      >
+        {licence.loading ? <LoadingState /> : <LicenceModuleOffNote permission={P.TRN_VIEW} />}
+      </ModulePageShell>
+    );
+  }
+  return <TrainingWorkspace />;
+}
+
+function TrainingWorkspace() {
   const { t } = useTranslation("training");
   const { can } = usePermissions();
   const canView = can(P.TRN_VIEW);

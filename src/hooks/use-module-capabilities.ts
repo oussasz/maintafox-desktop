@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { capabilityMapForClaimEdition } from "@/lib/edition-capability-catalog";
-import { parseCapabilityMap } from "@/lib/module-capability";
+import { isModuleCapabilityAllowed, parseCapabilityMap } from "@/lib/module-capability";
 import { ENTITLEMENTS_UPDATED_EVENT, getEntitlementSummary } from "@/services/entitlement-service";
 import { getProductLicenseOnboardingState } from "@/services/product-license-service";
 
@@ -49,4 +49,14 @@ export function useModuleCapabilities(): {
   }, [reloadToken]);
 
   return { capabilityMap, loading };
+}
+
+/**
+ * Whether the licence includes the module behind `permission` (same rule as the menu,
+ * `isModuleCapabilityAllowed`). `loading` while the licence is read: callers wait rather than
+ * ask the server for lists of a module that may be off.
+ */
+export function useModuleLicensed(permission: string): { licensed: boolean; loading: boolean } {
+  const { capabilityMap, loading } = useModuleCapabilities();
+  return { licensed: isModuleCapabilityAllowed(capabilityMap, permission), loading };
 }
