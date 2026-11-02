@@ -64,7 +64,8 @@ export async function updateMyProfile(input: UpdateProfileInput): Promise<UserPr
 }
 
 export async function changePassword(input: ChangePasswordInput): Promise<void> {
-  await invoke<void>("change_password", { payload: input });
+  // The profile form shows the reason in the field: no global toast.
+  await invoke<void>("change_password", { payload: input }, { notifyOnError: false });
 }
 
 export async function getSessionHistory(limit?: number): Promise<SessionHistoryEntry[]> {

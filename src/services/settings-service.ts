@@ -246,7 +246,12 @@ const PolicyTestResultSchema = z.object({
  * Requires `adm.settings` permission.
  */
 export async function savePolicyDraft(payload: SavePolicyDraftPayload): Promise<PolicySnapshot> {
-  const raw = await invoke<PolicySnapshot>("save_policy_draft", { payload });
+  // The policy panel shows the failure itself (title + reason): no global toast.
+  const raw = await invoke<PolicySnapshot>(
+    "save_policy_draft",
+    { payload },
+    { notifyOnError: false },
+  );
   return PolicySnapshotSchema.parse(raw);
 }
 
@@ -256,7 +261,11 @@ export async function savePolicyDraft(payload: SavePolicyDraftPayload): Promise<
  * Requires `adm.settings` permission.
  */
 export async function testPolicyDraft(domain: string): Promise<PolicyTestResult[]> {
-  const raw = await invoke<PolicyTestResult[]>("test_policy_draft", { domain });
+  const raw = await invoke<PolicyTestResult[]>(
+    "test_policy_draft",
+    { domain },
+    { notifyOnError: false },
+  );
   return z.array(PolicyTestResultSchema).parse(raw);
 }
 
@@ -266,7 +275,11 @@ export async function testPolicyDraft(domain: string): Promise<PolicyTestResult[
  * Requires `adm.settings` permission.
  */
 export async function activatePolicy(payload: ActivatePolicyPayload): Promise<PolicySnapshot> {
-  const raw = await invoke<PolicySnapshot>("activate_policy", { payload });
+  const raw = await invoke<PolicySnapshot>(
+    "activate_policy",
+    { payload },
+    { notifyOnError: false },
+  );
   return PolicySnapshotSchema.parse(raw);
 }
 
@@ -275,7 +288,7 @@ export async function activatePolicy(payload: ActivatePolicyPayload): Promise<Po
  * Requires `adm.settings` permission.
  */
 export async function discardPolicyDraft(domain: string): Promise<void> {
-  await invoke<void>("discard_policy_draft", { domain });
+  await invoke<void>("discard_policy_draft", { domain }, { notifyOnError: false });
 }
 
 /**
@@ -394,7 +407,8 @@ export type SiteSettingEvent = z.infer<typeof SiteSettingEventSchema>;
 
 /** A per-site rule at every planning site. */
 export async function listSiteSettings(key: string): Promise<SiteSettingView[]> {
-  const raw = await invoke<unknown>("list_site_settings", { key });
+  // The rules panel shows a failed read inline: no global toast.
+  const raw = await invoke<unknown>("list_site_settings", { key }, { notifyOnError: false });
   return z.array(SiteSettingViewSchema).parse(raw);
 }
 
@@ -418,6 +432,10 @@ export async function listSiteSettingEvents(
   siteNodeId: number,
   key: string,
 ): Promise<SiteSettingEvent[]> {
-  const raw = await invoke<unknown>("list_site_setting_events", { siteNodeId, key });
+  const raw = await invoke<unknown>(
+    "list_site_setting_events",
+    { siteNodeId, key },
+    { notifyOnError: false },
+  );
   return z.array(SiteSettingEventSchema).parse(raw);
 }

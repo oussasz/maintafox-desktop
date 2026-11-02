@@ -70,9 +70,11 @@ describe("user administration", () => {
   it("sends the list filter and defaults the fields an older backend does not send", async () => {
     ipc.invoke.mockResolvedValueOnce([userRow]);
     const users = await listUsers({ status: "locked", role_id: 2, org_node_id: 12 });
-    expect(ipc.invoke).toHaveBeenCalledWith("list_users", {
-      filter: { status: "locked", role_id: 2, org_node_id: 12 },
-    });
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      "list_users",
+      { filter: { status: "locked", role_id: 2, org_node_id: 12 } },
+      { notifyOnError: false },
+    );
     expect(users[0]?.is_locked).toBe(false);
     expect(users[0]?.last_login_at).toBeNull();
     expect(users[0]?.roles[0]?.scope_label).toBeNull();
