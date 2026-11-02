@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { describeAppError } from "@/lib/app-error";
+import { roleLabel } from "@/lib/role-labels";
 import {
   createDelegationPolicy,
   deleteDelegationPolicy,
@@ -215,7 +216,9 @@ export function DelegationManagerPanel() {
       {
         accessorKey: "admin_role_name",
         header: t("delegation.columns.adminRole", "Admin Role"),
-        cell: ({ row }) => <span className="font-medium">{row.original.admin_role_name}</span>,
+        cell: ({ row }) => (
+          <span className="font-medium">{roleLabel(t, row.original.admin_role_name)}</span>
+        ),
       },
       {
         id: "scope",
@@ -361,7 +364,7 @@ export function DelegationManagerPanel() {
                 <SelectContent>
                   {nonSystemRoles.map((r) => (
                     <SelectItem key={r.id} value={String(r.id)}>
-                      {r.name}
+                      {roleLabel(t, r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -431,7 +434,7 @@ export function DelegationManagerPanel() {
           <DialogHeader>
             <DialogTitle>{t("delegation.editTitle", "Edit Delegation Policy")}</DialogTitle>
             <DialogDescription>
-              {editTarget?.admin_role_name} —{" "}
+              {editTarget ? roleLabel(t, editTarget.admin_role_name) : ""} —{" "}
               {t(`delegation.scopeTypes.${editTarget?.managed_scope_type ?? "tenant"}`)}
             </DialogDescription>
           </DialogHeader>
@@ -469,7 +472,8 @@ export function DelegationManagerPanel() {
             <DialogDescription>{t("delegation.deleteConfirmDesc")}</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-text-secondary">
-            {deleteTarget?.admin_role_name} — {deleteTarget?.allowed_domains.join(", ")}
+            {deleteTarget ? roleLabel(t, deleteTarget.admin_role_name) : ""} —{" "}
+            {deleteTarget?.allowed_domains.join(", ")}
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>

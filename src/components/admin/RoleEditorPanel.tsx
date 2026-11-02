@@ -41,6 +41,7 @@ import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
+import { isShippedRole, useRoleText, withoutFormerRoles } from "@/lib/role-labels";
 import { cn } from "@/lib/utils";
 import {
   cloneRole,
@@ -227,15 +228,17 @@ function CloneRoleDialog({
   withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
 }) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!source) return;
-    setName(t("console.roleEditor.copyName", { name: source.name }));
-    setDescription(source.description ?? "");
-  }, [source, t]);
+    // A copy of a shipped role starts from its shown name and description, never the internal key.
+    setName(t("console.roleEditor.copyName", { name: roleText.label(source.name) }));
+    setDescription(roleText.description(source.name, source.description) ?? "");
+  }, [source, t, roleText]);
 
   const submit = async () => {
     if (!source || !name.trim()) return;
@@ -262,7 +265,9 @@ function CloneRoleDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t("console.roleEditor.cloneTitle", { name: source?.name ?? "" })}
+            {t("console.roleEditor.cloneTitle", {
+              name: source ? roleText.label(source.name) : "",
+            })}
           </DialogTitle>
           <DialogDescription>
             {t("console.roleEditor.cloneBody", { count: source?.permissions.length ?? 0 })}
@@ -312,6 +317,7 @@ function CompareRolesDialog({
   const { t } = useTranslation("admin");
   const moduleLabel = useModuleLabel();
   const text = usePermissionText();
+  const roleText = useRoleText();
   const shown = useMemo(
     () => new Map((catalog?.permissions ?? []).map((p) => [p.name, p.description] as const)),
     [catalog],
@@ -342,7 +348,7 @@ function CompareRolesDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {t("console.roleEditor.compareTitle", { name: base?.name ?? "" })}
+            {t("console.roleEditor.compareTitle", { name: base ? roleText.label(base.name) : "" })}
           </DialogTitle>
           <DialogDescription>{t("console.roleEditor.compareBody")}</DialogDescription>
         </DialogHeader>
@@ -357,7 +363,7 @@ function CompareRolesDialog({
                 .filter((r) => r.id !== base?.id)
                 .map((r) => (
                   <SelectItem key={r.id} value={String(r.id)}>
-                    {r.name}
+                    {roleText.label(r.name)}
                   </SelectItem>
                 ))}
             </SelectContent>
@@ -369,11 +375,11 @@ function CompareRolesDialog({
               <tr>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.module")}</th>
                 <th className="py-1.5 pr-2 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: base.name })}
+                  {t("console.roleEditor.onlyIn", { name: roleText.label(base.name) })}
                 </th>
                 <th className="py-1.5 pr-2 font-medium">{t("console.roleEditor.common")}</th>
                 <th className="py-1.5 font-medium">
-                  {t("console.roleEditor.onlyIn", { name: other.name })}
+                  {t("console.roleEditor.onlyIn", { name: roleText.label(other.name) })}
                 </th>
               </tr>
             </thead>
@@ -722,6 +728,12 @@ export function RoleEditorPanel() {
     ? selected.permissions.filter((p) => !catalogDescriptions.has(p)).length
     : 0;
   const holderCount = selected ? (holders.get(selected.id) ?? 0) : 0;
+  const roleText = useRoleText();
+  /** A former shipped role stays out of the list unless it is the one open (L5-03). */
+  const listedRoles = useMemo(() => withoutFormerRoles(roles, selectedId), [roles, selectedId]);
+  const selectedLabel = selected ? roleText.label(selected.name) : "";
+  /** A shipped role is described by the application (translated), not by its stored text. */
+  const shipped = selected ? isShippedRole(selected.name) : false;
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -745,7 +757,7 @@ export function RoleEditorPanel() {
           />
         ) : null}
         <ul className="space-y-1">
-          {roles.map((role) => (
+          {listedRoles.map((role) => (
             <li key={role.id}>
               <button
                 type="button"
@@ -761,7 +773,9 @@ export function RoleEditorPanel() {
                 {role.is_system ? (
                   <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden />
                 ) : null}
-                <span className="min-w-0 flex-1 truncate">{role.name}</span>
+                <span className="min-w-0 flex-1 truncate" title={roleText.label(role.name)}>
+                  {roleText.label(role.name)}
+                </span>
                 <span
                   className="flex items-center gap-0.5 text-[11px] text-text-secondary"
                   title={t("console.roleEditor.holders")}
@@ -783,7 +797,7 @@ export function RoleEditorPanel() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
-                <h3 className="text-lg font-semibold text-text-primary">{selected.name}</h3>
+                <h3 className="text-lg font-semibold text-text-primary">{selectedLabel}</h3>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip
                     label={selected.is_system ? t("roles.system") : t("roles.custom")}
@@ -821,16 +835,22 @@ export function RoleEditorPanel() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="role-description">{t("roles.fields.description")}</Label>
-              <Textarea
-                id="role-description"
-                rows={2}
-                value={description}
-                disabled={!canEdit}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
+            {shipped ? (
+              <p className="text-sm text-text-secondary">
+                {roleText.description(selected.name, selected.description)}
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="role-description">{t("roles.fields.description")}</Label>
+                <Textarea
+                  id="role-description"
+                  rows={2}
+                  value={description}
+                  disabled={!canEdit}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
+            )}
 
             {selected.is_system ? (
               <p className="rounded-md border border-surface-border bg-surface-1 p-3 text-xs text-text-secondary">
@@ -959,7 +979,9 @@ export function RoleEditorPanel() {
       <ConfirmDialog
         open={retireTarget !== null}
         onOpenChange={(v) => !v && setRetireTarget(null)}
-        title={t("console.roleEditor.retireTitle", { name: retireTarget?.name ?? "" })}
+        title={t("console.roleEditor.retireTitle", {
+          name: retireTarget ? roleText.label(retireTarget.name) : "",
+        })}
         description={t("console.roleEditor.retireBody")}
         confirmLabel={t("console.roleEditor.retire")}
         destructive
@@ -975,14 +997,14 @@ export function RoleEditorPanel() {
       <UnsavedChangesGuard
         when={dirty}
         title={t("console.roleEditor.unsavedTitle")}
-        description={t("console.roleEditor.unsavedLeaveBody", { name: selected?.name ?? "" })}
+        description={t("console.roleEditor.unsavedLeaveBody", { name: selectedLabel })}
         confirmLabel={t("console.roleEditor.discardChanges")}
       />
       <ConfirmDialog
         open={pendingSwitchId !== null}
         onOpenChange={(v) => !v && setPendingSwitchId(null)}
         title={t("console.roleEditor.unsavedTitle")}
-        description={t("console.roleEditor.unsavedBody", { name: selected?.name ?? "" })}
+        description={t("console.roleEditor.unsavedBody", { name: selectedLabel })}
         confirmLabel={t("console.roleEditor.discardChanges")}
         destructive
         onConfirm={() => {

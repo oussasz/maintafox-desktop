@@ -26,6 +26,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { gateSentenceText } from "@/lib/app-error";
 import { usePermissionText } from "@/lib/permission-labels";
+import { roleDescription, roleLabel } from "@/lib/role-labels";
 import {
   exportRoleModel,
   importRoleModel,
@@ -269,9 +270,9 @@ export function RoleImportExportPanel() {
                           onCheckedChange={() => toggleExportRole(role.id)}
                         />
                       </TableCell>
-                      <TableCell className="font-medium">{role.name}</TableCell>
+                      <TableCell className="font-medium">{roleLabel(t, role.name)}</TableCell>
                       <TableCell className="text-xs text-text-muted">
-                        {role.description ?? "—"}
+                        {roleDescription(t, role.name, role.description) ?? "—"}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant="secondary" className="text-[10px]">

@@ -53,6 +53,34 @@
     "saved": "Role updated",
     "delete": "Delete",
     "deleted": "Role deleted",
+    "shipped": {
+      "administrator": {
+        "name": "Administrator",
+        "description": "Every right, including managing accounts, roles and settings. Keep it to one or two people."
+      },
+      "supervisor": {
+        "name": "Maintenance supervisor",
+        "description": "Organises the team's work: requests, work orders, preventive maintenance, personnel and stores."
+      },
+      "technician": {
+        "name": "Maintenance technician",
+        "description": "Day-to-day work: sees everything, creates and carries out requests and work orders."
+      },
+      "readonly": {
+        "name": "Read only",
+        "description": "Sees the maintenance screens without being able to change anything."
+      },
+      "planner": {
+        "name": "Planner",
+        "description": "Plans work orders and preventive maintenance, prepares parts and purchases."
+      },
+      "financeManager": {
+        "name": "Finance manager",
+        "description": "Prepares and follows maintenance budgets, approves and exports costs."
+      },
+      "formerRole": "Former role, same as {{role}}",
+      "formerRoleDescription": "Role from an earlier version, with the same rights as \"{{role}}\". Accounts that hold it keep it; for a new account, choose \"{{role}}\"."
+    },
     "create": {
       "title": "Create role",
       "description": "Define a name and optionally select a template.",
@@ -1211,8 +1239,8 @@
       "loadError": "The roles could not be loaded.",
       "validationError": "The dependency check could not run. The server checks again when you save.",
       "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none.",
-      "hiddenRetained_one": "{{count}} permission unused in this version kept",
-      "hiddenRetained_other": "{{count}} permissions unused in this version kept"
+      "hiddenRetained_one": "{{count}} more right is meant for a feature that is not in this version: it is not shown, gives access to nothing today and stays in place, even after a save.",
+      "hiddenRetained_other": "{{count}} more rights are meant for features that are not in this version: they are not shown, give access to nothing today and stay in place, even after a save."
     },
     "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
     "usersLoadError": "The accounts could not be loaded."

@@ -18,6 +18,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
+import { roleLabel } from "@/lib/role-labels";
 import { listAssignableRoles, listAssignableScopeNodes, listUsers } from "@/services/rbac-service";
 import { useSessionStore } from "@/store/session-store";
 import type {
@@ -157,7 +158,7 @@ export function UserListPanel() {
               {roleRows.map((r) => (
                 <li key={r.assignment_id} className="flex items-center gap-1">
                   {r.is_emergency ? <Zap className="h-3 w-3 text-accent" aria-hidden /> : null}
-                  <span className="font-medium text-text-primary">{r.role_name}</span>
+                  <span className="font-medium text-text-primary">{roleLabel(t, r.role_name)}</span>
                   <span className="text-text-secondary">
                     · {scopeLabel(r.scope_type, r.scope_label, r.scope_reference)}
                   </span>
@@ -225,7 +226,7 @@ export function UserListPanel() {
       id: "role",
       kind: "select",
       label: t("console.filters.role"),
-      options: roles.map((r) => ({ value: String(r.id), label: r.name })),
+      options: roles.map((r) => ({ value: String(r.id), label: roleLabel(t, r.name) })),
       value: roleFilter,
       onChange: setRoleFilter,
       allLabel: t("console.filters.allRoles"),

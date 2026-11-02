@@ -31,6 +31,7 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
+import { useRoleText, withoutFormerRoles } from "@/lib/role-labels";
 import { listPersonnel } from "@/services/personnel-service";
 import { createUser, listAssignableRoles, listAssignableScopeNodes } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -99,6 +100,7 @@ export function CreateUserDialog({
   lockPersonnel = false,
 }: CreateUserDialogProps) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
   // The global toast host shows them (a local useToast list was never rendered here).
   const toast = pushAppToast;
   const { can } = usePermissions();
@@ -324,14 +326,16 @@ export function CreateUserDialog({
                   <SelectValue placeholder={t("users.create.rolePlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignableRoles.map((r) => (
+                  {withoutFormerRoles(assignableRoles).map((r) => (
                     <SelectItem
                       key={r.id}
                       value={String(r.id)}
-                      title={r.description ?? undefined}
-                      textValue={r.name}
+                      title={roleText.description(r.name, r.description) ?? undefined}
+                      textValue={roleText.label(r.name)}
                     >
-                      {r.is_system ? `${r.name} (${t("users.create.roleSystemBadge")})` : r.name}
+                      {r.is_system
+                        ? `${roleText.label(r.name)} (${t("users.create.roleSystemBadge")})`
+                        : roleText.label(r.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>

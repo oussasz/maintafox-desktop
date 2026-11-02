@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
 import { permissionDomain, usePermissionText } from "@/lib/permission-labels";
+import { roleLabel } from "@/lib/role-labels";
 import {
   adminSetUserPassword,
   deactivateUser,
@@ -229,7 +230,9 @@ export function UserDetailDialog({
         };
       case "revoke":
         return {
-          title: t("console.roles.revokeTitle", { role: pending.assignment.role_name }),
+          title: t("console.roles.revokeTitle", {
+            role: roleLabel(t, pending.assignment.role_name),
+          }),
           description: t("console.roles.revokeBody"),
           label: t("console.roles.revoke"),
         };
@@ -441,7 +444,7 @@ export function UserDetailDialog({
                             ) : (
                               <ShieldCheck className="h-4 w-4 text-primary" aria-hidden />
                             )}
-                            <span className="font-medium">{r.role_name}</span>
+                            <span className="font-medium">{roleLabel(t, r.role_name)}</span>
                             <StatusChip
                               label={scopeLabel(r.scope_type, r.scope_label, r.scope_reference)}
                               tone={r.scope_type === "tenant" ? "info" : "neutral"}

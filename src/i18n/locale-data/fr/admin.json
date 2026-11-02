@@ -53,6 +53,34 @@
     "saved": "Rôle mis à jour",
     "delete": "Supprimer",
     "deleted": "Rôle supprimé",
+    "shipped": {
+      "administrator": {
+        "name": "Administrateur",
+        "description": "Tous les droits, y compris la gestion des comptes, des rôles et des réglages. À réserver à une ou deux personnes."
+      },
+      "supervisor": {
+        "name": "Superviseur maintenance",
+        "description": "Organise le travail de l'équipe : demandes, ordres de travail, préventif, personnel et magasin."
+      },
+      "technician": {
+        "name": "Technicien de maintenance",
+        "description": "Travail de tous les jours : consulte tout, crée et réalise les demandes et les ordres de travail."
+      },
+      "readonly": {
+        "name": "Consultation seule",
+        "description": "Consulte les écrans de maintenance sans rien pouvoir modifier."
+      },
+      "planner": {
+        "name": "Planificateur",
+        "description": "Planifie les ordres de travail et le préventif, prépare les pièces et les achats."
+      },
+      "financeManager": {
+        "name": "Responsable financier",
+        "description": "Prépare et suit les budgets de maintenance, valide les coûts et les exporte."
+      },
+      "formerRole": "Ancien rôle, identique à {{role}}",
+      "formerRoleDescription": "Rôle d'une version précédente, avec les mêmes droits que « {{role}} ». Les comptes qui l'ont le gardent ; pour un nouveau compte, choisissez « {{role}} »."
+    },
     "create": {
       "title": "Créer un rôle",
       "description": "Définissez un nom et sélectionnez éventuellement un modèle.",
@@ -1211,8 +1239,8 @@
       "loadError": "Les rôles n'ont pas pu être chargés.",
       "validationError": "La vérification des dépendances n'a pas pu être effectuée. Le serveur la refait à l'enregistrement.",
       "templateUnreadable": "Ce modèle de rôle est illisible : le rôle n'a pas été créé. Choisissez un autre modèle ou aucun modèle.",
-      "hiddenRetained_one": "{{count}} droit non utilisé dans cette version conservé",
-      "hiddenRetained_other": "{{count}} droits non utilisés dans cette version conservés"
+      "hiddenRetained_one": "{{count}} droit de plus est prévu pour une fonction absente de cette version : il n'est pas affiché, ne donne accès à rien aujourd'hui et reste en place, même après un enregistrement.",
+      "hiddenRetained_other": "{{count}} droits de plus sont prévus pour des fonctions absentes de cette version : ils ne sont pas affichés, ne donnent accès à rien aujourd'hui et restent en place, même après un enregistrement."
     },
     "choicesLoadError": "Les listes de rôles et de sites n'ont pas pu être chargées : les filtres par rôle et par site et l'attribution de rôles sont indisponibles.",
     "usersLoadError": "Les comptes n'ont pas pu être chargés."

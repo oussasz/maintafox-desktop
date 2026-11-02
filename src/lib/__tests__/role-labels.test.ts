@@ -1,0 +1,70 @@
+import type { TFunction } from "i18next";
+import { describe, expect, it } from "vitest";
+
+import fr from "@/i18n/locale-data/fr/admin.json";
+import {
+  formerRoleOf,
+  isShippedRole,
+  roleDescription,
+  roleLabel,
+  withoutFormerRoles,
+} from "@/lib/role-labels";
+
+/** `t` reading the French admin file, with i18next's `{{x}}` interpolation and defaultValue. */
+const t = ((key: string, opts?: Record<string, unknown>) => {
+  let node: unknown = fr;
+  for (const part of key.split(".")) {
+    node = node && typeof node === "object" ? (node as Record<string, unknown>)[part] : undefined;
+  }
+  const text = typeof node === "string" ? node : String(opts?.["defaultValue"] ?? key);
+  return text.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(opts?.[name] ?? ""));
+}) as unknown as TFunction<"admin">;
+
+const role = (id: number, name: string) => ({ id, name });
+
+describe("shipped role names (L5-03)", () => {
+  it("shows each shipped role by its French name, keyed by the unchanged internal name", () => {
+    expect(roleLabel(t, "Administrator")).toBe("Administrateur");
+    expect(roleLabel(t, "Supervisor")).toBe("Superviseur maintenance");
+    expect(roleLabel(t, "Operator")).toBe("Technicien de maintenance");
+    expect(roleLabel(t, "Readonly")).toBe("Consultation seule");
+    expect(roleLabel(t, "Planner/Scheduler")).toBe("Planificateur");
+    expect(roleLabel(t, "Finance Manager")).toBe("Responsable financier");
+  });
+
+  it("labels a former duplicate role with the role it is identical to", () => {
+    expect(roleLabel(t, "Superadmin")).toBe("Ancien rôle, identique à Administrateur");
+    expect(roleLabel(t, "Maintenance Supervisor")).toBe(
+      "Ancien rôle, identique à Superviseur maintenance",
+    );
+    expect(roleLabel(t, "Maintenance Technician")).toBe(
+      "Ancien rôle, identique à Technicien de maintenance",
+    );
+    expect(roleLabel(t, "Read Only Observer")).toBe("Ancien rôle, identique à Consultation seule");
+    expect(formerRoleOf("Superadmin")).toBe("Administrator");
+  });
+
+  it("keeps a role created by the plant under its own name and description", () => {
+    expect(roleLabel(t, "Chef d'équipe nuit")).toBe("Chef d'équipe nuit");
+    expect(roleDescription(t, "Chef d'équipe nuit", "Équipe de nuit")).toBe("Équipe de nuit");
+    expect(isShippedRole("Chef d'équipe nuit")).toBe(false);
+  });
+
+  it("describes a shipped role in French, never by its stored English text", () => {
+    const text = roleDescription(t, "Readonly", "Read-only access to all operational modules.");
+    expect(text).toBe("Consulte les écrans de maintenance sans rien pouvoir modifier.");
+  });
+
+  it("hides a former role while the role it duplicates is offered", () => {
+    const roles = [
+      role(1, "Administrator"),
+      role(2, "Superadmin"),
+      role(3, "Read Only Observer"),
+      role(4, "Chef d'équipe"),
+    ];
+    // Readonly is not in this list: its former twin stays, so nobody is left without a choice.
+    expect(withoutFormerRoles(roles).map((r) => r.id)).toEqual([1, 3, 4]);
+    // The role a screen has open stays, whatever it is.
+    expect(withoutFormerRoles(roles, 2).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+});
