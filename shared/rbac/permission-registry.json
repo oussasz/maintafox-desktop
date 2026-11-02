@@ -161,7 +161,7 @@
       "name": "ot.approve",
       "description": "Approve work orders from draft / planning",
       "category": "ot",
-      "is_dangerous": false,
+      "is_dangerous": true,
       "requires_step_up": false,
       "usage": "backend",
       "aliases": []
@@ -386,7 +386,7 @@
       "name": "pm.approve",
       "description": "Approve PM plan changes",
       "category": "pm",
-      "is_dangerous": false,
+      "is_dangerous": true,
       "requires_step_up": false,
       "usage": "both",
       "aliases": []
@@ -530,7 +530,7 @@
       "name": "plan.confirm",
       "description": "Confirm planning commitments",
       "category": "plan",
-      "is_dangerous": false,
+      "is_dangerous": true,
       "requires_step_up": false,
       "usage": "both",
       "aliases": []
@@ -665,7 +665,7 @@
       "name": "ptw.issue",
       "description": "Issue work permits",
       "category": "ptw",
-      "is_dangerous": false,
+      "is_dangerous": true,
       "requires_step_up": false,
       "usage": "backend",
       "aliases": ["ptw.create", "ptw.approve"]
