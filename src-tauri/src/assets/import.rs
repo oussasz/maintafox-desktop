@@ -808,7 +808,8 @@ pub async fn apply_import_batch(
     let mut errored: i64 = 0;
     // (row_no, child equipment id, parent code): linked once every line is written, so a
     // parent may appear after its children in the file.
-    let mut parent_links: Vec<(i64, i64, String)> = Vec::new();
+    let mut parent_links: Vec<ParentLink> = Vec::new();
+    let mut parent_link_failures: Vec<serde_json::Value> = Vec::new();
 
     for staging_row in &staging_rows {
         let row_no: i64 = staging_row.try_get("", "row_no").map_err(|e| decode_err("row_no", e))?;
@@ -844,7 +845,12 @@ pub async fn apply_import_batch(
                 if let Some(parent) = normalized.parent_asset_code.as_deref() {
                     let parent = parent.trim().to_uppercase();
                     if !parent.is_empty() {
-                        parent_links.push((row_no, outcome.equipment_id(), parent));
+                        parent_links.push(ParentLink {
+                            row_no,
+                            child_id: outcome.equipment_id(),
+                            parent_code: parent,
+                            was_created: matches!(outcome, RowOutcome::Created(_)),
+                        });
                     }
                 }
             }
@@ -855,11 +861,39 @@ pub async fn apply_import_batch(
         }
     }
 
-    for (row_no, child_id, parent_code) in &parent_links {
-        if let Err(e) = link_parent_from_import(&txn, *child_id, parent_code).await {
-            tracing::warn!(row_no, error = %e, "import parent link error");
-            errored += 1;
+    // Links are tried in rounds: moving several assets at once can make a link wait for another
+    // one (A under B while B moves under C), so the order of the lines must not matter. A round
+    // that links nothing new stops the loop; what is left is reported.
+    let mut pending = parent_links;
+    loop {
+        let before = pending.len();
+        let mut still_pending: Vec<(ParentLink, String)> = Vec::new();
+        for link in pending {
+            if let Err(e) = link_parent_from_import(&txn, link.child_id, &link.parent_code).await {
+                still_pending.push((link, e.to_string()));
+            }
         }
+        let progressed = still_pending.len() < before;
+        if still_pending.is_empty() || !progressed {
+            // The line was written without its parent: count it as an error, not as a success,
+            // and keep the line number and reason in the audit event.
+            for (link, reason) in &still_pending {
+                tracing::warn!(row_no = link.row_no, error = %reason, "import parent link error");
+                if link.was_created {
+                    created -= 1;
+                } else {
+                    updated -= 1;
+                }
+                errored += 1;
+                parent_link_failures.push(serde_json::json!({
+                    "row_no": link.row_no,
+                    "parent": link.parent_code,
+                    "reason": reason,
+                }));
+            }
+            break;
+        }
+        pending = still_pending.into_iter().map(|(link, _)| link).collect();
     }
 
     // Also count rows that were already ineligible (error status)
@@ -887,6 +921,7 @@ pub async fn apply_import_batch(
                 "updated": updated,
                 "skipped": skipped,
                 "errored": errored,
+                "parent_link_failures": parent_link_failures,
                 "include_warnings": policy.include_warnings,
             })
             .to_string(),
@@ -912,6 +947,14 @@ pub async fn apply_import_batch(
 enum RowOutcome {
     Created(i64),
     Updated(i64),
+}
+
+/// A parent given in the file, linked once every line is written.
+struct ParentLink {
+    row_no: i64,
+    child_id: i64,
+    parent_code: String,
+    was_created: bool,
 }
 
 impl RowOutcome {
@@ -1036,18 +1079,13 @@ async fn apply_single_row(
         AppError::ValidationFailed(vec!["GATE_ASSET_IMPORT_CLASS_REQUIRED: class_code requis.".into()])
     })?;
     let (class_id, _class_parent_id) = identity::resolve_class_code(txn, class_code).await?;
-    let class_ref_id = identity::resolve_class_ref_id(txn, class_code).await.ok();
+    // The class must exist in Données de référence, like on the equipment form; a real database
+    // error is passed on, not hidden.
+    let class_ref_id = identity::resolve_class_ref_id(txn, class_code).await?;
 
     // Family: a value of the published EQUIPMENT.FAMILY list that belongs to the class.
     let family_ref_id = match normalized.family_code.as_deref() {
-        Some(fc) => {
-            let class_ref = class_ref_id.ok_or_else(|| {
-                AppError::ValidationFailed(vec![format!(
-                    "GATE_ASSET_CLASS_UNKNOWN: Classe '{class_code}' absente des Données de référence."
-                )])
-            })?;
-            Some(identity::validate_family_for_class_ref(txn, fc, class_ref).await?)
-        }
+        Some(fc) => Some(identity::validate_family_for_class_ref(txn, fc, class_ref_id).await?),
         None => None,
     };
 
@@ -1179,7 +1217,7 @@ async fn apply_single_row(
 
 /// References resolved once per row from the codes of the file.
 struct ImportRefs {
-    class_ref_id: Option<i64>,
+    class_ref_id: i64,
     family_ref_id: Option<i64>,
     criticality_ref_id: i64,
     status_ref_id: i64,
@@ -1276,8 +1314,11 @@ async fn update_equipment_from_import(
             class_id = ?,
             lifecycle_status = ?,
             criticality_value_id = ?,
-            equipment_class_ref_id = COALESCE(?, equipment_class_ref_id),
-            equipment_family_ref_id = COALESCE(?, equipment_family_ref_id),
+            equipment_class_ref_id = ?,
+            equipment_family_ref_id = CASE
+                WHEN ? IS NOT NULL THEN ?
+                WHEN equipment_class_ref_id IS ? THEN equipment_family_ref_id
+                ELSE NULL END,
             equipment_criticality_ref_id = ?,
             equipment_status_ref_id = ?,
             installed_at_node_id = COALESCE(?, installed_at_node_id),
@@ -1300,6 +1341,8 @@ async fn update_equipment_from_import(
             criticality_value_id.into(),
             refs.class_ref_id.into(),
             refs.family_ref_id.into(),
+            refs.family_ref_id.into(),
+            refs.class_ref_id.into(),
             refs.criticality_ref_id.into(),
             refs.status_ref_id.into(),
             refs.org_node_id.into(),

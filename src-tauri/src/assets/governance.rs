@@ -196,8 +196,8 @@ pub async fn validate_import_row(
     // Family code: a value of the published EQUIPMENT.FAMILY list that belongs to the class
     // (same rule as the equipment form).
     if let Some(ref family_code) = row.family_code {
-        match (&row.class_code, existing_class_parent_id.is_some()) {
-            (Some(class_code), true) => {
+        if let (Some(class_code), true) = (&row.class_code, existing_class_parent_id.is_some()) {
+            {
                 let outcome = match identity::resolve_class_ref_id(db, class_code).await {
                     Ok(class_ref_id) => identity::validate_family_for_class_ref(db, family_code, class_ref_id)
                         .await
@@ -225,7 +225,6 @@ pub async fn validate_import_row(
                     });
                 }
             }
-            _ => {}
         }
     }
 
@@ -517,7 +516,6 @@ pub async fn validate_import_row(
 /// Existing asset info for reclassification and status transition checks.
 #[derive(Debug, Clone)]
 struct ExistingAssetInfo {
-    id: i64,
     class_code: Option<String>,
     criticality_code: Option<String>,
     status_code: String,
@@ -711,9 +709,6 @@ async fn find_existing_asset_by_code(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r
-                .try_get("", "id")
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
             status_code: r
@@ -745,9 +740,6 @@ async fn find_existing_asset_by_external_key(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r
-                .try_get("", "id")
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
             status_code: r

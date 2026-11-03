@@ -1065,6 +1065,102 @@ mod tests {
         assert_eq!(closed.try_get::<i64>("", "cnt").expect("cnt"), 1);
     }
 
+    /// Adds a second class VALVE to the equipment classes (it is already in the seeded EQUIPMENT.CLASS list).
+    async fn setup_valve_class(db: &sea_orm::DatabaseConnection) {
+        let now = chrono::Utc::now().to_rfc3339();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO equipment_classes
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              VALUES (?, 'VALVE', 'Vannes', NULL, 'class', 1, ?, ?)",
+            [uuid::Uuid::new_v4().to_string().into(), now.clone().into(), now.into()],
+        ))
+        .await
+        .expect("insert valve class");
+    }
+
+    #[tokio::test]
+    async fn v4b_class_change_without_family_clears_the_old_family() {
+        let db = setup().await;
+        setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        setup_family_under_pump(&db).await;
+        setup_valve_class(&db).await;
+        let policy = import::ApplyPolicy {
+            include_warnings: true,
+            external_system_code: None,
+        };
+
+        let first = "code_equipement,nom,classe,famille,criticite,statut,emplacement\n\
+                     CC-1,Pompe,PUMP,FAM-TEST,STANDARD,ACTIVE_IN_SERVICE,SITE-001\n"
+            .as_bytes()
+            .to_vec();
+        let b1 = stage_and_validate(&db, &first, "cc1.csv").await;
+        import::apply_import_batch(&db, b1, &policy, Some(1))
+            .await
+            .expect("apply 1");
+        let id = find_equipment_id_by_code(&db, "CC-1").await;
+        assert_eq!(
+            identity::get_asset_by_id(&db, id)
+                .await
+                .expect("asset")
+                .family_code
+                .as_deref(),
+            Some("FAM-TEST")
+        );
+
+        // New class, no family given: the pump family must not stay on a valve.
+        let second = "code_equipement,nom,classe,criticite,statut,emplacement\n\
+                      CC-1,Pompe,VALVE,STANDARD,ACTIVE_IN_SERVICE,SITE-001\n"
+            .as_bytes()
+            .to_vec();
+        let b2 = stage_and_validate(&db, &second, "cc2.csv").await;
+        import::apply_import_batch(&db, b2, &policy, Some(1))
+            .await
+            .expect("apply 2");
+        let asset = identity::get_asset_by_id(&db, id).await.expect("asset");
+        assert_eq!(asset.class_code.as_deref(), Some("VALVE"));
+        assert_eq!(asset.family_code, None);
+    }
+
+    #[tokio::test]
+    async fn v4b_swapping_parents_works_whatever_the_line_order() {
+        let db = setup().await;
+        setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let policy = import::ApplyPolicy {
+            include_warnings: true,
+            external_system_code: None,
+        };
+
+        // SW-B is under SW-A.
+        let first = "code_equipement,nom,classe,criticite,statut,emplacement,parent\n\
+                     SW-A,A,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,\n\
+                     SW-C,C,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,\n\
+                     SW-B,B,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,SW-A\n"
+            .as_bytes()
+            .to_vec();
+        let b1 = stage_and_validate(&db, &first, "sw1.csv").await;
+        import::apply_import_batch(&db, b1, &policy, Some(1))
+            .await
+            .expect("apply 1");
+
+        // SW-A goes under SW-B while SW-B moves under SW-C: SW-A's line comes first.
+        let second = "code_equipement,nom,classe,criticite,statut,emplacement,parent\n\
+                      SW-A,A,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,SW-B\n\
+                      SW-B,B,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,SW-C\n"
+            .as_bytes()
+            .to_vec();
+        let b2 = stage_and_validate(&db, &second, "sw2.csv").await;
+        let result = import::apply_import_batch(&db, b2, &policy, Some(1))
+            .await
+            .expect("apply 2");
+        assert_eq!(result.errored, 0, "both parents must be linked");
+        assert_eq!(result.updated, 2);
+        assert_eq!(active_parent_code(&db, "SW-A").await.as_deref(), Some("SW-B"));
+        assert_eq!(active_parent_code(&db, "SW-B").await.as_deref(), Some("SW-C"));
+    }
+
     // ── V5 — Idempotent replay ────────────────────────────────────────────
 
     #[tokio::test]
