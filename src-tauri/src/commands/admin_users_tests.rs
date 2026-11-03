@@ -1935,10 +1935,12 @@ async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
     use crate::inventory::approvals::{ensure_can_approve, upsert_limit, DOC_REQUISITION};
     let db = crate::db::test_db::seeded().await;
     // A limit counts only on a role that holds the approval right (L3-03).
-    let (_, approver_role) = account_with_permissions(&db, "limit_source", &["inv.approve"]).await;
+    let (_, approver_role) =
+        account_with_permissions(&db, "limit_source", &[crate::rbac::permissions::INV_APPROVE]).await;
     // The user also holds the right permanently through another role with no limit row, so the
     // right check passes in every case below and each refusal comes from the limit's own validity.
-    let (_, rights_role) = account_with_permissions(&db, "limit_rights", &["inv.approve"]).await;
+    let (_, rights_role) =
+        account_with_permissions(&db, "limit_rights", &[crate::rbac::permissions::INV_APPROVE]).await;
     upsert_limit(
         &db,
         crate::inventory::domain::ProcurementApprovalLimitInput {
