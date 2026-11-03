@@ -1,10 +1,17 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import type { TFunction } from "i18next";
 import { describe, expect, it } from "vitest";
 
-import { eventLabel } from "@/components/activity/activity-labels";
+import {
+  eventLabel,
+  fieldLabel,
+  hasEventLabel,
+  payloadChanges,
+  payloadLines,
+  targetTypeLabel,
+} from "@/components/activity/activity-labels";
 import enActivity from "@/i18n/locale-data/en/activity.json";
 import frActivity from "@/i18n/locale-data/fr/activity.json";
 
@@ -59,5 +66,73 @@ describe("event and action names", () => {
     }
     expect(eventLabel(tFor(enActivity), "logout")).toBe("Sign-out");
     expect(eventLabel(tFor(frActivity), "logout")).toBe("Déconnexion");
+  });
+
+  it("names every audit action the backend writes, including the OT changes it copies (L5-09)", () => {
+    const srcRoot = join(__dirname, "..", "..", "..", "..", "src-tauri", "src");
+    const files = (readdirSync(srcRoot, { recursive: true }) as string[]).filter(
+      (f) =>
+        f.endsWith(".rs") &&
+        !/tests?\.rs$|_tests|[\\/]tests[\\/]|migrations|permissions_generated/.test(f),
+    );
+    const codes = new Set<string>();
+    const literal = /(?:action_code|event_type): "([a-z_]+(?:\.[a-z_]+)+)"/g;
+    const constant = /const (?:AUDIT_\w+|\w+_EVENT): &str = "([a-z_]+(?:\.[a-z_]+)+)"/g;
+    for (const file of files) {
+      const text = readFileSync(join(srcRoot, file), "utf8");
+      for (const m of text.matchAll(literal)) codes.add(m[1] ?? "");
+      for (const m of text.matchAll(constant)) codes.add(m[1] ?? "");
+      // `record_wo_change_with_diff` copies OT changes to the audit trail as `wo.<action>`.
+      for (const block of text.split("record_wo_change_with_diff(").slice(1)) {
+        const body = block.slice(0, block.indexOf(".await;"));
+        for (const m of body.matchAll(/"([a-z_]+)"\.into\(\)/g)) {
+          if (body.includes(`action: `) && m[1] !== "applied") codes.add(`wo.${m[1]}`);
+        }
+      }
+    }
+    codes.delete("test.action");
+    expect(codes.size).toBeGreaterThan(20);
+    expect(codes).toContain("wo.planned");
+    for (const catalog of [enActivity, frActivity]) {
+      const missing = [...codes].filter((code) => !hasEventLabel(tFor(catalog), code));
+      expect(missing).toEqual([]);
+    }
+    expect(eventLabel(tFor(frActivity), "asset.moved")).toBe("Équipement déplacé");
+    expect(eventLabel(tFor(frActivity), "permit.approved")).toBe("Permis approuvé");
+  });
+
+  it("names objects and changed fields in French, readable fallback otherwise", () => {
+    const fr = tFor(frActivity);
+    expect(targetTypeLabel(fr, "work_order")).toBe("OT");
+    expect(fieldLabel(fr, "closed_at")).toBe("Date de clôture");
+    expect(fieldLabel(fr, "some_new_field")).toBe("some new field");
+    expect(hasEventLabel(fr, "sync.future_thing.done")).toBe(false);
+  });
+
+  it("reads field changes from an event's details, never from older events", () => {
+    const change = { field: "closed_at", old: null, new: "2026-10-28T18:26:00Z" };
+    expect(payloadChanges({ changes: [change] })).toEqual([change]);
+    expect(payloadChanges({ detail: { changes: [change] } })).toEqual([change]);
+    expect(payloadChanges(JSON.stringify({ changes: [change] }))).toEqual([change]);
+    expect(payloadChanges({ summary: "Work order closed" })).toEqual([]);
+    expect(payloadChanges("not json")).toEqual([]);
+    expect(payloadChanges(null)).toEqual([]);
+  });
+
+  it("shows detail lines with French keys, without the changes, copy markers or sync ids", () => {
+    const fr = tFor(frActivity);
+    const lines = payloadLines(
+      {
+        summary: "Work order closed",
+        reason: "fuite",
+        source: "wo_change_events",
+        isolation_sync_id: "abc",
+        changes: [{ field: "status", old: "a", new: "b" }],
+        detail: { changes: [] },
+      },
+      fr,
+      { hideSummary: true },
+    );
+    expect(lines.map((l) => l.key)).toEqual(["Motif", "Détail"]);
   });
 });
