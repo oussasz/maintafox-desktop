@@ -40,6 +40,8 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A failed "load more" keeps the loaded rows and says so above the button.
+  const [moreError, setMoreError] = useState(false);
   const [search, setSearch] = useState("");
   const latest = useRef(0);
   // A work order closed or cancelled on this screen changes the list: the archive follows it.
@@ -67,7 +69,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         if (ticket !== latest.current) return;
         setItems(page.items);
         setTotal(page.total);
-        if (!text.trim()) setArchiveTotal(page.total);
+        setMoreError(false);
       } catch (e) {
         if (ticket !== latest.current) return;
         setError(t("archive.loadError"));
@@ -84,9 +86,23 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
     return () => clearTimeout(timer);
   }, [search, load, archivedKey]);
 
+  // The badge is the whole archive, whatever the search: its own unfiltered count.
+  useEffect(() => {
+    let current = true;
+    listWos({ status_codes: ["closed", "cancelled"], search: null, limit: 1, offset: 0 })
+      .then((page) => {
+        if (current) setArchiveTotal(page.total);
+      })
+      .catch((e) => console.error("WoArchivePanel.count", e));
+    return () => {
+      current = false;
+    };
+  }, [archivedKey]);
+
   const loadMore = useCallback(async () => {
     const ticket = latest.current;
     setLoadingMore(true);
+    setMoreError(false);
     try {
       const page = await listWos({
         status_codes: ["closed", "cancelled"],
@@ -99,12 +115,12 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       setItems([...items, ...page.items.filter((w) => !known.has(w.id))]);
       setTotal(page.total);
     } catch (e) {
-      setError(t("archive.loadError"));
+      if (ticket === latest.current) setMoreError(true);
       console.error("WoArchivePanel.loadMore", e);
     } finally {
       setLoadingMore(false);
     }
-  }, [items, search, t]);
+  }, [items, search]);
 
   const columns: ColumnDef<WorkOrder>[] = useMemo(
     () => [
@@ -202,6 +218,9 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
                 skeletonRows={5}
                 onRowClick={(row) => onRowClick?.(row)}
               />
+              {moreError ? (
+                <p className="text-xs text-destructive">{t("archive.loadError")}</p>
+              ) : null}
               {items.length < total ? (
                 <div className="flex items-center gap-3 text-xs text-text-muted">
                   <span>{t("archive.shown", { shown: items.length, total })}</span>

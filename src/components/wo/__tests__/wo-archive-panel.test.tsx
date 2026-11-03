@@ -13,13 +13,17 @@ function lookup(key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, opts?: Record<string, unknown>) =>
-      (lookup(key) ?? key).replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k] ?? "")),
+// One stable `t` and `i18n`, like the real hook: a new function per render would re-run the effects.
+const stableI18n = vi.hoisted(() => {
+  const state: { t: (key: string, opts?: Record<string, unknown>) => string; i18n: object } = {
+    t: (key) => key,
     i18n: { language: "en" },
-  }),
-}));
+  };
+  return state;
+});
+stableI18n.t = (key, opts) =>
+  (lookup(key) ?? key).replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k] ?? ""));
+vi.mock("react-i18next", () => ({ useTranslation: () => stableI18n }));
 
 const woSvc = vi.hoisted(() => ({ listWos: vi.fn() }));
 vi.mock("@/services/wo-service", () => woSvc);
@@ -62,5 +66,26 @@ describe("WoArchivePanel", () => {
         expect.objectContaining({ search: "huile", offset: 0 }),
       ),
     );
+  });
+
+  it("keeps the real archive count in the badge while a search is typed", async () => {
+    render(<WoArchivePanel />);
+    expect(await screen.findByText("549")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Archive/ }));
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: "huile" } });
+    await waitFor(() =>
+      expect(woSvc.listWos).toHaveBeenCalledWith(expect.objectContaining({ search: "huile" })),
+    );
+    expect(screen.getByText("549")).toBeInTheDocument();
+  });
+
+  it("keeps the loaded rows and says so when load more fails", async () => {
+    render(<WoArchivePanel />);
+    fireEvent.click(await screen.findByRole("button", { name: /Archive/ }));
+    expect(await screen.findByText("Closed 1")).toBeInTheDocument();
+    woSvc.listWos.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
+    expect(await screen.findByText(enOt.archive.loadError)).toBeInTheDocument();
+    expect(screen.getByText("Closed 1")).toBeInTheDocument();
   });
 });
