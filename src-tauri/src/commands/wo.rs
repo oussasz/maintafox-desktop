@@ -498,9 +498,11 @@ pub async fn update_wo_draft(
     let wo = queries::update_wo_draft_fields(&state.db, input, Some(i64::from(user.user_id))).await?;
     // Every change of a draft's equipment is recorded (who, when, old and new equipment), and
     // whether the order moved with it to another location (org node).
-    if let Some(before) = before.filter(|b| b.equipment_id != wo.equipment_id) {
+    // Any other edit is recorded as "updated" with the fields it changed (old → new values).
+    let equipment_changed = before.as_ref().is_some_and(|b| b.equipment_id != wo.equipment_id);
+    if let Some(before) = before.as_ref().filter(|_| equipment_changed) {
         let moved = before.entity_id != wo.entity_id;
-        audit::record_wo_change_event(
+        audit::record_wo_change_with_diff(
             &state.db,
             audit::WoAuditInput {
                 wo_id: Some(wo.id),
@@ -526,8 +528,26 @@ pub async fn update_wo_draft(
                 requires_step_up: false,
                 apply_result: "applied".into(),
             },
+            Some(before),
         )
         .await;
+    } else if let Some(before) = before.as_ref() {
+        if !audit::wo_field_changes(before, &wo).is_empty() {
+            audit::record_wo_change_with_diff(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(wo.id),
+                    action: "updated".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("OT modifié".into()),
+                    details_json: None,
+                    requires_step_up: false,
+                    apply_result: "applied".into(),
+                },
+                Some(before),
+            )
+            .await;
+        }
     }
     Ok(wo)
 }
@@ -579,8 +599,9 @@ pub async fn cancel_wo(
         }
     }
 
+    let before = queries::get_work_order(&state.db, input.id).await.ok().flatten();
     let wo = queries::cancel_work_order(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -591,6 +612,7 @@ pub async fn cancel_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -609,8 +631,9 @@ pub async fn plan_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::plan_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -621,6 +644,7 @@ pub async fn plan_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -639,8 +663,9 @@ pub async fn set_wo_permit_requirement(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
     let requires_permit = input.requires_permit;
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::set_permit_requirement(&state.db, input, actor_id).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -658,6 +683,7 @@ pub async fn set_wo_permit_requirement(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -696,8 +722,9 @@ pub async fn submit_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::submit_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -708,6 +735,7 @@ pub async fn submit_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -732,8 +760,9 @@ pub async fn mark_wo_ready(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::mark_wo_ready(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -744,6 +773,7 @@ pub async fn mark_wo_ready(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -758,8 +788,9 @@ pub async fn return_to_planning(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::return_to_planning(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -770,6 +801,7 @@ pub async fn return_to_planning(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -784,8 +816,9 @@ pub async fn approve_planning(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::approve_planning(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -796,6 +829,7 @@ pub async fn approve_planning(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -821,8 +855,9 @@ pub async fn assign_wo(
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
     let reason = input.override_reason.clone();
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::assign_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -833,6 +868,7 @@ pub async fn assign_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -858,8 +894,9 @@ pub async fn emergency_reassign_wo(
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
     let reason = input.override_reason.clone();
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::emergency_reassign_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -870,6 +907,7 @@ pub async fn emergency_reassign_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -888,8 +926,9 @@ pub async fn start_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::start_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -900,6 +939,7 @@ pub async fn start_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -918,8 +958,9 @@ pub async fn pause_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::pause_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -930,6 +971,7 @@ pub async fn pause_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -948,8 +990,9 @@ pub async fn resume_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::resume_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -960,6 +1003,7 @@ pub async fn resume_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -978,8 +1022,9 @@ pub async fn hold_wo(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::set_waiting_for_prerequisite(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -990,6 +1035,7 @@ pub async fn hold_wo(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -1008,8 +1054,9 @@ pub async fn complete_wo_mechanically(
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = execution::complete_wo_mechanically(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1020,6 +1067,7 @@ pub async fn complete_wo_mechanically(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -1562,8 +1610,9 @@ pub async fn save_verification(
     // The verifier is the signed-in user (as the screen sends), never another id.
     input.verified_by_id = i64::from(user.user_id);
 
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let result = closeout::save_verification(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(result.1.id),
@@ -1574,6 +1623,7 @@ pub async fn save_verification(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(result)
@@ -1634,9 +1684,10 @@ async fn close_wo_audited(
     user: &crate::auth::session_manager::AuthenticatedUser,
     input: closeout::WoCloseInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
-            audit::record_wo_change_event(
+            audit::record_wo_change_with_diff(
                 &state.db,
                 audit::WoAuditInput {
                     wo_id: Some(wo.id),
@@ -1647,6 +1698,7 @@ async fn close_wo_audited(
                     requires_step_up: false,
                     apply_result: "applied".into(),
                 },
+                before.as_ref(),
             )
             .await;
             Ok(wo)
@@ -1707,8 +1759,9 @@ pub async fn reopen_wo(
         }
     }
 
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
     let wo = closeout::reopen_wo(&state.db, input).await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1719,6 +1772,7 @@ pub async fn reopen_wo(
             requires_step_up: true,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)
@@ -1853,6 +1907,7 @@ pub async fn update_service_cost(
 ) -> AppResult<i64> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    let before = queries::get_work_order(&state.db, wo_id).await.ok().flatten();
     let row_version = costs::update_service_cost(
         &state.db,
         wo_id,
@@ -1861,7 +1916,7 @@ pub async fn update_service_cost(
         i64::from(user.user_id),
     )
     .await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo_id),
@@ -1872,6 +1927,7 @@ pub async fn update_service_cost(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(row_version)
@@ -1939,7 +1995,8 @@ pub async fn list_wo_change_events(
 ) -> AppResult<Vec<audit::WoChangeEvent>> {
     let user = require_session!(state);
     require_on_wo_records(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
-    audit::list_wo_change_events(&state.db, wo_id, limit.unwrap_or(50)).await
+    // The WO's change events and the audit-trail events about it (close-out, imported history).
+    audit::list_wo_history(&state.db, wo_id, limit.unwrap_or(50)).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1972,6 +2029,7 @@ pub async fn set_wo_requires_shutdown(
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, wo_id).await?;
+    let before = queries::get_work_order(&state.db, wo_id).await.ok().flatten();
     let wo = crate::wo::workflow::actions::schedule::save_shutdown_requirement(
         &state.db,
         wo_id,
@@ -1980,7 +2038,7 @@ pub async fn set_wo_requires_shutdown(
         i64::from(user.user_id),
     )
     .await?;
-    audit::record_wo_change_event(
+    audit::record_wo_change_with_diff(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
@@ -1999,6 +2057,7 @@ pub async fn set_wo_requires_shutdown(
             requires_step_up: false,
             apply_result: "applied".into(),
         },
+        before.as_ref(),
     )
     .await;
     Ok(wo)

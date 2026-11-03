@@ -1582,6 +1582,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // The override signer's password counts toward the signer's account lockout, as at sign-in
     // (`auth::lockout`): a locked-out signer is not checked at all. Read before the transaction
     // (the lockout check may write); the outcome is recorded after it.
+    // The work order as it was, for the fields the close changes (audit event `wo.closed`).
+    let before_close = queries::get_work_order(db, input.wo_id).await?;
     let signer_for_password = signer_password_account(&input);
     let signer_locked = match signer_for_password {
         Some(id) => second_signer::lockout_state(db, id).await?,
@@ -1807,6 +1809,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(db, input.wo_id, "wo.closed", Some(input.actor_id), None, None).await;
 
+    let closed = queries::get_work_order(db, input.wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.wo_id.to_string(),
+        })?;
+    // The fields the close changed (status, closing date…), old → new, for the audit trail.
+    let changes = before_close
+        .as_ref()
+        .map(|before| crate::wo::audit::wo_field_changes(before, &closed))
+        .unwrap_or_default();
+    let detail_json = (!changes.is_empty()).then(|| serde_json::json!({ "changes": changes }).to_string());
+
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(
         db,
@@ -1815,18 +1830,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             actor_id: Some(actor_i32),
             entity_type: Some("work_order"),
             entity_id: Some(wo_id_str.as_str()),
-            summary: "Work order closed",
+            summary: "OT clôturé",
+            detail_json,
             ..Default::default()
         },
     )
     .await;
 
-    queries::get_work_order(db, input.wo_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })
+    Ok(closed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

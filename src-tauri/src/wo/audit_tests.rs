@@ -643,4 +643,296 @@ mod tests {
         .await;
         // Reaching here confirms fire-and-log semantics
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // L5-09 — field changes (old → new), merged history, audit search by OT number
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn change_of<'a>(details: &'a serde_json::Value, field: &str) -> Option<&'a serde_json::Value> {
+        details
+            .get("changes")?
+            .as_array()?
+            .iter()
+            .find(|c| c.get("field").and_then(|f| f.as_str()) == Some(field))
+    }
+
+    async fn latest_change_details(db: &sea_orm::DatabaseConnection, wo_id: i64, action: &str) -> serde_json::Value {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT details_json FROM wo_change_events WHERE wo_id = ? AND action = ? ORDER BY id DESC LIMIT 1",
+                [wo_id.into(), action.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("change event row");
+        let raw: Option<String> = row.try_get("", "details_json").unwrap();
+        serde_json::from_str(&raw.expect("details_json")).expect("json")
+    }
+
+    #[tokio::test]
+    async fn l509_field_changes_list_only_differing_fields() {
+        let db = setup().await;
+        let (wo_id, _) = wo_in_progress(&db).await;
+        let wo = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        assert!(audit::wo_field_changes(&wo, &wo).is_empty());
+
+        let mut after = wo.clone();
+        after.closed_at = Some("2026-10-28T18:26:00Z".into());
+        after.title = "Nouveau titre".into();
+        let changes = audit::wo_field_changes(&wo, &after);
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        let details = audit::details_with_changes(Some(serde_json::json!("brut")), changes).unwrap();
+        assert_eq!(details["detail"], "brut");
+        let closed = change_of(&details, "closed_at").expect("closed_at change");
+        assert!(closed["old"].is_null());
+        assert_eq!(closed["new"], "2026-10-28T18:26:00Z");
+        assert_eq!(change_of(&details, "title").unwrap()["new"], "Nouveau titre");
+        assert!(audit::details_with_changes(None, Vec::new()).is_none());
+    }
+
+    #[tokio::test]
+    async fn l509_change_with_diff_records_old_new_and_copies_to_audit_trail() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, _) = wo_in_progress(&db).await;
+        let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planned_start = '2026-11-10T08:00:00Z' WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .unwrap();
+
+        audit::record_wo_change_with_diff(
+            &db,
+            WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "planned".into(),
+                actor_id: Some(actor),
+                summary: Some("Work order planned".into()),
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+            Some(&before),
+        )
+        .await;
+
+        let details = latest_change_details(&db, wo_id, "planned").await;
+        let change = change_of(&details, "planned_start").expect("planned_start change");
+        assert_eq!(change["old"], serde_json::json!(before.planned_start));
+        assert_eq!(change["new"], "2026-11-10T08:00:00Z");
+
+        // The audit trail holds the same change, its object the work order.
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT details_json FROM audit_events WHERE action_code = 'wo.planned' AND target_type = 'work_order' AND target_id = ?",
+                [wo_id.to_string().into()],
+            ))
+            .await
+            .unwrap()
+            .expect("audit copy");
+        let copy: serde_json::Value =
+            serde_json::from_str(&row.try_get::<String>("", "details_json").unwrap()).unwrap();
+        assert_eq!(copy["source"], audit::AUDIT_COPY_SOURCE);
+        assert_eq!(copy["wo_code"], before.code.as_str());
+        assert!(change_of(&copy, "planned_start").is_some());
+
+        // The per-WO history shows the change once (the audit copy is not repeated).
+        let history = audit::list_wo_history(&db, wo_id, 100).await.unwrap();
+        assert_eq!(history.iter().filter(|e| e.action == "planned").count(), 1);
+        assert!(history.iter().all(|e| e.action != "wo.planned"), "{history:?}");
+
+        // A change that changes nothing writes no audit copy.
+        let same = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        audit::record_wo_change_with_diff(
+            &db,
+            WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "paused".into(),
+                actor_id: Some(actor),
+                summary: None,
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+            Some(&same),
+        )
+        .await;
+        let copies = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'wo.paused'".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i64>("", "n")
+            .unwrap();
+        assert_eq!(copies, 0);
+    }
+
+    #[tokio::test]
+    async fn l509_close_records_closing_date_and_history_merges_audit_events() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv) = wo_in_progress(&db).await;
+        let rv = advance_to_completed_verified(&db, wo_id, rv).await;
+        let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+
+        closeout::close_wo(
+            &db,
+            WoCloseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("close_wo");
+
+        // The close-out's own audit event carries the closing date, old → new.
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT details_json FROM audit_events WHERE action_code = 'wo.closed' AND target_id = ?",
+                [wo_id.to_string().into()],
+            ))
+            .await
+            .unwrap()
+            .expect("wo.closed audit event");
+        let details: serde_json::Value =
+            serde_json::from_str(&row.try_get::<String>("", "details_json").unwrap()).unwrap();
+        let closed = change_of(&details["detail"], "closed_at").expect("closed_at change");
+        assert!(closed["old"].is_null());
+        assert!(closed["new"].is_string());
+
+        // Closed without a change event (imported history, seed): the history still shows it.
+        let history = audit::list_wo_history(&db, wo_id, 100).await.unwrap();
+        let from_audit: Vec<_> = history.iter().filter(|e| e.action == "wo.closed").collect();
+        assert_eq!(from_audit.len(), 1, "{history:?}");
+        assert_eq!(from_audit[0].source, "audit");
+
+        // Closed from the screen: the change event records the fields, and replaces the audit
+        // event in the history; no second audit copy is written.
+        audit::record_wo_change_with_diff(
+            &db,
+            WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "closed".into(),
+                actor_id: Some(actor),
+                summary: Some("Work order closed".into()),
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+            Some(&before),
+        )
+        .await;
+        let change_details = latest_change_details(&db, wo_id, "closed").await;
+        assert!(change_of(&change_details, "closed_at").is_some());
+        assert!(change_of(&change_details, "status").is_some());
+        let history = audit::list_wo_history(&db, wo_id, 100).await.unwrap();
+        assert!(history.iter().all(|e| e.action != "wo.closed"), "{history:?}");
+        assert_eq!(history.iter().filter(|e| e.action == "closed").count(), 1);
+        let n = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'wo.closed'".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i64>("", "n")
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn l509_audit_log_search_by_ot_number_and_filter_options() {
+        use crate::audit::writer::{write_audit_event, AuditEventInput};
+        use crate::commands::audit_log::{audit_filter_options, build_audit_filter_query, AuditFilter};
+
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, _) = wo_in_progress(&db).await;
+        let wo = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        for (code, target) in [("wo.closed", Some(wo_id.to_string())), ("login.success", None)] {
+            write_audit_event(
+                &db,
+                AuditEventInput {
+                    action_code: code.into(),
+                    target_type: target.as_ref().map(|_| "work_order".to_string()),
+                    target_id: target,
+                    actor_id: Some(actor),
+                    auth_context: "session".into(),
+                    result: "success".into(),
+                    before_hash: None,
+                    after_hash: None,
+                    retention_class: "standard".into(),
+                    details_json: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let run = |filter: AuditFilter| {
+            let db = &db;
+            async move {
+                let (sql, values) = build_audit_filter_query(&filter, true);
+                db.query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+                    .await
+                    .expect("audit query")
+            }
+        };
+
+        // Part of the OT number is enough; the object reads as "code — title".
+        let tail = &wo.code[wo.code.len().saturating_sub(4)..];
+        let rows = run(AuditFilter {
+            object_search: Some(tail.to_string()),
+            ..Default::default()
+        })
+        .await;
+        assert_eq!(rows.len(), 1);
+        let label: Option<String> = rows[0].try_get("", "target_label").unwrap();
+        assert_eq!(label.as_deref(), Some(format!("{} — {}", wo.code, wo.title).as_str()));
+        let actor_name: Option<String> = rows[0].try_get("", "actor_display_name").unwrap();
+        assert!(actor_name.is_some());
+
+        // A LIKE wildcard typed by the user is taken literally.
+        assert!(run(AuditFilter {
+            object_search: Some("%".into()),
+            ..Default::default()
+        })
+        .await
+        .is_empty());
+
+        // Exact action (not a prefix).
+        assert_eq!(
+            run(AuditFilter {
+                action: Some("wo.closed".into()),
+                ..Default::default()
+            })
+            .await
+            .len(),
+            1
+        );
+        assert!(run(AuditFilter {
+            action: Some("wo".into()),
+            ..Default::default()
+        })
+        .await
+        .is_empty());
+
+        let options = audit_filter_options(&db, None).await.unwrap();
+        assert!(options.actions.iter().any(|a| a == "wo.closed"));
+        assert!(options.actors.iter().any(|a| a.id == actor && !a.label.is_empty()));
+        let own = audit_filter_options(&db, Some(-1)).await.unwrap();
+        assert!(own.actions.is_empty() && own.actors.is_empty());
+    }
 }
