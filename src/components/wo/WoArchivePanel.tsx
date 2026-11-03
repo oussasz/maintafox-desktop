@@ -35,13 +35,20 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<WorkOrder[]>([]);
   const [total, setTotal] = useState(0);
+  // The whole archive, whatever the search: what the header badge shows.
+  const [archiveTotal, setArchiveTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const latest = useRef(0);
   // A work order closed or cancelled on this screen changes the list: the archive follows it.
-  const listItems = useWoStore((s) => s.items);
+  const archivedKey = useWoStore((s) =>
+    s.items
+      .filter((w) => w.status_code === "closed" || w.status_code === "cancelled")
+      .map((w) => w.id)
+      .join(","),
+  );
 
   // The count is read when the screen opens (not only once the panel is unfolded), and the
   // search is done by the server over every archived work order, not over the 50 loaded rows.
@@ -60,6 +67,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         if (ticket !== latest.current) return;
         setItems(page.items);
         setTotal(page.total);
+        if (!text.trim()) setArchiveTotal(page.total);
       } catch (e) {
         if (ticket !== latest.current) return;
         setError(t("archive.loadError"));
@@ -74,7 +82,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
   useEffect(() => {
     const timer = setTimeout(() => void load(search), search ? 300 : 0);
     return () => clearTimeout(timer);
-  }, [search, load, listItems]);
+  }, [search, load, archivedKey]);
 
   const loadMore = useCallback(async () => {
     const ticket = latest.current;
@@ -91,11 +99,12 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       setItems([...items, ...page.items.filter((w) => !known.has(w.id))]);
       setTotal(page.total);
     } catch (e) {
+      setError(t("archive.loadError"));
       console.error("WoArchivePanel.loadMore", e);
     } finally {
       setLoadingMore(false);
     }
-  }, [items, search]);
+  }, [items, search, t]);
 
   const columns: ColumnDef<WorkOrder>[] = useMemo(
     () => [
@@ -160,7 +169,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         )}
         <span className="text-sm font-medium text-text-primary">{t("archive.title")}</span>
         <Badge variant="secondary" className="text-xs">
-          {total}
+          {archiveTotal}
         </Badge>
       </button>
 
