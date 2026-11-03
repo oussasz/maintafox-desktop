@@ -396,6 +396,8 @@
     "GATE_ASSET_IMPORT_CSV_HEADERS": "Import refused: the CSV file headers cannot be read.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refused: the CSV file is invalid at line {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refused: the batch has no rows.",
+    "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refused: the location given does not exist in the active organisation.",
+    "GATE_ASSET_IMPORT_PARENT_UNKNOWN": "Import refused: the parent given does not exist in the equipment register.",
     "GATE_ASSET_IMPORT_STATUS_APPLY": "Apply refused: the batch is “{{status}}”, only a validated batch can be applied.",
     "GATE_ASSET_IMPORT_STATUS_LOAD": "Load refused: the batch is “{{status}}”, only an uploaded batch can be loaded.",
     "GATE_ASSET_IMPORT_STATUS_VALIDATE": "Validation refused: the batch is “{{status}}”, only an uploaded batch can be validated.",

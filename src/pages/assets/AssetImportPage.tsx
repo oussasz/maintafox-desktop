@@ -61,6 +61,8 @@ const ASSET_TEMPLATE_HEADER = [
   "famille",
   "criticite",
   "statut",
+  "emplacement",
+  "parent",
   "fabricant",
   "modele",
   "numero_serie",
