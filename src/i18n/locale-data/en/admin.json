@@ -112,7 +112,7 @@
       },
       "buyer": {
         "name": "Buyer",
-        "description": "Purchase requisitions and orders, goods receipts. Nobody approves their own requisition or order; set amount limits in \"Approval limits\", otherwise a buyer can approve a colleague's request of any amount."
+        "description": "Purchase requisitions and orders, goods receipts. Nobody approves their own requisition or order; approval goes to a manager who holds the approval right, within their limit."
       },
       "hseManager": {
         "name": "HSE manager",
@@ -120,7 +120,7 @@
       },
       "maintenanceManager": {
         "name": "Maintenance manager",
-        "description": "Runs maintenance: requests, work orders (including emergency reassignment and reopening), preventive programme, planning, equipment, reliability and reports. No purchasing, budget or administration rights."
+        "description": "Runs maintenance: requests, work orders (including emergency reassignment and reopening), preventive programme, planning, equipment, reliability and reports. Manages and approves purchases (within their limit); no budget or administration rights."
       },
       "costController": {
         "name": "Cost controller",

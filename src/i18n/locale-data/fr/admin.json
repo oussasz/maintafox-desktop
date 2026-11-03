@@ -112,7 +112,7 @@
       },
       "buyer": {
         "name": "Acheteur",
-        "description": "Demandes d'achat et commandes, réception des livraisons. Personne n'approuve sa propre demande ni sa propre commande ; fixez des montants dans « Plafonds d'approbation », sinon un acheteur peut approuver la demande d'un collègue quel que soit son montant."
+        "description": "Demandes d'achat et commandes, réception des livraisons. Personne n'approuve sa propre demande ni sa propre commande ; l'approbation revient à un responsable qui détient le droit d'approbation, dans la limite de son plafond."
       },
       "hseManager": {
         "name": "Responsable HSE",
@@ -120,7 +120,7 @@
       },
       "maintenanceManager": {
         "name": "Responsable maintenance",
-        "description": "Pilote la maintenance : demandes, ordres de travail (y compris réaffectation d'urgence et réouverture), programme préventif, planning, équipements, fiabilité et rapports. Pas de droit d'achat, de budget ni d'administration."
+        "description": "Pilote la maintenance : demandes, ordres de travail (y compris réaffectation d'urgence et réouverture), programme préventif, planning, équipements, fiabilité et rapports. Gère et approuve les achats (dans la limite de son plafond) ; pas de droit de budget ni d'administration."
       },
       "costController": {
         "name": "Contrôleur de coûts",
