@@ -23,7 +23,11 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuditChangeList } from "@/components/activity/AuditChangeList";
-import { eventLabel, payloadChanges } from "@/components/activity/activity-labels";
+import {
+  eventLabel,
+  payloadChanges,
+  payloadChangesUnavailable,
+} from "@/components/activity/activity-labels";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { mfTone } from "@/design-system/tone";
@@ -159,6 +163,7 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
         const permit =
           evt.action === "permit_requirement_changed" ? requiresPermitOf(evt.details_json) : null;
         const changes = payloadChanges(evt.details_json);
+        const unavailable = payloadChangesUnavailable(evt.details_json);
         const permitText =
           permit !== null ? t(permit ? "audit.permitRequired" : "audit.permitNotRequired") : null;
         // Audit-trail events are named like in the audit log (`activity` labels).
@@ -170,12 +175,17 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
         return {
           id: `${evt.source}-${evt.id}`,
           title,
-          ...(permitText !== null || changes.length > 0
+          ...(permitText !== null || changes.length > 0 || unavailable
             ? {
                 description: (
                   <>
                     {permitText !== null ? <span className="block">{permitText}</span> : null}
                     <AuditChangeList changes={changes} className="text-xs" />
+                    {unavailable ? (
+                      <span className="block text-xs text-text-muted">
+                        {tActivity("audit.detail.changesUnavailable")}
+                      </span>
+                    ) : null}
                   </>
                 ),
               }

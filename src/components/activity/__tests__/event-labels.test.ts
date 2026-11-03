@@ -9,6 +9,7 @@ import {
   fieldLabel,
   hasEventLabel,
   payloadChanges,
+  payloadChangesUnavailable,
   payloadLines,
   targetTypeLabel,
 } from "@/components/activity/activity-labels";
@@ -84,15 +85,22 @@ describe("event and action names", () => {
       for (const m of text.matchAll(constant)) codes.add(m[1] ?? "");
       // `record_wo_change_with_diff` copies OT changes to the audit trail as `wo.<action>`.
       for (const block of text.split("record_wo_change_with_diff(").slice(1)) {
+        // Every string literal of the `action:` expression, whatever its form ("x".into(),
+        // `if moved { "a" } else { "b" }.into()`, `if c { "a".into() } else { "b".into() }`).
         const body = block.slice(0, block.indexOf(".await;"));
-        for (const m of body.matchAll(/"([a-z_]+)"\.into\(\)/g)) {
-          if (body.includes(`action: `) && m[1] !== "applied") codes.add(`wo.${m[1]}`);
-        }
+        const start = body.indexOf("action: ");
+        if (start < 0) continue;
+        const rest = body.slice(start);
+        const expr = rest.slice(0, rest.search(/\n\s+actor_id:/));
+        for (const m of expr.matchAll(/"([a-z_]+)"/g)) codes.add(`wo.${m[1] ?? ""}`);
       }
     }
     codes.delete("test.action");
     expect(codes.size).toBeGreaterThan(20);
     expect(codes).toContain("wo.planned");
+    expect(codes).toContain("wo.site_moved");
+    expect(codes).toContain("wo.equipment_changed");
+    expect(codes).toContain("wo.shutdown_required_set");
     for (const catalog of [enActivity, frActivity]) {
       const missing = [...codes].filter((code) => !hasEventLabel(tFor(catalog), code));
       expect(missing).toEqual([]);
@@ -117,6 +125,9 @@ describe("event and action names", () => {
     expect(payloadChanges({ summary: "Work order closed" })).toEqual([]);
     expect(payloadChanges("not json")).toEqual([]);
     expect(payloadChanges(null)).toEqual([]);
+    expect(payloadChangesUnavailable({ changes_unavailable: true })).toBe(true);
+    expect(payloadChangesUnavailable({ detail: { changes_unavailable: true } })).toBe(true);
+    expect(payloadChangesUnavailable({ changes: [change] })).toBe(false);
   });
 
   it("shows detail lines with French keys, without the changes, copy markers or sync ids", () => {
@@ -133,6 +144,6 @@ describe("event and action names", () => {
       fr,
       { hideSummary: true },
     );
-    expect(lines.map((l) => l.key)).toEqual(["Motif", "Détail"]);
+    expect(lines.map((l) => l.key)).toEqual(["Motif"]);
   });
 });

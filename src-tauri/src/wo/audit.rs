@@ -355,8 +355,21 @@ pub fn details_with_changes(
     Some(serde_json::Value::Object(obj))
 }
 
+/// `details_json.changes_unavailable`: the work order was also changed by someone else between the
+/// reads before and after this change, so its field values are not recorded (they could credit
+/// this user with another change).
+pub const CHANGES_UNAVAILABLE: &str = "changes_unavailable";
+
+/// The fields changed between `before` and `after`, only when exactly one write happened in
+/// between (`row_version` one higher: every work-order write bumps it once, and the commands
+/// refuse a stale `expected_row_version`). `None` when another write may be mixed in.
+pub fn sole_write_changes(before: &WorkOrder, after: &WorkOrder) -> Option<Vec<serde_json::Value>> {
+    (after.row_version == before.row_version + 1).then(|| wo_field_changes(before, after))
+}
+
 /// Records a change event with the fields it changed (`before` read before the change; the work
-/// order is read again after it, with the same query) and, when fields changed, the same event in the audit
+/// order is read again after it, with the same query; values only when this change was the only
+/// write in between, [`sole_write_changes`]) and, when fields changed, the same event in the audit
 /// trail (`audit_events`, action `wo.<action>`, object the work order), so the audit log answers
 /// "who changed field X of OT Y, from what to what". Fire-and-log like [`record_wo_change_event`].
 /// Events stored before this existed are not touched (audit chain): they simply show no change.
@@ -365,9 +378,13 @@ pub async fn record_wo_change_with_diff(db: &DatabaseConnection, mut input: WoAu
         (Some(_), Some(id)) => super::queries::get_work_order(db, id).await.ok().flatten(),
         _ => None,
     };
-    let changes = match (before, after.as_ref()) {
-        (Some(b), Some(a)) => wo_field_changes(b, a),
-        _ => Vec::new(),
+    let (changes, unavailable) = match (before, after.as_ref()) {
+        (Some(b), Some(a)) => match sole_write_changes(b, a) {
+            Some(changes) => (changes, false),
+            None => (Vec::new(), true),
+        },
+        (Some(_), None) => (Vec::new(), true),
+        _ => (Vec::new(), false),
     };
     let has_changes = !changes.is_empty();
     let base = input
@@ -377,6 +394,16 @@ pub async fn record_wo_change_with_diff(db: &DatabaseConnection, mut input: WoAu
     let details = details_with_changes(base, changes);
     if has_changes {
         input.details_json = details.as_ref().map(serde_json::Value::to_string);
+    } else if unavailable {
+        let mut obj = match details {
+            Some(serde_json::Value::Object(map)) => map,
+            Some(other) => serde_json::Map::from_iter([("detail".to_string(), other)]),
+            None => serde_json::Map::new(),
+        };
+        obj.insert(CHANGES_UNAVAILABLE.into(), true.into());
+        input.details_json = Some(serde_json::Value::Object(obj).to_string());
+        record_wo_change_event(db, input).await;
+        return;
     }
     let action = input.action.clone();
     let actor_id = input.actor_id;

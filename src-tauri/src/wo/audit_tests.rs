@@ -699,7 +699,7 @@ mod tests {
         let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE work_orders SET planned_start = '2026-11-10T08:00:00Z' WHERE id = ?",
+            "UPDATE work_orders SET planned_start = '2026-11-10T08:00:00Z', row_version = row_version + 1 WHERE id = ?",
             [wo_id.into()],
         ))
         .await
@@ -773,6 +773,56 @@ mod tests {
             .try_get::<i64>("", "n")
             .unwrap();
         assert_eq!(copies, 0);
+    }
+
+    #[tokio::test]
+    async fn l509_change_mixed_with_another_write_records_no_values() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, _) = wo_in_progress(&db).await;
+        let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        // Two writes between the reads: this user's and someone else's (sync, other PC).
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET planned_start = '2026-11-12T08:00:00Z', row_version = row_version + 2 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .unwrap();
+
+        audit::record_wo_change_with_diff(
+            &db,
+            WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "planned".into(),
+                actor_id: Some(actor),
+                summary: None,
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+            Some(&before),
+        )
+        .await;
+
+        let details = latest_change_details(&db, wo_id, "planned").await;
+        assert!(details.get("changes").is_none(), "{details}");
+        assert_eq!(details[audit::CHANGES_UNAVAILABLE], true);
+        let copies = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'wo.planned'".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<i64>("", "n")
+            .unwrap();
+        assert_eq!(copies, 0, "no audit copy without values");
+        let mut after = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        assert!(audit::sole_write_changes(&before, &after).is_none());
+        after.row_version = before.row_version + 1;
+        assert!(audit::sole_write_changes(&before, &after).is_some());
     }
 
     #[tokio::test]

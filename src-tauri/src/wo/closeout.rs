@@ -1582,8 +1582,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // The override signer's password counts toward the signer's account lockout, as at sign-in
     // (`auth::lockout`): a locked-out signer is not checked at all. Read before the transaction
     // (the lockout check may write); the outcome is recorded after it.
-    // The work order as it was, for the fields the close changes (audit event `wo.closed`).
-    let before_close = queries::get_work_order(db, input.wo_id).await?;
     let signer_for_password = signer_password_account(&input);
     let signer_locked = match signer_for_password {
         Some(id) => second_signer::lockout_state(db, id).await?,
@@ -1591,6 +1589,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     };
 
     let txn = db.begin().await?;
+    // The work order as it was, read in the close's transaction, for the fields the close changes
+    // (audit event `wo.closed`).
+    let before_close = queries::get_work_order(&txn, input.wo_id).await?;
 
     // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -1815,12 +1816,15 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    // The fields the close changed (status, closing date…), old → new, for the audit trail.
-    let changes = before_close
-        .as_ref()
-        .map(|before| crate::wo::audit::wo_field_changes(before, &closed))
-        .unwrap_or_default();
-    let detail_json = (!changes.is_empty()).then(|| serde_json::json!({ "changes": changes }).to_string());
+    // The fields the close changed (status, closing date…), old → new, for the audit trail; only
+    // when the close was the only write since it read the work order (`sole_write_changes`).
+    let detail_json = before_close.as_ref().map(|before| {
+        match crate::wo::audit::sole_write_changes(before, &closed) {
+            Some(changes) => serde_json::json!({ "changes": changes }),
+            None => serde_json::json!({ "changes_unavailable": true }),
+        }
+        .to_string()
+    });
 
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(

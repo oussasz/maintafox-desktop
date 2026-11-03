@@ -74,7 +74,8 @@
       "no": "No",
       "empty": "—",
       "objectUnknown": "{{type}} (not found on this device)",
-      "actor": "Author"
+      "actor": "Author",
+      "changesUnavailable": "Values not available: the work order was changed elsewhere at the same time."
     }
   },
   "labels": {

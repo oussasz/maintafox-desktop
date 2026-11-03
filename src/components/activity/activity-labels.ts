@@ -193,8 +193,38 @@ export function payloadChanges(payload: unknown): FieldChange[] {
     : [];
 }
 
+/**
+ * The event's field values were not recorded: the work order was also changed by someone else
+ * at the same time (`wo::audit::CHANGES_UNAVAILABLE`).
+ */
+export function payloadChangesUnavailable(payload: unknown): boolean {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return false;
+    }
+  }
+  if (value == null || typeof value !== "object") return false;
+  const rec = value as Record<string, unknown>;
+  const detail = rec["detail"];
+  return (
+    rec["changes_unavailable"] === true ||
+    (detail != null &&
+      typeof detail === "object" &&
+      (detail as Record<string, unknown>)["changes_unavailable"] === true)
+  );
+}
+
 /** Keys shown under the changes or only in the technical details, not as detail lines. */
-const TECHNICAL_KEYS = new Set(["changes", "source", "device_id", "actor_name"]);
+const TECHNICAL_KEYS = new Set([
+  "changes",
+  "changes_unavailable",
+  "source",
+  "device_id",
+  "actor_name",
+]);
 
 /**
  * A details/summary payload as readable "label: value" lines (nested values summarised). Keys
@@ -215,9 +245,7 @@ export function payloadLines(
     .filter(([, v]) => v !== null && v !== undefined && v !== "")
     .filter(([k]) => !TECHNICAL_KEYS.has(k) && !k.endsWith("sync_id"))
     .filter(([k]) => !(options.hideSummary && k === "summary"))
-    .filter(
-      ([k, v]) => !(k === "detail" && payloadChanges({ detail: v }).length > 0 && isOnlyChanges(v)),
-    )
+    .filter(([k, v]) => !(k === "detail" && isOnlyChanges(v)))
     .map(([k, v]) => ({
       key: t ? translated(t, `labels.detailKey.${k}`, k) : humanizeCode(k),
       value: formatValue(v),
@@ -226,7 +254,10 @@ export function payloadLines(
 
 function isOnlyChanges(v: unknown): boolean {
   return (
-    v != null && typeof v === "object" && Object.keys(v as object).every((k) => k === "changes")
+    v != null &&
+    typeof v === "object" &&
+    Object.keys(v as object).length > 0 &&
+    Object.keys(v as object).every((k) => k === "changes" || k === "changes_unavailable")
   );
 }
 

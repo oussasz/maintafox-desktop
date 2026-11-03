@@ -56,6 +56,7 @@ import {
   eventLabel,
   hasEventLabel,
   payloadChanges,
+  payloadChangesUnavailable,
   payloadLines,
   resultLabel,
   resultTone,
@@ -508,7 +509,11 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       </dl>
                       {detail && changes.length > 0 ? <AuditChangeList changes={changes} /> : null}
                       {detail && changes.length === 0 && row.target_type === "work_order" ? (
-                        <p className="text-text-muted">{t("audit.detail.noChanges")}</p>
+                        <p className="text-text-muted">
+                          {payloadChangesUnavailable(detail.details_json)
+                            ? t("audit.detail.changesUnavailable")
+                            : t("audit.detail.noChanges")}
+                        </p>
                       ) : null}
                       {row.from_other_device ? (
                         <p className="text-text-muted" data-testid="history-from-other-device">

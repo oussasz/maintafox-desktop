@@ -74,7 +74,8 @@
       "no": "Non",
       "empty": "—",
       "objectUnknown": "{{type}} (introuvable sur ce poste)",
-      "actor": "Auteur"
+      "actor": "Auteur",
+      "changesUnavailable": "Valeurs non disponibles : l'OT a été modifié en même temps par ailleurs."
     }
   },
   "labels": {
