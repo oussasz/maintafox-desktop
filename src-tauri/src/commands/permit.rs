@@ -191,6 +191,15 @@ pub async fn set_work_permit_status(input: WorkPermitStatusInput, state: State<'
     queries::set_work_permit_status(&state.db, input, i64::from(user.user_id)).await
 }
 
+/// Whether the session user may approve this permit now (four-eyes), without approving it: the
+/// screen greys the approve step with the refusal's reason. Same right as the approval itself.
+#[tauri::command]
+pub async fn check_work_permit_approval(permit_id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, permit_id).await?;
+    queries::check_work_permit_approval(&state.db, permit_id, i64::from(user.user_id)).await
+}
+
 /// Choices of the isolation form (energy types, the plant's isolation methods). Read with the
 /// permit view right: a technician recording a LOTO needs no reference-data permission.
 #[tauri::command]

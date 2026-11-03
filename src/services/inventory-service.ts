@@ -4,8 +4,9 @@ import { invoke } from "@/lib/ipc-invoke";
 import { ipcErrorDetails } from "@/utils/errors";
 import type {
   ApproveInventoryCountLineInput,
-  ArticleConsumptionMonth,
   // Article / procurement analytics
+  ArticleAssetUsage,
+  ArticleConsumptionMonth,
   ArticleEquivalent,
   ArticleEquivalentInput,
   ArticleFamily,
@@ -1748,6 +1749,22 @@ export function listInventoryArticleEquivalents(articleId: number): Promise<Arti
     "list_inventory_article_equivalents",
     { articleId },
     z.array(ArticleEquivalentSchema),
+  );
+}
+
+export function listInventoryArticleUsage(articleId: number): Promise<ArticleAssetUsage[]> {
+  return invokeParsed(
+    "list_inventory_article_usage",
+    { articleId },
+    z.array(
+      z.object({
+        asset_id: z.number(),
+        asset_code: z.string(),
+        asset_name: z.string(),
+        quantity: z.number(),
+        is_critical_spare: z.boolean(),
+      }),
+    ),
   );
 }
 

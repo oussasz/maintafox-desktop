@@ -56,6 +56,7 @@ const print = vi.hoisted(() => ({ printLotoCard: vi.fn() }));
 vi.mock("@/components/permits/loto-card-print", () => print);
 
 const svc = vi.hoisted(() => ({
+  checkWorkPermitApproval: vi.fn().mockResolvedValue(undefined),
   listPermitTypes: vi.fn(),
   listWorkPermits: vi.fn(),
   permitComplianceKpi30d: vi.fn(),
@@ -310,7 +311,9 @@ describe("PermitsPage", () => {
     const panel = await openPermit();
     expect(await within(panel).findByRole("button", { name: "Verify" })).toBeDisabled();
     expect(within(panel).getAllByText(enPermits.isolation.selfBlocked).length).toBeGreaterThan(0);
-    expect(within(panel).getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(
+      within(panel).getByRole("button", { name: enPermits.transition.activate }),
+    ).toBeDisabled();
     expect(within(panel).getByText(enPermits.gate.unverified)).toBeInTheDocument();
   });
 
@@ -334,9 +337,11 @@ describe("PermitsPage", () => {
     );
 
     await waitFor(() =>
-      expect(within(panel).getByRole("button", { name: "Activate" })).toBeEnabled(),
+      expect(
+        within(panel).getByRole("button", { name: enPermits.transition.activate }),
+      ).toBeEnabled(),
     );
-    fireEvent.click(within(panel).getByRole("button", { name: "Activate" }));
+    fireEvent.click(within(panel).getByRole("button", { name: enPermits.transition.activate }));
     await waitFor(() =>
       expect(svc.setWorkPermitStatus).toHaveBeenCalledWith({
         id: 41,
@@ -471,6 +476,8 @@ describe("PermitsPage", () => {
     const tiles = await screen.findByTestId("permits-kpis");
     expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();
     expect(within(tiles).getByText(enPermits.kpi.onTimeRate)).toBeInTheDocument();
+    // L4-09: a share of 0.75 is 75 %, not 0.8 %.
+    expect(within(tiles).getByText(/^75\s?%$/)).toBeInTheDocument();
     expect(within(tiles).getAllByText(enPermits.kpi.period30d).length).toBeGreaterThan(0);
   });
 
@@ -479,7 +486,9 @@ describe("PermitsPage", () => {
     const panel = await openPermit();
     expect(await within(panel).findByText(enPermits.isolation.loadError)).toBeInTheDocument();
     expect(within(panel).queryByText(enPermits.isolation.empty)).toBeNull();
-    expect(within(panel).getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(
+      within(panel).getByRole("button", { name: enPermits.transition.activate }),
+    ).toBeDisabled();
     expect(within(panel).getByText(enPermits.gate.isolationsUnavailable)).toBeInTheDocument();
   });
 

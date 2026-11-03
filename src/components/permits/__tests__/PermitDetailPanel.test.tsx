@@ -52,6 +52,7 @@ vi.mock("@/lib/app-error", async (importOriginal) => ({
 vi.mock("@/components/permits/loto-card-print", () => ({ printLotoCard: vi.fn() }));
 
 const svc = vi.hoisted(() => ({
+  checkWorkPermitApproval: vi.fn().mockResolvedValue(undefined),
   listPermitIsolations: vi.fn(),
   listPermitIsolationOptions: vi.fn(),
   listPermitSuspensions: vi.fn(),
@@ -669,6 +670,26 @@ describe("PermitDetailPanel — four-eyes approval", () => {
       }),
     );
     expect(screen.queryByTestId("permit-approver")).toBeNull();
+  });
+
+  it("greys the approve step with the server's four-eyes reason before any click (L4-14)", async () => {
+    svc.checkWorkPermitApproval.mockRejectedValueOnce({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
+    const p = permit({
+      status: "pending_review",
+      approved_by_id: null,
+      approved_by_name: null,
+      approved_at: null,
+    });
+    await show(p);
+    expect(svc.checkWorkPermitApproval).toHaveBeenCalledWith(41);
+    const refusal = await screen.findByTestId("permit-approval-refusal");
+    const reason = String(lookup(enTraining, "errors.PERMIT_APPROVER_IS_SUBMITTER")).replace(
+      /\{\{\w+\}\}/g,
+      "",
+    );
+    expect(refusal).toHaveTextContent(reason.replace(/\s+/g, " ").trim());
+    expect(screen.getByRole("button", { name: enPermits.transition.approve })).toBeDisabled();
+    expect(svc.setWorkPermitStatus).not.toHaveBeenCalled();
   });
 
   it("surfaces the four-eyes refusal when the submitter tries to approve", async () => {

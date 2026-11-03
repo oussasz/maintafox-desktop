@@ -8,6 +8,7 @@ import { Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BudgetVersionCompare } from "@/components/finance/BudgetVersionCompare";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
@@ -146,6 +147,9 @@ export function BudgetPlanningPanel({
         canEdit={canBudget}
         onChanged={refresh}
       />
+      {versions.length >= 2 ? (
+        <BudgetVersionCompare versions={versions} referenceVersionId={referenceVersionId} />
+      ) : null}
       {version && version.id !== referenceVersionId ? (
         <p
           role="status"

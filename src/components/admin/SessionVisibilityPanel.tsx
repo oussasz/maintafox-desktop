@@ -17,6 +17,7 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { i18n } from "@/i18n";
+import { roleLabel } from "@/lib/role-labels";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
@@ -161,7 +162,7 @@ export function SessionVisibilityPanel() {
           <div className="flex flex-wrap gap-1">
             {row.original.current_role_names.map((r) => (
               <Badge key={r} variant="secondary" className="text-[10px]">
-                {r}
+                {roleLabel(t, r)}
               </Badge>
             ))}
           </div>

@@ -710,6 +710,7 @@ pub fn run() {
         commands::inventory::list_supplier_purchase_history,
         // ── Article equivalents ──────────────────────────────────────────────────────
         commands::inventory::list_inventory_article_equivalents,
+        commands::inventory::list_inventory_article_usage,
         commands::inventory::upsert_inventory_article_equivalent,
         commands::inventory::delete_inventory_article_equivalent,
         commands::inventory::list_inventory_article_purchase_history,
@@ -987,6 +988,7 @@ pub fn run() {
         commands::permit::create_work_permit,
         commands::permit::update_work_permit,
         commands::permit::set_work_permit_status,
+        commands::permit::check_work_permit_approval,
         commands::permit::list_permit_isolation_options,
         commands::permit::list_permit_isolations,
         commands::permit::upsert_permit_isolation,

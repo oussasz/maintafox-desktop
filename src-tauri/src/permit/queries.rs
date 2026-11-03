@@ -2176,6 +2176,15 @@ async fn four_eyes_approval(db: &impl ConnectionTrait, permit: &WorkPermit, acto
     })
 }
 
+/// Whether `actor_id` may approve the permit now under four-eyes: the same rule as the approval
+/// itself ([`four_eyes_approval`]), read only (nothing is written). The screen uses it to grey the
+/// approve step with the server's own reason instead of letting the click fail (L4-14); the
+/// approval is still checked again when it is made.
+pub async fn check_work_permit_approval(db: &DatabaseConnection, permit_id: i64, actor_id: i64) -> AppResult<()> {
+    let permit = require_work_permit(db, permit_id).await?;
+    four_eyes_approval(db, &permit, actor_id).await.map(|_| ())
+}
+
 /// `actor_id` is the session user; it is recorded as the reinstating person when a
 /// suspended permit returns to `active`.
 pub async fn set_work_permit_status(

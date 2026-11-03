@@ -1,6 +1,8 @@
 {
   "page": {
-    "title": "Planning"
+    "title": "Planning",
+    "counter": "engagés {{committed}} · à engager {{proposed}}",
+    "counterTitle": "{{committed}} OT engagé(s) et {{proposed}} OT planifié(s) mais pas encore engagé(s) sur la période affichée"
   },
   "views": {
     "gantt": "Tableau Gantt",
@@ -54,12 +56,12 @@
   },
   "actions": {
     "refreshBacklog": "Rafraîchir le backlog",
-    "freezePeriod": "Geler la période",
+    "lockPeriod": "Verrouiller une période (fenêtre / arrêt)",
     "exportPdf": "Exporter le Gantt PDF",
     "commit": "Créer l'engagement",
     "notifyTeams": "Notifier les équipes",
     "plannerTools": "Outils planificateur",
-    "requiresCommitments": "Disponible une fois du travail engagé sur ce tableau"
+    "requiresCommitments": "Aucun OT engagé sur la période Du–Au : engagez un OT du backlog, ou élargissez les dates, pour utiliser cet outil."
   },
   "state": {
     "loading": "Chargement des données planning..."
@@ -70,7 +72,7 @@
     "readinessScore": "Disponibilité",
     "skillMatch": "Adéquation compétences",
     "risk": "Risque",
-    "emptyReady": "Aucun candidat prêt.",
+    "emptyReady": "Aucun OT prêt à planifier. Seuls les OT au statut « Prêt à planifier » (ou planifiés, assignés) apparaissent ici ; un OT en brouillon ou en cours n'y figure pas.",
     "emptyBlocked": "Aucun candidat bloqué.",
     "readyHint": "Cliquez une carte Prêt pour l'engager au planning.",
     "blockedHint": "Ouvrez un élément bloqué pour lever ses blocages dans l'ordre de travail ou la demande.",
@@ -238,12 +240,6 @@
     "inserted": "Ajouté en semaine gelée :",
     "syncRefused": "refusé (sync)"
   },
-  "freeze": {
-    "title": "Geler la période de planning",
-    "summary": "Geler les engagements du {{start}} au {{end}}.",
-    "reason": "Motif de gel",
-    "reasonPlaceholder": "Expliquez pourquoi cette période doit être gelée"
-  },
   "override": {
     "title": "Déroger au double-booking",
     "description": "Ce déplacement entre en conflit avec une affectation existante. Indiquez un motif d'audit pour continuer.",
@@ -284,6 +280,12 @@
   "dialogs": {
     "cancel": "Annuler",
     "close": "Fermer"
+  },
+  "proposed": {
+    "label": "À engager",
+    "tooltip": "OT planifié mais pas encore engagé : cliquez pour l'engager",
+    "tooltipWithTeam": "OT planifié mais pas encore engagé (équipe : {{team}}) : cliquez pour l'engager",
+    "noRight": "Vous n'avez pas le droit d'engager un OT."
   },
   "deepLink": {
     "woNotInBacklog": "Cet ordre de travail n'est pas dans le backlog de planification (pas encore prêt à planifier, déjà engagé ou hors filtre).",
@@ -435,7 +437,6 @@
     "breakInRecorded": "Break-in enregistré",
     "slotReleased": "Créneau libéré",
     "commitmentCancelled": "Engagement annulé",
-    "periodFrozen": "Période gelée",
     "teamsNotified": "Équipes notifiées",
     "weekApproved": "Semaine approuvée",
     "weekFrozen": "Semaine gelée",

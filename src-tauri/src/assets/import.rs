@@ -163,6 +163,44 @@ fn map_import_event(row: &QueryResult) -> AppResult<ImportEvent> {
     })
 }
 
+// ─── CSV separator detection ──────────────────────────────────────────────────
+
+/// Strip a UTF-8 byte-order mark (Excel adds one to "CSV UTF-8" files).
+pub(crate) fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
+}
+
+/// Guess the field separator of a CSV file from its header line.
+///
+/// French Excel saves with ";" while exports from other tools use ","
+/// (or a tab). The separator found most often outside quotes in the first
+/// line wins; "," is the fallback when the line has none of them.
+pub(crate) fn detect_csv_delimiter(bytes: &[u8]) -> u8 {
+    let bytes = strip_utf8_bom(bytes);
+    let first_line_end = bytes.iter().position(|b| *b == b'\n').unwrap_or(bytes.len());
+    let mut counts = [(b';', 0usize), (b',', 0usize), (b'\t', 0usize)];
+    let mut in_quotes = false;
+    for b in &bytes[..first_line_end] {
+        if *b == b'"' {
+            in_quotes = !in_quotes;
+        } else if !in_quotes {
+            for (sep, n) in counts.iter_mut() {
+                if b == sep {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    // Strict ">" keeps the earlier entry on a tie, so ";" wins over "," (French Excel).
+    let mut best = (b',', 0usize);
+    for (sep, n) in counts {
+        if n > best.1 {
+            best = (sep, n);
+        }
+    }
+    best.0
+}
+
 // ─── CSV field normalization ──────────────────────────────────────────────────
 
 /// Known CSV header aliases mapped to our normalized field names.
@@ -322,9 +360,11 @@ pub async fn parse_and_stage_csv(
     }
 
     // Parse CSV headers and normalize them
+    let csv_content = strip_utf8_bom(csv_content);
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
+        .delimiter(detect_csv_delimiter(csv_content))
         .trim(csv::Trim::All)
         .from_reader(csv_content);
 
@@ -347,10 +387,11 @@ pub async fn parse_and_stage_csv(
         .iter()
         .any(|h| matches!(h, Some("asset_code") | Some("external_key")));
     if !has_identity {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_ASSET_IMPORT_CSV_COLUMNS: Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents)."
-                .into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_IMPORT_CSV_COLUMNS: Colonne du code équipement introuvable. Colonnes lues dans le fichier : {}. \
+             Utilisez une colonne « code_equipement » (ou « cle_externe »).",
+            raw_headers.join(" | ")
+        )]));
     }
 
     let txn = db.begin().await?;

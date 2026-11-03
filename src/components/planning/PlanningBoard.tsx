@@ -14,8 +14,10 @@ import {
   timelineItemTooltip,
   parseCommitmentItemId,
   parseConflictReasons,
+  parseProposedItemId,
   parseTeamGroupId,
   PLANNING_UNASSIGNED_GROUP_ID,
+  proposedItemId,
   utilizationState,
 } from "@/components/planning/planning-model";
 import {
@@ -50,6 +52,8 @@ type PlanningBoardProps = {
   onVisibleTimeChange: (start: number, end: number) => void;
   selectedCommitmentId: number | null;
   onSelectCommitment: (commitmentId: number) => void;
+  /** A planned OT without commitment ("to commit" bar) was clicked. */
+  onSelectProposed?: (workOrderId: number) => void;
   onReschedule: (
     commitmentId: number,
     newStartMs: number,
@@ -78,6 +82,7 @@ export function PlanningBoard({
   onVisibleTimeChange,
   selectedCommitmentId,
   onSelectCommitment,
+  onSelectProposed,
   onReschedule,
   loading = false,
   error = null,
@@ -137,7 +142,39 @@ export function PlanningBoard({
     }));
   }, [gantt, laneMode, t]);
 
-  const items = useMemo<ResourceTimelineItem[]>(() => {
+  /** Planned OTs with no commitment: dashed, read-only, never part of the load. */
+  const proposedItems = useMemo<ResourceTimelineItem[]>(() => {
+    const crewLaneIds = new Set((gantt?.crew_lanes ?? []).map((lane) => lane.team_id));
+    const next: ResourceTimelineItem[] = [];
+    for (const proposed of gantt?.proposed_work_orders ?? []) {
+      const start = Date.parse(proposed.planned_start);
+      const end = Date.parse(proposed.planned_end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      const inCrewLane =
+        laneMode === "crew" &&
+        proposed.assigned_team_id != null &&
+        crewLaneIds.has(proposed.assigned_team_id);
+      const tooltip = proposed.assigned_team_name
+        ? t("proposed.tooltipWithTeam", { team: proposed.assigned_team_name })
+        : t("proposed.tooltip");
+      next.push({
+        id: proposedItemId(proposed.work_order_id),
+        group:
+          inCrewLane && proposed.assigned_team_id != null
+            ? teamGroupId(proposed.assigned_team_id)
+            : PLANNING_UNASSIGNED_GROUP_ID,
+        title: `${t("proposed.label")} · ${proposed.code}`,
+        start_time: start,
+        end_time: end,
+        className: "mf-rt-item--proposed",
+        canMove: false,
+        tooltip: [`${proposed.code} — ${proposed.title}`, tooltip].join("\n"),
+      });
+    }
+    return next;
+  }, [gantt, laneMode, t]);
+
+  const commitmentItems = useMemo<ResourceTimelineItem[]>(() => {
     if (laneMode === "crew") {
       const next: ResourceTimelineItem[] = [];
       for (const commitment of commitments) {
@@ -183,6 +220,11 @@ export function PlanningBoard({
       tooltip: timelineItemTooltip(row, t),
     }));
   }, [commitments, gantt, canDrag, laneMode, t, absenceType]);
+
+  const items = useMemo(
+    () => [...commitmentItems, ...proposedItems],
+    [commitmentItems, proposedItems],
+  );
 
   const highlights = useMemo<ResourceTimelineTimeRangeHighlight[]>(
     () => buildPlanningWindowHighlights(lockedWindows),
@@ -322,6 +364,11 @@ export function PlanningBoard({
           selectedCommitmentId != null ? [commitmentItemId(selectedCommitmentId)] : []
         }
         onItemSelect={(itemId) => {
+          const proposedId = parseProposedItemId(itemId);
+          if (proposedId != null) {
+            onSelectProposed?.(proposedId);
+            return;
+          }
           const id = parseCommitmentItemId(itemId);
           if (id != null) onSelectCommitment(id);
         }}

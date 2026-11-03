@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Download,
   GanttChart,
-  Lock,
   RefreshCw,
   Siren,
   SquareStack,
@@ -24,7 +23,6 @@ import { BreakInDialog } from "@/components/planning/BreakInDialog";
 import { CommitDialog } from "@/components/planning/CommitDialog";
 import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
 import { CrewsWithoutSiteBanner } from "@/components/planning/CrewsWithoutSiteBanner";
-import { FreezeConfirmDialog } from "@/components/planning/FreezeConfirmDialog";
 import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
 import { PlanningBacklogRail } from "@/components/planning/PlanningBacklogRail";
 import { PlanningBoard } from "@/components/planning/PlanningBoard";
@@ -33,28 +31,28 @@ import { PlanningWindowDetailDialog } from "@/components/planning/PlanningWindow
 import { ProductionWindowDialog } from "@/components/planning/ProductionWindowDialog";
 import { WeeklySchedulePanel } from "@/components/planning/WeeklySchedulePanel";
 import {
+  PLANNING_DEFAULT_HORIZON_DAYS,
+  PLANNING_HORIZON_PRESETS,
+  PLANNING_TIMELINE_MAX_ZOOM_MS,
+  type PlanningBoardScope,
+  type PlanningPageView,
   addDaysIso,
   candidateDisplayCode,
   candidateDisplayTitle,
   clampVisibleToHorizon,
   filterCommitmentsForBoardScope,
+  isAssigneeOverridableError,
   localDateEndIso,
   localDateEndMs,
   localDateStartIso,
   localDateStartMs,
+  overridableCodes,
   parseMs,
-  PLANNING_DEFAULT_HORIZON_DAYS,
-  PLANNING_HORIZON_PRESETS,
-  PLANNING_TIMELINE_MAX_ZOOM_MS,
   readStoredBoardScope,
   readStoredPageView,
   toLocalIsoDate,
   writeStoredBoardScope,
   writeStoredPageView,
-  type PlanningBoardScope,
-  type PlanningPageView,
-  isAssigneeOverridableError,
-  overridableCodes,
 } from "@/components/planning/planning-model";
 import { useAssigneeCapacity } from "@/components/planning/use-assignee-capacity";
 import { Badge } from "@/components/ui/badge";
@@ -77,7 +75,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
-import { useFormatters } from "@/hooks/use-formatters";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
@@ -88,9 +85,9 @@ import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
 import { extractIpcValidationDetails } from "@/utils/errors";
 import type {
+  CreatePlanningWindowInput,
   CreateScheduleBreakInInput,
   CreateScheduleCommitmentInput,
-  CreatePlanningWindowInput,
   PlanningWindow,
   RescheduleCommitmentInput,
   ScheduleCandidate,
@@ -119,7 +116,6 @@ export function PlanningPage() {
   const readable = useReadableLists(["teams", "people"] as const);
   const rightsLoading = usePermissionsLoading();
   const { toast } = useToast();
-  const { formatDateTime } = useFormatters();
   /** Confirms a planning action that went through (failures already have their toast). */
   const done = (key: string) => toast({ title: t(`feedback.${key}`), variant: "success" });
 
@@ -145,7 +141,6 @@ export function PlanningPage() {
   const rescheduleCommitment = usePlanningStore((s) => s.rescheduleCommitment);
   const createPlanningWindow = usePlanningStore((s) => s.createPlanningWindow);
   const createBreakIn = usePlanningStore((s) => s.createBreakIn);
-  const freezeSchedule = usePlanningStore((s) => s.freezeSchedule);
   const notifyTeams = usePlanningStore((s) => s.notifyTeams);
   const exportGanttPdf = usePlanningStore((s) => s.exportGanttPdf);
   const [pdfPaper, setPdfPaper] = useState<"A4" | "A3">("A4");
@@ -199,7 +194,6 @@ export function PlanningPage() {
   const [windowDetailOpen, setWindowDetailOpen] = useState(false);
   const [breakInOpen, setBreakInOpen] = useState(false);
   const [breakInCommitmentId, setBreakInCommitmentId] = useState<number | null>(null);
-  const [freezeOpen, setFreezeOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const pendingRescheduleRef = useRef<PendingReschedule | null>(null);
@@ -223,9 +217,46 @@ export function PlanningPage() {
     setVisibleEnd(next.end);
   }, [horizonStart, horizonEnd]);
 
+  // The backlog is a table filled by a refresh: a planner opening the page gets it filled from the
+  // open work orders, everyone else reads what is there.
+  const canRefreshBacklog = can(P.PLAN_EDIT);
   useEffect(() => {
-    void loadBacklog();
-  }, [loadBacklog]);
+    if (rightsLoading) return;
+    if (canRefreshBacklog) {
+      // A failed refresh is already shown as a toast by the IPC layer: show what the table holds.
+      void refreshBacklog().catch(() => loadBacklog());
+    } else {
+      void loadBacklog();
+    }
+  }, [rightsLoading, canRefreshBacklog, refreshBacklog, loadBacklog]);
+
+  /** Planned OTs without a commitment in the period: counted apart, never as committed load. */
+  const proposedCount = ganttSnapshot?.proposed_work_orders?.length ?? 0;
+
+  /**
+   * A "to commit" bar was clicked: open the commit dialog of that OT, as a click on its backlog
+   * card does. An OT that is not a ready backlog candidate cannot be committed: say so (the
+   * notice also offers to open the OT).
+   */
+  const handleSelectProposed = useCallback(
+    (workOrderId: number) => {
+      if (!can(P.PLAN_CONFIRM)) {
+        toast({ title: t("proposed.noRight") });
+        return;
+      }
+      const candidate = backlog?.candidates.find(
+        (c) => c.source_type === "work_order" && c.source_id === workOrderId,
+      );
+      if (!candidate || candidate.readiness_status !== "ready") {
+        setDeepLinkMissWoId(workOrderId);
+        return;
+      }
+      setDeepLinkMissWoId(null);
+      setSelectedCandidate(candidate);
+      setCommitOpen(true);
+    },
+    [backlog, can, toast, t],
+  );
 
   /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
   const deepLinkHandledRef = useRef<string | null>(null);
@@ -596,20 +627,6 @@ export function PlanningPage() {
     await Promise.all([loadBacklog(), reloadBoard()]);
   }
 
-  async function handleFreeze(reason: string) {
-    try {
-      await freezeSchedule({
-        period_start: periodStartIso,
-        period_end: periodEndIso,
-        reason,
-      });
-      done("periodFrozen");
-      await reloadBoard();
-    } catch (err) {
-      throw err;
-    }
-  }
-
   async function handleNotifyTeams() {
     try {
       await notifyTeams({
@@ -630,8 +647,15 @@ export function PlanningPage() {
         <div className={mfLayout.moduleTitleRow}>
           <CalendarRange className={mfLayout.moduleHeaderIcon} aria-hidden />
           <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
-          <Badge variant="secondary" className="text-xs">
-            {backlog?.candidate_count ?? commitments.length}
+          <Badge
+            variant="secondary"
+            className="text-xs"
+            title={t("page.counterTitle", {
+              committed: commitments.length,
+              proposed: proposedCount,
+            })}
+          >
+            {t("page.counter", { committed: commitments.length, proposed: proposedCount })}
           </Badge>
         </div>
 
@@ -662,17 +686,7 @@ export function PlanningPage() {
                 <PermissionGate permission={P.PLAN_WINDOWS}>
                   <DropdownMenuItem onClick={() => setWindowOpen(true)}>
                     <SquareStack className="mr-2 h-3.5 w-3.5" />
-                    {t("windows.title")}
-                  </DropdownMenuItem>
-                </PermissionGate>
-                <PermissionGate permission={P.PLAN_CONFIRM}>
-                  <DropdownMenuItem
-                    disabled={commitments.length === 0 || saving}
-                    title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
-                    onClick={() => setFreezeOpen(true)}
-                  >
-                    <Lock className="mr-2 h-3.5 w-3.5" />
-                    {t("actions.freezePeriod")}
+                    {t("actions.lockPeriod")}
                   </DropdownMenuItem>
                 </PermissionGate>
                 <PermissionGate permission={P.PLAN_CONFIRM}>
@@ -953,6 +967,7 @@ export function PlanningPage() {
                   setSelectedCommitmentId(id);
                   setInspectorOpen(true);
                 }}
+                onSelectProposed={handleSelectProposed}
                 onReschedule={handleBoardReschedule}
                 loading={loading && !ganttSnapshot}
                 error={null}
@@ -1029,14 +1044,6 @@ export function PlanningPage() {
         personnel={personnel}
         saving={saving}
         onSubmit={handleCreateBreakIn}
-      />
-      <FreezeConfirmDialog
-        open={freezeOpen}
-        onOpenChange={setFreezeOpen}
-        periodStartLabel={formatDateTime(periodStartIso)}
-        periodEndLabel={formatDateTime(periodEndIso)}
-        saving={saving}
-        onConfirm={handleFreeze}
       />
       <CommitmentInspectorDialog
         open={inspectorOpen}
