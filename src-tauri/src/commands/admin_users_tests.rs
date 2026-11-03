@@ -1934,8 +1934,11 @@ async fn an_expired_grant_cannot_sign_a_parts_override() {
 async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
     use crate::inventory::approvals::{ensure_can_approve, upsert_limit, DOC_REQUISITION};
     let db = crate::db::test_db::seeded().await;
-    // Approving needs the approval right as well as a limit covering the amount (L3-03).
+    // A limit counts only on a role that holds the approval right (L3-03).
     let (_, approver_role) = account_with_permissions(&db, "limit_source", &["inv.approve"]).await;
+    // The user also holds the right permanently through another role with no limit row, so the
+    // right check passes in every case below and each refusal comes from the limit's own validity.
+    let (_, rights_role) = account_with_permissions(&db, "limit_rights", &["inv.approve"]).await;
     upsert_limit(
         &db,
         crate::inventory::domain::ProcurementApprovalLimitInput {
@@ -1951,6 +1954,8 @@ async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
     let author = insert_user(&db, "limit_author").await;
     let approver = insert_user(&db, "limit_approver").await;
     let approve = || ensure_can_approve(&db, DOC_REQUISITION, 1, Some(author), Some(approver));
+    let give_right = || raw_assignment(&db, "limit-right", approver, rights_role, "tenant", None, None, None);
+    give_right().await;
 
     // An emergency grant that lapsed a minute ago (same day) no longer carries the limit.
     raw_assignment(
@@ -1964,8 +1969,13 @@ async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
         None,
     )
     .await;
-    assert!(approve().await.is_err(), "a lapsed grant keeps no approval limit");
+    let refusal = format!(
+        "{:?}",
+        approve().await.expect_err("a lapsed grant keeps no approval limit")
+    );
+    assert!(refusal.contains("GATE_PROC_NO_APPROVAL_LIMIT"), "{refusal}");
     clear_assignments(&db, approver).await;
+    give_right().await;
     // Nor does an assignment whose validity ended a minute ago.
     raw_assignment(
         &db,
@@ -1978,8 +1988,15 @@ async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
         Some(stamp(-chrono::Duration::minutes(1))),
     )
     .await;
-    assert!(approve().await.is_err(), "an ended assignment keeps no approval limit");
+    let refusal = format!(
+        "{:?}",
+        approve()
+            .await
+            .expect_err("an ended assignment keeps no approval limit")
+    );
+    assert!(refusal.contains("GATE_PROC_NO_APPROVAL_LIMIT"), "{refusal}");
     clear_assignments(&db, approver).await;
+    give_right().await;
     raw_assignment(
         &db,
         "limit-running",
