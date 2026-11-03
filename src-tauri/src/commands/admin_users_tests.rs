@@ -1934,7 +1934,8 @@ async fn an_expired_grant_cannot_sign_a_parts_override() {
 async fn an_approval_limit_ends_with_its_grant_not_at_midnight() {
     use crate::inventory::approvals::{ensure_can_approve, upsert_limit, DOC_REQUISITION};
     let db = crate::db::test_db::seeded().await;
-    let (_, approver_role) = account_with_permissions(&db, "limit_source", &[]).await;
+    // Approving needs the approval right as well as a limit covering the amount (L3-03).
+    let (_, approver_role) = account_with_permissions(&db, "limit_source", &["inv.approve"]).await;
     upsert_limit(
         &db,
         crate::inventory::domain::ProcurementApprovalLimitInput {
