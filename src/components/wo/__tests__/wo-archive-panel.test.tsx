@@ -76,7 +76,10 @@ describe("WoArchivePanel", () => {
     await waitFor(() =>
       expect(woSvc.listWos).toHaveBeenCalledWith(expect.objectContaining({ search: "huile" })),
     );
+    // The search found one work order: the list says so, the badge still counts the whole archive.
+    expect(await screen.findByText("Closed 99")).toBeInTheDocument();
     expect(screen.getByText("549")).toBeInTheDocument();
+    expect(screen.queryByText(/^1$/)).not.toBeInTheDocument();
   });
 
   it("keeps the loaded rows and says so when load more fails", async () => {

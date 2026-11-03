@@ -93,6 +93,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       .then((page) => {
         if (current) setArchiveTotal(page.total);
       })
+      // The badge keeps its last value; the list below shows its own error if the service is down.
       .catch((e) => console.error("WoArchivePanel.count", e));
     return () => {
       current = false;
@@ -227,7 +228,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={loadingMore}
+                    disabled={loadingMore || loading}
                     onClick={() => void loadMore()}
                   >
                     {t("archive.loadMore", { count: total - items.length })}
