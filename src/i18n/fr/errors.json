@@ -396,6 +396,8 @@
     "GATE_ASSET_IMPORT_CSV_HEADERS": "Import refusé : les en-têtes du fichier CSV sont illisibles.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refusé : le fichier CSV est invalide à la ligne {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refusé : le lot ne contient aucune ligne.",
+    "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refusé : l'emplacement indiqué n'existe pas dans l'organisation active.",
+    "GATE_ASSET_IMPORT_PARENT_UNKNOWN": "Import refusé : le parent indiqué n'existe pas dans le parc d'équipements.",
     "GATE_ASSET_IMPORT_STATUS_APPLY": "Application refusée : le lot est « {{status}} », seul un lot validé peut être appliqué.",
     "GATE_ASSET_IMPORT_STATUS_LOAD": "Chargement refusé : le lot est « {{status}} », seul un lot téléversé peut être chargé.",
     "GATE_ASSET_IMPORT_STATUS_VALIDATE": "Validation refusée : le lot est « {{status}} », seul un lot téléversé peut être validé.",

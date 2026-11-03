@@ -362,62 +362,6 @@ pub(crate) async fn resolve_class_code(db: &impl ConnectionTrait, class_code: &s
     Ok((id, parent_id))
 }
 
-/// Validate that a family_code exists and is the parent of the resolved class.
-/// If the class has no parent (it IS top-level), the family code is optional
-/// and this function returns Ok if family_code matches the class itself.
-pub(crate) async fn validate_family_code(
-    db: &impl ConnectionTrait,
-    family_code: &str,
-    class_id: i64,
-    class_parent_id: Option<i64>,
-) -> AppResult<()> {
-    let expected_parent_id = match class_parent_id {
-        Some(pid) => pid,
-        None => {
-            // Top-level class — family_code should match the class itself
-            let row = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT code FROM equipment_classes WHERE id = ?",
-                    [class_id.into()],
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("class row missing")))?;
-            let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
-            if code != family_code {
-                return Err(AppError::ValidationFailed(vec![format!(
-                    "GATE_ASSET_CLASS_NO_FAMILY: La classe '{code}' n'est liée à aucune famille. \
-                     Supprimez la famille sélectionnée ('{family_code}') ou choisissez une classe qui appartient à cette famille."
-                )]));
-            }
-            return Ok(());
-        }
-    };
-
-    // Verify the parent's code matches family_code
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT code FROM equipment_classes \
-             WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
-            [expected_parent_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "GATE_ASSET_FAMILY_INACTIVE: La classe parente (famille) est inactive ou supprimée.".into(),
-            ])
-        })?;
-    let parent_code: String = row.try_get("", "code").map_err(|e| decode_err("parent.code", e))?;
-    if parent_code != family_code {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ASSET_FAMILY_CLASS_MISMATCH: La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
-             Famille attendue: '{parent_code}'."
-        )]));
-    }
-    Ok(())
-}
-
 fn canon_to_legacy_criticality_lookup(canon: &str) -> &'static str {
     match canon {
         "A" => "CRITIQUE",

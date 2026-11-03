@@ -81,7 +81,7 @@ fn map_hierarchy_row(row: &QueryResult) -> AppResult<AssetHierarchyRow> {
 
 /// Assert that an equipment row exists, is not deleted, and is not
 /// DECOMMISSIONED or SCRAPPED.
-async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
+pub(crate) async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -160,7 +160,7 @@ async fn assert_single_parent(db: &impl ConnectionTrait, child_id: i64, relation
 /// Detect hierarchy cycles via BFS. Starting from `parent_id`, walk up through
 /// active relations. If `child_id` is encountered as an ancestor, creating the
 /// proposed link would form a cycle.
-async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
+pub(crate) async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
     if parent_id == child_id {
         return Err(AppError::ValidationFailed(vec![
             "GATE_ASSET_HIER_SELF_PARENT: Un équipement ne peut pas être son propre parent.".into(),
