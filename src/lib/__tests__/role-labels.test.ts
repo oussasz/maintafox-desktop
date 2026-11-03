@@ -105,8 +105,8 @@ describe("role models (L5-04)", () => {
     expect(templateDescription(t, "Modèle atelier", "Notre modèle")).toBe("Notre modèle");
   });
 
-  it("says in the storekeeper and buyer models what the rights do not separate", () => {
-    expect(templateDescription(t, "Storekeeper Template", null)).toContain("réception séparé");
-    expect(templateDescription(t, "Buyer Template", null)).toContain("Plafonds d'approbation");
+  it("says in the storekeeper and buyer models how receiving and approving are kept apart", () => {
+    expect(templateDescription(t, "Storekeeper Template", null)).toContain("droit de réception");
+    expect(templateDescription(t, "Buyer Template", null)).toContain("droit d'approbation");
   });
 });
