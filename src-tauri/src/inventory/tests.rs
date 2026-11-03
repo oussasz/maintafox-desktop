@@ -1174,7 +1174,8 @@ async fn requisition_reject_requires_reason_and_is_terminal() {
             next_status: "REJECTED".to_string(),
             reason: Some("duplicate request".to_string()),
             note: None,
-            actor_id: None,
+            // Rejecting needs the approval right (the seeded administrator holds it).
+            actor_id: Some(1),
         },
     )
     .await

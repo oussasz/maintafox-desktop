@@ -2,7 +2,9 @@
  * Purchasing rules: stored exchange rates (supplier currency → tenant currency, used at receipt
  * when no rate is entered) and per-role approval limits for requisitions and purchase orders.
  * Separation of duties (the requester never approves their own document) is enforced by the
- * backend on every approval; this panel only states it.
+ * backend on every approval; this panel only states it. Rates convert foreign-currency orders
+ * into the currency the limits are measured in, so they are maintained with the same right as the
+ * limits (P.ADM_ROLES), never by buyers or purchase approvers.
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { Plus } from "lucide-react";
@@ -238,7 +240,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
         header: () => <span className="sr-only">{t("rules.fx.columns.actions")}</span>,
         cell: ({ row }) =>
           row.original.is_active === 1 ? (
-            <PermissionGate permission={P.INV_PROCURE}>
+            <PermissionGate permission={P.ADM_ROLES}>
               <Button
                 variant="ghost"
                 className="h-11"
@@ -267,9 +269,11 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
 
   const limitOf = (roleId: number, doc: ApprovalDocumentType) =>
     limits.find((l) => l.role_id === roleId && l.document_type === doc) ?? null;
-  const configured = (doc: ApprovalDocumentType) =>
-    limits.some((l) => l.document_type === doc && l.is_active === 1);
+  // First use: nothing but the seeded "Administrator: unlimited" rows, so only the administrator
+  // can approve until the limits per role are set.
+  const onlySeededLimits = limits.length > 0 && limits.every((l) => l.is_seeded_default);
 
+  // Limits fail closed: a role without an active limit cannot approve.
   const limitCell = (roleId: number, doc: ApprovalDocumentType) => {
     const limit = limitOf(roleId, doc);
     if (limit && limit.is_active === 1) {
@@ -279,11 +283,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
         <span className="tabular-nums">{formatCurrency(limit.max_amount)}</span>
       );
     }
-    return configured(doc) ? (
-      <StatusChip label={t("rules.limits.notAllowed")} tone="neutral" />
-    ) : (
-      <span className="text-text-muted">{t("rules.limits.noRule")}</span>
-    );
+    return <StatusChip label={t("rules.limits.notAllowed")} tone="neutral" />;
   };
 
   const openLimit = (role: RoleRow, doc: ApprovalDocumentType) => {
@@ -369,7 +369,7 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
               {t("rules.fx.description", { currency: currencyCode })}
             </p>
           </div>
-          <PermissionGate permission={P.INV_PROCURE}>
+          <PermissionGate permission={P.ADM_ROLES}>
             <Button className="h-11" onClick={openRateForm}>
               <Plus className="mr-1 h-4 w-4" aria-hidden />
               {t("rules.fx.add")}
@@ -407,6 +407,14 @@ export function ProcurementRulesPanel({ reloadToken = 0 }: { reloadToken?: numbe
           </p>
           <p className="mt-1 max-w-3xl text-sm font-medium">{t("rules.limits.sod")}</p>
         </div>
+        {!limitsError && !limitsLoading && onlySeededLimits ? (
+          <p
+            role="status"
+            className="mb-3 max-w-3xl rounded-md border border-status-warning/40 bg-status-warning/10 p-3 text-sm"
+          >
+            {t("rules.limits.firstUse", { currency: currencyCode })}
+          </p>
+        ) : null}
         {limitsError ? (
           <ErrorState
             error={limitsError}

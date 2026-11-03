@@ -16,6 +16,11 @@ import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { ProcurementAlertCards } from "@/components/inventory/ProcurementAlertCards";
+import {
+  ApproverRolesLine,
+  useApprovalBlocker,
+  useApprovalBlockerFor,
+} from "@/components/inventory/ProcurementApproval";
 import { ProcurementArchivePanel } from "@/components/inventory/ProcurementArchivePanel";
 import { ProcurementContextMenu } from "@/components/inventory/ProcurementContextMenu";
 import type { ProcurementContextMenuAction } from "@/components/inventory/ProcurementContextMenu";
@@ -328,6 +333,8 @@ export const ProcurementRepairablePanel = forwardRef<
     useFormatters();
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
+  /** Same approval blockers in row menus as in the detail panes (right, own document). */
+  const approvalBlockerFor = useApprovalBlockerFor();
   const demandSources = useLookupOptions("inventory.demand_source_type");
   const purchasePriorities = useLookupOptions("inventory.purchase_priority");
   const documentPurposes = useLookupOptions("inventory.document_link_purpose");
@@ -1067,16 +1074,22 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.requested_by_id);
+        const rejectBlocker = approvalBlockerFor(row.requested_by_id, false);
         actions.push({
           id: "approve",
           label: t("procurement.requisitions.actions.approve"),
           permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runRequisitionTransition(row, "APPROVED"),
         });
         actions.push({
           id: "reject",
           label: t("procurement.requisitions.actions.reject"),
           permission: P.INV_PROCURE,
+          disabled: rejectBlocker !== null,
+          disabledReason: rejectBlocker,
           destructive: true,
           onClick: () => {
             openRequisitionDetails(row.id);
@@ -1110,6 +1123,7 @@ export const ProcurementRepairablePanel = forwardRef<
       return actions;
     },
     [
+      approvalBlockerFor,
       confirmRequisitionDecline,
       openCreatePoForm,
       openRequisitionDetails,
@@ -1136,10 +1150,13 @@ export const ProcurementRepairablePanel = forwardRef<
         });
       }
       if (row.status === "SUBMITTED") {
+        const approveBlocker = approvalBlockerFor(row.ordered_by_id);
         actions.push({
           id: "approve",
           label: t("procurement.purchaseOrders.actions.approve"),
           permission: P.INV_PROCURE,
+          disabled: approveBlocker !== null,
+          disabledReason: approveBlocker,
           onClick: () => void runPurchaseOrderTransition(row, "APPROVED"),
         });
       }
@@ -1147,7 +1164,7 @@ export const ProcurementRepairablePanel = forwardRef<
         actions.push({
           id: "receive",
           label: t("procurement.purchaseOrders.actions.receive"),
-          permission: P.INV_PROCURE,
+          permission: P.INV_RECEIVE,
           onClick: () => openReceiveForPo(row.id),
         });
       }
@@ -1163,7 +1180,14 @@ export const ProcurementRepairablePanel = forwardRef<
       }
       return actions;
     },
-    [confirmPurchaseOrderCancel, openPoDetails, openReceiveForPo, runPurchaseOrderTransition, t],
+    [
+      approvalBlockerFor,
+      confirmPurchaseOrderCancel,
+      openPoDetails,
+      openReceiveForPo,
+      runPurchaseOrderTransition,
+      t,
+    ],
   );
 
   const repairableRowActions = useCallback(
@@ -2071,6 +2095,11 @@ export const ProcurementRepairablePanel = forwardRef<
     window.setTimeout(() => document.getElementById(RECOMMENDATIONS_ID)?.scrollIntoView(), 0);
   };
 
+  /** Why the signed-in user cannot approve / reject the open requisition (null: they may try). */
+  const requisitionApprovalBlocker = useApprovalBlocker(
+    selectedRequisition?.requested_by_id ?? null,
+  );
+
   /** Next step of the open requisition, shown next to its lifecycle buttons. */
   const requisitionStepHint = selectedRequisition
     ? t(`procurement.requisitions.hints.${selectedRequisition.status}`, {
@@ -2347,7 +2376,7 @@ export const ProcurementRepairablePanel = forwardRef<
                     <EmptyState
                       title={t("procurement.goodsReceipts.empty")}
                       description={t("procurement.goodsReceipts.emptyDescription")}
-                      {...(canProcure
+                      {...(can(P.INV_RECEIVE)
                         ? {
                             actionLabel: t("procurement.receive.title"),
                             onAction: () => {
@@ -3030,6 +3059,13 @@ export const ProcurementRepairablePanel = forwardRef<
                 </dt>
                 <dd>{formatDateTime(selectedRequisition.updated_at)}</dd>
               </dl>
+              {selectedRequisition.status === "SUBMITTED" ? (
+                <ApproverRolesLine
+                  documentType="REQUISITION"
+                  documentId={selectedRequisition.id}
+                  reloadKey={selectedRequisition.row_version}
+                />
+              ) : null}
               <div className="rounded-md border p-3 text-sm">
                 <div className="mb-2 font-medium">{t("procurement.requisitions.lines.title")}</div>
                 {reqLinesError ? (
@@ -3119,6 +3155,11 @@ export const ProcurementRepairablePanel = forwardRef<
                   {requisitionStepHint}
                 </p>
               ) : null}
+              {selectedRequisition.status === "SUBMITTED" && requisitionApprovalBlocker ? (
+                <p id="inv-req-approval-blocker" className="text-xs text-text-muted">
+                  {requisitionApprovalBlocker}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="text-sm text-text-muted">{t("procurement.requisitions.noSelection")}</p>
@@ -3151,8 +3192,21 @@ export const ProcurementRepairablePanel = forwardRef<
                   </Button>
                   <Button
                     className="h-11"
-                    aria-describedby="inv-req-step-hint"
-                    disabled={saving || selectedRequisition.status !== "SUBMITTED"}
+                    aria-describedby={
+                      selectedRequisition.status === "SUBMITTED" && requisitionApprovalBlocker
+                        ? "inv-req-approval-blocker"
+                        : "inv-req-step-hint"
+                    }
+                    title={
+                      selectedRequisition.status === "SUBMITTED"
+                        ? (requisitionApprovalBlocker ?? undefined)
+                        : undefined
+                    }
+                    disabled={
+                      saving ||
+                      selectedRequisition.status !== "SUBMITTED" ||
+                      requisitionApprovalBlocker !== null
+                    }
                     onClick={() => void runRequisitionTransition(selectedRequisition, "APPROVED")}
                   >
                     {t("procurement.requisitions.actions.approve")}
@@ -3161,7 +3215,9 @@ export const ProcurementRepairablePanel = forwardRef<
                     <Button
                       variant="destructive"
                       className="h-11"
-                      disabled={saving}
+                      // Rejecting needs the approval right too (not the separation of duties).
+                      title={approvalBlockerFor(null, false) ?? undefined}
+                      disabled={saving || approvalBlockerFor(null, false) !== null}
                       onClick={() => {
                         setRejectReason("");
                         setRejectOpen(true);

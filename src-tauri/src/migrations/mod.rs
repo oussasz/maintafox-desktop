@@ -248,6 +248,7 @@ mod m20261029_000266_mobile_phone_enrolled_notice;
 mod m20261101_000036_activity_audit_log;
 mod m20261102_000267_role_models;
 pub(crate) mod m20261102_000268_org_root_level_label;
+mod m20261102_000269_procurement_approval_rights;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
@@ -502,6 +503,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261029_000266_mobile_phone_enrolled_notice::Migration),
             Box::new(m20261102_000268_org_root_level_label::Migration),
             Box::new(m20261102_000267_role_models::Migration),
+            Box::new(m20261102_000269_procurement_approval_rights::Migration),
         ]
     }
 }
