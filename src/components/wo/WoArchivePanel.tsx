@@ -8,12 +8,15 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { listWos } from "@/services/wo-service";
+import { useWoStore } from "@/stores/wo-store";
 import { formatDate } from "@/utils/format-date";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -23,6 +26,8 @@ interface WoArchivePanelProps {
   onRowClick?: (wo: WorkOrder) => void;
 }
 
+const ARCHIVE_PAGE = 50;
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
@@ -31,32 +36,66 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
   const [items, setItems] = useState<WorkOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const latest = useRef(0);
+  // A work order closed or cancelled on this screen changes the list: the archive follows it.
+  const listItems = useWoStore((s) => s.items);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // The count is read when the screen opens (not only once the panel is unfolded), and the
+  // search is done by the server over every archived work order, not over the 50 loaded rows.
+  const load = useCallback(
+    async (text: string) => {
+      const ticket = ++latest.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const page = await listWos({
+          status_codes: ["closed", "cancelled"],
+          search: text.trim() || null,
+          limit: ARCHIVE_PAGE,
+          offset: 0,
+        });
+        if (ticket !== latest.current) return;
+        setItems(page.items);
+        setTotal(page.total);
+      } catch (e) {
+        if (ticket !== latest.current) return;
+        setError(t("archive.loadError"));
+        console.error("WoArchivePanel.load", e);
+      } finally {
+        if (ticket === latest.current) setLoading(false);
+      }
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => void load(search), search ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [search, load, listItems]);
+
+  const loadMore = useCallback(async () => {
+    const ticket = latest.current;
+    setLoadingMore(true);
     try {
       const page = await listWos({
         status_codes: ["closed", "cancelled"],
-        limit: 50,
-        offset: 0,
+        search: search.trim() || null,
+        limit: ARCHIVE_PAGE,
+        offset: items.length,
       });
-      setItems(page.items);
+      if (ticket !== latest.current) return;
+      const known = new Set(items.map((w) => w.id));
+      setItems([...items, ...page.items.filter((w) => !known.has(w.id))]);
       setTotal(page.total);
     } catch (e) {
-      setError(t("archive.loadError"));
-      console.error("WoArchivePanel.load", e);
+      console.error("WoArchivePanel.loadMore", e);
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
-  }, [t]);
-
-  useEffect(() => {
-    if (open && items.length === 0) {
-      void load();
-    }
-  }, [open, items.length, load]);
+  }, [items, search]);
 
   const columns: ColumnDef<WorkOrder>[] = useMemo(
     () => [
@@ -132,21 +171,42 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
               <span>{error}</span>
               <button
                 className="ml-2 text-xs underline hover:no-underline"
-                onClick={() => void load()}
+                onClick={() => void load(search)}
               >
                 {t("archive.retry")}
               </button>
             </div>
           ) : (
-            <DataTable
-              columns={columns}
-              data={items}
-              searchable
-              pageSize={10}
-              isLoading={loading}
-              skeletonRows={5}
-              onRowClick={(row) => onRowClick?.(row)}
-            />
+            <div className="space-y-3">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("search.placeholder")}
+                className="max-w-sm"
+                aria-label={t("search.placeholder")}
+              />
+              <DataTable
+                columns={columns}
+                data={items}
+                pageSize={10}
+                isLoading={loading}
+                skeletonRows={5}
+                onRowClick={(row) => onRowClick?.(row)}
+              />
+              {items.length < total ? (
+                <div className="flex items-center gap-3 text-xs text-text-muted">
+                  <span>{t("archive.shown", { shown: items.length, total })}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingMore}
+                    onClick={() => void loadMore()}
+                  >
+                    {t("archive.loadMore", { count: total - items.length })}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           )}
         </div>
       )}

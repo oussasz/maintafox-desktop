@@ -379,15 +379,20 @@ pub async fn list_work_orders_in_scope(
         binds.push(to.to_string().into());
     }
 
-    // ── Free-text search (code + title + equipment name) ─────────────────
+    // ── Free-text search: every word must match the code, title, description or equipment ──
     if let Some(ref search) = filter.search {
-        let trimmed = search.trim();
-        if !trimmed.is_empty() {
-            where_clauses.push("(wo.code LIKE ? OR wo.title LIKE ? OR ar.name LIKE ?)".to_string());
-            let pattern = format!("%{trimmed}%");
-            binds.push(pattern.clone().into());
-            binds.push(pattern.clone().into());
-            binds.push(pattern.into());
+        for word in search.split_whitespace() {
+            where_clauses.push(
+                "(wo.code LIKE ? ESCAPE '\\' OR wo.title LIKE ? ESCAPE '\\' \
+                  OR wo.description LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' \
+                  OR ar.asset_id_code LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            let escaped = word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let pattern = format!("%{escaped}%");
+            for _ in 0..5 {
+                binds.push(pattern.clone().into());
+            }
         }
     }
 

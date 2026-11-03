@@ -1044,7 +1044,9 @@
   "archive": {
     "title": "Archive (Closed / Cancelled)",
     "loadError": "Failed to load archived work orders.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "shown": "{{shown}} of {{total}} shown",
+    "loadMore": "Load more ({{count}} left)"
   },
   "search": {
     "placeholder": "Search by code, title, equipment…"
