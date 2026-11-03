@@ -193,36 +193,40 @@ pub async fn validate_import_row(
         None
     };
 
-    // Family code: a value of the published EQUIPMENT.FAMILY list that belongs to the class
+    // The class must also exist in Données de référence (the apply step needs its reference id),
+    // and a family is a value of the published EQUIPMENT.FAMILY list that belongs to that class
     // (same rule as the equipment form).
-    if let Some(ref family_code) = row.family_code {
-        if let (Some(class_code), true) = (&row.class_code, existing_class_parent_id.is_some()) {
-            {
-                let outcome = match identity::resolve_class_ref_id(db, class_code).await {
-                    Ok(class_ref_id) => identity::validate_family_for_class_ref(db, family_code, class_ref_id)
-                        .await
-                        .map(|_| ()),
-                    Err(e) => Err(e),
-                };
-                if let Err(e) = outcome {
-                    let text = e.to_string();
-                    let (category, message) = if text.contains("GATE_ASSET_FAMILY_UNKNOWN") {
-                        (
-                            ConflictCategory::UnknownFamilyCode,
-                            format!("Famille '{family_code}' introuvable dans les Données de référence (Familles d'équipement)."),
-                        )
-                    } else {
-                        (
-                            ConflictCategory::FamilyClassMismatch,
-                            format!("La famille '{family_code}' n'appartient pas à la classe '{class_code}' dans les Données de référence."),
-                        )
-                    };
-                    messages.push(ValidationMessage {
-                        category,
-                        field: "family_code".into(),
-                        message,
-                        severity: ValidationSeverity::Error,
-                    });
+    if let (Some(class_code), true) = (&row.class_code, existing_class_parent_id.is_some()) {
+        match identity::resolve_class_ref_id(db, class_code).await {
+            Err(_) => messages.push(ValidationMessage {
+                category: ConflictCategory::UnknownClassCode,
+                field: "class_code".into(),
+                message: format!(
+                    "La classe '{class_code}' est absente des Données de référence (Classes d'équipement)."
+                ),
+                severity: ValidationSeverity::Error,
+            }),
+            Ok(class_ref_id) => {
+                if let Some(ref family_code) = row.family_code {
+                    if let Err(e) = identity::validate_family_for_class_ref(db, family_code, class_ref_id).await {
+                        let (category, message) = if e.to_string().contains("GATE_ASSET_FAMILY_UNKNOWN") {
+                            (
+                                ConflictCategory::UnknownFamilyCode,
+                                format!("Famille '{family_code}' introuvable dans les Données de référence (Familles d'équipement)."),
+                            )
+                        } else {
+                            (
+                                ConflictCategory::FamilyClassMismatch,
+                                format!("La famille '{family_code}' n'appartient pas à la classe '{class_code}' dans les Données de référence."),
+                            )
+                        };
+                        messages.push(ValidationMessage {
+                            category,
+                            field: "family_code".into(),
+                            message,
+                            severity: ValidationSeverity::Error,
+                        });
+                    }
                 }
             }
         }

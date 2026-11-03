@@ -1161,6 +1161,46 @@ mod tests {
         assert_eq!(active_parent_code(&db, "SW-B").await.as_deref(), Some("SW-C"));
     }
 
+    #[tokio::test]
+    async fn v4b_parent_that_cannot_be_linked_counts_as_error_and_is_recorded() {
+        let db = setup().await;
+        setup_org_node(&db).await;
+        setup_equipment_class(&db).await;
+        let policy = import::ApplyPolicy {
+            include_warnings: true,
+            external_system_code: None,
+        };
+
+        // The parent line is in the file but refused (unknown class), so it is never created.
+        let csv = "code_equipement,nom,classe,criticite,statut,emplacement,parent\n\
+                   NL-CHILD,Enfant,PUMP,STANDARD,ACTIVE_IN_SERVICE,SITE-001,NL-PARENT\n\
+                   NL-PARENT,Parent,FAKE_CLASS,STANDARD,ACTIVE_IN_SERVICE,SITE-001,\n"
+            .as_bytes()
+            .to_vec();
+        let batch_id = stage_and_validate(&db, &csv, "nolink.csv").await;
+        let result = import::apply_import_batch(&db, batch_id, &policy, Some(1))
+            .await
+            .expect("apply");
+
+        assert_eq!(
+            result.created, 0,
+            "the child was written without its parent: not a success"
+        );
+        assert_eq!(result.errored, 1);
+        assert_eq!(active_parent_code(&db, "NL-CHILD").await, None);
+
+        let events = import::list_import_events(&db, batch_id).await.expect("events");
+        let applied = events
+            .iter()
+            .find(|e| e.event_type == "applied")
+            .expect("applied event");
+        let summary: serde_json::Value = serde_json::from_str(applied.summary_json.as_ref().unwrap()).unwrap();
+        let failure = &summary["parent_link_failures"][0];
+        assert_eq!(failure["row_no"], 1);
+        assert_eq!(failure["parent"], "NL-PARENT");
+        assert!(failure["reason"].as_str().is_some_and(|r| !r.is_empty()));
+    }
+
     // ── V5 — Idempotent replay ────────────────────────────────────────────
 
     #[tokio::test]

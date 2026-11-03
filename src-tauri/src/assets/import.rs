@@ -1079,8 +1079,8 @@ async fn apply_single_row(
         AppError::ValidationFailed(vec!["GATE_ASSET_IMPORT_CLASS_REQUIRED: class_code requis.".into()])
     })?;
     let (class_id, _class_parent_id) = identity::resolve_class_code(txn, class_code).await?;
-    // The class must exist in Données de référence, like on the equipment form; a real database
-    // error is passed on, not hidden.
+    // The class must exist in Données de référence, like on the equipment form (the preview
+    // already says so); any error here fails this row only.
     let class_ref_id = identity::resolve_class_ref_id(txn, class_code).await?;
 
     // Family: a value of the published EQUIPMENT.FAMILY list that belongs to the class.
