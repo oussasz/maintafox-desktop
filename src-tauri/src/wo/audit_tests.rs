@@ -717,6 +717,8 @@ mod tests {
                 apply_result: "applied".into(),
             },
             Some(&before),
+            None,
+            None,
         )
         .await;
 
@@ -760,6 +762,8 @@ mod tests {
                 apply_result: "applied".into(),
             },
             Some(&same),
+            None,
+            None,
         )
         .await;
         let copies = db
@@ -773,6 +777,27 @@ mod tests {
             .try_get::<i64>("", "n")
             .unwrap();
         assert_eq!(copies, 0);
+    }
+
+    #[tokio::test]
+    async fn l509_renamed_reference_is_not_a_change_of_the_work_order() {
+        let db = setup().await;
+        let (wo_id, _) = wo_in_progress(&db).await;
+        let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        // The equipment, the status or the team renamed elsewhere: same ids, other labels.
+        let mut after = before.clone();
+        after.asset_label = Some("Pompe renommée".into());
+        after.status_label = Some("Autre libellé".into());
+        after.assigned_team_label = Some("Équipe renommée".into());
+        after.responsible_display_name = Some("Autre nom".into());
+        after.urgency_label = Some("Autre urgence".into());
+        assert!(audit::wo_field_changes(&before, &after).is_empty());
+        // Another equipment (another id) is a change, shown by its label.
+        after.equipment_id = Some(before.equipment_id.unwrap_or(0) + 1);
+        let changes = audit::wo_field_changes(&before, &after);
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0]["field"], "equipment");
+        assert!(changes[0]["new"].as_str().unwrap_or("").contains("Pompe renommée"));
     }
 
     #[tokio::test]
@@ -802,6 +827,8 @@ mod tests {
                 apply_result: "applied".into(),
             },
             Some(&before),
+            None,
+            None,
         )
         .await;
 
@@ -881,6 +908,8 @@ mod tests {
                 apply_result: "applied".into(),
             },
             Some(&before),
+            None,
+            None,
         )
         .await;
         let change_details = latest_change_details(&db, wo_id, "closed").await;

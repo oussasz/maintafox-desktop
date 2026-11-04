@@ -262,31 +262,41 @@ fn equipment_text(wo: &WorkOrder) -> serde_json::Value {
     }
 }
 
-/// The values of a work order an auditor asks about, as they read on screen (labels, names and
-/// codes, not ids), keyed by a stable field code the screen translates (`labels.field.<code>`).
-fn audited_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value)> {
-    vec![
-        (
+fn opt_id(v: Option<i64>) -> serde_json::Value {
+    v.map_or(serde_json::Value::Null, serde_json::Value::from)
+}
+
+/// The values of a work order an auditor asks about, keyed by a stable field code the screen
+/// translates (`labels.field.<code>`): `(field, compared, shown)`. A field held by reference
+/// (status, urgency, equipment, responsible, team) is compared by its id and shown by its label,
+/// so renaming the referenced record (which does not touch the work order) is never recorded as
+/// a change of the work order; other fields are compared and shown as stored.
+fn audited_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value, serde_json::Value)> {
+    let by_ref = |field, id: Option<i64>, shown: serde_json::Value| (field, opt_id(id), shown);
+    let mut out = vec![
+        by_ref(
             "status",
+            Some(wo.status_id),
             opt_text(wo.status_label.as_deref().or(wo.status_code.as_deref())),
         ),
-        ("title", opt_text(Some(wo.title.as_str()))),
-        ("description", opt_text(wo.description.as_deref())),
-        (
+        by_ref(
             "urgency",
+            wo.urgency_id,
             opt_text(wo.urgency_label.as_deref().or(wo.urgency_code.as_deref())),
         ),
-        ("equipment", equipment_text(wo)),
-        (
+        by_ref("equipment", wo.equipment_id, equipment_text(wo)),
+        by_ref(
             "primary_responsible",
+            wo.primary_responsible_id,
             opt_text(
                 wo.responsible_display_name
                     .as_deref()
                     .or(wo.responsible_username.as_deref()),
             ),
         ),
-        (
+        by_ref(
             "assigned_team",
+            wo.assigned_team_id,
             opt_text(
                 wo.assigned_team_label
                     .as_deref()
@@ -294,6 +304,16 @@ fn audited_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value)> {
                     .or(wo.assigned_team_code.as_deref()),
             ),
         ),
+    ];
+    out.extend(stored_values(wo).into_iter().map(|(f, v)| (f, v.clone(), v)));
+    out
+}
+
+/// The audited fields stored on the work order row itself.
+fn stored_values(wo: &WorkOrder) -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        ("title", opt_text(Some(wo.title.as_str()))),
+        ("description", opt_text(wo.description.as_deref())),
         ("planned_start", opt_text(wo.planned_start.as_deref())),
         ("planned_end", opt_text(wo.planned_end.as_deref())),
         ("scheduled_at", opt_text(wo.scheduled_at.as_deref())),
@@ -328,8 +348,8 @@ pub fn wo_field_changes(before: &WorkOrder, after: &WorkOrder) -> Vec<serde_json
     audited_values(before)
         .into_iter()
         .zip(audited_values(after))
-        .filter(|((_, old), (_, new))| old != new)
-        .map(|((field, old), (_, new))| serde_json::json!({ "field": field, "old": old, "new": new }))
+        .filter(|((_, old_key, _), (_, new_key, _))| old_key != new_key)
+        .map(|((field, _, old), (_, _, new))| serde_json::json!({ "field": field, "old": old, "new": new }))
         .collect()
 }
 
@@ -367,19 +387,56 @@ pub fn sole_write_changes(before: &WorkOrder, after: &WorkOrder) -> Option<Vec<s
     (after.row_version == before.row_version + 1).then(|| wo_field_changes(before, after))
 }
 
-/// Records a change event with the fields it changed (`before` read before the change; the work
-/// order is read again after it, with the same query; values only when this change was the only
-/// write in between, [`sole_write_changes`]) and, when fields changed, the same event in the audit
-/// trail (`audit_events`, action `wo.<action>`, object the work order), so the audit log answers
+/// The fields a command changed, when it is proven that nothing else wrote the work order between
+/// `before` and `after`:
+/// - with the command's `expected_row_version`: `before` is that version (the command's own
+///   `UPDATE … WHERE row_version = expected` then refused any write in between), and `after` is
+///   the row the command read back in its own transaction (a command may bump the version more
+///   than once, e.g. re-stamping a plant rule);
+/// - without it: [`sole_write_changes`].
+///
+/// `None` when the proof is missing.
+pub fn proven_changes(
+    before: &WorkOrder,
+    after: &WorkOrder,
+    expected_row_version: Option<i64>,
+) -> Option<Vec<serde_json::Value>> {
+    match expected_row_version {
+        Some(expected) => (before.row_version == expected && after.row_version > before.row_version)
+            .then(|| wo_field_changes(before, after)),
+        None => sole_write_changes(before, after),
+    }
+}
+
+/// Records a change event with the fields it changed (`before` read before the change, `after`
+/// the work order the command returned, read in its transaction, or — `None` — read again here;
+/// values only when [`proven_changes`] proves nothing else wrote in between; read again here,
+/// the version must have moved by exactly one) and, when fields changed, the same event in the
+/// audit trail (`audit_events`, action `wo.<action>`, object the work order), so the audit log answers
 /// "who changed field X of OT Y, from what to what". Fire-and-log like [`record_wo_change_event`].
 /// Events stored before this existed are not touched (audit chain): they simply show no change.
-pub async fn record_wo_change_with_diff(db: &DatabaseConnection, mut input: WoAuditInput, before: Option<&WorkOrder>) {
-    let after = match (before, input.wo_id) {
-        (Some(_), Some(id)) => super::queries::get_work_order(db, id).await.ok().flatten(),
-        _ => None,
+pub async fn record_wo_change_with_diff(
+    db: &DatabaseConnection,
+    mut input: WoAuditInput,
+    before: Option<&WorkOrder>,
+    returned: Option<&WorkOrder>,
+    expected_row_version: Option<i64>,
+) {
+    let (after, proof) = match (before, returned, input.wo_id) {
+        (Some(_), Some(r), _) => (Some(r.clone()), expected_row_version),
+        // Read again after the commit: only a single write in between is a proof.
+        (Some(b), None, Some(id)) => (
+            super::queries::get_work_order(db, id)
+                .await
+                .ok()
+                .flatten()
+                .filter(|_| expected_row_version.is_none_or(|e| e == b.row_version)),
+            None,
+        ),
+        _ => (None, None),
     };
     let (changes, unavailable) = match (before, after.as_ref()) {
-        (Some(b), Some(a)) => match sole_write_changes(b, a) {
+        (Some(b), Some(a)) => match proven_changes(b, a, proof) {
             Some(changes) => (changes, false),
             None => (Vec::new(), true),
         },
