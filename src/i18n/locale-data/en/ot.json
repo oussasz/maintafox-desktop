@@ -168,6 +168,7 @@
     }
   },
   "form": {
+    "missingHint": "To complete before continuing: {{items}}",
     "title": {
       "label": "Title",
       "placeholder": "Short description of the work"

@@ -168,6 +168,7 @@
     }
   },
   "form": {
+    "missingHint": "À compléter pour continuer : {{items}}",
     "title": {
       "label": "Titre",
       "placeholder": "Description courte de l'intervention"
