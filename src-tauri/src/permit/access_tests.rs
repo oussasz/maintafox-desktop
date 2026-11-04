@@ -135,6 +135,7 @@ async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> W
             id: wp.id,
             status: status.into(),
             expected_row_version: wp.row_version,
+            reason: (status == "cancelled").then(|| "Essai : permis annulé".to_string()),
         },
         actor,
     )
@@ -1582,6 +1583,7 @@ async fn a_permits_site_follows_its_equipments_chain_and_is_fixed_once_approved(
             id: moved.id,
             status: "approved".into(),
             expected_row_version: moved.row_version,
+            reason: None,
         },
         1,
     )

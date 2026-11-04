@@ -106,6 +106,10 @@
     "unknownPerson": "Utilisateur inconnu",
     "approverNotRecorded": "approbateur non enregistré",
     "approverNotRecordedHint": "Approuvé avant que l’application n’enregistre qui approuve les permis.",
+    "cancelledBy": "Annulé par",
+    "cancelNotRecorded": "Annulé (personne non enregistrée)",
+    "cancelReason": "Motif : {{reason}}",
+    "cancelReasonNotRecorded": "Motif non enregistré (annulé avant que l’application ne le demande)",
     "selfApproved": "auto-approbation (site sans 4 yeux)",
     "selfApprovedHint": "Approuvé sans deuxième personne : le site de ce permis a levé les quatre yeux (Paramètres › Règles par site).",
     "none": "—",
@@ -124,6 +128,7 @@
     "cancel": "Annuler le permis",
     "suspend": "Suspendre",
     "confirmCancel": "Annuler ce permis ? Cette action est irréversible.",
+    "cancelReason": "Motif de l’annulation",
     "keep": "Garder le permis",
     "next": {
       "pending_review": "Étape suivante : le rédacteur soumet le permis, une autre personne le relira.",
