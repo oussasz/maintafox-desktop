@@ -548,6 +548,7 @@
     "reasonPlaceholder": "Expliquez la raison du déclassement…",
     "blockerBanner": "Impossible de déclasser — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
     "blockerDetail": "bloque le déclassement",
+    "openBlockers": "Voir la liste",
     "pmWarning": "seront suspendus",
     "iotWarning": "seront déliés",
     "docInfo": "restent archivés",
