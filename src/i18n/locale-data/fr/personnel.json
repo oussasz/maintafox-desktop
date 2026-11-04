@@ -194,6 +194,8 @@
     "restricted": "Restreint"
   },
   "create": {
+    "created": "Fiche de {{name}} créée",
+    "savedEdit": "Fiche de {{name}} enregistrée",
     "positionSeedFailed": "Les exigences du poste n'ont pas pu être chargées ({{msg}}) : ajoutez les compétences à la main.",
     "photoUploadWarning": "Fiche enregistrée, mais la photo n'a pas pu être envoyée : {{msg}}",
     "qualificationsInRecord": "Les compétences et certifications d'une personne existante se gèrent dans l'onglet Qualifications de sa fiche.",
@@ -740,24 +742,24 @@
     "export": {
       "saved": "Export enregistré",
       "failed": "L'export n'a pas pu être enregistré",
-      "summary": "Exporter le CSV synthese",
-      "skillsGap": "Exporter le CSV ecarts de competences",
+      "summary": "Exporter le CSV synthèse",
+      "skillsGap": "Exporter le CSV écarts de compétences",
       "kpi": "Exporter le CSV KPI"
     },
     "panel": {
-      "title": "Rapports effectifs",
-      "description": "Synthese operationnelle, ecarts de competences et KPI de readiness.",
+      "title": "Analyses du personnel",
+      "description": "Synthèse du personnel, écarts de compétences et indicateurs d'aptitude à intervenir.",
       "refresh": "Actualiser les rapports"
     },
     "kpis": {
       "totalPersonnel": "Total personnel : {{count}}",
-      "avgSkills": "Moy. competences/personne : {{value}}",
-      "blockedRatio": "Taux bloques : {{value}}"
+      "avgSkills": "Compétences par personne (moyenne) : {{value}}",
+      "blockedRatio": "Personnes bloquées : {{value}}"
     },
     "skillsGap": {
-      "title": "Ecarts de competences prioritaires",
-      "empty": "Aucune donnee d'ecart disponible.",
-      "score": "Score d'ecart : {{score}}"
+      "title": "Écarts de compétences prioritaires",
+      "empty": "Aucun écart de compétences à signaler.",
+      "score": "Écart de compétences : {{score}}"
     }
   },
   "capacityDays": {

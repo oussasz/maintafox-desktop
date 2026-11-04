@@ -815,8 +815,10 @@ fn parse_file_rows(source_kind: &str, file_content: &[u8]) -> AppResult<Vec<Hash
 }
 
 fn parse_csv_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>> {
+    let file_content = crate::assets::import::strip_utf8_bom(file_content);
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
+        .delimiter(crate::assets::import::detect_csv_delimiter(file_content))
         .trim(csv::Trim::All)
         .from_reader(file_content);
 

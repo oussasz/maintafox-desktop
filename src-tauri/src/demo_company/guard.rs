@@ -132,6 +132,8 @@ pub const RULED_TABLES: &[&str] = &[
     // Only the empty 'MAIN' store the migrations create, and its locations.
     "warehouses",
     "stock_locations",
+    // Only the seeded "Administrator: unlimited" purchase approval limits, unchanged.
+    "procurement_approval_limits",
     // Background job logs (module documentation): only runs that produced nothing. The PM
     // generation scheduler records one run at its first tick (the control row is due at once).
     "pm_generation_runs",
@@ -280,6 +282,22 @@ async fn ruled_offenders(db: &DatabaseConnection) -> AppResult<Vec<String>> {
             db,
             "SELECT COUNT(*) FROM stock_locations WHERE warehouse_id NOT IN (SELECT id FROM warehouses WHERE code = 'MAIN')",
             vec![],
+        )
+        .await?,
+    );
+
+    push(
+        "procurement_approval_limits",
+        "plafonds d'approbation définis dans l'entreprise",
+        count(
+            db,
+            "SELECT COUNT(*) FROM procurement_approval_limits \
+             WHERE entity_sync_id NOT IN (?, ?) OR row_version <> 1",
+            vec![
+                crate::inventory::approvals::seeded_limit_sync_id(crate::inventory::approvals::DOC_REQUISITION).into(),
+                crate::inventory::approvals::seeded_limit_sync_id(crate::inventory::approvals::DOC_PURCHASE_ORDER)
+                    .into(),
+            ],
         )
         .await?,
     );

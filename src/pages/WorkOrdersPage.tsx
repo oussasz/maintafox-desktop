@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
@@ -33,6 +33,7 @@ import {
   ViewToggle,
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -54,6 +55,7 @@ import { WoHiddenNotice, WoNoSiteBadge } from "@/components/wo/WoSiteScope";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { mfLayout } from "@/design-system/tokens";
 import { WO_STATUS_TONE, toneOf } from "@/design-system/tone";
+import { workOrderExportRows } from "@/export/list-exports";
 import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import {
@@ -133,12 +135,19 @@ export function WorkOrdersPage() {
   const [dashboardTick, setDashboardTick] = useState(0);
   const [integrityTick, setIntegrityTick] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open work order came from a link on another screen (a study, a request, the
+  // home page): the detail then offers "Retour" to that screen, with its filters and scroll.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
 
   useEffect(() => {
     const raw = searchParams.get("openWo");
     if (!raw) return;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return;
+    // react-router numbers its history entries; above 0 the user has a screen to return to.
+    const historyIndex = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    setOpenedFromLink(historyIndex > 0);
     void openWo(id);
     setSearchParams(
       (prev) => {
@@ -659,6 +668,32 @@ export function WorkOrdersPage() {
     [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm, typeLabel],
   );
 
+  // ── Export (the rows the list holds now, with the labels the screen shows) ──
+
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.number"),
+      t("list.columns.title"),
+      t("list.columns.equipment"),
+      t("list.columns.type"),
+      t("list.columns.status"),
+      t("list.filters.lifecycle"),
+      t("list.columns.assignedTo"),
+      t("list.columns.plannedEnd"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      workOrderExportRows(items, {
+        statusLabel: (code) => t(`status.${statusToI18nKey(code)}`),
+        lifecycleLabel: (code) => (isWoLifecycleState(code) ? t(`lifecycle.${code}`) : null),
+        typeLabel: (code, fallback) => typeLabel(code, fallback) || "",
+        formatDate: (iso) => formatDate(iso, i18n.language),
+      }),
+    [items, t, typeLabel, i18n.language],
+  );
+
   const viewOptions = useMemo<ViewOption<WoViewMode>[]>(
     () => [
       { value: "list", label: t("page.viewList"), icon: List },
@@ -700,6 +735,15 @@ export function WorkOrdersPage() {
               {t("action.create")}
             </Button>
           </PermissionGate>
+          {recordView ? (
+            <ExportCsvButton
+              permission={P.OT_VIEW}
+              fileName="ordres-de-travail.csv"
+              header={exportHeader}
+              getRows={getExportRows}
+              total={total}
+            />
+          ) : null}
           <ViewToggle value={activeView} options={viewOptions} onChange={switchView} />
           {recordView ? (
             <FilterToggleButton
@@ -810,7 +854,19 @@ export function WorkOrdersPage() {
         wo={activeWo?.wo ?? null}
         open={activeWo !== null || detailLoading}
         loading={detailLoading && !activeWo}
-        onClose={closeWo}
+        onClose={() => {
+          setOpenedFromLink(false);
+          closeWo();
+        }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                closeWo();
+                void navigate(-1);
+              },
+            }
+          : {})}
       />
 
       <WoCancelDialog

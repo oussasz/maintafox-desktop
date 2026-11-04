@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useRoleText, withoutFormerRoles } from "@/lib/role-labels";
 import { assignRoleScope } from "@/services/rbac-service";
 import type { AssignableRoleSummary, AssignableScopeNode, UserWithRoles } from "@shared/ipc-types";
 
@@ -54,6 +55,9 @@ export function AssignRoleDialog({
   withStepUp,
 }: AssignRoleDialogProps) {
   const { t } = useTranslation("admin");
+  const roleText = useRoleText();
+  // A former shipped role is not given any more: the role with the same rights is (L5-03).
+  const offered = useMemo(() => withoutFormerRoles(roles), [roles]);
   const [roleId, setRoleId] = useState("");
   const [scope, setScope] = useState<ScopeChoice>(PLANT_SCOPE);
   const [validFrom, setValidFrom] = useState("");
@@ -126,9 +130,9 @@ export function AssignRoleDialog({
                 <SelectValue placeholder={t("console.assign.chooseRole")} />
               </SelectTrigger>
               <SelectContent>
-                {roles.map((r) => (
+                {offered.map((r) => (
                   <SelectItem key={r.id} value={String(r.id)}>
-                    {r.name}
+                    {roleText.label(r.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -166,9 +170,11 @@ export function AssignRoleDialog({
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden />
               <span>
                 {replaced.length === 1
-                  ? t("console.assign.replaces", { role: replaced[0]?.role_name })
+                  ? t("console.assign.replaces", {
+                      role: replaced[0] ? roleText.label(replaced[0].role_name) : "",
+                    })
                   : t("console.assign.replacesMany", {
-                      roles: replaced.map((r) => r.role_name).join(", "),
+                      roles: replaced.map((r) => roleText.label(r.role_name)).join(", "),
                     })}
               </span>
             </div>

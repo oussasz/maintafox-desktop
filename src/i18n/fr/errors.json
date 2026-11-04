@@ -15,6 +15,13 @@
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
     "rightRequired": "Droit requis : {{right}}"
   },
+  "licence": {
+    "notInForceTitle": "Licence pas en vigueur",
+    "moduleOffTitle": "Module non inclus dans votre licence",
+    "moduleOff": "Le module « {{module}} » n'est pas inclus dans la licence de cette installation. Demandez à votre fournisseur Maintafox de l'ajouter à votre offre.",
+    "licenceNotInForce": "Votre licence n'est pas en vigueur pour le moment (suspendue, expirée ou en période de grâce) : le module « {{module}} » est arrêté. Contactez votre fournisseur Maintafox.",
+    "moduleUnknown": "ce module"
+  },
   "permission": {
     "cannotGrantOwnRole": "Vous ne pouvez pas vous donner un rôle à vous-même : un autre administrateur doit le faire."
   },
@@ -92,7 +99,8 @@
     "GATE_INV_PERIOD_CLOSED": "Mouvement refusé : cette date tombe dans une période de stock clôturée. Utilisez une date postérieure à la période clôturée.",
     "GATE_PROC_SELF_APPROVAL": "Approbation refusée : vous ne pouvez pas approuver un document que vous avez vous-même demandé. Un autre approbateur doit l'approuver.",
     "GATE_PROC_APPROVAL_LIMIT": "Approbation refusée : le montant dépasse votre plafond d'approbation. Un utilisateur disposant d'un plafond supérieur doit l'approuver.",
-    "GATE_PROC_NO_APPROVAL_LIMIT": "Approbation refusée : aucun de vos rôles n'a de plafond d'approbation pour ce type de document.",
+    "GATE_PROC_NO_APPROVAL_LIMIT": "Approbation refusée : aucun de vos rôles n'a de plafond d'approbation pour ce type de document. L'administrateur définit les plafonds par rôle dans « Plafonds d'approbation ».",
+    "GATE_PROC_APPROVAL_RIGHT": "Décision refusée : approuver ou refuser un achat demande le droit « Approuver les achats ».",
     "GATE_PROC_AMOUNT_UNKNOWN": "Approbation refusée : le montant du document ne peut pas être établi. Saisissez d'abord les prix unitaires de ses lignes.",
     "GATE_PROC_NO_EXCHANGE_RATE": "Réception refusée : aucun taux de change pour la devise de la commande à la date de réception. Saisissez le taux ou ajoutez-le dans Taux et approbations.",
     "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "Mise à jour FMECA bloquée : publiez d'abord des valeurs actives dans la liste « Modes de défaillance » des données de référence.",
@@ -389,6 +397,8 @@
     "GATE_ASSET_IMPORT_CSV_HEADERS": "Import refusé : les en-têtes du fichier CSV sont illisibles.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refusé : le fichier CSV est invalide à la ligne {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refusé : le lot ne contient aucune ligne.",
+    "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refusé : l'emplacement indiqué n'existe pas dans l'organisation active.",
+    "GATE_ASSET_IMPORT_PARENT_UNKNOWN": "Import refusé : le parent indiqué n'existe pas dans le parc d'équipements.",
     "GATE_ASSET_IMPORT_STATUS_APPLY": "Application refusée : le lot est « {{status}} », seul un lot validé peut être appliqué.",
     "GATE_ASSET_IMPORT_STATUS_LOAD": "Chargement refusé : le lot est « {{status}} », seul un lot téléversé peut être chargé.",
     "GATE_ASSET_IMPORT_STATUS_VALIDATE": "Validation refusée : le lot est « {{status}} », seul un lot téléversé peut être validé.",
@@ -948,7 +958,14 @@
     "GATE_SET_VALUE_OUT_OF_RANGE": "Paramètre refusé : la valeur {{value}} de « {{key}} » doit être comprise entre {{min}} et {{max}}.",
     "GATE_SET_MONTH_RANGE": "Paramètre refusé : le mois doit être compris entre 1 et 12.",
     "GATE_SET_CURRENCY_INVALID": "Paramètre refusé : saisissez un code de devise valide, par exemple EUR.",
-    "GATE_SET_HEADER_INVALID": "En-tête de document refusé : son contenu n'est pas valide (version, taille ou balises non autorisées). Corrigez-le puis enregistrez de nouveau.",
+    "GATE_SET_HEADER_INVALID": "En-tête de document refusé : son format n'est pas reconnu par cette version de l'application. Rouvrez l'écran, refaites l'en-tête puis enregistrez de nouveau.",
+    "GATE_SET_HEADER_TOO_LARGE": "En-tête trop volumineux : {{size_kb}} Ko, {{max_kb}} Ko au maximum. Retirez ou réduisez l'image.",
+    "GATE_SET_HEADER_TAG_FORBIDDEN": "En-tête refusé : la balise « {{tag}} » n'est pas autorisée. Supprimez le contenu collé qui la contient (collez plutôt en texte brut).",
+    "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN": "En-tête refusé : l'attribut « {{attribute}} » (balise « {{tag}} ») n'est pas autorisé. Supprimez le contenu collé qui le contient (collez plutôt en texte brut).",
+    "GATE_SET_HEADER_COMMENT": "En-tête refusé : il contient un commentaire caché, qui n'est pas autorisé. Supprimez le contenu collé (collez plutôt en texte brut).",
+    "GATE_SET_HEADER_SCRIPT": "En-tête refusé : il contient un lien ou du code qui n'est pas autorisé. Supprimez le contenu collé qui le contient.",
+    "GATE_SET_HEADER_UNCLOSED_TAG": "En-tête refusé : la balise « {{tag}} » n'est pas fermée. Supprimez le contenu collé qui la contient.",
+    "GATE_SET_HEADER_STRAY_BRACKET": "En-tête refusé : il contient un signe « < » qui n'ouvre aucune balise. Supprimez-le ou remplacez-le par un autre texte.",
     "GATE_SET_NOT_IN_USE": "Paramètre refusé : il n'est pas utilisé par l'application et ne peut pas être modifié.",
     "GATE_SET_OWN_SCREEN": "Paramètre refusé : il se modifie depuis son propre écran, pas depuis la liste des paramètres.",
     "GATE_SET_VALUE_EMPTY": "Paramètre refusé : la valeur de « {{key}} » ne peut pas être vide.",

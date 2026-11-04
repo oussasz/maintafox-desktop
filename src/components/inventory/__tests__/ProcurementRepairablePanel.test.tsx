@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
-import { createRef, type ReactNode } from "react";
+import { type ReactNode, createRef } from "react";
 import { initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ProcurementRepairablePanel,
+  type ProcurementRepairablePanelHandle,
   purchaseOrderCancelTarget,
   requisitionDeclineOrCloseTarget,
-  type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   listInventoryGoodsReceipts: vi.fn(),
   listInventoryGoodsReceiptLines: vi.fn(),
   listInventoryStateEvents: vi.fn(),
+  listProcurementApproverRoles: vi.fn(),
   getInventoryPurchaseOrderDetail: vi.fn(),
   updateInventoryProcurementPostingState: vi.fn(),
   upsertInventoryDocumentLink: vi.fn(),
@@ -228,6 +229,13 @@ describe("ProcurementRepairablePanel", () => {
     mocks.listInventoryGoodsReceipts.mockResolvedValue([]);
     mocks.listInventoryGoodsReceiptLines.mockResolvedValue([]);
     mocks.listInventoryStateEvents.mockResolvedValue([]);
+    mocks.listProcurementApproverRoles.mockResolvedValue({
+      document_type: "REQUISITION",
+      document_id: 503,
+      amount: 120,
+      amount_unknown_reason: null,
+      role_names: ["Administrator"],
+    });
     mocks.listInventoryDocumentLinks.mockResolvedValue([]);
     mocks.updateInventoryProcurementPostingState.mockResolvedValue({});
     mocks.upsertInventoryDocumentLink.mockResolvedValue({});
@@ -440,6 +448,8 @@ describe("ProcurementRepairablePanel", () => {
     render(<ProcurementRepairablePanel />);
     await openRow("REQ-3");
     const detail = await screen.findByRole("dialog");
+    // A submitted requisition names who approves it.
+    expect(await within(detail).findByText("To be approved by: Administrator")).toBeInTheDocument();
     fireEvent.click(within(detail).getByRole("button", { name: "Reject" }));
 
     const rejectDialog = await screen.findByRole("dialog", { name: "Reject requisition" });

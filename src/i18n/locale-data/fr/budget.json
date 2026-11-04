@@ -350,6 +350,19 @@
     "lateBooked_other": "Coûts tardifs imputés sur {{count}} OT.",
     "lateNone": "Aucun coût tardif à imputer."
   },
+  "compare": {
+    "title": "Comparer deux versions",
+    "hint": "Choisissez deux versions de l'année : les montants sont additionnés par centre de coûts et catégorie.",
+    "versionA": "Version A",
+    "versionB": "Version B",
+    "choose": "Choisir une version",
+    "gap": "Écart (B − A)",
+    "total": "Total",
+    "loading": "Chargement des versions…",
+    "sameVersion": "Choisissez deux versions différentes pour les comparer.",
+    "differentCurrencies": "Les deux versions n'ont pas la même devise : les montants sont affichés dans leur devise, les écarts ne sont pas calculés.",
+    "noLines": "Aucune ligne de budget dans ces deux versions."
+  },
   "planning": {
     "sameScenarioExists": "{{count}} version « {{scenario}} » est déjà ouverte pour {{year}}. Une seconde est rarement voulue : vérifiez avant de créer.",
     "confirmMoveTitle": "{{action}} cette version ?",
@@ -374,6 +387,7 @@
     "active": "Actif",
     "inactive": "Inactif",
     "versions": "Versions budgétaires {{year}}",
+    "notReference": "« {{title}} » n'est pas la version affichée dans Pilotage : l'ouvrir ou la modifier ici ne change pas le budget de référence.",
     "versionsHint": "Brouillon → soumise → approuvée → figée. Seule une version approuvée ou figée reçoit les coûts des OT.",
     "newVersion": "Nouvelle version",
     "newVersionHint": "Exercice {{year}}, en {{currency}} (devise de l'entreprise).",
@@ -464,7 +478,7 @@
       "cost12m": "Coût de maintenance",
       "cost12mHint": "12 mois, équipements valorisés",
       "costRav": "Coût / valeur de remplacement",
-      "costRavHint": "Indicateur SMRP",
+      "costRavHint": "Indicateur standard de maintenance",
       "withoutRav": "Sans valeur de remplacement",
       "withoutRavHint": "À renseigner sur la fiche équipement"
     }

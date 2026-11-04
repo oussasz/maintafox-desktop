@@ -945,7 +945,8 @@ export async function scanSuccessionRisk(
 }
 
 export async function declareOwnSkill(input: DeclareOwnSkillInput): Promise<void> {
-  await invokeParsed("declare_own_skill", { payload: input }, z.void());
+  // The profile screen shows the failure itself: no global toast.
+  await invokeParsed("declare_own_skill", { payload: input }, z.void(), { notifyOnError: false });
 }
 
 export async function listPersonnelSkillReferenceValues(): Promise<PersonnelSkillReferenceValue[]> {

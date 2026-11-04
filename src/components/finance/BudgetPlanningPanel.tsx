@@ -8,6 +8,7 @@ import { Pencil, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { BudgetVersionCompare } from "@/components/finance/BudgetVersionCompare";
 import { parseAmount } from "@/components/finance/WoCostEstimateDialog";
 import { VERSION_STATUS_TONE } from "@/components/finance/finance-tone";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
@@ -75,8 +76,10 @@ const TH = "px-3 py-2 text-start font-semibold";
 
 export interface BudgetPlanningPanelProps {
   fiscalYear: number;
-  /** Version shown in the cockpit, selected by default. */
+  /** Version opened for editing in this tab (not necessarily the one the cockpit shows). */
   selectedVersionId: number | null;
+  /** Version the cockpit and the OT costs use (approved), so a draft can say it does not replace it. */
+  referenceVersionId?: number | null;
   onSelectVersion: (id: number | null) => void;
   onChanged: () => void;
   /** Bumped by the page's Refresh button: reloads cost centres and versions. */
@@ -86,6 +89,7 @@ export interface BudgetPlanningPanelProps {
 export function BudgetPlanningPanel({
   fiscalYear,
   selectedVersionId,
+  referenceVersionId = null,
   onSelectVersion,
   onChanged,
   reloadToken = 0,
@@ -143,6 +147,17 @@ export function BudgetPlanningPanel({
         canEdit={canBudget}
         onChanged={refresh}
       />
+      {versions.length >= 2 ? (
+        <BudgetVersionCompare versions={versions} referenceVersionId={referenceVersionId} />
+      ) : null}
+      {version && version.id !== referenceVersionId ? (
+        <p
+          role="status"
+          className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-sm text-text-secondary"
+        >
+          {t("planning.notReference", { title: version.title ?? `v${version.version_no}` })}
+        </p>
+      ) : null}
       {version ? (
         <LinesSection
           version={version}

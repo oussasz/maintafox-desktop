@@ -7,6 +7,7 @@ import type { EntityFormImageItem } from "@/components/entity-form/EntityFormIma
 import { ExternalCompanyDialog } from "@/components/personnel/ExternalCompaniesPanel";
 import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { PositionCombobox } from "@/components/personnel/PositionCombobox";
+import { teamsForEntity } from "@/components/personnel/team-scope";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,18 +25,22 @@ import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
 import { Textarea } from "@/components/ui/textarea";
 import { mfInput } from "@/design-system/tokens";
+import { useFormatters } from "@/hooks/use-formatters";
+import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { usePermissionsLoading, useReadableLists } from "@/lib/list-access";
+import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
+  createRateCard,
+  getPositionRequirementSeed,
   listActiveTeams,
   listExternalCompanies,
   listPersonnel,
-  getPositionRequirementSeed,
   uploadPersonnelPhoto,
-  createRateCard,
 } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
@@ -43,9 +48,9 @@ import type {
   CertificationType,
   OrgDesignerNodeRow,
   Personnel,
+  PersonnelCertDraft,
   PersonnelCreateInput,
   PersonnelSkillDraft,
-  PersonnelCertDraft,
   PersonnelUpdateInput,
   TeamSummary,
 } from "@shared/ipc-types";
@@ -80,6 +85,9 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function PersonnelCreateDialog() {
   const { t } = useTranslation("personnel");
+  const { t: tTraining } = useTranslation("training");
+  const { currencyCode } = useFormatters();
+  const { toast } = useToast();
   const { can } = usePermissions();
   const showCreateForm = usePersonnelStore((s) => s.showCreateForm);
   const editingPersonnel = usePersonnelStore((s) => s.editingPersonnel);
@@ -166,6 +174,11 @@ export function PersonnelCreateDialog() {
     "teams",
     "certificationTypes",
   ]);
+  // Certifications belong to the training module: when the plant's edition does not include it the
+  // server refuses the list ("Permission refusée"), so it is neither asked for nor shown.
+  const { capabilityMap, loading: capabilitiesLoading } = useModuleCapabilities();
+  const trainingLicensed =
+    !capabilitiesLoading && isModuleCapabilityAllowed(capabilityMap, P.TRN_VIEW);
   const readableRef = useRef(readable);
   readableRef.current = readable;
 
@@ -218,7 +231,7 @@ export function PersonnelCreateDialog() {
   }, [showCreateForm, readable.people]);
 
   useEffect(() => {
-    if (!showCreateForm || !readable.certificationTypes) return;
+    if (!showCreateForm || !readable.certificationTypes || !trainingLicensed) return;
     let stale = false;
     listCertificationTypes()
       .then((rows) => {
@@ -228,30 +241,39 @@ export function PersonnelCreateDialog() {
     return () => {
       stale = true;
     };
-  }, [showCreateForm, readable.certificationTypes]);
+  }, [showCreateForm, readable.certificationTypes, trainingLicensed]);
 
-  const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
-    setEntityId(nextEntityId);
-    if (nextEntityId == null || !readableRef.current.teams) {
-      setTeamId(null);
-      setCrewOptions([]);
-      return;
-    }
-    setCrewsLoading(true);
-    try {
-      const crews = await listActiveTeams({ entity_id: nextEntityId });
-      setCrewOptions(crews);
-      setTeamId((prev) => {
-        if (prev == null) return null;
-        return crews.some((c) => c.id === prev) ? prev : null;
-      });
-    } catch {
-      setCrewOptions([]);
-      setTeamId(null);
-    } finally {
-      setCrewsLoading(false);
-    }
+  // Teams usable from a unit: its own, those below it and those of the sites above it.
+  const loadCrewsForEntity = useCallback(async (unitId: number) => {
+    const [teams, snap] = await Promise.all([listActiveTeams({}), getOrgDesignerSnapshot()]);
+    return teamsForEntity(teams, snap.nodes, unitId);
   }, []);
+
+  const handleEntityChange = useCallback(
+    async (nextEntityId: number | null) => {
+      setEntityId(nextEntityId);
+      if (nextEntityId == null || !readableRef.current.teams) {
+        setTeamId(null);
+        setCrewOptions([]);
+        return;
+      }
+      setCrewsLoading(true);
+      try {
+        const crews = await loadCrewsForEntity(nextEntityId);
+        setCrewOptions(crews);
+        setTeamId((prev) => {
+          if (prev == null) return null;
+          return crews.some((c) => c.id === prev) ? prev : null;
+        });
+      } catch {
+        setCrewOptions([]);
+        setTeamId(null);
+      } finally {
+        setCrewsLoading(false);
+      }
+    },
+    [loadCrewsForEntity],
+  );
 
   const resetForm = useCallback(() => {
     setFullName("");
@@ -323,7 +345,7 @@ export function PersonnelCreateDialog() {
       }
       setCrewsLoading(true);
       try {
-        const crews = await listActiveTeams({ entity_id: editing.primary_entity_id });
+        const crews = await loadCrewsForEntity(editing.primary_entity_id);
         setCrewOptions(crews);
         setTeamId(
           editing.primary_team_id != null && crews.some((c) => c.id === editing.primary_team_id)
@@ -337,7 +359,7 @@ export function PersonnelCreateDialog() {
         setCrewsLoading(false);
       }
     })();
-  }, [showCreateForm, permissionsLoading, resetForm]);
+  }, [showCreateForm, permissionsLoading, resetForm, loadCrewsForEntity]);
 
   // Seed skills/certs when position changes
   const handlePositionChange = useCallback(
@@ -366,21 +388,23 @@ export function PersonnelCreateDialog() {
               })),
           ];
         });
-        setCerts((prev) => {
-          const have = new Set(prev.map((c) => c.certTypeId));
-          return [
-            ...prev,
-            ...seed.certification_type_ids
-              .filter((certId) => !have.has(certId))
-              .map((certId) => ({ key: nextKey(), certTypeId: certId })),
-          ];
-        });
+        // Certifications belong to the training module: not seeded (nor sent) when it is not licensed.
+        if (trainingLicensed)
+          setCerts((prev) => {
+            const have = new Set(prev.map((c) => c.certTypeId));
+            return [
+              ...prev,
+              ...seed.certification_type_ids
+                .filter((certId) => !have.has(certId))
+                .map((certId) => ({ key: nextKey(), certTypeId: certId })),
+            ];
+          });
       } catch (err) {
         // Said, not swallowed: the form still works, the requirements are added by hand.
         setLocalError(t("create.positionSeedFailed", { msg: appErrorReason(err) }));
       }
     },
-    [t],
+    [t, trainingLicensed],
   );
 
   // ── Photo picker ──────────────────────────────────────────────────────────
@@ -482,7 +506,7 @@ export function PersonnelCreateDialog() {
         source_type: s.sourceType,
       }));
 
-    const certDrafts: PersonnelCertDraft[] = certs
+    const certDrafts: PersonnelCertDraft[] = (trainingLicensed ? certs : [])
       .filter((c): c is typeof c & { certTypeId: number } => c.certTypeId !== null)
       .map((c) => ({ certification_type_id: c.certTypeId }));
 
@@ -561,6 +585,7 @@ export function PersonnelCreateDialog() {
             setPhotoUploading(false);
           }
         }
+        toast({ title: t("create.savedEdit", { name }), variant: "success" });
         closeCreateForm();
         return;
       }
@@ -590,6 +615,8 @@ export function PersonnelCreateDialog() {
           setPhotoUploading(false);
         }
       }
+
+      toast({ title: t("create.created", { name }), variant: "success" });
 
       // Open CreateUserDialog if requested
       if (createAccount && canCreateUsers) {
@@ -826,7 +853,6 @@ export function PersonnelCreateDialog() {
                   value={homeScheduleRefId}
                   onChange={setHomeScheduleRefId}
                   placeholder={t("field.schedule")}
-                  allowClear
                 />
               </div>
               <div className="space-y-1.5">
@@ -913,14 +939,14 @@ export function PersonnelCreateDialog() {
                           />
                         </div>
                         <select
-                          className={cn(mfInput.nativeSelect, "w-20 px-2")}
+                          className={cn(mfInput.nativeSelect, "w-48 px-2")}
                           value={skill.proficiency}
                           onChange={(e) => updateSkillProf(skill.key, e.target.value)}
                           aria-label={t("create.skill.proficiency", "Proficiency")}
                         >
                           {[1, 2, 3, 4, 5].map((lvl) => (
                             <option key={lvl} value={lvl}>
-                              {lvl}
+                              {tTraining(`level.${lvl}`)}
                             </option>
                           ))}
                         </select>
@@ -938,55 +964,59 @@ export function PersonnelCreateDialog() {
                   </div>
                 )}
 
-                {/* ── Certifications ───────────────────────────────────────── */}
-                <div className="flex items-center justify-between">
-                  <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
-                  {readable.certificationTypes ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-4 h-9 gap-1 text-xs"
-                      onClick={addCert}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      {t("create.cert.add", "Add certification")}
-                    </Button>
-                  ) : null}
-                </div>
-                {!readable.certificationTypes ? (
-                  <ListAccessNote list="certificationTypes" />
-                ) : certs.length === 0 ? (
-                  <p className="text-xs text-text-muted">{t("create.cert.empty")}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {certs.map((cert) => (
-                      <div key={cert.key} className="flex items-center gap-2">
-                        <select
-                          className={cn(mfInput.nativeSelect, "w-auto flex-1")}
-                          value={cert.certTypeId ?? ""}
-                          onChange={(e) => updateCertType(cert.key, e.target.value)}
-                        >
-                          <option value="">{t("create.cert.placeholder")}</option>
-                          {certTypes.map((ct) => (
-                            <option key={ct.id} value={ct.id}>
-                              {ct.code} — {ct.name}
-                            </option>
-                          ))}
-                        </select>
+                {/* ── Certifications (training module) ─────────────────────── */}
+                {trainingLicensed ? (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <SectionLabel>{t("create.section.certs", "Certifications")}</SectionLabel>
+                      {readable.certificationTypes ? (
                         <Button
                           type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
-                          onClick={() => removeCert(cert.key)}
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 h-9 gap-1 text-xs"
+                          onClick={addCert}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Plus className="h-3.5 w-3.5" />
+                          {t("create.cert.add", "Add certification")}
                         </Button>
+                      ) : null}
+                    </div>
+                    {!readable.certificationTypes ? (
+                      <ListAccessNote list="certificationTypes" />
+                    ) : certs.length === 0 ? (
+                      <p className="text-xs text-text-muted">{t("create.cert.empty")}</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {certs.map((cert) => (
+                          <div key={cert.key} className="flex items-center gap-2">
+                            <select
+                              className={cn(mfInput.nativeSelect, "w-auto flex-1")}
+                              value={cert.certTypeId ?? ""}
+                              onChange={(e) => updateCertType(cert.key, e.target.value)}
+                            >
+                              <option value="">{t("create.cert.placeholder")}</option>
+                              {certTypes.map((ct) => (
+                                <option key={ct.id} value={ct.id}>
+                                  {ct.code} — {ct.name}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                              onClick={() => removeCert(cert.key)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    )}
+                  </>
+                ) : null}
               </>
             )}
 
@@ -1020,7 +1050,9 @@ export function PersonnelCreateDialog() {
             <p className="text-[11px] text-text-muted">{t("create.ratesHint")}</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="per-labor-rate">{t("field.laborRate")}</Label>
+                <Label htmlFor="per-labor-rate">
+                  {t("field.laborRate")} ({currencyCode}/h)
+                </Label>
                 <DecimalField
                   id="per-labor-rate"
                   fixed
@@ -1030,7 +1062,9 @@ export function PersonnelCreateDialog() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="per-overtime-rate">{t("field.overtimeRate")}</Label>
+                <Label htmlFor="per-overtime-rate">
+                  {t("field.overtimeRate")} ({currencyCode}/h)
+                </Label>
                 <DecimalField
                   id="per-overtime-rate"
                   fixed

@@ -43,6 +43,7 @@ pub fn parse_utc_timestamp(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
 /// Stable codes: a planned start / planned end that is not a date and time.
 pub const CODE_PLANNED_START_UNREADABLE: &str = "WO_PLANNED_START_UNREADABLE";
 pub const CODE_PLANNED_END_UNREADABLE: &str = "WO_PLANNED_END_UNREADABLE";
+pub const CODE_PLANNED_END_BEFORE_START: &str = "WO_PLANNED_END_BEFORE_START";
 
 /// Which bound of the work a planned date and time is: decides how a local time that the clock shows
 /// twice (autumn change) is read.
@@ -139,11 +140,61 @@ pub fn stored_planned_time(raw: Option<&str>, code: &str) -> AppResult<Option<St
     }
 }
 
+/// Refuses a planned end that falls before the planned start (both in their stored form, or any
+/// readable form: [`planned_time`]). A date that is blank or unreadable is not compared here: the
+/// unreadable one is refused by [`stored_planned_time`].
+pub fn ensure_planned_end_not_before_start(start: Option<&str>, end: Option<&str>) -> AppResult<()> {
+    let (Some(start), Some(end)) = (
+        start.map(str::trim).filter(|s| !s.is_empty()),
+        end.map(str::trim).filter(|s| !s.is_empty()),
+    ) else {
+        return Ok(());
+    };
+    let (Some(start_at), Some(end_at)) = (
+        planned_time(start, PlannedBound::Start),
+        planned_time(end, PlannedBound::End),
+    ) else {
+        return Ok(());
+    };
+    if end_at < start_at {
+        return Err(crate::errors::org_validation_failed(
+            CODE_PLANNED_END_BEFORE_START,
+            format!("The planned end ({end}) is before the planned start ({start})."),
+            std::collections::HashMap::from([
+                ("start".to_string(), start.to_string()),
+                ("end".to_string(), end.to_string()),
+            ]),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, FixedOffset, MappedLocalTime, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 
-    use super::{local_instant, PlannedBound};
+    use super::{ensure_planned_end_not_before_start, local_instant, PlannedBound};
+
+    #[test]
+    fn a_planned_end_before_the_planned_start_is_refused() {
+        let refused = ensure_planned_end_not_before_start(Some("2026-11-03T10:00:00Z"), Some("2026-11-03T08:00:00Z"));
+        match refused {
+            Err(crate::errors::AppError::OrgValidationFailed(issues)) => {
+                assert_eq!(issues[0].code, "WO_PLANNED_END_BEFORE_START");
+            }
+            other => panic!("expected WO_PLANNED_END_BEFORE_START, got {other:?}"),
+        }
+        // Same instant, later end, and a blank side are all fine.
+        for (s, e) in [
+            (Some("2026-11-03T10:00:00Z"), Some("2026-11-03T10:00:00Z")),
+            (Some("2026-11-03T10:00:00Z"), Some("2026-11-04T08:00:00Z")),
+            (Some("2026-11-03T10:00:00Z"), None),
+            (None, Some("2026-11-03T08:00:00Z")),
+            (Some(" "), Some("2026-11-03T08:00:00Z")),
+        ] {
+            assert!(ensure_planned_end_not_before_start(s, e).is_ok(), "{s:?} {e:?}");
+        }
+    }
 
     /// A zone with a daylight-saving change, like central Europe in 2026: UTC+1, and UTC+2 from
     /// 29 March 01:00 UTC (02:00 local jumps to 03:00) to 25 October 01:00 UTC (03:00 local falls

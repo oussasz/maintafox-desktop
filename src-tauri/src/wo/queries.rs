@@ -379,15 +379,20 @@ pub async fn list_work_orders_in_scope(
         binds.push(to.to_string().into());
     }
 
-    // ── Free-text search (code + title + equipment name) ─────────────────
+    // ── Free-text search: every word must match the code, title, description or equipment ──
     if let Some(ref search) = filter.search {
-        let trimmed = search.trim();
-        if !trimmed.is_empty() {
-            where_clauses.push("(wo.code LIKE ? OR wo.title LIKE ? OR ar.name LIKE ?)".to_string());
-            let pattern = format!("%{trimmed}%");
-            binds.push(pattern.clone().into());
-            binds.push(pattern.clone().into());
-            binds.push(pattern.into());
+        for word in search.split_whitespace() {
+            where_clauses.push(
+                "(wo.code LIKE ? ESCAPE '\\' OR wo.title LIKE ? ESCAPE '\\' \
+                  OR wo.description LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' \
+                  OR ar.asset_id_code LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            let escaped = word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let pattern = format!("%{escaped}%");
+            for _ in 0..5 {
+                binds.push(pattern.clone().into());
+            }
         }
     }
 
@@ -633,6 +638,7 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
     )?;
     input.planned_end =
         super::time::stored_planned_time(input.planned_end.as_deref(), super::time::CODE_PLANNED_END_UNREADABLE)?;
+    super::time::ensure_planned_end_not_before_start(input.planned_start.as_deref(), input.planned_end.as_deref())?;
     ensure_work_order_statuses_if_needed(txn).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(txn).await?;
 
@@ -1092,6 +1098,12 @@ pub async fn update_wo_draft_fields(
     if let Some(ref description) = input.description {
         sets.push("description = ?".into());
         values.push(description.clone().into());
+    }
+    // The dates as they will be stored: a side not sent stays as it is on the work order.
+    if input.planned_start.is_some() || input.planned_end.is_some() {
+        let start = input.planned_start.as_deref().or(current.planned_start.as_deref());
+        let end = input.planned_end.as_deref().or(current.planned_end.as_deref());
+        super::time::ensure_planned_end_not_before_start(start, end)?;
     }
     if let Some(ref planned_start) = input.planned_start {
         sets.push("planned_start = ?".into());

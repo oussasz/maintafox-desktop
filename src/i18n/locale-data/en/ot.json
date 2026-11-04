@@ -62,7 +62,7 @@
     "fromSafetyDi": "Set automatically: the originating request reported a safety risk."
   },
   "woPeople": {
-    "none": "No active staff member has a user account: link personnel to an account in Personnel.",
+    "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
   },
   "page": {
@@ -79,15 +79,14 @@
   },
   "integrity": {
     "title": "Data integrity findings",
-    "empty": "No open findings. Run detectors to scan work orders and related rows.",
-    "contractFrozen": "Analytics contract {{id}} v{{ver}} (sha256 {{hash}}…)",
-    "runDetectors": "Run detectors",
+    "empty": "No open issues. Run the check to review work orders and their lines.",
+    "runDetectors": "Run the check",
     "waiverDefaultReason": "Waived via operator workbench",
-    "approverId": "Approver user ID",
     "approverPlaceholder": "Required for error findings",
     "waiverReason": "Waiver reason",
     "waiverReasonPlaceholder": "Justification",
     "waive": "Waive",
+    "waiveNeedsApprover": "Choose an approver first: an error-level issue must be waived with another person's agreement.",
     "repair": "Repair",
     "applyRepair": "Apply repair",
     "repair.clearFailureMode": "Clear invalid failure mode",
@@ -206,7 +205,8 @@
       "label": "Planned end"
     },
     "duration": {
-      "label": "Estimated duration (h)"
+      "label": "Estimated duration (h)",
+      "exceedsWindow": "Warning: the estimated duration ({{hours}} h) is longer than the time between the planned start and end ({{window}} h)."
     },
     "notes": {
       "label": "Notes"
@@ -219,7 +219,8 @@
       "typeRequired": "Work order type is required.",
       "urgencyRequired": "Priority is required.",
       "urgencyInvalid": "The selected priority is no longer valid.",
-      "equipmentRequired": "Equipment is required."
+      "equipmentRequired": "Equipment is required.",
+      "plannedEndBeforeStart": "The planned end cannot be before the planned start."
     }
   },
   "status": {
@@ -527,6 +528,11 @@
       "hint": "Enter technician time for this intervention. Worked hours are calculated automatically.",
       "rateHint": "Labor cost uses the technician’s active hourly rate card when available; otherwise the entry is saved with a missing-rate warning.",
       "technician": "Technician",
+      "technicianPlaceholder": "Choose a technician",
+      "team": "Team",
+      "allTeams": "All teams",
+      "rateShown": "Hourly rate applied: {{rate}}",
+      "rateUnknown": "No hourly rate is set for this person: the entry will be saved without cost.",
       "date": "Date",
       "startTime": "Start time",
       "endTime": "End time",
@@ -762,7 +768,7 @@
     "temporary": "Temporary",
     "permanent": "Permanent",
     "notApplicable": "N/A",
-    "serviceCost": "Service cost (€)",
+    "serviceCost": "Service cost ({{currency}})",
     "detailsSaved": "Details saved.",
     "saveDetails": "Save details",
     "sectionReturn": "Return to service",
@@ -876,6 +882,7 @@
   "detail": {
     "close": "Close",
     "loading": "Loading work order…",
+    "backToOrigin": "Back",
     "loadingHint": "Fetching the latest work order details.",
     "cancelledBanner": "This work order was cancelled",
     "sections": {
@@ -1037,7 +1044,9 @@
   "archive": {
     "title": "Archive (Closed / Cancelled)",
     "loadError": "Failed to load archived work orders.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "shown": "{{shown}} of {{total}} shown",
+    "loadMore": "Load more ({{count}} left)"
   },
   "search": {
     "placeholder": "Search by code, title, equipment…"

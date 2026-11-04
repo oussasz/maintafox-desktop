@@ -441,6 +441,8 @@
       "title": "Replenishment recommendations",
       "refresh": "Refresh",
       "loading": "Loading…",
+      "tabTitle": "To order",
+      "store": "Store:",
       "transfer": "Transfer",
       "purchase": "Purchase",
       "suggestedQty": "Suggested qty",
@@ -602,6 +604,7 @@
       "searchPlaceholder": "Search order, article or serial number",
       "empty": "No repairable orders yet.",
       "emptyDescription": "Send a repairable part to a vendor to start tracking its repair cycle.",
+      "noRightHint": "Creating a repair order needs the “Manage purchasing” right. Ask your administrator.",
       "create": "New repairable order",
       "columns": {
         "order": "Order",
@@ -982,6 +985,16 @@
       "inStockUnit": "In the stock unit: {{received}} {{unit}} received, {{rejected}} {{unit}} of them rejected.",
       "converting": "Converting to the stock unit…"
     },
+    "approval": {
+      "approvers": "To be approved by: {{roles}}",
+      "approversNone": "No role may approve this amount. The administrator must set a high enough limit in \"Approval limits\".",
+      "approversLoading": "Looking up the approvers…",
+      "approversUnavailable": "The approvers could not be shown.",
+      "amountUnknown": "The amount is not known (missing price or exchange rate): only a role without a limit may approve.",
+      "noRight": "You do not have the \"Approve purchasing\" right.",
+      "noProcure": "You do not have the \"Manage purchasing\" right, needed to decide on a purchase.",
+      "ownDocument": "You created this document: another person must approve it."
+    },
     "poWorkspace": {
       "title": "Purchase order",
       "loading": "Loading purchase order…",
@@ -1259,6 +1272,7 @@
       "equivalents": "Equivalents",
       "repairableHistory": "Repairable history",
       "purchaseHistory": "Purchase history",
+      "usedOn": "Used on",
       "documents": "Documents"
     },
     "consumption": {
@@ -1298,6 +1312,16 @@
       "addEquivalent": "Add equivalent",
       "addDocumentLink": "Add document link",
       "createRequisitionForShortage": "Create purchase requisition"
+    },
+    "usedOn": {
+      "empty": "This part is not in any equipment's parts list.",
+      "hint": "Equipment whose parts list contains this item.",
+      "columns": {
+        "equipment": "Equipment",
+        "quantity": "Quantity per equipment",
+        "critical": "Critical spare"
+      },
+      "critical": "Critical"
     },
     "equivalents": {
       "empty": "No equivalents configured.",
@@ -1740,6 +1764,16 @@
       "unitRefused": "This unit does not convert to the article's stock unit (no conversion, other dimension or unit to review).",
       "converting": "Converting to the stock unit…"
     },
+    "return": {
+      "title": "Return unused parts from this work order",
+      "hint": "Already issued for {{wo}}: {{qty}} {{unit}}. Enter the quantity to give back: it returns to stock at the issue location.",
+      "select": "Issue to return",
+      "option": "{{qty}} {{unit}} issued from {{location}}",
+      "submit": "Return to stock",
+      "submitting": "Returning…",
+      "tooMuch": "You can only return {{qty}} {{unit}} (the quantity already issued for this work order).",
+      "toast": "{{qty}} {{unit}} of {{code}} put back in stock (return from {{wo}})"
+    },
     "outcome": {
       "title": "{{code}} issued to {{wo}}",
       "line": "{{qty}} {{unit}}{{lot}} at {{cost}} each",
@@ -1875,15 +1909,15 @@
     },
     "limits": {
       "title": "Approval limits",
-      "description": "Highest amount (in {{currency}}) each role may approve. While no limit is set for a document type, any user with the purchasing permission may approve it. Once one is set, only roles with a limit may approve, up to that limit.",
+      "description": "Highest amount (in {{currency}}) each role may approve. Only roles with the \"Approve purchasing\" right and a limit may approve, up to that limit. A role without a limit cannot approve.",
+      "firstUse": "No limit is set: only the administrator can approve. Set the limits per role, in {{currency}}.",
       "sod": "Whatever the limits, the person who created a requisition or a purchase order can never approve it.",
       "loadError": "Approval limits could not be loaded",
       "rolesUnavailable": "The role list needs role administration rights; only roles that already have a limit are shown.",
       "empty": "No role to show.",
       "saved": "Approval limit saved.",
       "unlimited": "Unlimited",
-      "notAllowed": "Not allowed",
-      "noRule": "No limit set",
+      "notAllowed": "Cannot approve",
       "edit": "Edit",
       "editFor": "Edit the {{doc}} limit of {{role}}",
       "docTypes": {

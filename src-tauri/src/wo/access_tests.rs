@@ -936,3 +936,36 @@ async fn an_open_permit_holds_any_equipment_change_but_stock_only_a_change_of_si
         "{err:?}"
     );
 }
+
+#[tokio::test]
+async fn the_search_matches_every_word_across_code_title_description_and_equipment() {
+    let f = fixture().await;
+    let plant_scope = scope::access_scope(&f.db, f.plant, OT_VIEW).await.expect("scope");
+    let found = |search: &'static str| {
+        let db = &f.db;
+        let scope = &plant_scope;
+        async move {
+            let page = queries::list_work_orders_in_scope(
+                db,
+                WoListFilter {
+                    search: Some(search.into()),
+                    ..all_filter()
+                },
+                scope,
+            )
+            .await
+            .expect("search");
+            ids(&page)
+        }
+    };
+
+    // Words in any order, each in a different field: title word + equipment name word.
+    assert_eq!(found("noise equipment").await, vec![f.wo_a1]);
+    // The equipment's own code finds its work orders (wo_a and wo_none sit on equipment A).
+    assert_eq!(found("WO-SCOPE-B").await, vec![f.wo_b]);
+    // The description is searched too.
+    assert!(found("site scope test").await.contains(&f.wo_a));
+    // A word nobody says narrows to nothing; wildcards are literal.
+    assert!(found("noise zzzz").await.is_empty());
+    assert!(found("100%").await.is_empty());
+}

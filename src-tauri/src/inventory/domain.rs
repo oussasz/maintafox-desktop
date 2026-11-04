@@ -223,6 +223,7 @@ pub struct InventoryReorderRecommendation {
     pub article_name: String,
     pub warehouse_id: i64,
     pub warehouse_code: String,
+    pub warehouse_name: String,
     pub min_stock: f64,
     pub reorder_point: f64,
     pub max_stock: Option<f64>,
@@ -247,6 +248,7 @@ pub struct InventoryReplenishmentRecommendation {
     pub article_name: String,
     pub warehouse_id: i64,
     pub warehouse_code: String,
+    pub warehouse_name: String,
     pub min_stock: f64,
     pub reorder_point: f64,
     pub max_stock: Option<f64>,
@@ -1509,6 +1511,21 @@ pub struct ProcurementApprovalLimit {
     pub is_active: i64,
     pub row_version: i64,
     pub updated_at: String,
+    /// The "Administrator: unlimited" row the app seeds so the plant is never locked out
+    /// (`approvals::seed_administrator_unlimited_limits`); editable like any other.
+    pub is_seeded_default: bool,
+}
+
+/// Who may approve a document: the roles that hold the approval right and whose active limit
+/// covers its amount (or is unlimited).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcurementApproverRoles {
+    pub document_type: String,
+    pub document_id: i64,
+    /// Amount in the tenant currency; None when it cannot be established (only unlimited roles).
+    pub amount: Option<f64>,
+    pub amount_unknown_reason: Option<String>,
+    pub role_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

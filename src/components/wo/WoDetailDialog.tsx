@@ -12,6 +12,7 @@
  */
 
 import {
+  ArrowLeft,
   CheckCircle2,
   ClipboardCheck,
   FileCheck2,
@@ -92,9 +93,20 @@ interface WoDetailDialogProps {
   open: boolean;
   loading?: boolean;
   onClose: () => void;
+  /**
+   * Set when the work order was opened from another screen (a study, a request, the home page):
+   * shows "← Retour", which closes the detail and returns to that screen.
+   */
+  onBackToOrigin?: () => void;
 }
 
-export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
+export function WoDetailDialog({
+  wo,
+  open,
+  loading = false,
+  onClose,
+  onBackToOrigin,
+}: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
   const { formatHours } = useFormatters();
   const { typeLabel, natureLabel } = useWoTypeLabels();
@@ -223,6 +235,18 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogHeader className="px-6 pt-5 pb-3">
+            {onBackToOrigin ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 mb-1 w-fit gap-1.5 self-start"
+                onClick={onBackToOrigin}
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden />
+                {t("detail.backToOrigin")}
+              </Button>
+            ) : null}
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1 min-w-0">
                 <DialogTitle className="text-lg font-bold flex items-center gap-2">

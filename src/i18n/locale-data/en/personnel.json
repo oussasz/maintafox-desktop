@@ -194,6 +194,8 @@
     "restricted": "Restricted"
   },
   "create": {
+    "created": "Record for {{name}} created",
+    "savedEdit": "Record for {{name}} saved",
     "positionSeedFailed": "The position's requirements could not be loaded ({{msg}}): add the skills by hand.",
     "photoUploadWarning": "Record saved, but the photo could not be uploaded: {{msg}}",
     "qualificationsInRecord": "Skills and certifications of an existing person are managed in the Qualifications tab of their record.",

@@ -439,7 +439,7 @@
       "failure": "Événements de panne",
       "document": "Documents",
       "iot": "Signaux IoT",
-      "erp": "Mapping ERP"
+      "erp": "Correspondance avec l'ERP"
     }
   },
   "import": {
@@ -488,7 +488,11 @@
       "title": "Téléverser un fichier CSV",
       "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
       "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
-      "selectFile": "Choisir un fichier"
+      "selectFile": "Choisir un fichier",
+      "templateSaved": "Modèle enregistré",
+      "templateFailed": "Le modèle n'a pas pu être enregistré",
+      "template": "Télécharger le modèle (Excel/CSV)",
+      "columnsHelp": "Colonnes : {{columns}}. Obligatoires : code_equipement, nom, classe, criticite, statut (classe, famille, criticite et statut reprennent les codes des Données de référence ; emplacement est le code du nœud tel qu'affiché dans Organisation ; parent est le code d'un autre équipement, déjà créé ou présent dans le fichier). Le séparateur « ; » (Excel français) ou « , » est reconnu automatiquement."
     },
     "validate": {
       "title": "Validation des données",
@@ -508,7 +512,9 @@
         "action": "Action",
         "messages": "Messages"
       },
-      "includeWarnings": "Inclure les lignes avec avertissements"
+      "includeWarnings": "Inclure les lignes avec avertissements",
+      "onlyWarnings": "Seules des lignes avec avertissement sont disponibles : cochez « Inclure les lignes avec avertissements » pour les importer, ou corrigez le fichier.",
+      "nothingToImport": "Aucune ligne ne peut être importée : corrigez le fichier selon les messages ci-dessus, puis relancez l'import."
     },
     "apply": {
       "confirmTitle": "Appliquer l'import ?",
@@ -657,7 +663,7 @@
     "title": "Profil de fiabilité",
     "schedule": "Régime de fonctionnement",
     "scheduleNone": "Non défini (24 h/24 supposé)",
-    "utilization": "Facteur d’utilisation (K_u)",
+    "utilization": "Facteur d’utilisation",
     "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
   },
   "structure": {

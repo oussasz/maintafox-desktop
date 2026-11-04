@@ -3707,6 +3707,42 @@ async fn four_eyes_the_author_and_the_submitter_never_approve_a_permit() {
     );
 }
 
+/// L4-14: the read-only approval check gives the same answer as the approval itself (the author
+/// and the submitter refused with their codes, a second person allowed) and writes nothing.
+#[tokio::test]
+async fn the_approval_check_follows_four_eyes_and_writes_nothing() {
+    let db = setup().await;
+    let submitter = second_approver(&db).await;
+    let asset = insert_equipment(&db, "EQ-4EYES-CHECK").await;
+    make_test_site_a_planning_site(&db).await;
+    let wp = create_permit(&db, "hot_work", asset).await;
+    let wp = set_status_as(&db, &wp, "pending_review", submitter)
+        .await
+        .expect("submit");
+
+    let err = queries::check_work_permit_approval(&db, wp.id, APPLIER)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_CREATOR");
+    let err = queries::check_work_permit_approval(&db, wp.id, submitter)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(err), "PERMIT_APPROVER_IS_SUBMITTER");
+    queries::check_work_permit_approval(&db, wp.id, VERIFIER)
+        .await
+        .expect("a second person may approve");
+
+    let held = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(
+        (held.status.as_str(), held.row_version, held.approved_by_id),
+        ("pending_review", wp.row_version, None)
+    );
+    assert!(audit_details(&db, "permit.approved", wp.id).await.is_empty());
+}
+
 /// On a site that opted out of four-eyes (the per-site rule), the author who submitted it may
 /// approve: allowed, flagged "auto-approbation" on the permit and in the audit. The same approval
 /// is refused once the site keeps four-eyes again.

@@ -36,6 +36,7 @@ import {
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -51,6 +52,7 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { mfTone } from "@/design-system/tone";
+import { articleExportRows } from "@/export/list-exports";
 import { useFormatters } from "@/hooks/use-formatters";
 import { LIST_PARAM, withoutParams } from "@/lib/list-links";
 import { cn } from "@/lib/utils";
@@ -636,6 +638,35 @@ export function InventoryPage() {
     });
   }, [articles, masterFamilyFilter, masterStatusFilter, masterStockFilter]);
 
+  // Export: the articles the list shows now (filters applied), with the labels the screen shows.
+  const exportHeader = useMemo(
+    () => [
+      t("list.columns.code"),
+      t("list.columns.name"),
+      t("list.columns.family"),
+      t("list.columns.onHand"),
+      t("list.columns.reserved"),
+      t("list.columns.available"),
+      t("list.columns.avgCost"),
+      t("list.columns.stockValue"),
+      t("list.columns.reorderPoint"),
+      t("list.columns.status"),
+    ],
+    [t],
+  );
+  const getExportRows = useCallback(
+    () =>
+      articleExportRows(filteredArticles, {
+        formatQty,
+        formatCurrency,
+        belowReorderLabel: t("list.belowReorder"),
+        activeLabel: t("filters.statusActive"),
+        inactiveLabel: t("filters.statusInactive"),
+        isBelowReorder: isBelowReorderPoint,
+      }),
+    [filteredArticles, formatQty, formatCurrency, t],
+  );
+
   const switchProcurementView = useCallback((v: ProcurementView) => {
     setProcurementView(v);
     try {
@@ -794,16 +825,29 @@ export function InventoryPage() {
           <Button
             variant="outline"
             className={mfLayout.primaryAction}
-            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
-          >
-            {t("procurement.purchaseOrders.actions.receive")}
-          </Button>
-          <Button
-            variant="outline"
-            className={mfLayout.primaryAction}
             onClick={() => procurementPanelRef.current?.openRepairable()}
           >
             {t("procurement.repairables.create")}
+          </Button>
+        </PermissionGate>
+      ) : null}
+      {invTab === "master" ? (
+        <ExportCsvButton
+          permission={P.INV_VIEW}
+          fileName="articles-stock.csv"
+          header={exportHeader}
+          getRows={getExportRows}
+        />
+      ) : null}
+      {invTab === "procurement" ? (
+        // Receiving goods is its own right (inv.receive), separate from managing purchases.
+        <PermissionGate permission={P.INV_RECEIVE}>
+          <Button
+            variant="outline"
+            className={mfLayout.primaryAction}
+            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
+          >
+            {t("procurement.purchaseOrders.actions.receive")}
           </Button>
         </PermissionGate>
       ) : null}
@@ -835,7 +879,10 @@ export function InventoryPage() {
       >
         {/* Daily work first, then periodic / setup screens, with a visible separation. */}
         <TabsList className="h-auto w-fit flex-wrap gap-y-1">
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.daily")}
           </span>
           <TabsTrigger value="master">{t("page.tabs.master")}</TabsTrigger>
@@ -843,7 +890,10 @@ export function InventoryPage() {
           <TabsTrigger value="procurement">{t("page.tabs.procurement")}</TabsTrigger>
           <TabsTrigger value="controls">{t("page.tabs.controls")}</TabsTrigger>
           <span className="mx-1 h-6 w-px bg-surface-border" aria-hidden />
-          <span className="px-2 text-xs font-medium text-text-muted" aria-hidden>
+          <span
+            className="pointer-events-none cursor-default select-none px-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted"
+            aria-hidden
+          >
             {t("page.tabGroups.setup")}
           </span>
           <TabsTrigger value="valuation">{t("page.tabs.valuation")}</TabsTrigger>

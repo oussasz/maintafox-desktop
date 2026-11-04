@@ -206,6 +206,9 @@ async fn ensure_active_org_model(db: &impl ConnectionTrait, now: &str) -> AppRes
     crate::db::inserted_id(&inserted)
 }
 
+/// Label of the top level made at activation (the whole company).
+pub const ROOT_LEVEL_LABEL: &str = "Entreprise";
+
 async fn ensure_root_node_type(db: &impl ConnectionTrait, model_id: i64, now: &str) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_sql_and_values(
@@ -225,10 +228,11 @@ async fn ensure_root_node_type(db: &impl ConnectionTrait, model_id: i64, now: &s
             (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
-          VALUES (?, ?, 'ROOT', 'Root Organization', 1, 1, 1, 1, 1, 1, 1, ?, ?)",
+          VALUES (?, ?, 'ROOT', ?, 1, 1, 1, 1, 1, 1, 1, ?, ?)",
             [
                 crate::sync::identity::seeded_entity_sync_id("org_node_types", "bootstrap-root-type").into(),
                 model_id.into(),
+                ROOT_LEVEL_LABEL.into(),
                 now.into(),
                 now.into(),
             ],

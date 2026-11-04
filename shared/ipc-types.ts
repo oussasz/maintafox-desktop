@@ -3055,6 +3055,7 @@ export interface InventoryReorderRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
@@ -3726,6 +3727,7 @@ export interface InventoryReplenishmentRecommendation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string;
   min_stock: number;
   reorder_point: number;
   max_stock: number | null;
@@ -9547,6 +9549,18 @@ export interface PlanningGanttFilter {
   team_id?: number | null;
 }
 
+/** A planned OT (start and end on its form) with no commitment yet: a read-only "to commit" bar. */
+export interface ProposedWorkOrder {
+  work_order_id: number;
+  code: string;
+  title: string;
+  planned_start: string;
+  planned_end: string;
+  assigned_team_id: number | null;
+  assigned_team_name: string | null;
+  equipment_label: string | null;
+}
+
 export interface PlanningGanttSnapshot {
   period_start: string;
   period_end: string;
@@ -9556,6 +9570,8 @@ export interface PlanningGanttSnapshot {
   assignee_lanes: PlanningAssigneeLane[];
   /** Plant-wide All Crews overview; empty when filtered to a single crew. */
   crew_lanes: PlanningCrewLane[];
+  /** Planned OTs without a commitment in the period; not counted in `capacity`. */
+  proposed_work_orders: ProposedWorkOrder[];
 }
 
 export interface NotifyTeamsInput {

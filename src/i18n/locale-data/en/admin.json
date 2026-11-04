@@ -18,7 +18,7 @@
     "sessions": "Sessions",
     "delegation": "Delegation",
     "emergency": "Emergency",
-    "importExport": "Import / Export",
+    "importExport": "Role import / export",
     "audit": "Audit",
     "phones": "Phones"
   },
@@ -53,11 +53,91 @@
     "saved": "Role updated",
     "delete": "Delete",
     "deleted": "Role deleted",
+    "shipped": {
+      "administrator": {
+        "name": "Administrator",
+        "description": "Every right, including managing accounts, roles and settings. Keep it to one or two people."
+      },
+      "supervisor": {
+        "name": "Maintenance supervisor",
+        "description": "Organises the team's work: requests, work orders, preventive maintenance, personnel and stores."
+      },
+      "technician": {
+        "name": "Maintenance technician",
+        "description": "Day-to-day work: sees everything, creates and carries out requests and work orders."
+      },
+      "readonly": {
+        "name": "Read only",
+        "description": "Sees the maintenance screens without being able to change anything."
+      },
+      "planner": {
+        "name": "Planner",
+        "description": "Plans work orders and preventive maintenance, prepares parts and purchases."
+      },
+      "financeManager": {
+        "name": "Finance manager",
+        "description": "Prepares and follows maintenance budgets, approves and exports costs."
+      },
+      "formerRoleSame": "Former role, same as {{role}}",
+      "formerRoleDifferent": "Former role, close to {{role}}: check its rights",
+      "formerRoleUnknown": "Former role, close to {{role}}",
+      "formerRoleDescriptionSame": "Role from an earlier version, with the same rights as \"{{role}}\". Accounts that hold it keep it; for a new account, choose \"{{role}}\".",
+      "formerRoleDescriptionDifferent": "Role from an earlier version, meant for the same job as \"{{role}}\", but its rights are no longer the same: compare them before deciding. Accounts that hold it keep it; for a new account, choose \"{{role}}\" or a plant role.",
+      "formerRoleDescriptionUnknown": "Role from an earlier version, meant for the same job as \"{{role}}\". Its rights are shown under Roles, in \"Former roles\". Accounts that hold it keep it."
+    },
+    "templates": {
+      "supervisor": {
+        "name": "Supervisor",
+        "description": "Runs the crew: sorts and approves requests, turns them into work orders, assigns, approves and closes the work. Sees preventive maintenance, planning, stock, permits and training."
+      },
+      "technician": {
+        "name": "Technician",
+        "description": "Carries out his work orders (times, parts, findings), reports what he finds, runs inspection rounds. Sees the permit and lockout card he works under, without issuing permits. If your technicians apply their own locks, add “Issue work permits” until the next version."
+      },
+      "planner": {
+        "name": "Planner",
+        "description": "Plans work orders and preventive maintenance, and reserves their parts while preparing the work orders. Makes no purchases and no stock adjustments; can take the parts of its work orders out of stock."
+      },
+      "observer": {
+        "name": "Read only",
+        "description": "Sees work orders, requests, preventive maintenance and equipment, without changing anything."
+      },
+      "financeManager": {
+        "name": "Finance manager",
+        "description": "Prepares and follows maintenance budgets, approves and posts costs, exports reports."
+      },
+      "storekeeper": {
+        "name": "Storekeeper",
+        "description": "Store work: issues, returns, transfers and stock counts. Also records supplier deliveries (goods-receipt right), without being able to place or approve purchases: purchasing and receiving stay with different people."
+      },
+      "buyer": {
+        "name": "Buyer",
+        "description": "Purchase requisitions and orders, goods receipts. Nobody approves their own requisition or order; approval goes to a manager who holds the approval right, within their limit."
+      },
+      "hseManager": {
+        "name": "HSE manager",
+        "description": "Issues, follows and closes work permits and lockouts, reports hazards. Step-up and \"different person\" rules on permits still apply."
+      },
+      "maintenanceManager": {
+        "name": "Maintenance manager",
+        "description": "Runs maintenance: requests, work orders (including emergency reassignment and reopening), preventive programme, planning, equipment, reliability and reports. Manages and approves purchases (within their limit); no budget or administration rights."
+      },
+      "costController": {
+        "name": "Cost controller",
+        "description": "Reads and exports maintenance costs and budgets. Changes, approves and posts nothing."
+      },
+      "productionOperator": {
+        "name": "Production operator",
+        "description": "Reports a problem on a machine of his area and follows his requests. Nothing else."
+      }
+    },
     "create": {
       "title": "Create role",
-      "description": "Define a name and optionally select a template.",
-      "template": "Template",
-      "noTemplate": "No template",
+      "description": "Start from a job model or an empty role, then adapt its rights.",
+      "template": "Create from a model",
+      "noTemplate": "No model (empty role)",
+      "templateRights_one": "The new role takes {{count}} right from this model; you can adapt it afterwards.",
+      "templateRights_other": "The new role takes the {{count}} rights of this model; you can adapt them afterwards.",
       "confirm": "Create",
       "namePlaceholder": "Field technician"
     },
@@ -555,7 +635,15 @@
       },
       "inv_procure": {
         "label": "Manage purchasing",
-        "description": "Create and approve purchase requisitions and orders. Sensitive action."
+        "description": "Create and follow up purchase requisitions and orders. Sensitive action."
+      },
+      "inv_approve": {
+        "label": "Approve purchasing",
+        "description": "Approve or reject purchase requisitions and orders, within the role's approval limit. Sensitive action."
+      },
+      "inv_receive": {
+        "label": "Receive goods",
+        "description": "Record goods receipts against purchase orders."
       },
       "inv_count": {
         "label": "Run stock counts",
@@ -930,7 +1018,8 @@
     }
   },
   "importExport": {
-    "title": "Role Import / Export",
+    "title": "Role import / export",
+    "description": "Back up or transfer roles and their permissions (JSON file). To export a list to Excel, use the \"Export (Excel/CSV)\" button on that list.",
     "export": {
       "title": "Export Roles",
       "selectRoles": "Select roles to export",
@@ -1173,6 +1262,26 @@
       "unsavedTitle": "Discard the changes?",
       "unsavedBody": "The role \"{{name}}\" has unsaved changes (permissions or description). They are lost if you open another role.",
       "discardChanges": "Discard changes",
+      "unsavedNewBody": "Role \"{{name}}\" has unsaved changes (rights or description). They will be lost if you create or copy a role. Save them first to keep them.",
+      "unsavedSummary": "Unsaved changes: {{added}} right(s) added, {{removed}} removed",
+      "saveBar": "Save the role changes",
+      "wholeGroup": "Whole group",
+      "sensitiveGroupTitle": "Sensitive rights of the {{group}} group",
+      "sensitiveGroupBody_one": "The other rights of the group are ticked. This sensitive right is not: tick it only if this role really needs it.",
+      "sensitiveGroupBody_other": "The other rights of the group are ticked. These {{count}} sensitive rights are not: tick them only if this role really needs them.",
+      "sensitiveGroupConfirm": "Tick them too",
+      "sensitiveGroupKeepOut": "Leave them unticked",
+      "formerRoles_one": "Former role ({{count}})",
+      "formerRoles_other": "Former roles ({{count}})",
+      "formerRolesHint": "Roles from an earlier version, kept for the accounts that hold them. They are no longer offered when a role is given. Open them to see their rights and who holds them.",
+      "autoAdded": "Added because {{perms}} needs it",
+      "needs": "\"{{perm}}\" needs \"{{required}}\"",
+      "notAddedTitle": "Required rights not ticked for you",
+      "notAddedHint": "These rights let a person act, approve or issue a permit: they are never ticked automatically. Tick them yourself if that is intended; otherwise the role cannot be saved.",
+      "dependentsTitle": "Ticked rights need what you just removed",
+      "dependentsHint": "They stay ticked. Remove them too, or tick back what they need: otherwise the role cannot be saved.",
+      "noticeDismiss": "Got it",
+      "wholeGroupToggle": "Tick or untick every right in the {{group}} group",
       "new": "New",
       "holders": "Active accounts holding this role",
       "holdersCount_one": "{{count}} active account",
@@ -1211,8 +1320,8 @@
       "loadError": "The roles could not be loaded.",
       "validationError": "The dependency check could not run. The server checks again when you save.",
       "templateUnreadable": "This role template is unreadable: the role was not created. Choose another template or none.",
-      "hiddenRetained_one": "{{count}} permission unused in this version kept",
-      "hiddenRetained_other": "{{count}} permissions unused in this version kept"
+      "hiddenRetained_one": "{{count}} more right is meant for a feature that is not in this version: it is not shown, gives access to nothing today and stays in place, even after a save.",
+      "hiddenRetained_other": "{{count}} more rights are meant for features that are not in this version: they are not shown, give access to nothing today and stay in place, even after a save."
     },
     "choicesLoadError": "The role and site lists could not be loaded: role and site filters and role assignment are unavailable.",
     "usersLoadError": "The accounts could not be loaded."
@@ -1285,7 +1394,9 @@
     "MOBILE_ENROL_NOT_LICENSED": "The licence does not include phones: ask your vendor to add some.",
     "MOBILE_ENROL_NO_FREE_SLOT": "Every phone of the licence is in use: revoke a phone, or ask your vendor for more.",
     "MOBILE_ENROL_NOT_FOUND": "The licence server does not know this enrolment or phone.",
-    "MOBILE_ENROL_SERVER_REFUSED": "The licence server refused the request. Try again later.",
+    "MOBILE_ENROL_SERVER_REFUSED": "The licence server refused the request. Check that the application is up to date, then try again; if it keeps refusing, contact your vendor.",
+    "MOBILE_ENROL_SERVER_PC_REFUSED": "The licence server does not recognise this PC. Check that its licence is active (Settings › System & Sync › Licence, or ask an administrator); if it is, contact your vendor.",
+    "MOBILE_ENROL_SERVER_FAULT": "The licence server has a temporary problem. Try again in a few minutes; if it continues, contact your vendor.",
     "MOBILE_ENROL_OFFLINE": "The licence server cannot be reached. Phones are managed online: check the connection and try again.",
     "MOBILE_ENROL_PC_NOT_ACTIVATED": "This PC has no active licence: phones cannot be managed from it.",
     "MOBILE_ENROL_DESKTOP_ONLY": "Phones are managed from a desktop PC.",

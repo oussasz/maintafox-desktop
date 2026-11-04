@@ -15,6 +15,13 @@
     "rateLimit": "Too many requests. Please wait.",
     "maintenance": "Service under maintenance. Try again later."
   },
+  "licence": {
+    "notInForceTitle": "Licence not in force",
+    "moduleOffTitle": "Module not included in your licence",
+    "moduleOff": "The “{{module}}” module is not included in this installation's licence. Ask your Maintafox supplier to add it to your plan.",
+    "licenceNotInForce": "Your licence is not in force at the moment (suspended, expired or in its grace period): the “{{module}}” module is stopped. Contact your Maintafox supplier.",
+    "moduleUnknown": "this module"
+  },
   "permission": {
     "cannotGrantOwnRole": "You cannot give a role to your own account: another administrator must do it."
   },
@@ -90,7 +97,8 @@
     "GATE_INV_PERIOD_CLOSED": "Posting refused: this date falls in a closed inventory period. Use a date after the closed period.",
     "GATE_PROC_SELF_APPROVAL": "Approval refused: you cannot approve a document you requested yourself. Another approver must approve it.",
     "GATE_PROC_APPROVAL_LIMIT": "Approval refused: the amount is above your approval limit. A user with a higher limit must approve it.",
-    "GATE_PROC_NO_APPROVAL_LIMIT": "Approval refused: none of your roles has an approval limit for this document type.",
+    "GATE_PROC_NO_APPROVAL_LIMIT": "Approval refused: none of your roles has an approval limit for this document type. The administrator sets the limits per role in \"Approval limits\".",
+    "GATE_PROC_APPROVAL_RIGHT": "Decision refused: approving or rejecting a purchase needs the \"Approve purchasing\" right.",
     "GATE_PROC_AMOUNT_UNKNOWN": "Approval refused: the document amount cannot be established. Enter the unit prices of its lines first.",
     "GATE_PROC_NO_EXCHANGE_RATE": "Receipt refused: no exchange rate for the order currency on the receipt date. Enter the rate or add it under Rates & approvals.",
     "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "FMECA update blocked: publish active values in the \"Failure modes\" reference list first.",
@@ -389,6 +397,8 @@
     "GATE_ASSET_IMPORT_CSV_HEADERS": "Import refused: the CSV file headers cannot be read.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refused: the CSV file is invalid at line {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refused: the batch has no rows.",
+    "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refused: the location given does not exist in the active organisation.",
+    "GATE_ASSET_IMPORT_PARENT_UNKNOWN": "Import refused: the parent given does not exist in the equipment register.",
     "GATE_ASSET_IMPORT_STATUS_APPLY": "Apply refused: the batch is “{{status}}”, only a validated batch can be applied.",
     "GATE_ASSET_IMPORT_STATUS_LOAD": "Load refused: the batch is “{{status}}”, only an uploaded batch can be loaded.",
     "GATE_ASSET_IMPORT_STATUS_VALIDATE": "Validation refused: the batch is “{{status}}”, only an uploaded batch can be validated.",
@@ -949,7 +959,14 @@
     "GATE_SET_VALUE_OUT_OF_RANGE": "Setting refused: the value {{value}} of \"{{key}}\" must be between {{min}} and {{max}}.",
     "GATE_SET_MONTH_RANGE": "Setting refused: the month must be between 1 and 12.",
     "GATE_SET_CURRENCY_INVALID": "Setting refused: enter a valid currency code, for example EUR.",
-    "GATE_SET_HEADER_INVALID": "Document header refused: its content is not valid (version, size or disallowed tags). Fix it and save again.",
+    "GATE_SET_HEADER_INVALID": "Document header refused: its format is not recognised by this version of the application. Reopen the screen, rebuild the header and save again.",
+    "GATE_SET_HEADER_TOO_LARGE": "Header too large: {{size_kb}} KB, {{max_kb}} KB maximum. Remove or shrink the image.",
+    "GATE_SET_HEADER_TAG_FORBIDDEN": "Header refused: the tag \"{{tag}}\" is not allowed. Remove the pasted content that contains it (paste as plain text instead).",
+    "GATE_SET_HEADER_ATTRIBUTE_FORBIDDEN": "Header refused: the attribute \"{{attribute}}\" (tag \"{{tag}}\") is not allowed. Remove the pasted content that contains it (paste as plain text instead).",
+    "GATE_SET_HEADER_COMMENT": "Header refused: it contains a hidden comment, which is not allowed. Remove the pasted content (paste as plain text instead).",
+    "GATE_SET_HEADER_SCRIPT": "Header refused: it contains a link or code that is not allowed. Remove the pasted content that contains it.",
+    "GATE_SET_HEADER_UNCLOSED_TAG": "Header refused: the tag \"{{tag}}\" is not closed. Remove the pasted content that contains it.",
+    "GATE_SET_HEADER_STRAY_BRACKET": "Header refused: it contains a \"<\" sign that opens no tag. Remove it or replace it with other text.",
     "GATE_SET_NOT_IN_USE": "Setting refused: it is not used by the application and cannot be changed.",
     "GATE_SET_OWN_SCREEN": "Setting refused: it is changed from its own screen, not from the settings list.",
     "GATE_SET_VALUE_EMPTY": "Setting refused: the value of \"{{key}}\" cannot be empty.",
