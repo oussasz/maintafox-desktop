@@ -1131,9 +1131,9 @@
         "title_one": "Ce compte a déjà un rôle sur toute l'usine.",
         "title_other": "Ce compte a déjà des rôles sur toute l'usine.",
         "replace": "Remplacer le rôle usine entière « {{role}} »",
-        "hint": "Un rôle remplacé prend fin aujourd'hui ; il reste dans l'historique du compte.",
-        "kept_one": "Le rôle « {{roles}} » reste en place : il donne toujours accès à tous les sites, la limite au site ne sert à rien.",
-        "kept_other": "Les rôles {{roles}} restent en place : ils donnent toujours accès à tous les sites, la limite au site ne sert à rien."
+        "hint": "Un rôle remplacé prend fin dès maintenant ; il reste dans l'historique du compte.",
+        "kept_one": "Le rôle « {{roles}} » reste en place : il donne toujours accès à tous les sites, la limite au site n'a aucun effet.",
+        "kept_other": "Les rôles {{roles}} restent en place : ils donnent toujours accès à tous les sites, la limite au site n'a aucun effet."
       },
       "confirm": "Attribuer"
     },

@@ -1590,13 +1590,20 @@ pub(crate) async fn ensure_role_allowed_at_scope<C: ConnectionTrait>(
 /// Admin ledger action of a plant-wide assignment ended because a narrower one replaced it (L5-07).
 pub(crate) const ROLE_REPLACED_ACTION: &str = "role_replaced";
 
-/// SQL condition: the org node `top` is the single top node of its organisation (the one made at
-/// activation, every site sits under it), so a role on it covers the whole plant. With several top
-/// nodes, each is only a part of the plant.
+/// SQL condition: the org node `top` belongs to the active structure model (the one the
+/// permission checks follow).
+const ACTIVE_MODEL_NODE_SQL: &str = "top.deleted_at IS NULL AND EXISTS (SELECT 1 FROM org_structure_models m \
+     WHERE m.id = top.structure_model_id AND m.status = 'active')";
+
+/// SQL condition: the org node `top` is the single top node of the active organisation (the one
+/// made at activation, every site sits under it), so a role on it covers the whole plant. With
+/// several top nodes, each is only a part of the plant.
 const SINGLE_TOP_NODE_SQL: &str = "top.parent_id IS NULL AND top.deleted_at IS NULL \
+     AND EXISTS (SELECT 1 FROM org_structure_models m \
+         WHERE m.id = top.structure_model_id AND m.status = 'active') \
      AND NOT EXISTS (SELECT 1 FROM org_nodes other WHERE other.parent_id IS NULL \
          AND other.deleted_at IS NULL AND other.id <> top.id \
-         AND other.structure_model_id IS top.structure_model_id)";
+         AND other.structure_model_id = top.structure_model_id)";
 
 /// SQL condition: the assignment `usa` covers the whole plant (plant-wide scope, or the single top
 /// node of the organisation).
@@ -1618,8 +1625,8 @@ struct EndedPlantWide {
     scope_reference: Option<String>,
 }
 
-/// Whether a scope is narrower than the whole plant: a team, or an org node other than the single
-/// top node (the node itself was checked to exist by [`validate_assignment_scope`]).
+/// Whether a scope is narrower than the whole plant: a team, or an org node of the active
+/// structure other than its single top node. A node outside the active structure replaces nothing.
 async fn scope_is_narrower_than_plant<C: ConnectionTrait>(
     conn: &C,
     scope_type: &str,
@@ -1629,13 +1636,27 @@ async fn scope_is_narrower_than_plant<C: ConnectionTrait>(
         "tenant" => Ok(false),
         "team" => Ok(true),
         _ => {
+            let reference = scope_reference.unwrap_or("");
+            let active = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    &format!(
+                        "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {ACTIVE_MODEL_NODE_SQL}"
+                    ),
+                    [reference.into()],
+                ))
+                .await?
+                .is_some();
+            if !active {
+                return Ok(false);
+            }
             let whole_plant = conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     &format!(
                         "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {SINGLE_TOP_NODE_SQL}"
                     ),
-                    [scope_reference.unwrap_or("").into()],
+                    [reference.into()],
                 ))
                 .await?
                 .is_some();

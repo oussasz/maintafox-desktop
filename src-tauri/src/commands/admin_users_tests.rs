@@ -2800,10 +2800,13 @@ async fn a_replacement_is_refused_whole_when_one_choice_is_not_a_plant_wide_role
     let tech = site_role(&db).await;
     let plant = plant_wide_assignment(&state, &caller, user, readonly).await;
     let foreign = plant_wide_assignment(&state, &caller, other_user, readonly).await;
+    // A site role on another node than the new grant: refused by the plant-wide rule itself, not
+    // because the same-scope replacement would have ended it first.
+    extra_node(&db, 905, "AREA-A2", Some(901)).await;
     let site_row = assign_role_scope_impl(
         &state,
         &caller,
-        assign(user, tech, "org_node", Some("902")),
+        assign(user, tech, "org_node", Some("905")),
         false,
         None,
     )
@@ -2879,4 +2882,209 @@ async fn replacing_needs_the_same_rights_as_withdrawing() {
     let r = assign_role_scope_impl(&state, &ops, replacing(ops_id, ops_role, "902", &[own]), false, None).await;
     assert!(matches!(r, Err(AppError::PermissionDenied(_))), "{r:?}");
     assert!(!is_ended(&db, own).await);
+}
+
+/// One more org node of the seeded structure model (`parent`: `None` for a top node).
+async fn extra_node(db: &DatabaseConnection, id: i64, code: &str, parent: Option<i64>) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO org_nodes (id, entity_sync_id, structure_model_id, code, name, node_type_id, parent_id, \
+         status, created_at, updated_at) \
+         VALUES (?, ?, 901, ?, ?, 901, ?, 'active', datetime('now'), datetime('now'))",
+        [
+            id.into(),
+            format!("adm-node-{id}").into(),
+            code.into(),
+            code.into(),
+            parent.into(),
+        ],
+    ))
+    .await
+    .expect("extra node");
+}
+
+/// Roles other than the administrator ones, enough to hold several assignments at one scope.
+async fn ordinary_roles(db: &DatabaseConnection) -> Vec<i64> {
+    db.query_all(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT id FROM roles WHERE name NOT IN ('Administrator', 'Superadmin') \
+         AND deleted_at IS NULL AND status != 'retired' ORDER BY id"
+            .to_string(),
+    ))
+    .await
+    .unwrap()
+    .iter()
+    .map(|r| r.try_get::<i64>("", "id").unwrap())
+    .collect()
+}
+
+async fn assignment_by_tag(db: &DatabaseConnection, tag: &str) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT id AS v FROM user_scope_assignments WHERE entity_sync_id = ?",
+        vec![format!("{tag}-usa").into()],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn ended_expired_and_emergency_assignments_are_never_replacement_choices() {
+    let db = crate::db::test_db::seeded().await;
+    seed_org(&db).await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "site_bad_ids").await;
+    let roles = ordinary_roles(&db).await;
+    assert!(roles.len() >= 4, "{roles:?}");
+    let tech = roles[0];
+    let plant = plant_wide_assignment(&state, &caller, user, roles[1]).await;
+    let past = (chrono::Utc::now() - chrono::Duration::days(2))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let soon = (chrono::Utc::now() + chrono::Duration::hours(2))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    raw_assignment(&db, "bad-ended", user, roles[2], "tenant", None, None, None).await;
+    let ended = assignment_by_tag(&db, "bad-ended").await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_scope_assignments SET deleted_at = ? WHERE id = ?",
+        [past.clone().into(), ended.into()],
+    ))
+    .await
+    .unwrap();
+    raw_assignment(&db, "bad-expired", user, roles[2], "tenant", None, None, Some(past)).await;
+    let expired = assignment_by_tag(&db, "bad-expired").await;
+    raw_assignment(&db, "bad-emergency", user, roles[3], "tenant", None, Some(soon), None).await;
+    let emergency = assignment_by_tag(&db, "bad-emergency").await;
+    let rows_before = assignment_rows(&db, user).await;
+
+    for bad in [ended, expired, emergency] {
+        let r = assign_role_scope_impl(
+            &state,
+            &caller,
+            replacing(user, tech, "902", &[plant, bad]),
+            false,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(&r, Err(AppError::ValidationFailed(m)) if m[0].starts_with("GATE_ADMIN_REPLACE_NOT_PLANT_WIDE")),
+            "{bad}: {r:?}"
+        );
+    }
+    assert!(!is_ended(&db, plant).await);
+    assert!(!is_ended(&db, expired).await);
+    assert!(!is_ended(&db, emergency).await);
+    assert_eq!(assignment_rows(&db, user).await, rows_before, "nothing granted");
+}
+
+#[tokio::test]
+async fn with_several_top_nodes_a_top_node_is_only_part_of_the_plant() {
+    let db = crate::db::test_db::seeded().await;
+    seed_org(&db).await;
+    extra_node(&db, 903, "SITE-B", None).await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "site_multi_root").await;
+    let roles = ordinary_roles(&db).await;
+    let on_top = assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, roles[1], "org_node", Some("901")),
+        false,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let r = assign_role_scope_impl(
+        &state,
+        &caller,
+        replacing(user, roles[0], "902", &[on_top]),
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&r, Err(AppError::ValidationFailed(m)) if m[0].starts_with("GATE_ADMIN_REPLACE_NOT_PLANT_WIDE")),
+        "{r:?}"
+    );
+    assert!(!is_ended(&db, on_top).await);
+
+    // A top node is narrower than the plant: a role there replaces the plant-wide one.
+    let plant = plant_wide_assignment(&state, &caller, user, roles[2]).await;
+    assign_role_scope_impl(&state, &caller, replacing(user, roles[0], "903", &[plant]), false, None)
+        .await
+        .expect("a top node among several replaces the plant-wide role");
+    assert!(is_ended(&db, plant).await);
+}
+
+#[tokio::test]
+async fn a_node_outside_the_active_structure_replaces_nothing() {
+    let db = crate::db::test_db::seeded().await;
+    seed_org(&db).await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "site_old_model").await;
+    let roles = ordinary_roles(&db).await;
+    let plant = plant_wide_assignment(&state, &caller, user, roles[1]).await;
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE org_structure_models SET status = 'superseded' WHERE id = 901".to_string(),
+    ))
+    .await
+    .unwrap();
+    let r = assign_role_scope_impl(&state, &caller, replacing(user, roles[0], "902", &[plant]), false, None).await;
+    assert!(
+        matches!(&r, Err(AppError::ValidationFailed(m)) if m[0].starts_with("GATE_ADMIN_REPLACE_NOT_NARROWER")),
+        "{r:?}"
+    );
+    assert!(!is_ended(&db, plant).await);
+}
+
+#[tokio::test]
+async fn replacing_the_last_administrators_plant_wide_role_is_refused_and_rolled_back() {
+    let db = crate::db::test_db::seeded().await;
+    seed_org(&db).await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let admin_role = role_id(&db, "Administrator").await;
+    let tech = site_role(&db).await;
+    let boss = insert_user(&db, "plant_boss").await;
+    let boss_admin = plant_wide_assignment(&state, &caller, boss, admin_role).await;
+    // The built-in account counts as an administrator only once its password was chosen: the
+    // other account is the only one now (`auth::last_admin`).
+    let only = assignment_by_role(&db, boss, admin_role).await;
+    assert_eq!(only, boss_admin);
+    assert!(crate::auth::last_admin::is_sole_active_administrator(&db, boss)
+        .await
+        .unwrap());
+    let rows_before = assignment_rows(&db, boss).await;
+
+    let r = assign_role_scope_impl(
+        &state,
+        &caller,
+        replacing(boss, tech, "902", &[boss_admin]),
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&r, Err(AppError::OrgValidationFailed(issues))
+            if issues.iter().any(|i| i.code == crate::auth::last_admin::LAST_ADMINISTRATOR_REQUIRED)),
+        "{r:?}"
+    );
+    assert!(!is_ended(&db, boss_admin).await, "not ended");
+    assert_eq!(assignment_rows(&db, boss).await, rows_before, "not granted");
+    assert_eq!(ledger_count(&db, "role_replaced", "applied").await, 0);
+}
+
+async fn assignment_by_role(db: &DatabaseConnection, user: i64, role: i64) -> i64 {
+    scalar_i64(
+        db,
+        "SELECT id AS v FROM user_scope_assignments WHERE user_id = ? AND role_id = ? AND deleted_at IS NULL",
+        vec![user.into(), role.into()],
+    )
+    .await
 }
