@@ -274,7 +274,7 @@ function SyncIndicator({
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
                    bg-status-warning/10 text-status-warning"
-        title={t("sync.offline")}
+        title={t("sync.offlineChangesSaved")}
       >
         <AlertCircle className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">{t("sync.offline")}</span>
