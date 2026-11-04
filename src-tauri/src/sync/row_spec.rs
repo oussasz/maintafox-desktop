@@ -789,6 +789,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("created_by_id", USER),
             r("submitted_by_id", USER),
             r("approved_by_id", USER),
+            // Who cancelled it (L4-15, migration 272).
+            r("cancelled_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),

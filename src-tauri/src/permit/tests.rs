@@ -155,6 +155,7 @@ pub(super) async fn set_status_as(
             id: wp.id,
             status: status.into(),
             expected_row_version: wp.row_version,
+            reason: (status == "cancelled").then(|| "Essai : permis annulé".to_string()),
         },
         actor,
     )
@@ -3878,4 +3879,67 @@ async fn four_eyes_a_permit_back_to_draft_is_submitted_again() {
     .expect("cancel line");
     assert_eq!(back.status, "draft");
     assert_eq!((back.submitted_by_id, back.submitted_at.as_deref()), (None, None));
+}
+
+/// L4-15 (field test p2 7.13): a permit is never cancelled without a reason (none or blank is
+/// refused, nothing written); with one, the permit keeps the reason (trimmed), who and when, and
+/// the cancellation is audited with it.
+#[tokio::test]
+async fn a_permit_is_cancelled_only_with_a_reason_kept_on_it() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L415-1").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let cancel = |reason: Option<&str>| {
+        let db = db.clone();
+        let reason = reason.map(str::to_string);
+        let (id, row_version) = (wp.id, wp.row_version);
+        async move {
+            queries::set_work_permit_status(
+                &db,
+                WorkPermitStatusInput {
+                    id,
+                    status: "cancelled".into(),
+                    expected_row_version: row_version,
+                    reason,
+                },
+                VERIFIER,
+            )
+            .await
+        }
+    };
+    for refused in [None, Some(""), Some("   ")] {
+        assert_validation(cancel(refused).await, "GATE_PERMIT_CANCEL_REASON_REQUIRED");
+    }
+    let unchanged = queries::get_work_permit(&db, wp.id)
+        .await
+        .expect("read")
+        .expect("permit");
+    assert_eq!(
+        (unchanged.status.as_str(), unchanged.row_version),
+        ("issued", wp.row_version)
+    );
+    assert_eq!(unchanged.cancel_reason, None);
+
+    let cancelled = cancel(Some("  Travaux reportés : pièce non livrée  "))
+        .await
+        .expect("cancel");
+    assert_eq!(cancelled.status, "cancelled");
+    assert_eq!(
+        cancelled.cancel_reason.as_deref(),
+        Some("Travaux reportés : pièce non livrée")
+    );
+    assert_eq!(cancelled.cancelled_by_id, Some(VERIFIER));
+    assert!(cancelled.cancelled_by_name.is_some(), "the person is named");
+    assert!(cancelled.cancelled_at.is_some());
+    assert_eq!(audit_count_of(&db, "permit.cancelled", wp.id).await, 1);
+    let reason = scalar_text(
+        &db,
+        &format!(
+            "SELECT json_extract(details_json, '$.reason') FROM audit_events \
+             WHERE action_code = 'permit.cancelled' AND target_id = '{}'",
+            wp.id
+        ),
+    )
+    .await;
+    assert_eq!(reason, "Travaux reportés : pièce non livrée");
 }

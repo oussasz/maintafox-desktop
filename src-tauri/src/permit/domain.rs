@@ -83,6 +83,16 @@ pub struct WorkPermit {
     /// ("auto-approbation (site sans 4 yeux)").
     #[serde(default)]
     pub self_approved: bool,
+    /// Why, by whom and when the permit was cancelled (L4-15, migration 272). `None` on a permit
+    /// cancelled before the reason was required (nothing is invented).
+    #[serde(default)]
+    pub cancel_reason: Option<String>,
+    #[serde(default)]
+    pub cancelled_by_id: Option<i64>,
+    #[serde(default)]
+    pub cancelled_by_name: Option<String>,
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +370,9 @@ pub struct WorkPermitStatusInput {
     pub id: i64,
     pub status: String,
     pub expected_row_version: i64,
+    /// Required (not blank) when `status` is `cancelled` (L4-15); ignored otherwise.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

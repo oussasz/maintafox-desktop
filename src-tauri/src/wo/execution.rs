@@ -521,16 +521,101 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
     permit_code: &str,
     permit_status: &str,
 ) -> AppResult<bool> {
-    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
-    if status != WoStatus::InProgress {
-        return Ok(false);
-    }
     let suspended = matches!(permit_status, "suspended" | "revalidation_required");
     let reason_code = if suspended {
         PERMIT_SUSPENDED_DELAY_REASON
     } else {
         PERMIT_ENDED_DELAY_REASON
     };
+    let comment = if suspended {
+        format!("Permis {permit_code} suspendu sur un autre poste")
+    } else {
+        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
+    };
+    system_permit_hold(
+        txn,
+        &SystemPermitHold {
+            wo_id,
+            permit_sync_id,
+            permit_code,
+            permit_status,
+            reason_code,
+            comment,
+            audit_action: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE,
+            audit_summary: "permis terminé ailleurs",
+        },
+    )
+    .await
+}
+
+/// The fixed delay reason of a running work order put on hold because its permit's expiry passed
+/// (L4-08, CMMS Advisor 2026-11-02, decision 9). The seeded value "Permit Expired / Revoked" of the
+/// plant's `WORK.DELAY_REASONS` list (reference data, its label editable there).
+pub const PERMIT_EXPIRED_DELAY_REASON: &str = "permit_expired";
+
+/// Audit action: a running work order put on hold because its permit expired ("permis expiré"),
+/// recorded as the system.
+pub const AUDIT_HELD_PERMIT_EXPIRED: &str = "wo.held_permit_expired";
+
+/// A permit of work order `wo_id`, still open, whose expiry has passed while the work order runs
+/// here (L4-08, CMMS Advisor 2026-11-02, decision 9: the permit expires automatically and its work
+/// stops): the work order is put on hold, in the caller's transaction, recorded as the system with
+/// the fixed reason [`PERMIT_EXPIRED_DELAY_REASON`], waiting for a prerequisite; audited
+/// ([`AUDIT_HELD_PERMIT_EXPIRED`]). Lock removal and the permit's close and hand-back stay allowed;
+/// resuming is refused by the start gate while the permit is expired. `false` when the work order
+/// is not running here.
+///
+/// Every PC reads the same expiry, so two PCs may both hold it: the delay segment's identity is
+/// derived from the fact (work order, permit, "expired", last start), and the crossing is settled
+/// by sync as for a permit ended elsewhere (`permit::ended_hold`).
+pub(crate) async fn hold_for_permit_expired(
+    txn: &impl ConnectionTrait,
+    wo_id: i64,
+    permit_sync_id: &str,
+    permit_code: &str,
+) -> AppResult<bool> {
+    system_permit_hold(
+        txn,
+        &SystemPermitHold {
+            wo_id,
+            permit_sync_id,
+            permit_code,
+            permit_status: "expired",
+            reason_code: PERMIT_EXPIRED_DELAY_REASON,
+            comment: format!("Permis {permit_code} expiré"),
+            audit_action: AUDIT_HELD_PERMIT_EXPIRED,
+            audit_summary: "permis expiré",
+        },
+    )
+    .await
+}
+
+/// A hold the application makes by itself for a permit (ended elsewhere, or expired).
+struct SystemPermitHold<'a> {
+    wo_id: i64,
+    permit_sync_id: &'a str,
+    permit_code: &'a str,
+    /// The permit's state behind the hold, part of the delay segment's derived identity.
+    permit_status: &'a str,
+    reason_code: &'a str,
+    comment: String,
+    audit_action: &'a str,
+    audit_summary: &'a str,
+}
+
+async fn system_permit_hold(txn: &impl ConnectionTrait, h: &SystemPermitHold<'_>) -> AppResult<bool> {
+    let SystemPermitHold {
+        wo_id,
+        permit_sync_id,
+        permit_code,
+        permit_status,
+        reason_code,
+        ..
+    } = *h;
+    let (_, status, row_version) = load_wo_status(txn, wo_id).await?;
+    if status != WoStatus::InProgress {
+        return Ok(false);
+    }
     let delay_reason_id = system_delay_reason_id(txn, reason_code).await?;
     let row = txn
         .query_one(Statement::from_sql_and_values(
@@ -557,18 +642,13 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
             last_start.as_deref().unwrap_or_default()
         ),
     );
-    let comment = if suspended {
-        format!("Permis {permit_code} suspendu sur un autre poste")
-    } else {
-        format!("Permis {permit_code} terminé sur un autre poste ({permit_status})")
-    };
     hold_writes(
         txn,
         &HoldWrites {
             wo_id,
             expected_row_version: row_version,
             delay_reason_id,
-            comment: Some(comment),
+            comment: Some(h.comment.clone()),
             actor_id: None,
             segment_sync_id: Some(segment_sync_id.clone()),
         },
@@ -579,7 +659,7 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
     crate::audit::writer::write_audit_event_in(
         txn,
         crate::audit::writer::AuditEventInput {
-            action_code: AUDIT_HELD_PERMIT_ENDED_ELSEWHERE.to_string(),
+            action_code: h.audit_action.to_string(),
             target_type: Some("work_order".to_string()),
             target_id: Some(wo_id.to_string()),
             actor_id: None,
@@ -589,7 +669,7 @@ pub(crate) async fn hold_for_permit_ended_elsewhere(
             after_hash: None,
             retention_class: "standard".to_string(),
             details_json: Some(serde_json::json!({
-                "summary": "permis terminé ailleurs",
+                "summary": h.audit_summary,
                 "permit_sync_id": permit_sync_id,
                 "permit_code": permit_code,
                 "permit_status": permit_status,

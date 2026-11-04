@@ -686,7 +686,7 @@
     "rollUp": "Include components",
     "rollUpScope_one": "Figures for this asset only.",
     "rollUpScope_other": "Figures for this asset and its components ({{count}} assets).",
-    "openRams": "Open in RAMS",
+    "openRams": "Analyse this asset",
     "kpi": {
       "workOrders": "Work orders",
       "openHint_one": "{{count}} open",

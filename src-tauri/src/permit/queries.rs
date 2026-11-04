@@ -79,14 +79,17 @@ const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.l
      COALESCE(wp.self_approved, 0) AS self_approved, \
      COALESCE(ucr.display_name, ucr.username) AS created_by_name, \
      COALESCE(usu.display_name, usu.username) AS submitted_by_name, \
-     COALESCE(uap.display_name, uap.username) AS approved_by_name \
+     COALESCE(uap.display_name, uap.username) AS approved_by_name, \
+     wp.cancel_reason, wp.cancelled_by_id, wp.cancelled_at, \
+     COALESCE(ucn.display_name, ucn.username) AS cancelled_by_name \
      FROM work_permits wp \
      LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
      LEFT JOIN equipment e ON e.id = wp.asset_id \
      LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id \
      LEFT JOIN user_accounts ucr ON ucr.id = wp.created_by_id \
      LEFT JOIN user_accounts usu ON usu.id = wp.submitted_by_id \
-     LEFT JOIN user_accounts uap ON uap.id = wp.approved_by_id";
+     LEFT JOIN user_accounts uap ON uap.id = wp.approved_by_id \
+     LEFT JOIN user_accounts ucn ON ucn.id = wp.cancelled_by_id";
 
 const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
      pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
@@ -349,6 +352,18 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
             row.try_get::<i64>("", "self_approved")
                 .map_err(|e| decode_err("self_approved", e))?,
         ),
+        cancel_reason: row
+            .try_get("", "cancel_reason")
+            .map_err(|e| decode_err("cancel_reason", e))?,
+        cancelled_by_id: row
+            .try_get("", "cancelled_by_id")
+            .map_err(|e| decode_err("cancelled_by_id", e))?,
+        cancelled_by_name: row
+            .try_get("", "cancelled_by_name")
+            .map_err(|e| decode_err("cancelled_by_name", e))?,
+        cancelled_at: row
+            .try_get("", "cancelled_at")
+            .map_err(|e| decode_err("cancelled_at", e))?,
     })
 }
 
@@ -2215,6 +2230,21 @@ async fn set_work_permit_status_in(
     let to = input.status.as_str();
     assert_transition_set_status(from, to)?;
 
+    // L4-15: a permit, possibly with padlocks still on, is never cancelled without a reason; the
+    // reason, who and when are kept on the permit (migration 272) and audited.
+    let cancel_reason = if to == "cancelled" {
+        match input.reason.as_deref().map(str::trim) {
+            Some(reason) if !reason.is_empty() => Some(reason.to_string()),
+            _ => {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_PERMIT_CANCEL_REASON_REQUIRED: Cancellation reason is required.".into(),
+                ]))
+            }
+        }
+    } else {
+        None
+    };
+
     // AU-03 (owner decision D5): a permit is neither closed nor cancelled while its work order is
     // being executed: the work is paused or completed first (a suspension puts it on hold itself).
     // Refused before anything is written; a close or cancellation received by synchronisation over
@@ -2290,11 +2320,13 @@ async fn set_work_permit_status_in(
         ("pending_review", "approved") => approved = (Some(actor_id), Some(now.clone())),
         _ => {}
     }
+    let mut cancelled = (current.cancelled_by_id, current.cancelled_at.clone());
     match to {
         "issued" => issued_at = issued_at.or(Some(now)),
         "active" => activated_at = activated_at.or(Some(now)),
         "closed" => closed_at = Some(now),
         "handed_back" => handed_back_at = Some(now),
+        "cancelled" => cancelled = (Some(actor_id), Some(now)),
         _ => {}
     }
 
@@ -2303,7 +2335,8 @@ async fn set_work_permit_status_in(
             DbBackend::Sqlite,
             "UPDATE work_permits SET status = ?, issued_at = ?, activated_at = ?, closed_at = ?, \
              handed_back_at = ?, submitted_by_id = ?, submitted_at = ?, approved_by_id = ?, approved_at = ?, \
-             self_approved = COALESCE(?, self_approved), row_version = ? \
+             self_approved = COALESCE(?, self_approved), cancel_reason = COALESCE(?, cancel_reason), \
+             cancelled_by_id = ?, cancelled_at = ?, row_version = ? \
              WHERE id = ? AND row_version = ?",
             [
                 input.status.into(),
@@ -2316,6 +2349,9 @@ async fn set_work_permit_status_in(
                 opt_i64(approved.0),
                 opt_string(approved.1),
                 opt_i64(self_approved.map(i64::from)),
+                opt_string(cancel_reason),
+                opt_i64(cancelled.0),
+                opt_string(cancelled.1),
                 new_rv.into(),
                 input.id.into(),
                 current.row_version.into(),
@@ -2334,7 +2370,8 @@ async fn set_work_permit_status_in(
 
 /// Audits a submission for review (`permit.submitted`) and an approval (`permit.approved`, with
 /// `self_approved` and the site's four-eyes rule: a self-approval on a site that opted out is
-/// recorded as such), in the transaction of the status change.
+/// recorded as such), and a cancellation with its reason (`permit.cancelled`, L4-15), in the
+/// transaction of the status change.
 async fn audit_review_step(
     db: &impl ConnectionTrait,
     before: &WorkPermit,
@@ -2362,6 +2399,16 @@ async fn audit_review_step(
                 "approved_at": after.approved_at,
                 "self_approved": after.self_approved,
                 "site_rule": if after.self_approved { "four_eyes_opted_out" } else { "four_eyes" },
+                "status_before": before.status,
+                "status_after": after.status,
+            }),
+        ),
+        (_, "cancelled") => (
+            "permit.cancelled",
+            serde_json::json!({
+                "code": after.code,
+                "reason": after.cancel_reason,
+                "cancelled_at": after.cancelled_at,
                 "status_before": before.status,
                 "status_after": after.status,
             }),
@@ -4184,6 +4231,48 @@ pub async fn list_open_permits_report_in_scope(
     }
     let (hidden_outside_scope, hidden_without_site) =
         hidden_permit_counts(db, scope, &open_sql, vec![now.into()]).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
+}
+
+/// Open permits whose expiry has passed (issued, active, suspended or to revalidate), in the
+/// reader's scope, with the permits left out and why (L4-08, CMMS Advisor 2026-11-02): such a
+/// permit no longer covers work, yet its isolations may still be in place until it is closed and
+/// handed back. Shown apart ("Permis expiré — isolement toujours en place"), never counted as
+/// open. Lock removal and closing stay allowed; the status is not rewritten here, so every
+/// device reads the same thing from the same expiry time without writing (no sync conflict).
+pub async fn list_overdue_permits_report_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let overdue_sql =
+        format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND wp.expires_at IS NOT NULL AND wp.expires_at <= ?");
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into()];
+    values.extend(scope_sql.binds);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "{WORK_PERMIT_SELECT} \
+                 WHERE {overdue_sql} \
+                 AND ({pred}) \
+                 ORDER BY wp.expires_at ASC, wp.id ASC",
+                pred = scope_sql.predicate,
+            ),
+            values,
+        ))
+        .await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(map_work_permit(&row)?);
+    }
+    let (hidden_outside_scope, hidden_without_site) =
+        hidden_permit_counts(db, scope, &overdue_sql, vec![now.into()]).await?;
     Ok(WorkPermitListPage {
         items,
         hidden_outside_scope,

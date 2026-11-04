@@ -186,7 +186,8 @@
       "none": "No sub-type"
     },
     "urgency": {
-      "label": "Urgency"
+      "label": "Urgency",
+      "placeholder": "Choose an urgency"
     },
     "equipment": {
       "label": "Equipment",
@@ -212,13 +213,14 @@
       "label": "Notes"
     },
     "cancel": "Cancel",
+    "missingFields": "To continue, fill in: {{fields}}.",
     "submit": "Create work order",
     "update": "Save changes",
     "validation": {
       "titleRequired": "Title is required",
       "typeRequired": "Work order type is required.",
-      "urgencyRequired": "Priority is required.",
-      "urgencyInvalid": "The selected priority is no longer valid.",
+      "urgencyRequired": "Urgency is required.",
+      "urgencyInvalid": "The selected urgency is no longer valid.",
       "equipmentRequired": "Equipment is required.",
       "plannedEndBeforeStart": "The planned end cannot be before the planned start."
     }
@@ -839,6 +841,7 @@
       "permit_rule_flag_cleared": "Permit requirement (rule) cleared",
       "shutdown_required_set": "Flagged as needing a shutdown",
       "shutdown_required_cleared": "“Needs shutdown” removed",
+      "updated": "Work order updated",
       "created": "Work order created",
       "submitted": "Submitted to planning",
       "planned": "Planned",

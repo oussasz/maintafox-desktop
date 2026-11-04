@@ -78,6 +78,11 @@ const WorkPermitSchema = z.object({
   approved_at: z.string().nullable(),
   /** Approved without a verified second person, on a site that opted out of four-eyes. */
   self_approved: z.boolean(),
+  /** Why, by whom and when the permit was cancelled (null: cancelled before it was recorded). */
+  cancel_reason: z.string().nullable(),
+  cancelled_by_id: z.number().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
 });
 
 const PermitSuspensionSchema = z.object({
@@ -306,6 +311,12 @@ export async function recordLotoCardPrint(input: {
 /** Open, not expired permits of the user's sites, with how many are left out and why. */
 export async function listOpenPermitsReport(): Promise<WorkPermitListPage> {
   const raw = await invoke<unknown>("list_open_permits_report");
+  return WorkPermitListPageSchema.parse(raw);
+}
+
+/** Open permits past their expiry (isolations possibly still in place), the user's sites only. */
+export async function listOverduePermitsReport(): Promise<WorkPermitListPage> {
+  const raw = await invoke<unknown>("list_overdue_permits_report");
   return WorkPermitListPageSchema.parse(raw);
 }
 

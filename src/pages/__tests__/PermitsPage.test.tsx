@@ -61,6 +61,7 @@ const svc = vi.hoisted(() => ({
   listWorkPermits: vi.fn(),
   permitComplianceKpi30d: vi.fn(),
   listOpenPermitsReport: vi.fn(),
+  listOverduePermitsReport: vi.fn(),
   listPermitIsolations: vi.fn(),
   listPermitIsolationOptions: vi.fn(),
   getWorkPermit: vi.fn(),
@@ -195,6 +196,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     approved_by_name: null,
     approved_at: null,
     self_approved: false,
+    cancel_reason: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     ...overrides,
   };
 }
@@ -291,6 +296,7 @@ describe("PermitsPage", () => {
       rate: null,
     });
     svc.listOpenPermitsReport.mockResolvedValue(page([]));
+    svc.listOverduePermitsReport.mockResolvedValue(page([]));
     svc.listPermitSuspensions.mockResolvedValue([]);
     svc.listPermitHandoverLogs.mockResolvedValue([]);
     svc.listPermitIsolations.mockResolvedValue([isolation()]);
@@ -476,6 +482,7 @@ describe("PermitsPage", () => {
     const tiles = await screen.findByTestId("permits-kpis");
     expect(within(tiles).getByText(enPermits.kpi.open)).toBeInTheDocument();
     expect(within(tiles).getByText(enPermits.kpi.onTimeRate)).toBeInTheDocument();
+    expect(within(tiles).getByText(enPermits.kpi.overdue)).toBeInTheDocument();
     // L4-09: a share of 0.75 is 75 %, not 0.8 %.
     expect(within(tiles).getByText(/^75\s?%$/)).toBeInTheDocument();
     expect(within(tiles).getAllByText(enPermits.kpi.period30d).length).toBeGreaterThan(0);

@@ -11086,6 +11086,8 @@ export interface WorkPermitStatusInput {
   id: number;
   status: WorkPermitStatus;
   expected_row_version: number;
+  /** Required (not blank) when cancelling the permit; ignored otherwise. */
+  reason?: string | null;
 }
 
 export interface PermitSuspendInput {

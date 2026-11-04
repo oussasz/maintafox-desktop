@@ -1813,3 +1813,130 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
             .is_empty()
     );
 }
+
+/// L5-09: a draft moved onto equipment a published plant rule covers is written twice (the edit,
+/// then the rule stamp), and still keeps its old → new values: the proof that nobody else wrote in
+/// between is the edit's own `expected_row_version` check, the values those the edit read back.
+#[tokio::test]
+async fn a_draft_edit_stamped_by_a_rule_keeps_its_old_and_new_values() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let tank = plain_equipment(&db).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let mut input = direct_input(actor, Some(false));
+    input.equipment_id = Some(tank);
+    let wo = crate::wo::queries::create_work_order(&db, input).await.expect("create");
+    assert!(!wo.requires_permit, "no rule on the tank");
+    let before = crate::wo::queries::get_work_order(&db, wo.id)
+        .await
+        .expect("q")
+        .expect("wo");
+
+    let edited = crate::wo::queries::update_wo_draft_fields(
+        &db,
+        crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: before.row_version,
+            title: None,
+            type_code: None,
+            equipment_id: Some(1),
+            location_id: None,
+            description: None,
+            planned_start: Some("2026-11-20T08:00:00Z".into()),
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        },
+        Some(actor),
+    )
+    .await
+    .expect("moved onto the pump");
+    assert!(edited.requires_permit, "the rule stamped it");
+    assert!(
+        edited.row_version > before.row_version + 1,
+        "edit and stamp both bumped the version"
+    );
+
+    crate::wo::audit::record_wo_change_with_diff(
+        &db,
+        crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "equipment_changed".into(),
+            actor_id: Some(actor),
+            summary: None,
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        Some(&before),
+        Some(&edited),
+        Some(before.row_version),
+    )
+    .await;
+    let raw = text_of(
+        &db,
+        &format!(
+            "SELECT details_json FROM wo_change_events WHERE wo_id = {} AND action = 'equipment_changed'",
+            wo.id
+        ),
+    )
+    .await;
+    let details: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert!(
+        details.get(crate::wo::audit::CHANGES_UNAVAILABLE).is_none(),
+        "{details}"
+    );
+    let fields: Vec<&str> = details["changes"]
+        .as_array()
+        .expect("changes")
+        .iter()
+        .filter_map(|c| c["field"].as_str())
+        .collect();
+    for field in ["equipment", "planned_start", "requires_permit"] {
+        assert!(fields.contains(&field), "{field} in {details}");
+    }
+    let equipment = details["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["field"] == "equipment")
+        .unwrap();
+    assert_eq!(equipment["old"], "PR-TANK — Tank");
+    assert_eq!(equipment["new"], "PR-PUMP — Pump");
+
+    // A screen that read an older version proves nothing: no values.
+    crate::wo::audit::record_wo_change_with_diff(
+        &db,
+        crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "planned".into(),
+            actor_id: Some(actor),
+            summary: None,
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        Some(&before),
+        Some(&edited),
+        Some(before.row_version - 1),
+    )
+    .await;
+    let raw = text_of(
+        &db,
+        &format!(
+            "SELECT details_json FROM wo_change_events WHERE wo_id = {} AND action = 'planned'",
+            wo.id
+        ),
+    )
+    .await;
+    assert!(raw.contains("changes_unavailable"), "{raw}");
+}
