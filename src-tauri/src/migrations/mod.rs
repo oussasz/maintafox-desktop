@@ -149,6 +149,7 @@ mod m20261001_000035_archive_core;
 mod m20261010_000151_finance_approval_rights;
 mod m20261010_000160_sync_foundations_v2;
 mod m20261011_000161_sync_transport_v2;
+mod m20261104_000270_bulk_import;
 mod m20261011_000162_sync_capture_identity;
 mod m20261011_000163_pm_due_basis_meter_sync_id;
 mod m20261011_000164_legacy_users_fk_to_user_accounts;
@@ -504,6 +505,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261102_000268_org_root_level_label::Migration),
             Box::new(m20261102_000267_role_models::Migration),
             Box::new(m20261102_000269_procurement_approval_rights::Migration),
+            Box::new(m20261104_000270_bulk_import::Migration),
         ]
     }
 }

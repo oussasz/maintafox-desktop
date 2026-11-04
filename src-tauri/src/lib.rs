@@ -46,6 +46,7 @@ pub mod locale;
 pub mod migrations;
 pub mod models;
 pub mod notifications;
+pub mod bulk_import;
 pub mod org;
 pub mod permit;
 pub mod personnel;
@@ -508,6 +509,12 @@ pub fn run() {
         commands::personnel::scan_succession_risk,
         commands::personnel::declare_own_skill,
         commands::personnel::list_personnel_skill_reference_values,
+        commands::bulk_import::list_bulk_import_entities,
+        commands::bulk_import::create_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_preview,
+        commands::bulk_import::apply_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_template,
+        commands::bulk_import::export_bulk_import_data,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,

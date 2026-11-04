@@ -11,6 +11,7 @@ pub mod analytics_dashboard;
 pub mod app;
 pub mod archive;
 pub mod assets;
+pub mod bulk_import;
 pub mod audit_log;
 pub mod auth;
 pub mod backup;
