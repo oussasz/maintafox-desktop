@@ -519,7 +519,8 @@
     "apply": {
       "confirmTitle": "Apply the import?",
       "confirmBody": "{{valid}} valid row(s) and {{warning}} with warnings will be created or updated in the register; {{error}} row(s) in error are not imported. Changed assets do not return to their previous state automatically.",
-      "run": "Apply Import"
+      "run": "Apply Import",
+      "noneImportable": "No valid row to import. Fix the errors in the file or include the rows with warnings."
     },
     "done": {
       "title": "Import Complete",

@@ -710,7 +710,8 @@
     "action": {
       "openWizard": "Import",
       "close": "Close",
-      "apply": "Apply batch"
+      "apply": "Apply batch",
+      "applyDisabled": "Upload and check a file with no blocking error before applying the batch."
     },
     "mode": {
       "label": "Import mode",

@@ -435,6 +435,11 @@ export function ReferenceImportWizard({
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t("import.apply")}
               </Button>
+              {!canApply && preview ? (
+                <p className="w-full text-xs text-text-muted" data-testid="apply-disabled-reason">
+                  {t("import.noneImportable")}
+                </p>
+              ) : null}
             </>
           )}
 
