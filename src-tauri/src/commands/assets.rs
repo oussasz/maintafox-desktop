@@ -319,6 +319,7 @@ pub async fn create_asset_meter(
 #[tauri::command]
 pub async fn record_meter_reading(
     payload: RecordMeterReadingPayload,
+    confirm_jump: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<meters::MeterReading> {
     let user = require_session!(state);
@@ -328,7 +329,42 @@ pub async fn record_meter_reading(
         crate::rbac::permissions::EQ_MANAGE,
         PermissionScope::Global
     );
-    meters::record_meter_reading(&state.db, payload, user.user_id).await
+    meters::record_meter_reading_checked(&state.db, payload, confirm_jump.unwrap_or(false), user.user_id).await
+}
+
+/// Warning a reading would raise (far above the usual use), asked before saving it.
+#[tauri::command]
+pub async fn assess_meter_reading(
+    meter_id: i64,
+    reading_value: f64,
+    reading_at: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Option<meters::MeterReadingWarning>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::assess_meter_reading(&state.db, meter_id, reading_value, reading_at).await
+}
+
+/// Cancel the latest reading of a meter with a reason (the history keeps it, marked cancelled).
+#[tauri::command]
+pub async fn cancel_meter_reading(
+    reading_id: i64,
+    reason: String,
+    state: State<'_, AppState>,
+) -> AppResult<meters::MeterReading> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    meters::cancel_meter_reading(&state.db, reading_id, &reason, user.user_id).await
 }
 
 #[tauri::command]

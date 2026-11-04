@@ -20,6 +20,7 @@ import type {
   CreateAssetMeterPayload,
   DecommissionAssetPayload,
   MeterReading,
+  MeterReadingWarning,
   RecordLifecycleEventPayload,
   RecordMeterReadingPayload,
   UploadAssetPhotoPayload,
@@ -76,7 +77,22 @@ export const MeterReadingSchema = z.object({
   source_reference: z.string().nullable(),
   quality_flag: z.string(),
   created_by_id: z.number().nullable(),
+  created_by_name: z.string().nullable(),
   created_at: z.string(),
+  entity_sync_id: z.string(),
+  is_cancelled: z.boolean(),
+  cancel_reason: z.string().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
+});
+
+export const MeterReadingWarningSchema = z.object({
+  delta: z.number(),
+  expected_delta: z.number(),
+  rate_per_day: z.number(),
+  days: z.number(),
+  previous_value: z.number(),
+  previous_at: z.string(),
 });
 
 export const AssetDocumentLinkSchema = z.object({
@@ -125,8 +141,25 @@ export async function createAssetMeter(payload: CreateAssetMeterPayload): Promis
 
 export async function recordMeterReading(
   payload: RecordMeterReadingPayload,
+  confirmJump = false,
 ): Promise<MeterReading> {
-  const raw = await invoke<unknown>("record_meter_reading", { payload });
+  const raw = await invoke<unknown>("record_meter_reading", { payload, confirmJump });
+  return MeterReadingSchema.parse(raw) as MeterReading;
+}
+
+/** Warning a reading would raise (far above the usual use), or null. */
+export async function assessMeterReading(
+  meterId: number,
+  readingValue: number,
+  readingAt: string | null,
+): Promise<MeterReadingWarning | null> {
+  const raw = await invoke<unknown>("assess_meter_reading", { meterId, readingValue, readingAt });
+  return raw === null ? null : (MeterReadingWarningSchema.parse(raw) as MeterReadingWarning);
+}
+
+/** Cancel the latest reading of a meter, with a reason (kept in the history, marked cancelled). */
+export async function cancelMeterReading(readingId: number, reason: string): Promise<MeterReading> {
+  const raw = await invoke<unknown>("cancel_meter_reading", { readingId, reason });
   return MeterReadingSchema.parse(raw) as MeterReading;
 }
 

@@ -131,11 +131,14 @@ async fn load_meter_readings(
     let meter = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT m.id FROM equipment_meters m
-             WHERE m.equipment_id = ? AND m.is_active = 1 AND upper(m.meter_type) = 'HOURS'
-               AND (SELECT COUNT(*) FROM asset_meter_readings r
-                    WHERE r.meter_id = m.id AND COALESCE(r.quality_flag, 'accepted') <> 'rejected') >= 2
-             ORDER BY m.is_primary DESC, m.id ASC LIMIT 1",
+            format!(
+                "SELECT m.id FROM equipment_meters m
+                 WHERE m.equipment_id = ? AND m.is_active = 1 AND upper(m.meter_type) = 'HOURS'
+                   AND (SELECT COUNT(*) FROM asset_meter_readings mr
+                        WHERE mr.meter_id = m.id AND {}) >= 2
+                 ORDER BY m.is_primary DESC, m.id ASC LIMIT 1",
+                crate::assets::meters::VALID_READING_SQL
+            ),
             [equipment_id.into()],
         ))
         .await?;
@@ -155,17 +158,18 @@ async fn load_meter_readings(
         .await?
         .is_some();
     let value_expr = if has_lifetime {
-        "COALESCE(lifetime_value, reading_value)"
+        "COALESCE(mr.lifetime_value, mr.reading_value)"
     } else {
-        "reading_value"
+        "mr.reading_value"
     };
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT reading_at, {value_expr} AS reading_value FROM asset_meter_readings
-                 WHERE meter_id = ? AND COALESCE(quality_flag, 'accepted') <> 'rejected'
-                 ORDER BY reading_at ASC, id ASC"
+                "SELECT mr.reading_at, {value_expr} AS reading_value FROM asset_meter_readings mr
+                 WHERE mr.meter_id = ? AND {valid}
+                 ORDER BY mr.reading_at ASC, mr.id ASC",
+                valid = crate::assets::meters::VALID_READING_SQL
             ),
             [meter_id.into()],
         ))
