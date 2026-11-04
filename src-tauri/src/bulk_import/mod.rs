@@ -6,6 +6,9 @@
 //! without a blocking surprise is applied. Rows are keyed by the business codes the user can see.
 //! An import never deletes a row that is missing from the file.
 
+pub mod cost_centre;
+#[cfg(test)]
+mod cost_centre_tests;
 pub mod org_tree;
 #[cfg(test)]
 mod org_tree_tests;
@@ -43,7 +46,7 @@ pub struct EntitySpec {
     pub columns: &'static [Column],
 }
 
-pub const ENTITIES: &[&EntitySpec] = &[&org_tree::SPEC];
+pub const ENTITIES: &[&EntitySpec] = &[&org_tree::SPEC, &cost_centre::SPEC];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
     ENTITIES
@@ -431,6 +434,7 @@ async fn validate(
 ) -> AppResult<Vec<RowOutcome>> {
     match entity {
         "org_tree" => org_tree::validate(db, rows).await,
+        "cost_centre" => cost_centre::validate(db, rows).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -623,6 +627,7 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
 
     let applied = match batch.entity.as_str() {
         "org_tree" => org_tree::apply(db, &todo, user_id).await,
+        "cost_centre" => cost_centre::apply(db, &todo).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -736,6 +741,7 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
     let spec = spec(entity)?;
     let rows = match spec.code {
         "org_tree" => org_tree::export(db).await?,
+        "cost_centre" => cost_centre::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {

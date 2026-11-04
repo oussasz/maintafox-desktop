@@ -1,7 +1,7 @@
 //! Organisation tree import: preview rules and apply.
 
 #[cfg(test)]
-mod tests {
+pub(in crate::bulk_import) mod tests {
     use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
     use crate::bulk_import::{self, CreateInput};
@@ -10,7 +10,7 @@ mod tests {
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
     /// Published model: SITE (root) > ZONE > LINE.
-    async fn setup() -> DatabaseConnection {
+    pub(in crate::bulk_import) async fn setup() -> DatabaseConnection {
         let db = crate::db::test_db::seeded().await;
         let model = structure_model::create_model(
             &db,
