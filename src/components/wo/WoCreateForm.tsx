@@ -320,6 +320,18 @@ export function WoCreateForm({
   const formatHours = (hours: number) => formatNumber(hours, { maximumFractionDigits: 1 });
   const isValid = Object.keys(currentErrors).length === 0;
   const catalogsReady = !typesLoading && !prioritiesLoading;
+  // Why the save button is grey: the fields still missing, in the order of the form.
+  const missingLabels: string[] = [];
+  if (currentErrors.equipment) missingLabels.push(t("form.equipment.label"));
+  if (currentErrors.typeCode) missingLabels.push(t("form.type.label"));
+  if (currentErrors.urgencyId) missingLabels.push(t("form.urgency.label"));
+  if (currentErrors.title) missingLabels.push(t("form.title.label"));
+  const reasons: string[] = [];
+  if (missingLabels.length > 0) {
+    reasons.push(t("form.missingFields", { fields: missingLabels.join(", ") }));
+  }
+  if (currentErrors.plannedEnd) reasons.push(currentErrors.plannedEnd);
+  const disabledReason = reasons.join(" ");
 
   const markTouched = useCallback((field: string) => {
     setTouched((prev) => new Set(prev).add(field));
@@ -505,7 +517,7 @@ export function WoCreateForm({
               setUrgencyId(code);
               markTouched("urgencyId");
             }}
-            placeholder={t("form.urgency.label")}
+            placeholder={t("form.urgency.placeholder")}
             className="w-full"
             aria-invalid={Boolean(fieldError("urgencyId"))}
           />
@@ -618,6 +630,16 @@ export function WoCreateForm({
             .join(" ")}
         </div>
       )}
+
+      {!isValid && catalogsReady && disabledReason ? (
+        <p
+          className="text-right text-xs text-text-muted"
+          role="status"
+          data-testid="wo-create-missing"
+        >
+          {disabledReason}
+        </p>
+      ) : null}
 
       {/* ── Actions ──────────────────────────────────────────────────── */}
       <div className="flex justify-end gap-2">
