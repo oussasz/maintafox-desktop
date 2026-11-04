@@ -283,6 +283,9 @@ export function AssetDecommissionModal({
                       variant="link"
                       size="sm"
                       className="h-auto p-0 text-xs"
+                      aria-label={`${t("decommission.openBlockers")} — ${dep.domain}`}
+                      // The asset stays selected: back on the register, its record reopens so the
+                      // decommissioning can be resumed once the work is closed.
                       onClick={() => {
                         const href = dep.href as string;
                         onClose();

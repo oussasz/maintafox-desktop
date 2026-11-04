@@ -103,6 +103,8 @@ describe("AssetDecommissionModal", () => {
 
     const links = await screen.findAllByRole("button", { name: /decommission.openBlockers/ });
     expect(links).toHaveLength(2);
+    // Each link names the list it opens.
+    expect(links[0]).toHaveAccessibleName("decommission.openBlockers — binding.domains.di");
     expect(screen.queryByRole("button", { name: /decommission.confirm/ })).not.toBeInTheDocument();
 
     fireEvent.click(links[1] as HTMLElement);
