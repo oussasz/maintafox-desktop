@@ -1148,7 +1148,9 @@ pub async fn update_wo_draft_fields(
     }
 
     if sets.is_empty() {
-        // Nothing to update — return current row
+        // Nothing to update — return current row, still checked against the version the screen
+        // read (as a write is): the audit trail then knows nothing else changed it in between.
+        crate::wo::closeout::check_concurrency(u64::from(current.row_version == input.expected_row_version))?;
         txn.commit().await?;
         return Ok(current);
     }

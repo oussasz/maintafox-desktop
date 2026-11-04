@@ -309,6 +309,12 @@ export async function listOpenPermitsReport(): Promise<WorkPermitListPage> {
   return WorkPermitListPageSchema.parse(raw);
 }
 
+/** Open permits past their expiry (isolations possibly still in place), the user's sites only. */
+export async function listOverduePermitsReport(): Promise<WorkPermitListPage> {
+  const raw = await invoke<unknown>("list_overdue_permits_report");
+  return WorkPermitListPageSchema.parse(raw);
+}
+
 export async function permitComplianceKpi30d(): Promise<PermitComplianceKpi30dRecord> {
   const raw = await invoke<unknown>("permit_compliance_kpi_30d");
   return PermitComplianceKpi30dSchema.parse(raw);

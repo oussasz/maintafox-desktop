@@ -841,6 +841,7 @@
       "permit_rule_flag_cleared": "Exigence de permis (règle) levée",
       "shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "shutdown_required_cleared": "« Nécessite un arrêt » retiré",
+      "updated": "OT modifié",
       "created": "Ordre de travail créé",
       "submitted": "Soumis à la planification",
       "planned": "Planifié",

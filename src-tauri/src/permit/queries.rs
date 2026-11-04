@@ -4191,6 +4191,48 @@ pub async fn list_open_permits_report_in_scope(
     })
 }
 
+/// Open permits whose expiry has passed (issued, active, suspended or to revalidate), in the
+/// reader's scope, with the permits left out and why (L4-08, CMMS Advisor 2026-11-02): such a
+/// permit no longer covers work, yet its isolations may still be in place until it is closed and
+/// handed back. Shown apart ("Permis expiré — isolement toujours en place"), never counted as
+/// open. Lock removal and closing stay allowed; the status is not rewritten here, so every
+/// device reads the same thing from the same expiry time without writing (no sync conflict).
+pub async fn list_overdue_permits_report_in_scope(
+    db: &impl ConnectionTrait,
+    scope: &AccessScope,
+) -> AppResult<WorkPermitListPage> {
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let overdue_sql =
+        format!("wp.status IN {OPEN_PERMIT_STATUSES_SQL} AND wp.expires_at IS NOT NULL AND wp.expires_at <= ?");
+    let scope_sql = super::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![now.clone().into()];
+    values.extend(scope_sql.binds);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "{WORK_PERMIT_SELECT} \
+                 WHERE {overdue_sql} \
+                 AND ({pred}) \
+                 ORDER BY wp.expires_at ASC, wp.id ASC",
+                pred = scope_sql.predicate,
+            ),
+            values,
+        ))
+        .await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(map_work_permit(&row)?);
+    }
+    let (hidden_outside_scope, hidden_without_site) =
+        hidden_permit_counts(db, scope, &overdue_sql, vec![now.into()]).await?;
+    Ok(WorkPermitListPage {
+        items,
+        hidden_outside_scope,
+        hidden_without_site,
+    })
+}
+
 /// The 30-day hand-back compliance, plant-wide (internal callers and tests).
 pub async fn permit_compliance_kpi_30d(db: &impl ConnectionTrait) -> AppResult<PermitComplianceKpi30d> {
     permit_compliance_kpi_30d_in_scope(db, &AccessScope::Everywhere).await

@@ -410,6 +410,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let permit_sweep = crate::permit::ended_hold::sweep(&app_state.db).await;
     info!(
         held = permit_sweep.work_orders_held,
+        expired_held = permit_sweep.expired_held,
         downtimes_ended = permit_sweep.downtimes_ended,
         failures = permit_sweep.failures,
         "startup: permit-end catch-up"
@@ -432,6 +433,16 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
         });
         info!("startup: notification scheduler started");
+    }
+
+    // Phase 5 (permits): running work under an expired permit is put on hold, every minute
+    // (`permit::ended_hold::start_expiry_watch`; L4-08, CMMS Advisor decision 9). Non-fatal.
+    {
+        let expiry_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::permit::ended_hold::start_expiry_watch(expiry_db).await;
+        });
+        info!("startup: permit expiry watch started");
     }
 
     // Phase 5a: notification emails through the control API (non-fatal; `notifications::email`)

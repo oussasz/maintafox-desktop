@@ -11,7 +11,7 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
@@ -41,6 +41,7 @@ import {
   PERMIT_QUERY_SELECT,
   PERMIT_REFUSAL_NAMESPACES,
   formatAssetLabel,
+  isPermitOverdue,
 } from "@/components/permits/permit-rules";
 import { usePermitTypeName } from "@/components/permits/permit-type-name";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
@@ -67,6 +68,7 @@ import {
   type WorkPermitRecord,
   getWorkPermit,
   listOpenPermitsReport,
+  listOverduePermitsReport,
   listPermitTypes,
   listWorkPermits,
   permitComplianceKpi30d,
@@ -113,6 +115,9 @@ export function PermitsPage() {
   /** Permits the list / the open report leave out: outside the user's sites, or without a site. */
   const [hidden, setHidden] = useState({ outsideScope: 0, withoutSite: 0 });
   const [openHidden, setOpenHidden] = useState(0);
+  /** Open permits past their expiry, isolations possibly still in place (L4-08). */
+  const [overdueCount, setOverdueCount] = useState<number | null>(null);
+  const [overdueHidden, setOverdueHidden] = useState(0);
   const [kpi30d, setKpi30d] = useState<PermitComplianceKpi30dRecord | null>(null);
   const [kpiError, setKpiError] = useState<unknown>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
@@ -168,15 +173,23 @@ export function PermitsPage() {
     setKpiLoading(true);
     setKpiError(null);
     try {
-      const [kpi, open] = await Promise.all([permitComplianceKpi30d(), listOpenPermitsReport()]);
+      const [kpi, open, overdue] = await Promise.all([
+        permitComplianceKpi30d(),
+        listOpenPermitsReport(),
+        listOverduePermitsReport(),
+      ]);
       setKpi30d(kpi);
       setOpenCount(open.items.length);
+      setOverdueCount(overdue.items.length);
+      setOverdueHidden(overdue.hidden_outside_scope + overdue.hidden_without_site);
       setOpenHidden(open.hidden_outside_scope + open.hidden_without_site);
     } catch (e) {
       setKpiError(e);
       setKpi30d(null);
       setOpenCount(null);
+      setOverdueCount(null);
       setOpenHidden(0);
+      setOverdueHidden(0);
     } finally {
       setKpiLoading(false);
     }
@@ -303,6 +316,9 @@ export function PermitsPage() {
               tone={toneOf(PERMIT_STATUS_TONE, row.original.status)}
               dot
             />
+            {isPermitOverdue(row.original) ? (
+              <StatusChip label={t("overdue.chip")} tone="danger" />
+            ) : null}
             <PermitNoSiteBadge permit={row.original} />
           </span>
         ),
@@ -507,7 +523,7 @@ export function PermitsPage() {
             ) : kpiLoading && kpi30d == null ? (
               <LoadingState />
             ) : (
-              <div className="grid gap-3 sm:grid-cols-3" data-testid="permits-kpis">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="permits-kpis">
                 <KpiTile
                   label={t("kpi.open")}
                   value={openCount != null ? formatNumber(openCount) : "—"}
@@ -517,6 +533,17 @@ export function PermitsPage() {
                       : t("kpi.openHint")
                   }
                   icon={HardHat}
+                />
+                <KpiTile
+                  label={t("kpi.overdue")}
+                  value={overdueCount != null ? formatNumber(overdueCount) : "—"}
+                  hint={
+                    overdueHidden > 0
+                      ? `${t("kpi.overdueHint")} · ${t("siteScope.overdueHidden", { count: overdueHidden })}`
+                      : t("kpi.overdueHint")
+                  }
+                  icon={AlertTriangle}
+                  {...(overdueCount != null && overdueCount > 0 ? { tone: "danger" as const } : {})}
                 />
                 <KpiTile
                   label={t("kpi.activated")}
