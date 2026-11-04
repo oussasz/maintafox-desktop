@@ -6300,6 +6300,8 @@ export interface AssignRoleScopeInput {
   scope_reference?: string | null;
   valid_from?: string | null;
   valid_to?: string | null;
+  /** Plant-wide assignments of the user to end with this narrower grant (same transaction). */
+  end_plant_wide_assignment_ids?: number[];
 }
 
 export interface RoleWithPermissions {
