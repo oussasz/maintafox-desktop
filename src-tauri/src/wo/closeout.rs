@@ -1609,6 +1609,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     };
 
     let txn = db.begin().await?;
+    // The work order as it was, read in the close's transaction, for the fields the close changes
+    // (audit event `wo.closed`).
+    let before_close = queries::get_work_order(&txn, input.wo_id).await?;
 
     // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -1827,6 +1830,22 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(db, input.wo_id, "wo.closed", Some(input.actor_id), None, None).await;
 
+    let closed = queries::get_work_order(db, input.wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.wo_id.to_string(),
+        })?;
+    // The fields the close changed (status, closing date…), old → new, for the audit trail; only
+    // when the close was the only write since it read the work order (`sole_write_changes`).
+    let detail_json = before_close.as_ref().map(|before| {
+        match crate::wo::audit::sole_write_changes(before, &closed) {
+            Some(changes) => serde_json::json!({ "changes": changes }),
+            None => serde_json::json!({ "changes_unavailable": true }),
+        }
+        .to_string()
+    });
+
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(
         db,
@@ -1835,18 +1854,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             actor_id: Some(actor_i32),
             entity_type: Some("work_order"),
             entity_id: Some(wo_id_str.as_str()),
-            summary: "Work order closed",
+            summary: "OT clôturé",
+            detail_json,
             ..Default::default()
         },
     )
     .await;
 
-    queries::get_work_order(db, input.wo_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })
+    Ok(closed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

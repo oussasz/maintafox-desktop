@@ -172,6 +172,27 @@ export function nextTransitions(status: string): PermitTransition[] {
   }
 }
 
+/** Open permit statuses (`permit::queries::OPEN_PERMIT_STATUSES_SQL`). */
+const OPEN_PERMIT_STATUSES: ReadonlySet<string> = new Set([
+  "issued",
+  "active",
+  "suspended",
+  "revalidation_required",
+]);
+
+/**
+ * An open permit whose expiry has passed (L4-08, `list_overdue_permits_report`): it no longer
+ * covers the work, yet its isolations may still be in place until it is closed and handed back.
+ */
+export function isPermitOverdue(
+  permit: { status: string; expires_at: string | null },
+  now: number = Date.now(),
+): boolean {
+  if (!OPEN_PERMIT_STATUSES.has(permit.status) || !permit.expires_at) return false;
+  const expiry = Date.parse(permit.expires_at);
+  return Number.isFinite(expiry) && expiry <= now;
+}
+
 const NON_CANCELLABLE: ReadonlySet<string> = new Set(["closed", "cancelled", "expired"]);
 
 export function canCancel(status: string): boolean {

@@ -128,6 +128,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     approved_by_name: "Alex Approver",
     approved_at: "2026-10-10T08:00:00Z",
     self_approved: false,
+    cancel_reason: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     ...overrides,
   };
 }
@@ -672,6 +676,18 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     expect(screen.queryByTestId("permit-approver")).toBeNull();
   });
 
+  it("shows the red expired-permit alert while an open permit is past its expiry (L4-08)", async () => {
+    await show(permit({ status: "active", expires_at: "2020-01-01T00:00:00Z" }));
+    const alert = await screen.findByTestId("permit-overdue");
+    expect(alert).toHaveTextContent(enPermits.overdue.title);
+  });
+
+  it("shows no expired-permit alert once the permit is handed back", async () => {
+    await show(permit({ status: "handed_back", expires_at: "2020-01-01T00:00:00Z" }));
+    expect(await screen.findByTestId("permit-status")).toBeInTheDocument();
+    expect(screen.queryByTestId("permit-overdue")).toBeNull();
+  });
+
   it("greys the approve step with the server's four-eyes reason before any click (L4-14)", async () => {
     svc.checkWorkPermitApproval.mockRejectedValueOnce({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
     const p = permit({
@@ -716,5 +732,78 @@ describe("PermitDetailPanel — four-eyes approval", () => {
       "",
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(reason.replace(/\s+/g, " ").trim());
+  });
+});
+
+// L4-15: a permit, possibly with padlocks still on, is never cancelled without a reason.
+describe("PermitDetailPanel — cancelling a permit needs a reason", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.userId = 10;
+    svc.listPermitIsolations.mockResolvedValue([VERIFIED_ISOLATION]);
+    svc.listPermitIsolationOptions.mockResolvedValue({ energy_types: [], isolation_methods: [] });
+    svc.listPermitSuspensions.mockResolvedValue([]);
+    svc.listPermitHandoverLogs.mockResolvedValue([]);
+    svc.listPermitHandoverRoles.mockResolvedValue([]);
+    svc.listPermitHandoverReceivers.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it("asks for the reason, keeps the permit on the other button and sends the reason", async () => {
+    svc.setWorkPermitStatus.mockResolvedValue(permit({ status: "cancelled" }));
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.transition.cancel }));
+    const dialog = await screen.findByRole("dialog");
+    // The two buttons say different things: keep the permit, or cancel it.
+    expect(within(dialog).getByRole("button", { name: enPermits.transition.keep })).toBeEnabled();
+    const submit = within(dialog).getByRole("button", { name: enPermits.transition.cancel });
+    expect(submit).toBeDisabled();
+    const reason = within(dialog).getByLabelText(enPermits.transition.cancelReason, {
+      exact: false,
+    });
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "  Work postponed: part not delivered " } });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() => expect(svc.setWorkPermitStatus).toHaveBeenCalledTimes(1));
+    expect(svc.setWorkPermitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "cancelled",
+        reason: "Work postponed: part not delivered",
+      }),
+    );
+  });
+
+  it("records nothing when the person keeps the permit", async () => {
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: enPermits.transition.cancel }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: enPermits.transition.keep }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(svc.setWorkPermitStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows who cancelled the permit, when and why", async () => {
+    await renderPanel(
+      permit({
+        status: "cancelled",
+        cancel_reason: "Work postponed",
+        cancelled_by_id: 8,
+        cancelled_by_name: "Sara Sup",
+        cancelled_at: "2026-11-04T10:00:00Z",
+      }),
+    );
+    const row = screen.getByTestId("permit-cancelled");
+    expect(row).toHaveTextContent("Sara Sup");
+    expect(row).toHaveTextContent(
+      fill(enPermits.detail.cancelReason, { reason: "Work postponed" }),
+    );
+  });
+
+  it("says the reason was not recorded on a permit cancelled before it was asked", async () => {
+    await renderPanel(permit({ status: "cancelled" }));
+    const row = screen.getByTestId("permit-cancelled");
+    expect(row).toHaveTextContent(enPermits.detail.cancelNotRecorded);
+    expect(row).toHaveTextContent(enPermits.detail.cancelReasonNotRecorded);
   });
 });

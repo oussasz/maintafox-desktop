@@ -2384,7 +2384,22 @@ export interface MeterReading {
   source_reference: string | null;
   quality_flag: string;
   created_by_id: number | null;
+  created_by_name: string | null;
   created_at: string;
+  entity_sync_id: string;
+  is_cancelled: boolean;
+  cancel_reason: string | null;
+  cancelled_by_name: string | null;
+  cancelled_at: string | null;
+}
+
+export interface MeterReadingWarning {
+  delta: number;
+  expected_delta: number;
+  rate_per_day: number;
+  days: number;
+  previous_value: number;
+  previous_at: string;
 }
 
 export interface RecordMeterReadingPayload {
@@ -11114,6 +11129,8 @@ export interface WorkPermitStatusInput {
   id: number;
   status: WorkPermitStatus;
   expected_row_version: number;
+  /** Required (not blank) when cancelling the permit; ignored otherwise. */
+  reason?: string | null;
 }
 
 export interface PermitSuspendInput {

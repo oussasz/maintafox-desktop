@@ -44,6 +44,15 @@ import {
 import { P } from "@shared/rbac/permissions.generated";
 
 const PAGE = 50;
+/** Step of a study an analysis method opens on (the step keys of the study page). */
+type AnalysisStep = "life" | "fmeca" | "rcm";
+/** The analysis methods offered on the home page, each with the study step it opens. */
+const ANALYSIS_METHODS: readonly { key: string; step: AnalysisStep }[] = [
+  { key: "weibull", step: "life" },
+  { key: "fmeca", step: "fmeca" },
+  { key: "rcm", step: "rcm" },
+  { key: "ishikawa", step: "fmeca" },
+];
 /** Data-quality worklist of the reliability module (records without mode / cause, exposure gaps). */
 const DATA_QUALITY_WORKLIST = "/reliability/data-quality";
 
@@ -56,6 +65,8 @@ export function RamsFleetPage() {
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [classId, setClassId] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Set when an analysis was asked for before any equipment was ticked.
+  const [needSelection, setNeedSelection] = useState(false);
   const [view, setView] = useState<FleetView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -149,8 +160,11 @@ export function RamsFleetPage() {
   const toggle = (id: number) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  const startStudy = async () => {
-    if (selected.length === 0) return;
+  const startStudy = async (step?: AnalysisStep) => {
+    if (selected.length === 0) {
+      setNeedSelection(true);
+      return;
+    }
     setCreating(true);
     try {
       const study = await createReliabilityStudy({
@@ -158,7 +172,7 @@ export function RamsFleetPage() {
         period_start: period.start,
         period_end: period.end,
       });
-      navigate(`/reliability/studies/${study.id}`);
+      navigate(`/reliability/studies/${study.id}${step ? `?step=${step}` : ""}`);
     } catch {
       // The global IPC toast reports the failure.
     } finally {
@@ -279,6 +293,66 @@ export function RamsFleetPage() {
         <LoadingState />
       ) : (
         <div className="grid gap-4">
+          <RamsCard
+            title={t("rams.methods.title")}
+            subtitle={t("rams.methods.hint")}
+            headingId="rams-methods"
+          >
+            {needSelection && selected.length === 0 ? (
+              <RamsCallout tone="warning" title={t("rams.methods.selectTitle")}>
+                {t("rams.methods.selectBody")}
+              </RamsCallout>
+            ) : null}
+            <ul className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
+              {ANALYSIS_METHODS.map((m) => (
+                <li
+                  key={m.key}
+                  className="flex flex-col justify-between gap-2 rounded-md border border-surface-border p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-text-primary">
+                      {t(`rams.methods.${m.key}.title`)}
+                    </p>
+                    <p className="text-xs text-text-muted">{t(`rams.methods.${m.key}.line`)}</p>
+                  </div>
+                  <PermissionGate permission={P.RAM_ANALYZE}>
+                    <Button
+                      variant="outline"
+                      className="h-10 justify-start"
+                      disabled={creating}
+                      onClick={() => void startStudy(m.step)}
+                    >
+                      <ArrowRight className="h-4 w-4" aria-hidden />
+                      {selected.length === 0
+                        ? t("rams.methods.choose")
+                        : t("rams.methods.start", { count: selected.length })}
+                    </Button>
+                  </PermissionGate>
+                </li>
+              ))}
+              <li className="flex flex-col justify-between gap-2 rounded-md border border-surface-border p-3">
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {t("rams.methods.studies.title")}
+                  </p>
+                  <p className="text-xs text-text-muted">{t("rams.methods.studies.line")}</p>
+                </div>
+                <Button
+                  variant="outline"
+                  className="h-10 justify-start"
+                  onClick={() =>
+                    document
+                      .getElementById("rams-studies")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  }
+                >
+                  <FolderOpen className="h-4 w-4" aria-hidden />
+                  {t("rams.methods.studies.open")}
+                </Button>
+              </li>
+            </ul>
+          </RamsCard>
+
           <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
             <KpiTile
               label={t("rams.kpi.availability")}

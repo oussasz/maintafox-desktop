@@ -26,7 +26,15 @@
 //!   this covers a removal verified elsewhere over a work order completed here (the same end time on
 //!   both: the row then settles as the same change).
 //!
-//! Two PCs receiving the same permit end both hold the work order. The first hold the server
+//! - Expiry: a work order running here (`in_progress`) under a permit still open (issued, active,
+//!   suspended, to revalidate) whose expiry has passed is put on hold, recorded as the system
+//!   (`wo::execution::hold_for_permit_expired`; L4-08, CMMS Advisor 2026-11-02, decision 9: the
+//!   permit expires automatically and its work stops; lock removal, close and hand-back stay
+//!   allowed). Also checked every minute ([`start_expiry_watch`]), since an expiry needs no sync
+//!   to happen. The permit's own status is not rewritten: every PC reads the same expiry, and the
+//!   alert "Permis expiré — isolement toujours en place" stays until hand-back.
+//!
+//! Two PCs receiving the same permit end (or seeing the same expiry) both hold the work order. The first hold the server
 //! receives is kept; the second PC's own hold is closed without a person when it is the same hold
 //! (`settle_crossed_hold_server_conflict` on the push, `settle_crossed_hold_inbound` on the apply):
 //! the work order row differs only by its `updated_at`, and the delay segment — whose identity is
@@ -54,6 +62,8 @@ fn sync_err(e: impl std::fmt::Display) -> AppError {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SweepReport {
     pub work_orders_held: u32,
+    /// Running work orders put on hold because a permit of theirs expired.
+    pub expired_held: u32,
     pub downtimes_ended: u32,
     pub failures: u32,
 }
@@ -86,6 +96,9 @@ pub async fn sweep(db: &DatabaseConnection) -> SweepReport {
             tracing::error!(target: "maintafox::sync", error = %err, "permit-end hold sweep not read");
         }
     }
+    let expired = hold_expired(db, &crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()).await;
+    report.expired_held = expired.expired_held;
+    report.failures += expired.failures;
     match downtimes_due(db).await {
         Ok(due) => {
             for (wo_id, verified_at, isolation_sync_id) in due {
@@ -126,7 +139,106 @@ pub async fn sweep(db: &DatabaseConnection) -> SweepReport {
     report
 }
 
-/// A work order to hold for a permit ended elsewhere.
+/// The expiry watch's tick (module documentation).
+const EXPIRY_WATCH_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Background loop: every minute, running work under an expired permit is put on hold
+/// ([`hold_expired`]). Never stops; a failure is logged and retried at the next tick.
+pub async fn start_expiry_watch(db: DatabaseConnection) {
+    let mut ticker = tokio::time::interval(EXPIRY_WATCH_TICK);
+    loop {
+        ticker.tick().await;
+        hold_expired(&db, &crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()).await;
+    }
+}
+
+/// Puts on hold every work order running here under an open permit whose expiry is at or before
+/// `now` (`%Y-%m-%dT%H:%M:%SZ`, the stored form), each in its own transaction. Best effort,
+/// idempotent.
+pub(crate) async fn hold_expired(db: &DatabaseConnection, now: &str) -> SweepReport {
+    let mut report = SweepReport::default();
+    let due = match expiry_holds_due(db, now).await {
+        Ok(due) => due,
+        Err(err) => {
+            report.failures += 1;
+            tracing::error!(target: "maintafox::permit", error = %err, "permit expiry hold sweep not read");
+            return report;
+        }
+    };
+    for d in due {
+        let held = async {
+            let txn = db.begin().await?;
+            let held =
+                crate::wo::execution::hold_for_permit_expired(&txn, d.wo_id, &d.permit_sync_id, &d.permit_code).await?;
+            txn.commit().await?;
+            Ok::<bool, AppError>(held)
+        }
+        .await;
+        match held {
+            Ok(true) => {
+                report.expired_held += 1;
+                tracing::warn!(
+                    target: "maintafox::permit",
+                    permit = %d.permit_code,
+                    work_order_id = d.wo_id,
+                    "work order put on hold: its permit expired"
+                );
+            }
+            Ok(false) => {}
+            Err(err) => {
+                report.failures += 1;
+                tracing::error!(
+                    target: "maintafox::permit",
+                    work_order_id = d.wo_id,
+                    permit = %d.permit_code,
+                    error = %err,
+                    "work order not put on hold for its expired permit; retried at the next sweep"
+                );
+            }
+        }
+    }
+    report
+}
+
+/// Running work orders with an open permit past its expiry: one per work order, the permit that
+/// expired first (then by its sync id), so every PC holding it names the same permit and writes
+/// the same delay segment.
+async fn expiry_holds_due(db: &DatabaseConnection, now: &str) -> AppResult<Vec<HoldDue>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT w.id AS wo_id, p.entity_sync_id AS permit_sync_id, p.code AS permit_code \
+                 FROM work_orders w \
+                 JOIN work_order_statuses s ON s.id = w.status_id \
+                 JOIN work_permits p ON p.id = ( \
+                     SELECT x.id FROM work_permits x \
+                      WHERE x.linked_work_order_id = w.id AND x.status IN {open} \
+                        AND x.expires_at IS NOT NULL AND x.expires_at <= ? \
+                      ORDER BY x.expires_at, x.entity_sync_id LIMIT 1) \
+                 WHERE s.code = 'in_progress' \
+                 ORDER BY w.id",
+                open = crate::permit::queries::OPEN_PERMIT_STATUSES_SQL,
+            ),
+            [now.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(HoldDue {
+                wo_id: r.try_get("", "wo_id").map_err(sync_err)?,
+                permit_sync_id: r
+                    .try_get::<Option<String>>("", "permit_sync_id")
+                    .map_err(sync_err)?
+                    .unwrap_or_default(),
+                permit_code: r.try_get("", "permit_code").map_err(sync_err)?,
+                permit_status: "expired".to_string(),
+            })
+        })
+        .collect()
+}
+
+/// A work order to hold for a permit ended elsewhere (or expired).
 struct HoldDue {
     wo_id: i64,
     permit_sync_id: String,
@@ -258,6 +370,7 @@ async fn same_hold(
     let system_reasons = [
         crate::wo::execution::PERMIT_ENDED_DELAY_REASON,
         crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON,
+        crate::wo::execution::PERMIT_EXPIRED_DELAY_REASON,
     ];
     let allowed: &[&str] = match entity_type {
         "work_orders" => {
@@ -326,7 +439,7 @@ async fn close_own_hold(
     server_row_version: Option<i64>,
 ) -> AppResult<()> {
     let message = format!(
-        "The same hold (permit ended on another PC) reached the server first from another PC{}: its version is \
+        "The same hold (permit ended on another PC, or expired) reached the server first from another PC{}: its version is \
          kept here.",
         server_row_version
             .map(|v| format!(" (server version {v})"))
@@ -366,7 +479,7 @@ async fn close_own_hold(
         target: "maintafox::sync",
         entity_type,
         entity_sync_id,
-        "own hold closed: the same hold (permit ended elsewhere) was kept from another PC"
+        "own hold closed: the same hold (permit ended elsewhere, or expired) was kept from another PC"
     );
     Ok(())
 }

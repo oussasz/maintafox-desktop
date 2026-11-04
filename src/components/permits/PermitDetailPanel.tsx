@@ -72,6 +72,7 @@ import {
   canCancelIsolation,
   closeBlocker,
   formatAssetLabel,
+  isPermitOverdue,
   isolationState,
   localInputToIso,
   nextTransitions,
@@ -126,6 +127,8 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [suspendDraft, setSuspendDraft] = useState({ reason: "", conditions: "" });
   const [cancelOpen, setCancelOpen] = useState(false);
+  /** L4-15: the reason a permit is cancelled (required). */
+  const [cancelReason, setCancelReason] = useState("");
   /** The planned isolation line whose cancellation is being confirmed. */
   const [cancelLine, setCancelLine] = useState<PermitIsolationRecord | null>(null);
   /** The isolation whose lock removal waits for the confirmation dialog. */
@@ -248,10 +251,25 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     }
   };
 
-  const transition = (to: WorkPermitStatus) =>
+  const transition = (to: WorkPermitStatus, reason?: string) =>
     run(() =>
-      setWorkPermitStatus({ id: permit.id, status: to, expected_row_version: permit.row_version }),
+      setWorkPermitStatus({
+        id: permit.id,
+        status: to,
+        expected_row_version: permit.row_version,
+        ...(reason != null ? { reason } : {}),
+      }),
     );
+
+  const handleCancel = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!cancelReason.trim()) return;
+    // A refusal is shown on the permit; the dialog stays open so the reason is not lost.
+    if (await transition("cancelled", cancelReason.trim())) {
+      setCancelOpen(false);
+      setCancelReason("");
+    }
+  };
 
   const blockerFor = (to: WorkPermitStatus): string | null => {
     // Without the isolations the safety gates cannot be explained: no lifecycle step offered.
@@ -460,6 +478,21 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                 </dd>
               </>
             ) : null}
+            {permit.status === "cancelled" ? (
+              <>
+                <dt className="text-text-muted">{t("detail.cancelledBy")}</dt>
+                <dd data-testid="permit-cancelled">
+                  {permit.cancelled_at != null
+                    ? byAt(permit.cancelled_by_name, permit.cancelled_at)
+                    : t("detail.cancelNotRecorded")}
+                  <span className="block text-xs text-text-muted">
+                    {permit.cancel_reason
+                      ? t("detail.cancelReason", { reason: permit.cancel_reason })
+                      : t("detail.cancelReasonNotRecorded")}
+                  </span>
+                </dd>
+              </>
+            ) : null}
           </dl>
         </div>
         <span data-testid="permit-status">
@@ -470,6 +503,19 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           />
         </span>
       </header>
+
+      {/* L4-08: past its expiry the permit no longer covers the work, but its isolations stay until
+          they are removed, the permit closed and handed back. Lock removal and closing stay open. */}
+      {isPermitOverdue(permit) ? (
+        <div
+          role="alert"
+          data-testid="permit-overdue"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          <p className="font-medium">{t("overdue.title")}</p>
+          <p>{t("overdue.body", { date: fmt(permit.expires_at) })}</p>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
@@ -1166,20 +1212,35 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         onRecorded={() => void loadChildren()}
       />
 
-      <ConfirmDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title={t("transition.cancel")}
-        description={t("transition.confirmCancel")}
-        confirmLabel={t("transition.cancel")}
-        dismissLabel={t("transition.keep")}
-        destructive
-        onConfirm={async () => {
-          const ok = await transition("cancelled");
-          // Keep the dialog open on failure (the message is shown on the permit).
-          if (!ok) throw new Error("cancel refused");
-        }}
-      />
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("transition.cancel")}</DialogTitle>
+            <DialogDescription>
+              {permit.code} · {t("transition.confirmCancel")}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={(e) => void handleCancel(e)}>
+            <FormField name="cancel-reason" label={t("transition.cancelReason")} required>
+              <Textarea
+                id="cancel-reason"
+                rows={2}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </FormField>
+            {error ? <p className="text-xs text-tone-danger-fg">{error}</p> : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCancelOpen(false)}>
+                {t("transition.keep")}
+              </Button>
+              <Button type="submit" variant="destructive" disabled={busy || !cancelReason.trim()}>
+                {t("transition.cancel")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={cancelLine != null}
         onOpenChange={(open) => {

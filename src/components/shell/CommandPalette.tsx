@@ -1,23 +1,43 @@
-import { Search } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { Activity, Search } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { canSeeNavItem, type NavItem } from "@/components/layout/Sidebar";
+import { type NavItem, canSeeNavItem } from "@/components/layout/Sidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * The reliability methods are searchable by their own names (Weibull, AMDEC, RCM, Ishikawa); each
+ * opens the reliability home page, whose first card explains and starts each analysis.
+ */
+const RAMS_METHOD_ITEMS: NavItem[] = (
+  [
+    ["rams-weibull", "nav.ramsWeibull"],
+    ["rams-fmeca", "nav.ramsFmeca"],
+    ["rams-rcm", "nav.ramsRcm"],
+    ["rams-ishikawa", "nav.ramsIshikawa"],
+  ] as const
+).map(([key, labelKey]) => ({
+  key,
+  labelKey,
+  path: "/reliability",
+  icon: <Activity className="h-4 w-4" />,
+  requiredPermission: P.RAM_VIEW,
+}));
+
 /** Navigable items — excludes group headers. */
-const navigableItems = defaultNavItems.filter((i) => !i.isGroupHeader);
+const navigableItems = [...defaultNavItems.filter((i) => !i.isGroupHeader), ...RAMS_METHOD_ITEMS];
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t } = useTranslation("shell");

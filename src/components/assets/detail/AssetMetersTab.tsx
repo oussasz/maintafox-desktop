@@ -4,7 +4,7 @@
  * backend refuses a value below the previous one unless the meter rolls over.
  */
 
-import { Gauge, History, Plus } from "lucide-react";
+import { Ban, Gauge, History, Plus } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -28,17 +28,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusChip } from "@/components/ui/status-chip";
+import { Textarea } from "@/components/ui/textarea";
 import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
 import { cn } from "@/lib/utils";
 import {
+  assessMeterReading,
+  cancelMeterReading,
   createAssetMeter,
   listAssetMeters,
   listMeterReadings,
   recordMeterReading,
 } from "@/services/asset-lifecycle-service";
 import { getLookupValues } from "@/services/lookup-service";
-import type { Asset, AssetMeter, LookupValueOption, MeterReading } from "@shared/ipc-types";
+import type {
+  Asset,
+  AssetMeter,
+  LookupValueOption,
+  MeterReading,
+  MeterReadingWarning,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 /** Readings shown in a meter's history. */
@@ -86,12 +95,19 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
   );
   const { data, error, loading, reload } = useLoad(load, String(asset.id));
   const [readingFor, setReadingFor] = useState<AssetMeter | null>(null);
+  // Meter whose correct reading is entered right after cancelling a wrong one.
+  const [reopenFor, setReopenFor] = useState<number | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
   if (loading && !data) return <LoadingState />;
   if (error || !data) {
     return <ErrorState error={error} onRetry={() => void reload()} retrying={loading} />;
+  }
+  const reopenMeter = reopenFor != null ? data.meters.find((x) => x.id === reopenFor) : undefined;
+  if (reopenMeter && !readingFor) {
+    setReopenFor(null);
+    setReadingFor(reopenMeter);
   }
   const typeLabel = (code: string) => {
     const opt = data.types.find((o) => o.code === code);
@@ -160,7 +176,16 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
                 {historyFor === m.id ? t("meters.hideHistory") : t("meters.showHistory")}
               </Button>
             </div>
-            {historyFor === m.id ? <MeterHistory meter={m} sources={data.sources} /> : null}
+            {historyFor === m.id ? (
+              <MeterHistory
+                meter={m}
+                sources={data.sources}
+                onCancelled={(thenRecord) => {
+                  if (thenRecord) setReopenFor(m.id);
+                  void reload();
+                }}
+              />
+            ) : null}
           </DetailSectionCard>
         ))
       )}
@@ -191,46 +216,198 @@ export function AssetMetersTab({ asset }: { asset: Asset }) {
   );
 }
 
-function MeterHistory({ meter, sources }: { meter: AssetMeter; sources: LookupValueOption[] }) {
+function MeterHistory({
+  meter,
+  sources,
+  onCancelled,
+}: {
+  meter: AssetMeter;
+  sources: LookupValueOption[];
+  onCancelled: (thenRecord: boolean) => void;
+}) {
   const { t, i18n } = useTranslation("equipment");
   const { formatDecimal, formatDateTime } = useFormatters();
+  const [cancelling, setCancelling] = useState<MeterReading | null>(null);
   const load = useMemo(() => () => listMeterReadings(meter.id, HISTORY_ROWS), [meter.id]);
   const { data, error, loading, reload } = useLoad<MeterReading[]>(
     load,
-    `${meter.id}:${meter.last_read_at ?? ""}`,
+    `${meter.id}:${meter.last_read_at ?? ""}:${meter.current_reading}`,
   );
   if (loading && !data) return <LoadingState />;
   if (error || !data) {
     return <ErrorState error={error} onRetry={() => void reload()} retrying={loading} />;
   }
   if (data.length === 0) return <p className="text-sm text-text-muted">{t("meters.noReadings")}</p>;
+  // Only the latest counted reading can be cancelled (older ones: cancel the newer first).
+  // The starting value of a meter is not kept as a reading, so its only reading cannot be cancelled.
+  const counted = data.filter(
+    (r) => !r.is_cancelled && r.quality_flag !== "corrected" && r.quality_flag !== "rejected",
+  );
+  const latestValidId = counted.length >= 2 ? counted[0]?.id : undefined;
   return (
-    <table className="w-full text-xs">
-      <caption className="sr-only">{t("meters.historyCaption", { name: meter.name })}</caption>
-      <thead>
-        <tr className={cn("text-start", mfTable.header)}>
-          <th className="py-1 font-medium">{t("meters.readingAt")}</th>
-          <th className="py-1 text-right font-medium">{t("meters.value")}</th>
-          <th className="py-1 pl-3 font-medium">{t("meters.source")}</th>
-          <th className="py-1 font-medium">{t("meters.reference")}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((r) => {
-          const src = sources.find((s) => s.code === r.source_type);
-          return (
-            <tr key={r.id} className="border-t border-surface-border">
-              <td className="py-1">{formatDateTime(r.reading_at)}</td>
-              <td className="py-1 text-right tabular-nums">
-                {formatDecimal(r.reading_value, 1)} {meter.unit ?? ""}
-              </td>
-              <td className="py-1 pl-3">{src ? optionLabel(src, i18n.language) : r.source_type}</td>
-              <td className="py-1">{r.source_reference ?? "—"}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <>
+      <table className="w-full text-xs">
+        <caption className="sr-only">{t("meters.historyCaption", { name: meter.name })}</caption>
+        <thead>
+          <tr className={cn("text-start", mfTable.header)}>
+            <th className="py-1 font-medium">{t("meters.readingAt")}</th>
+            <th className="py-1 text-right font-medium">{t("meters.value")}</th>
+            <th className="py-1 pl-3 font-medium">{t("meters.source")}</th>
+            <th className="py-1 font-medium">{t("meters.readBy")}</th>
+            <th className="py-1 font-medium">{t("meters.reference")}</th>
+            <th className="py-1" />
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((r) => {
+            const src = sources.find((s) => s.code === r.source_type);
+            return (
+              <tr
+                key={r.id}
+                className={cn(
+                  "border-t border-surface-border",
+                  r.is_cancelled && "text-text-muted",
+                )}
+              >
+                <td className={cn("py-1", r.is_cancelled && "line-through")}>
+                  {formatDateTime(r.reading_at)}
+                </td>
+                <td
+                  className={cn("py-1 text-right tabular-nums", r.is_cancelled && "line-through")}
+                >
+                  {formatDecimal(r.reading_value, 1)} {meter.unit ?? ""}
+                </td>
+                <td className="py-1 pl-3">
+                  {src ? optionLabel(src, i18n.language) : r.source_type}
+                </td>
+                <td className="py-1">{r.created_by_name ?? "—"}</td>
+                <td className="py-1">
+                  {r.is_cancelled ? (
+                    <span className="space-y-0.5">
+                      <StatusChip tone="neutral" label={t("meters.cancelledBadge")} />
+                      <span className="block">
+                        {t("meters.cancelledBy", {
+                          name: r.cancelled_by_name ?? "—",
+                          date: r.cancelled_at ? formatDateTime(r.cancelled_at) : "—",
+                          reason: r.cancel_reason ?? "",
+                        })}
+                      </span>
+                    </span>
+                  ) : (
+                    (r.source_reference ?? "—")
+                  )}
+                </td>
+                <td className="py-1 text-right">
+                  {r.id === latestValidId ? (
+                    <PermissionGate permission={P.EQ_MANAGE}>
+                      <Button
+                        variant="outline"
+                        className="h-7 gap-1 px-2 text-xs"
+                        onClick={() => setCancelling(r)}
+                      >
+                        <Ban className="h-3 w-3" aria-hidden />
+                        {t("meters.cancel")}
+                      </Button>
+                    </PermissionGate>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {cancelling ? (
+        <CancelReadingDialog
+          meter={meter}
+          reading={cancelling}
+          onClose={() => setCancelling(null)}
+          onDone={(thenRecord) => {
+            setCancelling(null);
+            onCancelled(thenRecord);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function CancelReadingDialog({
+  meter,
+  reading,
+  onClose,
+  onDone,
+}: {
+  meter: AssetMeter;
+  reading: MeterReading;
+  onClose: () => void;
+  onDone: (thenRecord: boolean) => void;
+}) {
+  const { t } = useTranslation("equipment");
+  const { formatDecimal, formatDateTime } = useFormatters();
+  const formId = useId();
+  const [reason, setReason] = useState("");
+  const [thenRecord, setThenRecord] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const invalid = reason.trim() === "";
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invalid) return;
+    setSaving(true);
+    try {
+      await cancelMeterReading(reading.id, reason.trim());
+      onDone(thenRecord);
+    } catch {
+      // Reported by the global IPC toast.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <EntityFormDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={t("meters.cancelTitle", { name: meter.name })}
+      description={t("meters.cancelIntro", {
+        value: formatDecimal(reading.reading_value, 1),
+        unit: meter.unit ?? "",
+        date: formatDateTime(reading.reading_at),
+      })}
+      footer={
+        <EntityFormFooter
+          cancelLabel={t("commercial.cancel")}
+          primaryLabel={t("meters.cancelConfirm")}
+          onCancel={onClose}
+          formId={formId}
+          primaryDisabled={invalid}
+          primaryLoading={saving}
+        />
+      }
+    >
+      <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4">
+        <FormField
+          name={`${formId}-reason`}
+          label={t("meters.cancelReason")}
+          description={t("meters.cancelReasonHint")}
+          required
+        >
+          <Textarea
+            id={`${formId}-reason`}
+            value={reason}
+            rows={3}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </FormField>
+        <label className="flex min-h-[44px] items-center gap-2 text-sm">
+          <Checkbox checked={thenRecord} onCheckedChange={(v) => setThenRecord(v === true)} />
+          {t("meters.cancelThenRecord")}
+        </label>
+        <p className="text-xs text-text-muted">{t("meters.cancelPmNote")}</p>
+      </form>
+    </EntityFormDialog>
   );
 }
 
@@ -255,6 +432,8 @@ function RecordReadingDialog({
   );
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
+  // Set when the typed value is far above the usual use: asks to confirm before saving.
+  const [warning, setWarning] = useState<MeterReadingWarning | null>(null);
 
   const parsed = parseNumber(value);
   const valueError =
@@ -268,24 +447,38 @@ function RecordReadingDialog({
   const future = readingAt > nowLocalInput();
   const invalid = parsed === null || Number.isNaN(parsed) || !!valueError || future || !source;
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const save = async (confirmJump: boolean) => {
     if (invalid || parsed === null) return;
     setSaving(true);
     try {
-      await recordMeterReading({
-        meter_id: meter.id,
-        reading_value: parsed,
-        reading_at: new Date(readingAt).toISOString(),
-        source_type: source,
-        source_reference: reference.trim() || null,
-      });
+      const at = new Date(readingAt).toISOString();
+      if (!confirmJump) {
+        const found = await assessMeterReading(meter.id, parsed, at);
+        if (found) {
+          setWarning(found);
+          return;
+        }
+      }
+      await recordMeterReading(
+        {
+          meter_id: meter.id,
+          reading_value: parsed,
+          reading_at: at,
+          source_type: source,
+          source_reference: reference.trim() || null,
+        },
+        confirmJump,
+      );
       onSaved();
     } catch {
       // Reported by the global IPC toast.
     } finally {
       setSaving(false);
     }
+  };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void save(false);
   };
 
   return (
@@ -310,13 +503,41 @@ function RecordReadingDialog({
         />
       }
     >
-      <form id={formId} onSubmit={(e) => void submit(e)} className="grid gap-4 sm:grid-cols-2">
+      <form id={formId} onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+        {warning ? (
+          <div
+            role="alert"
+            className="space-y-2 rounded-md border border-status-warning/40 bg-status-warning/10 p-3 text-sm sm:col-span-2"
+          >
+            <p className="font-medium">{t("meters.jumpTitle")}</p>
+            <p>
+              {t("meters.jumpBody", {
+                delta: formatDecimal(warning.delta, 1),
+                previous: formatDecimal(warning.previous_value, 1),
+                expected: formatDecimal(warning.expected_delta, 1),
+                value: formatDecimal(parsed ?? 0, 1),
+                unit: meter.unit ?? "",
+              })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => setWarning(null)}>
+                {t("meters.jumpBack")}
+              </Button>
+              <Button type="button" disabled={saving} onClick={() => void save(true)}>
+                {t("meters.jumpConfirm")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <FormField name={`${formId}-value`} label={t("meters.value")} required error={valueError}>
           <Input
             id={`${formId}-value`}
             inputMode="decimal"
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setWarning(null);
+            }}
           />
         </FormField>
         <FormField
