@@ -1085,6 +1085,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
                         // the equipment, sent as its sync id (equipment rows are never hard-deleted).
                         ("equipment", "equipment"),
+                        // A meter reading cancelled (`assets::meters::cancel_meter_reading`): the
+                        // target is the cancelled reading, sent as its sync id. Readings are
+                        // append-only and never hard-deleted (a cancelled reading stays, with a
+                        // marker row beside it), so the named row is always there.
+                        ("asset_meter_readings", "asset_meter_readings"),
                     ],
                 ),
             ],
