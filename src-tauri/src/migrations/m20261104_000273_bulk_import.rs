@@ -6,7 +6,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261104_000270_bulk_import"
+        "m20261104_000273_bulk_import"
     }
 }
 
@@ -58,7 +58,8 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         db.execute_unprepared("DROP TABLE IF EXISTS bulk_import_rows").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS bulk_import_batches").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS bulk_import_batches")
+            .await?;
         Ok(())
     }
 }
