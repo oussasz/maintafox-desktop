@@ -686,7 +686,7 @@
     "rollUp": "Inclure les composants",
     "rollUpScope_one": "Chiffres de cet équipement seul.",
     "rollUpScope_other": "Chiffres de cet équipement et de ses composants ({{count}} équipements).",
-    "openRams": "Ouvrir dans RAMS",
+    "openRams": "Analyser cet équipement",
     "kpi": {
       "workOrders": "Ordres de travail",
       "openHint_one": "{{count}} en cours",

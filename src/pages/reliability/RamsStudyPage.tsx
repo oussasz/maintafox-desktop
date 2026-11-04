@@ -2,7 +2,7 @@
  * Reliability study workspace: scope bar (equipment, period, failure mode, time base) and the six
  * steps — data, life (Weibull), FMECA, RCM decision, system model, decisions.
  */
-import { ArrowLeft, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -239,13 +239,28 @@ export function RamsStudyPage() {
         </div>
       }
       actions={
-        study && !archived ? (
-          <PermissionGate permission={P.RAM_ANALYZE}>
-            <Button className={mfLayout.primaryAction} onClick={() => openDecision(null)}>
-              <ClipboardCheck className="h-4 w-4" aria-hidden />
-              {t("rams.study.recordDecision")}
-            </Button>
-          </PermissionGate>
+        study ? (
+          <>
+            {step === "data" ? (
+              // The main action of the first step stays in the header: no scrolling to find it.
+              <Button className={mfLayout.primaryAction} onClick={() => goStep("life")}>
+                {t("rams.data.next")}
+                <ArrowRight className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null}
+            {!archived ? (
+              <PermissionGate permission={P.RAM_ANALYZE}>
+                <Button
+                  variant={step === "data" ? "outline" : "default"}
+                  className={step === "data" ? "h-11" : mfLayout.primaryAction}
+                  onClick={() => openDecision(null)}
+                >
+                  <ClipboardCheck className="h-4 w-4" aria-hidden />
+                  {t("rams.study.recordDecision")}
+                </Button>
+              </PermissionGate>
+            ) : null}
+          </>
         ) : null
       }
       bodyClassName={null}
