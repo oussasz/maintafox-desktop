@@ -1005,6 +1005,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // session closed by the stored-state check, a clock anomaly) stay on it too: the session
         // record is local to the device (`app_sessions`) and its id means nothing on another PC; the
         // actor is recorded in the event, on this PC.
+        // The audit of an applied bulk import (`bulk_import::apply_batch`, target `bulk_import_batch`)
+        // stays on this PC too: the staging batch is local-only (`bulk_import_batches`) and its id means
+        // nothing on another PC; the records the import created or updated travel on their own rows.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
              AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \

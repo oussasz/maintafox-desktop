@@ -320,6 +320,7 @@
       "user_scope_assignment": "Attribution de rôle",
       "trusted_device": "Poste de confiance",
       "app_session": "Session",
+      "bulk_import_batch": "Import de données",
       "admin_recovery_code": "Code de secours administrateur",
       "stock_location_article": "Article en stock",
       "stock_reservation": "Réservation de stock",
