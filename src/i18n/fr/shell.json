@@ -316,13 +316,13 @@
       "idle": "À jour",
       "scheduled": "Démarrage de la synchronisation",
       "running": "Synchronisation",
-      "degraded": "Attention requise",
+      "degraded": "À vérifier",
       "paused": "En pause",
-      "blocked": "Arrêtée",
+      "blocked": "Sync arrêtée",
       "error": "Erreur de sync",
       "pausedTitle": "La synchronisation a été mise en pause par un opérateur",
-      "blockedTitle": "La synchronisation est arrêtée",
-      "degradedTitle": "La synchronisation demande votre attention (nouvel essai prévu ou conflits à examiner)",
+      "blockedTitle": "La synchronisation est arrêtée : vos modifications restent enregistrées sur ce poste. Cliquez pour en voir la raison dans le centre de synchronisation.",
+      "degradedTitle": "La synchronisation demande votre attention : nouvel essai prévu ou conflits à examiner. Cliquez pour ouvrir le centre de synchronisation.",
       "statusBar": "Sync : {{state}}"
     },
     "panel": {
