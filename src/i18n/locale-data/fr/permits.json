@@ -27,6 +27,8 @@
       "badge": "À revoir : sans site",
       "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
     },
+    "overdueHidden_one": "{{count}} autre permis expiré est hors de vos sites ou sans site : non compté",
+    "overdueHidden_other": "{{count}} autres permis expirés sont hors de vos sites ou sans site : non comptés",
     "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
     "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
     "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."
@@ -41,7 +43,14 @@
     "activated": "Permis activés",
     "period30d": "30 derniers jours",
     "onTimeRate": "Mainlevées avant expiration",
+    "overdue": "Permis expirés, isolement en place",
+    "overdueHint": "Permis ouverts dont l’heure d’expiration est passée : arrêtez les travaux, retirez les cadenas, clôturez et faites la mainlevée.",
     "onTimeHint": "{{onTime}} des {{activated}} permis activés ces 30 derniers jours ont eu leur mainlevée avant leur heure d’expiration"
+  },
+  "overdue": {
+    "chip": "Expiré",
+    "title": "Permis expiré — isolement toujours en place",
+    "body": "L’heure d’expiration ({{date}}) est passée : ce permis ne couvre plus les travaux. Arrêtez-les, faites retirer et vérifier chaque cadenas, puis clôturez le permis et faites la mainlevée."
   },
   "open": {
     "title": "Permis ouverts (non expirés)",
