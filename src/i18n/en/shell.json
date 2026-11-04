@@ -473,8 +473,13 @@
   "commandPalette": {
     "title": "Command Palette",
     "open": "Go to a module…",
-    "placeholder": "Module name (e.g. Work orders)…",
-    "noResults": "No module matches \"{{query}}\""
+    "placeholder": "Module, work order or request number, equipment…",
+    "kind": {
+      "workOrder": "Work order",
+      "request": "Request",
+      "equipment": "Equipment"
+    },
+    "noResults": "No result for \"{{query}}\""
   },
   "session": {
     "timeRemaining": "Session expires in {{minutes}} min",

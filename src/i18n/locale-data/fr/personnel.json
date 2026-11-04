@@ -710,7 +710,8 @@
     "action": {
       "openWizard": "Importer",
       "close": "Fermer",
-      "apply": "Appliquer le lot"
+      "apply": "Appliquer le lot",
+      "applyDisabled": "Chargez et vérifiez un fichier sans erreur bloquante avant d'appliquer le lot."
     },
     "mode": {
       "label": "Mode d'import",

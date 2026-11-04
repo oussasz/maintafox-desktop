@@ -263,6 +263,7 @@
     "next": "Suivant",
     "back": "Retour",
     "apply": "Appliquer l'import",
+    "noneImportable": "Aucune ligne valide à importer. Corrigez les erreurs du fichier ou incluez les lignes avec avertissement.",
     "done": "Terminé",
     "applied": "Import terminé avec succès",
     "created": "Créés",

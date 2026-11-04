@@ -305,7 +305,7 @@ export function PersonnelImportWizard() {
             ) : null}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sm:flex-wrap">
             <Button variant="outline" onClick={() => setOpen(false)}>
               {t("import.action.close")}
             </Button>
@@ -313,6 +313,11 @@ export function PersonnelImportWizard() {
               {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {t("import.action.apply")}
             </Button>
+            {!canApply ? (
+              <p className="w-full text-xs text-text-muted" data-testid="apply-disabled-reason">
+                {t("import.action.applyDisabled")}
+              </p>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

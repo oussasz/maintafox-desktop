@@ -263,6 +263,7 @@
     "next": "Next",
     "back": "Back",
     "apply": "Apply import",
+    "noneImportable": "No valid row to import. Fix the errors in the file or include the rows with warnings.",
     "done": "Done",
     "applied": "Import completed successfully",
     "created": "Created",

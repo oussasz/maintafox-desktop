@@ -423,7 +423,7 @@ function PreviewStep() {
           </p>
         )}
       </CardContent>
-      <CardFooter className="flex gap-3">
+      <CardFooter className="flex flex-wrap items-center gap-3">
         <Button
           onClick={() => setConfirmApply(true)}
           disabled={!canApply || saving}
@@ -433,6 +433,11 @@ function PreviewStep() {
           <Play className="mr-2 h-4 w-4" />
           {t("import.apply.run")}
         </Button>
+        {!canApply && !saving ? (
+          <p className="text-sm text-text-muted" data-testid="apply-disabled-reason">
+            {t("import.apply.noneImportable")}
+          </p>
+        ) : null}
       </CardFooter>
       <ConfirmDialog
         open={confirmApply}
