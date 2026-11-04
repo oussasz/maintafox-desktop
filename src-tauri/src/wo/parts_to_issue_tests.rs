@@ -671,7 +671,11 @@ mod tests {
         .await
         .expect("issue 3 against a reservation of 2");
         assert_eq!(on_hand(&db, article_id, location_id).await, 7.0);
-        assert_eq!(issues(&db, article_id).await, 2, "2 from the reservation, 1 above it");
+        assert_eq!(
+            issues(&db, article_id).await,
+            1,
+            "one issue of 3 from the topped-up reservation"
+        );
         assert_eq!(issued.quantity_issued, 3.0);
         assert_eq!(
             issued.reservation_id,
@@ -679,6 +683,14 @@ mod tests {
             "the line keeps its reservation"
         );
         assert_eq!(issued.pending_issue_qty, 0.0);
+        assert_eq!(issued.quantity_reserved, 3.0);
+
+        // Re-review finding: the whole quantity can come back through the line's reservation.
+        let back = parts::record_actual_usage(&db, planned.id, 0.0, None, MayMoveStock)
+            .await
+            .expect("return all 3");
+        assert_eq!(back.quantity_issued, 0.0);
+        assert_eq!(on_hand(&db, article_id, location_id).await, 10.0);
     }
 
     /// Review finding: a line written before L3-21 without a location carried an "issued" figure

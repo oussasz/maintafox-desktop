@@ -1560,13 +1560,14 @@ pub async fn issue_part_to_issue(
     let article_id = part.article_id.unwrap_or_default();
 
     let issued_from = if let Some(reservation_id) = part.reservation_id {
-        // A use above the planned quantity: what the reservation still holds is issued from it,
-        // the rest is reserved and issued at the same location (the line keeps its reservation).
+        // A use above the planned quantity: the line's own reservation is topped up with the rest
+        // at its location, then everything is issued from it, so a later return finds it there.
+        // A released reservation takes no more: the part is reserved and issued afresh (the line
+        // then points at that reservation).
         let held = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT location_id, status, quantity_reserved - COALESCE(quantity_issued, 0.0) AS remaining \
-                 FROM stock_reservations WHERE id = ?",
+                "SELECT location_id, status, quantity_reserved - COALESCE(quantity_issued, 0.0) AS remaining                  FROM stock_reservations WHERE id = ?",
                 [reservation_id.into()],
             ))
             .await?
@@ -1579,46 +1580,31 @@ pub async fn issue_part_to_issue(
             .map_err(|e| decode_err("location_id", e))?;
         let status: String = held.try_get("", "status").map_err(|e| decode_err("status", e))?;
         let remaining: f64 = held.try_get("", "remaining").map_err(|e| decode_err("remaining", e))?;
-        let from_reservation = if status == "released" {
-            0.0
+        if status == "released" {
+            reserve_and_issue_execution_part_in(&txn, &part, article_id, location_id, input.quantity).await?;
         } else {
-            input.quantity.min(remaining.max(0.0))
-        };
-        let excess = input.quantity - from_reservation;
-        let (source_type, _source_di_id, wo_code) = load_wo_source_context(&txn, part.work_order_id).await?;
-        if from_reservation > QTY_EPSILON {
+            let excess = input.quantity - remaining.max(0.0);
+            if excess > QTY_EPSILON {
+                inventory_queries::top_up_reservation_in(
+                    &txn,
+                    reservation_id,
+                    excess,
+                    Some("WO part used above its reservation"),
+                )
+                .await?;
+                txn.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE work_order_parts SET quantity_reserved = quantity_reserved + ? WHERE id = ?",
+                    [excess.into(), part.id.into()],
+                ))
+                .await?;
+            }
+            let (source_type, _source_di_id, wo_code) = load_wo_source_context(&txn, part.work_order_id).await?;
             inventory_queries::issue_reserved_stock_in(
                 &txn,
                 &InventoryIssueInput {
                     reservation_id,
-                    quantity: from_reservation,
-                    source_type: Some(source_type.clone()),
-                    source_id: Some(part.work_order_id),
-                    source_ref: Some(wo_code.clone()),
-                    notes: Some("WO part issued from the parts to issue".to_string()),
-                },
-            )
-            .await?;
-        }
-        if excess > QTY_EPSILON {
-            let extra = inventory_queries::reserve_stock_in(
-                &txn,
-                &InventoryReserveInput {
-                    article_id,
-                    location_id,
-                    quantity: excess,
-                    source_type: source_type.clone(),
-                    source_id: Some(part.work_order_id),
-                    source_ref: Some(wo_code.clone()),
-                    notes: Some("WO part used above its reservation".to_string()),
-                },
-            )
-            .await?;
-            inventory_queries::issue_reserved_stock_in(
-                &txn,
-                &InventoryIssueInput {
-                    reservation_id: extra,
-                    quantity: excess,
+                    quantity: input.quantity,
                     source_type: Some(source_type),
                     source_id: Some(part.work_order_id),
                     source_ref: Some(wo_code),
