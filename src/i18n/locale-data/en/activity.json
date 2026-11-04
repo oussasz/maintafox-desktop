@@ -163,6 +163,7 @@
       "admin_recovery__refused": "Admin recovery refused",
       "admin_recovery__used": "Admin recovery code used",
       "article__created": "Article created",
+      "bulk_import__apply": "Data import applied",
       "asset__moved": "Equipment moved",
       "asset__meter_reading_cancelled": "Meter reading cancelled",
       "inventory__count__line_approved": "Count line approved",

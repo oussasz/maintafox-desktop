@@ -163,6 +163,7 @@
       "admin_recovery__refused": "Récupération administrateur refusée",
       "admin_recovery__used": "Code de secours administrateur utilisé",
       "article__created": "Article créé",
+      "bulk_import__apply": "Import de données appliqué",
       "asset__moved": "Équipement déplacé",
       "asset__meter_reading_cancelled": "Relevé de compteur annulé",
       "inventory__count__line_approved": "Ligne d'inventaire validée",
