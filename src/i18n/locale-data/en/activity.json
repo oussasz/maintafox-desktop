@@ -87,6 +87,7 @@
       "rbac__emergency_grant_created": "Emergency elevation granted",
       "role__assigned": "Role assigned",
       "role__revoked": "Role revoked",
+      "role__replaced": "Plant-wide role replaced by a narrower one",
       "permission__granted": "Permission granted",
       "permission__removed": "Permission removed",
       "permission__denied": "Access denied",

@@ -459,6 +459,8 @@
     "GATE_ADMIN_PHONE_INVALID": "Account refused: the phone number must be a valid international number (8 to 15 digits).",
     "GATE_ADMIN_REASON_REQUIRED": "Action refused: give the reason.",
     "GATE_ADMIN_REASON_TOO_LONG": "Action refused: the reason must not exceed 1000 characters.",
+    "GATE_ADMIN_REPLACE_NOT_NARROWER": "Replacement refused: only a role limited to part of the plant replaces a plant-wide role.",
+    "GATE_ADMIN_REPLACE_NOT_PLANT_WIDE": "Replacement refused: the role to end is no longer a plant-wide role of this account in force. Reopen the account and try again.",
     "GATE_ADMIN_RESET_DELETED": "Reset refused: the account is deleted.",
     "GATE_ADMIN_RESET_INACTIVE": "Reset refused: the account is inactive.",
     "GATE_ADMIN_RESET_SSO": "Reset refused: an SSO account has no local password.",
