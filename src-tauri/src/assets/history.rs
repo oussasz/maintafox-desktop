@@ -299,13 +299,15 @@ pub async fn list_asset_history_events(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             concat!(
-                "SELECT mr.id, mr.reading_at, mr.reading_value, mr.quality_flag, \
+                "SELECT mr.id, mr.reading_at, mr.reading_value, \
+                    CASE WHEN EXISTS (SELECT 1 FROM asset_meter_readings x WHERE x.cancels_sync_id = mr.entity_sync_id) \
+                         THEN 'cancelled' ELSE mr.quality_flag END AS quality_flag, \
                     em.name AS meter_name, ",
                 crate::reference::units::unit_symbol_of!("em.unit_value_id"),
                 " AS meter_unit \
              FROM asset_meter_readings mr \
              INNER JOIN equipment_meters em ON em.id = mr.meter_id \
-             WHERE em.equipment_id = ?"
+             WHERE em.equipment_id = ? AND mr.cancels_sync_id IS NULL"
             ),
             [asset_id.into()],
         ))

@@ -827,6 +827,8 @@ pub fn run() {
         commands::assets::create_asset_meter,
         commands::assets::record_meter_reading,
         commands::assets::get_latest_meter_value,
+        commands::assets::assess_meter_reading,
+        commands::assets::cancel_meter_reading,
         commands::assets::list_meter_readings,
         commands::assets::list_asset_document_links,
         commands::assets::list_asset_photos,

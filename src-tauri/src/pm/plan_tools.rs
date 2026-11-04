@@ -135,7 +135,7 @@ pub async fn record_pm_meter_reading(
     actor_id: i32,
 ) -> AppResult<PmAssetMeter> {
     let kind = parse_reading_kind(input.kind.as_deref())?;
-    meters::record_meter_reading_of_kind(
+    meters::record_meter_reading_of_kind_checked(
         db,
         RecordMeterReadingPayload {
             meter_id: input.meter_id,
@@ -146,6 +146,7 @@ pub async fn record_pm_meter_reading(
             quality_flag: None,
         },
         kind,
+        input.confirm_jump.unwrap_or(false),
         actor_id,
     )
     .await?;

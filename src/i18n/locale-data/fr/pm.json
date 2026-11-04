@@ -462,6 +462,10 @@
     "scopeRequired": "Choisissez ce que couvre le plan.",
     "readingRequired": "Saisissez un relevé positif ou nul pour un compteur.",
     "readingLower": "Le relevé est inférieur au précédent : indiquez s'il s'agit d'un retour à zéro du compteur ou d'un remplacement du compteur.",
+    "jumpTitle": "Valeur inhabituelle",
+    "jumpBody": "Ce relevé dépasse très largement l'usage habituel de ce compteur depuis le relevé précédent. Vérifiez la valeur saisie (une erreur de frappe déclencherait des maintenances à tort), puis confirmez si elle est exacte.",
+    "jumpBack": "Corriger la valeur",
+    "jumpConfirm": "Oui, la valeur est exacte",
     "PM_CODE_NOT_IN_LIST": "« {{code}} » n'est pas une valeur active de la liste de référence concernée."
   },
   "tolerance": {

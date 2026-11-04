@@ -228,13 +228,18 @@ pub async fn resolve_meter(
 /// Lifetime reading of a meter at `at` (latest accepted reading at or before it; the first
 /// reading when none is older; the current value when the meter has no reading).
 pub async fn lifetime_at(db: &impl ConnectionTrait, meter: &MeterState, at: &str) -> AppResult<f64> {
+    let valid = crate::assets::meters::VALID_READING_SQL;
     for sql in [
-        "SELECT COALESCE(lifetime_value, reading_value) AS v FROM asset_meter_readings
-         WHERE meter_id = ? AND quality_flag != 'corrected' AND reading_at <= ?
-         ORDER BY reading_at DESC LIMIT 1",
-        "SELECT COALESCE(lifetime_value, reading_value) AS v FROM asset_meter_readings
-         WHERE meter_id = ? AND quality_flag != 'corrected' AND ? IS NOT NULL
-         ORDER BY reading_at ASC LIMIT 1",
+        format!(
+            "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
+             WHERE mr.meter_id = ? AND {valid} AND mr.reading_at <= ?
+             ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
+        ),
+        format!(
+            "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
+             WHERE mr.meter_id = ? AND {valid} AND ? IS NOT NULL
+             ORDER BY mr.reading_at ASC, mr.entity_sync_id ASC LIMIT 1"
+        ),
     ] {
         if let Some(row) = db
             .query_one(Statement::from_sql_and_values(
