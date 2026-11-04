@@ -305,7 +305,7 @@ export function PersonnelImportWizard() {
             ) : null}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sm:flex-wrap">
             <Button variant="outline" onClick={() => setOpen(false)}>
               {t("import.action.close")}
             </Button>

@@ -408,7 +408,7 @@ export function ReferenceImportWizard({
         )}
 
         {/* ── Footer ──────────────────────────────────────────────────── */}
-        <DialogFooter>
+        <DialogFooter className="sm:flex-wrap">
           {step === "upload" && (
             <Button
               onClick={() => void handleUploadAndStage()}
