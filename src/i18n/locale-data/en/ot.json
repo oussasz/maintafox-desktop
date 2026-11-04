@@ -186,7 +186,8 @@
       "none": "No sub-type"
     },
     "urgency": {
-      "label": "Urgency"
+      "label": "Urgency",
+      "placeholder": "Choose an urgency"
     },
     "equipment": {
       "label": "Equipment",
@@ -212,6 +213,7 @@
       "label": "Notes"
     },
     "cancel": "Cancel",
+    "missingFields": "To continue, fill in: {{fields}}.",
     "submit": "Create work order",
     "update": "Save changes",
     "validation": {

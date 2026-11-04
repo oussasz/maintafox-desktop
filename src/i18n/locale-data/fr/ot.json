@@ -186,7 +186,8 @@
       "none": "Aucun sous-type"
     },
     "urgency": {
-      "label": "Urgence"
+      "label": "Urgence",
+      "placeholder": "Choisir une urgence"
     },
     "equipment": {
       "label": "Équipement",
@@ -212,6 +213,7 @@
       "label": "Remarques"
     },
     "cancel": "Annuler",
+    "missingFields": "Pour continuer, renseignez : {{fields}}.",
     "submit": "Créer l'ordre de travail",
     "update": "Enregistrer les modifications",
     "validation": {

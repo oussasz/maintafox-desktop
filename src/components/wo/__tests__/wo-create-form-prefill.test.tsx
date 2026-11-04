@@ -232,3 +232,13 @@ describe("WoCreateForm permit box in edit mode", () => {
     expect(getByTestId("permit-box")).not.toBeDisabled();
   });
 });
+
+describe("WoCreateForm greyed save button", () => {
+  it("says which fields are still missing, instead of staying silent", async () => {
+    const { findByTestId } = render(
+      <WoCreateForm initial={null} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const note = await findByTestId("wo-create-missing");
+    expect(note).toHaveTextContent("form.missingFields");
+  });
+});
