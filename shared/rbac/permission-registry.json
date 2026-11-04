@@ -1242,8 +1242,7 @@
       "pm.view",
       "pm.create",
       "pm.edit",
-      "inv.view",
-      "inv.receive"
+      "inv.view"
     ],
     "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"],
     "Finance Manager Template": [
@@ -1276,7 +1275,6 @@
     "Buyer Template": [
       "inv.view",
       "inv.procure",
-      "inv.receive",
       "ot.view",
       "eq.view",
       "fin.view",

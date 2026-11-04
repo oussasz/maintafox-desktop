@@ -1745,7 +1745,6 @@ pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[
             PM_CREATE,
             PM_EDIT,
             INV_VIEW,
-            INV_RECEIVE,
         ],
     ),
     ("Observer Template", &[OT_VIEW, DI_VIEW, PM_VIEW, EQ_VIEW]),
@@ -1787,7 +1786,6 @@ pub const ROLE_TEMPLATES: &[(&str, &[&str])] = &[
         &[
             INV_VIEW,
             INV_PROCURE,
-            INV_RECEIVE,
             OT_VIEW,
             EQ_VIEW,
             FIN_VIEW,
