@@ -74,6 +74,9 @@ pub async fn ensure_permit_requirement_rules(db: &impl ConnectionTrait) -> AppRe
 pub const CRITICAL_ASSET_RULE_CODE: &str = "CRITICITE_A";
 /// The criticality the shipped rule matches (`EQUIPMENT.CRITICALITY`).
 pub const CRITICAL_ASSET_CRITICALITY: &str = "A";
+/// Place of the shipped rule in the list: after the plant's own rules (the list's order decides
+/// between two matching isolation rules), the same on every PC so each records the same rule.
+pub const CRITICAL_ASSET_RULE_SORT_ORDER: i64 = 1000;
 /// The permit type the shipped rule calls for, when the plant still has it.
 pub const CRITICAL_ASSET_PERMIT_TYPE: &str = "loto";
 
@@ -119,7 +122,7 @@ pub async fn seed_critical_asset_rule(db: &impl ConnectionTrait) -> AppResult<bo
             "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
                 description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
                 metadata_json) \
-             SELECT ?, rs.id, NULL, ?, ?, ?, 0, NULL, NULL, NULL, NULL, 1, ? \
+             SELECT ?, rs.id, NULL, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, ? \
                FROM reference_domains d \
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
               WHERE UPPER(TRIM(d.code)) = ? \
@@ -134,6 +137,7 @@ pub async fn seed_critical_asset_rule(db: &impl ConnectionTrait) -> AppResult<bo
                 "Tout OT sur un équipement de criticité A exige un permis de consignation (LOTO). \
                  L'exigence ne se lève sur un OT qu'avec le droit de délivrer les permis et un motif."
                     .into(),
+                CRITICAL_ASSET_RULE_SORT_ORDER.into(),
                 meta.to_string().into(),
                 DOMAIN.into(),
                 sync_id.into(),

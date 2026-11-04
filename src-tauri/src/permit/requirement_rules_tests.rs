@@ -2064,3 +2064,111 @@ async fn a_rule_naming_an_unknown_criticality_is_refused() {
     .expect_err("refused");
     assert_eq!(code_of(&err), rules::CODE_RULE_INVALID);
 }
+
+/// A machine whose criticality is only the legacy "CRITIQUE" value is read as A.
+#[tokio::test]
+async fn a_legacy_critique_machine_is_critical_for_the_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    exec(
+        &db,
+        "UPDATE equipment SET equipment_criticality_ref_id = NULL, \
+         criticality_value_id = (SELECT lv.id FROM lookup_values lv \
+            JOIN lookup_domains ld ON ld.id = lv.domain_id \
+            WHERE ld.domain_key = 'equipment.criticality' AND lv.code = 'CRITIQUE') \
+         WHERE id = 1",
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+}
+
+/// The plant's own isolation rule comes before the shipped one (sort order 1000), whatever the
+/// codes: the plant's permit type is the one recorded.
+#[tokio::test]
+async fn the_plants_own_isolation_rule_keeps_priority_over_the_shipped_one() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(result.permit_flag.rule_code.as_deref(), Some("PUMPS_LOTO"));
+}
+
+/// A hot-work rule on a critical machine: the isolation type is recorded (AU-04 R5-S3 option A)
+/// and the hot-work type is shown with it.
+#[tokio::test]
+async fn hot_work_on_a_critical_machine_records_the_isolation_and_shows_both() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let shown = rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, Some("loto"))
+        .await
+        .expect("types");
+    assert!(shown.contains(&"loto".to_string()) && shown.contains(&"hot_work".to_string()));
+}
+
+/// The equipment form sets criticality A: its open work orders are flagged in the same save.
+#[tokio::test]
+async fn an_identity_edit_to_criticality_a_flags_the_open_work_orders() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    let rv = scalar(&db, "SELECT row_version FROM equipment WHERE id = 1").await;
+    crate::assets::identity::update_asset_identity(
+        &db,
+        1,
+        crate::assets::identity::UpdateAssetIdentityPayload {
+            criticality_code: Some("A".into()),
+            ..Default::default()
+        },
+        rv,
+        i32::try_from(actor).expect("id"),
+    )
+    .await
+    .expect("updated");
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+}
+
+/// A criticality changed without passing through this PC's forms (received by sync): the catch-up
+/// after the synchronisation pass flags the open work orders.
+#[tokio::test]
+async fn the_catch_up_flags_work_orders_of_a_machine_become_critical_elsewhere() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    make_critical(&db, 1).await;
+    assert_eq!(rules::catch_up(&db).await, 1);
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+}
