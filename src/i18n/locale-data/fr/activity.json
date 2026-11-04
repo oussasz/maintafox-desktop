@@ -225,6 +225,7 @@
       "wo_type__nature__set": "Nature d'un type d'OT définie",
       "wo__downtime_ended_by_lock_removal": "Arrêt de l'OT terminé au retrait du dernier cadenas",
       "wo__held_permit_ended_elsewhere": "OT mis en attente : permis terminé ailleurs",
+      "wo__held_permit_expired": "OT mis en attente : permis expiré",
       "wo__updated": "OT modifié",
       "wo__planned": "OT planifié",
       "wo__submitted": "OT soumis à la planification",
