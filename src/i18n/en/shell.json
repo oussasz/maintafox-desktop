@@ -321,8 +321,8 @@
       "blocked": "Sync stopped",
       "error": "Sync error",
       "pausedTitle": "Sync is paused by an operator",
-      "blockedTitle": "Sync is stopped: your changes stay saved on this PC. Click to see why in the sync center.",
-      "degradedTitle": "Sync needs attention: a retry is scheduled or conflicts need review. Click to open the sync center.",
+      "blockedTitle": "Sync is stopped. Open the sync center (cloud icon) to see why.",
+      "degradedTitle": "Sync needs attention: a retry is scheduled or conflicts need review. Open the sync center (cloud icon) to review them.",
       "statusBar": "Sync: {{state}}"
     },
     "panel": {
