@@ -801,6 +801,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn l509_write_after_the_close_commit_is_not_credited_to_the_closer() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        let (wo_id, rv) = wo_in_progress(&db).await;
+        let rv = advance_to_completed_verified(&db, wo_id, rv).await;
+        let before = queries::get_work_order(&db, wo_id).await.unwrap().unwrap();
+        assert_eq!(before.row_version, rv);
+        let closed = closeout::close_wo(
+            &db,
+            WoCloseInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: rv,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("close_wo");
+        // A sync write lands after the close's commit, before the command records its event.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET notes = 'from another PC', title = 'Renamed elsewhere', \
+             row_version = row_version + 1 WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .unwrap();
+
+        // As `commands::wo::close_wo_audited` does: no returned row, the expected version.
+        audit::record_wo_change_with_diff(
+            &db,
+            WoAuditInput {
+                wo_id: Some(wo_id),
+                action: "closed".into(),
+                actor_id: Some(actor),
+                summary: None,
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+            Some(&before),
+            None,
+            Some(rv),
+        )
+        .await;
+        let details = latest_change_details(&db, wo_id, "closed").await;
+        assert!(details.get("changes").is_none(), "{details}");
+        assert_eq!(details[audit::CHANGES_UNAVAILABLE], true);
+        // The row the close returned (read after its commit) would not have been a proof either:
+        // it is one version later, like a sole write, so only the re-read can tell.
+        assert_eq!(closed.row_version, rv + 1);
+    }
+
+    #[tokio::test]
+    async fn l509_draft_save_that_changes_nothing_still_checks_the_version() {
+        let db = setup().await;
+        let actor = admin_id(&db).await;
+        seed_test_equipment(&db).await;
+        let wo = queries::create_work_order(
+            &db,
+            WoCreateInput {
+                type_code: "corrective".into(),
+                equipment_id: Some(1),
+                location_id: None,
+                source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
+                entity_id: None,
+                planner_id: None,
+                urgency_code: Some("normal".into()),
+                subtype_code: None,
+                title: "Brouillon".into(),
+                description: None,
+                notes: None,
+                planned_start: None,
+                planned_end: None,
+                shift: None,
+                expected_duration_hours: None,
+                creator_id: actor,
+                requires_permit: None,
+            },
+        )
+        .await
+        .expect("create");
+        let empty = |rv: i64| crate::wo::domain::WoDraftUpdateInput {
+            id: wo.id,
+            expected_row_version: rv,
+            title: None,
+            type_code: None,
+            equipment_id: None,
+            location_id: None,
+            description: None,
+            planned_start: None,
+            planned_end: None,
+            shift: None,
+            expected_duration_hours: None,
+            notes: None,
+            urgency_code: None,
+            subtype_code: None,
+            requires_permit: None,
+        };
+        // Nothing to save, read at the current version: accepted, nothing written.
+        let same = queries::update_wo_draft_fields(&db, empty(wo.row_version), Some(actor))
+            .await
+            .expect("no-op save");
+        assert_eq!(same.row_version, wo.row_version);
+        // Someone else wrote meanwhile: the no-op save is refused like a write, so its event can
+        // never show their change as this user's.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET title = 'Autre PC', row_version = row_version + 1 WHERE id = ?",
+            [wo.id.into()],
+        ))
+        .await
+        .unwrap();
+        let err = queries::update_wo_draft_fields(&db, empty(wo.row_version), Some(actor))
+            .await
+            .expect_err("stale no-op save");
+        assert!(format!("{err:?}").contains("GATE_RECORD_CHANGED_ELSEWHERE"), "{err:?}");
+    }
+
+    #[tokio::test]
     async fn l509_change_mixed_with_another_write_records_no_values() {
         let db = setup().await;
         let actor = admin_id(&db).await;

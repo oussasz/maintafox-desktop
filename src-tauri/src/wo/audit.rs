@@ -389,10 +389,13 @@ pub fn sole_write_changes(before: &WorkOrder, after: &WorkOrder) -> Option<Vec<s
 
 /// The fields a command changed, when it is proven that nothing else wrote the work order between
 /// `before` and `after`:
-/// - with the command's `expected_row_version`: `before` is that version (the command's own
-///   `UPDATE … WHERE row_version = expected` then refused any write in between), and `after` is
-///   the row the command read back in its own transaction (a command may bump the version more
-///   than once, e.g. re-stamping a plant rule);
+/// - with the command's `expected_row_version`: `before` is that version and `after` is the row
+///   the command read back **inside its own transaction**, after its own version-checked write
+///   (`UPDATE … WHERE row_version = expected`, which refused any write in between; a command may
+///   bump the version more than once, e.g. re-stamping a plant rule). A branch of the command
+///   that writes nothing must check the expected version too (`update_wo_draft_fields`), or the
+///   caller passes no `before` (`save_verification` without a return to service). A work order
+///   read after the commit is no proof: such callers pass `None` (`close_wo`);
 /// - without it: [`sole_write_changes`].
 ///
 /// `None` when the proof is missing.
@@ -408,8 +411,9 @@ pub fn proven_changes(
     }
 }
 
-/// Records a change event with the fields it changed (`before` read before the change, `after`
-/// the work order the command returned, read in its transaction, or — `None` — read again here;
+/// Records a change event with the fields it changed (`before` read before the change,
+/// `returned` the work order the command read inside its transaction — only such a row; see
+/// [`proven_changes`] — or `None`: read again here;
 /// values only when [`proven_changes`] proves nothing else wrote in between; read again here,
 /// the version must have moved by exactly one) and, when fields changed, the same event in the
 /// audit trail (`audit_events`, action `wo.<action>`, object the work order), so the audit log answers

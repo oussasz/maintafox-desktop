@@ -1657,7 +1657,15 @@ pub async fn save_verification(
     // The verifier is the signed-in user (as the screen sends), never another id.
     input.verified_by_id = i64::from(user.user_id);
 
-    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    // Only a pass with the return to service confirmed writes the work order row
+    // (`closeout::save_verification`); any other review changes none of its fields, so none is
+    // recorded (a change made by someone else meanwhile is never credited to the reviewer).
+    let writes_wo = input.result == "pass" && input.return_to_service_confirmed;
+    let before = if writes_wo {
+        queries::get_work_order(&state.db, input.wo_id).await.ok().flatten()
+    } else {
+        None
+    };
     let expected = input.expected_row_version;
     let result = closeout::save_verification(&state.db, input).await?;
     audit::record_wo_change_with_diff(
@@ -1750,7 +1758,9 @@ async fn close_wo_audited(
                     apply_result: "applied".into(),
                 },
                 before.as_ref(),
-                Some(&wo),
+                // Read after the close's commit (PM generation, KPI refresh… run in between):
+                // not a proof; the work order is read again and must be one version later.
+                None,
                 Some(expected),
             )
             .await;
