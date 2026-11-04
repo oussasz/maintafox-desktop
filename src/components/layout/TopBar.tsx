@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
+import { UserQuickSettings } from "@/components/layout/UserQuickSettings";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { OPEN_SYNC_CENTER_EVENT } from "@/components/notifications/notification-links";
 import { CommandPalette } from "@/components/shell/CommandPalette";
@@ -196,7 +197,7 @@ export function TopBar() {
           {/* Dropdown */}
           {userMenuOpen && (
             <div
-              className="absolute right-0 top-full mt-1 w-48 rounded-md border
+              className="absolute right-0 top-full mt-1 w-60 rounded-md border
                          border-surface-border bg-surface-1 py-1 shadow-lg z-50"
               role="menu"
             >
@@ -213,6 +214,7 @@ export function TopBar() {
                 <SessionTimeIndicator expiresAt={sessionInfo?.expires_at ?? null} />
                 <DeviceTrustBadge status={deviceTrust} />
               </div>
+              <UserQuickSettings />
               <Link
                 to="/settings?tab=profile"
                 onClick={() => setUserMenuOpen(false)}

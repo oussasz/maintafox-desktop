@@ -26,6 +26,11 @@
   "user": {
     "menu": "User menu",
     "profile": "My profile",
+    "language": "Language",
+    "theme": "Display",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "Like Windows",
     "settings": "Settings",
     "logout": "Sign out"
   },
