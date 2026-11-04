@@ -1800,6 +1800,35 @@
         "quantity": "Quantity",
         "expiry": "Expiry"
       }
+    },
+    "toIssue": {
+      "title": "Parts to issue",
+      "description": "Parts recorded on a work order by someone without the stock right. Nothing has moved in stock: issue them (confirming or correcting the quantity) or cancel them with a reason. A work order cannot be closed while any remain.",
+      "empty": "No part to issue.",
+      "loadFailed": "The list of parts to issue could not be loaded.",
+      "workOrder": "WO",
+      "part": "Part",
+      "quantity": "To issue",
+      "location": "Location",
+      "noLocation": "To choose",
+      "issue": "Issue",
+      "cancel": "Cancel",
+      "issueTitle": "Issue {{part}} for {{wo}}",
+      "issueQuantity": "Issued quantity",
+      "requested": "Requested: {{qty}} {{unit}}",
+      "correctionReason": "Reason for the correction",
+      "correctionHint": "The quantity differs from the requested quantity: the reason is recorded in the work order history.",
+      "chooseLocation": "Location issued from",
+      "locationPlaceholder": "Choose the location",
+      "available": "{{location}} — available {{qty}}",
+      "confirmIssue": "Issue from stock",
+      "cancelTitle": "Cancel the part to issue {{part}}",
+      "cancelHint": "No quantity leaves the stock. The use recorded on the work order is withdrawn and the reason is recorded in the work order history.",
+      "cancelReason": "Reason",
+      "confirmCancel": "Cancel the part",
+      "issued": "{{part}} issued from stock for {{wo}}.",
+      "cancelled": "Part to issue cancelled for {{wo}}.",
+      "actionFailed": "The action did not go through."
     }
   },
   "valuation": {

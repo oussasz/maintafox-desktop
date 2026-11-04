@@ -634,6 +634,10 @@
       "summaryPlanned": "{{pending}} / {{total}} lignes planifiées à marquer Utilisée ou Non utilisée",
       "markUsed": "Utilisée",
       "usedQtyLabel": "Qté : {{qty}}",
+      "toIssue": {
+        "badge": "À sortir : {{qty}} {{unit}}",
+        "hint": "Pièce enregistrée sans le droit magasin : le magasinier la sort du stock depuis le comptoir de sortie. L'OT ne peut pas être clôturé avant."
+      },
       "badge": {
         "used": "Utilisée ({{qty}})",
         "notUsed": "Non utilisée"
@@ -648,6 +652,7 @@
         "qty": "Quantité utilisée",
         "save": "Ajouter",
         "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
+        "stockHintRequest": "Choisissez l'article et, si vous le savez, l'emplacement d'où il a été pris. Sans le droit magasin, la pièce est enregistrée « à sortir » : le magasinier la sort du stock, rien ne bouge avant. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
         "modeLabel": "Origine de la pièce",
         "modeStock": "Article en stock",
         "modeNonStock": "Hors stock",
@@ -722,6 +727,8 @@
       "partUsed": "Pièce utilisée : {{label}}",
       "partNotUsed": "Pièce marquée non utilisée : {{label}}",
       "partCancelled": "Ligne de pièce planifiée annulée : {{label}}",
+      "partIssued": "Pièce sortie du magasin : {{label}}",
+      "partToIssueCancelled": "Pièce à sortir annulée : {{label}}",
       "partSetRequired": "Ligne de pièce rendue obligatoire : {{label}}",
       "partSetOptional": "Ligne de pièce rendue optionnelle : {{label}}",
       "partAdded": "Pièce ajoutée en cours : {{label}}",

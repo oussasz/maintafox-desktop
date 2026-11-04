@@ -528,6 +528,11 @@
     "PLANNING_CAPACITY_EXCEEDED": "The crew's load would exceed its capacity plus its overtime ceiling on {{day}}.",
     "PLANNING_DOUBLE_BOOKING": "The technician already holds another job at this time: choose someone else, move the slot or override with a reason.",
     "PLANNING_OVERRIDE_REASON_REQUIRED": "Give the reason for overriding the checks on the technician.",
-    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed."
+    "PLANNING_BREAK_IN_CAPACITY_OVERRIDE_REQUIRED": "This break-in exceeds the crew's capacity: give a dangerous-override reason to proceed.",
+    "WO_PART_NOTHING_TO_ISSUE": "This part line has nothing left to issue: reload the list.",
+    "WO_PART_TO_ISSUE_QUANTITY_INVALID": "The issued quantity must be greater than zero; to issue nothing, cancel the line with a reason.",
+    "WO_PART_TO_ISSUE_REASON_REQUIRED": "Give the reason (at least {{min}} characters).",
+    "WO_PART_TO_ISSUE_LOCATION_REQUIRED": "Choose the stock location the part leaves from.",
+    "WO_PART_TO_ISSUE_WO_LOCKED": "The work order is {{status}}: nothing can be issued to it any more."
   }
 }

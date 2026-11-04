@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { PartsToIssuePanel } from "@/components/inventory/PartsToIssuePanel";
 import { WorkOrderReferencePicker } from "@/components/inventory/WorkOrderReferencePicker";
 import { toStockQuantity, useEntryFactor } from "@/components/inventory/entered-unit";
 import {
@@ -496,6 +497,10 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
 
   return (
     <div className="space-y-6">
+      {/* Parts used on work orders by people without the stock right (backend: inv.manage). */}
+      <PermissionGate permission={P.INV_MANAGE}>
+        <PartsToIssuePanel reloadToken={reloadToken} />
+      </PermissionGate>
       <section
         aria-labelledby="inv-issue-desk-title"
         className="rounded-lg border border-surface-border p-4"

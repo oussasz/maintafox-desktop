@@ -1800,6 +1800,35 @@
         "quantity": "Quantité",
         "expiry": "Expiration"
       }
+    },
+    "toIssue": {
+      "title": "Pièces à sortir",
+      "description": "Pièces enregistrées sur un OT par une personne sans le droit magasin. Rien n’a bougé dans le stock : sortez-les (en confirmant ou corrigeant la quantité) ou annulez-les avec un motif. Un OT ne peut pas être clôturé tant qu’il en reste.",
+      "empty": "Aucune pièce à sortir.",
+      "loadFailed": "La liste des pièces à sortir n’a pas pu être chargée.",
+      "workOrder": "OT",
+      "part": "Pièce",
+      "quantity": "À sortir",
+      "location": "Emplacement",
+      "noLocation": "À choisir",
+      "issue": "Sortir",
+      "cancel": "Annuler",
+      "issueTitle": "Sortir {{part}} pour {{wo}}",
+      "issueQuantity": "Quantité sortie",
+      "requested": "Demandé : {{qty}} {{unit}}",
+      "correctionReason": "Motif de la correction",
+      "correctionHint": "La quantité diffère de la quantité demandée : le motif est enregistré dans l’historique de l’OT.",
+      "chooseLocation": "Emplacement de sortie",
+      "locationPlaceholder": "Choisir l’emplacement",
+      "available": "{{location}} — disponible {{qty}}",
+      "confirmIssue": "Sortir du stock",
+      "cancelTitle": "Annuler la pièce à sortir {{part}}",
+      "cancelHint": "Aucune quantité ne sort du stock. La consommation enregistrée sur l’OT est retirée et le motif est enregistré dans l’historique de l’OT.",
+      "cancelReason": "Motif",
+      "confirmCancel": "Annuler la pièce",
+      "issued": "{{part}} sortie du stock pour {{wo}}.",
+      "cancelled": "Pièce à sortir annulée pour {{wo}}.",
+      "actionFailed": "L’action n’a pas abouti."
     }
   },
   "valuation": {
