@@ -8239,6 +8239,7 @@ async fn a_made_up_type_kept_as_received_is_recorded_and_can_be_lifted() {
             wo_id,
             expected_row_version: row_version,
             reason: "Type de permis inconnu ici, travail sans risque".into(),
+            permit_type_code: None,
         },
         APPLIER,
     )
@@ -8630,18 +8631,18 @@ async fn a_received_isolation_type_is_kept_over_a_weaker_rule_here() {
             .await
             .expect("q")
             .expect("wo");
-        assert_eq!(
-            crate::permit::requirement_rules::matching_permit_types(
-                &db,
-                wo.equipment_id,
-                wo.type_id,
-                wo.permit_rule_permit_type.as_deref()
-            )
+        // Both permit types are required: the received isolation rule's and the one this PC's list
+        // gives (L4-10b closes C7-N1).
+        let set = crate::permit::required_set::read(&db, wo.id)
             .await
-            .expect("types"),
-            vec!["loto".to_string(), "hot_work".to_string()],
-            "{held_first}: plusieurs règles de permis : loto, hot_work"
+            .expect("set")
+            .expect("wo");
+        assert_eq!(
+            set.uncleared_types(),
+            vec!["hot_work".to_string(), "loto".to_string()],
+            "{held_first}: every permit type is required"
         );
+        assert_eq!(set.primary(), Some("loto"), "{held_first}");
         // Received again: told once.
         let outcome = apply(&db, "work_orders", "wo-c6s1", &named).await;
         assert!(

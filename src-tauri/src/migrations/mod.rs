@@ -254,6 +254,7 @@ mod m20261104_000271_role_models_receipt;
 mod m20261104_000272_permit_cancel_reason;
 mod m20261104_000274_permit_type_work_at_height;
 mod m20261104_000278_permit_rule_critical_asset;
+mod m20261104_000279_wo_required_permit_types;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
@@ -514,6 +515,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261104_000272_permit_cancel_reason::Migration),
             Box::new(m20261104_000274_permit_type_work_at_height::Migration),
             Box::new(m20261104_000278_permit_rule_critical_asset::Migration),
+            Box::new(m20261104_000279_wo_required_permit_types::Migration),
         ]
     }
 }

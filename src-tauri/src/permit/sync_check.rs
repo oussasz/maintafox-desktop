@@ -2515,6 +2515,63 @@ pub(crate) async fn inbound_permit_rule_check(
             }
         }
     }
+    // The permit types the rules require (`permit::required_set`, CMMS Advisor 2026-11-04), when the
+    // row carries its set: a set that does not read is refused; a set that grows is never a conflict
+    // (a type a rule gives is only added, even once started); each clearing of a type that is new or
+    // changed here is judged as the clearing of a rule (who, when, why, before the start, the
+    // permit-issue right at the work order's site here, lead decision D-a). A clearing kept on a work
+    // order moved to another site no longer holds there (`void_clearing_on_site_change`).
+    if let Some(received_set) = received_required_set(received) {
+        let received_items = match received_set {
+            Ok(items) => items,
+            Err(why) => {
+                return conflict(
+                    "WO_PERMIT_REQUIRED_TYPES_INVALID",
+                    format!("work order {code}: the permit types it requires do not read ({why})"),
+                );
+            }
+        };
+        let held_set = match local.as_ref() {
+            Some(l) => required_set_of(l).unwrap_or_default(),
+            None => crate::permit::required_set::RequiredSet::default(),
+        };
+        let site_moved = local
+            .as_ref()
+            .is_some_and(|l| field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id"));
+        for item in &received_items {
+            let Some(clearing) = &item.clearing else {
+                continue;
+            };
+            let held_clearing = held_set.get(&item.permit_type_code).and_then(|h| h.clearing.as_ref());
+            if held_clearing == Some(clearing) {
+                if site_moved {
+                    return conflict(
+                        "WO_PERMIT_RULE_CLEAR_INVALID",
+                        format!(
+                            "work order {code}: its {} permit requirement was lifted at its site here and the received                              work order moves it to another site with that clearing kept",
+                            item.permit_type_code
+                        ),
+                    );
+                }
+                continue;
+            }
+            let required_by = format!("the plant rule {} ({} permit)", item.rule_code, item.permit_type_code);
+            if let Some(verdict) = judge_clearing(
+                conn,
+                &wo,
+                &code,
+                &required_by,
+                &ProtectedOrigin::Rule(item.rule_code.clone()),
+                clearing.by_sync_id.as_deref(),
+                Some(clearing.at.as_str()),
+                clearing.reason.as_deref(),
+            )
+            .await?
+            {
+                return Ok(Some(verdict));
+            }
+        }
+    }
     // A request flagged "sécurité" here protects its work orders that have not started: each PC
     // derives that protection itself from the request (`permit_requirement::
     // raise_work_orders_of_safety_request`, after the apply here). A received row without that origin
@@ -2609,19 +2666,19 @@ pub(crate) async fn inbound_permit_rule_check(
     if clearing_changed && clearing(&wo) == none && flag(&wo, "requires_permit") {
         return Ok(None);
     }
-    // A safety requirement cleared at one site does not stay cleared at another: a received move of
-    // a work order whose clearing is kept is refused (the PC that moved it withdraws the clearing in
-    // the same change). A work order that had no site here was cleared with the plant-wide right,
-    // which holds at any site.
-    if origin == ProtectedOrigin::SafetyRequest && field(&wo, "permit_rule_cleared_at").is_some() {
+    // A requirement cleared at one site (a safety request's, and a rule's since lead decision D-a)
+    // does not stay cleared at another: a received move of a work order whose clearing is kept is
+    // refused (the PC that moved it withdraws the clearing in the same change). A work order that had
+    // no site here was cleared with the plant-wide right, which holds at any site.
+    if field(&wo, "permit_rule_cleared_at").is_some() {
         if let Some(l) = local.as_ref() {
             let (held_site, new_site) = (field(l, "entity_sync_id"), field(&wo, "entity_sync_id"));
             if held_site.is_some() && held_site != new_site && clearing(l) == clearing(&wo) {
                 return conflict(
                     "WO_PERMIT_RULE_CLEAR_INVALID",
                     format!(
-                        "work order {code}: its permit requirement from a safety request was cleared at its site \
-                         here and the received work order moves it to another site with that clearing kept"
+                        "work order {code}: its permit requirement (required by {required_by}) was cleared at its \
+                         site here and the received work order moves it to another site with that clearing kept"
                     ),
                 );
             }
@@ -2664,15 +2721,85 @@ pub(crate) async fn inbound_permit_rule_check(
             return Ok(None);
         }
     }
+    judge_clearing(
+        conn,
+        &wo,
+        &code,
+        required_by,
+        &origin,
+        field(&wo, "permit_rule_cleared_by_sync_id"),
+        field(&wo, "permit_rule_cleared_at"),
+        field(&wo, "permit_rule_clear_reason"),
+    )
+    .await
+}
+
+/// The set of permit types a received row carries (`permit::required_set`): `None` when the row
+/// does not carry the key (a PC without migration 279) or carries NULL (no set stored there: its
+/// legacy columns speak); else the set, or why it does not read (a value that is not text, or text
+/// that is not a set).
+fn received_required_set(
+    received: &Payload,
+) -> Option<Result<Vec<crate::permit::required_set::RequiredPermit>, String>> {
+    match received.get(crate::permit::required_set::COLUMN) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.trim().is_empty() => None,
+        Some(Value::String(s)) => Some(crate::permit::required_set::parse(s)),
+        Some(other) => Some(Err(format!("not a text value: {other}"))),
+    }
+}
+
+/// The set of permit types a work order requires, read from a row as sent (its set, else its legacy
+/// columns; `permit::required_set::RequiredSet::from_row`).
+pub(crate) fn required_set_of(p: &Payload) -> Result<crate::permit::required_set::RequiredSet, String> {
+    let json = match p.get(crate::permit::required_set::COLUMN) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(other) => return Err(format!("not a text value: {other}")),
+    };
+    crate::permit::required_set::RequiredSet::from_row(
+        json,
+        crate::permit::required_set::Legacy {
+            rule_code: field(p, "permit_rule_code"),
+            permit_type: field(p, "permit_rule_permit_type"),
+            cleared_by_sync_id: field(p, "permit_rule_cleared_by_sync_id"),
+            cleared_at: field(p, "permit_rule_cleared_at"),
+            clear_reason: field(p, "permit_rule_clear_reason"),
+        },
+    )
+}
+
+/// One clearing of a protected permit requirement received on a work order (`wo`, the received row
+/// over the local one) judged as on this PC: who, when (readable, not in the future, before the
+/// work started), why (10 characters or more), and that person holds the permit-issue right at the
+/// work order's site here (`permit_requirement::may_clear_protected_requirement`). Used for the
+/// legacy clearing and for the clearing of each permit type of the set (`permit::required_set`).
+#[allow(clippy::too_many_arguments)]
+async fn judge_clearing(
+    conn: &impl ConnectionTrait,
+    wo: &Payload,
+    code: &str,
+    required_by: &str,
+    origin: &crate::wo::workflow::actions::permit_requirement::ProtectedOrigin,
+    cleared_by_sync: Option<&str>,
+    cleared_at: Option<&str>,
+    reason: Option<&str>,
+) -> AppResult<Option<InboundVerdict>> {
+    use crate::wo::workflow::actions::permit_requirement::{self as requirement, ProtectedOrigin};
     let invalid = |why: &str| {
         conflict(
             "WO_PERMIT_RULE_CLEAR_INVALID",
             format!("work order {code}: the permit required by {required_by} was cleared {why}"),
         )
     };
-    let reason_ok = field(&wo, "permit_rule_clear_reason")
+    let reason_ok = reason
+        .map(str::trim)
         .is_some_and(|r| r.chars().count() >= requirement::MIN_CLEAR_REASON_CHARS);
-    let Some(cleared_at) = time(&wo, "permit_rule_cleared_at") else {
+    let Some(cleared_at) = cleared_at
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .and_then(instant)
+    else {
         return invalid("without the time it was cleared");
     };
     if !reason_ok {
@@ -2698,7 +2825,7 @@ pub(crate) async fn inbound_permit_rule_check(
             }
         }
     }
-    let Some(clearer_sync) = field(&wo, "permit_rule_cleared_by_sync_id") else {
+    let Some(clearer_sync) = cleared_by_sync.map(str::trim).filter(|s| !s.is_empty()) else {
         return invalid("without saying who cleared it");
     };
     let Some(clearer) = local_user(conn, clearer_sync).await? else {
@@ -2712,8 +2839,10 @@ pub(crate) async fn inbound_permit_rule_check(
         Some(node) => local_id(conn, "org_nodes", node).await?,
         None => None,
     };
-    if !requirement::may_clear_protected_requirement(conn, clearer, &origin, site).await? {
-        if origin == ProtectedOrigin::SafetyRequest && site.is_none() {
+    if !requirement::may_clear_protected_requirement(conn, clearer, origin, site).await? {
+        // The right counts at the work order's site (lead decision D-a): a site not applied here
+        // yet waits.
+        if site.is_none() {
             if let Some(node) = site_sync {
                 return wait(format!("work order {code}: its site {node} is not applied yet"));
             }
@@ -2727,8 +2856,7 @@ pub(crate) async fn inbound_permit_rule_check(
             ));
         }
         let right_where = match origin {
-            ProtectedOrigin::Rule(_) => "the permit-issue right here",
-            ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
+            ProtectedOrigin::Rule(_) | ProtectedOrigin::SafetyRequest => "the permit-issue right at its site here",
         };
         return conflict(
             "WO_PERMIT_RULE_CLEAR_UNAUTHORISED",
@@ -2785,6 +2913,123 @@ pub(crate) enum HeldRule {
 /// is sent, and every PC keeps its rule the same way. A row that names another rule is noted, to
 /// converge after the write. A row without the rule keys (an older sender) leaves them as they are.
 pub(crate) async fn keep_held_rule_trace(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+) -> AppResult<Option<HeldRule>> {
+    // Whether the row itself requires the permit (before the rule kept here may raise it).
+    let row_requires = flag(payload, "requires_permit");
+    let held = keep_held_primary_rule(conn, entity_sync_id, payload).await?;
+    keep_required_set(conn, entity_sync_id, payload, row_requires).await?;
+    Ok(held)
+}
+
+/// Before a received work order is written (after [`keep_held_primary_rule`]), the permit types it
+/// requires (`permit::required_set`, CMMS Advisor 2026-11-04). The column travels whole: written
+/// as received it would drop a type added here, so the set written is the union of the set held
+/// here and the received one (`required_set::merge`: a type added on either PC is kept, a received
+/// clearing, judged on arrival, wins; a clearing held here that the row does not carry is withdrawn
+/// only when the row requires the permit). While the merged set has a type not lifted, the permit
+/// stays required. A row from a PC without migration 279 (no key) leaves the column as held here;
+/// when it lifts the primary rule (its legacy clearing) while another type here is not lifted, that
+/// clearing is recorded on the primary type, the permit stays required and this is recorded in the
+/// work order's history and audit trail. Nothing for a work order new here (written as received).
+async fn keep_required_set(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &mut Payload,
+    row_requires: bool,
+) -> AppResult<()> {
+    use crate::permit::required_set::{merge, Clearing, COLUMN};
+    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let held = required_set_of(&local).map_err(sync_err)?;
+    let row = overlay(Some(&local), payload);
+    if payload.contains_key(COLUMN) {
+        let received = required_set_of(&row).map_err(sync_err)?;
+        let merged = merge(&held, &received, row_requires);
+        payload.insert(
+            COLUMN.to_string(),
+            merged.to_json().map_or(Value::Null, Value::String),
+        );
+        if !merged.uncleared_types().is_empty() {
+            payload.insert("requires_permit".into(), Value::from(1_i64));
+        }
+        return Ok(());
+    }
+    // An older PC: it knows the primary rule only.
+    if !held.stored() || held.items().len() < 2 {
+        return Ok(());
+    }
+    let mut set = held.clone();
+    let primary = field(&row, "permit_rule_permit_type").map(str::to_string);
+    let mirrored = match (primary.as_deref(), field(&row, "permit_rule_cleared_at")) {
+        (Some(primary), Some(at)) if set.get(primary).is_some_and(|i| i.clearing.is_none()) => set.clear(
+            primary,
+            Clearing {
+                by_sync_id: field(&row, "permit_rule_cleared_by_sync_id").map(str::to_string),
+                at: at.to_string(),
+                reason: field(&row, "permit_rule_clear_reason").map(str::to_string),
+            },
+        ),
+        _ => false,
+    };
+    let remaining = set.uncleared_types();
+    let lifted_here = !flag(&row, "requires_permit") && !remaining.is_empty();
+    if !mirrored && !lifted_here {
+        return Ok(());
+    }
+    if mirrored {
+        payload.insert(COLUMN.to_string(), set.to_json().map_or(Value::Null, Value::String));
+    }
+    if remaining.is_empty() {
+        return Ok(());
+    }
+    payload.insert("requires_permit".into(), Value::from(1_i64));
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let (status, _, _) = crate::wo::workflow::transition::load_wo_status(conn, wo_id).await?;
+    let event = serde_json::json!({
+        "requires_permit": true,
+        "origin": "rule",
+        "cause": "received_without_required_types",
+        "lifted_permit_type": primary.filter(|_| mirrored),
+        "remaining_permit_types": remaining,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_types_still_required",
+        None,
+        Some(&status),
+        Some(&status),
+        Some(&event),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_types_still_required".into(),
+            actor_id: None,
+            summary: Some(format!(
+                "Exigence levée reçue d'un poste qui ne connaît que la règle principale : les permis {} restent exigés",
+                remaining.join(", ")
+            )),
+            details_json: Some(event),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// The primary rule of [`keep_held_rule_trace`].
+async fn keep_held_primary_rule(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
     payload: &mut Payload,
@@ -3218,19 +3463,42 @@ pub(crate) async fn inbound_work_order_check(
             format!("work order {code} requires a work permit and none was live when it started"),
         );
     }
-    // A plant rule that flagged it (flag not cleared) names the permit type it needs
-    // (`permit::wo_gate`): one live permit is of that type.
-    if flag(&wo, "requires_permit") && field(&wo, "permit_rule_cleared_at").is_none() {
-        if let Some(rule_type) = field(&wo, "permit_rule_permit_type") {
-            if !live_types.iter().any(|t| t == rule_type) {
-                return conflict(
-                    "PERMIT_TYPE_REQUIRED_TO_START",
-                    format!(
-                        "work order {code} started without a live permit of type {rule_type}, required by a plant rule"
-                    ),
-                );
-            }
+    // Every permit type the plant's rules required of it and not cleared (`permit::wo_gate`): one
+    // live permit of each. Judged with the set the sender held (the row's set when it carries one,
+    // else its legacy columns, read as the gate reads them), never the set held here: a type added
+    // here since is not a reason to refuse a start made there (it is named in the arrival finding,
+    // and the resume asks for it).
+    let mut sent = wo.clone();
+    if !received.contains_key(crate::permit::required_set::COLUMN) {
+        sent.remove(crate::permit::required_set::COLUMN);
+    }
+    let set = match required_set_of(&sent) {
+        Ok(set) => set,
+        Err(why) => {
+            return conflict(
+                "WO_PERMIT_REQUIRED_TYPES_INVALID",
+                format!("work order {code}: the permit types it requires do not read ({why})"),
+            )
         }
+    };
+    let required_types = if set.stored() || flag(&wo, "requires_permit") {
+        set.uncleared_types()
+    } else {
+        Vec::new()
+    };
+    let missing: Vec<&str> = required_types
+        .iter()
+        .map(String::as_str)
+        .filter(|t| !live_types.iter().any(|l| l == t))
+        .collect();
+    if !missing.is_empty() {
+        return conflict(
+            "PERMIT_TYPE_REQUIRED_TO_START",
+            format!(
+                "work order {code} started without a live permit of type {}, required by a plant rule",
+                missing.join(", ")
+            ),
+        );
     }
     Ok(None)
 }

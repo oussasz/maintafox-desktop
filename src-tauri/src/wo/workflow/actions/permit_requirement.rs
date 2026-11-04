@@ -8,14 +8,17 @@
 //! A flag a plant permit rule set when the work order was created, whatever created it
 //! (`permit::requirement_rules`, `work_orders.permit_rule_code`), or the requirement carried from a
 //! request flagged "sécurité" (`work_orders.permit_from_safety_di`, migration 255), is not cleared
-//! by the general edit: [`clear_permit_rule_flag`] needs the permit-issue right (`ptw.issue`:
-//! plant-wide for a rule, at the work order's site for a safety request) and a reason of 10
-//! characters or more, and records who, when and why on the work order (audited).
+//! by the general edit: [`clear_permit_rule_flag`] needs the permit-issue right (`ptw.issue`) at the
+//! work order's site (lead decision D-a: for a rule as for a safety request) and a reason of 10
+//! characters or more, and records who, when and why on the work order (audited). A work order the
+//! rules give several permit types (`permit::required_set`, CMMS Advisor 2026-11-04) has them lifted
+//! one type at a time; the permit stays required while one type is not lifted.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
 
 use crate::errors::{AppError, AppResult};
+use crate::permit::required_set::RequiredSet;
 use crate::wo::domain::WorkOrder;
 use crate::wo::queries;
 use crate::wo::time::now_utc_z;
@@ -108,10 +111,22 @@ pub const CODE_SAFETY_FLAG_NEEDS_CLEAR: &str = "WO_PERMIT_SAFETY_FLAG_NEEDS_CLEA
 /// Shortest reason accepted to clear a rule flag (the audit trail's "why").
 pub const MIN_CLEAR_REASON_CHARS: usize = 10;
 
+/// Stable code: the work order requires several permit types not lifted yet; the clearing names the
+/// one it lifts.
+pub const CODE_RULE_FLAG_TYPE_REQUIRED: &str = "WO_PERMIT_RULE_CLEAR_TYPE_REQUIRED";
+
 /// A permit requirement in force that the general edit may not clear (on `work_orders`, no alias):
-/// set by a plant rule or carried from a request flagged "sécurité", and not cleared.
-pub const PROTECTED_REQUIREMENT_SQL: &str = "requires_permit = 1 AND permit_rule_cleared_at IS NULL \
-     AND (permit_rule_code IS NOT NULL OR permit_from_safety_di = 1)";
+/// set by a plant rule or carried from a request flagged "sécurité", and not cleared; or a permit
+/// type of the set the rules require (`permit::required_set`) not lifted. A stored set that does not
+/// read counts as one with a type not lifted (fail-closed).
+pub const PROTECTED_REQUIREMENT_SQL: &str = "((requires_permit = 1 AND permit_rule_cleared_at IS NULL \
+     AND (permit_rule_code IS NOT NULL OR permit_from_safety_di = 1)) \
+     OR (TRIM(COALESCE(permit_required_types_json, '')) <> '' AND EXISTS (SELECT 1 FROM json_each( \
+            CASE WHEN json_valid(permit_required_types_json) \
+                  AND json_type(permit_required_types_json) = 'array' \
+                 THEN permit_required_types_json ELSE '[{}]' END) j \
+          WHERE IFNULL(json_type(j.value, '$.cleared_at'), 'null') <> 'text' \
+             OR TRIM(json_extract(j.value, '$.cleared_at')) = '')))";
 
 /// Where a protected permit requirement came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,25 +148,39 @@ impl ProtectedOrigin {
     }
 }
 
-/// The protected requirement of a work order, with its site (`entity_id`); `None` when it has none.
+/// The protected requirement of a work order, with its site (`entity_id`) and the permit types its
+/// rules require; `None` when it has none.
 async fn protected_requirement(
     conn: &impl ConnectionTrait,
     wo_id: i64,
-) -> AppResult<Option<(ProtectedOrigin, Option<i64>)>> {
+) -> AppResult<Option<(ProtectedOrigin, Option<i64>, RequiredSet)>> {
+    use crate::permit::required_set::{from_query_row, SELECT_COLUMNS, SELECT_JOIN};
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT permit_rule_code, entity_id FROM work_orders WHERE id = ? AND {PROTECTED_REQUIREMENT_SQL}"),
+            format!(
+                "SELECT wo.permit_rule_code AS rule_code, wo.entity_id AS site, {SELECT_COLUMNS} \
+                   FROM work_orders wo {SELECT_JOIN} WHERE wo.id = ? AND {PROTECTED_REQUIREMENT_SQL}"
+            ),
             [wo_id.into()],
         ))
         .await?;
     let Some(row) = row else {
         return Ok(None);
     };
-    let rule: Option<String> = row.try_get("", "permit_rule_code")?;
-    let site: Option<i64> = row.try_get("", "entity_id")?;
-    let origin = rule.map_or(ProtectedOrigin::SafetyRequest, ProtectedOrigin::Rule);
-    Ok(Some((origin, site)))
+    let rule: Option<String> = row.try_get("", "rule_code")?;
+    let site: Option<i64> = row.try_get("", "site")?;
+    let set = from_query_row(&row, wo_id)?;
+    // A type of the set not lifted is a rule's requirement, even without a primary rule.
+    let set_rule = set
+        .items()
+        .iter()
+        .find(|i| i.clearing.is_none())
+        .map(|i| i.rule_code.clone());
+    let origin = rule
+        .or(set_rule)
+        .map_or(ProtectedOrigin::SafetyRequest, ProtectedOrigin::Rule);
+    Ok(Some((origin, site, set)))
 }
 
 /// The work order's permit requirement was set by a plant rule, or carried from a request flagged
@@ -159,15 +188,15 @@ async fn protected_requirement(
 pub async fn assert_not_rule_flagged(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
     match protected_requirement(conn, wo_id).await? {
         None => Ok(()),
-        Some((ProtectedOrigin::Rule(rule), _)) => Err(crate::errors::org_validation_failed(
+        Some((ProtectedOrigin::Rule(rule), _, _)) => Err(crate::errors::org_validation_failed(
             CODE_RULE_FLAG_NEEDS_CLEAR,
             format!(
                 "The permit requirement was set by the plant rule '{rule}': clearing it needs the \
-                 permit-issue right and a reason."
+                 permit-issue right at the work order's site and a reason."
             ),
             crate::errors::issue_params(&[("rule", rule)]),
         )),
-        Some((ProtectedOrigin::SafetyRequest, _)) => Err(crate::errors::org_validation_failed(
+        Some((ProtectedOrigin::SafetyRequest, _, _)) => Err(crate::errors::org_validation_failed(
             CODE_SAFETY_FLAG_NEEDS_CLEAR,
             "The permit requirement comes from a request flagged as a safety concern: clearing it needs the \
              permit-issue right at the work order's site and a reason."
@@ -178,14 +207,12 @@ pub async fn assert_not_rule_flagged(conn: &impl ConnectionTrait, wo_id: i64) ->
 }
 
 /// Whether `user_id` may clear a protected permit requirement of `origin` on a work order at `site`
-/// (its `entity_id`; `None`, `0` or negative: no site).
-///
-/// - A plant rule: the permit-issue right plant-wide ([`holds_tenant_right`]), as before (a site
-///   role does not lift a plant rule).
-/// - A request flagged "sécurité" (CMMS Advisor decision D1): the permit-issue right at the work
-///   order's site, that is plant-wide, or through a permanent role on the site's node or one of its
-///   parents (live node, strict node reference: the subtree rule of `auth::scope`). A work order
-///   without a site: plant-wide only.
+/// (its `entity_id`; `None`, `0` or negative: no site): the permit-issue right at the work order's
+/// site, that is plant-wide, or through a permanent role on the site's node or one of its parents
+/// (live node, strict node reference: the subtree rule of `auth::scope`). A work order without a
+/// site: plant-wide only. The same for a request flagged "sécurité" (CMMS Advisor decision D1) and
+/// for a plant rule, one permit type at a time (lead decision D-a, CMMS Advisor 2026-11-04: "ptw.issue
+/// at the work order's site"); `origin` only names what is lifted.
 ///
 /// Emergency grants never count (as in [`holds_tenant_right`]). Used by the clear action and, on
 /// arrival, by `permit::sync_check::inbound_permit_rule_check` (the same rule on every PC).
@@ -194,14 +221,14 @@ pub async fn assert_not_rule_flagged(conn: &impl ConnectionTrait, wo_id: i64) ->
 pub(crate) async fn may_clear_protected_requirement(
     conn: &impl ConnectionTrait,
     user_id: i64,
-    origin: &ProtectedOrigin,
+    _origin: &ProtectedOrigin,
     site: Option<i64>,
 ) -> AppResult<bool> {
     use crate::rbac::permissions::PTW_ISSUE;
     if crate::settings::site::holds_tenant_right(conn, user_id, PTW_ISSUE).await? {
         return Ok(true);
     }
-    let (ProtectedOrigin::SafetyRequest, Some(node)) = (origin, site.filter(|n| *n > 0)) else {
+    let Some(node) = site.filter(|n| *n > 0) else {
         return Ok(false);
     };
     let chain = crate::auth::scope::ancestor_chain(conn, node).await?;
@@ -251,8 +278,11 @@ pub(crate) async fn user_sync_id(conn: &impl ConnectionTrait, user_id: Option<i6
 }
 
 /// Empties the clearing of a protected requirement (plant rule or safety request) whose
-/// `requires_permit` is `required_now`, and records it (`permit_clearing_withdrawn`, with `cause`
-/// and the withdrawn who / when / why) in the action history and the audit trail.
+/// `requires_permit` is `required_now`, with every permit type lifted in its set
+/// (`permit::required_set`), and records it (`permit_clearing_withdrawn`, with `cause`, the
+/// withdrawn who / when / why and the types withdrawn) in the action history and the audit trail.
+/// A received row that requires the permit while its set still has a type not lifted is no re-tick
+/// (the permit stays required for that type; the clearing of another type stands): nothing then.
 async fn withdraw_clearing(
     conn: &impl ConnectionTrait,
     wo_id: i64,
@@ -260,29 +290,49 @@ async fn withdraw_clearing(
     required_now: bool,
     cause: &str,
 ) -> AppResult<bool> {
+    use crate::permit::required_set::{from_query_row, SELECT_COLUMNS, SELECT_JOIN};
     let Some(row) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT permit_rule_code, permit_rule_cleared_by_id, permit_rule_cleared_at, permit_rule_clear_reason \
-               FROM work_orders \
-              WHERE id = ? AND requires_permit = ? AND permit_rule_cleared_at IS NOT NULL \
-                AND (permit_rule_code IS NOT NULL OR permit_from_safety_di = 1)",
+            format!(
+                "SELECT wo.permit_rule_code AS rule_code, wo.permit_rule_cleared_by_id AS cleared_by, \
+                        wo.permit_from_safety_di AS safety, {SELECT_COLUMNS} \
+                   FROM work_orders wo {SELECT_JOIN} \
+                  WHERE wo.id = ? AND wo.requires_permit = ?"
+            ),
             [wo_id.into(), i64::from(required_now).into()],
         ))
         .await?
     else {
         return Ok(false);
     };
-    let rule: Option<String> = row.try_get("", "permit_rule_code")?;
-    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
-    let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
-    let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    let rule: Option<String> = row.try_get("", "rule_code")?;
+    let cleared_by: Option<i64> = row.try_get("", "cleared_by")?;
+    let cleared_at: Option<String> = row.try_get("", "rs_cleared_at")?;
+    let reason: Option<String> = row.try_get("", "rs_clear_reason")?;
+    let safety: i64 = row.try_get("", "safety")?;
+    let mut set = from_query_row(&row, wo_id)?;
+    if required_now && !set.uncleared_types().is_empty() {
+        return Ok(false);
+    }
+    let legacy_cleared = cleared_at.is_some() && (rule.is_some() || safety == 1);
+    // The set as stored (a NULL column is the legacy clearing alone, withdrawn with it).
+    let withdrawn_types: Vec<String> = if set.stored() {
+        set.withdraw_clearings().into_iter().map(|i| i.permit_type_code).collect()
+    } else {
+        Vec::new()
+    };
+    if !legacy_cleared && withdrawn_types.is_empty() {
+        return Ok(false);
+    }
+    let json = if set.stored() { set.to_json() } else { None };
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_orders SET permit_rule_cleared_by_id = NULL, permit_rule_cleared_at = NULL, \
-                permit_rule_clear_reason = NULL \
+                permit_rule_clear_reason = NULL, \
+                permit_required_types_json = CASE WHEN ? THEN ? ELSE permit_required_types_json END \
           WHERE id = ?",
-        [wo_id.into()],
+        [set.stored().into(), json.into(), wo_id.into()],
     ))
     .await?;
     let origin = rule
@@ -299,6 +349,7 @@ async fn withdraw_clearing(
         "withdrawn_cleared_by_sync_id": user_sync_id(conn, cleared_by).await?,
         "withdrawn_cleared_at": cleared_at,
         "withdrawn_clear_reason": reason,
+        "withdrawn_permit_types": withdrawn_types,
     })
     .to_string();
     emit_action_event(
@@ -441,13 +492,14 @@ pub async fn raise_work_orders_of_safety_request(
     Ok(raised)
 }
 
-/// A safety request's requirement is cleared with the permit-issue right at the work order's site:
-/// when the work order then moves to another site (its equipment changes), that clearing no longer
-/// holds there. It is withdrawn in the same transaction: the requirement is in force again and
-/// `permit_rule_cleared_*` are emptied; the action history keeps the withdrawn clearing with both
-/// sites. A plant rule's flag is cleared with the plant-wide right, which holds at any site, and a
-/// work order that had no site was cleared with that right too: both are left as they are. Returns
-/// whether a clearing was withdrawn.
+/// A protected requirement is cleared with the permit-issue right at the work order's site (a
+/// safety request's, and a plant rule's permit types since lead decision D-a): when the work order
+/// then moves to another site (its equipment changes), that clearing no longer holds there. It is
+/// withdrawn in the same transaction: the requirement is in force again, `permit_rule_cleared_*`
+/// are emptied and every permit type lifted in its set is required again; the action history keeps
+/// the withdrawn clearing with both sites. A work order that had no site was cleared with the
+/// plant-wide right, which holds at any site: left as it is. Returns whether a clearing was
+/// withdrawn.
 pub async fn void_clearing_on_site_change(
     conn: &impl ConnectionTrait,
     wo_id: i64,
@@ -461,35 +513,53 @@ pub async fn void_clearing_on_site_change(
     if new_site == Some(old) {
         return Ok(false);
     }
+    use crate::permit::required_set::{from_query_row, SELECT_COLUMNS, SELECT_JOIN};
     let Some(row) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT permit_rule_cleared_by_id, permit_rule_cleared_at, permit_rule_clear_reason \
-               FROM work_orders \
-              WHERE id = ? AND permit_rule_code IS NULL AND permit_from_safety_di = 1 \
-                AND permit_rule_cleared_at IS NOT NULL",
+            format!(
+                "SELECT wo.permit_rule_code AS rule_code, wo.permit_rule_cleared_by_id AS cleared_by, \
+                        wo.permit_from_safety_di AS safety, {SELECT_COLUMNS} \
+                   FROM work_orders wo {SELECT_JOIN} WHERE wo.id = ?"
+            ),
             [wo_id.into()],
         ))
         .await?
     else {
         return Ok(false);
     };
-    let cleared_by: Option<i64> = row.try_get("", "permit_rule_cleared_by_id")?;
-    let cleared_at: Option<String> = row.try_get("", "permit_rule_cleared_at")?;
-    let reason: Option<String> = row.try_get("", "permit_rule_clear_reason")?;
+    let rule: Option<String> = row.try_get("", "rule_code")?;
+    let safety: i64 = row.try_get("", "safety")?;
+    let cleared_by: Option<i64> = row.try_get("", "cleared_by")?;
+    let cleared_at: Option<String> = row.try_get("", "rs_cleared_at")?;
+    let reason: Option<String> = row.try_get("", "rs_clear_reason")?;
+    let mut set = from_query_row(&row, wo_id)?;
+    let legacy_cleared = cleared_at.is_some() && (rule.is_some() || safety == 1);
+    let voided_types: Vec<String> = if set.stored() {
+        set.withdraw_clearings().into_iter().map(|i| i.permit_type_code).collect()
+    } else {
+        Vec::new()
+    };
+    if !legacy_cleared && voided_types.is_empty() {
+        return Ok(false);
+    }
+    let json = if set.stored() { set.to_json() } else { None };
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_orders SET requires_permit = 1, permit_rule_cleared_by_id = NULL, \
-                permit_rule_cleared_at = NULL, permit_rule_clear_reason = NULL \
+                permit_rule_cleared_at = NULL, permit_rule_clear_reason = NULL, \
+                permit_required_types_json = CASE WHEN ? THEN ? ELSE permit_required_types_json END \
           WHERE id = ?",
-        [wo_id.into()],
+        [set.stored().into(), json.into(), wo_id.into()],
     ))
     .await?;
+    let origin = rule.map_or(ProtectedOrigin::SafetyRequest, ProtectedOrigin::Rule);
     let (status, _, _) = load_wo_status(conn, wo_id).await?;
     let payload = serde_json::json!({
         "requires_permit": true,
-        "origin": ProtectedOrigin::SafetyRequest.as_str(),
+        "origin": origin.as_str(),
         "cause": "site_change",
+        "voided_permit_types": voided_types,
         "old_site": old,
         "new_site": new_site,
         "actor_sync_id": user_sync_id(conn, actor_id).await?,
@@ -515,7 +585,15 @@ pub async fn void_clearing_on_site_change(
             wo_id: Some(wo_id),
             action: "permit_clearing_voided".into(),
             actor_id,
-            summary: Some("Levée de l'exigence de permis (demande sécurité) annulée : changement de site".into()),
+            summary: Some(
+                match origin {
+                    ProtectedOrigin::Rule(_) => "Levée de l'exigence de permis (règle) annulée : changement de site",
+                    ProtectedOrigin::SafetyRequest => {
+                        "Levée de l'exigence de permis (demande sécurité) annulée : changement de site"
+                    }
+                }
+                .into(),
+            ),
             details_json: Some(payload),
             requires_step_up: false,
             apply_result: "applied".into(),
@@ -530,14 +608,23 @@ pub struct WoPermitRuleClearInput {
     pub wo_id: i64,
     pub expected_row_version: i64,
     pub reason: String,
+    /// The permit type of the set lifted (`permit::required_set`). None: the work order's only type
+    /// not lifted, or its safety-request requirement when the rules require no type of it.
+    #[serde(default)]
+    pub permit_type_code: Option<String>,
 }
 
-/// Clear a protected permit requirement: the flag a plant rule set at creation, or the requirement
-/// carried from a request flagged "sécurité" (migration 255). The person clearing it holds the
-/// permit-issue right (`ptw.issue`): plant-wide for a rule, at the work order's site for a safety
-/// request ([`may_clear_protected_requirement`]) — checked here as well as by the command, so
-/// converting or editing work orders is never enough. Allowed before execution starts, like any
-/// permit requirement change; records who, when and why on the work order and in its action history.
+/// Clear a protected permit requirement: one permit type the plant's rules require of the work order
+/// (`permit::required_set`), or the requirement carried from a request flagged "sécurité"
+/// (migration 255). The person clearing it holds the permit-issue right (`ptw.issue`) at the work
+/// order's site ([`may_clear_protected_requirement`], lead decision D-a) — checked here as well as by
+/// the command, so converting or editing work orders is never enough. Allowed before execution
+/// starts, like any permit requirement change; records who, when and why on that type (and, for the
+/// primary type, in the legacy columns too) and in the action history and audit trail. The permit
+/// stays required while another type is not lifted; the last type lifts it (with a safety request's
+/// requirement, as before). A work order with several types not lifted needs the type named
+/// ([`CODE_RULE_FLAG_TYPE_REQUIRED`]); a type it does not require, or already lifted, is refused
+/// ([`CODE_RULE_FLAG_ABSENT`]).
 pub async fn clear_permit_rule_flag(
     db: &DatabaseConnection,
     input: WoPermitRuleClearInput,
@@ -553,12 +640,49 @@ pub async fn clear_permit_rule_flag(
     }
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
-    let Some((origin, site)) = protected_requirement(&txn, input.wo_id).await? else {
+    let Some((origin, site, mut set)) = protected_requirement(&txn, input.wo_id).await? else {
         return Err(crate::errors::org_validation_failed(
             CODE_RULE_FLAG_ABSENT,
             "This work order carries no permit requirement set by a plant rule or a safety request.".to_string(),
             std::collections::HashMap::new(),
         ));
+    };
+    // The permit type lifted: the one named, else the only one not lifted.
+    let named = input
+        .permit_type_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let uncleared = set.uncleared_types();
+    let target: Option<crate::permit::required_set::RequiredPermit> = match named {
+        Some(permit_type) => match set.get(permit_type).filter(|i| i.clearing.is_none()) {
+            Some(item) => Some(item.clone()),
+            None => {
+                return Err(crate::errors::org_validation_failed(
+                    CODE_RULE_FLAG_ABSENT,
+                    format!(
+                        "This work order does not require a {permit_type} permit by a plant rule, or that requirement \
+                         is already lifted."
+                    ),
+                    crate::errors::issue_params(&[("permit_type", permit_type.to_string())]),
+                ));
+            }
+        },
+        None if uncleared.len() > 1 => {
+            return Err(crate::errors::org_validation_failed(
+                CODE_RULE_FLAG_TYPE_REQUIRED,
+                format!(
+                    "This work order requires several permit types ({}): name the one whose requirement is lifted.",
+                    uncleared.join(", ")
+                ),
+                crate::errors::issue_params(&[("permit_types", uncleared.join(", "))]),
+            ));
+        }
+        None => uncleared.first().and_then(|t| set.get(t)).cloned(),
+    };
+    let origin = match &target {
+        Some(item) => ProtectedOrigin::Rule(item.rule_code.clone()),
+        None => origin,
     };
     if !may_clear_protected_requirement(&txn, actor_id, &origin, site).await? {
         let message = match origin {
@@ -589,22 +713,54 @@ pub async fn clear_permit_rule_flag(
     };
 
     let now = now_utc_z();
+    if let Some(item) = &target {
+        set.clear(
+            &item.permit_type_code,
+            crate::permit::required_set::Clearing {
+                by_sync_id: user_sync_id(&txn, Some(actor_id)).await?,
+                at: now.clone(),
+                reason: Some(reason.clone()),
+            },
+        );
+    }
+    let remaining = set.uncleared_types();
+    // The permit stays required while a type is not lifted; the last one lifts it. The legacy
+    // columns record the clearing of the primary type, and the lifting of the whole requirement
+    // (the last type, or a safety request's requirement), as before.
+    let still_required = !remaining.is_empty();
+    let is_primary = target
+        .as_ref()
+        .is_some_and(|item| set.primary() == Some(item.permit_type_code.as_str()));
+    let json = if set.stored() { set.to_json() } else { None };
     let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET \
-                requires_permit = 0, \
-                permit_rule_cleared_by_id = ?, \
-                permit_rule_cleared_at = ?, \
-                permit_rule_clear_reason = ?, \
+                requires_permit = ?, \
+                permit_rule_cleared_by_id = CASE WHEN ? OR (? AND permit_rule_cleared_at IS NULL) THEN ? \
+                                                 ELSE permit_rule_cleared_by_id END, \
+                permit_rule_clear_reason = CASE WHEN ? OR (? AND permit_rule_cleared_at IS NULL) THEN ? \
+                                                ELSE permit_rule_clear_reason END, \
+                permit_rule_cleared_at = CASE WHEN ? OR (? AND permit_rule_cleared_at IS NULL) THEN ? \
+                                              ELSE permit_rule_cleared_at END, \
+                permit_required_types_json = CASE WHEN ? THEN ? ELSE permit_required_types_json END, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                i64::from(still_required).into(),
+                is_primary.into(),
+                (!still_required).into(),
                 actor_id.into(),
-                now.clone().into(),
+                is_primary.into(),
+                (!still_required).into(),
                 reason.clone().into(),
-                now.into(),
+                is_primary.into(),
+                (!still_required).into(),
+                now.clone().into(),
+                json.is_some().into(),
+                json.clone().into(),
+                now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),
             ],
@@ -613,11 +769,13 @@ pub async fn clear_permit_rule_flag(
     check_concurrency(result.rows_affected())?;
 
     let payload = serde_json::json!({
-        "requires_permit": false,
+        "requires_permit": still_required,
         "rule": rule,
         "origin": origin.as_str(),
         "reason": reason,
         "entity_id": site,
+        "permit_type_code": target.as_ref().map(|i| i.permit_type_code.clone()),
+        "remaining_permit_types": remaining,
     })
     .to_string();
     emit_action_event(
@@ -637,13 +795,14 @@ pub async fn clear_permit_rule_flag(
             wo_id: Some(input.wo_id),
             action: "permit_rule_flag_cleared".into(),
             actor_id: Some(actor_id),
-            summary: Some(
-                match origin {
-                    ProtectedOrigin::Rule(_) => "Exigence de permis (règle) levée",
-                    ProtectedOrigin::SafetyRequest => "Exigence de permis (demande sécurité) levée",
-                }
-                .into(),
-            ),
+            summary: Some(match (&target, &origin) {
+                (Some(item), _) => format!(
+                    "Exigence de permis {} (règle {}) levée",
+                    item.permit_type_code, item.rule_code
+                ),
+                (None, ProtectedOrigin::Rule(_)) => "Exigence de permis (règle) levée".into(),
+                (None, ProtectedOrigin::SafetyRequest) => "Exigence de permis (demande sécurité) levée".into(),
+            }),
             details_json: Some(payload.clone()),
             requires_step_up: false,
             apply_result: "applied".into(),

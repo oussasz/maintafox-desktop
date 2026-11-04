@@ -260,6 +260,7 @@ async fn a_matching_rule_flags_the_work_order_and_only_the_permit_right_clears_i
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: reason.into(),
+        permit_type_code: None,
     };
     let err = req::clear_permit_rule_flag(&db, clear("No hot work on this pump"), planner)
         .await
@@ -519,6 +520,7 @@ async fn a_safety_request_requirement_is_cleared_with_the_permit_right_at_its_si
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: reason.into(),
+        permit_type_code: None,
     };
 
     // No permit-issue right at all.
@@ -584,10 +586,11 @@ async fn a_safety_request_requirement_is_cleared_with_the_permit_right_at_its_si
     .expect("set again");
 }
 
-/// A work order without a site: the permit-issue right plant-wide only. A plant rule keeps its
-/// plant-wide clearing (a site role does not lift a plant rule), even on a safety request.
+/// A work order without a site: the permit-issue right plant-wide only. A plant rule's permit type
+/// is lifted with the right at the work order's site, like a safety request (lead decision D-a,
+/// CMMS Advisor 2026-11-04: "ptw.issue at the work order's site").
 #[tokio::test]
-async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
+async fn without_a_site_a_site_right_does_not_clear_and_a_plant_rule_clears_at_its_site() {
     let db = setup().await;
     let actor = admin(&db).await;
     let issuer = site_holder(&db, "issuer1", 1, crate::rbac::permissions::PTW_ISSUE).await;
@@ -608,6 +611,7 @@ async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         issuer,
     )
@@ -632,14 +636,17 @@ async fn without_a_site_or_with_a_plant_rule_a_site_right_does_not_clear() {
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: "Inspection visuelle seulement".into(),
+        permit_type_code: None,
     };
-    let err = req::clear_permit_rule_flag(&db, input.clone(), issuer)
+    add_second_site(&db).await;
+    let outsider = site_holder(&db, "issuer2", 2, crate::rbac::permissions::PTW_ISSUE).await;
+    let err = req::clear_permit_rule_flag(&db, input.clone(), outsider)
         .await
-        .expect_err("a plant rule stays plant-wide");
+        .expect_err("the right at another site does not lift it");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
-    let cleared = req::clear_permit_rule_flag(&db, input, actor)
+    let cleared = req::clear_permit_rule_flag(&db, input, issuer)
         .await
-        .expect("plant-wide right");
+        .expect("the right at the work order's site");
     assert!(!cleared.requires_permit);
 }
 
@@ -757,6 +764,7 @@ async fn a_cleared_safety_requirement_is_reinstated_when_the_work_order_changes_
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         issuer,
     )
@@ -903,6 +911,7 @@ async fn the_site_right_is_permanent_and_held_on_the_node_or_a_parent() {
         wo_id: wo.id,
         expected_row_version: wo.row_version,
         reason: "Inspection visuelle seulement".into(),
+        permit_type_code: None,
     };
 
     let emergency = site_holder(&db, "emergency1", 1, crate::rbac::permissions::PTW_ISSUE).await;
@@ -972,6 +981,7 @@ async fn a_cleared_requirement_required_again_is_protected_again() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         actor,
     )
@@ -1033,6 +1043,7 @@ async fn a_cleared_requirement_required_again_is_protected_again() {
             wo_id: wo.id,
             expected_row_version: wo.row_version,
             reason: "Inspection visuelle seulement".into(),
+            permit_type_code: None,
         },
         actor,
     )
@@ -1802,25 +1813,26 @@ async fn the_first_stamp_prefers_the_isolation_type_and_shows_several_rules() {
         .expect("create");
     assert_eq!(wo.permit_rule_code.as_deref(), Some("B_PUMP_LOTO"));
     assert_eq!(wo.permit_rule_permit_type.as_deref(), Some("loto"));
-    assert_eq!(
-        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
+    let required = || async {
+        crate::permit::required_set::read(&db, wo.id)
             .await
-            .expect("types"),
+            .expect("set")
+            .expect("wo")
+            .uncleared_types()
+    };
+    assert_eq!(
+        required().await,
         vec!["hot_work".to_string(), "loto".to_string()],
-        "several permit rules shown"
+        "every matching permit type is required (L4-10b)"
     );
-    // One type only: nothing shown.
+    // A rule deactivated later never drops a type already required.
     exec(
         &db,
         "UPDATE reference_values SET is_active = 0 WHERE code = 'A_PUMP_HOT'",
     )
     .await;
-    assert!(
-        rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, wo.permit_rule_permit_type.as_deref())
-            .await
-            .expect("types")
-            .is_empty()
-    );
+    rules::catch_up(&db).await;
+    assert_eq!(required().await, vec!["hot_work".to_string(), "loto".to_string()]);
 }
 
 /// L5-09: a draft moved onto equipment a published plant rule covers is written twice (the edit,
@@ -2125,10 +2137,12 @@ async fn hot_work_on_a_critical_machine_records_the_isolation_and_shows_both() {
         .await
         .expect("q")
         .expect("wo");
-    let shown = rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, Some("loto"))
+    let set = crate::permit::required_set::read(&db, wo.id)
         .await
-        .expect("types");
-    assert!(shown.contains(&"loto".to_string()) && shown.contains(&"hot_work".to_string()));
+        .expect("set")
+        .expect("wo");
+    assert!(set.contains("loto") && set.contains("hot_work"), "both permit types are required");
+    assert_eq!(set.primary(), Some("loto"), "the isolation rule stays the primary one");
 }
 
 /// The equipment form sets criticality A: its open work orders are flagged in the same save.

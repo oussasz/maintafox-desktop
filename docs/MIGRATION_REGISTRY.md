@@ -13,6 +13,7 @@ This document is the human-readable companion to migrations/mod.rs.
 | 004 | m20260402_000004_org_schema | org_structure_models, org_node_types, org_type_relationship_rules, org_nodes, org_node_responsibilities, org_entity_bindings | 1 | 03 |
 | 005 | m20260402_000005_equipment_schema | equipment_classes, equipment, equipment_hierarchy, equipment_meters, equipment_lifecycle_events | 1 | 03 |
 | 006 | m20260402_000006_teams_and_skills | skill_categories, skill_definitions, teams, team_skill_requirements | 1 | 03 |
+| 279 | m20261104_000279_wo_required_permit_types | work_orders (permit_required_types_json: every permit type the plant's rules require, backfilled from the rule each work order carries) | ux-fix | L4-10b |
 
 ## Upcoming (reserved for Phase 2)
 
