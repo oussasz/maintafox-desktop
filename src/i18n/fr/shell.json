@@ -468,7 +468,12 @@
   "commandPalette": {
     "title": "Palette de commandes",
     "open": "Aller à un module…",
-    "placeholder": "Nom du module (ex. Ordres de travail)…",
+    "placeholder": "Module, numéro d'OT ou de demande, équipement…",
+    "kind": {
+      "workOrder": "Ordre de travail",
+      "request": "Demande",
+      "equipment": "Équipement"
+    },
     "noResults": "Aucun module ne correspond à « {{query}} »"
   },
   "session": {

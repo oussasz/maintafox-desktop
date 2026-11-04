@@ -1,5 +1,5 @@
-import { Activity, Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, ClipboardList, Cog, Search, Wrench } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
@@ -10,6 +10,9 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
+import { listAssets } from "@/services/asset-service";
+import { listDis } from "@/services/di-service";
+import { listWos } from "@/services/wo-service";
 import { P } from "@shared/rbac/permissions.generated";
 
 interface CommandPaletteProps {
@@ -39,6 +42,21 @@ const RAMS_METHOD_ITEMS: NavItem[] = (
 /** Navigable items — excludes group headers. */
 const navigableItems = [...defaultNavItems.filter((i) => !i.isGroupHeader), ...RAMS_METHOD_ITEMS];
 
+/** What a line of the palette opens: a module, or one record found by its number or name. */
+interface PaletteEntry {
+  key: string;
+  label: string;
+  /** The kind of record ("Ordre de travail"), for found records only. */
+  kind?: string;
+  path: string;
+  icon: React.ReactNode;
+}
+
+/** Records are searched from this many typed characters, after this pause. */
+const RECORD_SEARCH_MIN_CHARS = 2;
+const RECORD_SEARCH_DELAY_MS = 250;
+const RECORDS_PER_KIND = 5;
+
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t } = useTranslation("shell");
   const navigate = useNavigate();
@@ -50,20 +68,98 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Records (work orders, requests, equipment) found by number or name, only those the user may
+  // see: each search is offered only with its view right; the backend stays the authority.
+  const [records, setRecords] = useState<PaletteEntry[]>([]);
+  const canWo = can(P.OT_VIEW);
+  const canDi = can(P.DI_VIEW);
+  const canAsset = can(P.EQ_VIEW);
+  useEffect(() => {
+    const text = query.trim();
+    if (!open || text.length < RECORD_SEARCH_MIN_CHARS) {
+      // Same empty list when already empty: no new state, no extra render.
+      setRecords((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      const found = async (run: () => Promise<PaletteEntry[]>): Promise<PaletteEntry[]> => {
+        try {
+          return await run();
+        } catch {
+          return [];
+        }
+      };
+      void Promise.all([
+        canWo
+          ? found(async () =>
+              (await listWos({ search: text, limit: RECORDS_PER_KIND, offset: 0 })).items.map(
+                (wo): PaletteEntry => ({
+                  key: `wo-${wo.id}`,
+                  label: `${wo.code} · ${wo.title}`,
+                  kind: t("commandPalette.kind.workOrder"),
+                  path: `/work-orders?openWo=${wo.id}`,
+                  icon: <Wrench className="h-4 w-4" />,
+                }),
+              ),
+            )
+          : Promise.resolve([]),
+        canDi
+          ? found(async () =>
+              (await listDis({ search: text, limit: RECORDS_PER_KIND, offset: 0 })).items.map(
+                (di): PaletteEntry => ({
+                  key: `di-${di.id}`,
+                  label: `${di.code} · ${di.title}`,
+                  kind: t("commandPalette.kind.request"),
+                  path: `/requests?openDi=${di.id}`,
+                  icon: <ClipboardList className="h-4 w-4" />,
+                }),
+              ),
+            )
+          : Promise.resolve([]),
+        canAsset
+          ? found(async () =>
+              (await listAssets(null, null, text, RECORDS_PER_KIND)).map(
+                (asset): PaletteEntry => ({
+                  key: `asset-${asset.id}`,
+                  label: `${asset.asset_code} · ${asset.asset_name}`,
+                  kind: t("commandPalette.kind.equipment"),
+                  path: `/equipment?assetId=${asset.id}`,
+                  icon: <Cog className="h-4 w-4" />,
+                }),
+              ),
+            )
+          : Promise.resolve([]),
+      ]).then((groups) => {
+        if (!stale) setRecords(groups.flat());
+      });
+    }, RECORD_SEARCH_DELAY_MS);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, open, canWo, canDi, canAsset, t]);
+
   // Same filter as the Sidebar: the user's rights and the modules the licence includes. A module
   // outside the licence is not offered here either (it used to open and refuse every list).
-  const permittedItems = navigableItems.filter(
-    (item) =>
-      canSeeNavItem(item, can) && isModuleCapabilityAllowed(capabilityMap, item.requiredPermission),
-  );
-
-  // Search filter — match against translated label
-  const filtered = query.trim()
-    ? permittedItems.filter((item) => {
-        const label = t(item.labelKey as never) as string;
-        return label.toLowerCase().includes(query.toLowerCase());
-      })
-    : permittedItems;
+  // The modules are matched against their translated label.
+  const entries = useMemo<PaletteEntry[]>(() => {
+    const needle = query.trim().toLowerCase();
+    const modules = navigableItems
+      .filter(
+        (item) =>
+          canSeeNavItem(item, can) &&
+          isModuleCapabilityAllowed(capabilityMap, item.requiredPermission),
+      )
+      .map((item) => ({
+        key: item.key,
+        label: t(item.labelKey as never) as string,
+        path: item.path,
+        icon: item.icon,
+      }))
+      .filter((item) => !needle || item.label.toLowerCase().includes(needle));
+    return [...modules, ...records];
+  }, [can, capabilityMap, query, records, t]);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -77,8 +173,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   // Clamp selectedIndex when filtered list changes
   useEffect(() => {
-    setSelectedIndex((prev) => Math.min(prev, Math.max(0, filtered.length - 1)));
-  }, [filtered.length]);
+    setSelectedIndex((prev) => Math.min(prev, Math.max(0, entries.length - 1)));
+  }, [entries.length]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -88,7 +184,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   }, [selectedIndex]);
 
   const selectItem = useCallback(
-    (item: NavItem) => {
+    (item: PaletteEntry) => {
       onOpenChange(false);
       navigate(item.path);
     },
@@ -100,16 +196,16 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setSelectedIndex((i) => (i + 1) % filtered.length);
+          setSelectedIndex((i) => (i + 1) % Math.max(1, entries.length));
           break;
         case "ArrowUp":
           e.preventDefault();
-          setSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+          setSelectedIndex((i) => (i - 1 + entries.length) % Math.max(1, entries.length));
           break;
         case "Enter":
           e.preventDefault();
-          if (filtered[selectedIndex]) {
-            selectItem(filtered[selectedIndex]);
+          if (entries[selectedIndex]) {
+            selectItem(entries[selectedIndex]);
           }
           break;
         case "Escape":
@@ -118,7 +214,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           break;
       }
     },
-    [filtered, selectedIndex, selectItem, onOpenChange],
+    [entries, selectedIndex, selectItem, onOpenChange],
   );
 
   return (
@@ -144,7 +240,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             aria-expanded="true"
             aria-controls="command-palette-list"
             aria-activedescendant={
-              filtered[selectedIndex] ? `command-palette-${filtered[selectedIndex].key}` : undefined
+              entries[selectedIndex] ? `command-palette-${entries[selectedIndex].key}` : undefined
             }
             className="flex-1 bg-transparent py-3 text-sm text-text-primary
                        placeholder:text-text-muted outline-none"
@@ -168,12 +264,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           role="listbox"
           aria-label={t("commandPalette.title")}
         >
-          {filtered.length === 0 ? (
+          {entries.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-text-muted">
               {t("commandPalette.noResults", { query })}
             </div>
           ) : (
-            filtered.map((item, i) => (
+            entries.map((item, i) => (
               <button
                 key={item.key}
                 id={`command-palette-${item.key}`}
@@ -194,7 +290,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <span className="h-4 w-4 shrink-0" aria-hidden>
                   {item.icon}
                 </span>
-                <span className="truncate">{t(item.labelKey as never)}</span>
+                <span className="truncate">{item.label}</span>
+                {item.kind ? (
+                  <span className="ms-auto shrink-0 text-xs text-text-muted">{item.kind}</span>
+                ) : null}
               </button>
             ))
           )}
