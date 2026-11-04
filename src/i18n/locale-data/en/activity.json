@@ -164,6 +164,7 @@
       "admin_recovery__used": "Admin recovery code used",
       "article__created": "Article created",
       "asset__moved": "Equipment moved",
+      "asset__meter_reading_cancelled": "Meter reading cancelled",
       "inventory__count__line_approved": "Count line approved",
       "inventory__count__line_entered": "Count line entered",
       "inventory__count__line_second_approved": "Count line second approval",
