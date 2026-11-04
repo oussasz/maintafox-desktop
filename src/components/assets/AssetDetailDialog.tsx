@@ -50,6 +50,7 @@ import { AssetStructureTab } from "@/components/assets/detail/AssetStructureTab"
 import { useLoad } from "@/components/assets/detail/use-load";
 import { WARRANTY_TONE, warrantyState } from "@/components/assets/detail/warranty";
 import { AssetHistoryView } from "@/components/assets/history/AssetHistoryView";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -104,7 +105,7 @@ const TAB_ICON: Record<AssetTab, typeof Info> = {
   history: History,
 };
 
-export function AssetDetailDialog() {
+export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => void } = {}) {
   const { t } = useTranslation("equipment");
   const { formatDate } = useFormatters();
   const assetId = useAssetSearchStore((s) => s.selectedResultId);
@@ -190,6 +191,7 @@ export function AssetDetailDialog() {
         ) : (
           <>
             <DialogHeader className="border-b border-surface-border px-6 pb-4 pt-5">
+              {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
               <div className="flex items-start justify-between gap-4 pr-10">
                 <div className="min-w-0 space-y-1.5">
                   <DialogTitle className="flex items-center gap-2 text-lg font-bold">
