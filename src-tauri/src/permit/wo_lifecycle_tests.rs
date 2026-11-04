@@ -1269,6 +1269,53 @@ async fn a_closure_received_over_running_work_puts_it_on_hold_after_the_apply() 
     );
 }
 
+/// L4-08 (CMMS Advisor decision 9): running work under a permit whose expiry passed is put on
+/// hold by the system with the reason "permit_expired", audited; nothing is held before the
+/// expiry, and a second look writes nothing more.
+#[tokio::test]
+async fn running_work_under_an_expired_permit_is_put_on_hold_by_the_system() {
+    let db = setup().await;
+    let (wo_id, wp) = running_work(&db, "EQ-L408-1").await;
+    let expiry = "2030-01-01T10:00:00Z";
+    db.execute_unprepared(&format!(
+        "UPDATE work_permits SET expires_at = '{expiry}' WHERE id = {}",
+        wp.id
+    ))
+    .await
+    .expect("set expiry");
+
+    let before = crate::permit::ended_hold::hold_expired(&db, "2030-01-01T09:59:59Z").await;
+    assert_eq!(before.expired_held, 0);
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress");
+
+    let at = crate::permit::ended_hold::hold_expired(&db, expiry).await;
+    assert_eq!((at.expired_held, at.failures), (1, 0));
+    assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+    let (reason, by, _) = open_hold(&db, wo_id).await;
+    assert_eq!(reason, crate::wo::execution::PERMIT_EXPIRED_DELAY_REASON);
+    assert_eq!(by, None, "recorded as the system");
+    assert_eq!(
+        scalar_i64(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_events WHERE action_code = '{}' AND actor_id IS NULL \
+                 AND details_json LIKE '%{}%'",
+                crate::wo::execution::AUDIT_HELD_PERMIT_EXPIRED,
+                wp.entity_sync_id
+            )
+        )
+        .await,
+        1
+    );
+    // The permit's own status is not rewritten (lock removal, close and hand-back stay possible).
+    assert_eq!(reread(&db, &wp).await.status, wp.status);
+
+    let version = wo_row_version(&db, wo_id).await;
+    let again = crate::permit::ended_hold::hold_expired(&db, "2030-01-01T10:05:00Z").await;
+    assert_eq!(again.expired_held, 0);
+    assert_eq!(wo_row_version(&db, wo_id).await, version);
+}
+
 /// C1: a suspension received over running work holds it with the reason "permit_suspended".
 #[tokio::test]
 async fn a_suspension_received_over_running_work_puts_it_on_hold_with_the_suspension_reason() {
