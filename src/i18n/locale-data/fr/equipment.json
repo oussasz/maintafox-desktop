@@ -519,7 +519,8 @@
     "apply": {
       "confirmTitle": "Appliquer l'import ?",
       "confirmBody": "{{valid}} ligne(s) valide(s) et {{warning}} avec avertissement seront créées ou mises à jour dans le registre ; {{error}} ligne(s) en erreur ne seront pas importées. Les équipements modifiés ne reviennent pas automatiquement à leur état précédent.",
-      "run": "Appliquer l'import"
+      "run": "Appliquer l'import",
+      "noneImportable": "Aucune ligne valide à importer. Corrigez les erreurs du fichier ou incluez les lignes avec avertissement."
     },
     "done": {
       "title": "Import terminé",
