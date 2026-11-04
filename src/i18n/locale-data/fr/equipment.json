@@ -821,7 +821,6 @@
     "title": "Documents",
     "noPermission": "La consultation des documents nécessite le droit Documentation.",
     "saved": "{{name}} enregistré.",
-    "size": "{{kb}} Ko",
     "download": "Télécharger",
     "downloadNamed": "Télécharger {{name}}",
     "upload": "Ajouter un document",
