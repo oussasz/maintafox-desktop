@@ -1,4 +1,4 @@
-//! Migration 270 — why a permit was cancelled (L4-15, field test p2 7.13): cancelling a permit,
+//! Migration 272 — why a permit was cancelled (L4-15, field test p2 7.13): cancelling a permit,
 //! possibly with padlocks still on, now needs a reason, and the permit keeps who cancelled it, when
 //! and why, shown on the permit and synced with it.
 //!
@@ -18,7 +18,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261104_000270_permit_cancel_reason"
+        "m20261104_000272_permit_cancel_reason"
     }
 }
 
@@ -63,7 +63,7 @@ mod tests {
 
     use crate::migrations::Migrator;
 
-    const NAME: &str = "m20261104_000270_permit_cancel_reason";
+    const NAME: &str = "m20261104_000272_permit_cancel_reason";
 
     /// Permits cancelled before this step are not rewritten: no reason or person is invented.
     #[tokio::test]
@@ -83,7 +83,7 @@ mod tests {
         )
         .await
         .expect("old permit");
-        Migrator::up(&db, None).await.expect("270");
+        Migrator::up(&db, None).await.expect("272");
         let row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,

@@ -83,7 +83,7 @@ pub struct WorkPermit {
     /// ("auto-approbation (site sans 4 yeux)").
     #[serde(default)]
     pub self_approved: bool,
-    /// Why, by whom and when the permit was cancelled (L4-15, migration 270). `None` on a permit
+    /// Why, by whom and when the permit was cancelled (L4-15, migration 272). `None` on a permit
     /// cancelled before the reason was required (nothing is invented).
     #[serde(default)]
     pub cancel_reason: Option<String>,

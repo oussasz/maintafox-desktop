@@ -2231,7 +2231,7 @@ async fn set_work_permit_status_in(
     assert_transition_set_status(from, to)?;
 
     // L4-15: a permit, possibly with padlocks still on, is never cancelled without a reason; the
-    // reason, who and when are kept on the permit (migration 270) and audited.
+    // reason, who and when are kept on the permit (migration 272) and audited.
     let cancel_reason = if to == "cancelled" {
         match input.reason.as_deref().map(str::trim) {
             Some(reason) if !reason.is_empty() => Some(reason.to_string()),
