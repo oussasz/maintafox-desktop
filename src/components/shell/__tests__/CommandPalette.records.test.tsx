@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CommandPalette } from "@/components/shell/CommandPalette";
+import { P } from "@shared/rbac/permissions.generated";
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({ WebviewWindow: vi.fn() }));
 const rights = vi.hoisted(() => ({ held: new Set<string>() }));
@@ -40,7 +41,7 @@ function renderPalette() {
 describe("CommandPalette records (L6-23)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    rights.held = new Set(["ot.view", "eq.view"]);
+    rights.held = new Set<string>([P.OT_VIEW, P.EQ_VIEW]);
     ipc.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "list_wo") {
         return { items: [{ id: 7, code: "OT-2026-0007", title: "Fuite pompe" }] };
