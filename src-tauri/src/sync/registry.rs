@@ -499,6 +499,14 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         category: LocalOnlyCategory::ImportStaging,
     },
     LocalOnlyTable {
+        table: "bulk_import_batches",
+        category: LocalOnlyCategory::ImportStaging,
+    },
+    LocalOnlyTable {
+        table: "bulk_import_rows",
+        category: LocalOnlyCategory::ImportStaging,
+    },
+    LocalOnlyTable {
         table: "reference_import_batches",
         category: LocalOnlyCategory::ImportStaging,
     },

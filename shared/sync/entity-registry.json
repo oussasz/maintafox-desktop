@@ -2495,6 +2495,8 @@
     "asset_import_staging": "import_staging",
     "backup_policies": "backup",
     "backup_runs": "backup",
+    "bulk_import_batches": "import_staging",
+    "bulk_import_rows": "import_staging",
     "computation_jobs": "job_queue",
     "connection_profiles": "secrets",
     "entitlement_cache_state": "licensing",
