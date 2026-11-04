@@ -135,15 +135,130 @@ export function retentionLabel(t: TFunction, code: string): string {
   return translated(t, `labels.retention.${code}`, code);
 }
 
-/** A details/summary payload as readable "label: value" lines (nested values summarised). */
-export function payloadLines(payload: unknown): { key: string; value: string }[] {
+/** Whether this version has a translated name for the action (not the readable fallback). */
+export function hasEventLabel(t: TFunction, code: string): boolean {
+  const missing = "__no_label__";
+  return t(`labels.event.${code.replace(/\./g, "__")}`, { defaultValue: missing }) !== missing;
+}
+
+/** Kind of object an audit event is about ("work_order" → "OT"). */
+export function targetTypeLabel(t: TFunction, code: string): string {
+  return translated(t, `labels.target.${code}`, code);
+}
+
+/** Name of a work-order field in a recorded change ("closed_at" → "Date de clôture"). */
+export function fieldLabel(t: TFunction, code: string): string {
+  return translated(t, `labels.field.${code}`, code);
+}
+
+/** One field changed by an event, values as recorded (labels, dates, numbers, yes/no). */
+export interface FieldChange {
+  field: string;
+  old: unknown;
+  new: unknown;
+}
+
+function asChanges(value: unknown): FieldChange[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((c) => {
+    if (c == null || typeof c !== "object") return [];
+    const rec = c as Record<string, unknown>;
+    return typeof rec["field"] === "string"
+      ? [{ field: rec["field"], old: rec["old"], new: rec["new"] }]
+      : [];
+  });
+}
+
+/**
+ * The field changes (old → new) recorded in an event's details: `changes`, or `detail.changes`
+ * for events written through the compatibility writer. Events recorded before changes were
+ * tracked have none (stored events are never rewritten).
+ */
+export function payloadChanges(payload: unknown): FieldChange[] {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return [];
+  const rec = value as Record<string, unknown>;
+  const own = asChanges(rec["changes"]);
+  if (own.length > 0) return own;
+  const detail = rec["detail"];
+  return detail != null && typeof detail === "object"
+    ? asChanges((detail as Record<string, unknown>)["changes"])
+    : [];
+}
+
+/**
+ * The event's field values were not recorded: the work order was also changed by someone else
+ * at the same time (`wo::audit::CHANGES_UNAVAILABLE`).
+ */
+export function payloadChangesUnavailable(payload: unknown): boolean {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return false;
+    }
+  }
+  if (value == null || typeof value !== "object") return false;
+  const rec = value as Record<string, unknown>;
+  const detail = rec["detail"];
+  return (
+    rec["changes_unavailable"] === true ||
+    (detail != null &&
+      typeof detail === "object" &&
+      (detail as Record<string, unknown>)["changes_unavailable"] === true)
+  );
+}
+
+/** Keys shown under the changes or only in the technical details, not as detail lines. */
+const TECHNICAL_KEYS = new Set([
+  "changes",
+  "changes_unavailable",
+  "source",
+  "device_id",
+  "actor_name",
+]);
+
+/**
+ * A details/summary payload as readable "label: value" lines (nested values summarised). Keys
+ * are translated (`labels.detailKey.*`, readable fallback otherwise) when `t` is given; the field
+ * changes and technical keys (sync ids, copy markers) are left out. `hideSummary` drops the stored
+ * summary (written by the backend in its own words) when the event's name already says it.
+ */
+export function payloadLines(
+  payload: unknown,
+  t?: TFunction,
+  options: { hideSummary?: boolean } = {},
+): { key: string; value: string }[] {
   if (payload == null) return [];
   if (typeof payload !== "object" || Array.isArray(payload)) {
     return [{ key: "", value: formatValue(payload) }];
   }
   return Object.entries(payload as Record<string, unknown>)
     .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => ({ key: humanizeCode(k), value: formatValue(v) }));
+    .filter(([k]) => !TECHNICAL_KEYS.has(k) && !k.endsWith("sync_id"))
+    .filter(([k]) => !(options.hideSummary && k === "summary"))
+    .filter(([k, v]) => !(k === "detail" && isOnlyChanges(v)))
+    .map(([k, v]) => ({
+      key: t ? translated(t, `labels.detailKey.${k}`, k) : humanizeCode(k),
+      value: formatValue(v),
+    }));
+}
+
+function isOnlyChanges(v: unknown): boolean {
+  return (
+    v != null &&
+    typeof v === "object" &&
+    Object.keys(v as object).length > 0 &&
+    Object.keys(v as object).every((k) => k === "changes" || k === "changes_unavailable")
+  );
 }
 
 function formatValue(v: unknown): string {
