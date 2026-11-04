@@ -526,4 +526,7 @@ pub struct RecordPmMeterReadingInput {
     pub reading_value: f64,
     pub reading_at: Option<String>,
     pub kind: Option<String>,
+    /// Set once the person has confirmed a value far above the meter's usual use.
+    #[serde(default)]
+    pub confirm_jump: Option<bool>,
 }

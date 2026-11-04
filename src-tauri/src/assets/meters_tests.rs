@@ -903,4 +903,196 @@ mod tests {
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
     }
+
+    // ── L2-01 — cancel a wrong reading, warn on abnormal jumps ───────────
+
+    async fn hours_meter(db: &sea_orm::DatabaseConnection, code: &str, rate: Option<f64>) -> meters::AssetMeter {
+        let node_id = setup_org_node(db).await;
+        setup_equipment_class(db).await;
+        let asset = create_test_asset(db, code, node_id).await;
+        meters::create_asset_meter(
+            db,
+            CreateAssetMeterPayload {
+                asset_id: asset.id,
+                name: "Hours".to_string(),
+                meter_code: None,
+                meter_type: "HOURS".to_string(),
+                unit_value_id: Some(crate::reference::units::unit_id_by_code(db, "H").await.expect("unit")),
+                initial_reading: None,
+                expected_rate_per_day: rate,
+                rollover_value: None,
+                is_primary: Some(false),
+            },
+            1,
+        )
+        .await
+        .expect("create meter")
+    }
+
+    fn reading(meter_id: i64, value: f64, at: &str) -> RecordMeterReadingPayload {
+        RecordMeterReadingPayload {
+            meter_id,
+            reading_value: value,
+            reading_at: Some(at.to_string()),
+            source_type: "MANUAL".to_string(),
+            source_reference: None,
+            quality_flag: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn l2_01_jump_needs_confirmation_then_cancel_restores_the_meter() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-A", Some(10.0)).await;
+        meters::record_meter_reading_checked(&db, reading(meter.id, 1000.0, "2026-04-01T08:00:00Z"), false, 1)
+            .await
+            .expect("first reading");
+
+        // 12 450 typed instead of 1 245 over ten days of about 10 h/day.
+        let err =
+            meters::record_meter_reading_checked(&db, reading(meter.id, 12_450.0, "2026-04-11T08:00:00Z"), false, 1)
+                .await
+                .expect_err("abnormal jump is refused until confirmed");
+        match err {
+            AppError::ValidationFailed(m) => assert!(m.iter().any(|x| x.contains("GATE_ASSET_METER_JUMP_UNCONFIRMED"))),
+            other => panic!("unexpected: {other:?}"),
+        }
+        let warning = meters::assess_meter_reading(&db, meter.id, 12_450.0, Some("2026-04-11T08:00:00Z".into()))
+            .await
+            .expect("assess")
+            .expect("warning");
+        assert!((warning.expected_delta - 100.0).abs() < 1e-6);
+        assert!(
+            meters::assess_meter_reading(&db, meter.id, 1_100.0, Some("2026-04-11T08:00:00Z".into()))
+                .await
+                .expect("assess")
+                .is_none()
+        );
+
+        // Confirmed (the user really typed it), then found wrong: cancel with a reason.
+        let wrong =
+            meters::record_meter_reading_checked(&db, reading(meter.id, 12_450.0, "2026-04-11T08:00:00Z"), true, 1)
+                .await
+                .expect("confirmed jump");
+        let cancelled = meters::cancel_meter_reading(&db, wrong.id, "  erreur de saisie  ", 1)
+            .await
+            .expect("cancel");
+        assert!(cancelled.is_cancelled);
+        assert_eq!(cancelled.cancel_reason.as_deref(), Some("erreur de saisie"));
+
+        let m = meters::list_asset_meters(&db, meter.asset_id).await.expect("list")[0].clone();
+        assert!(
+            (m.current_reading - 1000.0).abs() < 1e-6,
+            "meter back to the previous reading"
+        );
+        let latest = meters::get_latest_meter_value(&db, meter.id)
+            .await
+            .expect("latest")
+            .expect("some");
+        assert!((latest.reading_value - 1000.0).abs() < 1e-6);
+
+        // The cancelled reading stays in the history, the marker row does not.
+        let history = meters::list_meter_readings(&db, meter.id, None).await.expect("history");
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .any(|r| r.is_cancelled && (r.reading_value - 12_450.0).abs() < 1e-6));
+        assert!(history.iter().all(|r| r.created_by_id == Some(1)));
+
+        // The right value can now be recorded (a lower one than the cancelled value).
+        meters::record_meter_reading_checked(&db, reading(meter.id, 1_245.0, "2026-04-11T09:00:00Z"), false, 1)
+            .await
+            .expect("correct reading after the cancellation");
+
+        let audited: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'asset.meter_reading_cancelled'"
+                    .to_string(),
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n");
+        assert_eq!(audited, 1);
+    }
+
+    #[tokio::test]
+    async fn l2_01_cancel_needs_a_reason_and_only_the_latest_reading() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-B", None).await;
+        let first = meters::record_meter_reading(&db, reading(meter.id, 100.0, "2026-04-01T08:00:00Z"), 1)
+            .await
+            .expect("first");
+        let second = meters::record_meter_reading(&db, reading(meter.id, 150.0, "2026-04-02T08:00:00Z"), 1)
+            .await
+            .expect("second");
+
+        assert!(
+            meters::cancel_meter_reading(&db, second.id, "   ", 1).await.is_err(),
+            "reason required"
+        );
+        assert!(
+            meters::cancel_meter_reading(&db, first.id, "motif", 1).await.is_err(),
+            "an older reading is not the latest"
+        );
+        meters::cancel_meter_reading(&db, second.id, "motif", 1)
+            .await
+            .expect("cancel latest");
+        assert!(
+            meters::cancel_meter_reading(&db, second.id, "motif", 1).await.is_err(),
+            "already cancelled"
+        );
+        // Now the first one is the latest valid reading, but also the only one: the meter's starting
+        // value is not kept as a reading, so cancelling it would drop the meter to zero.
+        let err = meters::cancel_meter_reading(&db, first.id, "motif", 1)
+            .await
+            .expect_err("the only reading cannot be cancelled");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_CANCEL_ONLY_READING"));
+        let m = meters::list_asset_meters(&db, meter.asset_id).await.expect("list")[0].clone();
+        assert!((m.current_reading - 100.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn l2_01_two_cancellations_of_one_reading_show_it_once() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-C", None).await;
+        meters::record_meter_reading(&db, reading(meter.id, 100.0, "2026-04-01T08:00:00Z"), 1)
+            .await
+            .expect("first");
+        let second = meters::record_meter_reading(&db, reading(meter.id, 150.0, "2026-04-02T08:00:00Z"), 1)
+            .await
+            .expect("second");
+        meters::cancel_meter_reading(&db, second.id, "motif", 1)
+            .await
+            .expect("cancel");
+        // A second device cancelled the same reading offline: its marker arrives through sync.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO asset_meter_readings \
+             (meter_id, reading_value, reading_at, source_type, quality_flag, created_by_id, created_at, \
+              reading_kind, entity_sync_id, cancels_sync_id, cancel_reason) \
+             VALUES (?, 150.0, '2026-04-03T08:00:00Z', 'MANUAL', 'cancelled', 1, '2026-04-03T08:00:00Z', \
+                     'cancellation', 'other-device-marker', ?, 'autre appareil')",
+            [meter.id.into(), second.entity_sync_id.clone().into()],
+        ))
+        .await
+        .expect("second marker");
+        let history = meters::list_meter_readings(&db, meter.id, None).await.expect("history");
+        assert_eq!(history.len(), 2, "each reading once, markers hidden");
+        assert_eq!(history.iter().filter(|r| r.is_cancelled).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn l2_01_cancelled_quality_is_reserved_for_markers() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-D", None).await;
+        let mut payload = reading(meter.id, 100.0, "2026-04-01T08:00:00Z");
+        payload.quality_flag = Some("cancelled".to_string());
+        let err = meters::record_meter_reading(&db, payload, 1)
+            .await
+            .expect_err("reserved quality");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_QUALITY_RESERVED"));
+    }
 }
