@@ -782,6 +782,35 @@
       "to_check_other": "{{count}} à vérifier",
       "no_operating_hours": "Pas d'heures de marche"
     },
+    "methods": {
+      "title": "Quelle analyse faire ?",
+      "hint": "Cochez un ou plusieurs équipements de même type dans la liste ci-dessous, puis choisissez l'analyse.",
+      "selectTitle": "Aucun équipement coché",
+      "selectBody": "Cochez d'abord un ou plusieurs équipements dans la liste ci-dessous, puis relancez l'analyse.",
+      "choose": "Choisir des équipements",
+      "start": "Analyser la sélection ({{count}})",
+      "weibull": {
+        "title": "Durée de vie (Weibull)",
+        "line": "Estime quand et comment l'équipement tombe en panne : usure, panne précoce ou panne au hasard."
+      },
+      "fmeca": {
+        "title": "AMDEC",
+        "line": "Liste les défaillances possibles, leur cause et leur gravité, pour décider où agir en premier."
+      },
+      "rcm": {
+        "title": "RCM (maintenance fondée sur la fiabilité)",
+        "line": "Choisit pour chaque défaillance la bonne action : inspection, remplacement planifié ou rien."
+      },
+      "ishikawa": {
+        "title": "Ishikawa (arbre des causes)",
+        "line": "Cherche les causes d'une panne qui se répète : main-d'œuvre, méthode, matériel, milieu, matière."
+      },
+      "studies": {
+        "title": "Études enregistrées",
+        "line": "Reprenez une étude commencée ou consultez les décisions déjà prises.",
+        "open": "Voir les études"
+      }
+    },
     "studies": {
       "title": "Études enregistrées",
       "hint": "Une étude garde son périmètre, les enregistrements exclus avec leur motif, les coûts et les décisions.",
