@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   DollarSign,
   CheckSquare,
+  FileUp,
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
@@ -185,6 +186,13 @@ export const defaultNavItems: NavItem[] = [
     path: "/lookups",
     icon: <BookOpen className="h-4 w-4" />,
     requiredPermission: P.REF_VIEW,
+  },
+  {
+    key: "imports",
+    labelKey: "nav.imports",
+    path: "/imports",
+    icon: <FileUp className="h-4 w-4" />,
+    requiredPermission: P.ORG_MANAGE,
   },
   {
     key: "documentation",

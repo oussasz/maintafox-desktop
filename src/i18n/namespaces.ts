@@ -28,6 +28,7 @@ export const MODULE_NAMESPACES = {
   org: "org", // §6.2 Organization
   personnel: "personnel", // §6.6 Personnel
   reference: "reference", // §6.13 Reference Data / Lookups
+  imports: "imports", // Data imports wizard (organisation, stock, plans, history)
   inventory: "inventory", // §6.8 Inventory
   pm: "pm", // §6.9 Preventive Maintenance
   planning: "planning", // §6.16 Planning

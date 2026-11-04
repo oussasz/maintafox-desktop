@@ -1,0 +1,78 @@
+{
+  "title": "Imports de données",
+  "description": "Chargez votre usine depuis des fichiers Excel ou CSV : vérification avant écriture, raison de chaque ligne refusée, modèle à télécharger.",
+  "guide": {
+    "title": "Dans quel ordre charger les données ?",
+    "intro": "Chaque import s'appuie sur le précédent : un code inconnu est refusé, jamais créé automatiquement.",
+    "s0": "1. Listes de référence (Données de référence > Importer) : classes, familles, unités, priorités, causes de panne…",
+    "s1": "2. Organisation : sites, zones, lignes (cet écran).",
+    "s2": "3. Centres de coût.",
+    "s3": "4. Personnel, puis équipes et compétences (Personnel > Importer).",
+    "s4": "5. Équipements (Équipements > Importer), puis compteurs.",
+    "s5": "6. Magasins, articles, fournisseurs et stock d'ouverture.",
+    "s6": "7. Plans préventifs (ils arrivent en brouillon, un planificateur les publie).",
+    "s7": "8. Historique : ordres de travail et pannes passés (pour que les indicateurs de fiabilité ne démarrent pas à vide).",
+    "rules": "Règles communes : relancer le même fichier met à jour sans créer de doublon ; un import ne supprime jamais ce qui manque dans le fichier ; une cellule vide reste vide."
+  },
+  "choose": {
+    "title": "Que voulez-vous importer ?",
+    "needs": "À charger avant :"
+  },
+  "columns": {
+    "name": "Colonne",
+    "required": "Obligatoire",
+    "hint": "Contenu attendu",
+    "yes": "Oui",
+    "no": "Non"
+  },
+  "file": {
+    "template": "Télécharger le modèle vide",
+    "export": "Exporter les données actuelles",
+    "choose": "Choisir un fichier",
+    "saved": "Fichier enregistré",
+    "saveFailed": "Enregistrement impossible",
+    "badType": "Choisissez un fichier CSV ou Excel (.xlsx)."
+  },
+  "preview": {
+    "title": "Vérification de {{file}}",
+    "hint": "Rien n'est encore écrit. Les lignes refusées ne seront pas importées ; corrigez le fichier et rechargez-le si besoin.",
+    "appliedHint": "Import appliqué.",
+    "total": "{{n}} lignes",
+    "ok": "{{n}} correctes",
+    "warnings": "{{n}} avec avertissement",
+    "errors": "{{n}} refusées",
+    "ignored": "Colonnes ignorées (inconnues) : {{columns}}",
+    "data": "Contenu",
+    "status": "Résultat",
+    "action": "Action",
+    "messages": "Détail",
+    "s": {
+      "ok": "Correcte",
+      "warning": "Avertissement",
+      "error": "Refusée"
+    },
+    "a": {
+      "create": "Sera créée",
+      "update": "Sera mise à jour",
+      "skip": "Rien à faire"
+    },
+    "applied": {
+      "created": "Créée",
+      "updated": "Mise à jour",
+      "skipped": "Inchangée",
+      "failed": "Échec"
+    }
+  },
+  "result": {
+    "summary": "{{created}} créées, {{updated}} mises à jour, {{skipped}} inchangées, {{failed}} en échec."
+  },
+  "apply": {
+    "run": "Importer {{n}} ligne(s)",
+    "cancel": "Abandonner",
+    "another": "Importer un autre fichier",
+    "nothing": "Aucune ligne à importer : toutes sont refusées ou déjà à jour.",
+    "confirmTitle": "Appliquer l'import ?",
+    "confirmBody": "{{n}} ligne(s) seront écrites. {{errors}} ligne(s) refusée(s) seront ignorées. Une confirmation de votre mot de passe peut être demandée.",
+    "confirmLabel": "Appliquer l'import"
+  }
+}
