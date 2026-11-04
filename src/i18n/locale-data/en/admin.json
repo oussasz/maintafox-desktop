@@ -1132,8 +1132,8 @@
         "title_other": "This account already has plant-wide roles.",
         "replace": "Replace the plant-wide role \"{{role}}\"",
         "hint": "A replaced role ends right away; it stays in the account history.",
-        "kept_one": "The role \"{{roles}}\" stays in place: it still gives access to every site, so the site limit has no effect.",
-        "kept_other": "The roles {{roles}} stay in place: they still give access to every site, so the site limit has no effect."
+        "kept_one": "The role \"{{roles}}\" stays in place: it still gives access to every site: the site limit therefore has no effect.",
+        "kept_other": "The roles {{roles}} stay in place: they still give access to every site: the site limit therefore has no effect."
       },
       "confirm": "Assign"
     },

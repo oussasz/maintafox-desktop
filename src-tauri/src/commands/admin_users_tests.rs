@@ -3088,3 +3088,55 @@ async fn assignment_by_role(db: &DatabaseConnection, user: i64, role: i64) -> i6
     )
     .await
 }
+
+#[tokio::test]
+async fn the_top_node_of_a_superseded_structure_is_not_the_whole_plant() {
+    let db = crate::db::test_db::seeded().await;
+    seed_org(&db).await;
+    let state = AppState::new(db.clone());
+    let caller = admin_caller(&db).await;
+    let user = insert_user(&db, "site_old_top").await;
+    let roles = ordinary_roles(&db).await;
+    // A role on the top node of structure 901, which is then superseded by structure 902.
+    let old_top = assign_role_scope_impl(
+        &state,
+        &caller,
+        assign(user, roles[1], "org_node", Some("901")),
+        false,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    for sql in [
+        "UPDATE org_structure_models SET status = 'superseded' WHERE id = 901",
+        "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
+         VALUES (902, 'adm-model-2', 2, 'active', datetime('now'), datetime('now'))",
+        "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+         VALUES (902, 'adm-nt-2', 902, 'SITE', 'Site', 1, datetime('now'), datetime('now'))",
+        "INSERT INTO org_nodes (id, entity_sync_id, structure_model_id, code, name, node_type_id, status, created_at, updated_at) \
+         VALUES (910, 'adm-top-2', 902, 'TOP-2', 'Top 2', 902, 'active', datetime('now'), datetime('now'))",
+        "INSERT INTO org_nodes (id, entity_sync_id, structure_model_id, code, name, node_type_id, parent_id, status, created_at, updated_at) \
+         VALUES (911, 'adm-site-2', 902, 'SITE-2', 'Site 2', 902, 910, 'active', datetime('now'), datetime('now'))",
+    ] {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("second structure");
+    }
+    let rows_before = assignment_rows(&db, user).await;
+
+    let r = assign_role_scope_impl(
+        &state,
+        &caller,
+        replacing(user, roles[0], "911", &[old_top]),
+        false,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&r, Err(AppError::ValidationFailed(m)) if m[0].starts_with("GATE_ADMIN_REPLACE_NOT_PLANT_WIDE")),
+        "{r:?}"
+    );
+    assert!(!is_ended(&db, old_top).await, "nothing ended");
+    assert_eq!(assignment_rows(&db, user).await, rows_before, "nothing granted");
+}
