@@ -50,7 +50,7 @@ function toast(title: string, variant: "success" | "destructive", description?: 
 
 export function AssetDocumentsTab({ asset }: { asset: Asset }) {
   const { t } = useTranslation(["equipment", "documentation"]);
-  const { formatDate, formatNumber } = useFormatters();
+  const { formatDate, formatBytes } = useFormatters();
   const { can } = usePermissions();
   const canView = can(P.DOC_VIEW);
   const load = useMemo(
@@ -102,9 +102,7 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
                     (categories.option(doc.category)?.review_required ?? true) ? (
                       <ReviewMark className="ms-1" />
                     ) : null}{" "}
-                    · {doc.fileName} ·{" "}
-                    {t("documents.size", { kb: formatNumber(Math.ceil(doc.sizeBytes / 1024)) })} ·{" "}
-                    {formatDate(doc.uploadedAt)}
+                    · {doc.fileName} · {formatBytes(doc.sizeBytes)} · {formatDate(doc.uploadedAt)}
                   </p>
                 </div>
                 <Button

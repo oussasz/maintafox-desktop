@@ -5,7 +5,7 @@
     "retry": "Veuillez r\u00e9essayer.",
     "contactSupport": "Si le probl\u00e8me persiste, contactez le support.",
     "notFound": "L'\u00e9l\u00e9ment demand\u00e9 est introuvable.",
-    "forbidden": "Vous n'\u00eates pas autoris\u00e9 \u00e0 effectuer cette action.",
+    "forbidden": "Vous n'\u00eates pas autoris\u00e9 \u00e0 effectuer cette action. Demandez le droit à votre administrateur.",
     "serverError": "Erreur interne du serveur.",
     "timeout": "La requ\u00eate a expir\u00e9. V\u00e9rifiez votre connexion.",
     "offline": "Impossible de contacter le serveur. V\u00e9rifiez votre connexion r\u00e9seau.",
@@ -13,7 +13,7 @@
     "conflict": "Conflit de donn\u00e9es. Rechargez et r\u00e9essayez.",
     "rateLimit": "Trop de requ\u00eates. Veuillez patienter.",
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
-    "rightRequired": "Droit requis : {{right}}"
+    "rightRequired": "Droit requis : {{right}}. Demandez-le à votre administrateur."
   },
   "licence": {
     "notInForceTitle": "Licence pas en vigueur",

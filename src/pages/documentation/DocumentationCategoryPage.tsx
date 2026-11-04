@@ -358,7 +358,7 @@ function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
 
 export function DocumentationCategoryPage() {
   const { t } = useTranslation("documentation");
-  const { formatDateTime, formatDecimal, formatNumber } = useFormatters();
+  const { formatDateTime, formatBytes: formatSize, formatNumber } = useFormatters();
   const { categorySlug } = useParams<{ categorySlug: string }>();
   const { can } = usePermissions();
   const categories = useDocumentCategories();
@@ -401,15 +401,6 @@ export function DocumentationCategoryPage() {
     setDocs([]);
     void load();
   }, [load]);
-
-  const formatSize = useCallback(
-    (bytes: number) => {
-      if (bytes < 1024) return t("size.bytes", { value: formatNumber(bytes) });
-      if (bytes < 1024 * 1024) return t("size.kb", { value: formatDecimal(bytes / 1024, 1) });
-      return t("size.mb", { value: formatDecimal(bytes / (1024 * 1024), 1) });
-    },
-    [t, formatNumber, formatDecimal],
-  );
 
   const handleDownload = useCallback(
     async (doc: LibraryDocument) => {

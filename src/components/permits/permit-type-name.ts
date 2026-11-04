@@ -1,7 +1,7 @@
 /**
  * Shipped permit types show their name in the user's language while the stored name is still the
  * one the app seeded (`m20260615_000067_permit_domain_core`: LOTO, Hot work, Confined space, Cold
- * work, Electrical LV). The type is recognised by its code, never by the name text; a name the
+ * work, Electrical LV; `m20261104_000274_permit_type_work_at_height`: Work at height). The type is recognised by its code, never by the name text; a name the
  * plant typed (or changed) is shown exactly as stored.
  */
 
@@ -15,6 +15,8 @@ export const SEEDED_PERMIT_TYPE_NAMES: Readonly<Record<string, string>> = {
   confined_space: "Confined space",
   cold_work: "Cold work",
   electrical_lv: "Electrical LV",
+  // Added later (`m20261104_000274_permit_type_work_at_height`, L4-07).
+  work_at_height: "Work at height",
 };
 
 /** The text key (`permits` namespace) of a shipped type's translated name, or null. */

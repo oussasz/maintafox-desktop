@@ -296,7 +296,8 @@
       "hot_work": "Travail par point chaud",
       "confined_space": "Espace confiné",
       "cold_work": "Travail à froid",
-      "electrical_lv": "Électricité basse tension"
+      "electrical_lv": "Électricité basse tension",
+      "work_at_height": "Travail en hauteur"
     },
     "new": "Nouveau type",
     "code": "Code",

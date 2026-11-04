@@ -33,7 +33,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("shipped permit type names", () => {
-  it("lists exactly the names the migration seeds, by code", () => {
+  it("lists exactly the names the migrations seed, by code", () => {
     const sql = readFileSync(
       "src-tauri/src/migrations/m20260615_000067_permit_domain_core.rs",
       "utf8",
@@ -41,6 +41,14 @@ describe("shipped permit type names", () => {
     const seeded = [
       ...sql.matchAll(/'[0-9a-f-]{36}', '(\w+)', '([^']+)', '[^']*', \d, \d, \d/g),
     ].map((m) => [m[1], m[2]]);
+    // Types added later: one per migration, as `CODE` and `NAME` constants.
+    const later = readFileSync(
+      "src-tauri/src/migrations/m20261104_000274_permit_type_work_at_height.rs",
+      "utf8",
+    );
+    const code = /const CODE: &str = "(\w+)";/.exec(later)?.[1];
+    const name = /const NAME: &str = "([^"]+)";/.exec(later)?.[1];
+    seeded.push([String(code), String(name)]);
     expect(Object.fromEntries(seeded)).toEqual(SEEDED_PERMIT_TYPE_NAMES);
   });
 
