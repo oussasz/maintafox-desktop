@@ -310,6 +310,7 @@ async fn a_flagless_part_line_received_by_sync_is_required() {
             origin: None,
             is_required: false,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("optional line");

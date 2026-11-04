@@ -38,6 +38,12 @@ vi.mock("@/services/inventory-service", async (importOriginal) => {
   return { ...actual, ...svc };
 });
 vi.mock("@/services/wo-service", () => wo);
+// The list of parts "à sortir" above the desk (its own test: PartsToIssuePanel.test.tsx).
+vi.mock("@/services/wo-execution-service", () => ({
+  listWoPartsToIssue: vi.fn().mockResolvedValue([]),
+  issueWoPartToIssue: vi.fn(),
+  cancelWoPartToIssue: vi.fn(),
+}));
 vi.mock("@/services/reference-service", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, ...ref };

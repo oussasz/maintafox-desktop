@@ -3,7 +3,9 @@ import { invoke } from "@/lib/ipc-invoke";
 import { notifyWoCostChanged } from "@/lib/wo-cost-events";
 import type {
   AddWoToolInput,
+  CancelWoPartToIssueInput,
   DowntimeType,
+  IssueWoPartToIssueInput,
   TaskResultCode,
   WoDelaySegment,
   WoDowntimeSegment,
@@ -12,6 +14,7 @@ import type {
   WoExecutionEvent,
   WoIntervener,
   WoMechCompleteInput,
+  WoPartToIssue,
   WoPlanAdherence,
   WoTool,
   WorkOrder,
@@ -199,6 +202,21 @@ export async function recordPartUsage(
       unitCost: unitCost ?? null,
     }),
   );
+}
+
+/** Parts "à sortir": used by someone without the stock right, waiting for the storekeeper. */
+export async function listWoPartsToIssue(): Promise<WoPartToIssue[]> {
+  return invoke<WoPartToIssue[]>("list_wo_parts_to_issue");
+}
+
+/** The storekeeper issues a part "à sortir" (stock leaves the store, audited). */
+export async function issueWoPartToIssue(input: IssueWoPartToIssueInput): Promise<WoExecPart> {
+  return announceCost(await invoke<WoExecPart>("issue_wo_part_to_issue", { input }));
+}
+
+/** A quantity "à sortir" withdrawn with a reason (no stock moves, audited). */
+export async function cancelWoPartToIssue(input: CancelWoPartToIssueInput): Promise<WoExecPart> {
+  return announceCost(await invoke<WoExecPart>("cancel_wo_part_to_issue", { input }));
 }
 
 export async function confirmNoParts(woId: number): Promise<void> {

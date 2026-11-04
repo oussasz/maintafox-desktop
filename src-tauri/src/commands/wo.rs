@@ -1268,11 +1268,39 @@ pub async fn list_wo_labor_candidates(state: State<'_, AppState>) -> AppResult<V
 // P) add_part — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Whether the user may move stock (`inv.manage`, as the store desk checks it, L3-21): refused by
+/// the role, the entitlement or the licence means "à sortir" for the storekeeper, never an error
+/// of the work-order action itself.
+async fn stock_authority(state: &AppState, user_id: i32) -> AppResult<parts::StockAuthority> {
+    let perm = crate::rbac::permissions::INV_MANAGE;
+    let held = crate::auth::rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        perm,
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !held {
+        return Ok(parts::StockAuthority::RequestOnly);
+    }
+    let enforced = match crate::entitlements::queries::enforce_capability_for_permission(&state.db, perm).await {
+        Ok(()) => crate::license::queries::enforce_permission_matrix(&state.db, user_id, perm).await,
+        Err(err) => Err(err),
+    };
+    match enforced {
+        Ok(()) => Ok(parts::StockAuthority::MayMoveStock),
+        Err(AppError::PermissionDenied(_) | AppError::LicenseDenied { .. }) => Ok(parts::StockAuthority::RequestOnly),
+        Err(err) => Err(err),
+    }
+}
+
 #[tauri::command]
 pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
-    parts::add_planned_part(&state.db, input).await
+    let authority = stock_authority(&state, user.user_id).await?;
+    parts::add_planned_part(&state.db, input, authority).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1295,7 +1323,68 @@ pub async fn record_part_usage(
         wo_part_id,
     )
     .await?;
-    parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost).await
+    let authority = stock_authority(&state, user.user_id).await?;
+    parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost, authority).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q2) parts "à sortir" — the storekeeper's list, issue and cancellation (L3-21)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn list_wo_parts_to_issue(state: State<'_, AppState>) -> AppResult<Vec<parts::PartToIssue>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    parts::list_parts_to_issue(&state.db).await
+}
+
+#[tauri::command]
+pub async fn issue_wo_part_to_issue(
+    input: parts::IssuePartToIssueInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    let issued = parts::issue_part_to_issue(&state.db, input, i64::from(user.user_id)).await?;
+    // An issue reaching an already settled OT is a late cost (finance settlement), as at the desk.
+    crate::finance::settlement::post_late_costs_best_effort(
+        &state.db,
+        &[issued.work_order_id],
+        i64::from(user.user_id),
+    )
+    .await;
+    Ok(issued)
+}
+
+/// The storekeeper (stock right) or whoever edits the work order (the person who recorded the
+/// use) withdraws a quantity "à sortir" with a reason; no stock moves.
+#[tauri::command]
+pub async fn cancel_wo_part_to_issue(
+    input: parts::CancelPartToIssueInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    if stock_authority(&state, user.user_id).await? == parts::StockAuthority::RequestOnly {
+        require_on_child(
+            &state,
+            user.user_id,
+            crate::rbac::permissions::OT_EDIT,
+            access::WoChild::Part,
+            input.wo_part_id,
+        )
+        .await?;
+    }
+    parts::cancel_part_to_issue(&state.db, input, i64::from(user.user_id)).await
 }
 
 #[tauri::command]

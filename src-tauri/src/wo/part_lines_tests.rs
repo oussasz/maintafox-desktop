@@ -197,6 +197,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add planned part")
@@ -438,6 +439,7 @@ mod tests {
                 origin: Some("execution_added".into()),
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add");
@@ -485,7 +487,7 @@ mod tests {
             .await
             .expect("cancel");
         set_wo_status(&db, wo_id, "in_progress").await;
-        let err = parts::record_actual_usage(&db, part.id, 1.0, None)
+        let err = parts::record_actual_usage(&db, part.id, 1.0, None, crate::wo::parts::StockAuthority::MayMoveStock)
             .await
             .expect_err("cancelled line");
         assert_eq!(refusal_code(err), part_line_codes::CANCELLED);
@@ -700,7 +702,7 @@ mod tests {
         set_wo_status(&db, wo_id, "in_progress").await;
 
         fail_used_quantity_update(&db).await;
-        parts::record_actual_usage(&db, part.id, 2.0, None)
+        parts::record_actual_usage(&db, part.id, 2.0, None, crate::wo::parts::StockAuthority::MayMoveStock)
             .await
             .expect_err("the used quantity cannot be written");
         assert_eq!(movements(&db, article_id, "ISSUE").await, 0, "no stock movement");
@@ -713,7 +715,7 @@ mod tests {
         assert_eq!(line.quantity_used, None);
 
         drop_used_quantity_failure(&db).await;
-        let used = parts::record_actual_usage(&db, part.id, 2.0, None)
+        let used = parts::record_actual_usage(&db, part.id, 2.0, None, crate::wo::parts::StockAuthority::MayMoveStock)
             .await
             .expect("retry");
         assert_eq!(used.quantity_used, Some(2.0));
@@ -742,6 +744,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add part without reservation");
@@ -749,7 +752,7 @@ mod tests {
         set_wo_status(&db, wo_id, "in_progress").await;
 
         fail_used_quantity_update(&db).await;
-        parts::record_actual_usage(&db, part.id, 2.0, None)
+        parts::record_actual_usage(&db, part.id, 2.0, None, crate::wo::parts::StockAuthority::MayMoveStock)
             .await
             .expect_err("the used quantity cannot be written");
         assert_eq!(movements(&db, article_id, "RESERVE").await, 0);
@@ -761,7 +764,7 @@ mod tests {
         assert_eq!(line.quantity_issued, 0.0);
 
         drop_used_quantity_failure(&db).await;
-        parts::record_actual_usage(&db, part.id, 2.0, None)
+        parts::record_actual_usage(&db, part.id, 2.0, None, crate::wo::parts::StockAuthority::MayMoveStock)
             .await
             .expect("retry");
         assert_eq!(movements(&db, article_id, "ISSUE").await, 1, "issued once");

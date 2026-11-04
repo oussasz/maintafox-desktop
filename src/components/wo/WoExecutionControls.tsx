@@ -241,6 +241,24 @@ function OriginBadge({
   );
 }
 
+/** Used quantity not yet issued from the store ("à sortir"): the storekeeper issues it. */
+function PartToIssueChip({ part }: { part: WoExecPart }) {
+  const { t } = useTranslation("ot");
+  if (!(part.pending_issue_qty > 0)) return null;
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+      title={t("execution.parts.toIssue.hint")}
+    >
+      {t("execution.parts.toIssue.badge", {
+        qty: part.pending_issue_qty,
+        unit: part.unit_symbol ?? "",
+      })}
+    </Badge>
+  );
+}
+
 function executionLogI18nKey(summaryKey: string): string {
   if (summaryKey.startsWith("executionLog.")) {
     return `execution.${summaryKey}`;
@@ -970,13 +988,13 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     const actuallyUsedParts = useMemo(
       () =>
-        parts.filter(
+        activeParts.filter(
           (p) =>
             p.origin === "execution_added" ||
             p.consumption_status === "used" ||
             (p.quantity_used ?? 0) > 0,
         ),
-      [parts],
+      [activeParts],
     );
 
     const downtimeLostMinutes = useMemo(
@@ -1216,6 +1234,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                                 })
                               : t("execution.parts.badge.notUsed")}
                           </Badge>
+                          <PartToIssueChip part={part} />
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
@@ -1350,6 +1369,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
                     </span>
                     <OriginBadge origin={part.origin} t={t} />
+                    <PartToIssueChip part={part} />
                   </div>
                 ))}
               </div>

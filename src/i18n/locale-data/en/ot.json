@@ -637,6 +637,10 @@
       "summaryPlanned": "{{pending}} / {{total}} planned lines still need Used or Not used",
       "markUsed": "Used",
       "usedQtyLabel": "Qty: {{qty}}",
+      "toIssue": {
+        "badge": "To issue: {{qty}} {{unit}}",
+        "hint": "Part recorded without the stock right: the storekeeper issues it from stock at the issue desk. The work order cannot be closed before."
+      },
       "badge": {
         "used": "Used ({{qty}})",
         "notUsed": "Not used"
@@ -651,6 +655,7 @@
         "qty": "Quantity used",
         "save": "Add part",
         "stockHint": "Choose the article and the location it was taken from: the quantity is reserved and issued from stock. Use “Non-stock” only for an item the store does not manage.",
+        "stockHintRequest": "Choose the article and the location it was taken from. Without the stock right, the part is recorded “to issue”: the storekeeper issues it from stock, nothing moves before. Use “Non-stock” only for an item the store does not manage.",
         "modeLabel": "Part origin",
         "modeStock": "Stock article",
         "modeNonStock": "Non-stock",
@@ -725,6 +730,8 @@
       "partUsed": "Part used: {{label}}",
       "partNotUsed": "Part marked unused: {{label}}",
       "partCancelled": "Planned part line cancelled: {{label}}",
+      "partIssued": "Part issued from the store: {{label}}",
+      "partToIssueCancelled": "Part to issue cancelled: {{label}}",
       "partSetRequired": "Part line set to required: {{label}}",
       "partSetOptional": "Part line set to optional: {{label}}",
       "partAdded": "Part added during execution: {{label}}",
