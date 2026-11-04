@@ -637,13 +637,20 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add_planned_part");
 
-        parts::record_actual_usage(&db, part.id, 2.0, Some(45.0))
-            .await
-            .expect("record_actual_usage");
+        parts::record_actual_usage(
+            &db,
+            part.id,
+            2.0,
+            Some(45.0),
+            crate::wo::parts::StockAuthority::MayMoveStock,
+        )
+        .await
+        .expect("record_actual_usage");
 
         let rv = seed_rams_for_complete(&db, wo.id).await;
 
@@ -907,13 +914,20 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add part");
 
-        parts::record_actual_usage(&db, part.id, 2.0, Some(45.0))
-            .await
-            .expect("record usage");
+        parts::record_actual_usage(
+            &db,
+            part.id,
+            2.0,
+            Some(45.0),
+            crate::wo::parts::StockAuthority::MayMoveStock,
+        )
+        .await
+        .expect("record usage");
 
         costs::update_service_cost(
             &db,
@@ -1342,6 +1356,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add_part");
@@ -1429,9 +1444,15 @@ mod tests {
         .await;
 
         // Phase E — Mechanical completion
-        parts::record_actual_usage(&db, part.id, 2.0, Some(45.0))
-            .await
-            .expect("record_part_usage");
+        parts::record_actual_usage(
+            &db,
+            part.id,
+            2.0,
+            Some(45.0),
+            crate::wo::parts::StockAuthority::MayMoveStock,
+        )
+        .await
+        .expect("record_part_usage");
 
         labor::close_labor_entry(&db, labor_row.id, "2026-04-10T10:00:00Z".into(), actor)
             .await

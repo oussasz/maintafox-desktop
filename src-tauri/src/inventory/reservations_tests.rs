@@ -406,12 +406,19 @@ async fn closing_a_work_order_releases_both_kinds_of_reservation_with_an_audit_e
             origin: None,
             is_required: true,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("part line");
-    parts::record_actual_usage(&db, part.id, 1.0, Some(20.0))
-        .await
-        .expect("usage");
+    parts::record_actual_usage(
+        &db,
+        part.id,
+        1.0,
+        Some(20.0),
+        crate::wo::parts::StockAuthority::MayMoveStock,
+    )
+    .await
+    .expect("usage");
     exec(
         &db,
         "UPDATE work_order_parts SET reservation_id = ? WHERE id = ?",
@@ -546,6 +553,7 @@ async fn cancelling_a_work_order_releases_both_kinds_of_reservation_with_an_audi
             origin: None,
             is_required: true,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("planned part");
@@ -565,6 +573,7 @@ async fn cancelling_a_work_order_releases_both_kinds_of_reservation_with_an_audi
             origin: None,
             is_required: false,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("reference line");
@@ -1367,6 +1376,7 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
             origin: None,
             is_required: true,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("planned part");
@@ -1389,6 +1399,7 @@ async fn the_d13_upgrade_releases_open_reservations_of_ended_work_orders_once() 
             origin: None,
             is_required: false,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("reference line");

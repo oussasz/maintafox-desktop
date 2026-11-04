@@ -389,13 +389,20 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             origin: None,
             is_required: true,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("part");
 
-    parts::record_actual_usage(db, part.id, 2.0, Some(45.0))
-        .await
-        .expect("usage");
+    parts::record_actual_usage(
+        db,
+        part.id,
+        2.0,
+        Some(45.0),
+        crate::wo::parts::StockAuthority::MayMoveStock,
+    )
+    .await
+    .expect("usage");
 
     // RAMS data-quality gate: failure coding (symptom) and RCA must exist BEFORE mechanical completion.
     let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
@@ -1341,13 +1348,20 @@ async fn test_obs_12_full_observability_chain() {
             origin: None,
             is_required: true,
         },
+        crate::wo::parts::StockAuthority::MayMoveStock,
     )
     .await
     .expect("part");
 
-    parts::record_actual_usage(&db, part.id, 2.0, Some(45.0))
-        .await
-        .expect("usage");
+    parts::record_actual_usage(
+        &db,
+        part.id,
+        2.0,
+        Some(45.0),
+        crate::wo::parts::StockAuthority::MayMoveStock,
+    )
+    .await
+    .expect("usage");
 
     // RAMS data-quality gate: failure coding + RCA before mechanical completion.
     let obs12_symptom = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")

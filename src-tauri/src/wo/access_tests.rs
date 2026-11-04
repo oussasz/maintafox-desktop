@@ -585,7 +585,7 @@ async fn actions_and_child_records_are_checked_at_the_work_orders_site() {
     let mut parts = Vec::new();
     for wo_id in [f.wo_a, f.wo_b, f.wo_none] {
         parts.push(
-            crate::wo::parts::add_planned_part(&f.db, part(wo_id))
+            crate::wo::parts::add_planned_part(&f.db, part(wo_id), crate::wo::parts::StockAuthority::MayMoveStock)
                 .await
                 .expect("part line")
                 .id,

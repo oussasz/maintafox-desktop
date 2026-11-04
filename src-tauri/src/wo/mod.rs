@@ -50,6 +50,8 @@ mod migration_tests;
 #[cfg(test)]
 mod part_lines_tests;
 #[cfg(test)]
+mod parts_to_issue_tests;
+#[cfg(test)]
 mod retired_equipment_review_tests;
 #[cfg(test)]
 mod retired_equipment_tests;
