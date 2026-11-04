@@ -69,6 +69,7 @@ pub const SPEC: EntitySpec = EntitySpec {
 };
 
 struct Existing {
+    code: String,
     name: String,
     entity_id: Option<i64>,
     parent_code: Option<String>,
@@ -111,6 +112,7 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         existing.insert(
             key(&code),
             Existing {
+                code: code.clone(),
                 name: r.try_get("", "name")?,
                 entity_id: r.try_get("", "entity_id")?,
                 parent_code: r.try_get::<Option<String>>("", "parent_code")?.map(|p| key(&p)),
@@ -135,13 +137,15 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         sites.entry(key(&code)).or_insert(r.try_get("", "id")?);
     }
 
-    // Personnel numbers, with the user account of the person when there is one.
+    // Personnel numbers, with the live user account of the person when there is one (a disabled or
+    // deleted account does not count).
     let mut people: HashMap<String, Option<i64>> = HashMap::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT p.employee_code AS code, MIN(ua.id) AS user_id \
-             FROM personnel p LEFT JOIN user_accounts ua ON ua.personnel_id = p.id \
+             FROM personnel p LEFT JOIN user_accounts ua \
+               ON ua.personnel_id = p.id AND ua.is_active = 1 AND ua.deleted_at IS NULL \
              GROUP BY p.id"
                 .to_string(),
         ))
@@ -236,128 +240,42 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         });
     }
 
-    // Who is the parent of each code once the file is applied?
-    let mut effective_parent: HashMap<String, Option<String>> = HashMap::new();
-    for (k, e) in &existing {
-        effective_parent.insert(k.clone(), e.parent_code.clone());
-    }
-    for (i, l) in lines.iter().enumerate() {
-        if l.code.is_empty() || first_row_of.get(&key(&l.code)) != Some(&i) {
-            continue;
-        }
-        match &l.parent {
-            Some(p) => {
-                effective_parent.insert(key(&l.code), Some(key(p)));
-            }
-            None => {
-                effective_parent.entry(key(&l.code)).or_insert(None);
-            }
-        }
-    }
-    // Is each code active once the file is applied?
-    let mut active_after: HashMap<String, bool> = existing.iter().map(|(k, e)| (k.clone(), e.active)).collect();
-    for (i, l) in lines.iter().enumerate() {
-        if l.code.is_empty() || first_row_of.get(&key(&l.code)) != Some(&i) {
-            continue;
-        }
-        let was = active_after.get(&key(&l.code)).copied().unwrap_or(true);
-        active_after.insert(key(&l.code), l.active.unwrap_or(was));
-    }
-
-    // Second pass: rules that need the whole file.
+    // Rules that only need the line and what already exists.
     for (i, line) in lines.iter_mut().enumerate() {
         if line.code.is_empty() || first_row_of.get(&key(&line.code)) != Some(&i) {
             continue;
         }
         let me = key(&line.code);
         let is_new = !existing.contains_key(&me);
-        let mut extra: Vec<RowMessage> = Vec::new();
         // Name and site are needed to create a cost centre; an existing one keeps what a blank
         // cell leaves out.
         if is_new && line.name.is_empty() {
-            extra.push(RowMessage::error("CC_IMPORT_NAME", "Le libellé est obligatoire."));
+            line.messages
+                .push(RowMessage::error("CC_IMPORT_NAME", "Le libellé est obligatoire."));
         }
         if is_new && line.site.is_none() {
-            extra.push(RowMessage::error(
+            line.messages.push(RowMessage::error(
                 "CC_IMPORT_SITE",
                 "Le code site est obligatoire pour un nouveau centre de coût.",
             ));
         }
-        if let Some(p) = line.parent.clone() {
-            let pk = key(&p);
+        if let Some(p) = &line.parent {
+            let pk = key(p);
             if pk == me {
-                extra.push(RowMessage::error(
+                line.messages.push(RowMessage::error(
                     "CC_IMPORT_CYCLE",
                     "Un centre de coût ne peut pas être son propre parent.",
                 ));
             } else if !existing.contains_key(&pk) && !first_row_of.contains_key(&pk) {
-                extra.push(RowMessage::error(
+                line.messages.push(RowMessage::error(
                     "CC_IMPORT_PARENT_UNKNOWN",
                     format!("Le parent « {p} » est introuvable : ni parmi les centres de coût, ni dans le fichier."),
                 ));
-            } else {
-                let mut cur = Some(pk.clone());
-                let mut steps = 0;
-                let mut in_loop = false;
-                while let Some(c) = cur {
-                    if c == me {
-                        in_loop = true;
-                        extra.push(RowMessage::error(
-                            "CC_IMPORT_CYCLE",
-                            format!("Le parent « {p} » crée une boucle dans la hiérarchie."),
-                        ));
-                        break;
-                    }
-                    steps += 1;
-                    if steps > 500 {
-                        break;
-                    }
-                    cur = effective_parent.get(&c).cloned().flatten();
-                }
-                let child_active = active_after.get(&me).copied().unwrap_or(true);
-                if !in_loop && child_active && active_after.get(&pk) == Some(&false) {
-                    extra.push(RowMessage::error(
-                        "CC_IMPORT_PARENT_INACTIVE",
-                        format!("Le parent « {p} » est inactif : un centre actif ne peut pas être rattaché dessous."),
-                    ));
-                }
             }
         }
-        line.messages.extend(extra);
     }
 
-    // A child whose parent is created in this file and refused there cannot be imported either.
-    loop {
-        let mut changed = false;
-        for i in 0..lines.len() {
-            let me = key(&lines[i].code);
-            if lines[i].code.is_empty()
-                || first_row_of.get(&me) != Some(&i)
-                || lines[i].messages.iter().any(|m| m.severity == "error")
-            {
-                continue;
-            }
-            let Some(p) = lines[i].parent.clone() else {
-                continue;
-            };
-            let pk = key(&p);
-            if existing.contains_key(&pk) {
-                continue;
-            }
-            if let Some(pi) = first_row_of.get(&pk) {
-                if lines[*pi].messages.iter().any(|m| m.severity == "error") {
-                    lines[i].messages.push(RowMessage::error(
-                        "CC_IMPORT_PARENT_REFUSED",
-                        format!("Le parent « {p} » est refusé dans ce fichier : corrigez-le d'abord."),
-                    ));
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    hierarchy_rules(&mut lines, &existing, &first_row_of);
 
     Ok(lines
         .into_iter()
@@ -365,21 +283,10 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         .map(|(i, l)| {
             let me = key(&l.code);
             let is_first = !l.code.is_empty() && first_row_of.get(&me) == Some(&i);
-            let ex = if is_first { existing.get(&me) } else { None };
-            let has_error = l.messages.iter().any(|m| m.severity == "error");
-            let owner_id = match l.owner {
-                Owner::User(id) => Some(id),
-                Owner::None | Owner::Unknown | Owner::NoAccount => None,
-            };
-            let action = if has_error || !is_first {
+            let action = if has_error(&l) || !is_first {
                 "skip"
-            } else if let Some(e) = ex {
-                let changed = (!l.name.is_empty() && l.name != e.name)
-                    || l.entity_id.is_some_and(|id| Some(id) != e.entity_id)
-                    || l.parent.as_ref().is_some_and(|p| Some(key(p)) != e.parent_code)
-                    || owner_id.is_some_and(|id| Some(id) != e.owner_id)
-                    || l.active.is_some_and(|a| a != e.active);
-                if changed {
+            } else if let Some(e) = existing.get(&me) {
+                if changes(&l, e) {
                     "update"
                 } else {
                     "skip"
@@ -394,13 +301,140 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                     "name": l.name,
                     "entity_id": l.entity_id,
                     "parent_code": l.parent,
-                    "owner_id": owner_id,
+                    "owner_id": l.owner_id(),
                     "active": l.active,
                 }),
                 messages: l.messages,
             }
         })
         .collect())
+}
+
+impl Line {
+    fn owner_id(&self) -> Option<i64> {
+        match self.owner {
+            Owner::User(id) => Some(id),
+            Owner::None | Owner::Unknown | Owner::NoAccount => None,
+        }
+    }
+}
+
+fn has_error(line: &Line) -> bool {
+    line.messages.iter().any(|m| m.severity == "error")
+}
+
+/// Whether applying the line would change the existing cost centre (blank cells change nothing).
+fn changes(line: &Line, e: &Existing) -> bool {
+    (!line.name.is_empty() && line.name != e.name)
+        || line.entity_id.is_some_and(|id| Some(id) != e.entity_id)
+        || line.parent.as_ref().is_some_and(|p| Some(key(p)) != e.parent_code)
+        || line.owner_id().is_some_and(|id| Some(id) != e.owner_id)
+        || line.active.is_some_and(|a| a != e.active)
+}
+
+/// Parent rules, checked against the hierarchy as it will be once the file is applied: only lines
+/// that are accepted count, so they are re-checked until no further line is refused. A refused line
+/// changes nothing, which can in turn leave another line under an inactive parent or a refused one.
+/// Finance re-checks the same rules when each line is written.
+fn hierarchy_rules(lines: &mut [Line], existing: &HashMap<String, Existing>, first_row_of: &HashMap<String, usize>) {
+    loop {
+        let accepted: Vec<bool> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| !l.code.is_empty() && first_row_of.get(&key(&l.code)) == Some(&i) && !has_error(l))
+            .collect();
+
+        // Parent, active flag and shown code of each cost centre once the accepted lines are applied.
+        let mut parent_after: HashMap<String, Option<String>> = HashMap::new();
+        let mut active_after: HashMap<String, bool> = HashMap::new();
+        let mut shown: HashMap<String, String> = HashMap::new();
+        for (k, e) in existing {
+            parent_after.insert(k.clone(), e.parent_code.clone());
+            active_after.insert(k.clone(), e.active);
+            shown.insert(k.clone(), e.code.clone());
+        }
+        for (i, l) in lines.iter().enumerate() {
+            if !accepted[i] {
+                continue;
+            }
+            let me = key(&l.code);
+            match &l.parent {
+                Some(p) => {
+                    parent_after.insert(me.clone(), Some(key(p)));
+                }
+                None => {
+                    parent_after.entry(me.clone()).or_insert(None);
+                }
+            }
+            let was = active_after.get(&me).copied().unwrap_or(true);
+            active_after.insert(me.clone(), l.active.unwrap_or(was));
+            shown.entry(me).or_insert_with(|| l.code.clone());
+        }
+
+        let mut refusals: Vec<(usize, RowMessage)> = Vec::new();
+        for (i, l) in lines.iter().enumerate() {
+            if !accepted[i] {
+                continue;
+            }
+            let me = key(&l.code);
+            // A line that changes nothing is skipped and checks nothing.
+            if existing.get(&me).is_some_and(|e| !changes(l, e)) {
+                continue;
+            }
+            // The parent after the import: the one in the line, or the current one when the cell is blank.
+            let Some(pk) = parent_after.get(&me).cloned().flatten() else {
+                continue;
+            };
+            let p = shown.get(&pk).cloned().unwrap_or_else(|| pk.clone());
+            if first_row_of.get(&pk).is_some_and(|pi| !accepted[*pi]) {
+                refusals.push((
+                    i,
+                    RowMessage::error(
+                        "CC_IMPORT_PARENT_REFUSED",
+                        format!("Le parent « {p} » est refusé dans ce fichier : corrigez-le d'abord."),
+                    ),
+                ));
+                continue;
+            }
+            let mut cur = Some(pk.clone());
+            let mut steps = 0;
+            let mut in_loop = false;
+            while let Some(c) = cur {
+                if c == me {
+                    in_loop = true;
+                    break;
+                }
+                steps += 1;
+                if steps > 500 {
+                    break;
+                }
+                cur = parent_after.get(&c).cloned().flatten();
+            }
+            if in_loop {
+                refusals.push((
+                    i,
+                    RowMessage::error(
+                        "CC_IMPORT_CYCLE",
+                        format!("Le parent « {p} » crée une boucle dans la hiérarchie."),
+                    ),
+                ));
+            } else if active_after.get(&me).copied().unwrap_or(true) && active_after.get(&pk) == Some(&false) {
+                refusals.push((
+                    i,
+                    RowMessage::error(
+                        "CC_IMPORT_PARENT_INACTIVE",
+                        format!("Le parent « {p} » est inactif : un centre actif ne peut pas être rattaché dessous."),
+                    ),
+                ));
+            }
+        }
+        if refusals.is_empty() {
+            break;
+        }
+        for (i, m) in refusals {
+            lines[i].messages.push(m);
+        }
+    }
 }
 
 fn fail(row: &StagedRow, message: impl Into<String>) -> RowApplied {
@@ -418,128 +452,116 @@ fn app_error_text(e: &AppError) -> String {
     }
 }
 
+fn text(row: &StagedRow, field: &str) -> String {
+    row.normalized[field].as_str().unwrap_or_default().to_string()
+}
+
+/// Id and row version of a cost centre, matched on the code the same way as the preview (trimmed,
+/// any letter case, accented letters included).
 async fn cost_centre_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Option<(i64, i64)>> {
-    Ok(db
-        .query_one(Statement::from_sql_and_values(
+    let wanted = key(code);
+    for r in db
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, row_version FROM cost_centers WHERE lower(code) = lower(?)",
-            [code.into()],
+            "SELECT id, code, row_version FROM cost_centers".to_string(),
         ))
         .await?
-        .map(|r| {
-            (
-                r.try_get("", "id").unwrap_or_default(),
-                r.try_get("", "row_version").unwrap_or_default(),
-            )
-        }))
+    {
+        let c: String = r.try_get("", "code")?;
+        if key(&c) == wanted {
+            return Ok(Some((r.try_get("", "id")?, r.try_get("", "row_version")?)));
+        }
+    }
+    Ok(None)
+}
+
+/// Writes one line. `Ok(Err(reason))` means finance refused it for now: it is tried again while
+/// other lines go through, since a parent created or reactivated later in the file may unblock it.
+async fn apply_one(db: &DatabaseConnection, row: &StagedRow) -> AppResult<Result<&'static str, String>> {
+    let code = text(row, "code");
+    let parent_id = match row.normalized["parent_code"].as_str() {
+        None => None,
+        Some(p) => match cost_centre_by_code(db, p).await? {
+            Some((pid, _)) => Some(pid),
+            None => {
+                return Ok(Err(format!(
+                    "Le parent « {p} » n'existe pas : ce centre de coût n'a pas été importé."
+                )))
+            }
+        },
+    };
+    let active = row.normalized["active"].as_bool();
+    let owner = row.normalized["owner_id"].as_i64();
+    let entity_id = row.normalized["entity_id"].as_i64();
+    if row.action == "create" {
+        let created = queries::create_cost_center(
+            db,
+            CreateCostCenterInput {
+                code,
+                name: text(row, "name"),
+                entity_id,
+                parent_cost_center_id: parent_id,
+                budget_owner_id: owner,
+                erp_external_id: None,
+                is_active: active,
+            },
+        )
+        .await;
+        return Ok(created.map(|_| "created").map_err(|e| app_error_text(&e)));
+    }
+    let Some((id, version)) = cost_centre_by_code(db, &code).await? else {
+        return Ok(Err(format!("Le centre de coût « {code} » n'existe plus.")));
+    };
+    let name = text(row, "name");
+    let updated = queries::update_cost_center(
+        db,
+        id,
+        version,
+        UpdateCostCenterInput {
+            code: None,
+            name: (!name.is_empty()).then_some(name),
+            entity_id,
+            parent_cost_center_id: parent_id,
+            budget_owner_id: owner,
+            erp_external_id: None,
+            is_active: active,
+        },
+    )
+    .await;
+    Ok(updated.map(|_| "updated").map_err(|e| app_error_text(&e)))
 }
 
 pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec<RowApplied>> {
     let mut out: Vec<RowApplied> = Vec::new();
-    let text = |row: &StagedRow, field: &str| row.normalized[field].as_str().unwrap_or_default().to_string();
 
-    // New cost centres: a parent created in this file must exist before its children.
-    let mut pending: Vec<&StagedRow> = rows.iter().filter(|r| r.action == "create").collect();
+    // New and existing cost centres in one queue, tried again as long as at least one line goes
+    // through: a parent created, moved or reactivated anywhere in the file is then in place before
+    // its children, whatever the depth.
+    let mut pending: Vec<(&StagedRow, String)> = rows
+        .iter()
+        .filter(|r| r.action == "create" || r.action == "update")
+        .map(|r| (r, String::new()))
+        .collect();
     loop {
         let before_len = pending.len();
-        let mut still: Vec<&StagedRow> = Vec::new();
-        for row in pending {
-            let parent_id = match row.normalized["parent_code"].as_str() {
-                None => None,
-                Some(p) => {
-                    if let Some((id, _)) = cost_centre_by_code(db, p).await? {
-                        Some(id)
-                    } else {
-                        still.push(row);
-                        continue;
-                    }
-                }
-            };
-            let created = queries::create_cost_center(
-                db,
-                CreateCostCenterInput {
-                    code: text(row, "code"),
-                    name: text(row, "name"),
-                    entity_id: row.normalized["entity_id"].as_i64(),
-                    parent_cost_center_id: parent_id,
-                    budget_owner_id: row.normalized["owner_id"].as_i64(),
-                    erp_external_id: None,
-                    is_active: row.normalized["active"].as_bool(),
-                },
-            )
-            .await;
-            out.push(match created {
-                Ok(_) => RowApplied {
+        let mut still: Vec<(&StagedRow, String)> = Vec::new();
+        for (row, _) in pending {
+            match apply_one(db, row).await? {
+                Ok(status) => out.push(RowApplied {
                     row_id: row.id,
-                    status: "created",
+                    status,
                     message: String::new(),
-                },
-                Err(e) => fail(row, app_error_text(&e)),
-            });
+                }),
+                Err(reason) => still.push((row, reason)),
+            }
         }
         pending = still;
         if pending.is_empty() || pending.len() == before_len {
             break;
         }
     }
-    for row in pending {
-        out.push(fail(
-            row,
-            "Le parent n'a pas pu être créé : ce centre de coût n'a pas été importé.",
-        ));
-    }
-
-    // Existing cost centres: two passes, so a parent reactivated later in the file does not block
-    // its children.
-    let mut todo: Vec<&StagedRow> = rows.iter().filter(|r| r.action == "update").collect();
-    for pass in 0..2 {
-        let mut retry: Vec<&StagedRow> = Vec::new();
-        for row in todo {
-            let code = text(row, "code");
-            let Some((id, version)) = cost_centre_by_code(db, &code).await? else {
-                out.push(fail(row, format!("Le centre de coût « {code} » n'existe plus.")));
-                continue;
-            };
-            let parent_id = match row.normalized["parent_code"].as_str() {
-                None => None,
-                Some(p) => match cost_centre_by_code(db, p).await? {
-                    Some((pid, _)) => Some(pid),
-                    None => {
-                        out.push(fail(row, format!("Le parent « {p} » n'existe pas.")));
-                        continue;
-                    }
-                },
-            };
-            let name = text(row, "name");
-            let result = queries::update_cost_center(
-                db,
-                id,
-                version,
-                UpdateCostCenterInput {
-                    code: None,
-                    name: (!name.is_empty()).then_some(name),
-                    entity_id: row.normalized["entity_id"].as_i64(),
-                    parent_cost_center_id: parent_id,
-                    budget_owner_id: row.normalized["owner_id"].as_i64(),
-                    erp_external_id: None,
-                    is_active: row.normalized["active"].as_bool(),
-                },
-            )
-            .await;
-            match result {
-                Ok(_) => out.push(RowApplied {
-                    row_id: row.id,
-                    status: "updated",
-                    message: String::new(),
-                }),
-                Err(_) if pass == 0 => retry.push(row),
-                Err(e) => out.push(fail(row, app_error_text(&e))),
-            }
-        }
-        todo = retry;
-        if todo.is_empty() {
-            break;
-        }
+    for (row, reason) in pending {
+        out.push(fail(row, reason));
     }
 
     // Lines with nothing to do are reported as skipped.

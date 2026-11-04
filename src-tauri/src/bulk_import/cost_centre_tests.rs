@@ -154,4 +154,192 @@ mod tests {
         let p = bulk_import::get_preview(&db, round.id).await.expect("preview");
         assert!(p.rows.iter().all(|r| r.action == "skip" && r.status == "ok"));
     }
+
+    async fn exec(db: &DatabaseConnection, sql: &str) {
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect(sql);
+    }
+
+    /// A person with the given personnel number; `account` adds a user account (live or disabled).
+    async fn person(db: &DatabaseConnection, code: &str, account: Option<bool>) -> Option<i64> {
+        exec(
+            db,
+            &format!("INSERT INTO personnel (employee_code, full_name, availability_status) VALUES ('{code}', '{code}', 'available')"),
+        )
+        .await;
+        let live = account?;
+        exec(
+            db,
+            &format!(
+                "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+                 force_password_change, personnel_id, created_at, updated_at) \
+                 SELECT 'cc-{code}', 'u-{code}', '{code}', 'local', {}, 0, 0, id, datetime('now'), datetime('now') \
+                 FROM personnel WHERE employee_code = '{code}'",
+                i64::from(live)
+            ),
+        )
+        .await;
+        let r = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT id FROM user_accounts WHERE username = 'u-{code}'"),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        Some(r.try_get("", "id").unwrap())
+    }
+
+    async fn owner_of(db: &DatabaseConnection, code: &str) -> Option<i64> {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT budget_owner_id FROM cost_centers WHERE code = ?",
+            [code.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "budget_owner_id")
+        .unwrap()
+    }
+
+    async fn active_of(db: &DatabaseConnection, code: &str) -> bool {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT is_active FROM cost_centers WHERE code = ?",
+            [code.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "is_active")
+        .unwrap()
+            != 0
+    }
+
+    async fn message_codes(db: &DatabaseConnection, csv: &str) -> (i64, Vec<Vec<String>>) {
+        let b = bulk_import::create_batch(db, input("cost_centre", csv), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(db, b.id).await.expect("preview");
+        (
+            b.id,
+            p.rows
+                .iter()
+                .map(|r| r.messages.iter().map(|m| m.code.clone()).collect())
+                .collect(),
+        )
+    }
+
+    async fn load(db: &DatabaseConnection, csv: &str) {
+        let (id, codes) = message_codes(db, csv).await;
+        assert!(codes.iter().all(Vec::is_empty), "{codes:?}");
+        let res = bulk_import::apply_batch(db, id, 1).await.expect("apply");
+        assert_eq!(res.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn owner_is_the_live_account_of_the_person_and_round_trips_through_export() {
+        let db = db_with_sites().await;
+        let m1 = person(&db, "M1", Some(true)).await;
+        person(&db, "M2", None).await;
+        person(&db, "M3", Some(false)).await;
+        let m4 = person(&db, "M4", Some(true)).await;
+
+        let csv = format!("{HEADER}\nCC1;Maintenance;S1;;M1;\nCC2;Méthodes;S1;;M2;\nCC3;Achats;S1;;M3;\n");
+        let (id, codes) = message_codes(&db, &csv).await;
+        assert!(codes[0].is_empty());
+        // No account, or only a disabled one: a warning, and the owner stays empty.
+        assert_eq!(codes[1], vec!["CC_IMPORT_OWNER_NO_ACCOUNT"]);
+        assert_eq!(codes[2], vec!["CC_IMPORT_OWNER_NO_ACCOUNT"]);
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.created, res.failed), (3, 0));
+        assert_eq!(owner_of(&db, "CC1").await, m1);
+        assert_eq!(owner_of(&db, "CC2").await, None);
+        assert_eq!(owner_of(&db, "CC3").await, None);
+
+        // A new owner is seen as a change.
+        let b = bulk_import::create_batch(&db, input("cost_centre", &format!("{HEADER}\nCC1;;;;M4;\n")), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert_eq!(p.rows[0].action, "update");
+        bulk_import::apply_batch(&db, b.id, 1).await.expect("apply");
+        assert_eq!(owner_of(&db, "CC1").await, m4);
+
+        // The export gives the personnel number back, and loads again with nothing to do.
+        let exported = bulk_import::export(&db, "cost_centre").await.expect("export");
+        let cc1 = exported.rows.iter().find(|r| r[0] == "CC1").expect("CC1 row");
+        assert_eq!(cc1[4], "M4");
+        let mut round = exported.header.join(";");
+        for r in &exported.rows {
+            round.push('\n');
+            round.push_str(&r.join(";"));
+        }
+        let b = bulk_import::create_batch(&db, input("cost_centre", &round), Some(1))
+            .await
+            .expect("re-import");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert!(p.rows.iter().all(|r| r.action == "skip"));
+    }
+
+    #[tokio::test]
+    async fn new_child_under_a_parent_the_file_reactivates_later_is_written() {
+        let db = db_with_sites().await;
+        load(&db, &format!("{HEADER}\nP;Parent;S1;;;non\n")).await;
+        let (id, codes) = message_codes(&db, &format!("{HEADER}\nN;Nouveau;S1;P;;\nP;;;;;oui\n")).await;
+        assert!(codes.iter().all(Vec::is_empty), "{codes:?}");
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.created, res.updated, res.failed), (1, 1, 0));
+        assert_eq!(parent_code_of(&db, "N").await.as_deref(), Some("P"));
+        assert!(active_of(&db, "P").await);
+    }
+
+    #[tokio::test]
+    async fn a_chain_reactivated_from_the_bottom_up_is_written_at_any_depth() {
+        let db = db_with_sites().await;
+        load(
+            &db,
+            &format!("{HEADER}\nP;Racine;S1;;;non\nC;Milieu;S1;P;;non\nG;Bas;S1;C;;non\n"),
+        )
+        .await;
+        let (id, codes) = message_codes(&db, &format!("{HEADER}\nG;;;;;oui\nC;;;;;oui\nP;;;;;oui\n")).await;
+        assert!(codes.iter().all(Vec::is_empty), "{codes:?}");
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.updated, res.failed), (3, 0));
+        for code in ["P", "C", "G"] {
+            assert!(active_of(&db, code).await, "{code}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_blank_parent_cell_is_checked_against_the_current_parent() {
+        let db = db_with_sites().await;
+        load(&db, &format!("{HEADER}\nP;Racine;S1;;;non\nC;Enfant;S1;P;;non\n")).await;
+        // Reactivating only the child: its current parent stays inactive.
+        let (_, codes) = message_codes(&db, &format!("{HEADER}\nC;;;;;oui\n")).await;
+        assert_eq!(codes[0], vec!["CC_IMPORT_PARENT_INACTIVE"]);
+        // Reactivating both is fine.
+        let (id, codes) = message_codes(&db, &format!("{HEADER}\nC;;;;;oui\nP;;;;;oui\n")).await;
+        assert!(codes.iter().all(Vec::is_empty), "{codes:?}");
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.updated, res.failed), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_refused_line_counts_as_not_applied_for_the_lines_under_it() {
+        let db = db_with_sites().await;
+        load(&db, &format!("{HEADER}\nP;Inactif;S1;;;non\nX;Actif;S1;;;\n")).await;
+        // P's reactivation is refused (bad site), so N cannot rely on it; X's line is refused, so a
+        // child under X is refused too even though X exists.
+        let csv = format!("{HEADER}\nP;;NOPE;;;oui\nN;Nouveau;S1;P;;\nX;;NOPE;;;\nY;Sous X;S1;X;;\n");
+        let (id, codes) = message_codes(&db, &csv).await;
+        assert_eq!(codes[0], vec!["CC_IMPORT_SITE"]);
+        assert_eq!(codes[1], vec!["CC_IMPORT_PARENT_REFUSED"]);
+        assert_eq!(codes[2], vec!["CC_IMPORT_SITE"]);
+        assert_eq!(codes[3], vec!["CC_IMPORT_PARENT_REFUSED"]);
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.created, res.updated, res.failed), (0, 0, 0));
+    }
 }
