@@ -672,6 +672,18 @@ describe("PermitDetailPanel — four-eyes approval", () => {
     expect(screen.queryByTestId("permit-approver")).toBeNull();
   });
 
+  it("shows the red expired-permit alert while an open permit is past its expiry (L4-08)", async () => {
+    await show(permit({ status: "active", expires_at: "2020-01-01T00:00:00Z" }));
+    const alert = await screen.findByTestId("permit-overdue");
+    expect(alert).toHaveTextContent(enPermits.overdue.title);
+  });
+
+  it("shows no expired-permit alert once the permit is handed back", async () => {
+    await show(permit({ status: "handed_back", expires_at: "2020-01-01T00:00:00Z" }));
+    expect(await screen.findByTestId("permit-status")).toBeInTheDocument();
+    expect(screen.queryByTestId("permit-overdue")).toBeNull();
+  });
+
   it("greys the approve step with the server's four-eyes reason before any click (L4-14)", async () => {
     svc.checkWorkPermitApproval.mockRejectedValueOnce({ code: "PERMIT_APPROVER_IS_SUBMITTER" });
     const p = permit({

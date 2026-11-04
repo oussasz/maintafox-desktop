@@ -72,6 +72,7 @@ import {
   canCancelIsolation,
   closeBlocker,
   formatAssetLabel,
+  isPermitOverdue,
   isolationState,
   localInputToIso,
   nextTransitions,
@@ -470,6 +471,19 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
           />
         </span>
       </header>
+
+      {/* L4-08: past its expiry the permit no longer covers the work, but its isolations stay until
+          they are removed, the permit closed and handed back. Lock removal and closing stay open. */}
+      {isPermitOverdue(permit) ? (
+        <div
+          role="alert"
+          data-testid="permit-overdue"
+          className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          <p className="font-medium">{t("overdue.title")}</p>
+          <p>{t("overdue.body", { date: fmt(permit.expires_at) })}</p>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
