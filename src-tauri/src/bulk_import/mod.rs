@@ -179,8 +179,29 @@ pub fn normalize_header(header: &str) -> String {
     collapsed.trim_matches('_').to_string()
 }
 
+/// Largest file accepted (a few thousand lines of text is far below this).
+const MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
+/// Most data lines in one file; split bigger files into several.
+const MAX_ROWS: usize = 5000;
+
+fn too_many_rows() -> AppError {
+    gate(
+        "GATE_BULK_IMPORT_FILE",
+        &format!("Le fichier a trop de lignes (maximum {MAX_ROWS}) : découpez-le en plusieurs fichiers."),
+    )
+}
+
 /// Raw cells of the file: the header line and the data lines.
 fn read_cells(source_kind: &str, bytes: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(gate(
+            "GATE_BULK_IMPORT_FILE",
+            &format!(
+                "Le fichier est trop volumineux (maximum {} Mo).",
+                MAX_FILE_BYTES / (1024 * 1024)
+            ),
+        ));
+    }
     match source_kind {
         "csv" => {
             let bytes = crate::assets::import::strip_utf8_bom(bytes);
@@ -209,6 +230,9 @@ fn read_cells(source_kind: &str, bytes: &[u8]) -> AppResult<(Vec<String>, Vec<Ve
                         &format!("Une ligne du fichier est illisible : {e}"),
                     )
                 })?;
+                if rows.len() >= MAX_ROWS {
+                    return Err(too_many_rows());
+                }
                 rows.push(record.iter().map(|v| v.trim().to_string()).collect());
             }
             Ok((headers, rows))
@@ -229,6 +253,9 @@ fn read_cells(source_kind: &str, bytes: &[u8]) -> AppResult<(Vec<String>, Vec<Ve
                         &format!("La première feuille du classeur est illisible : {e}"),
                     )
                 })?;
+            if range.height() > MAX_ROWS + 1 {
+                return Err(too_many_rows());
+            }
             let mut iter = range.rows();
             let Some(first) = iter.next() else {
                 return Ok((Vec::new(), Vec::new()));
@@ -383,6 +410,19 @@ async fn load_batch(db: &impl ConnectionTrait, batch_id: i64) -> AppResult<Batch
     batch_from_row(&row)
 }
 
+/// Which import type a batch belongs to (read before the permission check, so keep it light).
+pub async fn entity_of(db: &DatabaseConnection, batch_id: i64) -> AppResult<String> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT entity FROM bulk_import_batches WHERE id = ?",
+        [batch_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| gate("GATE_BULK_IMPORT_NOT_FOUND", "Ce lot d'import n'existe pas."))?
+    .try_get("", "entity")
+    .map_err(Into::into)
+}
+
 /// Checks run when the batch is created, so the screen shows the preview at once.
 async fn validate(
     db: &DatabaseConnection,
@@ -504,14 +544,20 @@ pub async fn get_preview(db: &DatabaseConnection, batch_id: i64) -> AppResult<Pr
     Ok(Preview { batch, rows })
 }
 
-pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -> AppResult<ApplyResult> {
-    let batch = load_batch(db, batch_id).await?;
-    if batch.status != "validated" {
-        return Err(gate(
-            "GATE_BULK_IMPORT_STATUS",
-            "Ce lot a déjà été appliqué ou n'est plus valide.",
-        ));
-    }
+/// The apply step stopped on a database error part-way: the batch cannot be applied again, the
+/// per-row results already stored say what was written.
+async fn mark_failed(db: &DatabaseConnection, batch_id: i64) {
+    let _ = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE bulk_import_batches SET status = 'failed', updated_at = ? WHERE id = ?",
+            [crate::clock::now().to_rfc3339().into(), batch_id.into()],
+        ))
+        .await;
+}
+
+/// The rows of a batch that passed the check, ready for the entity's apply step.
+async fn staged_rows(db: &DatabaseConnection, batch_id: i64) -> AppResult<Vec<StagedRow>> {
     let staged = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -533,10 +579,57 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
             normalized: serde_json::from_str(&normalized).unwrap_or(Value::Null),
         });
     }
+    Ok(todo)
+}
 
-    let results = match batch.entity.as_str() {
-        "org_tree" => org_tree::apply(db, &todo, user_id).await?,
-        _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
+/// A permission needed on top of the type's own one, because of what this particular batch does
+/// (for example deactivating organisation nodes, which the organisation screen reserves for
+/// administrators). `None` when the type's permission is enough.
+pub async fn extra_permission(db: &DatabaseConnection, batch_id: i64) -> AppResult<Option<&'static str>> {
+    let batch = load_batch(db, batch_id).await?;
+    let rows = staged_rows(db, batch_id).await?;
+    Ok(match batch.entity.as_str() {
+        "org_tree" if org_tree::deactivates_nodes(&rows) => Some(crate::rbac::permissions::ORG_ADMIN),
+        _ => None,
+    })
+}
+
+pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -> AppResult<ApplyResult> {
+    let batch = load_batch(db, batch_id).await?;
+    // Claim the batch before writing anything: a second call (double click, retry) finds it
+    // already taken and stops here instead of running the import twice.
+    let claimed = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE bulk_import_batches SET status = 'applying', updated_at = ? \
+             WHERE id = ? AND status = 'validated'",
+            [crate::clock::now().to_rfc3339().into(), batch_id.into()],
+        ))
+        .await?;
+    if claimed.rows_affected() != 1 {
+        return Err(gate(
+            "GATE_BULK_IMPORT_STATUS",
+            "Ce lot a déjà été appliqué ou n'est plus valide.",
+        ));
+    }
+    let todo = match staged_rows(db, batch_id).await {
+        Ok(t) => t,
+        Err(e) => {
+            mark_failed(db, batch_id).await;
+            return Err(e);
+        }
+    };
+
+    let applied = match batch.entity.as_str() {
+        "org_tree" => org_tree::apply(db, &todo, user_id).await,
+        _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
+    };
+    let results = match applied {
+        Ok(r) => r,
+        Err(e) => {
+            mark_failed(db, batch_id).await;
+            return Err(e);
+        }
     };
 
     let (mut created, mut updated, mut skipped, mut failed) = (0i64, 0i64, 0i64, 0i64);

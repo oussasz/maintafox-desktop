@@ -221,4 +221,84 @@ mod tests {
         let p = bulk_import::get_preview(&db, again.id).await.expect("preview");
         assert!(p.rows.iter().all(|r| r.action == "skip" && r.status == "ok"));
     }
+
+    const BASE: &str = "code;libellé;type de nœud;code parent;actif\n\
+                        S1;Usine;SITE;;\n\
+                        Z1;Zone A;ZONE;S1;\n\
+                        Z2;Zone B;ZONE;S1;\n\
+                        L1;Ligne;LINE;Z1;\n";
+
+    #[tokio::test]
+    async fn a_batch_cannot_be_applied_twice() {
+        let db = setup().await;
+        let b = bulk_import::create_batch(&db, input(BASE), Some(1))
+            .await
+            .expect("batch");
+        bulk_import::apply_batch(&db, b.id, 1).await.expect("first apply");
+        let err = bulk_import::apply_batch(&db, b.id, 1).await.expect_err("second apply");
+        assert!(format!("{err:?}").contains("GATE_BULK_IMPORT_STATUS"));
+    }
+
+    #[tokio::test]
+    async fn deactivation_rules_follow_the_whole_file() {
+        let db = setup().await;
+        let b = bulk_import::create_batch(&db, input(BASE), Some(1))
+            .await
+            .expect("batch");
+        bulk_import::apply_batch(&db, b.id, 1).await.expect("apply base");
+
+        // A parent cannot be deactivated while its child stays active.
+        let alone = "code;libellé;type de nœud;code parent;actif\nZ1;Zone A;ZONE;S1;non\n";
+        let b = bulk_import::create_batch(&db, input(alone), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert_eq!(p.rows[0].messages[0].code, "ORG_IMPORT_ACTIVE_CHILDREN");
+
+        // A new node under a parent that is being deactivated is refused.
+        let under = "code;libellé;type de nœud;code parent;actif\n\
+                     Z2;Zone B;ZONE;S1;non\n\
+                     L9;Nouvelle ligne;LINE;Z2;\n";
+        let b = bulk_import::create_batch(&db, input(under), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert_eq!(p.rows[1].messages[0].code, "ORG_IMPORT_PARENT_INACTIVE");
+
+        // Parent listed before its child: both go, the child first, and the extra right is needed.
+        let both = "code;libellé;type de nœud;code parent;actif\n\
+                    Z1;Zone A;ZONE;S1;non\n\
+                    L1;Ligne;LINE;Z1;non\n";
+        let b = bulk_import::create_batch(&db, input(both), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert!(p.rows.iter().all(|r| r.status == "ok" && r.action == "update"));
+        assert_eq!(
+            bulk_import::extra_permission(&db, b.id).await.expect("extra"),
+            Some(crate::rbac::permissions::ORG_ADMIN)
+        );
+        let res = bulk_import::apply_batch(&db, b.id, 1).await.expect("apply");
+        assert_eq!((res.updated, res.failed), (2, 0));
+
+        // A plain rename needs nothing beyond the type's own permission.
+        let rename = "code;libellé;type de nœud;code parent\nZ2;Zone Sud;ZONE;S1\n";
+        let b = bulk_import::create_batch(&db, input(rename), Some(1))
+            .await
+            .expect("batch");
+        assert_eq!(bulk_import::extra_permission(&db, b.id).await.expect("extra"), None);
+    }
+
+    #[tokio::test]
+    async fn a_file_with_too_many_lines_is_refused() {
+        let db = setup().await;
+        let mut csv = String::from("code;libellé;type de nœud;code parent\n");
+        for i in 0..5001 {
+            csv.push_str(&format!("S{i};Site {i};SITE;\n"));
+        }
+        let err = bulk_import::create_batch(&db, input(&csv), Some(1))
+            .await
+            .expect_err("too many lines");
+        assert!(format!("{err:?}").contains("trop de lignes"));
+    }
 }

@@ -13,7 +13,7 @@ use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 
 async fn entity_of_batch(state: &State<'_, AppState>, batch_id: i64) -> AppResult<String> {
-    Ok(bulk_import::get_preview(&state.db, batch_id).await?.batch.entity)
+    bulk_import::entity_of(&state.db, batch_id).await
 }
 
 #[tauri::command]
@@ -45,6 +45,9 @@ pub async fn apply_bulk_import_batch(batch_id: i64, state: State<'_, AppState>) 
     let entity = entity_of_batch(&state, batch_id).await?;
     let spec = bulk_import::spec(&entity)?;
     require_permission!(state, &user, spec.permission, PermissionScope::Global);
+    if let Some(extra) = bulk_import::extra_permission(&state.db, batch_id).await? {
+        require_permission!(state, &user, extra, PermissionScope::Global);
+    }
     require_step_up!(state);
     bulk_import::apply_batch(&state.db, batch_id, user.user_id).await
 }

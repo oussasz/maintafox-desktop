@@ -139,6 +139,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     }
 
     let mut existing: HashMap<String, ExistingNode> = HashMap::new();
+    // Codes that differ only by case: the file cannot tell which node it means.
+    let mut ambiguous: HashSet<String> = HashSet::new();
     for r in db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -151,6 +153,9 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     {
         let code: String = r.try_get("", "code")?;
         let status: String = r.try_get("", "status")?;
+        if existing.contains_key(&key(&code)) {
+            ambiguous.insert(key(&code));
+        }
         existing.insert(
             key(&code),
             ExistingNode {
@@ -246,6 +251,15 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         let ex = existing.get(&me);
         let my_type_is_root = lines[i].type_id.is_some_and(|t| root_type_ids.contains(&t));
 
+        if ambiguous.contains(&me) {
+            extra.push(RowMessage::error(
+                "ORG_IMPORT_CODE_AMBIGUOUS",
+                format!(
+                    "Plusieurs nœuds existants ont un code qui ne diffère que par la casse (« {} ») : corrigez-les depuis l'écran Organisation.",
+                    lines[i].code
+                ),
+            ));
+        }
         match (ex, &parent) {
             (Some(e), _) => {
                 if lines[i].type_id.is_some_and(|t| t != e.type_id) {
@@ -345,6 +359,48 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             }
         }
         lines[i].messages.extend(extra);
+    }
+
+    // Deactivation rules that depend on the rest of the file.
+    let is_deactivation = |l: &Line, i: usize| {
+        !l.code.is_empty()
+            && first_row_of.get(&key(&l.code)) == Some(&i)
+            && existing.get(&key(&l.code)).is_some_and(|e| e.active)
+            && l.active == Some(false)
+            && !l.messages.iter().any(|m| m.severity == "error")
+    };
+    let mut inactive_after: HashSet<String> = existing
+        .iter()
+        .filter(|(_, e)| !e.active)
+        .map(|(k, _)| k.clone())
+        .collect();
+    for (i, l) in lines.iter().enumerate() {
+        if is_deactivation(l, i) {
+            inactive_after.insert(key(&l.code));
+        }
+    }
+    for (i, line) in lines.iter_mut().enumerate() {
+        let me = key(&line.code);
+        if is_deactivation(line, i) {
+            let blocked = existing.iter().any(|(ck, e)| {
+                e.active && e.parent_code.as_deref() == Some(me.as_str()) && !inactive_after.contains(ck)
+            });
+            if blocked {
+                line.messages.push(RowMessage::error(
+                    "ORG_IMPORT_ACTIVE_CHILDREN",
+                    "Ce nœud a encore des enfants actifs : désactivez-les aussi dans le fichier (ou depuis l'écran Organisation).",
+                ));
+            }
+        } else if !line.code.is_empty() && first_row_of.get(&me) == Some(&i) && !existing.contains_key(&me) {
+            if let Some(p) = line.parent.clone().filter(|p| !p.is_empty()) {
+                if inactive_after.contains(&key(&p)) {
+                    line.messages.push(RowMessage::error(
+                        "ORG_IMPORT_PARENT_INACTIVE",
+                        format!("Le parent « {p} » est inactif (ou le sera après l'import) : on ne crée pas de nœud actif dessous."),
+                    ));
+                }
+            }
+        }
     }
 
     // A child whose new parent is itself refused cannot be created either.
@@ -448,21 +504,55 @@ async fn node_id_by_code(db: &DatabaseConnection, model_id: i64, code: &str) -> 
         }))
 }
 
+async fn depth_by_code(db: &DatabaseConnection, model_id: i64, code: &str) -> AppResult<i64> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT depth FROM org_nodes \
+             WHERE lower(code) = lower(?) AND structure_model_id = ? AND deleted_at IS NULL",
+            [code.into(), model_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<i64>("", "depth").ok())
+        .unwrap_or(0))
+}
+
+/// True when applying these staged rows deactivates an existing node, which the organisation
+/// screen reserves for administrators.
+pub fn deactivates_nodes(rows: &[StagedRow]) -> bool {
+    rows.iter()
+        .any(|r| r.action == "update" && r.normalized["deactivate"].as_bool() == Some(true))
+}
+
 pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) -> AppResult<Vec<RowApplied>> {
     let model_id = crate::org::model_scope::get_active_model_id(db).await?;
     let mut out: Vec<RowApplied> = Vec::new();
 
-    // Renames first: they never depend on another row.
+    // Renames and deactivations first: they never depend on a new node. Deepest nodes first, so a
+    // parent is never deactivated while one of its children (also in the file) is still active.
+    let mut updates: Vec<(&StagedRow, i64)> = Vec::new();
     for row in rows.iter().filter(|r| r.action == "update") {
+        let code = row.normalized["code"].as_str().unwrap_or_default();
+        updates.push((row, depth_by_code(db, model_id, code).await?));
+    }
+    updates.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+    for (row, _) in updates {
         let code = row.normalized["code"].as_str().unwrap_or_default();
         let Some((id, mut version)) = node_id_by_code(db, model_id, code).await? else {
             out.push(fail(row, format!("Le nœud « {code} » n'existe plus.")));
             continue;
         };
-        let before = nodes::get_org_node_by_id(db, id).await.ok();
+        let before = match nodes::get_org_node_by_id(db, id).await {
+            Ok(b) => b,
+            Err(e) => {
+                out.push(fail(row, app_error_text(&e)));
+                continue;
+            }
+        };
         let name = row.normalized["name"].as_str().unwrap_or_default().to_string();
         let mut result: AppResult<()> = Ok(());
-        if before.as_ref().is_some_and(|b| b.name != name) && !name.is_empty() {
+        let renamed = before.name != name && !name.is_empty();
+        if renamed {
             match nodes::update_org_node_metadata(
                 db,
                 UpdateOrgNodeMetadataPayload {
@@ -490,27 +580,51 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
         }
         match result {
             Ok(()) => {
-                if let Ok(after) = nodes::get_org_node_by_id(db, id).await {
-                    let _ = audit::record_org_change(
-                        db,
-                        OrgAuditEventInput {
-                            entity_kind: "org_node".to_string(),
-                            entity_id: Some(id),
-                            change_type: "update_metadata".to_string(),
-                            before_json: before.and_then(|b| serde_json::to_string(&b).ok()),
-                            after_json: serde_json::to_string(&after).ok(),
-                            preview_summary_json: Some("{\"source\":\"bulk_import\"}".to_string()),
-                            changed_by_id: Some(i64::from(user_id)),
-                            requires_step_up: true,
-                            apply_result: "applied".to_string(),
-                        },
-                    )
-                    .await;
+                let mut audit_failure: Option<String> = None;
+                match nodes::get_org_node_by_id(db, id).await {
+                    Ok(after) => {
+                        let before_json = serde_json::to_string(&before).ok();
+                        let after_json = serde_json::to_string(&after).ok();
+                        let mut events: Vec<&str> = Vec::new();
+                        if renamed {
+                            events.push("update_metadata");
+                        }
+                        if row.normalized["deactivate"].as_bool() == Some(true) {
+                            events.push("deactivate_node");
+                        }
+                        for change_type in events {
+                            if let Err(e) = audit::record_org_change(
+                                db,
+                                OrgAuditEventInput {
+                                    entity_kind: "org_node".to_string(),
+                                    entity_id: Some(id),
+                                    change_type: change_type.to_string(),
+                                    before_json: before_json.clone(),
+                                    after_json: after_json.clone(),
+                                    preview_summary_json: Some("{\"source\":\"bulk_import\"}".to_string()),
+                                    changed_by_id: Some(i64::from(user_id)),
+                                    requires_step_up: true,
+                                    apply_result: "applied".to_string(),
+                                },
+                            )
+                            .await
+                            {
+                                audit_failure = Some(app_error_text(&e));
+                            }
+                        }
+                    }
+                    Err(e) => audit_failure = Some(app_error_text(&e)),
                 }
-                out.push(RowApplied {
-                    row_id: row.id,
-                    status: "updated",
-                    message: String::new(),
+                out.push(match audit_failure {
+                    None => RowApplied {
+                        row_id: row.id,
+                        status: "updated",
+                        message: String::new(),
+                    },
+                    Some(why) => fail(
+                        row,
+                        format!("Modifié, mais la trace d'audit n'a pas pu être enregistrée : {why}"),
+                    ),
                 });
             }
             Err(e) => out.push(fail(row, app_error_text(&e))),
@@ -554,7 +668,7 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
             .await;
             match created {
                 Ok(node) => {
-                    let _ = audit::record_org_change(
+                    let audited = audit::record_org_change(
                         db,
                         OrgAuditEventInput {
                             entity_kind: "org_node".to_string(),
@@ -569,10 +683,19 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
                         },
                     )
                     .await;
-                    out.push(RowApplied {
-                        row_id: row.id,
-                        status: "created",
-                        message: String::new(),
+                    out.push(match audited {
+                        Ok(_) => RowApplied {
+                            row_id: row.id,
+                            status: "created",
+                            message: String::new(),
+                        },
+                        Err(e) => fail(
+                            row,
+                            format!(
+                                "Créé, mais la trace d'audit n'a pas pu être enregistrée : {}",
+                                app_error_text(&e)
+                            ),
+                        ),
                     });
                 }
                 Err(e) => out.push(fail(row, app_error_text(&e))),
