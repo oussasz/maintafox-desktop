@@ -124,6 +124,8 @@ export interface RecordPmMeterReadingInput {
   reading_value: number;
   reading_at: string | null;
   kind: PmMeterReadingKind | null;
+  /** Set once the person has confirmed a value far above the meter's usual use. */
+  confirm_jump?: boolean;
 }
 
 const PmPlanSchema = z.object({

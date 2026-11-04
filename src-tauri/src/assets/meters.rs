@@ -404,7 +404,7 @@ const METER_FROM: &str = "equipment_meters em LEFT JOIN reference_values mu ON m
 const READING_SELECT: &str = "mr.id, mr.meter_id, mr.reading_value, mr.reading_at, mr.source_type,      mr.source_reference, mr.quality_flag, mr.created_by_id, mr.created_at, mr.entity_sync_id,      COALESCE(au.display_name, au.username) AS created_by_name,      CASE WHEN c.id IS NULL THEN 0 ELSE 1 END AS is_cancelled,      c.cancel_reason AS cancel_reason, c.created_at AS cancelled_at,      COALESCE(cu.display_name, cu.username) AS cancelled_by_name";
 
 /// `FROM` clause matching [`READING_SELECT`].
-const READING_FROM: &str = "asset_meter_readings mr      LEFT JOIN user_accounts au ON au.id = mr.created_by_id      LEFT JOIN asset_meter_readings c ON c.cancels_sync_id = mr.entity_sync_id      LEFT JOIN user_accounts cu ON cu.id = c.created_by_id";
+const READING_FROM: &str = "asset_meter_readings mr      LEFT JOIN user_accounts au ON au.id = mr.created_by_id      LEFT JOIN asset_meter_readings c ON c.id = (SELECT MIN(x.id) FROM asset_meter_readings x WHERE x.cancels_sync_id = mr.entity_sync_id)     LEFT JOIN user_accounts cu ON cu.id = c.created_by_id";
 
 /// Condition (alias `mr`) of a reading that counts: a real reading, not corrected or rejected, and
 /// not cancelled. Usage-based plans, the study clock and the meter's current value use it.
@@ -592,6 +592,17 @@ pub async fn record_meter_reading_checked(
     record_reading_inner(db, payload, None, confirm_jump, actor_id).await
 }
 
+/// [`record_meter_reading_checked`] when the person also states a rollover or replacement.
+pub async fn record_meter_reading_of_kind_checked(
+    db: &DatabaseConnection,
+    payload: RecordMeterReadingPayload,
+    kind: Option<MeterReadingKind>,
+    confirm_jump: bool,
+    actor_id: i32,
+) -> AppResult<MeterReading> {
+    record_reading_inner(db, payload, kind, confirm_jump, actor_id).await
+}
+
 async fn record_reading_inner(
     db: &DatabaseConnection,
     payload: RecordMeterReadingPayload,
@@ -622,6 +633,14 @@ async fn record_reading_inner(
 
     // ── 4. Quality flag: default to 'accepted' ──────────────────────────
     let quality_flag = payload.quality_flag.as_deref().unwrap_or("accepted").to_string();
+    if quality_flag == "cancelled" {
+        // Reserved for the cancellation marker rows written by `cancel_meter_reading`.
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_METER_QUALITY_RESERVED: Cette qualite de releve est reservee aux annulations.".into(),
+        ]));
+    }
+    // A corrected or rejected reading is kept for the record but never becomes the meter's value.
+    let counts = quality_flag != "corrected" && quality_flag != "rejected";
 
     let now = crate::clock::now().to_rfc3339();
     let reading_at = payload.reading_at.unwrap_or_else(|| now.clone());
@@ -641,14 +660,14 @@ async fn record_reading_inner(
     let mut new_offset = current_offset;
 
     // ── 5. Monotonic timestamp check (skip for corrections) ──────────────
-    if quality_flag != "corrected" {
+    if counts {
         let latest = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 format!(
                     "SELECT mr.reading_at, mr.reading_value FROM asset_meter_readings mr \
                      WHERE mr.meter_id = ? AND {VALID_READING_SQL} \
-                     ORDER BY mr.reading_at DESC, mr.id DESC LIMIT 1"
+                     ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
                 ),
                 [payload.meter_id.into()],
             ))
@@ -725,7 +744,7 @@ async fn record_reading_inner(
 
     // ── 7. Update equipment_meters current value ─────────────────────────
     // Only update if the new reading is the most recent accepted reading.
-    if quality_flag != "corrected" {
+    if counts {
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE equipment_meters SET current_reading = ?, reading_offset = ?, \
@@ -756,7 +775,7 @@ async fn record_reading_inner(
     txn.commit().await?;
 
     // Best-effort PM regen for equipment-scoped meter plans (never fail the reading).
-    if quality_flag != "corrected" {
+    if counts {
         crate::pm::generation_control::try_generate_pm_for_equipment(db, equipment_id).await;
     }
 
@@ -897,7 +916,7 @@ pub async fn assess_meter_reading(
             format!(
                 "SELECT mr.reading_at, mr.reading_value FROM asset_meter_readings mr \
                  WHERE mr.meter_id = ? AND {VALID_READING_SQL} \
-                 ORDER BY mr.reading_at DESC, mr.id DESC LIMIT 1"
+                 ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
             ),
             [meter_id.into()],
         ))
@@ -974,7 +993,7 @@ pub async fn cancel_meter_reading(
                 "SELECT mr.id, mr.reading_at, mr.reading_value, \
                         COALESCE(mr.lifetime_value, mr.reading_value) AS lifetime \
                  FROM asset_meter_readings mr WHERE mr.meter_id = ? AND {VALID_READING_SQL} \
-                 ORDER BY mr.reading_at DESC, mr.id DESC LIMIT 2"
+                 ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 2"
             ),
             [target_reading.meter_id.into()],
         ))
@@ -988,20 +1007,31 @@ pub async fn cancel_meter_reading(
         ]));
     }
 
-    // The meter goes back to the reading before the cancelled one (or to zero, never read).
-    let (restored, restored_at, restored_offset) = match valid.get(1) {
-        Some(prev) => {
-            let value: f64 = prev
-                .try_get("", "reading_value")
-                .map_err(|e| decode_err("reading_value", e))?;
-            let lifetime: f64 = prev.try_get("", "lifetime").map_err(|e| decode_err("lifetime", e))?;
-            let at: String = prev
-                .try_get("", "reading_at")
-                .map_err(|e| decode_err("reading_at", e))?;
-            (value, Some(at), lifetime - value)
-        }
-        None => (0.0, None, 0.0),
+    // The meter goes back to the reading before the cancelled one. The value given when the meter
+    // was created is not kept as a reading, so a meter's only reading cannot be cancelled: the
+    // meter would fall back to zero instead of its real starting value.
+    let Some(prev) = valid.get(1) else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_METER_CANCEL_ONLY_READING: C'est le premier releve du compteur : il ne peut pas etre annule \
+             car la valeur de depart n'est pas conservee. Saisissez un releve plus recent pour le remplacer."
+                .into(),
+        ]));
     };
+    let (restored, restored_at, restored_offset) = {
+        let value: f64 = prev
+            .try_get("", "reading_value")
+            .map_err(|e| decode_err("reading_value", e))?;
+        let lifetime: f64 = prev.try_get("", "lifetime").map_err(|e| decode_err("lifetime", e))?;
+        let at: String = prev
+            .try_get("", "reading_at")
+            .map_err(|e| decode_err("reading_at", e))?;
+        (value, Some(at), lifetime - value)
+    };
+    if target_reading.entity_sync_id.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ASSET_METER_CANCEL_NO_SYNC_ID: Ce releve n'a pas d'identifiant de synchronisation.".into(),
+        ]));
+    }
 
     let now = crate::clock::now().to_rfc3339();
     let marker_sync_id = Uuid::new_v4().to_string();
@@ -1010,7 +1040,7 @@ pub async fn cancel_meter_reading(
         "INSERT INTO asset_meter_readings \
          (meter_id, reading_value, reading_at, source_type, source_reference, quality_flag, created_by_id, \
           created_at, reading_kind, lifetime_value, entity_sync_id, cancels_sync_id, cancel_reason) \
-         VALUES (?, ?, ?, ?, NULL, 'cancelled', ?, ?, 'cancellation', ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, NULL, 'cancelled', ?, ?, 'cancellation', NULL, ?, ?, ?)",
         [
             target_reading.meter_id.into(),
             target_reading.reading_value.into(),
@@ -1018,7 +1048,6 @@ pub async fn cancel_meter_reading(
             target_reading.source_type.clone().into(),
             (actor_id as i64).into(),
             now.clone().into(),
-            target_reading.reading_value.into(),
             marker_sync_id.into(),
             target_reading.entity_sync_id.clone().into(),
             reason.to_string().into(),
@@ -1085,7 +1114,7 @@ pub async fn get_latest_meter_value(db: &DatabaseConnection, meter_id: i64) -> A
     let sql = format!(
         "SELECT {READING_SELECT} FROM {READING_FROM} \
          WHERE mr.meter_id = ? AND {VALID_READING_SQL} \
-         ORDER BY mr.reading_at DESC, mr.id DESC LIMIT 1"
+         ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
     );
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -1115,7 +1144,7 @@ pub async fn list_meter_readings(
     let sql = format!(
         "SELECT {READING_SELECT} FROM {READING_FROM} \
          WHERE mr.meter_id = ? AND mr.cancels_sync_id IS NULL \
-         ORDER BY mr.reading_at DESC, mr.id DESC \
+         ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC \
          LIMIT {row_limit}"
     );
     let rows = db

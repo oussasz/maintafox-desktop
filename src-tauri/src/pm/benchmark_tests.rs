@@ -384,6 +384,7 @@ async fn read_meter(db: &DatabaseConnection, value: f64, at: &str, kind: Option<
             reading_value: value,
             reading_at: Some(at.to_string()),
             kind: kind.map(str::to_string),
+            confirm_jump: Some(true),
         },
         1,
     )
@@ -449,6 +450,7 @@ async fn rollover_and_replacement_keep_counting_usage() {
             reading_value: 10.0,
             reading_at: Some("2026-01-06T00:00:00Z".to_string()),
             kind: Some("normal".to_string()),
+            confirm_jump: Some(true),
         },
         1,
     )

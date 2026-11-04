@@ -239,7 +239,11 @@ function MeterHistory({
   }
   if (data.length === 0) return <p className="text-sm text-text-muted">{t("meters.noReadings")}</p>;
   // Only the latest counted reading can be cancelled (older ones: cancel the newer first).
-  const latestValidId = data.find((r) => !r.is_cancelled && r.quality_flag !== "corrected")?.id;
+  // The starting value of a meter is not kept as a reading, so its only reading cannot be cancelled.
+  const counted = data.filter(
+    (r) => !r.is_cancelled && r.quality_flag !== "corrected" && r.quality_flag !== "rejected",
+  );
+  const latestValidId = counted.length >= 2 ? counted[0]?.id : undefined;
   return (
     <>
       <table className="w-full text-xs">

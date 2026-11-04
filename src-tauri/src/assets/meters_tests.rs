@@ -1044,12 +1044,55 @@ mod tests {
             meters::cancel_meter_reading(&db, second.id, "motif", 1).await.is_err(),
             "already cancelled"
         );
-        // Now the first one is the latest valid reading.
-        meters::cancel_meter_reading(&db, first.id, "motif", 1)
+        // Now the first one is the latest valid reading, but also the only one: the meter's starting
+        // value is not kept as a reading, so cancelling it would drop the meter to zero.
+        let err = meters::cancel_meter_reading(&db, first.id, "motif", 1)
             .await
-            .expect("cancel first");
+            .expect_err("the only reading cannot be cancelled");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_CANCEL_ONLY_READING"));
         let m = meters::list_asset_meters(&db, meter.asset_id).await.expect("list")[0].clone();
-        assert!(m.current_reading.abs() < 1e-6);
-        assert!(m.last_read_at.is_none());
+        assert!((m.current_reading - 100.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn l2_01_two_cancellations_of_one_reading_show_it_once() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-C", None).await;
+        meters::record_meter_reading(&db, reading(meter.id, 100.0, "2026-04-01T08:00:00Z"), 1)
+            .await
+            .expect("first");
+        let second = meters::record_meter_reading(&db, reading(meter.id, 150.0, "2026-04-02T08:00:00Z"), 1)
+            .await
+            .expect("second");
+        meters::cancel_meter_reading(&db, second.id, "motif", 1)
+            .await
+            .expect("cancel");
+        // A second device cancelled the same reading offline: its marker arrives through sync.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO asset_meter_readings \
+             (meter_id, reading_value, reading_at, source_type, quality_flag, created_by_id, created_at, \
+              reading_kind, entity_sync_id, cancels_sync_id, cancel_reason) \
+             VALUES (?, 150.0, '2026-04-03T08:00:00Z', 'MANUAL', 'cancelled', 1, '2026-04-03T08:00:00Z', \
+                     'cancellation', 'other-device-marker', ?, 'autre appareil')",
+            [meter.id.into(), second.entity_sync_id.clone().into()],
+        ))
+        .await
+        .expect("second marker");
+        let history = meters::list_meter_readings(&db, meter.id, None).await.expect("history");
+        assert_eq!(history.len(), 2, "each reading once, markers hidden");
+        assert_eq!(history.iter().filter(|r| r.is_cancelled).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn l2_01_cancelled_quality_is_reserved_for_markers() {
+        let db = setup().await;
+        let meter = hours_meter(&db, "L201-D", None).await;
+        let mut payload = reading(meter.id, 100.0, "2026-04-01T08:00:00Z");
+        payload.quality_flag = Some("cancelled".to_string());
+        let err = meters::record_meter_reading(&db, payload, 1)
+            .await
+            .expect_err("reserved quality");
+        assert!(format!("{err:?}").contains("GATE_ASSET_METER_QUALITY_RESERVED"));
     }
 }
