@@ -8,7 +8,7 @@ import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
 const i18nMock = vi.hoisted(() => ({
-  t: (key: string) => key,
+  t: (key: string, opts?: { fields?: string }) => (opts?.fields ? `${key}:${opts.fields}` : key),
   i18n: { language: "fr" },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
@@ -239,6 +239,9 @@ describe("WoCreateForm greyed save button", () => {
       <WoCreateForm initial={null} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
     );
     const note = await findByTestId("wo-create-missing");
+    // The sentence names the fields still missing (equipment and title on an empty form).
     expect(note).toHaveTextContent("form.missingFields");
+    expect(note).toHaveTextContent("form.equipment.label");
+    expect(note).toHaveTextContent("form.title.label");
   });
 });

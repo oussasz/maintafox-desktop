@@ -219,8 +219,8 @@
     "validation": {
       "titleRequired": "Le titre est requis",
       "typeRequired": "Le type d'ordre de travail est obligatoire.",
-      "urgencyRequired": "La priorité est obligatoire.",
-      "urgencyInvalid": "La priorité sélectionnée n'est plus valide.",
+      "urgencyRequired": "L'urgence est obligatoire.",
+      "urgencyInvalid": "L'urgence sélectionnée n'est plus valide.",
       "equipmentRequired": "Équipement obligatoire.",
       "plannedEndBeforeStart": "La fin prévue ne peut pas être avant le début prévu."
     }
