@@ -1276,19 +1276,25 @@ async fn a_closure_received_over_running_work_puts_it_on_hold_after_the_apply() 
 async fn running_work_under_an_expired_permit_is_put_on_hold_by_the_system() {
     let db = setup().await;
     let (wo_id, wp) = running_work(&db, "EQ-L408-1").await;
+    // Expiry in the real past (the resume gate below reads the wall clock); the sweep is
+    // driven at the exact boundary: one second before holds nothing, the expiry itself holds.
+    let expiry_at = chrono::Utc::now() - chrono::Duration::minutes(5);
+    let expiry = expiry_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let one_second_before = (expiry_at - chrono::Duration::seconds(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
     db.execute_unprepared(&format!(
-        "UPDATE work_permits SET expires_at = '{}' WHERE id = {}",
-        ago(5),
+        "UPDATE work_permits SET expires_at = '{expiry}' WHERE id = {}",
         wp.id
     ))
     .await
     .expect("set expiry");
 
-    let before = crate::permit::ended_hold::hold_expired(&db, &ago(10)).await;
+    let before = crate::permit::ended_hold::hold_expired(&db, &one_second_before).await;
     assert_eq!(before.expired_held, 0);
     assert_eq!(wo_status(&db, wo_id).await, "in_progress");
 
-    let at = crate::permit::ended_hold::hold_expired(&db, &ago(0)).await;
+    let at = crate::permit::ended_hold::hold_expired(&db, &expiry).await;
     assert_eq!((at.expired_held, at.failures), (1, 0));
     assert_eq!(wo_status(&db, wo_id).await, "on_hold");
     let (reason, by, _) = open_hold(&db, wo_id).await;

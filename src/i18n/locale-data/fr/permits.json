@@ -27,6 +27,8 @@
       "badge": "À revoir : sans site",
       "hint": "Permis enregistré sans site. Seuls les utilisateurs ayant un rôle valable pour toute l’usine le voient et peuvent agir dessus."
     },
+    "overdueHidden_one": "{{count}} autre permis expiré est hors de vos sites ou sans site : non compté",
+    "overdueHidden_other": "{{count}} autres permis expirés sont hors de vos sites ou sans site : non comptés",
     "openHidden_one": "{{count}} autre permis ouvert est hors de vos sites ou sans site : non compté",
     "openHidden_other": "{{count}} autres permis ouverts sont hors de vos sites ou sans site : non comptés",
     "noIssueRightAtSite": "Vous n’avez pas le droit de délivrer des permis sur le site de cet équipement."

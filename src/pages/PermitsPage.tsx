@@ -539,7 +539,7 @@ export function PermitsPage() {
                   value={overdueCount != null ? formatNumber(overdueCount) : "—"}
                   hint={
                     overdueHidden > 0
-                      ? `${t("kpi.overdueHint")} · ${t("siteScope.openHidden", { count: overdueHidden })}`
+                      ? `${t("kpi.overdueHint")} · ${t("siteScope.overdueHidden", { count: overdueHidden })}`
                       : t("kpi.overdueHint")
                   }
                   icon={AlertTriangle}
