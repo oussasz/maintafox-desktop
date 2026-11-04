@@ -296,7 +296,8 @@
       "hot_work": "Hot work",
       "confined_space": "Confined space",
       "cold_work": "Cold work",
-      "electrical_lv": "Electrical LV"
+      "electrical_lv": "Electrical LV",
+      "work_at_height": "Work at height"
     },
     "new": "New type",
     "code": "Code",

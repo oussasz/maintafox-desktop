@@ -26,6 +26,11 @@
   "user": {
     "menu": "User menu",
     "profile": "My profile",
+    "language": "Language",
+    "theme": "Display",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "Like Windows",
     "settings": "Settings",
     "logout": "Sign out"
   },
@@ -316,13 +321,13 @@
       "idle": "Up to date",
       "scheduled": "Sync starting",
       "running": "Syncing",
-      "degraded": "Needs attention",
+      "degraded": "To check",
       "paused": "Paused",
-      "blocked": "Stopped",
+      "blocked": "Sync stopped",
       "error": "Sync error",
       "pausedTitle": "Sync is paused by an operator",
-      "blockedTitle": "Sync is stopped",
-      "degradedTitle": "Sync needs attention (retry scheduled or conflicts to review)",
+      "blockedTitle": "Sync is stopped. Open the sync center (cloud icon) to see why.",
+      "degradedTitle": "Sync needs attention: a retry is scheduled or conflicts need review. Open the sync center (cloud icon) to review them.",
       "statusBar": "Sync: {{state}}"
     },
     "panel": {
