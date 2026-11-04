@@ -75,13 +75,16 @@ describe("permit rule metadata", () => {
       criticalityCode: "A",
       permitTypeCode: "loto",
     });
+    expect(JSON.parse(buildPermitRuleMetadata(null, state))).toEqual({
+      criticality_code: "A",
+      permit_type_code: "loto",
+    });
+    // An empty choice is left out; the backend writes every key when it checks the rule.
     const written = JSON.parse(
       buildPermitRuleMetadata(v.metadata_json, { ...state, criticalityCode: "" }),
     ) as Record<string, unknown>;
     expect(written).toEqual({
       origin: "shipped",
-      equipment_class_code: null,
-      work_type_code: null,
       permit_type_code: "loto",
     });
   });
