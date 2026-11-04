@@ -1007,7 +1007,7 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // actor is recorded in the event, on this PC.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session') \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
