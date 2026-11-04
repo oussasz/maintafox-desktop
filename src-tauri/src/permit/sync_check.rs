@@ -2548,7 +2548,8 @@ pub(crate) async fn inbound_permit_rule_check(
                     return conflict(
                         "WO_PERMIT_RULE_CLEAR_INVALID",
                         format!(
-                            "work order {code}: its {} permit requirement was lifted at its site here and the received                              work order moves it to another site with that clearing kept",
+                            "work order {code}: its {} permit requirement was lifted at its site here and the received \
+                             work order moves it to another site with that clearing kept",
                             item.permit_type_code
                         ),
                     );
