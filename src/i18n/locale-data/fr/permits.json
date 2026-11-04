@@ -20,7 +20,7 @@
       "outsideScope_other": "{{count}} permis ne sont pas affichés : hors de vos sites.",
       "withoutSite_one": "{{count}} permis n’est pas affiché : il n’a pas de site.",
       "withoutSite_other": "{{count}} permis ne sont pas affichés : ils n’ont pas de site.",
-      "allPermits": "Ces nombres portent sur tous les permis, quels que soient les filtres ou la recherche.",
+      "allPermits": "Total calculé sur tous les permis, sans tenir compte des filtres.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
     },
     "noSite": {
