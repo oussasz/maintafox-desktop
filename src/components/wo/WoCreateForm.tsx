@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { StickyActionBar } from "@/components/ui/sticky-action-bar";
 import { Textarea } from "@/components/ui/textarea";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
@@ -620,8 +621,6 @@ export function WoCreateForm({
         </FormField>
       </section>
 
-      <Separator />
-
       {/* ── Error banner ────────────────────────────────────────────── */}
       {(submitError || storeError || catalogError || prioritiesError) && (
         <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
@@ -642,7 +641,13 @@ export function WoCreateForm({
       ) : null}
 
       {/* ── Actions ──────────────────────────────────────────────────── */}
-      <div className="flex justify-end gap-2">
+      <StickyActionBar
+        hint={
+          !isValid
+            ? t("form.missingHint", { items: Object.values(currentErrors).join(" · ") })
+            : undefined
+        }
+      >
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
@@ -654,7 +659,7 @@ export function WoCreateForm({
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
-      </div>
+      </StickyActionBar>
     </div>
   );
 }
