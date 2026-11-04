@@ -474,7 +474,7 @@
       "request": "Demande",
       "equipment": "Équipement"
     },
-    "noResults": "Aucun module ne correspond à « {{query}} »"
+    "noResults": "Aucun résultat pour « {{query}} »"
   },
   "session": {
     "timeRemaining": "Session expire dans {{minutes}} min",

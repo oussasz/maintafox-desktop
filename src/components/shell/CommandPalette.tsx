@@ -7,12 +7,11 @@ import { type NavItem, canSeeNavItem } from "@/components/layout/Sidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
+import { invoke } from "@/lib/ipc-invoke";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
-import { listAssets } from "@/services/asset-service";
-import { listDis } from "@/services/di-service";
-import { listWos } from "@/services/wo-service";
+import type { Asset, DiListPage, WoListPage } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 interface CommandPaletteProps {
@@ -70,7 +69,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   // Records (work orders, requests, equipment) found by number or name, only those the user may
   // see: each search is offered only with its view right; the backend stays the authority.
-  const [records, setRecords] = useState<PaletteEntry[]>([]);
+  const [found, setFound] = useState<{ query: string; items: PaletteEntry[] }>({
+    query: "",
+    items: [],
+  });
   const canWo = can(P.OT_VIEW);
   const canDi = can(P.DI_VIEW);
   const canAsset = can(P.EQ_VIEW);
@@ -78,12 +80,14 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     const text = query.trim();
     if (!open || text.length < RECORD_SEARCH_MIN_CHARS) {
       // Same empty list when already empty: no new state, no extra render.
-      setRecords((prev) => (prev.length === 0 ? prev : []));
+      setFound((prev) => (prev.items.length === 0 ? prev : { query: "", items: [] }));
       return;
     }
     let stale = false;
     const timer = window.setTimeout(() => {
-      const found = async (run: () => Promise<PaletteEntry[]>): Promise<PaletteEntry[]> => {
+      // A search the user did not ask for by name: a failure or a refusal shows nothing (no
+      // global error toast while typing).
+      const attempt = async (run: () => Promise<PaletteEntry[]>): Promise<PaletteEntry[]> => {
         try {
           return await run();
         } catch {
@@ -92,8 +96,14 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       };
       void Promise.all([
         canWo
-          ? found(async () =>
-              (await listWos({ search: text, limit: RECORDS_PER_KIND, offset: 0 })).items.map(
+          ? attempt(async () =>
+              (
+                await invoke<WoListPage>(
+                  "list_wo",
+                  { filter: { search: text, limit: RECORDS_PER_KIND, offset: 0 } },
+                  { notifyOnError: false },
+                )
+              ).items.map(
                 (wo): PaletteEntry => ({
                   key: `wo-${wo.id}`,
                   label: `${wo.code} · ${wo.title}`,
@@ -105,8 +115,14 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             )
           : Promise.resolve([]),
         canDi
-          ? found(async () =>
-              (await listDis({ search: text, limit: RECORDS_PER_KIND, offset: 0 })).items.map(
+          ? attempt(async () =>
+              (
+                await invoke<DiListPage>(
+                  "list_di",
+                  { filter: { search: text, limit: RECORDS_PER_KIND, offset: 0 } },
+                  { notifyOnError: false },
+                )
+              ).items.map(
                 (di): PaletteEntry => ({
                   key: `di-${di.id}`,
                   label: `${di.code} · ${di.title}`,
@@ -118,8 +134,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             )
           : Promise.resolve([]),
         canAsset
-          ? found(async () =>
-              (await listAssets(null, null, text, RECORDS_PER_KIND)).map(
+          ? attempt(async () =>
+              (
+                await invoke<Asset[]>(
+                  "list_assets",
+                  {
+                    statusFilter: null,
+                    orgNodeFilter: null,
+                    query: text,
+                    limit: RECORDS_PER_KIND,
+                  },
+                  { notifyOnError: false },
+                )
+              ).map(
                 (asset): PaletteEntry => ({
                   key: `asset-${asset.id}`,
                   label: `${asset.asset_code} · ${asset.asset_name}`,
@@ -131,7 +158,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             )
           : Promise.resolve([]),
       ]).then((groups) => {
-        if (!stale) setRecords(groups.flat());
+        if (!stale) setFound({ query: text, items: groups.flat() });
       });
     }, RECORD_SEARCH_DELAY_MS);
     return () => {
@@ -158,8 +185,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         icon: item.icon,
       }))
       .filter((item) => !needle || item.label.toLowerCase().includes(needle));
+    // Records found for an earlier text are not offered for the current one.
+    const records = found.query === query.trim() ? found.items : [];
     return [...modules, ...records];
-  }, [can, capabilityMap, query, records, t]);
+  }, [can, capabilityMap, query, found, t]);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
