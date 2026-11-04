@@ -1,9 +1,9 @@
 import { Activity, Search } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
-import { canSeeNavItem, type NavItem } from "@/components/layout/Sidebar";
+import { type NavItem, canSeeNavItem } from "@/components/layout/Sidebar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui";
 import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
