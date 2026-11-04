@@ -840,7 +840,13 @@ pub async fn apply_import_batch(
             Ok(outcome) => {
                 match outcome {
                     RowOutcome::Created(_) => created += 1,
-                    RowOutcome::Updated(_) => updated += 1,
+                    RowOutcome::Updated(equip_id) => {
+                        updated += 1;
+                        // Its class or criticality may have changed: the plant's permit rules are
+                        // applied to its open work orders at once (a failure stops the import).
+                        crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(&txn, equip_id, actor_id)
+                            .await?;
+                    }
                 }
                 if let Some(parent) = normalized.parent_asset_code.as_deref() {
                     let parent = parent.trim().to_uppercase();

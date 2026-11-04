@@ -4,20 +4,23 @@
     "problem": {
       "unknownClass": "Classe « {{code}} » absente de la liste publiée des classes.",
       "unknownWorkType": "Type de travail « {{code}} » absent de la liste publiée.",
+      "unknownCriticality": "Criticité « {{code}} » absente de la liste publiée des criticités.",
       "unknownPermitType": "Type de permis « {{code}} » inconnu."
     },
     "unusableBanner_one": "{{count}} règle ne peut pas être appliquée ({{codes}}) : elle est ignorée quand une demande devient un OT. Corrigez-la.",
     "unusableBanner_other": "{{count}} règles ne peuvent pas être appliquées ({{codes}}) : elles sont ignorées quand une demande devient un OT. Corrigez-les.",
-    "intro": "Chaque règle nomme une classe d'équipement et/ou un type de travail, et le type de permis qu'elle exige. Quand une demande devient un OT qui correspond, l'OT est marqué « permis requis ».",
+    "intro": "Chaque règle nomme une classe d'équipement, un type de travail et/ou une criticité d'équipement, et le type de permis qu'elle exige. Tout OT qui correspond est marqué « permis requis » dès sa création ; la règle CRITICITE_A, livrée avec le logiciel, l'exige pour tout équipement de criticité A.",
     "colClass": "Classe d'équipement",
     "colWorkType": "Type de travail",
+    "colCriticality": "Criticité",
     "colPermitType": "Type de permis exigé",
     "anyClass": "Toute classe",
     "anyWorkType": "Tout type de travail",
+    "anyCriticality": "Toute criticité",
     "choosePermitType": "Choisir un type de permis",
     "incomplete": "Règle incomplète",
-    "incompleteHint": "Une règle nomme un type de permis et au moins une classe d'équipement ou un type de travail.",
-    "optionsLoadError": "Les classes, types de travail ou types de permis n'ont pas pu être lus"
+    "incompleteHint": "Une règle nomme un type de permis et au moins une classe d'équipement, un type de travail ou une criticité.",
+    "optionsLoadError": "Les classes, types de travail, criticités ou types de permis n'ont pas pu être lus"
   },
   "page": {
     "title": "Données de référence",

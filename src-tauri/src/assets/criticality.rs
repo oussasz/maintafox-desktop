@@ -311,6 +311,9 @@ pub async fn assess_asset_criticality(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("criticality assessment missing after insert")))?;
     let assessment = map_assessment(&row)?;
+    // A machine that becomes critical gets the plant's permit rule on its open work orders at once.
+    crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(&txn, payload.asset_id, Some(actor_id))
+        .await?;
     let asset_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

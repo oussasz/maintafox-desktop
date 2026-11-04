@@ -1303,6 +1303,16 @@ pub async fn update_asset_identity(
         crate::assets::lifecycle::move_asset_recorded_in(&txn, asset_id, new_node_id, version_after_edit, actor_id)
             .await?;
     }
+    if payload.criticality_code.is_some() || payload.class_code.is_some() {
+        // A machine that becomes critical (or changes class) gets the plant's permit rule on its
+        // open work orders at once.
+        crate::permit::requirement_rules::stamp_open_work_orders_of_equipment(
+            &txn,
+            asset_id,
+            Some(i64::from(actor_id)),
+        )
+        .await?;
+    }
 
     // Fetch updated asset with resolved codes
     let select_sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
