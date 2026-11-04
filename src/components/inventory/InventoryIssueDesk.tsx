@@ -102,6 +102,8 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
 
   const scanRef = useRef<HTMLInputElement>(null);
   const [scanValue, setScanValue] = useState("");
+  // Bumped when a part "à sortir" is issued above: the stock figures below are read again.
+  const [stockVersion, setStockVersion] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<unknown>(null);
   const [scan, setScan] = useState<ScanResolution | null>(null);
@@ -166,7 +168,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [expiryWindow, expiringVersion, reloadToken]);
+  }, [expiryWindow, expiringVersion, reloadToken, stockVersion]);
 
   // ── Stock of the scanned article ─────────────────────────────────────────────
   useEffect(() => {
@@ -203,7 +205,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [scan, reloadToken]);
+  }, [scan, reloadToken, stockVersion]);
 
   // ── Planned parts of the work order for this article ─────────────────────────
   useEffect(() => {
@@ -245,7 +247,7 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     return () => {
       cancelled = true;
     };
-  }, [scan, workOrder]);
+  }, [scan, workOrder, stockVersion]);
 
   // ── Lots at the chosen location ──────────────────────────────────────────────
   useEffect(() => {
@@ -499,7 +501,10 @@ export function InventoryIssueDesk({ reloadToken = 0 }: InventoryIssueDeskProps)
     <div className="space-y-6">
       {/* Parts used on work orders by people without the stock right (backend: inv.manage). */}
       <PermissionGate permission={P.INV_MANAGE}>
-        <PartsToIssuePanel reloadToken={reloadToken} />
+        <PartsToIssuePanel
+          reloadToken={reloadToken}
+          onChanged={() => setStockVersion((v) => v + 1)}
+        />
       </PermissionGate>
       <section
         aria-labelledby="inv-issue-desk-title"

@@ -642,4 +642,71 @@ mod tests {
             .expect("check");
         assert!(verdict.is_some(), "issued stock: a conflict for a person");
     }
+
+    /// Review finding: more used than planned. What the reservation holds is issued from it, the
+    /// rest is reserved and issued at the same location; the line keeps its reservation.
+    #[tokio::test]
+    async fn a_use_above_the_reservation_is_issued_in_full() {
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "TI-OVER-1", 10.0).await;
+        let planned = parts::add_planned_part(&db, input(wo_id, article_id, Some(location_id), 2.0), RequestOnly)
+            .await
+            .expect("plan 2");
+        let reservation_id = planned.reservation_id.expect("reserved");
+        set_wo_status(&db, wo_id, "in_progress").await;
+        parts::record_actual_usage(&db, planned.id, 3.0, None, RequestOnly)
+            .await
+            .expect("3 used");
+        let issued = parts::issue_part_to_issue(
+            &db,
+            IssuePartToIssueInput {
+                wo_part_id: planned.id,
+                quantity: 3.0,
+                stock_location_id: None,
+                correction_reason: None,
+            },
+            admin_id(&db).await,
+        )
+        .await
+        .expect("issue 3 against a reservation of 2");
+        assert_eq!(on_hand(&db, article_id, location_id).await, 7.0);
+        assert_eq!(issues(&db, article_id).await, 2, "2 from the reservation, 1 above it");
+        assert_eq!(issued.quantity_issued, 3.0);
+        assert_eq!(
+            issued.reservation_id,
+            Some(reservation_id),
+            "the line keeps its reservation"
+        );
+        assert_eq!(issued.pending_issue_qty, 0.0);
+    }
+
+    /// Review finding: a line written before L3-21 without a location carried an "issued" figure
+    /// that only mirrored its use (nothing left the store). It can still be lowered, and its use
+    /// is "à sortir" in full.
+    #[tokio::test]
+    async fn an_old_mirror_only_issued_figure_does_not_lock_the_line() {
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, _) = seed_stock_article(&db, "TI-OLD-1", 10.0).await;
+        let planned = parts::add_planned_part(&db, input(wo_id, article_id, None, 2.0), MayMoveStock)
+            .await
+            .expect("plan without a location");
+        assert_eq!(planned.reservation_id, None);
+        set_wo_status(&db, wo_id, "in_progress").await;
+        // As versions before L3-21 wrote it: used and "issued" 2, no movement.
+        exec(
+            &db,
+            "UPDATE work_order_parts SET quantity_used = 2, quantity_issued = 2, consumption_status = 'used' WHERE id = ?",
+            vec![planned.id.into()],
+        )
+        .await;
+
+        let lowered = parts::record_actual_usage(&db, planned.id, 1.0, None, RequestOnly)
+            .await
+            .expect("lowering is no return: nothing left the store");
+        assert_eq!(lowered.quantity_issued, 0.0);
+        assert_eq!(lowered.pending_issue_qty, 1.0, "the use is now to issue in full");
+        assert_eq!(issues(&db, article_id).await, 0);
+    }
 }

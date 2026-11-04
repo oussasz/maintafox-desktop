@@ -1,4 +1,4 @@
-//! Migration 270 — work-order parts "à sortir" (L3-21, CMMS Advisor option A).
+//! Migration 275 — work-order parts "à sortir" (L3-21, CMMS Advisor option A).
 //!
 //! Only the stock right (`inv.manage`) moves stock. A person without it who records the use of a
 //! stock article on a work order records the line without a stock movement; the storekeeper then
@@ -20,7 +20,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261104_000270_wo_parts_to_issue"
+        "m20261104_000275_wo_parts_to_issue"
     }
 }
 

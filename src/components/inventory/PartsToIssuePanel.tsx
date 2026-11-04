@@ -327,7 +327,7 @@ export function PartsToIssuePanel({
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setAction(null)} disabled={busy}>
-                  {t("issueDesk.toIssue.cancel")}
+                  {t("issueDesk.toIssue.close")}
                 </Button>
                 <Button
                   variant={action.kind === "cancel" ? "destructive" : "default"}

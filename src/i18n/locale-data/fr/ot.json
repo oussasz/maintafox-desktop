@@ -652,7 +652,7 @@
         "qty": "Quantité utilisée",
         "save": "Ajouter",
         "stockHint": "Choisissez l'article et l'emplacement d'où il est sorti : la quantité est réservée et sortie du stock. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
-        "stockHintRequest": "Choisissez l'article et, si vous le savez, l'emplacement d'où il a été pris. Sans le droit magasin, la pièce est enregistrée « à sortir » : le magasinier la sort du stock, rien ne bouge avant. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
+        "stockHintRequest": "Choisissez l'article et l'emplacement d'où il a été pris. Sans le droit magasin, la pièce est enregistrée « à sortir » : le magasinier la sort du stock, rien ne bouge avant. Utilisez « Hors stock » seulement pour un article non géré en magasin.",
         "modeLabel": "Origine de la pièce",
         "modeStock": "Article en stock",
         "modeNonStock": "Hors stock",

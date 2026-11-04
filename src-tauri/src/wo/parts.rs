@@ -77,6 +77,17 @@ pub struct WoPart {
     pub pending_issue_qty: f64,
 }
 
+/// Two quantities closer than this are the same (sums of decimal quantities in floating point).
+const QTY_EPSILON: f64 = 1e-9;
+
+/// A stock line whose issued quantity has no trace in the store: no reservation and no location.
+/// Every stock issue of a line goes through a reservation (and an issue from the parts "à sortir"
+/// also records its location), so such a figure was only the mirror of the use that versions
+/// before L3-21 wrote on a line without a location: nothing left the store for it.
+fn issued_without_store_trace(part: &WoPart) -> bool {
+    part.reservation_id.is_none() && part.stock_location_id.is_none()
+}
+
 /// Whether the person acting may move stock (`inv.manage`, L3-21).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StockAuthority {
@@ -688,7 +699,19 @@ async fn record_actual_usage_in<C: ConnectionTrait>(
 
     // What already left the store for this line; the used quantity above it is issued now (stock
     // right) or "à sortir" (no stock right, or no stock location to issue from).
-    let previous_issued = part.quantity_issued.max(0.0);
+    // A figure without a store trace (written before L3-21 on a line without a location) left
+    // nothing: it counts as 0, so the whole use is "à sortir" and nothing is refused as a return.
+    let previous_issued = if part.article_id.is_some() && issued_without_store_trace(&part) {
+        0.0
+    } else {
+        part.quantity_issued.max(0.0)
+    };
+    // The same quantity typed again (0.3 against an issued 0.30000000000000004) is no change.
+    let quantity_used = if (quantity_used - previous_issued).abs() <= QTY_EPSILON {
+        previous_issued
+    } else {
+        quantity_used
+    };
     let return_required = || {
         AppError::ValidationFailed(vec![
             "GATE_WO_PART_RETURN_REQUIRED: Cette pièce a déjà été sortie du stock : enregistrez un retour magasin pour réduire la quantité."
@@ -828,7 +851,8 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
         Some(reservation_id) => reservation_issued_quantity(db, reservation_id).await?,
         None => 0.0,
     };
-    if part.article_id.is_some() && (part.quantity_issued > 0.0 || store_issued > 0.0) {
+    let line_issued = !issued_without_store_trace(&part) && part.quantity_issued > 0.0;
+    if part.article_id.is_some() && (line_issued || store_issued > 0.0) {
         return Err(AppError::ValidationFailed(vec![
             "GATE_WO_PART_RETURN_REQUIRED: Cette pièce a déjà été sortie du stock : enregistrez un retour magasin pour réduire la quantité."
                 .to_string(),
@@ -1355,7 +1379,7 @@ async fn reservation_issued_quantity<C: ConnectionTrait>(conn: &C, reservation_i
 // F) Parts "à sortir" — issued or cancelled by the storekeeper (L3-21)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Notification category of a part line "à sortir" (migration 270): the stock right holders.
+/// Notification category of a part line "à sortir" (migration 275): the stock right holders.
 pub const PART_TO_ISSUE_CATEGORY: &str = "wo_part_to_issue";
 
 /// Where the notice leads: the issue desk of the stock screen.
@@ -1524,7 +1548,7 @@ pub async fn issue_part_to_issue(
         ));
     }
     let requested = part.pending_issue_qty;
-    let corrected = (input.quantity - requested).abs() > f64::EPSILON;
+    let corrected = (input.quantity - requested).abs() > QTY_EPSILON;
     let reason = trimmed_reason(input.correction_reason.as_deref());
     if corrected && reason.is_none() {
         return Err(part_line_refusal(
@@ -1536,20 +1560,74 @@ pub async fn issue_part_to_issue(
     let article_id = part.article_id.unwrap_or_default();
 
     let issued_from = if let Some(reservation_id) = part.reservation_id {
+        // A use above the planned quantity: what the reservation still holds is issued from it,
+        // the rest is reserved and issued at the same location (the line keeps its reservation).
+        let held = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT location_id, status, quantity_reserved - COALESCE(quantity_issued, 0.0) AS remaining \
+                 FROM stock_reservations WHERE id = ?",
+                [reservation_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "StockReservation".into(),
+                id: reservation_id.to_string(),
+            })?;
+        let location_id: i64 = held
+            .try_get("", "location_id")
+            .map_err(|e| decode_err("location_id", e))?;
+        let status: String = held.try_get("", "status").map_err(|e| decode_err("status", e))?;
+        let remaining: f64 = held.try_get("", "remaining").map_err(|e| decode_err("remaining", e))?;
+        let from_reservation = if status == "released" {
+            0.0
+        } else {
+            input.quantity.min(remaining.max(0.0))
+        };
+        let excess = input.quantity - from_reservation;
         let (source_type, _source_di_id, wo_code) = load_wo_source_context(&txn, part.work_order_id).await?;
-        inventory_queries::issue_reserved_stock_in(
-            &txn,
-            &InventoryIssueInput {
-                reservation_id,
-                quantity: input.quantity,
-                source_type: Some(source_type),
-                source_id: Some(part.work_order_id),
-                source_ref: Some(wo_code),
-                notes: Some("WO part issued from the parts to issue".to_string()),
-            },
-        )
-        .await?;
-        part.stock_location_id
+        if from_reservation > QTY_EPSILON {
+            inventory_queries::issue_reserved_stock_in(
+                &txn,
+                &InventoryIssueInput {
+                    reservation_id,
+                    quantity: from_reservation,
+                    source_type: Some(source_type.clone()),
+                    source_id: Some(part.work_order_id),
+                    source_ref: Some(wo_code.clone()),
+                    notes: Some("WO part issued from the parts to issue".to_string()),
+                },
+            )
+            .await?;
+        }
+        if excess > QTY_EPSILON {
+            let extra = inventory_queries::reserve_stock_in(
+                &txn,
+                &InventoryReserveInput {
+                    article_id,
+                    location_id,
+                    quantity: excess,
+                    source_type: source_type.clone(),
+                    source_id: Some(part.work_order_id),
+                    source_ref: Some(wo_code.clone()),
+                    notes: Some("WO part used above its reservation".to_string()),
+                },
+            )
+            .await?;
+            inventory_queries::issue_reserved_stock_in(
+                &txn,
+                &InventoryIssueInput {
+                    reservation_id: extra,
+                    quantity: excess,
+                    source_type: Some(source_type),
+                    source_id: Some(part.work_order_id),
+                    source_ref: Some(wo_code),
+                    notes: Some("WO part issued from the parts to issue".to_string()),
+                },
+            )
+            .await?;
+        }
+        Some(location_id)
     } else {
         let Some(location_id) = input.stock_location_id.or(part.stock_location_id) else {
             return Err(part_line_refusal(
@@ -1562,7 +1640,12 @@ pub async fn issue_part_to_issue(
         Some(location_id)
     };
 
-    let issued_total = part.quantity_issued.max(0.0) + input.quantity;
+    let issued_before = if issued_without_store_trace(&part) {
+        0.0
+    } else {
+        part.quantity_issued.max(0.0)
+    };
+    let issued_total = issued_before + input.quantity;
     let updated = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
