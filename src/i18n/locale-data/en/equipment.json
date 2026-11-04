@@ -821,7 +821,6 @@
     "title": "Documents",
     "noPermission": "Viewing documents needs the Documentation view permission.",
     "saved": "{{name}} saved.",
-    "size": "{{kb}} KB",
     "download": "Download",
     "downloadNamed": "Download {{name}}",
     "upload": "Add a document",
