@@ -845,7 +845,7 @@ async fn usual_rate_per_day(db: &impl ConnectionTrait, meter_id: i64) -> AppResu
             format!(
                 "SELECT mr.reading_at, COALESCE(mr.lifetime_value, mr.reading_value) AS v \
                  FROM asset_meter_readings mr WHERE mr.meter_id = ? AND {VALID_READING_SQL} \
-                 ORDER BY mr.reading_at ASC, mr.id ASC"
+                 ORDER BY mr.reading_at ASC, mr.entity_sync_id ASC"
             ),
             [meter_id.into()],
         ))

@@ -77,6 +77,11 @@ export function PmMeterReadingDialog({ open, onClose, onRecorded }: PmMeterReadi
     setError(null);
   }, [open]);
 
+  // A confirmation only covers the exact asset, meter, date and kind it was asked for.
+  useEffect(() => {
+    setJumpAsk(false);
+  }, [asset, meterId, readAt, kind]);
+
   useEffect(() => {
     setMeters(null);
     setMeterId("");

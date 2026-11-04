@@ -168,7 +168,7 @@ async fn load_meter_readings(
             format!(
                 "SELECT mr.reading_at, {value_expr} AS reading_value FROM asset_meter_readings mr
                  WHERE mr.meter_id = ? AND {valid}
-                 ORDER BY mr.reading_at ASC, mr.id ASC",
+                 ORDER BY mr.reading_at ASC, mr.entity_sync_id ASC",
                 valid = crate::assets::meters::VALID_READING_SQL
             ),
             [meter_id.into()],

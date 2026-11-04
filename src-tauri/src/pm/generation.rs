@@ -233,12 +233,12 @@ pub async fn lifetime_at(db: &impl ConnectionTrait, meter: &MeterState, at: &str
         format!(
             "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
              WHERE mr.meter_id = ? AND {valid} AND mr.reading_at <= ?
-             ORDER BY mr.reading_at DESC, mr.id DESC LIMIT 1"
+             ORDER BY mr.reading_at DESC, mr.entity_sync_id DESC LIMIT 1"
         ),
         format!(
             "SELECT COALESCE(mr.lifetime_value, mr.reading_value) AS v FROM asset_meter_readings mr
              WHERE mr.meter_id = ? AND {valid} AND ? IS NOT NULL
-             ORDER BY mr.reading_at ASC, mr.id ASC LIMIT 1"
+             ORDER BY mr.reading_at ASC, mr.entity_sync_id ASC LIMIT 1"
         ),
     ] {
         if let Some(row) = db
