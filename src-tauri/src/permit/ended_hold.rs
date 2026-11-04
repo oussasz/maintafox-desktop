@@ -439,7 +439,7 @@ async fn close_own_hold(
     server_row_version: Option<i64>,
 ) -> AppResult<()> {
     let message = format!(
-        "The same hold (permit ended on another PC) reached the server first from another PC{}: its version is \
+        "The same hold (permit ended on another PC, or expired) reached the server first from another PC{}: its version is \
          kept here.",
         server_row_version
             .map(|v| format!(" (server version {v})"))
@@ -479,7 +479,7 @@ async fn close_own_hold(
         target: "maintafox::sync",
         entity_type,
         entity_sync_id,
-        "own hold closed: the same hold (permit ended elsewhere) was kept from another PC"
+        "own hold closed: the same hold (permit ended elsewhere, or expired) was kept from another PC"
     );
     Ok(())
 }

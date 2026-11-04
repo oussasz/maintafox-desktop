@@ -117,6 +117,7 @@ export function PermitsPage() {
   const [openHidden, setOpenHidden] = useState(0);
   /** Open permits past their expiry, isolations possibly still in place (L4-08). */
   const [overdueCount, setOverdueCount] = useState<number | null>(null);
+  const [overdueHidden, setOverdueHidden] = useState(0);
   const [kpi30d, setKpi30d] = useState<PermitComplianceKpi30dRecord | null>(null);
   const [kpiError, setKpiError] = useState<unknown>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
@@ -180,6 +181,7 @@ export function PermitsPage() {
       setKpi30d(kpi);
       setOpenCount(open.items.length);
       setOverdueCount(overdue.items.length);
+      setOverdueHidden(overdue.hidden_outside_scope + overdue.hidden_without_site);
       setOpenHidden(open.hidden_outside_scope + open.hidden_without_site);
     } catch (e) {
       setKpiError(e);
@@ -187,6 +189,7 @@ export function PermitsPage() {
       setOpenCount(null);
       setOverdueCount(null);
       setOpenHidden(0);
+      setOverdueHidden(0);
     } finally {
       setKpiLoading(false);
     }
@@ -534,7 +537,11 @@ export function PermitsPage() {
                 <KpiTile
                   label={t("kpi.overdue")}
                   value={overdueCount != null ? formatNumber(overdueCount) : "—"}
-                  hint={t("kpi.overdueHint")}
+                  hint={
+                    overdueHidden > 0
+                      ? `${t("kpi.overdueHint")} · ${t("siteScope.openHidden", { count: overdueHidden })}`
+                      : t("kpi.overdueHint")
+                  }
                   icon={AlertTriangle}
                   {...(overdueCount != null && overdueCount > 0 ? { tone: "danger" as const } : {})}
                 />
