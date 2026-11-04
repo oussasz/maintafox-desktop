@@ -43,6 +43,7 @@ import {
 } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import { TERMINAL_DI_STATES, diStatusToI18nKey } from "@/components/di/status-meta";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -83,6 +84,8 @@ interface DiDetailDialogProps {
   similar?: DiSummaryRow[];
   open: boolean;
   onClose: () => void;
+  /** Set when the request was opened from another screen: shows "← Retour" back to it. */
+  onBackToOrigin?: () => void;
 }
 
 /** Last entry of the transition log with the given action. */
@@ -101,6 +104,7 @@ export function DiDetailDialog({
   similar = [],
   open,
   onClose,
+  onBackToOrigin,
 }: DiDetailDialogProps) {
   const { t, i18n } = useTranslation("di");
   const dateLocale = intlLocaleForLanguage(i18n.language);
@@ -265,6 +269,7 @@ export function DiDetailDialog({
       >
         {/* ── Header ──────────────────────────────────────────────────── */}
         <DialogHeader className="px-6 pt-5 pb-3">
+          {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1 min-w-0">
               <DialogTitle className="text-lg font-bold flex items-center gap-2">
