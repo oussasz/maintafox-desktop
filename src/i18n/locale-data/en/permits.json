@@ -106,6 +106,10 @@
     "unknownPerson": "Unknown user",
     "approverNotRecorded": "approver not recorded",
     "approverNotRecordedHint": "Approved before the app recorded who approved permits.",
+    "cancelledBy": "Cancelled by",
+    "cancelNotRecorded": "Cancelled (person not recorded)",
+    "cancelReason": "Reason: {{reason}}",
+    "cancelReasonNotRecorded": "Reason not recorded (cancelled before the app asked for one)",
     "selfApproved": "self-approval (site without four-eyes)",
     "selfApprovedHint": "Approved without a second person: this permit's site opted out of four-eyes (Settings › Rules per site).",
     "none": "—",
@@ -124,6 +128,7 @@
     "cancel": "Cancel permit",
     "suspend": "Suspend",
     "confirmCancel": "Cancel this permit? This cannot be undone.",
+    "cancelReason": "Reason for cancelling",
     "keep": "Keep the permit",
     "next": {
       "pending_review": "Next step: the writer submits the permit; another person will review it.",

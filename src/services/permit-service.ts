@@ -78,6 +78,11 @@ const WorkPermitSchema = z.object({
   approved_at: z.string().nullable(),
   /** Approved without a verified second person, on a site that opted out of four-eyes. */
   self_approved: z.boolean(),
+  /** Why, by whom and when the permit was cancelled (null: cancelled before it was recorded). */
+  cancel_reason: z.string().nullable(),
+  cancelled_by_id: z.number().nullable(),
+  cancelled_by_name: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
 });
 
 const PermitSuspensionSchema = z.object({

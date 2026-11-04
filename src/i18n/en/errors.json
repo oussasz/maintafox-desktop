@@ -224,6 +224,7 @@
     "GATE_WO_CANCEL_LOCKS_FITTED": "Cancellation refused: a lock is still fitted under a permit of this work order, its removal not verified. Have the lock taken off and its removal verified.",
     "GATE_PERMIT_CLOSE_WORK_IN_PROGRESS": "Permit close refused: work on the linked work order is in progress. Pause or complete the work order first.",
     "GATE_PERMIT_CANCEL_WORK_IN_PROGRESS": "Permit cancellation refused: work on the linked work order is in progress. Pause or complete the work order first.",
+    "GATE_PERMIT_CANCEL_REASON_REQUIRED": "Permit cancellation refused: give the reason for cancelling.",
     "GATE_PERMIT_DATE_INVALID": "Date refused: the permit's expiry date is not valid. Pick it in the date picker.",
     "GATE_PERMIT_STATUS_INVALID": "Status change refused: this permit status does not exist. Reload the permit, then try again.",
     "GATE_PERMIT_NO_OPEN_SUSPENSION": "Reinstatement refused: this permit has no open suspension. Reload the permit.",

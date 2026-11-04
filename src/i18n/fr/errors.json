@@ -224,6 +224,7 @@
     "GATE_WO_CANCEL_LOCKS_FITTED": "Annulation refusée : un cadenas est encore posé sous un permis de cet OT, sa dépose n'est pas vérifiée. Faites retirer le cadenas et vérifier sa dépose.",
     "GATE_PERMIT_CLOSE_WORK_IN_PROGRESS": "Clôture du permis refusée : le travail de l'OT lié est en cours. Mettez l'OT en pause ou terminez-le d'abord.",
     "GATE_PERMIT_CANCEL_WORK_IN_PROGRESS": "Annulation du permis refusée : le travail de l'OT lié est en cours. Mettez l'OT en pause ou terminez-le d'abord.",
+    "GATE_PERMIT_CANCEL_REASON_REQUIRED": "Annulation du permis refusée : indiquez le motif de l'annulation.",
     "GATE_PERMIT_DATE_INVALID": "Date refusée : la date d'expiration du permis n'est pas valide. Choisissez-la dans le sélecteur.",
     "GATE_PERMIT_STATUS_INVALID": "Changement d'état refusé : cet état de permis n'existe pas. Rechargez le permis, puis recommencez.",
     "GATE_PERMIT_NO_OPEN_SUSPENSION": "Reprise refusée : ce permis n'a pas de suspension en cours. Rechargez le permis.",
