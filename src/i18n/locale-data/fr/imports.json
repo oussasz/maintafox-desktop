@@ -37,10 +37,10 @@
     "title": "Vérification de {{file}}",
     "hint": "Rien n'est encore écrit. Les lignes refusées ne seront pas importées ; corrigez le fichier et rechargez-le si besoin.",
     "appliedHint": "Import appliqué.",
-    "total": "{{n}} lignes",
-    "ok": "{{n}} correctes",
-    "warnings": "{{n}} avec avertissement",
-    "errors": "{{n}} refusées",
+    "total": "Lignes : {{n}}",
+    "ok": "Correctes : {{n}}",
+    "warnings": "Avec avertissement : {{n}}",
+    "errors": "Refusées : {{n}}",
     "ignored": "Colonnes ignorées (inconnues) : {{columns}}",
     "data": "Contenu",
     "status": "Résultat",
@@ -67,12 +67,12 @@
     "summary": "{{created}} créées, {{updated}} mises à jour, {{skipped}} inchangées, {{failed}} en échec."
   },
   "apply": {
-    "run": "Importer {{n}} ligne(s)",
+    "run": "Lancer l'import ({{n}})",
     "cancel": "Abandonner",
     "another": "Importer un autre fichier",
     "nothing": "Aucune ligne à importer : toutes sont refusées ou déjà à jour.",
     "confirmTitle": "Appliquer l'import ?",
-    "confirmBody": "{{n}} ligne(s) seront écrites. {{errors}} ligne(s) refusée(s) seront ignorées. Une confirmation de votre mot de passe peut être demandée.",
+    "confirmBody": "Lignes qui seront écrites : {{n}}. Lignes refusées, ignorées : {{errors}}. Une confirmation de votre mot de passe peut être demandée.",
     "confirmLabel": "Appliquer l'import"
   }
 }

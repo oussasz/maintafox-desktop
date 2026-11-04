@@ -206,6 +206,7 @@ export function DataImportPage() {
                   key={e.code}
                   variant={e.code === selected ? "default" : "outline"}
                   size="sm"
+                  disabled={busy}
                   onClick={() => {
                     setSelected(e.code);
                     reset();
@@ -242,11 +243,21 @@ export function DataImportPage() {
                   </Table>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => void saveTable("template")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void saveTable("template")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     {t("file.template")}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => void saveTable("export")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void saveTable("export")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     {t("file.export")}
                   </Button>
@@ -337,7 +348,7 @@ export function DataImportPage() {
                       >
                         <TableCell className="text-text-muted">{row.row_no}</TableCell>
                         <TableCell className="font-mono text-xs">
-                          {(entity?.columns ?? [])
+                          {(entities.find((e) => e.code === preview.batch.entity)?.columns ?? [])
                             .map((c) => row.raw[c.key])
                             .filter(Boolean)
                             .join(" · ")}
@@ -422,7 +433,7 @@ export function DataImportPage() {
                     {t("apply.run", { n: importable })}
                   </Button>
                 )}
-                <Button variant="outline" onClick={reset}>
+                <Button variant="outline" disabled={busy} onClick={reset}>
                   <RotateCcw className="mr-2 h-4 w-4" />
                   {applied ? t("apply.another") : t("apply.cancel")}
                 </Button>

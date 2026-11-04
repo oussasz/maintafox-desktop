@@ -37,10 +37,10 @@
     "title": "Check of {{file}}",
     "hint": "Nothing is written yet. Refused lines will not be imported; fix the file and load it again if needed.",
     "appliedHint": "Import applied.",
-    "total": "{{n}} lines",
-    "ok": "{{n}} correct",
-    "warnings": "{{n}} with a warning",
-    "errors": "{{n}} refused",
+    "total": "Lines: {{n}}",
+    "ok": "Correct: {{n}}",
+    "warnings": "With a warning: {{n}}",
+    "errors": "Refused: {{n}}",
     "ignored": "Ignored (unknown) columns: {{columns}}",
     "data": "Content",
     "status": "Result",
@@ -67,12 +67,12 @@
     "summary": "{{created}} created, {{updated}} updated, {{skipped}} unchanged, {{failed}} failed."
   },
   "apply": {
-    "run": "Import {{n}} line(s)",
+    "run": "Run the import ({{n}})",
     "cancel": "Abandon",
     "another": "Import another file",
     "nothing": "No line to import: all are refused or already up to date.",
     "confirmTitle": "Apply the import?",
-    "confirmBody": "{{n}} line(s) will be written. {{errors}} refused line(s) will be ignored. You may be asked to confirm your password.",
+    "confirmBody": "Lines that will be written: {{n}}. Refused lines, ignored: {{errors}}. You may be asked to confirm your password.",
     "confirmLabel": "Apply the import"
   }
 }
