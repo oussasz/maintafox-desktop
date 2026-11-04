@@ -982,16 +982,18 @@ async fn after_received_work_order(
     // Every permit type the list here gives it is required, whatever its status while it is open
     // (in progress or on hold too: its resume will ask for them; CMMS Advisor 2026-11-04). The types
     // a started work order lacked are named in its arrival finding.
-    let open: bool = conn
+    let status: Option<String> = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT 1 AS x FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
-              WHERE wo.id = ? AND st.code NOT IN ('completed', 'closed', 'cancelled')",
+            "SELECT st.code FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
             [wo_id.into()],
         ))
         .await?
-        .is_some();
-    let added = if open {
+        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let open = status
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "completed" | "closed" | "cancelled"));
+    let mut missing = if open {
         let rules = crate::permit::requirement_rules::PublishedRules::load(conn).await?;
         crate::permit::requirement_rules::add_matching_types(
             conn,
@@ -1005,6 +1007,16 @@ async fn after_received_work_order(
     } else {
         Vec::new()
     };
+    // Running here without a live permit of a type it requires (one added just now, or held here
+    // while the sender's set lacked it: its start was judged with the sender's set).
+    if status.as_deref() == Some("in_progress") {
+        for uncovered in crate::permit::requirement_rules::required_types_without_live_permit(conn, wo_id).await? {
+            if !missing.iter().any(|(t, _)| *t == uncovered.0) {
+                missing.push(uncovered);
+            }
+        }
+    }
+    missing.sort();
     if !first_join_history {
         let received_without_held_rule = match held_rule {
             Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
@@ -1015,7 +1027,7 @@ async fn after_received_work_order(
             wo_id,
             received_without_held_rule,
             matches!(held_rule, Some(HeldRule::Received)),
-            &added,
+            &missing,
         )
         .await?;
     }

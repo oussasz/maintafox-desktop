@@ -9103,3 +9103,294 @@ async fn a_draft_edit_rechecks_a_rule_kept_as_received() {
     assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "loto"));
     assert_eq!(rule_events_with_cause(&db, "wo-c6s3", "draft_edit").await.len(), 1);
 }
+
+// ── The permit types a work order requires, received (L4-10b, CMMS Advisor 2026-11-04) ────────
+
+/// A set of permit types as a row carries it: `(type, rule, clearing (by, at, reason))`.
+fn required_set_json(items: &[(&str, &str, Option<(&str, &str, &str)>)]) -> Value {
+    let matches: Vec<(String, String)> = items.iter().map(|(t, r, _)| (t.to_string(), r.to_string())).collect();
+    let mut set = crate::permit::required_set::RequiredSet::from_matches(&matches);
+    for (t, _, clearing) in items {
+        if let Some((by, at, reason)) = clearing {
+            set.clear(
+                t,
+                crate::permit::required_set::Clearing {
+                    by_sync_id: Some(by.to_string()),
+                    at: at.to_string(),
+                    reason: Some(reason.to_string()),
+                },
+            );
+        }
+    }
+    json!(set.to_json().expect("a set"))
+}
+
+/// A work order requiring a permit here, its set stored with `types` (none lifted), the first one
+/// the primary rule's; its id and sync id.
+async fn wo_with_required_set(db: &DatabaseConnection, equipment: &str, types: &[(&str, &str)]) -> (i64, String) {
+    let asset = insert_equipment(db, equipment).await;
+    let (wo_id, _) = assigned_wo_requiring_permit(db, asset).await;
+    let items: Vec<(&str, &str, Option<(&str, &str, &str)>)> = types.iter().map(|(t, r)| (*t, *r, None)).collect();
+    let set = required_set_json(&items);
+    let (primary_type, primary_rule) = types[0];
+    exec(
+        db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 1, permit_rule_code = '{primary_rule}', \
+             permit_rule_permit_type = '{primary_type}', permit_required_types_json = '{}' WHERE id = {wo_id}",
+            set.as_str().expect("text")
+        ),
+    )
+    .await;
+    let wo_sync = text(db, &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"))
+        .await
+        .expect("wo sync id");
+    (wo_id, wo_sync)
+}
+
+/// The permit types the work order requires here and not lifted.
+async fn uncleared_here(db: &DatabaseConnection, wo_id: i64) -> Vec<String> {
+    crate::permit::required_set::read(db, wo_id)
+        .await
+        .expect("set")
+        .expect("wo")
+        .uncleared_types()
+}
+
+/// Two PCs that added different permit types converge on both (the set is the union); a received
+/// clearing of a type that is not the primary one is judged like a rule's (a reason, a known person
+/// holding the permit-issue right at the work order's site); a type lifted while another is not
+/// keeps the permit required, and the primary rule's legacy clearing then is no re-tick (its
+/// clearing is not withdrawn).
+#[tokio::test]
+async fn received_permit_types_are_merged_and_their_clearings_judged() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-1", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
+    let requires = || {
+        let db = &db;
+        async move {
+            text(
+                db,
+                &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+            )
+            .await
+        }
+    };
+    // The other PC holds hot work and cold work.
+    let theirs = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[(
+            "permit_required_types_json",
+            required_set_json(&[("cold_work", "rule-cold", None), ("hot_work", "rule-hot", None)]),
+        )],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &theirs).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        uncleared_here(&db, wo_id).await,
+        vec!["cold_work".to_string(), "hot_work".to_string(), "loto".to_string()],
+        "union of both sets"
+    );
+
+    let admin = user_sync(&db, APPLIER).await;
+    let lifted_cold = |by: &str, reason: &str| {
+        required_set_json(&[
+            ("cold_work", "rule-cold", Some((by, now().as_str(), reason))),
+            ("hot_work", "rule-hot", None),
+            ("loto", "rule-loto", None),
+        ])
+    };
+    let base = wire(&db, "work_orders", &wo_sync).await;
+    let verifier = user_sync(&db, VERIFIER).await;
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            base.clone(),
+            &[("permit_required_types_json", lifted_cold(&verifier, "Pas de travail à froid ici"))],
+        ),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            base.clone(),
+            &[("permit_required_types_json", lifted_cold("user-not-here", "Pas de travail à froid ici"))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Deferred { .. }), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(base.clone(), &[("permit_required_types_json", lifted_cold(&admin, "court"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(base.clone(), &[("permit_required_types_json", json!("not a set"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_REQUIRED_TYPES_INVALID"), "{outcome:?}");
+    let outcome = apply(
+        &db,
+        "work_orders",
+        &wo_sync,
+        &with(
+            base.clone(),
+            &[("permit_required_types_json", lifted_cold(&admin, "Pas de travail à froid ici"))],
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        uncleared_here(&db, wo_id).await,
+        vec!["hot_work".to_string(), "loto".to_string()]
+    );
+    assert_eq!(requires().await.as_deref(), Some("1"));
+
+    // The primary rule lifted there (legacy columns and its type), loto still required: the permit
+    // stays required, and that clearing is kept here (no re-tick).
+    let at = now();
+    let primary_lifted = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[
+            ("requires_permit", json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!(admin)),
+            ("permit_rule_cleared_at", json!(at)),
+            ("permit_rule_clear_reason", json!("Soudure remplacée par un serrage")),
+            (
+                "permit_required_types_json",
+                required_set_json(&[
+                    ("cold_work", "rule-cold", Some((admin.as_str(), at.as_str(), "Pas de travail à froid ici"))),
+                    ("hot_work", "rule-hot", Some((admin.as_str(), at.as_str(), "Soudure remplacée par un serrage"))),
+                    ("loto", "rule-loto", None),
+                ]),
+            ),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", &wo_sync, &primary_lifted).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(uncleared_here(&db, wo_id).await, vec!["loto".to_string()]);
+    assert_eq!(requires().await.as_deref(), Some("1"));
+    assert!(
+        text(&db, &format!("SELECT permit_rule_cleared_at FROM work_orders WHERE id = {wo_id}"))
+            .await
+            .is_some(),
+        "the primary rule's clearing is kept"
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events WHERE wo_id = {wo_id} \
+                 AND action_code = 'permit_clearing_withdrawn'"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("0"),
+        "no clearing withdrawn as a re-tick"
+    );
+}
+
+/// A PC without migration 279 sends no set: lifting the primary rule there does not lift the other
+/// types held here; the permit stays required, the primary type is recorded lifted, and this is
+/// recorded on the work order.
+#[tokio::test]
+async fn an_older_pc_lifting_the_primary_rule_keeps_the_other_types_required() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-2", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
+    let mut older = with(
+        wire(&db, "work_orders", &wo_sync).await,
+        &[
+            ("requires_permit", json!(0)),
+            ("permit_rule_cleared_by_sync_id", json!(user_sync(&db, APPLIER).await)),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Soudure remplacée par un serrage")),
+        ],
+    );
+    older.remove("permit_required_types_json");
+    let outcome = apply(&db, "work_orders", &wo_sync, &older).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(uncleared_here(&db, wo_id).await, vec!["loto".to_string()]);
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(requires_permit AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("1"),
+        "still required for loto"
+    );
+    assert_eq!(
+        text(
+            &db,
+            &format!(
+                "SELECT CAST(COUNT(*) AS TEXT) FROM wo_action_events WHERE wo_id = {wo_id} \
+                 AND action_code = 'permit_types_still_required'"
+            ),
+        )
+        .await
+        .as_deref(),
+        Some("1")
+    );
+}
+
+/// A received start is judged with the set its sender held, never the one here: started with a
+/// live permit of each type it required there, it is applied even though this PC requires one more
+/// type, and that type is named in its arrival finding. Started without a type the sender itself
+/// required, it is refused.
+#[tokio::test]
+async fn a_received_start_is_judged_with_the_senders_set() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-3", &[("loto", "rule-1"), ("hot_work", "rule-h")]).await;
+    let in_progress = status_sync(&db, "in_progress").await;
+    let wp = advance_to_issued(&db, create_from_wo(&db, "loto", wo_id).await.expect("permit")).await;
+    apply_and_verify(&db, &add_isolation(&db, wp.id, "MCC-L410B breaker").await).await;
+    set_status(&db, &wp, "active").await.expect("activate");
+    let started = |set: Value| {
+        let db = &db;
+        let (wo_sync, in_progress) = (wo_sync.clone(), in_progress.clone());
+        async move {
+            with(
+                wire(db, "work_orders", &wo_sync).await,
+                &[
+                    ("status_sync_id", in_progress),
+                    ("actual_start", json!(now())),
+                    ("permit_required_types_json", set),
+                ],
+            )
+        }
+    };
+    let both = started(required_set_json(&[("hot_work", "rule-h", None), ("loto", "rule-1", None)])).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &both).await;
+    assert_eq!(code(&outcome), Some("PERMIT_TYPE_REQUIRED_TO_START"), "{outcome:?}");
+    let loto_only = started(required_set_json(&[("loto", "rule-1", None)])).await;
+    let outcome = apply(&db, "work_orders", &wo_sync, &loto_only).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        uncleared_here(&db, wo_id).await,
+        vec!["hot_work".to_string(), "loto".to_string()],
+        "the type held here is kept"
+    );
+    let finding = text(
+        &db,
+        &format!(
+            "SELECT payload_json FROM wo_action_events WHERE wo_id = {wo_id} \
+             AND action_code = 'permit_rule_missing_on_arrival'"
+        ),
+    )
+    .await
+    .expect("a finding");
+    assert!(finding.contains("\"missing_permit_types\":[\"hot_work\"]"), "{finding}");
+}

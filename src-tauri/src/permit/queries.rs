@@ -31,8 +31,6 @@ const WP_STATUSES: &[&str] = &[
 /// open-permits report and the "permit expiring / expired" notification checks share it.
 pub const OPEN_PERMIT_STATUSES_SQL: &str = "('issued', 'active', 'suspended', 'revalidation_required')";
 
-/// Statuses after which a permit no longer protects work (no further lifecycle edits).
-const WP_TERMINAL_STATUSES: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
 
 /// Statuses in which isolation points may be defined, applied and verified. An `active`
 /// permit must be suspended first so new energy sources are never added under live work.
@@ -1729,15 +1727,17 @@ async fn create_work_permit_in(
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
     let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
 
+    // A work order has at most one open permit of each type: the plant's rules can require several
+    // types of it, and its start needs a live permit of each (`permit::required_set`, CMMS Advisor
+    // 2026-11-04); a second open permit of the same type is refused.
     if let Some(wo_id) = input.linked_work_order_id {
-        if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
-            if !WP_TERMINAL_STATUSES.contains(&existing.status.as_str()) {
-                return Err(refused(
-                    "PERMIT_WO_ALREADY_HAS_OPEN",
-                    format!("Work order already has an open permit ({}).", existing.code),
-                    &[("permit", existing.code.clone())],
-                ));
-            }
+        let open = list_live_permits_linked_to_work_order(db, wo_id).await?;
+        if let Some(existing) = open.iter().find(|p| p.permit_type_id == input.permit_type_id) {
+            return Err(refused(
+                "PERMIT_WO_ALREADY_HAS_OPEN",
+                format!("Work order already has an open permit of this type ({}).", existing.code),
+                &[("permit", existing.code.clone())],
+            ));
         }
     }
 
@@ -2043,13 +2043,16 @@ async fn update_work_permit_in(
     };
     let asset_id = target.asset_id;
     let linked = target.linked_work_order_id;
-    // Same rule as creation: a work order has at most one open permit.
+    // Same rule as creation: a work order has at most one open permit of each type.
     if let Some(wo_id) = linked.filter(|w| Some(*w) != current.linked_work_order_id) {
         let others = list_live_permits_linked_to_work_order(db, wo_id).await?;
-        if let Some(existing) = others.iter().find(|p| p.id != current.id) {
+        if let Some(existing) = others
+            .iter()
+            .find(|p| p.id != current.id && p.permit_type_id == current.permit_type_id)
+        {
             return Err(refused(
                 "PERMIT_WO_ALREADY_HAS_OPEN",
-                format!("Work order already has an open permit ({}).", existing.code),
+                format!("Work order already has an open permit of this type ({}).", existing.code),
                 &[("permit", existing.code.clone())],
             ));
         }

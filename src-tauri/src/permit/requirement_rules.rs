@@ -985,6 +985,31 @@ pub async fn add_matching_types(
     Ok(added)
 }
 
+/// The permit types of a work order's stored set (`permit::required_set`) not cleared and without a
+/// live permit of that type linked to it (the gate's reading, `permit::wo_gate`), each with its
+/// rule: a work order received in progress that runs here without them (its start was judged with
+/// the sender's set) is recorded in its arrival finding. Nothing for a set read from the legacy
+/// columns alone (judged as before).
+pub async fn required_types_without_live_permit(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Vec<(String, String)>> {
+    let Some(set) = crate::permit::required_set::read(conn, wo_id).await? else {
+        return Ok(Vec::new());
+    };
+    if !set.stored() {
+        return Ok(Vec::new());
+    }
+    let live = crate::permit::queries::list_live_permits_linked_to_work_order(conn, wo_id).await?;
+    Ok(set
+        .items()
+        .iter()
+        .filter(|i| i.clearing.is_none())
+        .filter(|i| !live.iter().any(|p| p.permit_type_code.as_deref() == Some(i.permit_type_code.as_str())))
+        .map(|i| (i.permit_type_code.clone(), i.rule_code.clone()))
+        .collect())
+}
+
 /// [`stamp_matching_rule`] on every work order of this PC that has not started: when the plant's
 /// rule list changes here or is received (a work order without a rule gets one; one with a rule gets
 /// the other types the list now gives). Returns the work orders flagged.
