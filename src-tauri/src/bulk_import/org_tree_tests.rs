@@ -290,6 +290,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refused_deactivation_also_refuses_the_one_above_it() {
+        let db = setup().await;
+        let b = bulk_import::create_batch(&db, input(BASE), Some(1))
+            .await
+            .expect("batch");
+        bulk_import::apply_batch(&db, b.id, 1).await.expect("apply base");
+
+        // Z1 keeps its active child L1 (not in the file), so S1 cannot go either.
+        let chain = "code;libellé;type de nœud;code parent;actif\n\
+                     S1;Usine;SITE;;non\n\
+                     Z1;Zone A;ZONE;S1;non\n\
+                     Z2;Zone B;ZONE;S1;non\n";
+        let b = bulk_import::create_batch(&db, input(chain), Some(1))
+            .await
+            .expect("batch");
+        let p = bulk_import::get_preview(&db, b.id).await.expect("preview");
+        assert_eq!(p.rows[0].messages[0].code, "ORG_IMPORT_ACTIVE_CHILDREN");
+        assert_eq!(p.rows[1].messages[0].code, "ORG_IMPORT_ACTIVE_CHILDREN");
+        assert_eq!((p.rows[2].status.as_str(), p.rows[2].action.as_str()), ("ok", "update"));
+    }
+
+    #[tokio::test]
     async fn a_file_with_too_many_lines_is_refused() {
         let db = setup().await;
         let mut csv = String::from("code;libellé;type de nœud;code parent\n");

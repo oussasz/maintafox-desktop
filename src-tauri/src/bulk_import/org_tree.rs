@@ -297,6 +297,13 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                         "ORG_IMPORT_CYCLE",
                         "Un nœud ne peut pas être son propre parent.",
                     ));
+                } else if ambiguous.contains(&pk) {
+                    extra.push(RowMessage::error(
+                        "ORG_IMPORT_PARENT_AMBIGUOUS",
+                        format!(
+                            "Plusieurs nœuds existants ont un code qui ne diffère que par la casse (« {p} ») : on ne sait pas lequel est le parent."
+                        ),
+                    ));
                 } else if !existing.contains_key(&pk) && !first_row_of.contains_key(&pk) {
                     extra.push(RowMessage::error(
                         "ORG_IMPORT_PARENT_UNKNOWN",
@@ -369,19 +376,24 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             && l.active == Some(false)
             && !l.messages.iter().any(|m| m.severity == "error")
     };
-    let mut inactive_after: HashSet<String> = existing
-        .iter()
-        .filter(|(_, e)| !e.active)
-        .map(|(k, _)| k.clone())
-        .collect();
-    for (i, l) in lines.iter().enumerate() {
-        if is_deactivation(l, i) {
-            inactive_after.insert(key(&l.code));
+    // A refused deactivation can make its own parent's deactivation impossible: repeat until stable.
+    let inactive_after = loop {
+        let mut inactive_after: HashSet<String> = existing
+            .iter()
+            .filter(|(_, e)| !e.active)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for (i, l) in lines.iter().enumerate() {
+            if is_deactivation(l, i) {
+                inactive_after.insert(key(&l.code));
+            }
         }
-    }
-    for (i, line) in lines.iter_mut().enumerate() {
-        let me = key(&line.code);
-        if is_deactivation(line, i) {
+        let mut changed = false;
+        for (i, line) in lines.iter_mut().enumerate() {
+            if !is_deactivation(line, i) {
+                continue;
+            }
+            let me = key(&line.code);
             let blocked = existing.iter().any(|(ck, e)| {
                 e.active && e.parent_code.as_deref() == Some(me.as_str()) && !inactive_after.contains(ck)
             });
@@ -390,8 +402,19 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                     "ORG_IMPORT_ACTIVE_CHILDREN",
                     "Ce nœud a encore des enfants actifs : désactivez-les aussi dans le fichier (ou depuis l'écran Organisation).",
                 ));
+                changed = true;
             }
-        } else if !line.code.is_empty() && first_row_of.get(&me) == Some(&i) && !existing.contains_key(&me) {
+        }
+        if !changed {
+            break inactive_after;
+        }
+    };
+    for (i, line) in lines.iter_mut().enumerate() {
+        let me = key(&line.code);
+        if is_deactivation(line, i) {
+            continue;
+        }
+        if !line.code.is_empty() && first_row_of.get(&me) == Some(&i) && !existing.contains_key(&me) {
             if let Some(p) = line.parent.clone().filter(|p| !p.is_empty()) {
                 if inactive_after.contains(&key(&p)) {
                     line.messages.push(RowMessage::error(
@@ -573,6 +596,7 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
                 Err(e) => result = Err(e),
             }
         }
+        let rename_done = renamed && result.is_ok();
         if result.is_ok() && row.normalized["deactivate"].as_bool() == Some(true) {
             if let Err(e) = nodes::deactivate_org_node(db, id, version, user_id).await {
                 result = Err(e);
@@ -626,6 +650,42 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
                         format!("Modifié, mais la trace d'audit n'a pas pu être enregistrée : {why}"),
                     ),
                 });
+            }
+            Err(e) if rename_done => {
+                // The rename is written; keep its audit record even though the deactivation was refused.
+                let audited = match nodes::get_org_node_by_id(db, id).await {
+                    Ok(after) => audit::record_org_change(
+                        db,
+                        OrgAuditEventInput {
+                            entity_kind: "org_node".to_string(),
+                            entity_id: Some(id),
+                            change_type: "update_metadata".to_string(),
+                            before_json: serde_json::to_string(&before).ok(),
+                            after_json: serde_json::to_string(&after).ok(),
+                            preview_summary_json: Some("{\"source\":\"bulk_import\"}".to_string()),
+                            changed_by_id: Some(i64::from(user_id)),
+                            requires_step_up: true,
+                            apply_result: "applied".to_string(),
+                        },
+                    )
+                    .await
+                    .map(|_| ()),
+                    Err(err) => Err(err),
+                };
+                let audit_note = match audited {
+                    Ok(()) => String::new(),
+                    Err(err) => format!(
+                        " La trace d'audit du renommage n'a pas pu être enregistrée : {}",
+                        app_error_text(&err)
+                    ),
+                };
+                out.push(fail(
+                    row,
+                    format!(
+                        "Renommé, mais la désactivation a été refusée : {}.{audit_note}",
+                        app_error_text(&e)
+                    ),
+                ));
             }
             Err(e) => out.push(fail(row, app_error_text(&e))),
         }

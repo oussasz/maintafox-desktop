@@ -544,8 +544,9 @@ pub async fn get_preview(db: &DatabaseConnection, batch_id: i64) -> AppResult<Pr
     Ok(Preview { batch, rows })
 }
 
-/// The apply step stopped on a database error part-way: the batch cannot be applied again, the
-/// per-row results already stored say what was written.
+/// The apply step stopped on a database error part-way: the batch cannot be applied again. Some
+/// rows may already be written (the organisation screen and its audit trail show them), but the
+/// batch holds no per-row result for them; re-check the file to see what is still to do.
 async fn mark_failed(db: &DatabaseConnection, batch_id: i64) {
     let _ = db
         .execute(Statement::from_sql_and_values(
@@ -633,28 +634,36 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
     };
 
     let (mut created, mut updated, mut skipped, mut failed) = (0i64, 0i64, 0i64, 0i64);
-    let txn = db.begin().await?;
-    for res in &results {
-        match res.status {
-            "created" => created += 1,
-            "updated" => updated += 1,
-            "skipped" => skipped += 1,
-            _ => failed += 1,
+    let stored = async {
+        let txn = db.begin().await?;
+        for res in &results {
+            match res.status {
+                "created" => created += 1,
+                "updated" => updated += 1,
+                "skipped" => skipped += 1,
+                _ => failed += 1,
+            }
+            txn.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE bulk_import_rows SET apply_status = ?, apply_message = ? WHERE id = ?",
+                [res.status.into(), res.message.clone().into(), res.row_id.into()],
+            ))
+            .await?;
         }
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE bulk_import_rows SET apply_status = ?, apply_message = ? WHERE id = ?",
-            [res.status.into(), res.message.clone().into(), res.row_id.into()],
+            "UPDATE bulk_import_batches SET status = 'applied', updated_at = ? WHERE id = ?",
+            [crate::clock::now().to_rfc3339().into(), batch_id.into()],
         ))
         .await?;
+        txn.commit().await?;
+        Ok::<(), AppError>(())
     }
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE bulk_import_batches SET status = 'applied', updated_at = ? WHERE id = ?",
-        [crate::clock::now().to_rfc3339().into(), batch_id.into()],
-    ))
-    .await?;
-    txn.commit().await?;
+    .await;
+    if let Err(e) = stored {
+        mark_failed(db, batch_id).await;
+        return Err(e);
+    }
 
     crate::audit::writer::write_audit_event(
         db,

@@ -170,6 +170,8 @@ export function DataImportPage() {
     ? preview.rows.filter((r) => r.status !== "error" && r.action !== "skip").length
     : 0;
   const applied = preview?.batch.status === "applied";
+  // Any status other than "validated" (applied, applying, failed) is final: it cannot be applied again.
+  const closed = preview ? preview.batch.status !== "validated" : false;
 
   return (
     <ModulePageShell icon={FileUp} title={t("title")} description={t("description")}>
@@ -419,7 +421,7 @@ export function DataImportPage() {
               )}
 
               <div className="flex flex-wrap gap-2">
-                {!applied && (
+                {!closed && (
                   <Button
                     disabled={busy || importable === 0}
                     onClick={() => setConfirmApply(true)}
@@ -435,10 +437,10 @@ export function DataImportPage() {
                 )}
                 <Button variant="outline" disabled={busy} onClick={reset}>
                   <RotateCcw className="mr-2 h-4 w-4" />
-                  {applied ? t("apply.another") : t("apply.cancel")}
+                  {closed ? t("apply.another") : t("apply.cancel")}
                 </Button>
               </div>
-              {!applied && importable === 0 && (
+              {!closed && importable === 0 && (
                 <p className="text-sm text-tone-warning-fg">{t("apply.nothing")}</p>
               )}
             </CardContent>
