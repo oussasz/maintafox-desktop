@@ -7,12 +7,14 @@
  *
  * Confirmation needs the dependency check: if it cannot be loaded the failure is shown with a
  * retry and nothing can be confirmed (an unknown blocker count is never read as zero). The target
- * status is chosen by the user; none is preset.
+ * status is chosen by the user; none is preset. While open work blocks it, each blocking count
+ * opens the list of that work (same rule as the count) and the confirm button is not offered.
  */
 
 import {
   AlertTriangle,
   ClipboardList,
+  ExternalLink,
   FileText,
   Loader2,
   Radio,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { findStatus, statusLabelKey } from "@/components/assets/asset-tones";
@@ -43,7 +46,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useWoOpenRuleText } from "@/lib/wo-open-rule";
+import { listLinks } from "@/lib/list-links";
+import { useWoOpenRuleText, type WoOpenRuleText } from "@/lib/wo-open-rule";
 import { decommissionAsset, getAssetBindingSummary } from "@/services/asset-lifecycle-service";
 import { useEquipmentTaxonomy } from "@/stores/equipment-taxonomy-store";
 import type { Asset, AssetBindingSummary } from "@shared/ipc-types";
@@ -62,6 +66,8 @@ interface DependencyRow {
   icon: React.ReactNode;
   level: "blocker" | "warning" | "info";
   detail: string;
+  /** List of the records behind a blocking count, filtered on this asset with the count's rule. */
+  href?: string;
 }
 
 const ICON_CLS = "h-4 w-4 shrink-0";
@@ -69,8 +75,8 @@ const ICON_CLS = "h-4 w-4 shrink-0";
 function buildDependencies(
   summary: AssetBindingSummary,
   t: (key: string, opts?: Record<string, unknown>) => string,
-  /** Name of the "open OT" rule the blocking count uses ("Not yet closed"), when known. */
-  openWoRuleLabel: string | null,
+  /** The "open OT" rule the blocking count uses ("Not yet closed"), when known. */
+  openWoRule: WoOpenRuleText | null,
 ): DependencyRow[] {
   const entry = (
     domain: string,
@@ -83,6 +89,7 @@ function buildDependencies(
     icon: React.ReactNode,
     level: "blocker" | "warning" | "info",
     detail: string,
+    href?: string,
   ): DependencyRow => ({
     domain,
     count: summary[field].count,
@@ -90,6 +97,7 @@ function buildDependencies(
     icon,
     level,
     detail,
+    ...(href ? { href } : {}),
   });
 
   return [
@@ -99,13 +107,18 @@ function buildDependencies(
       <ClipboardList className={ICON_CLS} />,
       "blocker",
       t("decommission.blockerDetail"),
+      listLinks.requests({ scope: "open", equipmentId: summary.asset_id }),
     ),
     entry(
-      openWoRuleLabel ? `${t("binding.domains.wo")} — ${openWoRuleLabel}` : t("binding.domains.wo"),
+      openWoRule ? `${t("binding.domains.wo")} — ${openWoRule.label}` : t("binding.domains.wo"),
       "open_wo_count",
       <Wrench className={ICON_CLS} />,
       "blocker",
       t("decommission.blockerDetail"),
+      // Without a known rule the list could not apply the count's own filter: no link.
+      openWoRule
+        ? listLinks.workOrders({ scope: openWoRule.scope, equipmentId: summary.asset_id })
+        : undefined,
     ),
     entry(
       t("binding.domains.pm"),
@@ -138,6 +151,7 @@ export function AssetDecommissionModal({
   onDecommissioned,
 }: AssetDecommissionModalProps) {
   const { t } = useTranslation("equipment");
+  const navigate = useNavigate();
   const woOpenRuleText = useWoOpenRuleText();
 
   const [summary, setSummary] = useState<AssetBindingSummary | null>(null);
@@ -180,7 +194,7 @@ export function AssetDecommissionModal({
     ? buildDependencies(
         summary,
         t as (key: string, opts?: Record<string, unknown>) => string,
-        woOpenRuleText(summary.open_wo_rule)?.label ?? null,
+        woOpenRuleText(summary.open_wo_rule),
       )
     : [];
   const blockerCount = dependencies
@@ -264,6 +278,21 @@ export function AssetDecommissionModal({
                     {dep.available ? (dep.count ?? 0) : "—"}
                   </span>
                   <span className="text-xs text-text-muted">{dep.detail}</span>
+                  {dep.href && dep.level === "blocker" && dep.available && (dep.count ?? 0) > 0 && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => {
+                        const href = dep.href as string;
+                        onClose();
+                        void navigate(href);
+                      }}
+                    >
+                      <ExternalLink className="mr-1 h-3 w-3" aria-hidden />
+                      {t("decommission.openBlockers")}
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -316,11 +345,17 @@ export function AssetDecommissionModal({
           <Button variant="outline" onClick={onClose} disabled={submitting}>
             {t("decommission.cancel")}
           </Button>
-          <Button variant="destructive" disabled={!canConfirm} onClick={() => void handleConfirm()}>
-            {submitting && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
-            {t("decommission.confirm")}
-          </Button>
+          {!hasBlockers && (
+            <Button
+              variant="destructive"
+              disabled={!canConfirm}
+              onClick={() => void handleConfirm()}
+            >
+              {submitting && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+              <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+              {t("decommission.confirm")}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

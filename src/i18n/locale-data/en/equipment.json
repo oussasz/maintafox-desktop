@@ -548,6 +548,7 @@
     "reasonPlaceholder": "Explain the reason for decommissioning…",
     "blockerBanner": "Cannot decommission — {{count}} open work item(s). Close them first.",
     "blockerDetail": "blocks decommission",
+    "openBlockers": "View list",
     "pmWarning": "will be suspended",
     "iotWarning": "will be unlinked",
     "docInfo": "remain archived",
