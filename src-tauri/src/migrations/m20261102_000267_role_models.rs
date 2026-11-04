@@ -188,7 +188,7 @@ mod tests {
         assert!(!rights("Technician Template").contains(&OT_EMERGENCY_ASSIGN));
         assert!(!rights("Supervisor Template").contains(&OT_EMERGENCY_ASSIGN));
         assert!(rights("Maintenance Manager Template").contains(&OT_EMERGENCY_ASSIGN));
-        // Goods receipt needs the purchasing right: the storekeeper does not get it (Advisor 1).
+        // The storekeeper receives goods (`inv.receive`) but holds no purchasing right (Advisor 1).
         assert!(!rights("Storekeeper Template").contains(&INV_PROCURE));
         assert!(rights("Buyer Template").contains(&INV_PROCURE));
     }

@@ -1,20 +1,76 @@
 //! Approval limits and separation of duties for requisitions and purchase orders.
 //!
-//! Enforced by the backend at the transition to APPROVED:
-//! 1. Separation of duties: the requester of a requisition, or the buyer who created a purchase
+//! Enforced by the backend at the transition to APPROVED (and, for the right, REJECTED):
+//! 1. Approval right: the approver holds `inv.approve` (distinct from `inv.procure`, which
+//!    creates and manages documents).
+//! 2. Separation of duties: the requester of a requisition, or the buyer who created a purchase
 //!    order, cannot approve it.
-//! 2. Amount limit (only when limits are configured for that document type): the approver must
-//!    hold a role whose limit (`procurement_approval_limits`, tenant currency, NULL = unlimited)
-//!    covers the document amount. A document whose amount cannot be established (line without a
+//! 3. Amount limit, fail closed: the approver must hold a role whose active limit
+//!    (`procurement_approval_limits`, tenant currency, NULL = unlimited) covers the document
+//!    amount. A user whose roles have no limit for that document type cannot approve it, even when
+//!    no limit is configured at all; a document whose amount cannot be established (line without a
 //!    price, foreign currency without a stored rate) can only be approved with an unlimited role.
+//!    So the plant is never locked out, one visible, editable row "Administrator: unlimited" is
+//!    seeded per document type ([`seed_administrator_unlimited_limits`]); every other limit is
+//!    left for the administrator to set.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
-use crate::inventory::domain::{ProcurementApprovalLimit, ProcurementApprovalLimitInput};
+use crate::inventory::domain::{ProcurementApprovalLimit, ProcurementApprovalLimitInput, ProcurementApproverRoles};
 
 pub const DOC_REQUISITION: &str = "REQUISITION";
 pub const DOC_PURCHASE_ORDER: &str = "PURCHASE_ORDER";
+pub const DOCUMENT_TYPES: [&str; 2] = [DOC_REQUISITION, DOC_PURCHASE_ORDER];
+
+/// Name of the locked role that receives the seeded unlimited limit.
+const ADMINISTRATOR_ROLE: &str = "Administrator";
+
+/// Sync identity of the seeded "Administrator: unlimited" row of a document type: the same on
+/// every device, so two devices never hold two copies of it.
+pub fn seeded_limit_sync_id(document_type: &str) -> String {
+    crate::sync::identity::seeded_entity_sync_id(
+        "procurement_approval_limits",
+        &format!("{ADMINISTRATOR_ROLE}:{document_type}"),
+    )
+}
+
+/// Seeds, once per document type, the active unlimited limit of the Administrator role. A row
+/// that already exists for that role and type (whatever the administrator made of it: capped,
+/// deactivated) is never touched again. Returns the number of rows created. Called by migration
+/// 269 (existing databases) and by the startup seeder (new databases: the role is created there).
+pub async fn seed_administrator_unlimited_limits<C: ConnectionTrait>(db: &C) -> AppResult<u64> {
+    let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut created = 0;
+    for document_type in DOCUMENT_TYPES {
+        let sync_id = seeded_limit_sync_id(document_type);
+        created += db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO procurement_approval_limits
+                    (entity_sync_id, role_id, document_type, max_amount, is_active, row_version, created_by_id,
+                     created_at, updated_at)
+                 SELECT ?, r.id, ?, NULL, 1, 1, NULL, ?, ?
+                 FROM roles r
+                 WHERE r.name = ? AND r.deleted_at IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM procurement_approval_limits l
+                                   WHERE l.role_id = r.id AND l.document_type = ?)
+                   AND NOT EXISTS (SELECT 1 FROM procurement_approval_limits l WHERE l.entity_sync_id = ?)",
+                [
+                    sync_id.clone().into(),
+                    document_type.into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                    ADMINISTRATOR_ROLE.into(),
+                    document_type.into(),
+                    sync_id.into(),
+                ],
+            ))
+            .await?
+            .rows_affected();
+    }
+    Ok(created)
+}
 
 /// Amount of a document in the tenant currency; None when it cannot be established, with the
 /// reason shown to the approver.
@@ -34,11 +90,17 @@ fn map_limit(row: sea_orm::QueryResult) -> AppResult<ProcurementApprovalLimit> {
         is_active: row.try_get("", "is_active")?,
         row_version: row.try_get("", "row_version")?,
         updated_at: row.try_get("", "updated_at")?,
+        is_seeded_default: {
+            let document_type: String = row.try_get("", "document_type")?;
+            let sync_id: String = row.try_get("", "entity_sync_id")?;
+            sync_id == seeded_limit_sync_id(&document_type)
+        },
     })
 }
 
-const LIMIT_SELECT: &str = "SELECT l.id, l.role_id, r.name AS role_name, l.document_type, l.max_amount, l.is_active,
-            l.row_version, l.updated_at
+const LIMIT_SELECT: &str =
+    "SELECT l.id, l.entity_sync_id, l.role_id, r.name AS role_name, l.document_type, l.max_amount,
+            l.is_active, l.row_version, l.updated_at
      FROM procurement_approval_limits l
      JOIN roles r ON r.id = l.role_id";
 
@@ -238,27 +300,10 @@ pub async fn purchase_order_amount<C: ConnectionTrait>(db: &C, purchase_order_id
     })
 }
 
-/// Largest approval limit the user holds for a document type through active role assignments:
-/// `Ok(None)` when limits are not configured for that type at all, `Ok(Some(None))` unlimited,
-/// `Ok(Some(Some(x)))` capped at x, or an error when limits exist but none of the user's roles has one.
-async fn approver_limit<C: ConnectionTrait>(
-    db: &C,
-    user_id: i64,
-    document_type: &str,
-) -> AppResult<Option<Option<f64>>> {
-    let configured: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM procurement_approval_limits WHERE document_type = ? AND is_active = 1",
-            [document_type.into()],
-        ))
-        .await?
-        .map(|r| r.try_get("", "n"))
-        .transpose()?
-        .unwrap_or(0);
-    if configured == 0 {
-        return Ok(None);
-    }
+/// Largest approval limit the user holds for a document type through role assignments in force:
+/// `Ok(None)` unlimited, `Ok(Some(x))` capped at x, or an error when none of the user's roles has
+/// an active limit for that type (fail closed: also when no limit is configured at all).
+async fn approver_limit<C: ConnectionTrait>(db: &C, user_id: i64, document_type: &str) -> AppResult<Option<f64>> {
     // The shared rule and clock: stored bounds are `YYYY-MM-DDTHH:MM:SSZ`, which
     // `datetime('now')` (`YYYY-MM-DD HH:MM:SS`) does not compare with, so a lapsed grant used
     // to keep its limit until midnight.
@@ -266,6 +311,9 @@ async fn approver_limit<C: ConnectionTrait>(
     let mut values: Vec<sea_orm::Value> = vec![user_id.into()];
     values.extend(crate::rbac::resolver::in_force_binds(&now));
     values.push(document_type.into());
+    values.push(crate::rbac::permissions::INV_APPROVE.into());
+    // Only the limits of roles that carry the approval right count: an unlimited limit left on a
+    // role without the right never widens another role's limit.
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -273,7 +321,9 @@ async fn approver_limit<C: ConnectionTrait>(
                 "SELECT l.max_amount FROM procurement_approval_limits l
                  JOIN user_scope_assignments usa ON usa.role_id = l.role_id
                  WHERE usa.user_id = ? AND {}
-                   AND l.document_type = ? AND l.is_active = 1",
+                   AND l.document_type = ? AND l.is_active = 1
+                   AND EXISTS (SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+                               WHERE rp.role_id = l.role_id AND p.name = ?)",
                 crate::rbac::resolver::ASSIGNMENT_IN_FORCE_SQL
             ),
             values,
@@ -281,18 +331,91 @@ async fn approver_limit<C: ConnectionTrait>(
         .await?;
     if rows.is_empty() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_PROC_NO_APPROVAL_LIMIT: none of your roles may approve a {} (no approval limit is set for them).",
+            "GATE_PROC_NO_APPROVAL_LIMIT: none of your roles has an approval limit for a {}; the administrator \
+             sets the limits per role (Approval limits).",
             label(document_type)
         )]));
     }
-    let mut best: Option<f64> = Some(0.0);
+    let mut best = 0.0_f64;
     for row in rows {
         match row.try_get::<Option<f64>>("", "max_amount")? {
-            None => return Ok(Some(None)),
-            Some(v) => best = Some(best.unwrap_or(0.0).max(v)),
+            None => return Ok(None),
+            Some(v) => best = best.max(v),
         }
     }
     Ok(Some(best))
+}
+
+/// The approval right (`inv.approve`), held through any role assignment in force. Checked here as
+/// well as by the commands, so that no caller of the procurement transitions approves or rejects
+/// without it.
+pub async fn ensure_approval_right<C: ConnectionTrait>(db: &C, approver_id: Option<i64>) -> AppResult<i64> {
+    let Some(approver) = approver_id else {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_APPROVER_REQUIRED: An approval needs a signed-in approver.".to_string(),
+        ]));
+    };
+    let held = crate::rbac::resolver::all_scope_permissions(db, approver).await?;
+    if !held.contains(crate::rbac::permissions::INV_APPROVE) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_PROC_APPROVAL_RIGHT: approving or rejecting a purchase needs the right '{}'.",
+            crate::rbac::permissions::INV_APPROVE
+        )]));
+    }
+    Ok(approver)
+}
+
+async fn document_amount<C: ConnectionTrait>(
+    db: &C,
+    document_type: &str,
+    document_id: i64,
+) -> AppResult<DocumentAmount> {
+    if document_type == DOC_PURCHASE_ORDER {
+        purchase_order_amount(db, document_id).await
+    } else {
+        requisition_amount(db, document_id).await
+    }
+}
+
+/// The roles that may approve this document: they hold `inv.approve` and an active limit for its
+/// type that covers its amount (or is unlimited). Ordered by name.
+pub async fn approver_roles(
+    db: &DatabaseConnection,
+    document_type: &str,
+    document_id: i64,
+) -> AppResult<ProcurementApproverRoles> {
+    ensure_document_type(document_type)?;
+    let amount = document_amount(db, document_type, document_id).await?;
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT r.name AS role_name
+             FROM procurement_approval_limits l
+             JOIN roles r ON r.id = l.role_id
+             WHERE l.document_type = ? AND l.is_active = 1 AND r.deleted_at IS NULL
+               AND (l.max_amount IS NULL OR (? IS NOT NULL AND l.max_amount + 0.000001 >= ?))
+               AND EXISTS (SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+                           WHERE rp.role_id = r.id AND p.name = ?)
+             ORDER BY r.name",
+            [
+                document_type.into(),
+                amount.amount.map_or(Value::Double(None), Value::from),
+                amount.amount.map_or(Value::Double(None), Value::from),
+                crate::rbac::permissions::INV_APPROVE.into(),
+            ],
+        ))
+        .await?;
+    let role_names = rows
+        .iter()
+        .map(|r| r.try_get::<String>("", "role_name"))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ProcurementApproverRoles {
+        document_type: document_type.to_string(),
+        document_id,
+        amount: amount.amount,
+        amount_unknown_reason: amount.unknown_reason,
+        role_names,
+    })
 }
 
 fn label(document_type: &str) -> &'static str {
@@ -303,7 +426,7 @@ fn label(document_type: &str) -> &'static str {
     }
 }
 
-/// Checks separation of duties and the approver's limit before an approval.
+/// Checks the approval right, separation of duties and the approver's limit before an approval.
 pub async fn ensure_can_approve<C: ConnectionTrait>(
     db: &C,
     document_type: &str,
@@ -311,28 +434,17 @@ pub async fn ensure_can_approve<C: ConnectionTrait>(
     author_id: Option<i64>,
     approver_id: Option<i64>,
 ) -> AppResult<()> {
-    let Some(approver) = approver_id else {
-        return Err(AppError::ValidationFailed(vec![
-            "GATE_INV_APPROVER_REQUIRED: An approval needs a signed-in approver.".to_string(),
-        ]));
-    };
+    let approver = ensure_approval_right(db, approver_id).await?;
     if author_id == Some(approver) {
         return Err(AppError::ValidationFailed(vec![format!(
             "GATE_PROC_SELF_APPROVAL: you created this {}; another person must approve it.",
             label(document_type)
         )]));
     }
-    let Some(limit) = approver_limit(db, approver, document_type).await? else {
-        return Ok(());
-    };
-    let Some(max) = limit else {
+    let Some(max) = approver_limit(db, approver, document_type).await? else {
         return Ok(()); // unlimited role
     };
-    let amount = if document_type == DOC_PURCHASE_ORDER {
-        purchase_order_amount(db, document_id).await?
-    } else {
-        requisition_amount(db, document_id).await?
-    };
+    let amount = document_amount(db, document_type, document_id).await?;
     match amount.amount {
         Some(value) if value <= max + 1e-6 => Ok(()),
         Some(value) => Err(AppError::ValidationFailed(vec![format!(

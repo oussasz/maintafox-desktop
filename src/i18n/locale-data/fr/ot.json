@@ -1045,7 +1045,9 @@
   "archive": {
     "title": "Archive (Clôturés / Annulés)",
     "loadError": "Échec du chargement des OT archivés.",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "shown": "{{shown}} sur {{total}} affichés",
+    "loadMore": "Charger plus ({{count}} restants)"
   },
   "search": {
     "placeholder": "Rechercher par code, titre, équipement…"

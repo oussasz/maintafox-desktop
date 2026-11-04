@@ -2674,6 +2674,11 @@ async fn seed_system_roles(db: &impl ConnectionTrait) -> AppResult<()> {
     .await?;
     grant_baseline(db, "Read Only Observer", &view_permissions, &now).await?;
 
+    // Purchase approval limits fail closed: the Administrator's visible, editable unlimited limit
+    // (once per document type, never re-created) keeps the plant from being locked out; every
+    // other limit is left for the administrator to set.
+    crate::inventory::approvals::seed_administrator_unlimited_limits(db).await?;
+
     tracing::info!("seeder::system_roles_seeded");
     Ok(())
 }

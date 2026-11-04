@@ -825,13 +825,6 @@ export function InventoryPage() {
           <Button
             variant="outline"
             className={mfLayout.primaryAction}
-            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
-          >
-            {t("procurement.purchaseOrders.actions.receive")}
-          </Button>
-          <Button
-            variant="outline"
-            className={mfLayout.primaryAction}
             onClick={() => procurementPanelRef.current?.openRepairable()}
           >
             {t("procurement.repairables.create")}
@@ -845,6 +838,18 @@ export function InventoryPage() {
           header={exportHeader}
           getRows={getExportRows}
         />
+      ) : null}
+      {invTab === "procurement" ? (
+        // Receiving goods is its own right (inv.receive), separate from managing purchases.
+        <PermissionGate permission={P.INV_RECEIVE}>
+          <Button
+            variant="outline"
+            className={mfLayout.primaryAction}
+            onClick={() => procurementPanelRef.current?.openReceiveGoods()}
+          >
+            {t("procurement.purchaseOrders.actions.receive")}
+          </Button>
+        </PermissionGate>
       ) : null}
       {invTab === "procurement" ? (
         <ViewToggle

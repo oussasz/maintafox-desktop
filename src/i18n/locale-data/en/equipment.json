@@ -492,7 +492,7 @@
       "templateSaved": "Template saved",
       "templateFailed": "The template could not be saved",
       "template": "Download the template (Excel/CSV)",
-      "columnsHelp": "Columns: {{columns}}. Required: code_equipement, nom, classe, criticite, statut (class, family, criticality and status use the codes of Reference data). The \";\" (French Excel) or \",\" separator is detected automatically."
+      "columnsHelp": "Columns: {{columns}}. Required: code_equipement, nom, classe, criticite, statut (class, family, criticality and status use the codes of Reference data; emplacement is the node code as shown in Organisation; parent is the code of another asset, already created or present in the file). The \";\" (French Excel) or \",\" separator is detected automatically."
     },
     "validate": {
       "title": "Data Validation",
