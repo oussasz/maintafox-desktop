@@ -28,6 +28,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { StickyActionBar } from "@/components/ui/sticky-action-bar";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -343,6 +344,26 @@ export function WoCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field differs from what the form opened with. The type picked by default on a new
+  // work order and an equipment passed in by the caller are not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    notes !== (initial?.notes ?? "") ||
+    plannedStart !== (initial?.planned_start ? toDateTimeLocal(initial.planned_start) : "") ||
+    plannedEnd !== (initial?.planned_end ? toDateTimeLocal(initial.planned_end) : "") ||
+    expectedDuration !== (initial?.expected_duration_hours ?? null) ||
+    requiresPermit !== (initial?.requires_permit ?? false) ||
+    urgencyId !== (initial?.urgency_code ?? "") ||
+    subtypeCode !== (initial?.subtype_code ?? "") ||
+    (isEdit && typeCode !== (initial?.type_code ?? "")) ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
@@ -370,6 +391,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         await updateDraft(draftPayload);
+        markSaved();
         onSubmitted({ ...initial, title, description, requires_permit: requiresPermit });
       } else {
         const input: WoCreateInput = {
@@ -387,6 +409,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         const wo = await submitNewWo(input);
+        markSaved();
         onSubmitted(wo);
       }
     } catch (err) {
@@ -414,6 +437,7 @@ export function WoCreateForm({
     requiresPermit,
     submitNewWo,
     updateDraft,
+    markSaved,
     onSubmitted,
   ]);
 
@@ -648,7 +672,7 @@ export function WoCreateForm({
             : undefined
         }
       >
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+        <Button variant="outline" size="sm" onClick={requestCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -660,6 +684,7 @@ export function WoCreateForm({
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </StickyActionBar>
+      {guard}
     </div>
   );
 }

@@ -36,6 +36,7 @@ import { DecimalField } from "@/components/ui/decimal-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ListAccessNote } from "@/components/ui/list-access-note";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { useToast } from "@/hooks/use-toast";
 import { appErrorReason } from "@/lib/app-error";
 import { useZodForm } from "@/lib/form-helpers";
@@ -111,7 +112,7 @@ export function AssetCreateForm() {
     setValue,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = form;
 
   // What the user entered is cleared only when the form opens: a rights reload or a language
@@ -211,6 +212,12 @@ export function AssetCreateForm() {
     }
   }, [watchedFamilyCode, setValue]);
 
+  // Unsaved input: a field the user changed or a photo chosen (a parent passed in is not input).
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({
+    dirty: isDirty || pendingPhotos.length > 0,
+    onCancel: closeForm,
+  });
+
   const onSubmit: Parameters<typeof handleSubmit>[0] = async (values) => {
     setSubmitError(null);
     if (
@@ -286,6 +293,7 @@ export function AssetCreateForm() {
         }
       }
 
+      markSaved();
       closeForm();
     } catch (err) {
       setSubmitError(appErrorReason(err));
@@ -319,7 +327,7 @@ export function AssetCreateForm() {
               {t("createForm.submit")}
             </>
           }
-          onCancel={() => closeForm()}
+          onCancel={requestCancel}
           cancelDisabled={busy}
           primaryDisabled={!catalogReady}
           primaryLoading={busy}
@@ -378,7 +386,9 @@ export function AssetCreateForm() {
                 id="class_code"
                 referenceType="equipment.class"
                 value={watch("class_code") || null}
-                onChange={(v) => setValue("class_code", v ?? "", { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("class_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+                }
                 placeholder={t("createForm.selectClass")}
                 allowClear={false}
                 aria-invalid={!!errors.class_code}
@@ -389,7 +399,9 @@ export function AssetCreateForm() {
                 id="family_code"
                 referenceType="equipment.family"
                 value={watch("family_code") ?? null}
-                onChange={(v) => setValue("family_code", v, { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("family_code", v, { shouldDirty: true, shouldValidate: true })
+                }
                 parentCode={watchedClassCode || null}
                 placeholder={t("createForm.selectFamilyOptional")}
                 disabled={!watchedClassCode}
@@ -401,7 +413,9 @@ export function AssetCreateForm() {
                 id="subfamily_code"
                 referenceType="equipment.subfamily"
                 value={watch("subfamily_code") ?? null}
-                onChange={(v) => setValue("subfamily_code", v, { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("subfamily_code", v, { shouldDirty: true, shouldValidate: true })
+                }
                 parentCode={watchedFamilyCode ?? null}
                 placeholder={t("createForm.selectSubfamilyOptional")}
                 disabled={!watchedFamilyCode}
@@ -419,7 +433,9 @@ export function AssetCreateForm() {
               id="criticality_code"
               referenceType="equipment.criticality"
               value={watch("criticality_code") || null}
-              onChange={(v) => setValue("criticality_code", v ?? "", { shouldValidate: true })}
+              onChange={(v) =>
+                setValue("criticality_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+              }
               placeholder={t("createForm.selectCriticality")}
               allowClear={false}
               aria-invalid={!!errors.criticality_code}
@@ -439,7 +455,9 @@ export function AssetCreateForm() {
                 id="org_node_id"
                 options={orgOptions}
                 value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                onChange={(v) => setValue("org_node_id", Number(v), { shouldValidate: true })}
+                onChange={(v) =>
+                  setValue("org_node_id", Number(v), { shouldDirty: true, shouldValidate: true })
+                }
                 placeholder={t("createForm.selectOrg")}
                 disabled={orgOptions.length === 0}
                 aria-invalid={!!errors.org_node_id}
@@ -452,7 +470,9 @@ export function AssetCreateForm() {
             <EquipmentParentPicker
               id="parent_asset_id"
               value={watch("parent_asset_id") ?? null}
-              onChange={(id) => setValue("parent_asset_id", id, { shouldValidate: true })}
+              onChange={(id) =>
+                setValue("parent_asset_id", id, { shouldDirty: true, shouldValidate: true })
+              }
               rootAssetId={parentPreFill?.id ?? null}
             />
           </FormField>
@@ -472,7 +492,9 @@ export function AssetCreateForm() {
             <Checkbox
               id="maintainable_boundary"
               checked={watch("maintainable_boundary")}
-              onCheckedChange={(c) => setValue("maintainable_boundary", c === true)}
+              onCheckedChange={(c) =>
+                setValue("maintainable_boundary", c === true, { shouldDirty: true })
+              }
             />
             <Label htmlFor="maintainable_boundary" className="text-sm">
               {t("createForm.maintainableBoundary")}
@@ -491,7 +513,9 @@ export function AssetCreateForm() {
               id="status_code"
               referenceType="equipment.status"
               value={watch("status_code") || null}
-              onChange={(v) => setValue("status_code", v ?? "", { shouldValidate: true })}
+              onChange={(v) =>
+                setValue("status_code", v ?? "", { shouldDirty: true, shouldValidate: true })
+              }
               placeholder={t("createForm.selectStatus")}
               allowClear={false}
               excludeCodes={retiredStatusCodes}
@@ -551,7 +575,7 @@ export function AssetCreateForm() {
                 setValue(
                   "rams_schedule_reference_value_id",
                   v != null && v !== "" ? Number(v) : null,
-                  { shouldValidate: true },
+                  { shouldDirty: true, shouldValidate: true },
                 )
               }
               placeholder={t("createForm.selectScheduleClass")}
@@ -574,7 +598,10 @@ export function AssetCreateForm() {
                   : null
               }
               onValueChange={(v) =>
-                setValue("rams_utilization_factor", v ?? Number.NaN, { shouldValidate: true })
+                setValue("rams_utilization_factor", v ?? Number.NaN, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
               }
             />
             <p className="mt-1 text-[11px] text-text-muted">
@@ -592,6 +619,7 @@ export function AssetCreateForm() {
           </div>
         )}
       </form>
+      {guard}
     </EntityFormDialog>
   );
 }
