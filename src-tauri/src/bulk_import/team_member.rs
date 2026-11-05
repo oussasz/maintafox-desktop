@@ -712,10 +712,22 @@ async fn write_period(db: &DatabaseConnection, row: &StagedRow, p: i64, t: i64) 
     match assignment {
         Some(id) => {
             if let Some(to) = to {
+                // The lead role lives on a running membership: a period that this line ends, or
+                // that it reopens after it had ended, no longer carries an old lead flag (a new
+                // lead is set by the "chef d'équipe" column, after the periods).
+                let today = crate::clock::now().date_naive();
+                let was_running = stored.is_some_and(|(_, old_to)| running(old_to, today));
+                let ends_or_reopens = !running(after.1, today) || !was_running;
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "UPDATE personnel_team_assignments SET valid_to = ?, updated_at = ? WHERE id = ?",
-                    [to.to_string().into(), now.into(), id.into()],
+                    "UPDATE personnel_team_assignments                      SET valid_to = ?, updated_at = ?,                          is_lead = CASE WHEN ? THEN 0 ELSE is_lead END,                          role_code = CASE WHEN ? AND is_lead = 1 THEN 'member' ELSE role_code END                      WHERE id = ?",
+                    [
+                        to.to_string().into(),
+                        now.into(),
+                        ends_or_reopens.into(),
+                        ends_or_reopens.into(),
+                        id.into(),
+                    ],
                 ))
                 .await?;
             }

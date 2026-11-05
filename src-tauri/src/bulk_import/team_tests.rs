@@ -415,4 +415,32 @@ P1;IT-B;01/01/2020;31/12/2020;;
         assert_eq!(errors(&p, 2), vec!["MEMBER_IMPORT_HOME_PERSON"]);
         assert!(errors(&p, 3).is_empty(), "a plain period is still accepted");
     }
+
+    #[tokio::test]
+    async fn reopening_an_ended_period_does_not_bring_back_an_old_lead() {
+        let db = db_with_crews().await;
+        let p1 = person_id(&db, "P1").await;
+        let a = team_id(&db, "IT-A").await;
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel_team_assignments (entity_sync_id, personnel_id, team_id, role_code, valid_from, valid_to, is_lead)                  VALUES ('old-lead', {p1}, {a}, 'lead', '2024-01-01', '2024-12-31', 1)"
+            ),
+        )
+        .await;
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P1;IT-A;01/01/2024;31/12/2099;;
+"
+            ),
+        )
+        .await;
+        assert_eq!(action(&p, 2), "update");
+        let res = apply(&db, &p).await;
+        assert_eq!((res.updated, res.failed), (1, 0));
+        assert!(!is_lead(&db, "P1", "IT-A").await);
+    }
 }

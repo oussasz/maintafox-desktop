@@ -128,7 +128,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT t.id, t.code, t.name, t.team_type, t.status, t.primary_node_id, t.deleted_at, n.code AS node_code              FROM teams t LEFT JOIN org_nodes n ON n.id = t.primary_node_id"
+            "SELECT t.id, t.code, t.name, t.team_type, t.status, t.primary_node_id, t.deleted_at, n.code AS node_code \
+             FROM teams t LEFT JOIN org_nodes n ON n.id = t.primary_node_id"
                 .to_string(),
         ))
         .await?
