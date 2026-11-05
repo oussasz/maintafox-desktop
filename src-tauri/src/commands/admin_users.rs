@@ -1640,7 +1640,7 @@ async fn scope_is_narrower_than_plant<C: ConnectionTrait>(
             let active = conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    &format!(
+                    format!(
                         "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {ACTIVE_MODEL_NODE_SQL}"
                     ),
                     [reference.into()],
@@ -1653,7 +1653,7 @@ async fn scope_is_narrower_than_plant<C: ConnectionTrait>(
             let whole_plant = conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    &format!(
+                    format!(
                         "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {SINGLE_TOP_NODE_SQL}"
                     ),
                     [reference.into()],
@@ -1694,7 +1694,7 @@ async fn end_replaced_plant_wide<C: ConnectionTrait>(
         let row = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                &format!(
+                format!(
                     "SELECT usa.id, usa.role_id, r.name AS role_name, usa.scope_type, usa.scope_reference \
                      FROM user_scope_assignments usa \
                      INNER JOIN roles r ON r.id = usa.role_id \
