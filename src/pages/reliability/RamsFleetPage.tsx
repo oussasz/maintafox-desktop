@@ -369,15 +369,18 @@ export function RamsFleetPage() {
                   : formatDecimal(k.availability_operational * 100, 1)
               }
               unit="%"
-              hint={rateHint(t("rams.kpi.availabilityHint", { period: periodLabel }), [])}
+              hint={rateHint(
+                t("rams.kpi.availabilityHint", { period: periodLabel, basis: basisHint }),
+                [],
+              )}
             />
             <KpiTile
               label={t("rams.kpi.mtbf")}
               value={hours(k?.mtbf_hours)}
               unit="h"
               hint={rateHint(
-                t("rams.kpi.mtbfHint", { basis: basisHint }),
-                exclusions([["notEligible", k?.mtbf_excluded_not_eligible ?? 0]]),
+                t("rams.kpi.mtbfHint", { period: periodLabel, basis: basisHint }),
+                exclusions([["missingDate", k?.mtbf_excluded_missing_date ?? 0]]),
               )}
             />
             <KpiTile
@@ -410,6 +413,7 @@ export function RamsFleetPage() {
               label={t("rams.kpi.failures")}
               value={formatNumber(k?.failure_count ?? 0)}
               hint={t("rams.kpi.failuresHint", {
+                period: periodLabel,
                 hours: formatNumber(Math.round(k?.downtime_hours ?? 0)),
               })}
             />
@@ -421,6 +425,7 @@ export function RamsFleetPage() {
                 ? { tone: "warning" as const }
                 : {})}
               hint={t("rams.kpi.dataQualityHint", {
+                period: periodLabel,
                 mode: k?.records_missing_mode ?? 0,
                 cause: k?.records_missing_cause ?? 0,
                 mechanism: k?.records_missing_mechanism ?? 0,

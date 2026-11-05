@@ -8,29 +8,50 @@
 //! deleted, dated by `COALESCE(failed_at, detected_at, created_at)` inside `[start, end]` (`end`
 //! clipped to now), of the equipment class when one is chosen, installed at the org node or below
 //! it when one is chosen. The fleet = the equipment of the class / org node (with or without
-//! failures): every one of them adds its hours.
+//! failures) in service during the window: every one of them adds its hours.
+//!
+//! A failure is dated once, by `COALESCE(failed_at, detected_at, created_at)`: a failure dated
+//! inside the window counts with its full restore time even when it is restored after the window
+//! end, and a failure dated before the window start is not counted (even if restored inside it).
 //!
 //! The decisions also ask to clip the window to the observation start of imported history
 //! ("Historique complet depuis le"); no such date is stored anywhere yet, so the window is not
 //! clipped (nothing is invented in its place).
 //!
 //! # Definitions
-//! - **Hours (T)** per equipment: operating hours when it has run-hour data (meter, runtime log,
-//!   operating schedule; `study::clock`), calendar hours otherwise. The mix is returned
-//!   (`operating_basis_count` / `calendar_basis_count`) so every screen states it.
-//! - **MTBF** = Σ T over the fleet / number of failures flagged MTBF-eligible
-//!   (`eligible_unplanned_mtbf`, ISO 14224; same parser as `compute::eligible_unplanned_mtbf`).
-//!   Failures not flagged are counted in `mtbf_excluded_not_eligible`.
+//! - **Hours (T)** per equipment, over its own window = the scope window clipped to
+//!   `[equipment.commissioning_date, equipment.decommissioned_at]` where they are set and
+//!   readable (equipment not in service at all during the window is not part of the fleet):
+//!   operating hours when it has run-hour data (meter, runtime log, operating schedule;
+//!   `study::clock`) covering at least [`MIN_OPERATING_COVERAGE`] of its window, calendar hours
+//!   of its window otherwise (a meter or runtime log that does not cover the window would
+//!   under-count; the equipment is then counted on the calendar basis, not as operating). Above
+//!   the threshold the uncovered part (at most 5 % of the window) adds no hours: nothing is
+//!   extrapolated. A schedule-based clock always covers its window. The mix
+//!   is returned (`operating_basis_count` / `calendar_basis_count`) so every screen states it.
+//! - **MTBF** = Σ T over the fleet / number of unplanned failures of the scope (CMMS Advisor
+//!   ruling, 2026-11-05). Eligibility is evaluated live from the record, never from the frozen
+//!   `eligible_flags_json` flag: every unplanned failure (`is_planned = 0`; a work order raises a
+//!   failure record only when its type is corrective) with an equipment and a failure date
+//!   counts, whatever its coding — cause "not determined" and no mode at all count too (they only
+//!   lower the coding completeness below). Left out of the MTBF only: a failure without
+//!   equipment (impossible: `failure_events.equipment_id` is NOT NULL) and a failure without a
+//!   readable date (`mtbf_excluded_missing_date`: unplanned records of the class / org node whose
+//!   `COALESCE(failed_at, detected_at, created_at)` cannot be read, so they belong to no window).
+//!   No action exists for a person to exclude a failure from the MTBF, so none is read.
 //! - **MTTR** = mean time to RESTORE (EN 13306): mean of `restored_at − failed_at` over the
 //!   failures that have both times in the right order. Failures without `failed_at`, without
 //!   `restored_at`, or restored before they failed (or with an unreadable time) are left out and
-//!   counted, each under the first reason that applies.
-//! - **Mean active repair time** (second, separately labelled figure): mean of
-//!   `active_repair_hours` over the failures where it is recorded (> 0); the others are counted in
+//!   counted, each under the first reason that applies. For a record raised from a work order the
+//!   stored times are the work start (`actual_start`) and the work-order close (`closed_at`), so
+//!   the MTTR of those records is work start → close; imported records carry failure → restore.
+//! - **Mean repair person-hours** (second, separately labelled figure): mean of
+//!   `active_repair_hours` (for a work order: the Σ of the interveners' hours worked) over the
+//!   failures where it is recorded (> 0); the others are counted in
 //!   `repair_excluded_missing_hours`.
 //! - **A_o** = MTBF / (MTBF + MTTR) with the two figures above (decision: A_o uses the restore
 //!   MTTR). Undefined when either is undefined.
-//! - MTBF, MTTR, mean active repair and A_o are given only for windows of at least
+//! - MTBF, MTTR, mean repair person-hours and A_o are given only for windows of at least
 //!   [`MIN_RATE_WINDOW_DAYS`] days; shorter windows give counts only (`window_too_short`).
 //! - **Complete record** (data quality): a failure mode (a reference code), a cause or "cause not
 //!   determined", and a mechanism (the mechanism list holds its own "unknown" value). The coding of
@@ -43,7 +64,7 @@ use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::AppResult;
-use crate::reliability::study::clock::{load_clock, parse_instant, SOURCE_CALENDAR};
+use crate::reliability::study::clock::{load_clock, parse_instant, parse_instant_opt, StudyClock, SOURCE_CALENDAR};
 use crate::reliability::study::domain::{FilterOption, FleetKpis};
 use crate::reliability::study::store::{get, opt_i64};
 
@@ -144,15 +165,6 @@ pub(crate) fn complete_sql() -> String {
     format!("({MODE_SQL} IS NOT NULL AND {CAUSE_CODED_SQL} AND {MECHANISM_SQL} IS NOT NULL)")
 }
 
-/// MTBF eligibility, read exactly as `compute::eligible_unplanned_mtbf`: the flag is JSON `true`
-/// or the integer 1; invalid JSON or any other value is not eligible.
-/// (Nested `CASE`: SQLite evaluates a `CASE` lazily, so the JSON functions never see invalid JSON.)
-const ELIGIBLE_SQL: &str = "(CASE WHEN json_valid(fe.eligible_flags_json) THEN
-       (CASE WHEN json_type(fe.eligible_flags_json, '$.eligible_unplanned_mtbf') IN ('true', 'integer')
-              AND json_extract(fe.eligible_flags_json, '$.eligible_unplanned_mtbf') = 1
-         THEN 1 ELSE 0 END)
-     ELSE 0 END)";
-
 /// Restore time of a record in hours (only meaningful when both times exist).
 const RESTORE_HOURS_SQL: &str = "((julianday(fe.restored_at) - julianday(fe.failed_at)) * 24.0)";
 
@@ -165,7 +177,6 @@ pub(crate) struct AssetAgg {
     pub class_id: Option<i64>,
     pub class_name: Option<String>,
     pub failures: i64,
-    pub eligible: i64,
     pub downtime: f64,
     pub restore_hours: f64,
     pub restore_count: i64,
@@ -189,7 +200,6 @@ pub(crate) async fn load_asset_aggs(db: &impl ConnectionTrait, scope: &FleetScop
     let sql = format!(
         "SELECT e.id, e.asset_id_code, e.name, e.class_id, ec.name AS class_name,
                 COUNT(fe.id) AS failures,
-                SUM({ELIGIBLE_SQL}) AS eligible,
                 COALESCE(SUM(fe.downtime_duration_hours), 0.0) AS downtime,
                 COALESCE(SUM(CASE WHEN {has_times} AND {RESTORE_HOURS_SQL} >= 0 THEN {RESTORE_HOURS_SQL} ELSE 0.0 END), 0.0)
                     AS restore_hours,
@@ -227,7 +237,6 @@ pub(crate) async fn load_asset_aggs(db: &impl ConnectionTrait, scope: &FleetScop
                 class_id: get(r, "class_id")?,
                 class_name: get(r, "class_name")?,
                 failures: get(r, "failures")?,
-                eligible: get(r, "eligible")?,
                 downtime: get(r, "downtime")?,
                 restore_hours: get(r, "restore_hours")?,
                 restore_count: get(r, "restore_count")?,
@@ -286,12 +295,58 @@ pub(crate) struct AssetHours {
     pub source: &'static str,
 }
 
-/// Every equipment of the scope's fleet (with or without failures) and its hours.
+/// Least share of an equipment's window that its meter or runtime log must cover for its
+/// operating hours to be used; below it the equipment counts calendar hours (module header).
+pub const MIN_OPERATING_COVERAGE: f64 = 0.95;
+
+/// A stored instant: RFC 3339, SQLite `YYYY-MM-DD HH:MM:SS` or a bare `YYYY-MM-DD` (start of the
+/// day, UTC). Unreadable or empty values give `None` (no clipping).
+fn stored_instant(raw: Option<&str>) -> Option<DateTime<Utc>> {
+    let raw = raw?.trim();
+    parse_instant_opt(Some(raw)).or_else(|| {
+        chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|n| n.and_utc())
+    })
+}
+
+/// The scope window of one equipment: clipped to its commissioning and decommissioning dates.
+/// `None` when it was not in service at any time of the window.
+pub(crate) fn asset_window(
+    scope: &FleetScope,
+    commissioned: Option<DateTime<Utc>>,
+    decommissioned: Option<DateTime<Utc>>,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let lo = commissioned.map_or(scope.start, |c| c.max(scope.start));
+    let hi = decommissioned.map_or(scope.end, |d| d.min(scope.end));
+    (hi > lo).then_some((lo, hi))
+}
+
+/// Hours of one equipment over its window: operating hours when its clock covers the window
+/// (at least [`MIN_OPERATING_COVERAGE`]), calendar hours otherwise.
+pub(crate) fn asset_hours(clock: &StudyClock, lo: DateTime<Utc>, hi: DateTime<Utc>) -> AssetHours {
+    if clock.is_operating() && clock.coverage(lo, hi) >= MIN_OPERATING_COVERAGE {
+        AssetHours {
+            hours: clock.hours_between(lo, hi),
+            source: clock.source(),
+        }
+    } else {
+        AssetHours {
+            hours: StudyClock::Calendar.hours_between(lo, hi),
+            source: SOURCE_CALENDAR,
+        }
+    }
+}
+
+/// Every equipment of the scope's fleet in service during the window (with or without failures)
+/// and its hours.
 pub(crate) async fn fleet_hours(db: &DatabaseConnection, scope: &FleetScope) -> AppResult<HashMap<i64, AssetHours>> {
     let fleet = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
+            "SELECT e.id, e.commissioning_date, e.decommissioned_at
+             FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
              WHERE e.deleted_at IS NULL
                AND (? IS NULL OR e.class_id = ?)
                AND (? IS NULL OR n.ancestor_path LIKE '%/' || ? || '/%')",
@@ -306,16 +361,46 @@ pub(crate) async fn fleet_hours(db: &DatabaseConnection, scope: &FleetScope) -> 
     let mut out = HashMap::with_capacity(fleet.len());
     for r in &fleet {
         let id: i64 = get(r, "id")?;
+        let commissioned: Option<String> = get(r, "commissioning_date")?;
+        let decommissioned: Option<String> = get(r, "decommissioned_at")?;
+        let Some((lo, hi)) = asset_window(
+            scope,
+            stored_instant(commissioned.as_deref()),
+            stored_instant(decommissioned.as_deref()),
+        ) else {
+            continue;
+        };
         let clock = load_clock(db, id).await?;
-        out.insert(
-            id,
-            AssetHours {
-                hours: clock.hours_between(scope.start, scope.end),
-                source: clock.source(),
-            },
-        );
+        out.insert(id, asset_hours(&clock, lo, hi));
     }
     Ok(out)
+}
+
+/// Unplanned failure records of the scope's class / org node whose failure date cannot be read:
+/// they belong to no window, so they are left out of the MTBF (and counted).
+pub(crate) async fn missing_date_count(db: &impl ConnectionTrait, scope: &FleetScope) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(fe.id) AS n FROM failure_events fe
+             JOIN equipment e ON e.id = fe.equipment_id AND e.deleted_at IS NULL
+             LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
+             WHERE COALESCE(fe.is_planned, 0) = 0
+               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) IS NULL
+               AND (? IS NULL OR e.class_id = ?)
+               AND (? IS NULL OR n.ancestor_path LIKE '%/' || ? || '/%')",
+            [
+                opt_i64(scope.equipment_class_id),
+                opt_i64(scope.equipment_class_id),
+                opt_i64(scope.org_node_id),
+                opt_i64(scope.org_node_id),
+            ],
+        ))
+        .await?;
+    match row {
+        Some(r) => get(&r, "n"),
+        None => Ok(0),
+    }
 }
 
 fn mean(sum: f64, n: i64) -> Option<f64> {
@@ -323,13 +408,20 @@ fn mean(sum: f64, n: i64) -> Option<f64> {
 }
 
 /// The fleet figures from per-equipment aggregates and hours (definitions: module header).
-pub(crate) fn kpis_of(scope: &FleetScope, aggs: &[AssetAgg], hours: &HashMap<i64, AssetHours>) -> FleetKpis {
+/// `missing_date` = [`missing_date_count`] of the scope.
+pub(crate) fn kpis_of(
+    scope: &FleetScope,
+    aggs: &[AssetAgg],
+    hours: &HashMap<i64, AssetHours>,
+    missing_date: i64,
+) -> FleetKpis {
     let sum_i = |f: fn(&AssetAgg) -> i64| aggs.iter().map(f).sum::<i64>();
     let sum_f = |f: fn(&AssetAgg) -> f64| aggs.iter().map(f).sum::<f64>();
     let exposure: f64 = hours.values().map(|h| h.hours.max(0.0)).sum();
     let operating = hours.values().filter(|h| h.source != SOURCE_CALENDAR).count() as i64;
     let failures = sum_i(|a| a.failures);
-    let eligible = sum_i(|a| a.eligible);
+    // Every unplanned failure of the scope counts (CMMS Advisor ruling 2026-11-05).
+    let eligible = failures;
     let coding = CodingCounts::of(aggs);
     let too_short = scope.window_too_short();
     let rate = |v: Option<f64>| if too_short { None } else { v };
@@ -352,7 +444,7 @@ pub(crate) fn kpis_of(scope: &FleetScope, aggs: &[AssetAgg], hours: &HashMap<i64
         availability_operational: ao,
         mtbf_hours: mtbf,
         eligible_failure_count: eligible,
-        mtbf_excluded_not_eligible: failures - eligible,
+        mtbf_excluded_missing_date: missing_date,
         mttr_hours: mttr,
         restore_count: sum_i(|a| a.restore_count),
         restore_excluded_missing_failed_at: sum_i(|a| a.missing_failed_at),
@@ -375,7 +467,8 @@ pub(crate) fn kpis_of(scope: &FleetScope, aggs: &[AssetAgg], hours: &HashMap<i64
 pub async fn fleet_kpis(db: &DatabaseConnection, scope: &FleetScope) -> AppResult<FleetKpis> {
     let aggs = load_asset_aggs(db, scope).await?;
     let hours = fleet_hours(db, scope).await?;
-    Ok(kpis_of(scope, &aggs, &hours))
+    let missing_date = missing_date_count(db, scope).await?;
+    Ok(kpis_of(scope, &aggs, &hours, missing_date))
 }
 
 /// Org nodes holding equipment and equipment classes in use (the filters of the fleet screens).

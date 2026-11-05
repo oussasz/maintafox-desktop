@@ -44,19 +44,22 @@ pub struct FleetKpis {
     pub exposure_hours: f64,
     /// A_o = MTBF / (MTBF + MTTR restore).
     pub availability_operational: Option<f64>,
-    /// Σ hours / MTBF-eligible failures (ISO 14224 `eligible_unplanned_mtbf`).
+    /// Σ hours / unplanned failures of the scope (every one, whatever its coding).
     pub mtbf_hours: Option<f64>,
+    /// Failures counted in the MTBF (every unplanned failure of the scope: = `failure_count`).
     pub eligible_failure_count: i64,
-    /// Failures left out of the MTBF (not flagged eligible).
-    pub mtbf_excluded_not_eligible: i64,
-    /// Mean time to restore (EN 13306): failure → back in service, over failures with both times.
+    /// Unplanned records of the class / org node left out of the MTBF: failure date unreadable.
+    pub mtbf_excluded_missing_date: i64,
+    /// Mean time to restore (EN 13306) over failures with both times: work start → work-order
+    /// close for records raised from a work order, failure → back in service for imported ones.
     pub mttr_hours: Option<f64>,
     pub restore_count: i64,
     pub restore_excluded_missing_failed_at: i64,
     pub restore_excluded_missing_restored_at: i64,
     /// Restored before the failure time (or a time that cannot be read).
     pub restore_excluded_inconsistent: i64,
-    /// Mean active repair time, over failures with active repair hours recorded.
+    /// Mean repair person-hours (Σ of the interveners' hours worked for a work order), over the
+    /// failures where they are recorded.
     pub mean_active_repair_hours: Option<f64>,
     pub active_repair_count: i64,
     pub repair_excluded_missing_hours: i64,
@@ -83,7 +86,7 @@ pub struct FleetAssetRow {
     pub downtime_hours: f64,
     /// Share of the fleet downtime (0–1).
     pub downtime_share: f64,
-    /// Hours of the equipment / its MTBF-eligible failures (same definition as the fleet figure).
+    /// Hours of the equipment / its unplanned failures (same definition as the fleet figure).
     pub mtbf_hours: Option<f64>,
     /// Mean time to restore of the equipment (same definition as the fleet figure).
     pub mttr_hours: Option<f64>,

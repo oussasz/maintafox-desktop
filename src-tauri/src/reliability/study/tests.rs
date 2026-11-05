@@ -1443,16 +1443,17 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     close(v.rows[0].downtime_share, 16.0 / 26.0, 1e-12);
     let hours = 333.0 * 24.0;
     close(v.kpis.exposure_hours, 2.0 * hours, 1e-6);
-    // MTBF over the 4 eligible failures only (F5 has no failure mode: not eligible).
+    // MTBF over every unplanned failure (F5 has no failure mode: it still counts).
     close(v.rows[0].mtbf_hours.expect("mtbf"), hours / 2.0, 1e-6);
     assert_eq!(
-        (v.kpis.eligible_failure_count, v.kpis.mtbf_excluded_not_eligible),
-        (4, 1)
+        (v.kpis.eligible_failure_count, v.kpis.mtbf_excluded_missing_date),
+        (5, 0)
     );
-    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 4.0, 1e-6);
+    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 5.0, 1e-6);
     // MTTR = time to restore: only F1 has both times (10:00 -> 20:00); F2..F5 lack restored_at.
-    close(v.rows[0].mttr_hours.expect("mttr"), 10.0, 1e-9);
-    close(v.kpis.mttr_hours.expect("fleet mttr"), 10.0, 1e-9);
+    // julianday() arithmetic is precise to about a millisecond.
+    close(v.rows[0].mttr_hours.expect("mttr"), 10.0, 1e-6);
+    close(v.kpis.mttr_hours.expect("fleet mttr"), 10.0, 1e-6);
     assert_eq!(v.kpis.restore_count, 1);
     assert_eq!(v.kpis.restore_excluded_missing_restored_at, 4);
     assert_eq!(v.kpis.restore_excluded_missing_failed_at, 0);
@@ -1463,12 +1464,8 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
         (5, 0)
     );
     // A_o = MTBF / (MTBF + MTTR restore).
-    let mtbf = 2.0 * hours / 4.0;
-    close(
-        v.kpis.availability_operational.expect("ao"),
-        mtbf / (mtbf + 10.0),
-        1e-12,
-    );
+    let mtbf = 2.0 * hours / 5.0;
+    close(v.kpis.availability_operational.expect("ao"), mtbf / (mtbf + 10.0), 1e-9);
     // Nothing has a cause or mechanism: no record is complete.
     close(v.kpis.data_quality.expect("dq"), 0.0, 1e-12);
     assert_eq!(v.kpis.records_missing_mode, 1);
@@ -1663,7 +1660,7 @@ async fn home_card_and_quality_page_share_the_completeness_predicate() {
     assert_eq!(page.records_complete, 1);
 }
 
-/// MTBF counts eligible failures only; MTTR is the time to restore over failures with both times;
+/// MTBF counts every unplanned failure; MTTR is the time to restore over failures with both times;
 /// the excluded records are counted under the first reason that applies.
 #[tokio::test]
 async fn fleet_kpis_eligibility_restore_and_exclusions() {
@@ -1751,10 +1748,11 @@ async fn fleet_kpis_eligibility_restore_and_exclusions() {
     let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
     let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
     assert_eq!(k.failure_count, 6);
-    // Eligible: a, b, d, e (c has no mode, g has unreadable flags).
-    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_not_eligible), (4, 2));
+    // Every unplanned failure counts in the MTBF, whatever its coding or its frozen flag (c has no
+    // mode, g has unreadable flags).
+    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_missing_date), (6, 0));
     let hours = 333.0 * 24.0 * 2.0;
-    close(k.mtbf_hours.expect("mtbf"), hours / 4.0, 1e-6);
+    close(k.mtbf_hours.expect("mtbf"), hours / 6.0, 1e-6);
     // Restore: a 4 h, b 8 h, c 6 h; d restored before failing; e without failure time; g not restored.
     assert_eq!(k.restore_count, 3);
     close(k.mttr_hours.expect("mttr"), 18.0 / 3.0, 1e-9);
@@ -1769,7 +1767,7 @@ async fn fleet_kpis_eligibility_restore_and_exclusions() {
     // Active repair (downtime / 2 in the fixture): 1, 3, 1, 2, 1 h; d has none recorded.
     close(k.mean_active_repair_hours.expect("repair"), 8.0 / 5.0, 1e-9);
     assert_eq!((k.active_repair_count, k.repair_excluded_missing_hours), (5, 1));
-    let mtbf = hours / 4.0;
+    let mtbf = hours / 6.0;
     close(k.availability_operational.expect("ao"), mtbf / (mtbf + 6.0), 1e-12);
 
     // Windows under 90 days give counts only.
@@ -1830,26 +1828,141 @@ fn fleet_kpis_hours_mix_counts() {
     let aggs = vec![AssetAgg {
         equipment_id: 1,
         failures: 3,
-        eligible: 2,
         restore_hours: 9.0,
         restore_count: 3,
         repair_hours: 4.5,
         repair_count: 3,
         ..AssetAgg::default()
     }];
-    let k = kpis_of(&scope, &aggs, &hours);
+    let k = kpis_of(&scope, &aggs, &hours, 0);
     assert_eq!(
         (k.equipment_count, k.operating_basis_count, k.calendar_basis_count),
         (3, 2, 1)
     );
     close(k.exposure_hours, 14736.0, 1e-9);
-    close(k.mtbf_hours.expect("mtbf"), 14736.0 / 2.0, 1e-9);
+    close(k.mtbf_hours.expect("mtbf"), 14736.0 / 3.0, 1e-9);
     close(k.mttr_hours.expect("mttr"), 3.0, 1e-12);
     close(k.mean_active_repair_hours.expect("repair"), 1.5, 1e-12);
-    // No eligible failure: no MTBF and no A_o (never a made-up 100 %).
-    let k = kpis_of(&scope, &[], &hours);
+    // No failure: no MTBF and no A_o (never a made-up 100 %).
+    let k = kpis_of(&scope, &[], &hours, 0);
     assert!(k.mtbf_hours.is_none() && k.availability_operational.is_none());
     assert_eq!(k.calendar_basis_count, 1);
+}
+
+/// CMMS Advisor ruling 2026-11-05: MTBF eligibility is evaluated live; every unplanned failure
+/// with an equipment and a readable date counts, whatever its coding; a missing date is excluded
+/// and counted.
+#[tokio::test]
+async fn fleet_kpis_mtbf_counts_every_unplanned_failure() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    let mech = mechanism_id(&f).await;
+    // Cause "not determined", fully coded: counts, complete.
+    failure(&f.db, "nd", f.p101, "2025-03-01T00:00:00Z", None, m, None, 2.0).await;
+    code_completely(&f, "nd", mech).await;
+    // No mode at all: counts, but is not complete.
+    failure(&f.db, "nomode", f.p101, "2025-04-01T00:00:00Z", None, None, None, 2.0).await;
+    // Coded after close: written without a mode (frozen flag false), mode added later: counts.
+    failure(&f.db, "late", f.p102, "2025-05-01T00:00:00Z", None, None, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET failure_mode_id = {} WHERE entity_sync_id = 'st-fe-late'",
+            f.mode_id
+        ),
+    )
+    .await;
+    // No readable failure date: belongs to no window, excluded from the MTBF and counted.
+    failure(&f.db, "nodate", f.p102, "2025-06-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET failed_at = NULL, detected_at = NULL, created_at = 'inconnue' \
+         WHERE entity_sync_id = 'st-fe-nodate'",
+    )
+    .await;
+
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.failure_count, 3);
+    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_missing_date), (3, 1));
+    close(k.mtbf_hours.expect("mtbf"), 333.0 * 24.0 * 2.0 / 3.0, 1e-6);
+    assert_eq!((k.records_complete, k.records_missing_mode), (1, 1));
+}
+
+/// Hours of each equipment cover only the part of the window it was in service
+/// (commissioning date, decommissioning date); out of service all window: not in the fleet.
+#[tokio::test]
+async fn fleet_hours_clip_to_commissioning_and_decommissioning() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    failure(
+        &f.db,
+        "a",
+        f.p101,
+        "2025-08-01T00:00:00Z",
+        None,
+        Some(f.mode_id),
+        None,
+        2.0,
+    )
+    .await;
+    // P-101 commissioned mid-window (bare date), P-102 decommissioned mid-window.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET commissioning_date = '2025-07-01' WHERE id = {}",
+            f.p101
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-04-01T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    // P-101: Jul 1 → Dec 31 = 183 days; P-102: Feb 1 → Apr 1 = 59 days.
+    assert_eq!(k.equipment_count, 2);
+    close(k.exposure_hours, (183.0 + 59.0) * 24.0, 1e-6);
+    close(k.mtbf_hours.expect("mtbf"), (183.0 + 59.0) * 24.0, 1e-6);
+
+    // Decommissioned before the window: not part of the fleet, no hours.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-01-15T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.equipment_count, 1);
+    close(k.exposure_hours, 183.0 * 24.0, 1e-6);
+}
+
+/// A meter that does not cover the equipment's window gives calendar hours, counted on the
+/// calendar basis; a meter covering it gives its operating hours.
+#[test]
+fn asset_hours_fall_back_to_calendar_when_the_meter_does_not_cover_the_window() {
+    use chrono::TimeZone;
+
+    use crate::reliability::study::clock::{StudyClock, SOURCE_CALENDAR, SOURCE_METER};
+    use crate::reliability::study::fleet_kpis::asset_hours;
+    let day = |d: u32| chrono::Utc.with_ymd_and_hms(2025, 1, d, 0, 0, 0).unwrap();
+    // 12 h of running per day, readings on Jan 1 and Jan 11.
+    let clock = StudyClock::Meter(vec![(day(1), 0.0), (day(11), 120.0)]);
+    let covered = asset_hours(&clock, day(1), day(11));
+    assert_eq!(covered.source, SOURCE_METER);
+    close(covered.hours, 120.0, 1e-9);
+    // Window Jan 1 → Jan 21: the meter covers half of it -> calendar hours of the whole window.
+    let uncovered = asset_hours(&clock, day(1), day(21));
+    assert_eq!(uncovered.source, SOURCE_CALENDAR);
+    close(uncovered.hours, 20.0 * 24.0, 1e-9);
 }
 
 // ── Part B: FMECA, RCM, system model, competing modes ───────────────────────────────────────

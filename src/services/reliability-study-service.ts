@@ -29,16 +29,18 @@ const FleetKpisSchema = z.object({
   exposure_hours: num,
   /** Aₒ = MTBF / (MTBF + MTTR restore). */
   availability_operational: optNum,
-  /** Σ hours / MTBF-eligible failures. */
+  /** Σ hours / every unplanned failure of the scope, whatever its coding. */
   mtbf_hours: optNum,
   eligible_failure_count: num,
-  mtbf_excluded_not_eligible: num,
-  /** Mean time to restore: failure → back in service. */
+  /** Unplanned records of the class / site left out of the MTBF: failure date unreadable. */
+  mtbf_excluded_missing_date: num,
+  /** Mean time to restore: work start → WO close (work orders), failure → back in service (imported). */
   mttr_hours: optNum,
   restore_count: num,
   restore_excluded_missing_failed_at: num,
   restore_excluded_missing_restored_at: num,
   restore_excluded_inconsistent: num,
+  /** Mean repair person-hours (Σ of the interveners' hours worked). */
   mean_active_repair_hours: optNum,
   active_repair_count: num,
   repair_excluded_missing_hours: num,

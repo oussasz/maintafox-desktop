@@ -65,8 +65,8 @@ const fleetView = {
     exposure_hours: 20790,
     availability_operational: 0.964,
     mtbf_hours: 2310,
-    eligible_failure_count: 9,
-    mtbf_excluded_not_eligible: 1,
+    eligible_failure_count: 10,
+    mtbf_excluded_missing_date: 1,
     mttr_hours: 6.8,
     restore_count: 8,
     restore_excluded_missing_failed_at: 0,
@@ -193,20 +193,28 @@ describe("RamsFleetPage", () => {
     // Each figure states its definition, its hours basis and what it left out.
     expect(
       screen.getByText(
-        "eligible failures (ISO 14224), operating hours: 2 equipment / calendar: 1 · 1 excluded: not MTBF-eligible",
+        "all unplanned failures, Last 12 months, operating hours: 2 equipment / calendar: 1 · 1 excluded: failure date missing",
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "mean time from failure to back in service, Last 12 months · 2 excluded: back-in-service time missing",
+        "from work start to work-order close, or from failure to back in service for imported records; Last 12 months, in clock hours · 2 excluded: back-in-service time missing",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Mean active repair")).toBeInTheDocument();
+    expect(screen.getByText("Mean repair person-hours")).toBeInTheDocument();
     expect(screen.getByText("3.2")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "complete = mode + cause + mechanism; 1 without mode, 1 without cause, 2 without mechanism",
+        "Last 12 months; complete = mode + cause + mechanism; 1 without mode, 1 without cause, 2 without mechanism",
       ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Aₒ = MTBF / (MTBF + MTTR), Last 12 months, operating hours: 2 equipment / calendar: 1",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("unplanned, Last 12 months; 244 h of downtime (clock hours)"),
     ).toBeInTheDocument();
     // Default window: the last 12 months.
     expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("12");

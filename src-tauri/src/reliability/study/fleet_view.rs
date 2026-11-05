@@ -2,7 +2,7 @@
 //! equipment ranked by downtime, computed live from the failure records of the period.
 //!
 //! The KPIs and the per-equipment MTBF / MTTR come from the one shared calculation
-//! (`study::fleet_kpis`, definitions there): MTBF over MTBF-eligible failures, MTTR = mean time
+//! (`study::fleet_kpis`, definitions there): MTBF over every unplanned failure, MTTR = mean time
 //! to restore, A_o = MTBF / (MTBF + MTTR), data quality = completely coded records.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -10,7 +10,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use crate::errors::AppResult;
 use crate::reliability::study::clock::SOURCE_CALENDAR;
 use crate::reliability::study::domain::{FleetAssetRow, FleetView, FleetViewFilter};
-use crate::reliability::study::fleet_kpis::{filter_options, fleet_hours, kpis_of, load_asset_aggs, FleetScope};
+use crate::reliability::study::fleet_kpis::{
+    filter_options, fleet_hours, kpis_of, load_asset_aggs, missing_date_count, FleetScope,
+};
 use crate::reliability::study::store::get;
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -28,7 +30,8 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
     let aggs = load_asset_aggs(db, &scope).await?;
     // Equipment of the filtered fleet with no failure still count in the hours (A_o, MTBF).
     let hours = fleet_hours(db, &scope).await?;
-    let kpis = kpis_of(&scope, &aggs, &hours);
+    let missing_date = missing_date_count(db, &scope).await?;
+    let kpis = kpis_of(&scope, &aggs, &hours, missing_date);
     let downtime_total = kpis.downtime_hours;
     let too_short = scope.window_too_short();
 
@@ -62,8 +65,8 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
             } else {
                 0.0
             },
-            // Same definitions as the fleet figures (eligible failures, time to restore).
-            mtbf_hours: (!too_short && a.eligible > 0 && asset_hours > 0.0).then(|| asset_hours / a.eligible as f64),
+            // Same definitions as the fleet figures (every unplanned failure, time to restore).
+            mtbf_hours: (!too_short && a.failures > 0 && asset_hours > 0.0).then(|| asset_hours / a.failures as f64),
             mttr_hours: (!too_short && a.restore_count > 0).then(|| a.restore_hours / a.restore_count as f64),
             time_basis: source.to_string(),
             data_quality: if source == SOURCE_CALENDAR {

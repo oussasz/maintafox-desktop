@@ -130,6 +130,11 @@ export function RamsDataQualityPage() {
 
   const hoursN = Number(hours.replace(",", "."));
   const share = view && view.records > 0 ? view.records_complete / view.records : null;
+  /** Incomplete records of the scope (all sources), the same count as the RAMS home card. */
+  const incomplete = view ? Math.max(0, view.records - view.records_complete) : 0;
+  /** Incomplete records not raised from a work order (imported): not in the work-order list. */
+  const notListed =
+    view && !view.coding_gaps_truncated ? Math.max(0, incomplete - view.coding_gaps.length) : 0;
   /** "300+" when the backend stopped the list at its maximum. */
   const atLeast = (n: number, truncated: boolean) =>
     truncated ? `${formatNumber(n)}+` : formatNumber(n);
@@ -216,8 +221,13 @@ export function RamsDataQualityPage() {
             />
             <KpiTile
               label={t("rams.quality.codingGaps")}
-              value={atLeast(view.coding_gaps.length, view.coding_gaps_truncated)}
-              {...(view.coding_gaps_truncated ? { hint: t("rams.quality.truncated") } : {})}
+              value={formatNumber(incomplete)}
+              hint={t("rams.quality.codingGapsHint", {
+                mode: view.records_missing_mode,
+                cause: view.records_missing_cause,
+                mechanism: view.records_missing_mechanism,
+              })}
+              {...(incomplete > 0 ? { tone: "warning" as const } : {})}
             />
             <KpiTile
               label={t("rams.quality.noHours")}
@@ -236,9 +246,18 @@ export function RamsDataQualityPage() {
             subtitle={t("rams.quality.codingHint")}
             headingId="dq-coding"
           >
-            {view.coding_gaps.length === 0 ? (
+            {incomplete === 0 ? (
               <p className="text-sm text-text-muted">{t("rams.quality.noCodingGap")}</p>
-            ) : (
+            ) : null}
+            {notListed > 0 ? (
+              <p className="mb-3 text-sm text-text-secondary">
+                {t("rams.quality.notListed", { count: notListed })}
+              </p>
+            ) : null}
+            {view.coding_gaps_truncated ? (
+              <p className="mb-3 text-sm text-text-secondary">{t("rams.quality.truncated")}</p>
+            ) : null}
+            {view.coding_gaps.length === 0 ? null : (
               <div className={RAMS_TABLE_FRAME}>
                 <div className="max-h-[420px] overflow-auto">
                   <table className="w-full text-sm" aria-labelledby="dq-coding">
