@@ -9883,11 +9883,10 @@ async fn a_received_site_move_withdraws_the_liftings_held_here() {
     let err = crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
         .await
         .expect_err("the start is refused");
+    // No permit is linked at all, so the gate refuses with its general code before naming types;
+    // that hot work is required again is asserted on the set above.
     let err = format!("{err:?}");
-    assert!(
-        err.contains("PERMIT_TYPE_REQUIRED_TO_START") && err.contains("hot_work"),
-        "{err}"
-    );
+    assert!(err.contains("PERMIT_REQUIRED_TO_START"), "{err}");
     assert_eq!(
         event_count(&db, wo_id, "permit_clearing_voided").await.as_deref(),
         Some("1")
