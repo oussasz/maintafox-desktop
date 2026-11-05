@@ -343,7 +343,7 @@
       "mobile_phone": "Mobile phone",
       "licensing_trust_key": "Licensing trust key",
       "license_admin_action": "Licence action",
-      "pm_plans": "PM plan"
+      "pm_plan": "PM plan"
     },
     "field": {
       "status": "Status",
