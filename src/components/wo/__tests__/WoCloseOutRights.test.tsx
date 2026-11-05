@@ -71,12 +71,17 @@ vi.mock("../use-wo-people", () => ({
   mergeWoPersonOptions: (base: unknown[]) => base,
 }));
 /** The rights the user holds at the work order's site (`useWoAccess`). */
-const rights = vi.hoisted(() => ({ held: new Set<string>() }));
+const rights = vi.hoisted(() => ({ held: new Set<string>(), loading: false, failed: false }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: (p: string) => rights.held.has(p) }),
 }));
+// As the real hook: while loading, or after a failed read, `can` answers false for everything.
 vi.mock("@/hooks/use-access-at", () => ({
-  useAccessAt: () => ({ loading: false, can: (p: string) => rights.held.has(p) }),
+  useAccessAt: () => ({
+    loading: rights.loading,
+    failed: rights.failed,
+    can: (p: string) => !rights.loading && !rights.failed && rights.held.has(p),
+  }),
 }));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 5 } }) }));
 vi.mock("@/hooks/use-step-up", () => ({
@@ -109,7 +114,50 @@ describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     rights.held = new Set(["ot.view", "ot.edit", "ot.close"]);
+    rights.loading = false;
+    rights.failed = false;
     closeout.getWoAnalyticsSnapshot.mockResolvedValue(null);
+  });
+
+  it("says no right is missing while the rights are still loading", async () => {
+    rights.loading = true;
+    // The dialog's edit right comes from the same loading answer: false meanwhile.
+    show(WO, false);
+    await waitFor(() => expect(closeout.getWoForCloseOut).toHaveBeenCalledWith(42));
+    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).not.toHaveAttribute("title");
+    expect(screen.queryByText(/Right required/)).toBeNull();
+    expect(screen.queryByTestId("wo-close-blocked")).toBeNull();
+  });
+
+  it("says no right is missing when the rights cannot be read (the server decides)", async () => {
+    rights.failed = true;
+    show(WO, false);
+    await waitFor(() => expect(closeout.getWoForCloseOut).toHaveBeenCalledWith(42));
+    expect(saveButton()).toBeDisabled();
+    expect(screen.queryByText(/Right required/)).toBeNull();
+    expect(screen.queryByTestId("wo-close-blocked")).toBeNull();
+  });
+
+  it("still says a closed work order no longer changes while the rights load", async () => {
+    rights.loading = true;
+    show({ ...WO, status_code: "closed" } as WorkOrder, false);
+    expect(await screen.findByText(enOt.closeout.blocked.closed)).toBeVisible();
+  });
+
+  it("offers closing to a holder of ot.close without ot.edit, as close_wo does", async () => {
+    rights.held = new Set(["ot.view", "ot.close"]);
+    show(WO, false);
+    const editReason = rightText(enAdmin.permissions.items.ot_edit.label);
+    await waitFor(() => expect(saveButton()).toHaveAttribute("title", editReason));
+    expect(saveButton()).toBeDisabled();
+    expect(closeButton()).toBeEnabled();
+    expect(screen.getByText(enOt.closeout.closureWarning)).toBeInTheDocument();
+    // The verification needs the edit right: greyed with the same reason, readable.
+    const verify = screen.getByRole("button", { name: enOt.closeout.submitVerification });
+    expect(verify).toBeDisabled();
+    expect(verify).toHaveAttribute("aria-describedby", "wo-verify-blocker");
+    expect(screen.getByText(editReason, { selector: "#wo-verify-blocker" })).toBeVisible();
   });
 
   it("offers saving and closing to a user holding both rights", async () => {

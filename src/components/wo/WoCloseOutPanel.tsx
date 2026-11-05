@@ -132,9 +132,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { t: tPermits } = useTranslation("permits");
   const { info } = useSession();
   // Reopen is offered from the user's rights at this work order's site.
-  const { can } = useWoAccess(wo);
-  // Closing needs its own right (`ot.close`), on top of the edit right.
-  const canClose = canEdit && can(P.OT_CLOSE);
+  const access = useWoAccess(wo);
+  const { can } = access;
+  // Closing needs `ot.close` only, as `close_wo` does (not the edit right as well).
+  const canClose = can(P.OT_CLOSE);
+  // A missing right is said only once the rights are read: while they load, or when they cannot
+  // be read, `can` answers false for everything and the backend stays the gate.
+  const rightsKnown = !access.loading && !access.failed;
   const permissionText = usePermissionText();
   /** "Droit requis : …" naming the right as the administration screens do. */
   const rightRequired = (permission: string) =>
@@ -549,18 +553,20 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
   // Same rules as the backend (`save_failure_detail`, `update_wo_rca`, `update_service_cost`):
   // the edit right at the work order's site, on a work order neither closed nor cancelled.
-  const detailBlocker =
+  const stateBlocker =
     statusCode === "closed"
       ? t("closeout.blocked.closed")
       : statusCode === "cancelled"
         ? t("closeout.blocked.cancelled")
-        : !canEdit
-          ? rightRequired(P.OT_EDIT)
-          : null;
-  const isDetailEditable = detailBlocker === null;
+        : null;
+  /** "Droit requis" for the edit right, once the rights are known to lack it. */
+  const editRightReason = rightsKnown && !canEdit ? rightRequired(P.OT_EDIT) : null;
+  const isDetailEditable = stateBlocker === null && canEdit;
+  /** Why saving the details is greyed (null while the rights load or cannot be read). */
+  const detailBlocker = stateBlocker ?? editRightReason;
   // Closing needs `ot.close` (`close_wo`): someone who works on the order without it sees the
   // step greyed with the right it needs.
-  const closeBlocker = canEdit && !canClose ? rightRequired(P.OT_CLOSE) : null;
+  const closeBlocker = rightsKnown && canEdit && !canClose ? rightRequired(P.OT_CLOSE) : null;
 
   useEffect(() => {
     if (statusCode !== "closed") return;
@@ -864,7 +870,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           {/* Greyed with its reason rather than hidden or refused after the click (L5-08). */}
           <Button
             onClick={() => void handleSaveDetails()}
-            disabled={detailBlocker !== null || savingDetails || loadedVersion == null}
+            disabled={!isDetailEditable || savingDetails || loadedVersion == null}
             title={detailBlocker ?? undefined}
             aria-describedby={detailBlocker ? "wo-closeout-details-blocker" : undefined}
           >
@@ -961,7 +967,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                 !verificationResult ||
                 (verificationResult === "pass" && !returnToServiceConfirmed)
               }
-              title={canEdit ? undefined : rightRequired(P.OT_EDIT)}
+              title={editRightReason ?? undefined}
+              aria-describedby={editRightReason ? "wo-verify-blocker" : undefined}
             >
               {savingVerification ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -970,6 +977,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               )}
               {t("closeout.submitVerification")}
             </Button>
+            {editRightReason ? (
+              <p id="wo-verify-blocker" className="text-xs text-text-muted">
+                {editRightReason}
+              </p>
+            ) : null}
           </div>
         )}
 
@@ -989,7 +1001,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                     id="wo-no-dt-attest"
                     checked={noDowntimeAttestation}
                     onCheckedChange={(v) => setNoDowntimeAttestation(Boolean(v))}
-                    disabled={!canEdit || closing}
+                    disabled={closing}
                   />
                   <Label htmlFor="wo-no-dt-attest" className="cursor-pointer text-sm">
                     {t("closeout.noDowntimeAttestation")}
@@ -1002,7 +1014,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                       id="wo-no-dt-reason"
                       value={noDowntimeReason}
                       onChange={(e) => setNoDowntimeReason(e.target.value)}
-                      disabled={!canEdit || closing}
+                      disabled={closing}
                       rows={2}
                     />
                   </div>
@@ -1015,7 +1027,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                 id="wo-fmeca-override-reason"
                 value={fmecaOverrideReason}
                 onChange={(e) => setFmecaOverrideReason(e.target.value)}
-                disabled={!canEdit || closing}
+                disabled={closing}
                 rows={2}
                 placeholder={t("closeout.fmecaOverrideReasonPlaceholder")}
               />
@@ -1025,7 +1037,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               <Select
                 value={fmecaOverrideSignerId || "__none"}
                 onValueChange={(v) => setFmecaOverrideSignerId(v === "__none" ? "" : v)}
-                disabled={!canEdit || closing}
+                disabled={closing}
               >
                 <SelectTrigger id="wo-fmeca-override-signer-id">
                   <SelectValue placeholder={t("closeout.fmecaOverrideSignerIdPlaceholder")} />
@@ -1048,7 +1060,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                 autoComplete="off"
                 value={fmecaOverrideSignerPassword}
                 onChange={(e) => setFmecaOverrideSignerPassword(e.target.value)}
-                disabled={!canEdit || closing}
+                disabled={closing}
                 placeholder={t("closeout.fmecaOverrideSignerPasswordPlaceholder")}
               />
               <p className="text-xs text-muted-foreground">{t("closeout.fmecaOverrideHint")}</p>
@@ -1078,7 +1090,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
             <Button
               variant="destructive"
               onClick={() => setConfirmAction("close")}
-              disabled={!canEdit || closing}
+              disabled={closing}
             >
               {closing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
