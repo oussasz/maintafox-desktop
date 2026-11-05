@@ -342,4 +342,61 @@ mod tests {
         let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
         assert_eq!((res.created, res.updated, res.failed), (0, 0, 0));
     }
+
+    #[tokio::test]
+    async fn a_refusal_reason_never_relies_on_a_change_that_is_itself_refused() {
+        let db = db_with_sites().await;
+        load(&db, &format!("{HEADER}\nP;Parent;S1;;;\nQ;Autre;S1;;;\n")).await;
+        // Q is refused, so P's move under Q and its deactivation are refused: P stays active. N is
+        // refused because its parent's line is refused, not because P would be inactive.
+        let csv = format!("{HEADER}\nQ;;NOPE;;;\nP;;;Q;;non\nN;Nouveau;S1;P;;\n");
+        let (id, codes) = message_codes(&db, &csv).await;
+        assert_eq!(codes[0], vec!["CC_IMPORT_SITE"]);
+        assert_eq!(codes[1], vec!["CC_IMPORT_PARENT_REFUSED"]);
+        assert_eq!(codes[2], vec!["CC_IMPORT_PARENT_REFUSED"]);
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.created, res.updated), (0, 0));
+        assert!(active_of(&db, "P").await);
+    }
+
+    #[tokio::test]
+    async fn codes_that_differ_only_by_letter_case_are_refused() {
+        let db = db_with_sites().await;
+        exec(
+            &db,
+            "INSERT INTO cost_centers (code, name) VALUES ('CC-A', 'A'), ('cc-a', 'a')",
+        )
+        .await;
+        let csv = format!("{HEADER}\nCC-A;Nouveau nom;;;;\nN;Nouveau;S1;Cc-A;;\n");
+        let (id, codes) = message_codes(&db, &csv).await;
+        assert_eq!(codes[0], vec!["CC_IMPORT_CODE_AMBIGUOUS"]);
+        assert_eq!(codes[1], vec!["CC_IMPORT_CODE_AMBIGUOUS"]);
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.created, res.updated), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn a_reversed_branch_is_written_once_the_line_it_waits_for_is_in() {
+        let db = db_with_sites().await;
+        load(
+            &db,
+            &format!("{HEADER}\nR;Racine;S1;;;\nX;Milieu;S1;R;;\nY;Bas;S1;X;;\n"),
+        )
+        .await;
+        // R > X > Y becomes R > Y > X: X can only move under Y once Y has left X.
+        let (id, codes) = message_codes(&db, &format!("{HEADER}\nX;;;Y;;\nY;;;R;;\n")).await;
+        assert!(codes.iter().all(Vec::is_empty), "{codes:?}");
+        let res = bulk_import::apply_batch(&db, id, 1).await.expect("apply");
+        assert_eq!((res.updated, res.failed), (2, 0));
+        assert_eq!(parent_code_of(&db, "X").await.as_deref(), Some("Y"));
+        assert_eq!(parent_code_of(&db, "Y").await.as_deref(), Some("R"));
+    }
+
+    #[tokio::test]
+    async fn a_loop_across_two_lines_refuses_both() {
+        let db = db_with_sites().await;
+        let (_, codes) = message_codes(&db, &format!("{HEADER}\nA;A;S1;B;;\nB;B;S1;A;;\n")).await;
+        assert_eq!(codes[0], vec!["CC_IMPORT_CYCLE"]);
+        assert_eq!(codes[1], vec!["CC_IMPORT_CYCLE"]);
+    }
 }

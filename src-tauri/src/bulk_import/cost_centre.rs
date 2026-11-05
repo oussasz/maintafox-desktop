@@ -5,7 +5,7 @@
 //! is ever deleted. The owner is given as a personnel number (matricule): it must exist in the
 //! personnel register, and the owner is stored when that person has a user account.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::json;
@@ -96,8 +96,10 @@ struct Line {
 }
 
 pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>]) -> AppResult<Vec<RowOutcome>> {
-    // Existing cost centres by code.
+    // Existing cost centres by code. Two codes that differ only by letter case cannot be told apart
+    // by the file: lines naming them are refused.
     let mut existing: HashMap<String, Existing> = HashMap::new();
+    let mut ambiguous: HashSet<String> = HashSet::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -109,6 +111,9 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     {
         let code: String = r.try_get("", "code")?;
         let active: i64 = r.try_get("", "is_active")?;
+        if existing.contains_key(&key(&code)) {
+            ambiguous.insert(key(&code));
+        }
         existing.insert(
             key(&code),
             Existing {
@@ -246,6 +251,16 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             continue;
         }
         let me = key(&line.code);
+        for c in std::iter::once(&line.code).chain(line.parent.as_ref()) {
+            if ambiguous.contains(&key(c)) {
+                line.messages.push(RowMessage::error(
+                    "CC_IMPORT_CODE_AMBIGUOUS",
+                    format!(
+                        "Plusieurs centres de coût ont le code « {c} » à la casse près : renommez-les dans Finance avant d'importer."
+                    ),
+                ));
+            }
+        }
         let is_new = !existing.contains_key(&me);
         // Name and site are needed to create a cost centre; an existing one keeps what a blank
         // cell leaves out.
@@ -371,7 +386,8 @@ fn hierarchy_rules(lines: &mut [Line], existing: &HashMap<String, Existing>, fir
             shown.entry(me).or_insert_with(|| l.code.clone());
         }
 
-        let mut refusals: Vec<(usize, RowMessage)> = Vec::new();
+        // Each failing line, with the cost centres above it (its parent path after the import).
+        let mut failing: Vec<(usize, RowMessage, Vec<String>)> = Vec::new();
         for (i, l) in lines.iter().enumerate() {
             if !accepted[i] {
                 continue;
@@ -386,53 +402,53 @@ fn hierarchy_rules(lines: &mut [Line], existing: &HashMap<String, Existing>, fir
                 continue;
             };
             let p = shown.get(&pk).cloned().unwrap_or_else(|| pk.clone());
-            if first_row_of.get(&pk).is_some_and(|pi| !accepted[*pi]) {
-                refusals.push((
-                    i,
-                    RowMessage::error(
-                        "CC_IMPORT_PARENT_REFUSED",
-                        format!("Le parent « {p} » est refusé dans ce fichier : corrigez-le d'abord."),
-                    ),
-                ));
-                continue;
-            }
+            let mut path: Vec<String> = Vec::new();
             let mut cur = Some(pk.clone());
-            let mut steps = 0;
             let mut in_loop = false;
             while let Some(c) = cur {
                 if c == me {
                     in_loop = true;
                     break;
                 }
-                steps += 1;
-                if steps > 500 {
+                if path.len() >= 500 {
                     break;
                 }
                 cur = parent_after.get(&c).cloned().flatten();
+                path.push(c);
             }
-            if in_loop {
-                refusals.push((
-                    i,
-                    RowMessage::error(
-                        "CC_IMPORT_CYCLE",
-                        format!("Le parent « {p} » crée une boucle dans la hiérarchie."),
-                    ),
-                ));
+            let message = if first_row_of.get(&pk).is_some_and(|pi| !accepted[*pi]) {
+                RowMessage::error(
+                    "CC_IMPORT_PARENT_REFUSED",
+                    format!("Le parent « {p} » est refusé dans ce fichier : corrigez-le d'abord."),
+                )
+            } else if in_loop {
+                RowMessage::error(
+                    "CC_IMPORT_CYCLE",
+                    format!("Le parent « {p} » crée une boucle dans la hiérarchie."),
+                )
             } else if active_after.get(&me).copied().unwrap_or(true) && active_after.get(&pk) == Some(&false) {
-                refusals.push((
-                    i,
-                    RowMessage::error(
-                        "CC_IMPORT_PARENT_INACTIVE",
-                        format!("Le parent « {p} » est inactif : un centre actif ne peut pas être rattaché dessous."),
-                    ),
-                ));
-            }
+                RowMessage::error(
+                    "CC_IMPORT_PARENT_INACTIVE",
+                    format!("Le parent « {p} » est inactif : un centre actif ne peut pas être rattaché dessous."),
+                )
+            } else {
+                continue;
+            };
+            failing.push((i, message, path));
         }
-        if refusals.is_empty() {
+        if failing.is_empty() {
             break;
         }
-        for (i, m) in refusals {
-            lines[i].messages.push(m);
+        // A line whose path holds another failing line waits for the next round: refusing that line
+        // changes the hierarchy above it, so its own reason could no longer hold. When every failing
+        // line waits (they form a loop), all of them are refused.
+        let failing_codes: HashSet<String> = failing.iter().map(|(i, _, _)| key(&lines[*i].code)).collect();
+        let ready = |path: &Vec<String>| !path.iter().any(|c| failing_codes.contains(c));
+        let any_ready = failing.iter().any(|(_, _, path)| ready(path));
+        for (i, m, path) in failing {
+            if !any_ready || ready(&path) {
+                lines[i].messages.push(m);
+            }
         }
     }
 }
@@ -457,9 +473,10 @@ fn text(row: &StagedRow, field: &str) -> String {
 }
 
 /// Id and row version of a cost centre, matched on the code the same way as the preview (trimmed,
-/// any letter case, accented letters included).
-async fn cost_centre_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Option<(i64, i64)>> {
+/// any letter case, accented letters included). `Err` when several cost centres match.
+async fn cost_centre_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Result<Option<(i64, i64)>, String>> {
     let wanted = key(code);
+    let mut found = None;
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -469,10 +486,15 @@ async fn cost_centre_by_code(db: &DatabaseConnection, code: &str) -> AppResult<O
     {
         let c: String = r.try_get("", "code")?;
         if key(&c) == wanted {
-            return Ok(Some((r.try_get("", "id")?, r.try_get("", "row_version")?)));
+            if found.is_some() {
+                return Ok(Err(format!(
+                    "Plusieurs centres de coût ont le code « {code} » à la casse près : renommez-les dans Finance avant d'importer."
+                )));
+            }
+            found = Some((r.try_get("", "id")?, r.try_get("", "row_version")?));
         }
     }
-    Ok(None)
+    Ok(Ok(found))
 }
 
 /// Writes one line. `Ok(Err(reason))` means finance refused it for now: it is tried again while
@@ -482,8 +504,9 @@ async fn apply_one(db: &DatabaseConnection, row: &StagedRow) -> AppResult<Result
     let parent_id = match row.normalized["parent_code"].as_str() {
         None => None,
         Some(p) => match cost_centre_by_code(db, p).await? {
-            Some((pid, _)) => Some(pid),
-            None => {
+            Err(reason) => return Ok(Err(reason)),
+            Ok(Some((pid, _))) => Some(pid),
+            Ok(None) => {
                 return Ok(Err(format!(
                     "Le parent « {p} » n'existe pas : ce centre de coût n'a pas été importé."
                 )))
@@ -509,8 +532,10 @@ async fn apply_one(db: &DatabaseConnection, row: &StagedRow) -> AppResult<Result
         .await;
         return Ok(created.map(|_| "created").map_err(|e| app_error_text(&e)));
     }
-    let Some((id, version)) = cost_centre_by_code(db, &code).await? else {
-        return Ok(Err(format!("Le centre de coût « {code} » n'existe plus.")));
+    let (id, version) = match cost_centre_by_code(db, &code).await? {
+        Err(reason) => return Ok(Err(reason)),
+        Ok(Some(found)) => found,
+        Ok(None) => return Ok(Err(format!("Le centre de coût « {code} » n'existe plus."))),
     };
     let name = text(row, "name");
     let updated = queries::update_cost_center(
