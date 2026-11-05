@@ -383,7 +383,7 @@ pub async fn record_imported_skill(
         ));
     }
     let now = crate::clock::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    match existing_id {
+    let written = match existing_id {
         Some(id) => {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -405,7 +405,7 @@ pub async fn record_imported_skill(
                     personnel_id.into(),
                 ],
             ))
-            .await?;
+            .await?
         }
         None => {
             db.execute(Statement::from_sql_and_values(
@@ -413,7 +413,7 @@ pub async fn record_imported_skill(
                 "INSERT INTO personnel_skills \
                     (entity_sync_id, personnel_id, reference_value_id, proficiency_level, valid_from, valid_to, \
                      source_type, is_primary, is_validated, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, NULL, NULL, 'import', 0, 0, ?, ?)",
+                 VALUES (?, ?, ?, ?, NULL, NULL, 'import', 0, 0, ?, ?)                  ON CONFLICT(personnel_id, reference_value_id) DO NOTHING",
                 [
                     crate::sync::identity::new_entity_sync_id().into(),
                     personnel_id.into(),
@@ -423,8 +423,15 @@ pub async fn record_imported_skill(
                     now.into(),
                 ],
             ))
-            .await?;
+            .await?
         }
+    };
+    // Recorded or removed on the screen since the file was checked: nothing is written over it.
+    if written.rows_affected() != 1 {
+        return Err(skill_issue(
+            "SKILL_CHANGED_ELSEWHERE",
+            "This skill was changed elsewhere since the file was checked: check the file again.",
+        ));
     }
     Ok(())
 }

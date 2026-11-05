@@ -206,9 +206,18 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         let mut matched: Option<usize> = None;
         if let (Some(p), Some(t)) = (person, cert_type) {
             let list = certs.get(&(p, t.id)).map(Vec::as_slice).unwrap_or_default();
-            let by_ref = cert_ref
-                .as_ref()
-                .and_then(|r| list.iter().position(|c| c.cert_ref.as_deref().map(key) == Some(key(r))));
+            let same_ref = |c: &Stored| {
+                cert_ref
+                    .as_ref()
+                    .is_some_and(|r| c.cert_ref.as_deref().map(key) == Some(key(r)))
+            };
+            if list.iter().filter(|c| same_ref(c)).count() > 1 {
+                messages.push(RowMessage::error(
+                    "CERT_IMPORT_WHICH",
+                    "Cette personne a plusieurs certificats de ce type avec ce numéro : corrigez-les dans Formation & habilitations.",
+                ));
+            }
+            let by_ref = list.iter().position(same_ref);
             let by_date = || {
                 issued.and_then(|d| {
                     list.iter()

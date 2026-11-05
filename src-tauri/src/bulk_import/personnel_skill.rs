@@ -47,12 +47,16 @@ pub const SPEC: EntitySpec = EntitySpec {
 };
 
 /// Published, active skills of the PERSONNEL.SKILLS list by code key (newest list version first).
-async fn skill_catalogue(db: &impl ConnectionTrait) -> AppResult<HashMap<String, i64>> {
+/// Codes given twice in the same list version, letter case aside, are returned apart: the file
+/// cannot tell them apart.
+async fn skill_catalogue(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, i64>, HashSet<String>)> {
     let mut out: HashMap<String, i64> = HashMap::new();
+    let mut version_of: HashMap<String, i64> = HashMap::new();
+    let mut ambiguous: HashSet<String> = HashSet::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT rv.id, rv.code FROM reference_values rv \
+            "SELECT rv.id, rv.code, rs.version_no FROM reference_values rv \
              JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
              JOIN reference_domains d ON d.id = rs.domain_id \
              WHERE d.code = 'PERSONNEL.SKILLS' AND rv.is_active = 1 \
@@ -62,9 +66,14 @@ async fn skill_catalogue(db: &impl ConnectionTrait) -> AppResult<HashMap<String,
         .await?
     {
         let code: String = r.try_get("", "code")?;
+        let version: i64 = r.try_get("", "version_no")?;
+        if version_of.get(&key(&code)) == Some(&version) {
+            ambiguous.insert(key(&code));
+        }
+        version_of.entry(key(&code)).or_insert(version);
         out.entry(key(&code)).or_insert(r.try_get("", "id")?);
     }
-    Ok(out)
+    Ok((out, ambiguous))
 }
 
 /// People by personnel number key; the keys held by several people are returned apart.
@@ -134,11 +143,13 @@ pub(super) fn resolve_person(
 
 pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>]) -> AppResult<Vec<RowOutcome>> {
     let (people, ambiguous_people) = people_by_code(db).await?;
-    let catalogue = skill_catalogue(db).await?;
+    let (catalogue, ambiguous_skills) = skill_catalogue(db).await?;
 
     // A person's existing skills by skill code key (whatever list version they point to):
     // (row id, level).
+    // A person holding the same code twice (two list versions) cannot be updated from a file line.
     let mut held: HashMap<(i64, String), (i64, i64)> = HashMap::new();
+    let mut held_twice: HashSet<(i64, String)> = HashSet::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -149,10 +160,13 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         .await?
     {
         let code: String = r.try_get("", "code")?;
-        held.insert(
-            (r.try_get("", "personnel_id")?, key(&code)),
-            (r.try_get("", "id")?, r.try_get("", "proficiency_level")?),
-        );
+        let k = (r.try_get("", "personnel_id")?, key(&code));
+        if held
+            .insert(k.clone(), (r.try_get("", "id")?, r.try_get("", "proficiency_level")?))
+            .is_some()
+        {
+            held_twice.insert(k);
+        }
     }
 
     let mut first_row_of: HashMap<(i64, String), usize> = HashMap::new();
@@ -172,6 +186,19 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         let stored = person
             .zip(skill_key.clone())
             .and_then(|(p, k)| held.get(&(p, k)).copied());
+        if let (Some(p), Some(k)) = (person, skill_key.clone()) {
+            if held_twice.contains(&(p, k.clone())) {
+                messages.push(RowMessage::error(
+                    "SKILL_IMPORT_HELD_TWICE",
+                    "Cette personne a cette compétence deux fois (deux versions de la liste) : corrigez sa fiche dans Personnel.",
+                ));
+            } else if stored.is_none() && ambiguous_skills.contains(&k) {
+                messages.push(RowMessage::error(
+                    "SKILL_IMPORT_SKILL_AMBIGUOUS",
+                    "Plusieurs compétences de la liste ont ce code à la casse près : corrigez la liste dans Données de référence.",
+                ));
+            }
+        }
         match (cell("skill_code"), catalogue_id, stored) {
             (None, _, _) => messages.push(RowMessage::error(
                 "SKILL_IMPORT_SKILL",

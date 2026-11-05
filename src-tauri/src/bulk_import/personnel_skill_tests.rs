@@ -224,4 +224,42 @@ mod tests {
         .await;
         assert_eq!(errors(&p, 2), vec!["CERT_IMPORT_WHICH"]);
     }
+
+    #[tokio::test]
+    async fn a_skill_recorded_elsewhere_after_the_preview_fails_its_line_only() {
+        let db = db_with_people().await;
+        let (s1, s2) = two_skills(&db).await;
+        let p = run(
+            &db,
+            "personnel_skill",
+            &format!(
+                "{SKILLS}
+IT-P1;{s1};3
+IT-P1;{s2};2
+"
+            ),
+        )
+        .await;
+        assert_eq!(
+            (action(&p, 2), action(&p, 3)),
+            ("create".to_string(), "create".to_string())
+        );
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO personnel_skills (entity_sync_id, personnel_id, reference_value_id, proficiency_level,                  source_type, is_primary, is_validated)                  SELECT 'race', p.id, rv.id, 5, 'manual', 0, 1 FROM personnel p, reference_values rv                  JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published'                  JOIN reference_domains d ON d.id = rs.domain_id AND d.code = 'PERSONNEL.SKILLS'                  WHERE p.employee_code = 'IT-P1' AND rv.code = '{s1}'"
+            ),
+        )
+        .await;
+        let res = apply(&db, &p).await;
+        assert_eq!((res.created, res.failed), (1, 1));
+        let kept = text(
+            &db,
+            &format!(
+                "SELECT ps.is_validated || ps.source_type || ps.proficiency_level FROM personnel_skills ps                  JOIN reference_values rv ON rv.id = ps.reference_value_id WHERE rv.code = '{s1}'                  AND ps.personnel_id = (SELECT id FROM personnel WHERE employee_code = 'IT-P1')"
+            ),
+        )
+        .await;
+        assert_eq!(kept.as_deref(), Some("1manual5"), "the screen's skill is left as it is");
+    }
 }
