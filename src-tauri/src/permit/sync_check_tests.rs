@@ -7450,8 +7450,9 @@ async fn a_clearing_with_a_row_without_the_rule_is_judged_against_the_rule_held_
 }
 
 /// R2-B1, safety origin: a work order from a request flagged "sécurité" that also holds a plant rule
-/// here is not downgraded by a row without the rule: a clearing by a holder of the permit-issue right
-/// at its site only (enough for a safety request) is refused, the rule needs it plant-wide.
+/// here, received in a row without the rule, is judged with the rule held here: a clearing by a
+/// holder of the permit-issue right at its site is accepted, as for the rule itself (lead decision
+/// D-a), and the rule held here is kept.
 #[tokio::test]
 async fn a_row_without_the_rule_never_downgrades_a_ruled_safety_work_order() {
     use crate::auth::scope_tests::{assign, role, user};
@@ -7475,8 +7476,29 @@ async fn a_row_without_the_rule_never_downgrades_a_ruled_safety_work_order() {
         ],
     );
     let outcome = apply(&db, "work_orders", "wo-r2-4", &site_cleared).await;
-    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(rule_state(&db, "wo-r2-4").await, ruled("CORRECTIVE_LOTO", "loto"));
+    // A holder of the right at another site only is refused.
+    let other_site = user(&db, "r2_other_site_issuer").await;
+    exec(
+        &db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) SELECT 902, 'r2-node-902', 'R2-SITE-902', 'Site 902', node_type_id, \
+         'active', datetime('now'), datetime('now'), structure_model_id FROM org_nodes WHERE id = 1",
+    )
+    .await;
+    assign(&db, other_site, issuer_role, "org_node", Some(902)).await;
+    let elsewhere = wo_row(
+        &planning,
+        &[
+            (super::sync_check::SAFETY_ORIGIN, json!(1)),
+            ("permit_rule_cleared_by_sync_id", json!("scope-user-r2_other_site_issuer")),
+            ("permit_rule_cleared_at", json!(now())),
+            ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
+        ],
+    );
+    let outcome = apply(&db, "work_orders", "wo-r2-4", &elsewhere).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
 }
 
 /// R2-S1: two PCs that derived different rules for a work order not started (two versions of the
@@ -8092,6 +8114,14 @@ async fn a_clearing_withdrawn_by_the_convergence_is_recorded() {
 // ── AU-04 round 5: a rule kept as received is recorded and re-checked (R5-S1); test gaps ────────
 
 /// Events of a work order with this cause, as JSON.
+/// The rule changes among `events` (not the permit types added to the set, L4-10b).
+fn rule_changes(events: Vec<Value>) -> Vec<Value> {
+    events
+        .into_iter()
+        .filter(|e| e.get("added_permit_types").is_none())
+        .collect()
+}
+
 async fn rule_events_with_cause(db: &DatabaseConnection, wo_sync: &str, cause: &str) -> Vec<Value> {
     db.query_all(Statement::from_string(
         DbBackend::Sqlite,
@@ -8139,7 +8169,7 @@ async fn a_rule_kept_as_received_is_recorded_and_rechecked_when_the_list_matches
     // This one, and the template work order of the fixture (planned here with no rule).
     assert_eq!(crate::permit::requirement_rules::catch_up(&db).await, 2);
     assert_eq!(rule_state(&db, "wo-r5-1").await, ruled("CORRECTIVE_LOTO", "loto"));
-    let events = rule_events_with_cause(&db, "wo-r5-1", "catch_up").await;
+    let events = rule_changes(rule_events_with_cause(&db, "wo-r5-1", "catch_up").await);
     assert_eq!(events.len(), 1);
     assert_eq!(
         (&events[0]["previous_permit_type_code"], &events[0]["permit_type_code"]),
@@ -8168,9 +8198,7 @@ async fn a_started_arrival_back_to_planning_gets_this_pcs_rule() {
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(rule_state(&db, "wo-r5-2").await, ruled("CORRECTIVE_LOTO", "loto"));
     assert_eq!(
-        rule_events_with_cause(&db, "wo-r5-2", "work_order_received")
-            .await
-            .len(),
+        rule_changes(rule_events_with_cause(&db, "wo-r5-2", "work_order_received").await).len(),
         1,
         "recorded"
     );
@@ -8999,6 +9027,16 @@ async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
         ),
     )
     .await;
+    // The hot-work type it was received with stays required too (a type is never dropped, L4-10b):
+    // refused until a hot-work permit is live as well.
+    let refused = resume(&db, wo_id).await;
+    assert!(
+        format!("{refused:?}").contains("PERMIT_TYPE_REQUIRED_TO_START") && format!("{refused:?}").contains("hot_work"),
+        "{refused:?}"
+    );
+    assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let hot = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("hot-work permit")).await;
+    set_status(&db, &hot, "active").await.expect("activate");
     let resumed = resume(&db, wo_id).await.expect("re-stamped and resumed");
     assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
     assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
@@ -9101,7 +9139,10 @@ async fn a_draft_edit_rechecks_a_rule_kept_as_received() {
     .await
     .expect("draft edit");
     assert_eq!(rule_state(&db, "wo-c6s3").await, ruled("CORRECTIVE_LOTO", "loto"));
-    assert_eq!(rule_events_with_cause(&db, "wo-c6s3", "draft_edit").await.len(), 1);
+    assert_eq!(
+        rule_changes(rule_events_with_cause(&db, "wo-c6s3", "draft_edit").await).len(),
+        1
+    );
 }
 
 // ── The permit types a work order requires, received (L4-10b, CMMS Advisor 2026-11-04) ────────

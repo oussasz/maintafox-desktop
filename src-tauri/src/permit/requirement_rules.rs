@@ -974,8 +974,12 @@ pub async fn add_matching_types(
         },
     )
     .await?;
+    // A work order received already started is told through its arrival finding, which names the
+    // types it lacked (`finding_for_started_without_rule`): one notice, not two.
+    let told_by_finding = cause == stamp_causes::WORK_ORDER_RECEIVED
+        && !crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str());
     let wo_sync: Option<String> = row.try_get("", "entity_sync_id")?;
-    if let Some(wo_sync) = wo_sync.filter(|_| !before.is_empty()) {
+    if let Some(wo_sync) = wo_sync.filter(|_| !before.is_empty() && !told_by_finding) {
         let code: String = row.try_get("", "code")?;
         crate::settings::received_notice::notify_work_order_permit_types_added(
             conn, wo_id, &wo_sync, &code, &added, &before,
@@ -1137,7 +1141,8 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             return 0;
         }
     };
-    let mut flagged = 0;
+    // Work orders flagged, each counted once (a missing type added, then its received rule re-checked).
+    let mut flagged: Vec<i64> = Vec::new();
     for wo_id in ids {
         let one = async {
             // Read first: a work order that holds every type the rules give it (and a rule, when one
@@ -1169,7 +1174,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             Ok(stamped.is_some())
         };
         match one.await {
-            Ok(true) => flagged += 1,
+            Ok(true) => flagged.push(wo_id),
             Ok(false) => {}
             Err(err) => tracing::error!(
                 target: "maintafox::sync",
@@ -1217,8 +1222,8 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             Ok(changed.is_some())
         };
         match one.await {
-            Ok(true) => flagged += 1,
-            Ok(false) => {}
+            Ok(true) if !flagged.contains(&wo_id) => flagged.push(wo_id),
+            Ok(_) => {}
             Err(err) => tracing::error!(
                 target: "maintafox::sync",
                 work_order_id = wo_id,
@@ -1227,7 +1232,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             ),
         }
     }
-    flagged
+    flagged.len()
 }
 
 /// Whether the reference set `set_id` belongs to the plant's rule list.
