@@ -403,6 +403,7 @@
     "GATE_BULK_IMPORT_EMPTY": "Le fichier ne contient aucune ligne à importer.",
     "GATE_BULK_IMPORT_NOT_FOUND": "Ce lot d'import n'existe pas.",
     "GATE_BULK_IMPORT_STATUS": "Ce lot a déjà été appliqué ou n'est plus valide.",
+    "GATE_BULK_IMPORT_SKILL_GONE": "Cette compétence n'est plus dans la liste de référence : vérifiez le fichier à nouveau.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refusé : le fichier CSV est invalide à la ligne {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refusé : le lot ne contient aucune ligne.",
     "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refusé : l'emplacement indiqué n'existe pas dans l'organisation active.",

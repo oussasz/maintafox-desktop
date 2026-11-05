@@ -284,7 +284,8 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec
                 let rv = n["reference_value_id"].as_i64();
                 let written = match (existing, rv) {
                     (None, None) => Err(AppError::ValidationFailed(vec![
-                        "Cette compétence n'est plus dans la liste de référence.".to_string(),
+                        "GATE_BULK_IMPORT_SKILL_GONE: Cette compétence n'est plus dans la liste de référence."
+                            .to_string(),
                     ])),
                     _ => {
                         crate::personnel::skills::record_imported_skill(db, p, rv.unwrap_or_default(), level, existing)
