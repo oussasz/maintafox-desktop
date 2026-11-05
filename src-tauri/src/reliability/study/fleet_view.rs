@@ -11,7 +11,7 @@ use crate::errors::AppResult;
 use crate::reliability::study::clock::SOURCE_CALENDAR;
 use crate::reliability::study::domain::{FleetAssetRow, FleetView, FleetViewFilter};
 use crate::reliability::study::fleet_kpis::{
-    filter_options, fleet_hours, kpis_of, load_asset_aggs, missing_date_count, FleetScope,
+    filter_options, fleet_hours, kpis_of, load_asset_aggs, missing_date_count, outside_service_count, FleetScope,
 };
 use crate::reliability::study::store::get;
 
@@ -31,7 +31,8 @@ pub async fn fleet_view(db: &DatabaseConnection, filter: FleetViewFilter) -> App
     // Equipment of the filtered fleet with no failure still count in the hours (A_o, MTBF).
     let hours = fleet_hours(db, &scope).await?;
     let missing_date = missing_date_count(db, &scope).await?;
-    let kpis = kpis_of(&scope, &aggs, &hours, missing_date);
+    let outside_service = outside_service_count(db, &scope).await?;
+    let kpis = kpis_of(&scope, &aggs, &hours, missing_date, outside_service);
     let downtime_total = kpis.downtime_hours;
     let too_short = scope.window_too_short();
 

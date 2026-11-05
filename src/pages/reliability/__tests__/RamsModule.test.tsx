@@ -67,6 +67,7 @@ const fleetView = {
     mtbf_hours: 2310,
     eligible_failure_count: 10,
     mtbf_excluded_missing_date: 1,
+    mtbf_excluded_outside_service: 2,
     mttr_hours: 6.8,
     restore_count: 8,
     restore_excluded_missing_failed_at: 0,
@@ -193,7 +194,7 @@ describe("RamsFleetPage", () => {
     // Each figure states its definition, its hours basis and what it left out.
     expect(
       screen.getByText(
-        "all unplanned failures, Last 12 months, operating hours: 2 equipment / calendar: 1 · 1 excluded: failure date missing",
+        "all unplanned failures, Last 12 months, operating hours: 2 equipment / calendar: 1 · 2 excluded: outside service period · 1 excluded (all periods): failure date missing",
       ),
     ).toBeInTheDocument();
     expect(

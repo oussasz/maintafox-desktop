@@ -1834,7 +1834,7 @@ fn fleet_kpis_hours_mix_counts() {
         repair_count: 3,
         ..AssetAgg::default()
     }];
-    let k = kpis_of(&scope, &aggs, &hours, 0);
+    let k = kpis_of(&scope, &aggs, &hours, 0, 0);
     assert_eq!(
         (k.equipment_count, k.operating_basis_count, k.calendar_basis_count),
         (3, 2, 1)
@@ -1844,7 +1844,7 @@ fn fleet_kpis_hours_mix_counts() {
     close(k.mttr_hours.expect("mttr"), 3.0, 1e-12);
     close(k.mean_active_repair_hours.expect("repair"), 1.5, 1e-12);
     // No failure: no MTBF and no A_o (never a made-up 100 %).
-    let k = kpis_of(&scope, &[], &hours, 0);
+    let k = kpis_of(&scope, &[], &hours, 0, 0);
     assert!(k.mtbf_hours.is_none() && k.availability_operational.is_none());
     assert_eq!(k.calendar_basis_count, 1);
 }
@@ -1943,6 +1943,71 @@ async fn fleet_hours_clip_to_commissioning_and_decommissioning() {
     let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
     assert_eq!(k.equipment_count, 1);
     close(k.exposure_hours, 183.0 * 24.0, 1e-6);
+}
+
+/// Failures count only inside their equipment's service period (the window of its hours); the
+/// others are out of every figure and counted in `mtbf_excluded_outside_service`.
+#[tokio::test]
+async fn fleet_failures_limited_to_the_service_period() {
+    use crate::reliability::study::fleet_kpis::{coding_counts, fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    // P-101 commissioned Jul 1 (bare date): two failures before (b2 one hour before), two from it
+    // on (a1 at the commissioning instant).
+    for (tag, at) in [
+        ("b1", "2025-03-01T00:00:00Z"),
+        ("b2", "2025-06-30T23:00:00Z"),
+        ("a1", "2025-07-01T00:00:00Z"),
+        ("a2", "2025-09-01T00:00:00Z"),
+    ] {
+        failure(&f.db, tag, f.p101, at, Some(at), m, None, 2.0).await;
+    }
+    // P-102 decommissioned before the window, with failures inside the window.
+    failure(&f.db, "d1", f.p102, "2025-04-01T00:00:00Z", None, m, None, 2.0).await;
+    failure(&f.db, "d2", f.p102, "2025-05-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET commissioning_date = '2025-07-01' WHERE id = {}",
+            f.p101
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE equipment SET decommissioned_at = '2025-01-15T00:00:00Z' WHERE id = {}",
+            f.p102
+        ),
+    )
+    .await;
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.equipment_count, 1);
+    assert_eq!((k.failure_count, k.eligible_failure_count), (2, 2));
+    assert_eq!(k.mtbf_excluded_outside_service, 4);
+    // P-101: Jul 1 → Dec 31 = 183 days over its two failures.
+    close(k.mtbf_hours.expect("mtbf"), 183.0 * 24.0 / 2.0, 1e-6);
+    close(k.downtime_hours, 4.0, 1e-9);
+    // The quality page reads the same scope.
+    assert_eq!(coding_counts(&f.db, &scope).await.expect("coding").records, 2);
+
+    // Per equipment: P-102 is not ranked at all (no zero-hours MTBF).
+    let rows = fleet_view(
+        &f.db,
+        FleetViewFilter {
+            period_start: "2025-02-01T00:00:00Z".into(),
+            period_end: "2025-12-31T00:00:00Z".into(),
+            equipment_class_id: Some(f.class_id),
+            ..FleetViewFilter::default()
+        },
+    )
+    .await
+    .expect("fleet")
+    .rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].equipment_id, rows[0].failures), (f.p101, 2));
+    close(rows[0].mtbf_hours.expect("mtbf"), 183.0 * 24.0 / 2.0, 1e-6);
 }
 
 /// A meter that does not cover the equipment's window gives calendar hours, counted on the

@@ -12,12 +12,12 @@ import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import {
+  RAMS_DEFAULT_MONTHS,
   RAMS_FILTER_LABEL,
   RAMS_PERIOD_MONTHS,
   RAMS_SELECT_CLASS,
   RAMS_TABLE_FRAME,
   RamsCallout,
-  RAMS_DEFAULT_MONTHS,
   RamsCard,
   type RamsPeriodMonths,
   dataQualityHref,
@@ -380,7 +380,10 @@ export function RamsFleetPage() {
               unit="h"
               hint={rateHint(
                 t("rams.kpi.mtbfHint", { period: periodLabel, basis: basisHint }),
-                exclusions([["missingDate", k?.mtbf_excluded_missing_date ?? 0]]),
+                exclusions([
+                  ["outsideService", k?.mtbf_excluded_outside_service ?? 0],
+                  ["missingDate", k?.mtbf_excluded_missing_date ?? 0],
+                ]),
               )}
             />
             <KpiTile

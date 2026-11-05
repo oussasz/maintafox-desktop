@@ -743,7 +743,8 @@
       "dataQualityHint": "{{period}}; complete = mode + cause + mechanism; {{mode}} without mode, {{cause}} without cause, {{mechanism}} without mechanism",
       "tooShort": "period too short for the MTBF (under {{days}} days)",
       "excluded": {
-        "missingDate": "{{count}} excluded: failure date missing",
+        "outsideService": "{{count}} excluded: outside service period",
+        "missingDate": "{{count}} excluded (all periods): failure date missing",
         "failedAt": "{{count}} excluded: failure time missing",
         "restoredAt": "{{count}} excluded: back-in-service time missing",
         "inconsistent": "{{count}} excluded: back in service before the failure",

@@ -743,7 +743,8 @@
       "dataQualityHint": "{{period}} ; complètes = mode + cause + mécanisme ; {{mode}} sans mode, {{cause}} sans cause, {{mechanism}} sans mécanisme",
       "tooShort": "période trop courte pour le MTBF (moins de {{days}} jours)",
       "excluded": {
-        "missingDate": "{{count}} exclus : date de panne manquante",
+        "outsideService": "{{count}} exclus : hors période de service",
+        "missingDate": "{{count}} exclus (toutes périodes) : date de panne manquante",
         "failedAt": "{{count}} exclus : heure de panne manquante",
         "restoredAt": "{{count}} exclus : heure de remise en service manquante",
         "inconsistent": "{{count}} exclus : remise en service avant la panne",

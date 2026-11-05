@@ -34,6 +34,8 @@ const FleetKpisSchema = z.object({
   eligible_failure_count: num,
   /** Unplanned records of the class / site left out of the MTBF: failure date unreadable. */
   mtbf_excluded_missing_date: num,
+  /** Records of the window dated outside their equipment's service period: out of every figure. */
+  mtbf_excluded_outside_service: num,
   /** Mean time to restore: work start → WO close (work orders), failure → back in service (imported). */
   mttr_hours: optNum,
   restore_count: num,

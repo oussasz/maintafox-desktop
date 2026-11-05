@@ -7,12 +7,22 @@
 //! Failure records = `failure_events` that are unplanned (`is_planned = 0`), of equipment not
 //! deleted, dated by `COALESCE(failed_at, detected_at, created_at)` inside `[start, end]` (`end`
 //! clipped to now), of the equipment class when one is chosen, installed at the org node or below
-//! it when one is chosen. The fleet = the equipment of the class / org node (with or without
-//! failures) in service during the window: every one of them adds its hours.
+//! it when one is chosen, and dated inside the equipment's own service period
+//! `[commissioning_date, decommissioned_at]` (the same clipping as its hours, see below). The
+//! fleet = the equipment of the class / org node (with or without failures) in service during the
+//! window: every one of them adds its hours.
+//!
+//! A failure dated in the window but outside its equipment's service period (before
+//! commissioning, after decommissioning) sits on no hours: it is out of the scope entirely — MTBF,
+//! MTTR, repair hours, downtime, the per-equipment figures AND the coding completeness (home card
+//! and quality page share this one scope, so they still agree) — and counted in
+//! `mtbf_excluded_outside_service`.
 //!
 //! A failure is dated once, by `COALESCE(failed_at, detected_at, created_at)`: a failure dated
 //! inside the window counts with its full restore time even when it is restored after the window
 //! end, and a failure dated before the window start is not counted (even if restored inside it).
+//! For a record raised from a work order `failed_at` is the work start (`actual_start`), so such a
+//! failure is dated at the work start, not at its detection.
 //!
 //! The decisions also ask to clip the window to the observation start of imported history
 //! ("Historique complet depuis le"); no such date is stored anywhere yet, so the window is not
@@ -37,7 +47,9 @@
 //!   lower the coding completeness below). Left out of the MTBF only: a failure without
 //!   equipment (impossible: `failure_events.equipment_id` is NOT NULL) and a failure without a
 //!   readable date (`mtbf_excluded_missing_date`: unplanned records of the class / org node whose
-//!   `COALESCE(failed_at, detected_at, created_at)` cannot be read, so they belong to no window).
+//!   `COALESCE(failed_at, detected_at, created_at)` cannot be read, so they belong to no window:
+//!   counted over all periods) and a failure outside its equipment's service period
+//!   (`mtbf_excluded_outside_service`, see Scope).
 //!   No action exists for a person to exclude a failure from the MTBF, so none is read.
 //! - **MTTR** = mean time to RESTORE (EN 13306): mean of `restored_at − failed_at` over the
 //!   failures that have both times in the right order. Failures without `failed_at`, without
@@ -131,10 +143,31 @@ impl FleetScope {
     }
 }
 
+/// Failure date of a record (SQL, normalised by SQLite `datetime`).
+const FAILURE_DATE_SQL: &str = "datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at))";
+
+/// The record's failure date lies in its equipment's service period. `datetime()` reads a bare
+/// date as the start of the day (UTC) and gives NULL for an unreadable date (no clipping): the
+/// same reading [`fleet_hours`] uses for the hours window ([`asset_window`]). Never NULL for a
+/// record of a scope (its failure date is readable).
+fn in_service_sql() -> String {
+    format!(
+        "((datetime(e.commissioning_date) IS NULL OR {d} >= datetime(e.commissioning_date))
+          AND (datetime(e.decommissioned_at) IS NULL OR {d} <= datetime(e.decommissioned_at)))",
+        d = FAILURE_DATE_SQL
+    )
+}
+
 /// `FROM … WHERE …` of the failure records of a scope (6 binds: [`FleetScope::binds`]). Aliases:
 /// `fe` failure record, `e` equipment, `n` its org node, `wo` source work order, `wfd` its
-/// close-out coding, `di` the request the work order came from.
+/// close-out coding, `di` the request the work order came from. Only records inside their
+/// equipment's service period (module header).
 pub(crate) fn scope_from_sql() -> String {
+    format!("{} AND {}", window_from_sql(), in_service_sql())
+}
+
+/// [`scope_from_sql`] without the service-period condition (same binds).
+fn window_from_sql() -> String {
     format!(
         "FROM failure_events fe
          JOIN equipment e ON e.id = fe.equipment_id AND e.deleted_at IS NULL
@@ -345,7 +378,9 @@ pub(crate) async fn fleet_hours(db: &DatabaseConnection, scope: &FleetScope) -> 
     let fleet = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id, e.commissioning_date, e.decommissioned_at
+            // Dates read by SQLite `datetime()`, as for the failures ([`in_service_sql`]).
+            "SELECT e.id, datetime(e.commissioning_date) AS commissioning_date,
+                    datetime(e.decommissioned_at) AS decommissioned_at
              FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
              WHERE e.deleted_at IS NULL
                AND (? IS NULL OR e.class_id = ?)
@@ -403,17 +438,40 @@ pub(crate) async fn missing_date_count(db: &impl ConnectionTrait, scope: &FleetS
     }
 }
 
+/// Unplanned failure records of the scope's window, class and org node dated outside their
+/// equipment's service period (before commissioning or after decommissioning): no hours stand
+/// behind them, so they are out of every figure (and counted).
+pub(crate) async fn outside_service_count(db: &impl ConnectionTrait, scope: &FleetScope) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COUNT(fe.id) AS n {} AND NOT {}",
+                window_from_sql(),
+                in_service_sql()
+            ),
+            scope.binds(),
+        ))
+        .await?;
+    match row {
+        Some(r) => get(&r, "n"),
+        None => Ok(0),
+    }
+}
+
 fn mean(sum: f64, n: i64) -> Option<f64> {
     (n > 0 && sum.is_finite()).then(|| sum / n as f64)
 }
 
 /// The fleet figures from per-equipment aggregates and hours (definitions: module header).
-/// `missing_date` = [`missing_date_count`] of the scope.
+/// `missing_date` = [`missing_date_count`], `outside_service` = [`outside_service_count`] of the
+/// scope.
 pub(crate) fn kpis_of(
     scope: &FleetScope,
     aggs: &[AssetAgg],
     hours: &HashMap<i64, AssetHours>,
     missing_date: i64,
+    outside_service: i64,
 ) -> FleetKpis {
     let sum_i = |f: fn(&AssetAgg) -> i64| aggs.iter().map(f).sum::<i64>();
     let sum_f = |f: fn(&AssetAgg) -> f64| aggs.iter().map(f).sum::<f64>();
@@ -445,6 +503,7 @@ pub(crate) fn kpis_of(
         mtbf_hours: mtbf,
         eligible_failure_count: eligible,
         mtbf_excluded_missing_date: missing_date,
+        mtbf_excluded_outside_service: outside_service,
         mttr_hours: mttr,
         restore_count: sum_i(|a| a.restore_count),
         restore_excluded_missing_failed_at: sum_i(|a| a.missing_failed_at),
@@ -468,7 +527,8 @@ pub async fn fleet_kpis(db: &DatabaseConnection, scope: &FleetScope) -> AppResul
     let aggs = load_asset_aggs(db, scope).await?;
     let hours = fleet_hours(db, scope).await?;
     let missing_date = missing_date_count(db, scope).await?;
-    Ok(kpis_of(scope, &aggs, &hours, missing_date))
+    let outside_service = outside_service_count(db, scope).await?;
+    Ok(kpis_of(scope, &aggs, &hours, missing_date, outside_service))
 }
 
 /// Org nodes holding equipment and equipment classes in use (the filters of the fleet screens).

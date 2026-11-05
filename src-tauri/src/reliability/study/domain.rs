@@ -50,6 +50,9 @@ pub struct FleetKpis {
     pub eligible_failure_count: i64,
     /// Unplanned records of the class / org node left out of the MTBF: failure date unreadable.
     pub mtbf_excluded_missing_date: i64,
+    /// Unplanned records of the window dated outside their equipment's service period (before
+    /// commissioning, after decommissioning): out of every figure of the scope.
+    pub mtbf_excluded_outside_service: i64,
     /// Mean time to restore (EN 13306) over failures with both times: work start → work-order
     /// close for records raised from a work order, failure → back in service for imported ones.
     pub mttr_hours: Option<f64>,
