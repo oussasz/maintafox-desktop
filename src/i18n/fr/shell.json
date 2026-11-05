@@ -414,6 +414,7 @@
       "purchase_orders": "Commande d'achat",
       "procurement_requisitions": "Demande d'achat",
       "goods_receipts": "Réception",
+      "repairable_orders": "Ordre de réparation",
       "inventory_suppliers": "Fournisseur",
       "personnel": "Personne",
       "personnel_availability_blocks": "Absence",

@@ -448,7 +448,7 @@
       "suggestedQty": "Suggested qty",
       "available": "Available",
       "supplier": "Preferred supplier",
-      "lead": "ETA",
+      "lead": "Expected arrival",
       "cost": "Est. cost",
       "surplusFrom": "Surplus from",
       "transferHint": "Prefer internal transfer",
