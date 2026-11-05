@@ -339,22 +339,29 @@ fn map_columns(
 }
 
 /// A date cell: `JJ/MM/AAAA` (or `J/M/AAAA`), ISO `AAAA-MM-JJ`, or an Excel date serial; a time
-/// after the date is ignored. `Err` when the cell is not a date.
+/// after the date is ignored. The year needs four digits. A bare number is read as an Excel date
+/// only between 1950 and 2100, so a stray year or count is never turned into a date. `Err` when
+/// the cell is not a date.
 pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<chrono::NaiveDate>, ()> {
     use chrono::NaiveDate;
     let Some(text) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
     let day = text.split(['T', ' ']).next().unwrap_or(text);
-    if let Ok(d) = NaiveDate::parse_from_str(day, "%d/%m/%Y") {
-        return Ok(Some(d));
+    if day.rsplit('/').next().is_some_and(|y| y.len() == 4) {
+        if let Ok(d) = NaiveDate::parse_from_str(day, "%d/%m/%Y") {
+            return Ok(Some(d));
+        }
     }
-    if let Ok(d) = NaiveDate::parse_from_str(day, "%Y-%m-%d") {
-        return Ok(Some(d));
+    if day.split('-').next().is_some_and(|y| y.len() == 4) {
+        if let Ok(d) = NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+            return Ok(Some(d));
+        }
     }
-    // Excel stores a date as the number of days since 30/12/1899.
+    // Excel stores a date as the number of days since 30/12/1899 (18264 = 01/01/1950,
+    // 73051 = 01/01/2100).
     if let Ok(serial) = text.parse::<f64>() {
-        if (1.0..=2_958_465.0).contains(&serial) {
+        if (18_264.0..73_051.0).contains(&serial) {
             let base = NaiveDate::from_ymd_opt(1899, 12, 30).ok_or(())?;
             return base
                 .checked_add_signed(chrono::Duration::days(serial.trunc() as i64))

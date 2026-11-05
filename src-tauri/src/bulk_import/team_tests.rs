@@ -140,6 +140,9 @@ mod tests {
         assert_eq!(parse_date(Some("46082")), Ok(d));
         assert_eq!(parse_date(Some("  ")), Ok(None));
         assert_eq!(parse_date(Some("mars 2026")), Err(()));
+        assert_eq!(parse_date(Some("2026")), Err(()), "a bare year is not an Excel date");
+        assert_eq!(parse_date(Some("12")), Err(()));
+        assert_eq!(parse_date(Some("05/11/26")), Err(()), "the year needs four digits");
     }
 
     #[tokio::test]
@@ -269,5 +272,147 @@ mod tests {
         assert_eq!((res.updated, res.failed), (1, 0));
         assert!(is_lead(&db, "P2", "IT-A").await);
         assert!(!is_lead(&db, "P1", "IT-A").await);
+    }
+
+    #[tokio::test]
+    async fn renaming_a_crew_on_a_deactivated_site_does_not_recheck_the_site() {
+        let db = db_with_crews().await;
+        exec(&db, "UPDATE org_nodes SET status = 'inactive' WHERE code = 'S1'").await;
+        let p = run(
+            &db,
+            "team",
+            &format!(
+                "{TEAMS}
+IT-A;Mécanique 2;S1;maintenance;
+"
+            ),
+        )
+        .await;
+        assert!(errors(&p, 2).is_empty());
+        assert_eq!(action(&p, 2), "update");
+        let res = apply(&db, &p).await;
+        assert_eq!((res.updated, res.failed), (1, 0));
+        let p = run(
+            &db,
+            "team",
+            &format!(
+                "{TEAMS}
+IT-Z;Nouvelle;S1;maintenance;
+"
+            ),
+        )
+        .await;
+        assert_eq!(
+            errors(&p, 2),
+            vec!["TEAM_IMPORT_SITE_INACTIVE"],
+            "a new crew still needs an active site"
+        );
+    }
+
+    #[tokio::test]
+    async fn ending_the_period_of_the_lead_with_lead_no_is_one_update() {
+        let db = db_with_crews().await;
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P1;IT-A;01/01/2025;;;oui
+"
+            ),
+        )
+        .await;
+        apply(&db, &p).await;
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P1;IT-A;01/01/2025;31/12/2025;;non
+"
+            ),
+        )
+        .await;
+        assert!(errors(&p, 2).is_empty());
+        assert_eq!(action(&p, 2), "update");
+        let res = apply(&db, &p).await;
+        assert_eq!((res.updated, res.failed), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn people_who_left_round_trip_but_cannot_be_changed() {
+        let db = db_with_crews().await;
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P3;IT-A;01/01/2025;;;
+P2;IT-B;01/01/2025;;;
+"
+            ),
+        )
+        .await;
+        apply(&db, &p).await;
+        exec(
+            &db,
+            "UPDATE personnel SET employment_status = 'inactive' WHERE employee_code = 'P3'",
+        )
+        .await;
+        exec(&db, "UPDATE teams SET status = 'inactive' WHERE code = 'IT-B'").await;
+        // Two old periods without a start date, told apart by their end dates.
+        let p1 = person_id(&db, "P1").await;
+        let a = team_id(&db, "IT-A").await;
+        for end in ["2020-12-31", "2021-12-31"] {
+            exec(
+                &db,
+                &format!(
+                    "INSERT INTO personnel_team_assignments (entity_sync_id, personnel_id, team_id, valid_from, valid_to)                      VALUES ('old-{end}', {p1}, {a}, NULL, '{end}')"
+                ),
+            )
+            .await;
+        }
+        let again = run(&db, "team_member", &exported(&db, "team_member", MEMBERS, 1).await).await;
+        assert!(
+            again.rows.iter().all(|r| r.action == "skip" && r.status == "ok"),
+            "{:?}",
+            again.rows.iter().map(|r| (&r.action, &r.messages)).collect::<Vec<_>>()
+        );
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P3;IT-A;01/01/2025;30/06/2026;;
+P2;IT-B;01/01/2025;30/06/2026;;
+"
+            ),
+        )
+        .await;
+        assert_eq!(errors(&p, 2), vec!["MEMBER_IMPORT_PERSON_INACTIVE"]);
+        assert_eq!(errors(&p, 3), vec!["MEMBER_IMPORT_TEAM_INACTIVE"]);
+    }
+
+    #[tokio::test]
+    async fn a_home_crew_the_personnel_record_would_refuse_is_refused_in_the_preview() {
+        let db = db_with_crews().await;
+        exec(
+            &db,
+            "UPDATE personnel SET employment_origin = 'external', external_company_id = NULL WHERE employee_code = 'P1'",
+        )
+        .await;
+        let p = run(
+            &db,
+            "team_member",
+            &format!(
+                "{MEMBERS}
+P1;IT-A;;;oui;
+P1;IT-B;01/01/2020;31/12/2020;;
+"
+            ),
+        )
+        .await;
+        assert_eq!(errors(&p, 2), vec!["MEMBER_IMPORT_HOME_PERSON"]);
+        assert!(errors(&p, 3).is_empty(), "a plain period is still accepted");
     }
 }

@@ -92,6 +92,12 @@ struct Line {
     lead: Option<bool>,
     /// Index, in the memberships of this person and crew, of the one the line updates.
     matched: Option<usize>,
+    /// What the line changes on that membership (all true / set for a new one).
+    to_change: bool,
+    home_change: bool,
+    lead_change: Option<bool>,
+    /// Whether applying the line writes anything.
+    writes: bool,
     messages: Vec<RowMessage>,
 }
 
@@ -131,15 +137,20 @@ fn show_or_open(d: Option<NaiveDate>) -> String {
 pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>]) -> AppResult<Vec<RowOutcome>> {
     let today = crate::clock::now().date_naive();
 
-    // People by personnel number: (id, employment status), their home crew, and the shown code.
+    // People by personnel number: (id, employment status), their home crew, the shown code, and
+    // why the personnel update would refuse to change their home crew (it re-checks the stored
+    // record: an external person needs a company, a contract cannot end before it starts).
     let mut people: HashMap<String, (i64, String)> = HashMap::new();
     let mut ambiguous_people: HashSet<String> = HashSet::new();
     let mut home_of: HashMap<i64, Option<i64>> = HashMap::new();
     let mut code_of_person: HashMap<i64, String> = HashMap::new();
+    let mut home_blocked: HashMap<i64, &'static str> = HashMap::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, employee_code, employment_status, primary_team_id FROM personnel".to_string(),
+            "SELECT id, employee_code, employment_status, employment_origin, external_company_id, \
+                    contract_start_date, contract_end_date, primary_team_id FROM personnel"
+                .to_string(),
         ))
         .await?
     {
@@ -151,6 +162,23 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         people.insert(key(&code), (id, r.try_get("", "employment_status")?));
         home_of.insert(id, r.try_get("", "primary_team_id")?);
         code_of_person.insert(id, code);
+        let origin: Option<String> = r.try_get("", "employment_origin")?;
+        let company: Option<i64> = r.try_get("", "external_company_id")?;
+        let start: Option<String> = r.try_get("", "contract_start_date")?;
+        let end: Option<String> = r.try_get("", "contract_end_date")?;
+        if origin.as_deref() == Some("external") && company.is_none() {
+            home_blocked.insert(
+                id,
+                "cette personne externe n'a pas d'entreprise : complétez sa fiche dans Personnel.",
+            );
+        } else if let (Some(s), Some(e)) = (start, end) {
+            if s > e {
+                home_blocked.insert(
+                    id,
+                    "son contrat se termine avant de commencer : corrigez sa fiche dans Personnel.",
+                );
+            }
+        }
     }
 
     // Live crews by code: (id, active).
@@ -202,6 +230,9 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     let mut lines: Vec<Line> = Vec::new();
     for (i, raw) in rows.iter().enumerate() {
         let mut messages = Vec::new();
+        // Refusals that only apply when the line changes something: an unchanged line of a person
+        // who has left (or of a crew no longer active) is just reported as up to date.
+        let mut if_writes: Vec<RowMessage> = Vec::new();
         let cell = |k: &str| raw.get(k).map(|s| s.trim()).filter(|s| !s.is_empty());
         let person = match cell("employee_code") {
             None => {
@@ -228,14 +259,15 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                     ));
                     None
                 }
-                Some((_, status)) if status != "active" => {
-                    messages.push(RowMessage::error(
-                        "MEMBER_IMPORT_PERSON_INACTIVE",
-                        format!("« {m} » n'est pas actif dans le personnel : réactivez-le d'abord."),
-                    ));
-                    None
+                Some((id, status)) => {
+                    if status != "active" {
+                        if_writes.push(RowMessage::error(
+                            "MEMBER_IMPORT_PERSON_INACTIVE",
+                            format!("« {m} » n'est pas actif dans le personnel : réactivez-le d'abord."),
+                        ));
+                    }
+                    Some(*id)
                 }
-                Some((id, _)) => Some(*id),
             },
         };
         let team = match cell("team_code") {
@@ -261,14 +293,15 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                     ));
                     None
                 }
-                Some((_, false)) => {
-                    messages.push(RowMessage::error(
-                        "MEMBER_IMPORT_TEAM_INACTIVE",
-                        format!("L'équipe « {t} » n'est pas active."),
-                    ));
-                    None
+                Some((id, active)) => {
+                    if !active {
+                        if_writes.push(RowMessage::error(
+                            "MEMBER_IMPORT_TEAM_INACTIVE",
+                            format!("L'équipe « {t} » n'est pas active."),
+                        ));
+                    }
+                    Some(*id)
                 }
-                Some((id, true)) => Some(*id),
             },
         };
         let mut date = |k: &str, label: &str| match parse_date(cell(k)) {
@@ -300,13 +333,41 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         let matched = match (person, team) {
             (Some(p), Some(t)) => memberships.get(&(p, t)).and_then(|list| match from {
                 Some(f) => list.iter().position(|m| m.from == Some(f)),
+                // Blank start: the membership without a start date (the one with the same end date
+                // first, when there are several), else the one still running.
                 None => list
                     .iter()
-                    .position(|m| m.from.is_none())
+                    .position(|m| m.from.is_none() && to.is_some() && m.to == to)
+                    .or_else(|| list.iter().position(|m| m.from.is_none()))
                     .or_else(|| list.iter().rposition(|m| running(m.to, today))),
             }),
             _ => None,
         };
+
+        // What the line changes on the membership it matches (blank cells change nothing).
+        let stored = matched.and_then(|m| memberships.get(&(person?, team?)).map(|list| &list[m]));
+        let after_to = to.or(stored.and_then(|m| m.to));
+        let to_change = to.is_some() && stored.is_none_or(|m| m.to != to);
+        let home_now = person.and_then(|p| home_of.get(&p).copied().flatten());
+        let home_change = home == Some(true) && team.is_some() && team != home_now;
+        let was_lead = stored.is_some_and(|m| m.is_lead && running(m.to, today));
+        // Ending the period ends the lead role with it: "non" on a line that closes the period
+        // changes nothing more (the crew screen only changes the lead of a running membership).
+        let lead_change = lead
+            .filter(|v| *v != was_lead)
+            .filter(|v| *v || running(after_to, today));
+        let writes = stored.is_none() || to_change || home_change || lead_change.is_some();
+        if writes {
+            messages.append(&mut if_writes);
+        }
+        if let (true, Some(p)) = (home_change, person) {
+            if let Some(reason) = home_blocked.get(&p) {
+                messages.push(RowMessage::error(
+                    "MEMBER_IMPORT_HOME_PERSON",
+                    format!("L'équipe principale ne peut pas être changée : {reason}"),
+                ));
+            }
+        }
         if let (Some(p), Some(t)) = (person, team) {
             let k = (p, t, matched, if matched.is_some() { None } else { from });
             if let Some(first) = first_row_of.get(&k) {
@@ -326,6 +387,10 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             home,
             lead,
             matched,
+            to_change,
+            home_change,
+            lead_change,
+            writes,
             messages,
         });
     }
@@ -385,6 +450,11 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         let (false, Some(p), Some(t)) = (l.has_error(), l.person, l.team) else {
             continue;
         };
+        // A line that changes nothing is reported as up to date and checks nothing (old data may
+        // already hold overlapping periods); it still counts as what the file says for others.
+        if !l.writes {
+            continue;
+        }
         let mine = period(l);
         let open = running(mine.1, today);
         let team_code = code_of_team.get(&t).cloned().unwrap_or_default();
@@ -504,22 +574,29 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         }
     }
 
+    // Crews in which each person has a running membership, for the home crew warning.
+    let mut running_crews: HashMap<i64, Vec<i64>> = HashMap::new();
+    for ((p, t), list) in &memberships {
+        if list.iter().any(|m| running(m.to, today)) {
+            running_crews.entry(*p).or_default().push(*t);
+        }
+    }
+
     let mut out = Vec::new();
     for l in &lines {
         let mut messages = l.messages.clone();
         let stored = stored_of(l);
         let home_now = l.person.and_then(|p| home_of.get(&p).copied().flatten());
-        let home_change = l.home == Some(true) && l.team.is_some() && l.team != home_now;
-        let was_lead = stored.is_some_and(|m| m.is_lead && running(m.to, today));
-        let lead_change = l.lead.filter(|v| *v != was_lead);
-        let to_change = l.to.is_some() && stored.is_none_or(|m| m.to != l.to);
+        let (to_change, home_change, lead_change) = (l.to_change, l.home_change, l.lead_change);
 
         if let (false, Some(p), Some(t)) = (l.has_error(), l.person, l.team) {
             if home_change {
-                let mut others: Vec<String> = memberships
-                    .iter()
-                    .filter(|((mp, mt), list)| *mp == p && *mt != t && list.iter().any(|m| running(m.to, today)))
-                    .filter_map(|((_, mt), _)| code_of_team.get(mt).cloned())
+                let mut others: Vec<String> = running_crews
+                    .get(&p)
+                    .into_iter()
+                    .flatten()
+                    .filter(|mt| **mt != t)
+                    .filter_map(|mt| code_of_team.get(mt).cloned())
                     .collect();
                 others.sort();
                 if !others.is_empty() {

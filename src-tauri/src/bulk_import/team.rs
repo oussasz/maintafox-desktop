@@ -76,6 +76,8 @@ struct Existing {
     id: i64,
     name: String,
     node_id: Option<i64>,
+    /// Code of the crew's current node, which may belong to an older organisation model.
+    node_code: Option<String>,
     team_type: String,
     status: String,
 }
@@ -126,7 +128,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, code, name, team_type, status, primary_node_id, deleted_at FROM teams".to_string(),
+            "SELECT t.id, t.code, t.name, t.team_type, t.status, t.primary_node_id, t.deleted_at, n.code AS node_code              FROM teams t LEFT JOIN org_nodes n ON n.id = t.primary_node_id"
+                .to_string(),
         ))
         .await?
     {
@@ -145,6 +148,7 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                 id: r.try_get("", "id")?,
                 name: r.try_get("", "name")?,
                 node_id: r.try_get("", "primary_node_id")?,
+                node_code: r.try_get("", "node_code")?,
                 team_type: r.try_get("", "team_type")?,
                 status: r.try_get("", "status")?,
             },
@@ -218,6 +222,10 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             }
             Some(s) => {
                 match sites.get(&key(s)) {
+                    // The crew's own site, kept as it is even when it belongs to an older model.
+                    None if current.is_some_and(|e| e.node_code.as_deref().map(key) == Some(key(s))) => {
+                        current.and_then(|e| e.node_id)
+                    }
                     None => {
                         messages.push(RowMessage::error(
                         "TEAM_IMPORT_SITE",
@@ -337,7 +345,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                 normalized: json!({
                     "code": l.code,
                     "name": l.name,
-                    "node_id": l.node_id,
+                    // Only a new site is written: the crew update re-checks any site it is given.
+                    "node_id": l.node_id.filter(|id| existing.get(&me).is_none_or(|e| e.node_id != Some(*id))),
                     "team_type": l.team_type,
                     "status": status,
                 }),
@@ -347,11 +356,9 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         .collect())
 }
 
-/// Id of the live crew with this code, matched the same way as the preview. `Err` when several
-/// crews match or none does.
-pub(super) async fn team_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<Result<i64, String>> {
-    let wanted = key(code);
-    let mut found = None;
+/// Ids of the live crews by code key, read once for the whole apply (apply never changes a code).
+async fn live_team_ids(db: &impl ConnectionTrait) -> AppResult<HashMap<String, Vec<i64>>> {
+    let mut out: HashMap<String, Vec<i64>> = HashMap::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -360,16 +367,9 @@ pub(super) async fn team_by_code(db: &impl ConnectionTrait, code: &str) -> AppRe
         .await?
     {
         let c: String = r.try_get("", "code")?;
-        if key(&c) == wanted {
-            if found.is_some() {
-                return Ok(Err(format!(
-                    "Plusieurs équipes ont le code « {code} » à la casse près : renommez-les dans Personnel avant d'importer."
-                )));
-            }
-            found = Some(r.try_get("", "id")?);
-        }
+        out.entry(key(&c)).or_default().push(r.try_get("", "id")?);
     }
-    Ok(found.ok_or_else(|| format!("L'équipe « {code} » n'existe plus.")))
+    Ok(out)
 }
 
 fn text(row: &StagedRow, field: &str) -> Option<String> {
@@ -381,6 +381,7 @@ fn text(row: &StagedRow, field: &str) -> Option<String> {
 
 pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec<RowApplied>> {
     let mut out = Vec::new();
+    let ids = live_team_ids(db).await?;
     for row in rows {
         let code = text(row, "code").unwrap_or_default();
         let node_id = row.normalized["node_id"].as_i64();
@@ -406,15 +407,11 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec
                 .await
                 .map(|_| "created")
             }
-            "update" => match team_by_code(db, &code).await? {
-                Err(reason) => {
-                    out.push(failed(row, reason));
-                    continue;
-                }
-                Ok(id) => team_repository::update_team(
+            "update" => match ids.get(&key(&code)).map(Vec::as_slice) {
+                Some([id]) => team_repository::update_team(
                     db,
                     TeamUpdateInput {
-                        id,
+                        id: *id,
                         code: None,
                         name: text(row, "name"),
                         team_type: text(row, "team_type"),
@@ -427,6 +424,19 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec
                 )
                 .await
                 .map(|_| "updated"),
+                Some([]) | None => {
+                    out.push(failed(row, format!("L'équipe « {code} » n'existe plus.")));
+                    continue;
+                }
+                Some(_) => {
+                    out.push(failed(
+                        row,
+                        format!(
+                            "Plusieurs équipes ont le code « {code} » à la casse près : renommez-les dans Personnel avant d'importer."
+                        ),
+                    ));
+                    continue;
+                }
             },
             _ => Ok("skipped"),
         };
