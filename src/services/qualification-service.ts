@@ -302,3 +302,52 @@ export async function listCertificationExpiryDrilldown(
   });
   return z.array(CertificationExpiryDrilldownRowSchema).parse(raw);
 }
+
+// ── Validation list (unvalidated skills, certificates waiting for verification) ──────────────
+
+const PendingQualificationSchema = z.object({
+  kind: z.enum(["skill", "certification"]),
+  id: z.number(),
+  personnel_id: z.number(),
+  employee_code: z.string(),
+  full_name: z.string(),
+  team_name: z.string().nullable(),
+  item_code: z.string(),
+  item_label: z.string(),
+  proficiency_level: z.number().nullable(),
+  issued_at: z.string().nullable(),
+  valid_to: z.string().nullable(),
+  issuing_body: z.string().nullable(),
+  certificate_ref: z.string().nullable(),
+  source_type: z.string().nullable(),
+  row_version: z.number().nullable(),
+});
+export type PendingQualification = z.infer<typeof PendingQualificationSchema>;
+
+const QualificationValidationResultSchema = z.object({
+  kind: z.string(),
+  id: z.number(),
+  validated: z.boolean(),
+  code: z.string().nullable(),
+});
+export type QualificationValidationResult = z.infer<typeof QualificationValidationResultSchema>;
+
+export async function listPendingQualifications(): Promise<PendingQualification[]> {
+  const raw = await invoke<unknown>("list_pending_qualifications");
+  return z.array(PendingQualificationSchema).parse(raw);
+}
+
+/** Validates the lines exactly as shown: a line changed since is refused (code per line). */
+export async function validatePendingQualifications(
+  lines: PendingQualification[],
+): Promise<QualificationValidationResult[]> {
+  const items = lines.map((l) => ({
+    kind: l.kind,
+    id: l.id,
+    proficiency_level: l.proficiency_level,
+    valid_to: l.kind === "skill" ? l.valid_to : null,
+    row_version: l.row_version,
+  }));
+  const raw = await invoke<unknown>("validate_pending_qualifications", { items });
+  return z.array(QualificationValidationResultSchema).parse(raw);
+}
