@@ -559,14 +559,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
       : statusCode === "cancelled"
         ? t("closeout.blocked.cancelled")
         : null;
+  // The reasons read the rights from this panel's own read, the one `rightsKnown` describes: the
+  // `canEdit` prop comes from the dialog's separate read, which may still be loading or have failed.
+  const hasEditRight = can(P.OT_EDIT);
   /** "Droit requis" for the edit right, once the rights are known to lack it. */
-  const editRightReason = rightsKnown && !canEdit ? rightRequired(P.OT_EDIT) : null;
+  const editRightReason = rightsKnown && !hasEditRight ? rightRequired(P.OT_EDIT) : null;
   const isDetailEditable = stateBlocker === null && canEdit;
   /** Why saving the details is greyed (null while the rights load or cannot be read). */
   const detailBlocker = stateBlocker ?? editRightReason;
   // Closing needs `ot.close` (`close_wo`): someone who works on the order without it sees the
   // step greyed with the right it needs.
-  const closeBlocker = rightsKnown && canEdit && !canClose ? rightRequired(P.OT_CLOSE) : null;
+  const closeBlocker = rightsKnown && hasEditRight && !canClose ? rightRequired(P.OT_CLOSE) : null;
 
   useEffect(() => {
     if (statusCode !== "closed") return;

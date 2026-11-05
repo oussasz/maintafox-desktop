@@ -139,6 +139,18 @@ describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
     expect(screen.queryByTestId("wo-close-blocked")).toBeNull();
   });
 
+  it("names no missing right the panel's own read holds, whatever the dialog's read says", async () => {
+    // The dialog reads the rights separately: still loading or failed there, its `canEdit` is
+    // false while this panel's read holds both rights.
+    show(WO, false);
+    await waitFor(() => expect(closeout.getWoForCloseOut).toHaveBeenCalledWith(42));
+    await waitFor(() => expect(closeButton()).toBeEnabled());
+    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).not.toHaveAttribute("title");
+    expect(screen.queryByText(/Right required/)).toBeNull();
+    expect(screen.queryByTestId("wo-close-blocked")).toBeNull();
+  });
+
   it("still says a closed work order no longer changes while the rights load", async () => {
     rights.loading = true;
     show({ ...WO, status_code: "closed" } as WorkOrder, false);
