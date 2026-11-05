@@ -3926,6 +3926,25 @@ export interface CreatePmPlanInput {
   is_active?: boolean;
 }
 
+/** "Dupliquer ce plan" (L6-11): a draft v1 copy of a plan onto a target asset or scope. */
+export interface DuplicatePmPlanInput {
+  source_plan_id: number;
+  code: string;
+  title: string;
+  /** Target scope; the source plan's scope when omitted. */
+  target_scope_type?: string | null;
+  target_scope_id?: number | null;
+  /** Meter of the target asset with the source meter's unit; omitted: to choose before publishing. */
+  target_meter_id?: number | null;
+}
+
+export interface DuplicatePmPlanResult {
+  plan: PmPlan;
+  version: PmPlanVersion;
+  /** The trigger counts on a meter still to choose before publishing. */
+  meter_to_choose: boolean;
+}
+
 export interface UpdatePmPlanInput {
   title?: string | null;
   description?: string | null;

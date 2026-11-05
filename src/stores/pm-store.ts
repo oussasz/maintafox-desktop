@@ -13,15 +13,17 @@
 import { create } from "zustand";
 
 import {
+  type DuplicatePmPlanRowResult,
   type PmComplianceReport,
   type PmExecutionRow,
   type PmOccurrenceRow,
   type PmPlanRow,
   createPmPlan,
-  createPmRevisionFromFinding,
   createPmPlanVersion,
+  createPmRevisionFromFinding,
   deletePmPlan,
   deletePmPlanVersion,
+  duplicatePmPlan,
   executePmOccurrence,
   generatePmOccurrences,
   getPmCompliance,
@@ -45,6 +47,7 @@ import {
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
+  DuplicatePmPlanInput,
   ExecutePmOccurrenceInput,
   ExecutePmOccurrenceResult,
   GeneratePmOccurrencesInput,
@@ -130,6 +133,8 @@ interface PmStoreState {
   transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrenceRow>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
   createPlan: (input: CreatePmPlanInput) => Promise<PmPlanRow>;
+  /** "Dupliquer ce plan": draft copy (version 1) on the chosen asset; opens the new plan. */
+  duplicatePlan: (input: DuplicatePmPlanInput) => Promise<DuplicatePmPlanRowResult>;
   updatePlan: (
     planId: number,
     expectedRowVersion: number,
@@ -412,6 +417,14 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       await get().loadWorkspace();
       await get().openPlan(plan.id);
       return plan;
+    }),
+
+  duplicatePlan: (input) =>
+    withSaving(async () => {
+      const result = await duplicatePmPlan(input);
+      await get().loadWorkspace();
+      await get().openPlan(result.plan.id);
+      return result;
     }),
 
   updatePlan: (planId, expectedRowVersion, input) =>

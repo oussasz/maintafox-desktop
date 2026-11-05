@@ -29,6 +29,7 @@ import { PmArchivePanel } from "@/components/pm/PmArchivePanel";
 import { PmAutopilotStrip } from "@/components/pm/PmAutopilotStrip";
 import { PmCalendarView } from "@/components/pm/PmCalendarView";
 import { PmDueQueueView } from "@/components/pm/PmDueQueueView";
+import { PmDuplicatePlanDialog } from "@/components/pm/PmDuplicatePlanDialog";
 import { PmExecutionDialog } from "@/components/pm/PmExecutionDialog";
 import { PmMeterReadingDialog } from "@/components/pm/PmMeterReadingDialog";
 import { PmOccurrenceTransitionDialog } from "@/components/pm/PmOccurrenceTransitionDialog";
@@ -133,6 +134,7 @@ export function PmPage() {
   const openPlan = usePmStore((s) => s.openPlan);
   const closePlan = usePmStore((s) => s.closePlan);
   const createPlan = usePmStore((s) => s.createPlan);
+  const duplicatePlan = usePmStore((s) => s.duplicatePlan);
   const updatePlan = usePmStore((s) => s.updatePlan);
   const transitionPlanLifecycle = usePmStore((s) => s.transitionPlanLifecycle);
   const createVersion = usePmStore((s) => s.createVersion);
@@ -162,6 +164,7 @@ export function PmPage() {
   const [dueWindow, setDueWindow] = useState<PmDueWindow>("all");
 
   const [planFormOpen, setPlanFormOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [planFormMode, setPlanFormMode] = useState<"create" | "edit">("create");
   const [versionFormOpen, setVersionFormOpen] = useState(false);
   const [versionFormMode, setVersionFormMode] = useState<"create" | "edit">("create");
@@ -632,6 +635,7 @@ export function PmPage() {
           setPlanFormMode("edit");
           setPlanFormOpen(true);
         }}
+        onDuplicatePlan={() => setDuplicateOpen(true)}
         onDeletePlan={() => {
           if (!activePlan) return;
           setPendingDelete({
@@ -723,6 +727,27 @@ export function PmPage() {
         }
         destructive
         onConfirm={confirmDelete}
+      />
+
+      <PmDuplicatePlanDialog
+        open={duplicateOpen && activePlan != null}
+        plan={activePlan}
+        versions={versions}
+        saving={saving}
+        onClose={() => setDuplicateOpen(false)}
+        onDuplicate={async (input) => {
+          const result = await duplicatePlan(input);
+          pushAppToast({
+            title: t(
+              result.meter_to_choose
+                ? "messages.planDuplicatedMeterToChoose"
+                : "messages.planDuplicated",
+              { code: result.plan.code },
+            ),
+            variant: "success",
+          });
+          return result;
+        }}
       />
 
       <PmPlanFormDialog
