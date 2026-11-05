@@ -809,6 +809,11 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Signer password confirmation",
     "fmecaOverrideHint": "Required only when critical FMECA suggested parts were not consumed. Signer must be Supervisor/Admin, different from closer, and re-authenticated.",
     "closeWo": "Close WO",
+    "blocked": {
+      "closed": "The work order is closed: its details can no longer be changed.",
+      "cancelled": "The work order is cancelled: its details can no longer be changed.",
+      "rightRequired": "Right required: {{right}}."
+    },
     "confirmVerifyTitle": "Record the technical verification?",
     "confirmVerifyDescription": "{{code}}: result \"{{result}}\"{{rts}}. The verification is recorded in your name in the audit trail.",
     "confirmVerifyReturnToService": ", equipment returned to service",
