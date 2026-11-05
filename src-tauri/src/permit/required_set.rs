@@ -269,9 +269,16 @@ impl RequiredSet {
 /// `permit::sync_check::keep_held_rule_trace`): the union of both, so a type added on either PC is
 /// kept and two PCs that added different types converge on both. For a type both hold, the rule is
 /// the smaller rule code (the same on every PC); the received clearing wins (it passed the check on
-/// arrival); a clearing held here that the row does not carry is withdrawn only when the row
-/// requires the permit (`received_requires`: the permit required again, as a re-tick), else kept.
-pub fn merge(held: &RequiredSet, received: &RequiredSet, received_requires: bool) -> RequiredSet {
+/// arrival); a clearing held here that the row does not carry is kept, unless the row is a re-tick
+/// ([`is_received_retick`]): then every clearing held here is withdrawn, and returned (second
+/// element) for the caller to record. A received row never drops a type.
+pub fn merge(
+    held: &RequiredSet,
+    received: &RequiredSet,
+    received_requires: bool,
+) -> (RequiredSet, Vec<RequiredPermit>) {
+    let retick = is_received_retick(held, received, received_requires);
+    let mut withdrawn = Vec::new();
     let mut merged = RequiredSet {
         items: Vec::new(),
         stored: true,
@@ -288,7 +295,10 @@ pub fn merge(held: &RequiredSet, received: &RequiredSet, received_requires: bool
                 rule_code: h.rule_code.clone().min(r.rule_code.clone()),
                 clearing: match (&h.clearing, &r.clearing) {
                     (_, Some(c)) => Some(c.clone()),
-                    (Some(_), None) if received_requires => None,
+                    (Some(_), None) if retick => {
+                        withdrawn.push(h.clone());
+                        None
+                    }
                     (held_clearing, None) => held_clearing.clone(),
                 },
             },
@@ -298,7 +308,23 @@ pub fn merge(held: &RequiredSet, received: &RequiredSet, received_requires: bool
         merged.items.push(one);
     }
     merged.sort();
-    merged
+    (merged, withdrawn)
+}
+
+/// Whether a received row is an unambiguous re-tick of the permit requirement (the permit required
+/// again, every clearing withdrawn), as `permit_requirement::withdraw_clearing_on_retick` makes it:
+/// the row requires the permit, its set lifts no type at all, and every type held here is lifted
+/// (a re-tick is only made on a work order whose permit was no longer required). A PC on this
+/// version sends `requires_permit = 1` whenever one type is still required, so that flag alone says
+/// nothing: a row that still lifts a type, or that arrives over a type still required here, comes
+/// from a PC that has not received a lifting made here yet (security review L4-10b), and the
+/// liftings held here are kept.
+pub fn is_received_retick(held: &RequiredSet, received: &RequiredSet, received_requires: bool) -> bool {
+    received_requires
+        && !received.is_empty()
+        && received.items.iter().all(|i| i.clearing.is_none())
+        && held.items.iter().any(|i| i.clearing.is_some())
+        && held.uncleared_types().is_empty()
 }
 
 /// The refusal of a stored set that does not read.
@@ -481,7 +507,8 @@ mod tests {
         let received =
             RequiredSet::from_matches(&[("hot_work".into(), "SOUDURE".into()), ("loto".into(), "AUTRE".into())]);
         // The row does not require the permit: the clearing held here is kept.
-        let merged = merge(&held, &received, false);
+        let (merged, withdrawn) = merge(&held, &received, false);
+        assert!(withdrawn.is_empty());
         assert_eq!(merged.items().len(), 2);
         assert_eq!(
             merged.get("loto").expect("loto").rule_code,
@@ -490,17 +517,72 @@ mod tests {
         );
         assert!(merged.get("loto").expect("loto").clearing.is_some());
         assert_eq!(merged.uncleared_types(), vec!["hot_work".to_string()]);
-        // Required again by the row: the clearing it does not carry is withdrawn.
-        assert_eq!(merge(&held, &received, true).uncleared_types().len(), 2);
+        // Requiring the permit for hot work, which the row still requires, is no re-tick of loto.
+        let (merged, withdrawn) = merge(&held, &received, true);
+        assert!(withdrawn.is_empty());
+        assert_eq!(merged.uncleared_types(), vec!["hot_work".to_string()]);
         // A received clearing wins; the same merge either way round gives the same set.
         let mut cleared = received.clone();
         cleared.clear("hot_work", clearing("2026-11-04T09:00:00Z"));
-        let a = merge(&held, &cleared, false);
+        let (a, _) = merge(&held, &cleared, false);
         assert!(a.get("hot_work").expect("hot").clearing.is_some());
         assert_eq!(
-            merge(&received, &held, false).to_json(),
-            merge(&held, &received, false).to_json(),
+            merge(&received, &held, false).0.to_json(),
+            merge(&held, &received, false).0.to_json(),
             "both PCs end on the same set"
         );
+    }
+
+    /// PC A lifted hot work while LOTO stays required; PC B, before receiving that lifting, sends an
+    /// unrelated edit (requires_permit = 1, both types not lifted). A keeps its lifting, B adopts it:
+    /// the states never swap (security review L4-10b).
+    #[test]
+    fn a_row_that_has_not_seen_a_lifting_never_withdraws_it() {
+        let mut on_a = RequiredSet::from_matches(&[
+            ("hot_work".into(), "SOUDURE".into()),
+            ("loto".into(), "CRITICITE_A".into()),
+        ]);
+        on_a.clear("hot_work", clearing("2026-11-04T08:00:00Z"));
+        let on_b = RequiredSet::from_matches(&[
+            ("hot_work".into(), "SOUDURE".into()),
+            ("loto".into(), "CRITICITE_A".into()),
+        ]);
+        assert!(!is_received_retick(&on_a, &on_b, true));
+        let (a_after, withdrawn) = merge(&on_a, &on_b, true);
+        assert!(withdrawn.is_empty(), "A keeps its lifting");
+        assert_eq!(a_after.uncleared_types(), vec!["loto".to_string()]);
+        let (b_after, withdrawn) = merge(&on_b, &on_a, true);
+        assert!(withdrawn.is_empty());
+        assert_eq!(b_after.uncleared_types(), vec!["loto".to_string()], "B adopts it");
+        assert_eq!(a_after.to_json(), b_after.to_json());
+        // A row that still lifts another type has not seen every lifting made here either.
+        let mut all_lifted = on_a.clone();
+        all_lifted.clear("loto", clearing("2026-11-04T09:00:00Z"));
+        assert!(!is_received_retick(&all_lifted, &on_a, true));
+    }
+
+    /// A re-tick (every type lifted here, the row requiring the permit with no type lifted) still
+    /// withdraws every clearing, returned for the caller to record; a row that does not require the
+    /// permit never does.
+    #[test]
+    fn an_unambiguous_re_tick_withdraws_every_clearing() {
+        let mut held = RequiredSet::from_matches(&[
+            ("hot_work".into(), "SOUDURE".into()),
+            ("loto".into(), "CRITICITE_A".into()),
+        ]);
+        held.clear("hot_work", clearing("2026-11-04T08:00:00Z"));
+        held.clear("loto", clearing("2026-11-04T08:30:00Z"));
+        let received = RequiredSet::from_matches(&[
+            ("hot_work".into(), "SOUDURE".into()),
+            ("loto".into(), "CRITICITE_A".into()),
+        ]);
+        assert!(is_received_retick(&held, &received, true));
+        let (merged, withdrawn) = merge(&held, &received, true);
+        assert_eq!(merged.uncleared_types().len(), 2);
+        let types: Vec<&str> = withdrawn.iter().map(|i| i.permit_type_code.as_str()).collect();
+        assert_eq!(types, vec!["hot_work", "loto"]);
+        assert!(!is_received_retick(&held, &received, false));
+        let (merged, withdrawn) = merge(&held, &received, false);
+        assert!(withdrawn.is_empty() && merged.uncleared_types().is_empty());
     }
 }

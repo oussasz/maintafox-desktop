@@ -2925,12 +2925,16 @@ pub(crate) async fn keep_held_rule_trace(
 /// requires (`permit::required_set`, CMMS Advisor 2026-11-04). The column travels whole: written
 /// as received it would drop a type added here, so the set written is the union of the set held
 /// here and the received one (`required_set::merge`: a type added on either PC is kept, a received
-/// clearing, judged on arrival, wins; a clearing held here that the row does not carry is withdrawn
-/// only when the row requires the permit). While the merged set has a type not lifted, the permit
-/// stays required. A row from a PC without migration 279 (no key) leaves the column as held here;
-/// when it lifts the primary rule (its legacy clearing) while another type here is not lifted, that
-/// clearing is recorded on the primary type, the permit stays required and this is recorded in the
-/// work order's history and audit trail. Nothing for a work order new here (written as received).
+/// clearing, judged on arrival, wins; a clearing held here that the row does not carry is kept,
+/// unless the row is an unambiguous re-tick, `required_set::is_received_retick`, when every clearing
+/// is withdrawn and recorded). A lifting of the primary type kept that way keeps its legacy clearing
+/// too (a row that has not seen it yet sends none). While the merged set has a type not lifted, the
+/// permit stays required. A row from a PC without migration 279 (no key) leaves the column as held
+/// here, except that a lifting of the primary rule made there (its legacy clearing, judged on
+/// arrival by [`inbound_permit_rule_check`]) is recorded on the primary type, whatever the size of
+/// the set; while another type here is not lifted, the permit stays required and this is recorded
+/// in the work order's history and audit trail. Nothing for a work order new here (written as
+/// received).
 async fn keep_required_set(
     conn: &impl ConnectionTrait,
     entity_sync_id: &str,
@@ -2945,15 +2949,20 @@ async fn keep_required_set(
     let row = overlay(Some(&local), payload);
     if payload.contains_key(COLUMN) {
         let received = required_set_of(&row).map_err(sync_err)?;
-        let merged = merge(&held, &received, row_requires);
+        let (merged, withdrawn) = merge(&held, &received, row_requires);
         payload.insert(COLUMN.to_string(), merged.to_json().map_or(Value::Null, Value::String));
         if !merged.uncleared_types().is_empty() {
             payload.insert("requires_permit".into(), Value::from(1_i64));
         }
+        if withdrawn.is_empty() {
+            keep_held_primary_clearing(&local, &row, payload, &held, &merged);
+        } else {
+            record_received_retick(conn, entity_sync_id, &local, &withdrawn).await?;
+        }
         return Ok(());
     }
     // An older PC: it knows the primary rule only.
-    if !held.stored() || held.items().len() < 2 {
+    if !held.stored() {
         return Ok(());
     }
     let mut set = held.clone();
@@ -2970,7 +2979,9 @@ async fn keep_required_set(
         _ => false,
     };
     let remaining = set.uncleared_types();
-    let lifted_here = !flag(&row, "requires_permit") && !remaining.is_empty();
+    // A set of the primary type alone: the legacy columns say it all (judged as before) once the
+    // lifting is mirrored.
+    let lifted_here = held.items().len() >= 2 && !flag(&row, "requires_permit") && !remaining.is_empty();
     if !mirrored && !lifted_here {
         return Ok(());
     }
@@ -3013,6 +3024,101 @@ async fn keep_required_set(
                 "Exigence levée reçue d'un poste qui ne connaît que la règle principale : les permis {} restent exigés",
                 remaining.join(", ")
             )),
+            details_json: Some(event),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// A lifting of the primary type held here and kept by [`keep_required_set`] (the row has not seen
+/// it: no re-tick) keeps its legacy clearing. The row sends none, and a primary type without its
+/// legacy clearing reads as required (`required_set::RequiredSet::from_row`, fail-closed): written
+/// as sent, the lifting made here would be dropped without a record while the sender adopts it.
+fn keep_held_primary_clearing(
+    local: &Payload,
+    row: &Payload,
+    payload: &mut Payload,
+    held: &crate::permit::required_set::RequiredSet,
+    merged: &crate::permit::required_set::RequiredSet,
+) {
+    let Some(primary) = held.primary() else {
+        return;
+    };
+    if RULE_TRACE_KEYS.iter().any(|k| field(local, k) != field(row, k))
+        || field(local, "permit_rule_cleared_at").is_none()
+        || CLEARING_KEYS.iter().any(|k| field(row, k).is_some())
+    {
+        return;
+    }
+    let kept = held.get(primary).and_then(|i| i.clearing.as_ref());
+    if kept.is_none() || merged.get(primary).and_then(|i| i.clearing.as_ref()) != kept {
+        return;
+    }
+    for key in CLEARING_KEYS {
+        payload.insert(key.to_string(), local.get(key).cloned().unwrap_or(Value::Null));
+    }
+}
+
+/// Records the clearings withdrawn by a received re-tick (`required_set::is_received_retick`) in
+/// the work order's history and audit trail, as `permit_requirement::withdraw_clearing` records a
+/// re-tick made here (`permit_clearing_withdrawn`, cause `received_retick`).
+async fn record_received_retick(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    local: &Payload,
+    withdrawn: &[crate::permit::required_set::RequiredPermit],
+) -> AppResult<()> {
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(());
+    };
+    let (status, _, _) = crate::wo::workflow::transition::load_wo_status(conn, wo_id).await?;
+    let rule = field(local, "permit_rule_code");
+    let clearings: Vec<Value> = withdrawn
+        .iter()
+        .map(|i| {
+            let c = i.clearing.as_ref();
+            serde_json::json!({
+                "permit_type_code": i.permit_type_code,
+                "rule_code": i.rule_code,
+                "cleared_by_sync_id": c.and_then(|c| c.by_sync_id.clone()),
+                "cleared_at": c.map(|c| c.at.clone()),
+                "clear_reason": c.and_then(|c| c.reason.clone()),
+            })
+        })
+        .collect();
+    let event = serde_json::json!({
+        "requires_permit": true,
+        "rule": rule,
+        "origin": if rule.is_some() { "rule" } else { "safety_request" },
+        "cause": "received_retick",
+        "actor_sync_id": Value::Null,
+        "withdrawn_cleared_by_sync_id": field(local, "permit_rule_cleared_by_sync_id"),
+        "withdrawn_cleared_at": field(local, "permit_rule_cleared_at"),
+        "withdrawn_clear_reason": field(local, "permit_rule_clear_reason"),
+        "withdrawn_permit_types": withdrawn.iter().map(|i| i.permit_type_code.clone()).collect::<Vec<_>>(),
+        "withdrawn_clearings": clearings,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_clearing_withdrawn",
+        None,
+        Some(&status),
+        Some(&status),
+        Some(&event),
+    )
+    .await?;
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_clearing_withdrawn".into(),
+            actor_id: None,
+            summary: Some("Levée de l'exigence de permis retirée : permis de nouveau exigé".into()),
             details_json: Some(event),
             requires_step_up: false,
             apply_result: "applied".into(),
