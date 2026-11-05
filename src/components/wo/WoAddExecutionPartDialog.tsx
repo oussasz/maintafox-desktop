@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useCanReadList } from "@/lib/list-access";
 import { cn } from "@/lib/utils";
 import {
@@ -42,6 +43,7 @@ import {
 } from "@/services/inventory-service";
 import { addPart } from "@/services/wo-execution-service";
 import type { InventoryStockBalance } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { woActionFailureText } from "./wo-action-error";
 
@@ -64,6 +66,8 @@ export function WoAddExecutionPartDialog({
   onAdded,
 }: WoAddExecutionPartDialogProps) {
   const { t } = useTranslation("ot");
+  const { can } = usePermissions();
+  const canMoveStock = can(P.INV_MANAGE);
   const { formatNumber } = useFormatters();
   // Stock parts come from the inventory: without its view right only non-stock parts are offered.
   const canReadArticles = useCanReadList("articles");
@@ -232,7 +236,14 @@ export function WoAddExecutionPartDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("execution.parts.add.title")}</DialogTitle>
-          <DialogDescription>{t("execution.parts.add.stockHint")}</DialogDescription>
+          {/* Only the stock right moves stock (backend: inv.manage); without it the part is "à sortir". */}
+          <DialogDescription>
+            {t(
+              canMoveStock
+                ? "execution.parts.add.stockHint"
+                : "execution.parts.add.stockHintRequest",
+            )}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

@@ -725,6 +725,7 @@ impl Corrective {
                             "auto_reserve": true,
                             "is_required": true,
                         }))?,
+                        crate::wo::parts::StockAuthority::MayMoveStock,
                     )
                     .await?;
                 }
@@ -1253,7 +1254,9 @@ async fn finish_parts(ctx: &mut Ctx<'_>, wo_id: i64, actor: i64) -> AppResult<()
         let id: i64 = r.try_get("", "id")?;
         let qty: f64 = r.try_get("", "quantity_planned")?;
         ctx.tick()?;
-        crate::wo::parts::record_actual_usage(ctx.db, id, qty, None).await?;
+        // The demo storekeeper issues the parts (the stock right).
+        crate::wo::parts::record_actual_usage(ctx.db, id, qty, None, crate::wo::parts::StockAuthority::MayMoveStock)
+            .await?;
         ctx.count("sorties de stock sur OT", 1);
     }
     Ok(())
@@ -1447,6 +1450,7 @@ impl PmJob {
                                 "auto_reserve": true,
                                 "is_required": true,
                             }))?,
+                            crate::wo::parts::StockAuthority::MayMoveStock,
                         )
                         .await?;
                         self.parts.push((a.id, qty));

@@ -17,6 +17,9 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("@/services/asset-lifecycle-service", () => svc);
 
+const navigateMock = vi.hoisted(() => vi.fn());
+vi.mock("react-router-dom", () => ({ useNavigate: () => navigateMock }));
+
 const opt = (id: number, code: string, tag: string) => ({
   id,
   code,
@@ -48,6 +51,8 @@ const ASSET = {
 
 const count = (n: number) => ({ count: n, status: "available" });
 const SUMMARY = {
+  asset_id: 5,
+  open_wo_rule: "not_yet_closed",
   open_di_count: count(0),
   open_wo_count: count(0),
   linked_pm_plan_count: count(0),
@@ -60,12 +65,16 @@ beforeEach(() => {
   useEquipmentTaxonomyStore.setState({ catalog: CATALOG, loading: false, error: null });
 });
 
+function renderModal(onClose = vi.fn()) {
+  return render(
+    <AssetDecommissionModal open asset={ASSET} onClose={onClose} onDecommissioned={vi.fn()} />,
+  );
+}
+
 describe("AssetDecommissionModal", () => {
   it("cannot be confirmed when the open-work check failed to load", async () => {
     svc.getAssetBindingSummary.mockRejectedValueOnce({ code: "DATABASE_ERROR", message: "busy" });
-    render(
-      <AssetDecommissionModal open asset={ASSET} onClose={vi.fn()} onDecommissioned={vi.fn()} />,
-    );
+    renderModal();
     expect(await screen.findByText("decommission.dependenciesError")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /decommission.confirm/ })).toBeDisabled();
     expect(screen.queryByLabelText("decommission.reasonLabel")).not.toBeInTheDocument();
@@ -73,9 +82,7 @@ describe("AssetDecommissionModal", () => {
 
   it("needs a chosen final status: none is preset", async () => {
     svc.getAssetBindingSummary.mockResolvedValueOnce(SUMMARY);
-    render(
-      <AssetDecommissionModal open asset={ASSET} onClose={vi.fn()} onDecommissioned={vi.fn()} />,
-    );
+    renderModal();
     const reason = await screen.findByPlaceholderText("decommission.reasonPlaceholder");
     fireEvent.change(reason, { target: { value: "Remplacé par PMP-201" } });
     await waitFor(() =>
@@ -83,5 +90,39 @@ describe("AssetDecommissionModal", () => {
     );
     expect(screen.getByText("decommission.targetStatusPlaceholder")).toBeInTheDocument();
     expect(svc.decommissionAsset).not.toHaveBeenCalled();
+  });
+
+  it("blocked by open work: each blocking count opens its list and no confirm is offered", async () => {
+    svc.getAssetBindingSummary.mockResolvedValueOnce({
+      ...SUMMARY,
+      open_di_count: count(1),
+      open_wo_count: count(2),
+    });
+    const onClose = vi.fn();
+    renderModal(onClose);
+
+    const links = await screen.findAllByRole("button", { name: /decommission.openBlockers/ });
+    expect(links).toHaveLength(2);
+    // Each link names the list it opens.
+    expect(links[0]).toHaveAccessibleName("decommission.openBlockers — binding.domains.di");
+    expect(screen.queryByRole("button", { name: /decommission.confirm/ })).not.toBeInTheDocument();
+
+    fireEvent.click(links[1] as HTMLElement);
+    expect(onClose).toHaveBeenCalled();
+    expect(navigateMock).toHaveBeenCalledWith("/work-orders?scope=not_closed&equipment=5");
+    fireEvent.click(links[0] as HTMLElement);
+    expect(navigateMock).toHaveBeenCalledWith("/requests?scope=open&equipment=5");
+  });
+
+  it("offers no list link for a zero count or an unknown open-work rule", async () => {
+    svc.getAssetBindingSummary.mockResolvedValueOnce({
+      ...SUMMARY,
+      open_wo_rule: "future_rule",
+      open_wo_count: count(3),
+    });
+    renderModal();
+
+    expect(await screen.findByText(/decommission.blockerBanner/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /decommission.openBlockers/ })).toBeNull();
   });
 });

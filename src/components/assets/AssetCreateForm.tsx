@@ -25,6 +25,7 @@ import {
   EntityFormSection,
   orderImagesForUpload,
   pickEntityFormImages,
+  revealFirstFormError,
   type EntityFormImageItem,
 } from "@/components/entity-form";
 import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
@@ -218,10 +219,12 @@ export function AssetCreateForm() {
       !values.status_code?.trim()
     ) {
       setSubmitError(t("createForm.validation.referenceRequired"));
+      revealFirstFormError(FORM_ID);
       return;
     }
     if (!values.org_node_id || values.org_node_id === 0) {
       setSubmitError(t("createForm.validation.orgRequired"));
+      revealFirstFormError(FORM_ID);
       return;
     }
 
@@ -286,6 +289,7 @@ export function AssetCreateForm() {
       closeForm();
     } catch (err) {
       setSubmitError(appErrorReason(err));
+      revealFirstFormError(FORM_ID);
     }
   };
 
@@ -329,7 +333,11 @@ export function AssetCreateForm() {
         </div>
       )}
 
-      <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+      <form
+        id={FORM_ID}
+        onSubmit={(e) => void handleSubmit(onSubmit, () => revealFirstFormError(FORM_ID))(e)}
+        className="space-y-6"
+      >
         <EntityFormSection title={t("createForm.sections.identification")}>
           <FormField
             name="asset_code"

@@ -34,3 +34,5 @@ export {
   pickEntityFormImages,
 } from "./pick-entity-form-images";
 export type { EntityFormFileItem } from "./pick-entity-form-images";
+
+export { revealFirstFormError } from "./reveal-first-form-error";

@@ -1253,6 +1253,26 @@ pub(crate) async fn close_preflight(
         preflight.add("GATE_CLOSEOUT_PARTS_REQUIRED: Consommation de pieces requise. (Parts actuals required.)");
     }
 
+    // (b2) No part "à sortir" left (L3-21): the storekeeper issues it, or cancels it with a reason,
+    // so the parts used on the work order are the parts that left the store.
+    let to_issue = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM work_order_parts \
+             WHERE work_order_id = ? AND pending_issue_qty > 0 AND consumption_status <> 'cancelled'",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("parts to issue count")))?
+        .try_get::<i64>("", "cnt")
+        .map_err(|e| decode_err("parts to issue cnt", e))?;
+    if to_issue > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_PARTS_TO_ISSUE:count={to_issue}: Clôture bloquée : {to_issue} pièce(s) à sortir du magasin. \
+             Le magasinier les sort ou les annule avec un motif. ({to_issue} part(s) still to issue from the store.)"
+        ));
+    }
+
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
         let fd_row = conn
