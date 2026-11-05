@@ -725,6 +725,7 @@ impl Corrective {
                             "auto_reserve": true,
                             "is_required": true,
                         }))?,
+                        crate::wo::parts::StockAuthority::MayMoveStock,
                     )
                     .await?;
                 }
@@ -1017,7 +1018,7 @@ async fn lock_out(
         }))?,
     )
     .await?;
-    isolation_id = isolation.id;
+    let isolation_id = isolation.id;
     let lock = format!("CAD-{}-{:03}", site, sim.rng.gen_range(1..60));
     ctx.tick()?;
     let rv = row_version(db, "permit_isolations", isolation_id).await?;
@@ -1253,7 +1254,9 @@ async fn finish_parts(ctx: &mut Ctx<'_>, wo_id: i64, actor: i64) -> AppResult<()
         let id: i64 = r.try_get("", "id")?;
         let qty: f64 = r.try_get("", "quantity_planned")?;
         ctx.tick()?;
-        crate::wo::parts::record_actual_usage(ctx.db, id, qty, None).await?;
+        // The demo storekeeper issues the parts (the stock right).
+        crate::wo::parts::record_actual_usage(ctx.db, id, qty, None, crate::wo::parts::StockAuthority::MayMoveStock)
+            .await?;
         ctx.count("sorties de stock sur OT", 1);
     }
     Ok(())
@@ -1447,6 +1450,7 @@ impl PmJob {
                                 "auto_reserve": true,
                                 "is_required": true,
                             }))?,
+                            crate::wo::parts::StockAuthority::MayMoveStock,
                         )
                         .await?;
                         self.parts.push((a.id, qty));

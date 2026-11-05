@@ -198,7 +198,8 @@
     "stock_count_recount": "Count to do again",
     "stock_count_second_approval": "Stock count held for a second approval",
     "retired_equipment_work": "Work order on retired equipment",
-    "retired_equipment_request": "Request on retired equipment"
+    "retired_equipment_request": "Request on retired equipment",
+    "wo_part_to_issue": "Work-order part to issue from the store"
   },
   "messages": {
     "wo_assigned": {
@@ -427,6 +428,10 @@
     "retired_equipment_di": {
       "title": "Request {{code}} on retired equipment {{asset}}",
       "body": "{{title}}: request open while equipment {{asset}} ({{asset_name}}) is retired (crossed in synchronisation). Reject the request with a reason, or return the equipment to service."
+    },
+    "wo_part_to_issue": {
+      "title": "To issue for {{wo}}: {{part}}",
+      "body": "{{quantity}} {{unit}} of {{part}} used on work order {{wo}} without the stock right: issue the part at the issue desk, or cancel it with a reason."
     }
   },
   "audience": {

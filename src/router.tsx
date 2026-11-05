@@ -18,6 +18,9 @@ const AssetImportPage = lazy(() =>
     default: m.AssetImportPage,
   })),
 );
+const DataImportPage = lazy(() =>
+  import("@/pages/import/DataImportPage").then((m) => ({ default: m.DataImportPage })),
+);
 const RequestsPage = lazy(() =>
   import("@/pages/RequestsPage").then((m) => ({ default: m.RequestsPage })),
 );
@@ -339,6 +342,10 @@ const routes: RouteObject[] = [
                   {
                     element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute anyOf={[P.ORG_MANAGE, P.FIN_BUDGET, P.PER_MANAGE]} />,
+                    children: [{ path: "imports", element: <DataImportPage /> }],
                   },
                   { path: "notifications", element: <NotificationsPage /> },
                   {

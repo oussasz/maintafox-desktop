@@ -557,6 +557,8 @@ pub async fn apply_pm_content_to_work_order<C: ConnectionTrait + TransactionTrai
                     origin: None,
                     is_required: part.required,
                 },
+                // Generated content only plans and reserves; no stock moves here.
+                crate::wo::parts::StockAuthority::MayMoveStock,
             )
             .await?;
         }

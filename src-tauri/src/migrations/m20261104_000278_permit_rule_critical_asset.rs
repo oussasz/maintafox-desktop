@@ -13,9 +13,10 @@
 //! (`permit::requirement_rules::seed_critical_asset_rule`): never over a value with its identity or
 //! its code, so a rule the plant changed or removed later is not brought back. Work orders already
 //! open get it from the start-up catch-up (`permit::requirement_rules::catch_up`), each PC deriving
-//! the same from the same list.
+//! the same from the same list. The seeded value is written with change capture suspended: each PC
+//! makes it with the same identity, so nothing is sent.
 
-use sea_orm::TransactionTrait;
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 use sea_orm_migration::prelude::*;
 
 pub struct Migration;
@@ -31,9 +32,28 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // sea-orm-migration does not open a transaction for SQLite: one here.
         let txn = manager.get_connection().begin().await?;
+        // Made by this migration on every PC with the same identity: nothing is sent.
+        let capture = txn
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'sync_capture_suppression'"
+                    .to_string(),
+            ))
+            .await?
+            .is_some();
+        if capture {
+            crate::sync::capture::begin_suppression(&txn)
+                .await
+                .map_err(|e| DbErr::Custom(e.to_string()))?;
+        }
         crate::permit::requirement_rules::seed_critical_asset_rule(&txn)
             .await
             .map_err(|e| DbErr::Custom(e.to_string()))?;
+        if capture {
+            crate::sync::capture::end_suppression(&txn)
+                .await
+                .map_err(|e| DbErr::Custom(e.to_string()))?;
+        }
         txn.commit().await
     }
 
@@ -94,7 +114,22 @@ mod tests {
     #[tokio::test]
     async fn the_list_gets_the_critical_asset_rule() {
         let db = before_278().await;
+        let journal = |db: &DatabaseConnection| {
+            let db = db.clone();
+            async move {
+                db.query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(*) AS n FROM sync_capture_journal".to_string(),
+                ))
+                .await
+                .expect("journal")
+                .map_or(0, |r| r.try_get::<i64>("", "n").expect("n"))
+            }
+        };
+        let sent_before = journal(&db).await;
         Migrator::up(&db, None).await.expect("278");
+        // Made on every PC with the same identity: nothing is sent.
+        assert_eq!(journal(&db).await, sent_before, "nothing is sent");
         let (active, meta) = shipped_rule(&db).await.expect("seeded");
         assert_eq!(active, 1);
         let rule = parse_rule(Some(&meta)).expect("reads");

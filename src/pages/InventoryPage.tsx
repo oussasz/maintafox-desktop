@@ -197,6 +197,9 @@ export function InventoryPage() {
     const stock = searchParams.get(LIST_PARAM.stock);
     if (stock === "to_reconcile") {
       setInvTab("controls");
+    } else if (stock === "to_issue") {
+      // The notice of a work-order part "à sortir" opens the issue desk and its list.
+      setInvTab("issueDesk");
     } else if (stock === "below_reorder") {
       setInvTab("master");
       setMasterStockFilter("below_reorder");

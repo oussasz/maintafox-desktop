@@ -24,6 +24,7 @@ pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod build_identity;
+pub mod bulk_import;
 pub mod clock;
 pub mod commands;
 pub mod data_integrity;
@@ -509,6 +510,12 @@ pub fn run() {
         commands::personnel::scan_succession_risk,
         commands::personnel::declare_own_skill,
         commands::personnel::list_personnel_skill_reference_values,
+        commands::bulk_import::list_bulk_import_entities,
+        commands::bulk_import::create_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_preview,
+        commands::bulk_import::apply_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_template,
+        commands::bulk_import::export_bulk_import_data,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,
@@ -923,6 +930,9 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Parts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::add_part,
         commands::wo::record_part_usage,
+        commands::wo::list_wo_parts_to_issue,
+        commands::wo::issue_wo_part_to_issue,
+        commands::wo::cancel_wo_part_to_issue,
         commands::wo::mark_part_not_used,
         commands::wo::cancel_planned_part,
         commands::wo::set_planned_part_required,

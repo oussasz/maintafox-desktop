@@ -3,12 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  PLANT_SCOPE,
   type ScopeChoice,
   ScopeNodeSelect,
   scopeChoiceToInput,
+  wholePlantNodeId,
 } from "@/components/admin/ScopeNodeSelect";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
@@ -28,7 +29,28 @@ import {
 } from "@/components/ui/select";
 import { useRoleText, withoutFormerRoles } from "@/lib/role-labels";
 import { assignRoleScope } from "@/services/rbac-service";
-import type { AssignableRoleSummary, AssignableScopeNode, UserWithRoles } from "@shared/ipc-types";
+import type {
+  AssignableRoleSummary,
+  AssignableScopeNode,
+  RoleAssignmentSummary,
+  UserWithRoles,
+} from "@shared/ipc-types";
+
+/** Scope types that name an org node (the node and everything below it). */
+const NODE_SCOPE_TYPES = new Set(["entity", "site", "org_node"]);
+
+/**
+ * Whether an assignment gives access to the whole plant and is in force (or starts later): the
+ * plant-wide scope, or the top node of the organisation. Emergency access ends on its own.
+ */
+function coversWholePlant(r: RoleAssignmentSummary, topId: number | null, now: string): boolean {
+  if (r.is_emergency) return false;
+  if (r.valid_to && r.valid_to < now) return false;
+  if (r.scope_type === "tenant") return true;
+  return (
+    topId !== null && NODE_SCOPE_TYPES.has(r.scope_type) && r.scope_reference === String(topId)
+  );
+}
 
 interface AssignRoleDialogProps {
   user: UserWithRoles | null;
@@ -43,7 +65,9 @@ interface AssignRoleDialogProps {
 /**
  * Give a user a role, plant-wide or limited to an org node (and everything below it), with an
  * optional validity window. One role per user and scope target: assigning at a target that
- * already carries a role replaces it (the screen says which one before confirming).
+ * already carries a role replaces it (the screen says which one once role and scope are chosen).
+ * A role limited to part of the plant offers to end the user's plant-wide roles (ticked by
+ * default, L5-07): kept, they would still open every site.
  */
 export function AssignRoleDialog({
   user,
@@ -59,38 +83,63 @@ export function AssignRoleDialog({
   // A former shipped role is not given any more: the role with the same rights is (L5-03).
   const offered = useMemo(() => withoutFormerRoles(roles), [roles]);
   const [roleId, setRoleId] = useState("");
-  const [scope, setScope] = useState<ScopeChoice>(PLANT_SCOPE);
+  // Nothing chosen at first: the warnings below speak of a real choice only.
+  const [scope, setScope] = useState<ScopeChoice>("");
   const [validFrom, setValidFrom] = useState("");
   const [validTo, setValidTo] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Plant-wide assignments the administrator unticked (kept beside the new role).
+  const [kept, setKept] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     if (!open) return;
     setRoleId("");
-    setScope(PLANT_SCOPE);
+    setScope("");
     setValidFrom("");
     setValidTo("");
+    setKept(new Set());
   }, [open]);
 
-  const target = scopeChoiceToInput(scope);
+  const target = useMemo(() => (scope === "" ? null : scopeChoiceToInput(scope)), [scope]);
+  const chosen = roleId !== "" && target !== null;
+  const topId = useMemo(() => wholePlantNodeId(nodes), [nodes]);
   // The roles the backend replaces: at a node, the role naming that node; plant-wide, every
   // plant-wide role of the user, whatever reference it was recorded with (the first
   // administrator's role names the plant, a plant-wide choice here names none).
   const replaced = useMemo(() => {
-    if (!user) return [];
+    if (!user || !chosen || !target) return [];
     return user.roles.filter(
       (r) =>
         r.scope_type === target.scope_type &&
         (target.scope_type === "tenant" ||
           (r.scope_reference ?? "") === (target.scope_reference ?? "")),
     );
-  }, [user, target.scope_type, target.scope_reference]);
+  }, [user, chosen, target]);
+  // A role limited to part of the plant: the plant-wide roles that would still open every site.
+  const plantWide = useMemo(() => {
+    if (!user || !chosen || !target) return [];
+    const wholePlantRef = topId === null ? null : String(topId);
+    if (target.scope_type === "tenant" || target.scope_reference === wholePlantRef) return [];
+    const now = new Date().toISOString();
+    return user.roles.filter((r) => coversWholePlant(r, topId, now));
+  }, [user, chosen, target, topId]);
+  const ending = plantWide.filter((r) => !kept.has(r.assignment_id));
+  const stillPlantWide = plantWide.filter((r) => kept.has(r.assignment_id));
+
+  const toggleReplace = (assignmentId: number, replace: boolean) => {
+    setKept((prev) => {
+      const next = new Set(prev);
+      if (replace) next.delete(assignmentId);
+      else next.add(assignmentId);
+      return next;
+    });
+  };
 
   const windowInvalid = validFrom !== "" && validTo !== "" && validFrom > validTo;
-  const canSubmit = !!user && roleId !== "" && !windowInvalid && !submitting;
+  const canSubmit = !!user && chosen && !windowInvalid && !submitting;
 
   const submit = async () => {
-    if (!user || !canSubmit) return;
+    if (!user || !canSubmit || !target) return;
     setSubmitting(true);
     try {
       await withStepUp(() =>
@@ -101,6 +150,7 @@ export function AssignRoleDialog({
           scope_reference: target.scope_reference,
           valid_from: validFrom || null,
           valid_to: validTo || null,
+          end_plant_wide_assignment_ids: ending.map((r) => r.assignment_id),
         }),
       );
       onAssigned();
@@ -160,6 +210,45 @@ export function AssignRoleDialog({
             <p className="text-xs text-status-danger" role="alert">
               {t("console.assign.windowInvalid")}
             </p>
+          ) : null}
+
+          {plantWide.length > 0 ? (
+            <div
+              className="space-y-2 rounded-md border border-tone-attention-border bg-tone-attention-bg p-3 text-sm text-tone-attention-fg"
+              data-testid="assign-plant-wide"
+            >
+              <p className="font-medium">
+                {t("console.assign.plantWide.title", { count: plantWide.length })}
+              </p>
+              {plantWide.map((r) => (
+                <label key={r.assignment_id} className="flex items-start gap-2">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={!kept.has(r.assignment_id)}
+                    onCheckedChange={(v) => toggleReplace(r.assignment_id, v)}
+                  />
+                  <span>
+                    {t("console.assign.plantWide.replace", { role: roleText.label(r.role_name) })}
+                  </span>
+                </label>
+              ))}
+              <p className="text-xs">{t("console.assign.plantWide.hint")}</p>
+            </div>
+          ) : null}
+
+          {stillPlantWide.length > 0 ? (
+            <div
+              className="flex items-start gap-2 rounded-md border border-tone-danger-border bg-tone-danger-bg p-3 text-sm text-tone-danger-fg"
+              role="alert"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <span>
+                {t("console.assign.plantWide.kept", {
+                  count: stillPlantWide.length,
+                  roles: stillPlantWide.map((r) => roleText.label(r.role_name)).join(", "),
+                })}
+              </span>
+            </div>
           ) : null}
 
           {replaced.length > 0 ? (

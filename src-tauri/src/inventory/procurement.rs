@@ -28,10 +28,6 @@ fn now_iso() -> String {
 /// over-receipt to reconcile (`negative_stock`, "sur-réception — à rapprocher").
 pub(crate) const RECEIVE_OVER_ORDERED_TOLERANCE: f64 = 1e-6;
 
-fn next_doc_number(prefix: &str) -> String {
-    format!("{prefix}-{}", crate::clock::now().timestamp_millis())
-}
-
 /// Treat whitespace-only user input as absent so the column stays NULL instead of blank.
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
@@ -380,7 +376,9 @@ pub async fn create_procurement_requisition(
     }
 
     let tx = db.begin().await?;
-    let req_number = next_doc_number("REQ");
+    let req_number = crate::sync::code_clash::PROCUREMENT_REQUISITIONS
+        .next_number(&tx)
+        .await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO procurement_requisitions
@@ -640,7 +638,7 @@ pub async fn create_purchase_order_from_requisition(
     .filter(|code| code != &tenant);
 
     let tx = db.begin().await?;
-    let po_number = next_doc_number("PO");
+    let po_number = crate::sync::code_clash::PURCHASE_ORDERS.next_number(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO purchase_orders
@@ -954,7 +952,7 @@ pub async fn receive_purchase_order_goods(
     };
 
     let tx = db.begin().await?;
-    let gr_number = next_doc_number("GR");
+    let gr_number = crate::sync::code_clash::GOODS_RECEIPTS.next_number(&tx).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO goods_receipts
@@ -1396,8 +1394,9 @@ pub async fn create_repairable_order(
     if let Some(vendor_supplier_id) = input.vendor_supplier_id {
         ensure_supplier_active(db, vendor_supplier_id).await?;
     }
-    let code = next_doc_number("REP");
-    let inserted = db
+    let tx = db.begin().await?;
+    let code = crate::sync::code_clash::REPAIRABLE_ORDERS.next_number(&tx).await?;
+    let inserted = tx
         .execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO repairable_orders
@@ -1423,7 +1422,7 @@ pub async fn create_repairable_order(
     .await?;
     let id = crate::db::inserted_id(&inserted)?;
     record_state_event(
-        db,
+        &tx,
         "repairable_order",
         id,
         None,
@@ -1433,6 +1432,7 @@ pub async fn create_repairable_order(
         Some("repairable_requested"),
     )
     .await?;
+    tx.commit().await?;
     get_repairable_order(db, id).await
 }
 
@@ -2598,7 +2598,9 @@ pub async fn create_multi_line_requisition(
     validate_requisition_lines(db, &input.lines).await?;
 
     let tx = db.begin().await?;
-    let req_number = next_doc_number("REQ");
+    let req_number = crate::sync::code_clash::PROCUREMENT_REQUISITIONS
+        .next_number(&tx)
+        .await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO procurement_requisitions

@@ -10,6 +10,9 @@
 //! numbers carry the device code and do not clash unless two device codes are equal. PM plan codes
 //! are typed by people, so two PCs can give two plans the same code: such a clash is handled the
 //! same way, the plan on this device getting a `PM-<device>-<sequence>` code when renumbered.
+//! Purchase documents (requisition `DA-…`, purchase order `BC-…`, goods receipt `BR-…`, repair
+//! order `REP-…`) are numbered the same way; their older clock-made numbers (`REQ-1793483773224`)
+//! are kept as they are.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -55,6 +58,18 @@ fn personnel_prefix() -> String {
 fn pm_plan_prefix() -> String {
     "PM".to_string()
 }
+fn requisition_prefix() -> String {
+    "DA".to_string()
+}
+fn purchase_order_prefix() -> String {
+    "BC".to_string()
+}
+fn goods_receipt_prefix() -> String {
+    "BR".to_string()
+}
+fn repairable_order_prefix() -> String {
+    "REP".to_string()
+}
 fn permit_prefix() -> String {
     format!("PTW-{}", crate::clock::now().format("%Y"))
 }
@@ -97,7 +112,50 @@ pub const PM_PLANS: NumberedTable = NumberedTable {
     width: 4,
 };
 
-pub const NUMBERED_TABLES: &[NumberedTable] = &[WORK_ORDERS, INTERVENTION_REQUESTS, PERSONNEL, WORK_PERMITS, PM_PLANS];
+/// Purchase requisition (demande d'achat).
+pub const PROCUREMENT_REQUISITIONS: NumberedTable = NumberedTable {
+    entity_type: "procurement_requisitions",
+    table: "procurement_requisitions",
+    column: "req_number",
+    prefix: requisition_prefix,
+    width: 4,
+};
+/// Purchase order (bon de commande).
+pub const PURCHASE_ORDERS: NumberedTable = NumberedTable {
+    entity_type: "purchase_orders",
+    table: "purchase_orders",
+    column: "po_number",
+    prefix: purchase_order_prefix,
+    width: 4,
+};
+/// Goods receipt (bon de réception).
+pub const GOODS_RECEIPTS: NumberedTable = NumberedTable {
+    entity_type: "goods_receipts",
+    table: "goods_receipts",
+    column: "gr_number",
+    prefix: goods_receipt_prefix,
+    width: 4,
+};
+/// Repair order of a repairable part.
+pub const REPAIRABLE_ORDERS: NumberedTable = NumberedTable {
+    entity_type: "repairable_orders",
+    table: "repairable_orders",
+    column: "order_code",
+    prefix: repairable_order_prefix,
+    width: 4,
+};
+
+pub const NUMBERED_TABLES: &[NumberedTable] = &[
+    WORK_ORDERS,
+    INTERVENTION_REQUESTS,
+    PERSONNEL,
+    WORK_PERMITS,
+    PM_PLANS,
+    PROCUREMENT_REQUISITIONS,
+    PURCHASE_ORDERS,
+    GOODS_RECEIPTS,
+    REPAIRABLE_ORDERS,
+];
 
 pub fn numbered_table(entity_type: &str) -> Option<&'static NumberedTable> {
     NUMBERED_TABLES.iter().find(|t| t.entity_type == entity_type)
@@ -452,6 +510,52 @@ mod tests {
         );
         let dev_a = crate::sync::device_code::this_device_code(&a).await.expect("code");
         assert_eq!(on_a, format!("PER-{dev_a}-0001"));
+    }
+
+    #[tokio::test]
+    async fn purchase_documents_get_readable_device_numbers() {
+        let db = started_device_db().await;
+        let dev = crate::sync::device_code::this_device_code(&db).await.expect("code");
+        // A clock-made number from before (L3-12) stays and does not feed the sequence.
+        exec(
+            &db,
+            "INSERT INTO procurement_requisitions (req_number, demand_source_type) VALUES ('REQ-1793483773224', 'MANUAL')",
+            vec![],
+        )
+        .await;
+        let first = PROCUREMENT_REQUISITIONS
+            .next_number(&db)
+            .await
+            .expect("requisition number");
+        assert_eq!(first, format!("DA-{dev}-0001"));
+        exec(
+            &db,
+            "INSERT INTO procurement_requisitions (req_number, demand_source_type) VALUES (?, 'MANUAL')",
+            vec![first.into()],
+        )
+        .await;
+        let second = PROCUREMENT_REQUISITIONS
+            .next_number(&db)
+            .await
+            .expect("requisition number");
+        assert_eq!(second, format!("DA-{dev}-0002"));
+        for (table, prefix) in [
+            (PURCHASE_ORDERS, "BC"),
+            (GOODS_RECEIPTS, "BR"),
+            (REPAIRABLE_ORDERS, "REP"),
+        ] {
+            assert_eq!(
+                table.next_number(&db).await.expect("number"),
+                format!("{prefix}-{dev}-0001"),
+                "{}",
+                table.table
+            );
+            assert!(
+                numbered_table(table.entity_type).is_some(),
+                "{} clashes are handled",
+                table.table
+            );
+        }
     }
 
     #[tokio::test]

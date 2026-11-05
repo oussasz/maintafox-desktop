@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -55,6 +55,7 @@ import {
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
@@ -140,6 +141,8 @@ export function RequestsPage() {
   const loadQueueCounts = useDiStore((s) => s.loadQueueCounts);
   const openDi = useDiStore((s) => s.openDi);
   const closeDi = useDiStore((s) => s.closeDi);
+  const navigate = useNavigate();
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const openCreateForm = useDiStore((s) => s.openCreateForm);
   const setFilter = useDiStore((s) => s.setFilter);
   const openApproval = useDiReviewStore((s) => s.openApproval);
@@ -197,7 +200,10 @@ export function RequestsPage() {
     const raw = searchParams.get("openDi");
     if (!raw) return;
     const id = Number.parseInt(raw, 10);
-    if (!Number.isNaN(id)) void openDi(id);
+    if (!Number.isNaN(id)) {
+      setOpenedFromLink(hasScreenToReturnTo());
+      void openDi(id);
+    }
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -964,7 +970,19 @@ export function RequestsPage() {
         transitions={activeDi?.transitions ?? []}
         similar={activeDi?.similar ?? []}
         open={activeDi !== null}
-        onClose={closeDi}
+        onClose={() => {
+          setOpenedFromLink(false);
+          closeDi();
+        }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                closeDi();
+                void navigate(-1);
+              },
+            }
+          : {})}
       />
 
       <DiFormDialog />

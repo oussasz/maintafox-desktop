@@ -2219,6 +2219,15 @@ fn session_user(id: i64, username: &str, is_admin: bool) -> crate::auth::session
     }
 }
 
+/// The command path checks the licence matrix, which refuses writes from a device that has no
+/// trusted binding for the user. Bind this device here so the test never depends on the network.
+async fn trust_this_device(db: &DatabaseConnection, user_id: i64) {
+    let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
+    crate::auth::device::register_device_trust(db, i32::try_from(user_id).expect("fits"), &fingerprint, None)
+        .await
+        .expect("trust register");
+}
+
 /// The command asks `adm.settings` and a step-up only when the setting changes.
 #[tokio::test]
 async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_chain() {
@@ -2234,6 +2243,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     let issuer_id = user_with(&db, "ptw_issuer_only", &[crate::rbac::permissions::PTW_ISSUE]).await;
     let issuer = session_user(issuer_id, "ptw_issuer_only", false);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, issuer_id).await;
     state.session.write().await.create_session(issuer.clone());
     let renamed = crate::commands::permit::upsert_permit_type_impl(&state, &issuer, chain_input(&hot, None, None))
         .await
@@ -2250,6 +2260,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     // The administrator: refused until the step-up, then accepted (and audited).
     let admin = session_user(APPLIER, "admin", true);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, APPLIER).await;
     state.session.write().await.create_session(admin.clone());
     let err = crate::commands::permit::upsert_permit_type_impl(
         &state,
