@@ -43,6 +43,7 @@ import {
 } from "@/components/di/di-reference-labels";
 import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import { TERMINAL_DI_STATES, diStatusToI18nKey } from "@/components/di/status-meta";
+import { useRefreshAfterQuestion } from "@/components/di/use-refresh-after-question";
 import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -183,6 +184,18 @@ export function DiDetailDialog({
     },
     [di, onClose],
   );
+
+  // A small question dialog (return for clarification, rejection) opens over the sheet: Annuler
+  // then leaves the sheet as it was, and the sheet re-reads the request once the dialog is gone.
+  const askOver = useCallback(
+    (open: (di: InterventionRequest) => void) => {
+      if (di) open(di);
+    },
+    [di],
+  );
+  useRefreshAfterQuestion(open, () => {
+    if (di) void openDi(di.id);
+  });
 
   const handleTriageAccept = useCallback(async () => {
     if (!di) return;
@@ -615,7 +628,7 @@ export function DiDetailDialog({
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => handOff(openReturn)}
+                onClick={() => askOver(openReturn)}
               >
                 <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                 {t("review.returnAction")}
@@ -648,7 +661,7 @@ export function DiDetailDialog({
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => handOff(openRejection)}
+                onClick={() => askOver(openRejection)}
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
                 {t("action.closeRequest")}
