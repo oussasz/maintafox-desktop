@@ -328,6 +328,10 @@
       "title": "Reliability decision refused: plan {{plan}} v{{version}} published, to review",
       "body": "The decision “{{decision}}” was refused at synchronisation (its approval is not valid on a PC). Version {{version}} of plan {{plan}}, published from it, stays in force: review it and publish another version if it does not fit."
     },
+    "wo_permit_types_added": {
+      "title": "Work order {{code}}: permit now also required: {{permit_types}}",
+      "body": "The plant's permit rules ({{rules}}) also require a {{permit_types}} permit for work order {{code}}, besides {{previous_permit_types}}. An active permit of each type is needed to start or resume this work."
+    },
     "wo_permit_rule_type_changed": {
       "title": "Work order {{code}}: required permit changed from {{previous_permit_type}} to {{permit_type}}",
       "body": "The plant's permit rules applied here give work order {{code}} rule {{rule}} ({{permit_type}} permit) instead of {{previous_rule}} ({{previous_permit_type}} permit). Check the permit planned for this work."

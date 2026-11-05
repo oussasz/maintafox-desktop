@@ -1,11 +1,13 @@
 /**
  * A permit flag set by a plant rule: named with its permit type, cleared only with the
- * permit-issue right and a reason of 10 characters or more, after a confirmation.
+ * permit-issue right at the work order's site and a reason of 10 characters or more, after a
+ * confirmation. Every permit type the rules require is listed with its state, each lifted on its
+ * own (L4-10b).
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { WorkOrder } from "@shared/ipc-types";
+import type { RequiredPermitView, WorkOrder } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 vi.mock("react-i18next", () => ({
@@ -16,8 +18,8 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-// The plant-wide rights (the rights at no node, `useAccessAt(0)`): clearing a rule flag stays a
-// plant-wide right.
+// The plant-wide rights (the rights at no node, `useAccessAt(0)`) and the rights at a work order's
+// site: clearing a rule's permit type is read at the work order's site (lead decision D-a).
 const granted = vi.hoisted(() => ({
   rights: new Set<string>(),
   /** The rights at a work order's site (any node other than 0). */
@@ -79,37 +81,21 @@ describe("WoPermitRuleNote", () => {
     expect(permitRuleFlagActive(wo())).toBe(true);
   });
 
-  it("shows when several plant rules name different permit types (display only)", () => {
-    const { rerender } = render(<WoPermitRuleNote wo={wo()} />);
-    expect(screen.queryByTestId("wo-permit-rule-several")).toBeNull();
-    rerender(
-      <WoPermitRuleNote
-        wo={wo({
-          permit_rule_code: "PUMP_LOTO",
-          permit_rule_permit_type: "LOTO",
-          permit_rule_matching_types: ["HOT_WORK", "LOTO"],
-        })}
-      />,
-    );
-    expect(screen.getByTestId("wo-permit-rule-several")).toHaveTextContent(
-      'permitRule.severalTypes {"types":"HOT_WORK, LOTO"}',
-    );
-  });
-
   it("offers no clearing without the permit-issue right", () => {
     render(<WoPermitRuleNote wo={wo()} />);
     expect(screen.queryByRole("button", { name: "permitRule.clear" })).toBeNull();
   });
 
   it("clears only after a confirmation with a reason of 10 characters or more", async () => {
-    granted.rights = new Set([P.PTW_ISSUE]);
+    granted.siteRights = new Set([P.PTW_ISSUE]);
     const saved = wo({ requires_permit: false, permit_rule_cleared_at: "2026-10-18T10:00:00Z" });
     svc.clearWoPermitRuleFlag.mockResolvedValue(saved);
     const onCleared = vi.fn();
-    render(<WoPermitRuleNote wo={wo()} onCleared={onCleared} />);
-    // The right is read plant-wide (no node), never at the work order's site.
-    expect(granted.nodes.length).toBeGreaterThan(0);
-    expect(granted.nodes.every((n) => n === 0)).toBe(true);
+    render(
+      <WoPermitRuleNote wo={wo({ entity_id: 7 } as Partial<WorkOrder>)} onCleared={onCleared} />,
+    );
+    // The right is read at the work order's site (lead decision D-a).
+    expect(granted.nodes).toContain(7);
 
     fireEvent.click(screen.getByRole("button", { name: "permitRule.clear" }));
     const confirm = screen.getByRole("button", { name: "permitRule.clearConfirm" });
@@ -134,7 +120,7 @@ describe("WoPermitRuleNote", () => {
   });
 
   it("is not clearable once execution has started", () => {
-    granted.rights = new Set([P.PTW_ISSUE]);
+    granted.siteRights = new Set([P.PTW_ISSUE]);
     render(<WoPermitRuleNote wo={wo({ status_code: "in_progress" })} />);
     expect(screen.queryByRole("button", { name: "permitRule.clear" })).toBeNull();
   });
@@ -153,6 +139,133 @@ describe("WoPermitRuleNote", () => {
     expect(screen.getByTestId("wo-permit-rule")).toHaveTextContent("Cold work only");
     rerender(<WoPermitRuleNote wo={wo({ permit_rule_code: null })} />);
     expect(screen.queryByTestId("wo-permit-rule")).toBeNull();
+  });
+});
+
+// Every permit type the plant's rules require (CMMS Advisor 2026-11-04, L4-10b): listed with its
+// rule and state, each lifted on its own with the right at the work order's site.
+describe("WoPermitRuleNote — required permits", () => {
+  const permits: RequiredPermitView[] = [
+    {
+      permit_type_code: "loto",
+      permit_type_name: "Consignation",
+      rule_code: "CRITICITE_A",
+      primary: true,
+      cleared_at: null,
+      cleared_by_name: null,
+      clear_reason: null,
+      live_permit_code: "PTW-0004",
+      live_permit_status: "active",
+      state: "live",
+    },
+    {
+      permit_type_code: "hot_work",
+      permit_type_name: "Travail à chaud",
+      rule_code: "SOUDURE",
+      primary: false,
+      cleared_at: null,
+      cleared_by_name: null,
+      clear_reason: null,
+      live_permit_code: null,
+      live_permit_status: null,
+      state: "missing",
+    },
+    {
+      permit_type_code: "height",
+      permit_type_name: "Travail en hauteur",
+      rule_code: "HAUTEUR",
+      primary: false,
+      cleared_at: "2026-11-04T08:00:00Z",
+      cleared_by_name: "Issuer",
+      clear_reason: "Nacelle non utilisée",
+      live_permit_code: null,
+      live_permit_status: null,
+      state: "cleared",
+    },
+  ];
+  const multi = (overrides: Partial<WorkOrder> = {}) =>
+    wo({
+      permit_rule_code: "CRITICITE_A",
+      permit_rule_permit_type: "loto",
+      entity_id: 7,
+      required_permits: permits,
+      ...overrides,
+    } as Partial<WorkOrder>);
+
+  it("lists each required permit with its rule, the primary one and its state", () => {
+    render(<WoPermitRuleNote wo={multi()} />);
+    const loto = screen.getByTestId("wo-required-permit-loto");
+    expect(loto).toHaveAttribute("data-state", "live");
+    expect(loto).toHaveTextContent("Consignation");
+    expect(loto).toHaveTextContent('permitRule.listRule {"rule":"CRITICITE_A"}');
+    expect(loto).toHaveTextContent("permitRule.listPrimary");
+    expect(loto).toHaveTextContent('permitRule.listLive {"permit":"PTW-0004","status":"active"}');
+    const hot = screen.getByTestId("wo-required-permit-hot_work");
+    expect(hot).toHaveAttribute("data-state", "missing");
+    expect(hot).toHaveTextContent("permitRule.listMissing");
+    expect(hot).not.toHaveTextContent("permitRule.listPrimary");
+    const height = screen.getByTestId("wo-required-permit-height");
+    expect(height).toHaveAttribute("data-state", "cleared");
+    expect(height).toHaveTextContent("Nacelle non utilisée");
+    expect(height).toHaveTextContent("Issuer");
+  });
+
+  it("stays protected while one type is not cleared, even with the primary rule cleared", () => {
+    const primaryCleared = multi({
+      requires_permit: true,
+      permit_rule_cleared_at: "2026-11-04T08:00:00Z",
+    });
+    expect(permitRuleFlagActive(primaryCleared)).toBe(true);
+    const allCleared = multi({
+      requires_permit: false,
+      permit_rule_cleared_at: "2026-11-04T08:00:00Z",
+      required_permits: permits.map((p) => ({ ...p, state: "cleared" as const })),
+    });
+    expect(permitRuleFlagActive(allCleared)).toBe(false);
+    expect(
+      permitFromSafetyRequestOnly(multi({ permit_rule_code: null, permit_from_safety_di: true })),
+    ).toBe(false);
+  });
+
+  it("offers no lifting without the permit-issue right at the work order's site", () => {
+    granted.rights = new Set();
+    granted.siteRights = new Set();
+    render(<WoPermitRuleNote wo={multi()} />);
+    expect(screen.queryAllByRole("button", { name: /permitRule.listClear/ })).toHaveLength(0);
+  });
+
+  it("lifts one type at a time, naming it, after a confirmation with a reason", async () => {
+    granted.siteRights = new Set([P.PTW_ISSUE]);
+    const saved = multi();
+    svc.clearWoPermitRuleFlag.mockResolvedValue(saved);
+    const onCleared = vi.fn();
+    render(<WoPermitRuleNote wo={multi()} onCleared={onCleared} />);
+    expect(granted.nodes).toContain(7);
+    // A button per type not cleared; none on the cleared one.
+    expect(screen.getAllByRole("button", { name: /permitRule.listClear/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "permitRule.listClear Travail à chaud" }));
+    const confirm = screen.getByRole("button", { name: "permitRule.clearConfirm" });
+    fireEvent.change(screen.getByLabelText("permitRule.reason"), { target: { value: "court" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("permitRule.reason"), {
+      target: { value: "Meulage à froid seulement" },
+    });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(svc.clearWoPermitRuleFlag).toHaveBeenCalledWith({
+        wo_id: 12,
+        expected_row_version: 3,
+        reason: "Meulage à froid seulement",
+        permit_type_code: "hot_work",
+      }),
+    );
+    await waitFor(() => expect(onCleared).toHaveBeenCalledWith(saved));
+  });
+
+  it("is not liftable once execution has started", () => {
+    granted.siteRights = new Set([P.PTW_ISSUE]);
+    render(<WoPermitRuleNote wo={multi({ status_code: "in_progress" })} />);
+    expect(screen.queryAllByRole("button", { name: /permitRule.listClear/ })).toHaveLength(0);
   });
 });
 
