@@ -67,6 +67,7 @@ function actionIcon(action: string) {
       return <RotateCcw className={cn(cls, "text-primary")} />;
     case "role_assigned":
     case "role_revoked":
+    case "role_replaced":
       return <Shield className={cn(cls, "text-primary")} />;
     case "role_created":
     case "role_updated":

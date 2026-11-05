@@ -1127,6 +1127,14 @@
       "windowInvalid": "La date de début doit précéder la date de fin.",
       "replaces": "Ce compte a déjà le rôle « {{role}} » sur ce périmètre : il sera remplacé.",
       "replacesMany": "Ce compte a déjà les rôles {{roles}} sur ce périmètre : ils seront tous remplacés.",
+      "plantWide": {
+        "title_one": "Ce compte a déjà un rôle sur toute l'usine.",
+        "title_other": "Ce compte a déjà des rôles sur toute l'usine.",
+        "replace": "Remplacer le rôle usine entière « {{role}} »",
+        "hint": "Un rôle remplacé prend fin dès maintenant ; il reste dans l'historique du compte.",
+        "kept_one": "Le rôle « {{roles}} » reste en place : il donne toujours accès à tous les sites : la limite au site n'a donc aucun effet.",
+        "kept_other": "Les rôles {{roles}} restent en place : ils donnent toujours accès à tous les sites : la limite au site n'a donc aucun effet."
+      },
       "confirm": "Attribuer"
     },
     "user": {
@@ -1205,6 +1213,7 @@
       "role_retired": "Rôle « {{target}} » retiré du service",
       "role_assigned": "Rôle attribué : {{target}}",
       "role_revoked": "Rôle retiré : {{target}}",
+      "role_replaced": "Rôle sur toute l'usine terminé, remplacé par un rôle limité à une partie de l'usine : {{target}}",
       "emergency_grant_created": "Accès d'urgence accordé : {{target}}",
       "permission_created": "Permission personnalisée créée : {{target}}"
     },
@@ -1220,6 +1229,7 @@
       "user_reactivated": "Compte réactivé",
       "role_assigned": "Rôle attribué",
       "role_revoked": "Rôle retiré",
+      "role_replaced": "Rôle usine entière remplacé",
       "session_revoked": "Session fermée",
       "emergency_grant_created": "Accès d'urgence accordé",
       "emergency_grant_revoked": "Accès d'urgence retiré",

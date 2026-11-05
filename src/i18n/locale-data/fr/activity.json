@@ -100,6 +100,7 @@
       "rbac__emergency_grant_created": "Élévation d'urgence accordée",
       "role__assigned": "Rôle attribué",
       "role__revoked": "Rôle retiré",
+      "role__replaced": "Rôle usine entière remplacé par un rôle limité",
       "permission__granted": "Droit accordé",
       "permission__removed": "Droit retiré",
       "permission__denied": "Accès refusé",

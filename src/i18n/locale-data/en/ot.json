@@ -5,7 +5,7 @@
       "outsideScope_other": "{{count}} work orders are not shown: outside your sites.",
       "withoutSite_one": "{{count}} work order is not shown: it has no site.",
       "withoutSite_other": "{{count}} work orders are not shown: they have no site.",
-      "allWorkOrders": "These counts cover all work orders, whatever the filters or search.",
+      "allWorkOrders": "Total over all work orders, ignoring the filters.",
       "askPlantWide": "Ask a user with a plant-wide role to see them."
     },
     "noSite": {

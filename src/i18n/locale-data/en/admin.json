@@ -1127,6 +1127,14 @@
       "windowInvalid": "The start date must be before the end date.",
       "replaces": "This account already has the role \"{{role}}\" on this scope: it will be replaced.",
       "replacesMany": "This account already has the roles {{roles}} on this scope: they will all be replaced.",
+      "plantWide": {
+        "title_one": "This account already has a plant-wide role.",
+        "title_other": "This account already has plant-wide roles.",
+        "replace": "Replace the plant-wide role \"{{role}}\"",
+        "hint": "A replaced role ends right away; it stays in the account history.",
+        "kept_one": "The role \"{{roles}}\" stays in place: it still gives access to every site: the site limit therefore has no effect.",
+        "kept_other": "The roles {{roles}} stay in place: they still give access to every site: the site limit therefore has no effect."
+      },
       "confirm": "Assign"
     },
     "user": {
@@ -1205,6 +1213,7 @@
       "role_retired": "Role \"{{target}}\" retired",
       "role_assigned": "Role assigned: {{target}}",
       "role_revoked": "Role removed: {{target}}",
+      "role_replaced": "Plant-wide role ended, replaced by a role limited to part of the plant: {{target}}",
       "emergency_grant_created": "Emergency access granted: {{target}}",
       "permission_created": "Custom permission created: {{target}}"
     },
@@ -1220,6 +1229,7 @@
       "user_reactivated": "Account re-enabled",
       "role_assigned": "Role assigned",
       "role_revoked": "Role withdrawn",
+      "role_replaced": "Plant-wide role replaced",
       "session_revoked": "Session closed",
       "emergency_grant_created": "Emergency access granted",
       "emergency_grant_revoked": "Emergency access withdrawn",
