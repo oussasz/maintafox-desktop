@@ -2805,13 +2805,13 @@ async fn judge_clearing(
     if cleared_at > future_bound() {
         return invalid("at a time in the future");
     }
-    if time(&wo, "actual_start").is_some_and(|started| cleared_at > started) {
+    if time(wo, "actual_start").is_some_and(|started| cleared_at > started) {
         return invalid("after its execution started");
     }
     // Past "ready" without a start time: it started at a time not known here, so a clearing cannot
     // be shown to come before it (the clear action itself refuses a work order past "ready").
-    if time(&wo, "actual_start").is_none() {
-        if let Some(status_sync) = field(&wo, "status_sync_id") {
+    if time(wo, "actual_start").is_none() {
+        if let Some(status_sync) = field(wo, "status_sync_id") {
             let Some(status) = status_code(conn, status_sync).await? else {
                 return wait(format!("work-order status {status_sync} is not applied yet"));
             };
@@ -2831,7 +2831,7 @@ async fn judge_clearing(
         ));
     };
     // The work order's site here (its org node, `entity_id`, sent as `entity_sync_id`).
-    let site_sync = field(&wo, "entity_sync_id");
+    let site_sync = field(wo, "entity_sync_id");
     let site = match site_sync {
         Some(node) => local_id(conn, "org_nodes", node).await?,
         None => None,
@@ -2916,9 +2916,60 @@ pub(crate) async fn keep_held_rule_trace(
 ) -> AppResult<Option<HeldRule>> {
     // Whether the row itself requires the permit (before the rule kept here may raise it).
     let row_requires = flag(payload, "requires_permit");
+    // First: a clearing held here was judged at the work order's site here; a row that moves it
+    // to another site withdraws every one of them, so none is kept below.
+    void_held_clearings_on_received_site_change(conn, entity_sync_id, payload).await?;
     let held = keep_held_primary_rule(conn, entity_sync_id, payload).await?;
     keep_required_set(conn, entity_sync_id, payload, row_requires).await?;
     Ok(held)
+}
+
+/// Before a received work order is written (security review of L4-10b): a clearing held here (the
+/// legacy `permit_rule_cleared_*` and every type lifted in its set) was judged with the
+/// permit-issue right at the work order's site here (lead decision D-a). A received row that moves
+/// the work order to another site (its `entity_sync_id`) from a PC that did not hold that clearing
+/// sends none for it, and [`inbound_permit_rule_check`] accepts it (a clearing it carried unchanged
+/// is refused there). Kept by the merge, such a clearing would hold at a site where nobody judged
+/// it: every one held here is withdrawn first, as a move made here does
+/// (`permit_requirement::void_clearing_on_site_change`, cause `site_change`, recorded in the work
+/// order's history and audit trail in the apply's transaction), so [`keep_held_primary_rule`],
+/// [`keep_required_set`] and [`keep_held_primary_clearing`] find nothing to keep. A clearing the
+/// row carries (judged on arrival at the new site) is written as received. A work order that had no
+/// site here was cleared with the plant-wide right: left as it is.
+async fn void_held_clearings_on_received_site_change(
+    conn: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    payload: &Payload,
+) -> AppResult<bool> {
+    let Some(local) = local_wire(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(false);
+    };
+    let row = overlay(Some(&local), payload);
+    let (held_site, new_site) = (field(&local, "entity_sync_id"), field(&row, "entity_sync_id"));
+    if held_site.is_none() || held_site == new_site {
+        return Ok(false);
+    }
+    let Some(wo_id) = local_id(conn, "work_orders", entity_sync_id).await? else {
+        return Ok(false);
+    };
+    let old_site = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_id FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<i64>>("", "entity_id").map_err(sync_err))
+        .transpose()?
+        .flatten();
+    let new_site = match new_site {
+        Some(node) => local_id(conn, "org_nodes", node).await?,
+        None => None,
+    };
+    crate::wo::workflow::actions::permit_requirement::void_clearing_on_site_change(
+        conn, wo_id, old_site, new_site, None,
+    )
+    .await
 }
 
 /// Before a received work order is written (after [`keep_held_primary_rule`]), the permit types it
@@ -2966,7 +3017,12 @@ async fn keep_required_set(
         return Ok(());
     }
     let mut set = held.clone();
-    let primary = field(&row, "permit_rule_permit_type").map(str::to_string);
+    // The primary type held here: a row naming another rule (or permit type) never mirrors its
+    // legacy clearing onto a type of the set that is not the primary one.
+    let primary = held
+        .primary()
+        .filter(|p| field(&row, "permit_rule_permit_type") == Some(*p))
+        .map(str::to_string);
     let mirrored = match (primary.as_deref(), field(&row, "permit_rule_cleared_at")) {
         (Some(primary), Some(at)) if set.get(primary).is_some_and(|i| i.clearing.is_none()) => set.clear(
             primary,

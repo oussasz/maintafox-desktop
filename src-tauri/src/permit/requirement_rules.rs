@@ -1167,7 +1167,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             let matches = matching_types(db, &rules, equipment, type_id).await?;
             let held = crate::permit::required_set::read(db, wo_id).await?.unwrap_or_default();
             let missing_type = matches.iter().any(|(t, _)| !held.contains(t));
-            if !missing_type && !(unruled && !matches.is_empty()) {
+            if !missing_type && (!unruled || matches.is_empty()) {
                 return Ok(false);
             }
             let txn = db.begin().await?;
@@ -1328,7 +1328,7 @@ pub async fn finding_for_started_without_rule(
             let type_id: i64 = row.try_get("", "type_id")?;
             let outcome = evaluate(conn, equipment, type_id, false).await?;
             match (outcome.rule_code, outcome.permit_type_code) {
-                (Some(rule), Some(permit_type)) if !(rule == named && Some(&permit_type) == named_type.as_ref()) => {
+                (Some(rule), Some(permit_type)) if rule != named || Some(&permit_type) != named_type.as_ref() => {
                     received_rule = Some((named, named_type));
                     Some((rule, permit_type, requires_now, false))
                 }

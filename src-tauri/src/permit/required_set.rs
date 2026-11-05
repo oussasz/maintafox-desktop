@@ -318,11 +318,16 @@ pub fn merge(
 /// version sends `requires_permit = 1` whenever one type is still required, so that flag alone says
 /// nothing: a row that still lifts a type, or that arrives over a type still required here, comes
 /// from a PC that has not received a lifting made here yet (security review L4-10b), and the
-/// liftings held here are kept.
+/// liftings held here are kept. A row naming a type not held here is no re-tick either: the sender
+/// requires the permit for that type (its flag is explained by it), and it may not have received
+/// the liftings made here.
 pub fn is_received_retick(held: &RequiredSet, received: &RequiredSet, received_requires: bool) -> bool {
     received_requires
         && !received.is_empty()
-        && received.items.iter().all(|i| i.clearing.is_none())
+        && received
+            .items
+            .iter()
+            .all(|i| i.clearing.is_none() && held.contains(&i.permit_type_code))
         && held.items.iter().any(|i| i.clearing.is_some())
         && held.uncleared_types().is_empty()
 }
