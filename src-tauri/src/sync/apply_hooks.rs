@@ -138,6 +138,10 @@
 //!   organisation administration right plant-wide here), when and why, and the record still has no
 //!   site here; the trace is never rewritten; a work order or request given a site without that
 //!   trace is a conflict (`org::site_assignment::inbound_site_assignment_check`).
+//! - `work_orders`: a dépannage (migration 277) carries its "panne constatée à" (readable, not later
+//!   than its row) and its "machine arrêtée", and is never turned back into an ordinary work order;
+//!   otherwise a conflict (`wo::depannage::inbound_depannage_check`). Its start is judged by the
+//!   permit gate of a start like any work order entering in progress (above).
 //! - `work_orders` / `intervention_requests` / `equipment`: after the apply, an open work order or
 //!   request on equipment retired here (created on one PC, the retirement recorded on another,
 //!   whichever arrives second) is applied, never refused, and gets its one review item
@@ -291,15 +295,19 @@ pub(crate) async fn before_upsert_checked(
                     };
                     match closeout {
                         Some(verdict) => Some(verdict),
-                        None => {
-                            crate::org::site_assignment::inbound_site_assignment_check(
-                                conn,
-                                crate::org::site_assignment::NoSiteKind::WorkOrder,
-                                entity_sync_id,
-                                payload,
-                            )
-                            .await?
-                        }
+                        None => match crate::org::site_assignment::inbound_site_assignment_check(
+                            conn,
+                            crate::org::site_assignment::NoSiteKind::WorkOrder,
+                            entity_sync_id,
+                            payload,
+                        )
+                        .await?
+                        {
+                            Some(verdict) => Some(verdict),
+                            None => {
+                                crate::wo::depannage::inbound_depannage_check(conn, entity_sync_id, payload).await?
+                            }
+                        },
                     }
                 }
             },

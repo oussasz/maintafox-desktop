@@ -8,6 +8,7 @@ pub mod closeout_reference_catalog;
 pub(crate) mod closeout_sync;
 pub mod costs;
 pub mod delay;
+pub mod depannage;
 pub mod domain;
 pub mod execution;
 pub mod execution_log;
@@ -41,6 +42,8 @@ mod closeout_gates_tests;
 mod closeout_sync_tests;
 #[cfg(test)]
 mod closeout_tests;
+#[cfg(test)]
+mod depannage_tests;
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]

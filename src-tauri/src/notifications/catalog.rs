@@ -156,6 +156,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "wo_permit_rule_missing",
     "insp_anomaly_origin_cancelled",
     "rel_decision_refused_wo_kept",
+    "wo_depannage_permit_needed",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -195,6 +196,9 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // planner, or the PM planners (`settings::received_notice::announce_refused_decision`).
     ("rel_decision_refused_wo_kept", "planner"),
     ("rel_decision_refused_wo_kept", "watcher"),
+    // A dépannage waiting for its permit (CMMS Advisor 2026-11-05, `wo::depannage`): the
+    // permit-issue right holders of the work order's site (plant-wide ones included).
+    ("wo_depannage_permit_needed", "permission:ptw.issue"),
 ];
 
 /// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
@@ -212,6 +216,8 @@ pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
     ("insp_anomaly_origin_cancelled", "reviewer"),
     // Neither a planner nor a proposer active here: the holders of the right to approve decisions.
     ("rel_decision_refused_wo_kept", "permission:ram.manage"),
+    // Nobody holds the permit-issue right at the dépannage's site: the settings administrators.
+    ("wo_depannage_permit_needed", "permission:adm.settings"),
 ];
 
 /// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).

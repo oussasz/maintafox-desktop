@@ -279,18 +279,39 @@ pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyRe
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
+    let txn = db.begin().await?;
+    let wo = start_wo_in(&txn, &input, None).await?;
+    txn.commit().await?;
+    Ok(wo)
+}
+
+/// How a start is recorded on the transition log when another path than the start command makes
+/// it (the dépannage, `wo::depannage`): the reason code and note of that log row.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StartMark<'a> {
+    pub reason_code: &'a str,
+    pub notes: &'a str,
+}
+
+/// [`start_wo`] in the caller's transaction: the permit / LOTO gate, then ready → in progress,
+/// judged and recorded at one clock read. `mark`: the reason code and note of the transition-log
+/// row when the start is made by another path; `None` for the start command.
+pub(crate) async fn start_wo_in(
+    txn: &impl ConnectionTrait,
+    input: &WoStartInput,
+    mark: Option<StartMark<'_>>,
+) -> AppResult<WorkOrder> {
     // One clock read: the moment judged by the permit gate is the start recorded below.
     let at = now_utc_second();
-    let txn = db.begin().await?;
     // Permit gate in the same transaction as the status change (no window in between).
-    crate::permit::wo_gate::assert_in_progress_permit_gate_with(&txn, input.wo_id, None, at).await?;
-    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(&txn, input.wo_id).await?;
+    crate::permit::wo_gate::assert_in_progress_permit_gate_with(txn, input.wo_id, None, at).await?;
+    let linked_permit = crate::permit::queries::get_work_permit_linked_to_work_order(txn, input.wo_id).await?;
 
-    let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    let (from_code, current_status, _rv) = load_wo_status(txn, input.wo_id).await?;
     assert_action_allowed(&current_status, WoAction::Start).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
+    let in_progress_status_id = resolve_status_id(txn, "in_progress").await?;
     let now = stamp(at);
 
     // Close any open delay segment
@@ -323,20 +344,20 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     check_concurrency(result.rows_affected())?;
 
     log_transition(
-        &txn,
+        txn,
         input.wo_id,
         &from_code,
         "in_progress",
         "start",
         input.actor_id,
-        None,
-        None,
+        mark.map(|m| m.reason_code),
+        mark.map(|m| m.notes),
         &now,
     )
     .await?;
 
     emit_action_event(
-        &txn,
+        txn,
         input.wo_id,
         "started",
         Some(input.actor_id),
@@ -346,7 +367,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     )
     .await?;
 
-    let wo = queries::get_work_order(&txn, input.wo_id)
+    let wo = queries::get_work_order(txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
@@ -362,7 +383,6 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
         })?;
     }
 
-    txn.commit().await?;
     Ok(wo)
 }
 

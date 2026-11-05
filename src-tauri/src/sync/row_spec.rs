@@ -541,6 +541,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("permit_rule_cleared_by_id", USER),
             // Who gave an old work order without a site its site (migration 245).
             r("site_assigned_by_id", USER),
+            // Who validated a dépannage after the fact (migration 277).
+            r("validated_by_id", USER),
             r("assigned_team_id", "teams"),
             r("urgency_id", "reference_values"),
             r("source_di_id", "intervention_requests"),

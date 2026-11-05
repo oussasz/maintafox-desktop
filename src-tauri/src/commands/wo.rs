@@ -13,6 +13,8 @@
 //!                open_downtime, close_downtime, save_failure_detail, save_verification,
 //!                close_wo, upload_wo_attachment, update_service_cost
 //!   ot.admin   — reopen_wo, delete_wo_attachment
+//!   ot.create + ot.edit (+ ot.emergency_assign to assign someone else) — start_depannage_wo
+//!   ot.edit    — set_wo_breakdown_at
 //!
 //! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every work order is checked at its org node
 //! `work_orders.entity_id` (`wo::access`), with the same permission as before; what belongs to a
@@ -30,8 +32,8 @@ use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::wo::types;
 use crate::wo::{
-    access, analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, statuses,
-    tasks,
+    access, analytics, attachments, audit, closeout, costs, delay, depannage, execution, labor, parts, queries, stats,
+    statuses, tasks,
 };
 use crate::{require_permission, require_session};
 
@@ -942,6 +944,106 @@ pub async fn emergency_reassign_wo(
     )
     .await;
     Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G3) start_depannage_wo — ot.create + ot.edit at the site (+ ot.emergency_assign for another
+//     assignee); set_wo_breakdown_at — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Creates a corrective work order and starts it at once (`wo::depannage`), in one transaction; when
+/// a permit is needed it stays ready, waiting for it (never refused for the permit).
+#[tauri::command]
+pub async fn start_depannage_wo(
+    mut input: depannage::WoDepannageInput,
+    state: State<'_, AppState>,
+) -> AppResult<depannage::WoDepannageStartResult> {
+    let user = require_session!(state);
+    // The actor is the signed-in user, never an id sent by the screen.
+    input.actor_id = i64::from(user.user_id);
+    let assigned_to_other = input.assignee_id.is_some_and(|a| a != input.actor_id);
+    access::require_depannage_at(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        None,
+        Some(input.equipment_id),
+        assigned_to_other,
+    )
+    .await?;
+    // Permit drafts only with the permit-issue right (checked per draft at the work order's site).
+    input.permit_drafting =
+        crate::permit::access::permit_drafting_rights(&state.db, &state.permission_cache, user.user_id).await;
+    let result = depannage::start_depannage(&state.db, input).await?;
+    let waiting = result.outcome == depannage::DepannageOutcome::WaitingForPermit;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(result.wo.id),
+            action: if waiting {
+                "depannage_waiting_permit"
+            } else {
+                "depannage_started"
+            }
+            .into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(
+                if waiting {
+                    "Dépannage work order created, waiting for its permit"
+                } else {
+                    "Dépannage work order created and started"
+                }
+                .into(),
+            ),
+            details_json: Some(
+                serde_json::json!({
+                    "breakdown_at": result.wo.breakdown_at,
+                    "machine_stopped": result.wo.machine_stopped,
+                    "primary_responsible_id": result.wo.primary_responsible_id,
+                    "breakdown_old_warning": result.breakdown_old_warning,
+                    "outcome": result.outcome,
+                    "required_permit_types": result.required_permit_types,
+                    "permit_draft_ids": result.permit_draft_ids,
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(result)
+}
+
+/// Changes the "Panne constatée à" of a dépannage until it is closed; audited with old → new.
+#[tauri::command]
+pub async fn set_wo_breakdown_at(
+    mut input: depannage::WoBreakdownAtInput,
+    state: State<'_, AppState>,
+) -> AppResult<depannage::WoDepannageResult> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
+    let result = depannage::set_breakdown_at(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(result.wo.id),
+            action: "breakdown_at_changed".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Dépannage breakdown time changed".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        Some(&result.wo),
+        Some(expected),
+    )
+    .await;
+    Ok(result)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

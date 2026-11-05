@@ -1715,7 +1715,9 @@ pub async fn create_work_permit(
     Ok(out)
 }
 
-async fn create_work_permit_in(
+/// [`create_work_permit`] in the caller's transaction (also the permit drafts of a dépannage,
+/// `wo::depannage`, written with the dépannage itself). The rights are the caller's to check.
+pub(crate) async fn create_work_permit_in(
     db: &impl ConnectionTrait,
     input: WorkPermitCreateInput,
     actor_id: i64,
