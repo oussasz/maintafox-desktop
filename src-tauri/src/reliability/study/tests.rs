@@ -1435,22 +1435,46 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     .await
     .expect("fleet");
     assert_eq!(v.kpis.equipment_count, 2);
+    assert!(!v.kpis.window_too_short);
     // P-101: F1 10 h + F2 6 h; P-102: 4 + 4 + 2 h.
     assert_eq!(v.kpis.failure_count, 5);
     close(v.kpis.downtime_hours, 26.0, 1e-9);
     assert_eq!(v.rows[0].asset_code, "P-101");
     close(v.rows[0].downtime_share, 16.0 / 26.0, 1e-12);
     let hours = 333.0 * 24.0;
+    close(v.kpis.exposure_hours, 2.0 * hours, 1e-6);
+    // MTBF over the 4 eligible failures only (F5 has no failure mode: not eligible).
     close(v.rows[0].mtbf_hours.expect("mtbf"), hours / 2.0, 1e-6);
-    close(v.rows[0].mttr_hours.expect("mttr"), 8.0 / 2.0, 1e-12);
-    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 5.0, 1e-6);
+    assert_eq!(
+        (v.kpis.eligible_failure_count, v.kpis.mtbf_excluded_not_eligible),
+        (4, 1)
+    );
+    close(v.kpis.mtbf_hours.expect("fleet mtbf"), 2.0 * hours / 4.0, 1e-6);
+    // MTTR = time to restore: only F1 has both times (10:00 -> 20:00); F2..F5 lack restored_at.
+    close(v.rows[0].mttr_hours.expect("mttr"), 10.0, 1e-9);
+    close(v.kpis.mttr_hours.expect("fleet mttr"), 10.0, 1e-9);
+    assert_eq!(v.kpis.restore_count, 1);
+    assert_eq!(v.kpis.restore_excluded_missing_restored_at, 4);
+    assert_eq!(v.kpis.restore_excluded_missing_failed_at, 0);
+    // Mean active repair (separate figure): 5 + 3 + 2 + 2 + 1 h over 5 failures.
+    close(v.kpis.mean_active_repair_hours.expect("repair"), 13.0 / 5.0, 1e-9);
+    assert_eq!(
+        (v.kpis.active_repair_count, v.kpis.repair_excluded_missing_hours),
+        (5, 0)
+    );
+    // A_o = MTBF / (MTBF + MTTR restore).
+    let mtbf = 2.0 * hours / 4.0;
     close(
         v.kpis.availability_operational.expect("ao"),
-        2.0 * hours / (2.0 * hours + 26.0),
+        mtbf / (mtbf + 10.0),
         1e-12,
     );
+    // Nothing has a cause or mechanism: no record is complete.
     close(v.kpis.data_quality.expect("dq"), 0.0, 1e-12);
     assert_eq!(v.kpis.records_missing_mode, 1);
+    assert_eq!(v.kpis.records_missing_cause, 5);
+    assert_eq!(v.kpis.records_missing_mechanism, 5);
+    assert_eq!((v.kpis.operating_basis_count, v.kpis.calendar_basis_count), (0, 2));
     assert_eq!(v.rows[0].data_quality, "no_operating_hours");
     assert!(v.rows[0].last_study_id.is_some());
     assert!(v.equipment_classes.iter().any(|c| c.id == f.class_id));
@@ -1486,6 +1510,346 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     .expect("empty period");
     assert_eq!(other.kpis.failure_count, 0);
     assert!(other.rows.is_empty() && other.kpis.data_quality.is_none());
+}
+
+/// Sets cause "not determined" and a mechanism on the failure record `tag` (complete coding).
+async fn code_completely(f: &Fixture, tag: &str, mechanism: i64) {
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET cause_not_determined = 1, failure_mechanism_id = {mechanism} \
+             WHERE entity_sync_id = 'st-fe-{tag}'"
+        ),
+    )
+    .await;
+}
+
+async fn mechanism_id(f: &Fixture) -> i64 {
+    crate::wo::closeout_reference_catalog::ensure_value(
+        &f.db,
+        "WORK.FAILURE_MECHANISMS",
+        "ST_WEAR",
+        "Usure",
+        None,
+        None,
+        90,
+    )
+    .await
+    .expect("mechanism");
+    scalar(
+        &f.db,
+        "SELECT v.id FROM reference_values v JOIN reference_sets s ON s.id = v.set_id \
+         JOIN reference_domains d ON d.id = s.domain_id WHERE d.code = 'WORK.FAILURE_MECHANISMS' AND v.code = 'ST_WEAR'",
+    )
+    .await
+}
+
+fn quality_filter(class: Option<i64>, org: Option<i64>) -> crate::reliability::study::data_quality::DataQualityFilter {
+    crate::reliability::study::data_quality::DataQualityFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: org,
+        equipment_class_id: class,
+    }
+}
+
+fn fleet_filter(class: Option<i64>, org: Option<i64>) -> FleetViewFilter {
+    FleetViewFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: org,
+        equipment_class_id: class,
+        limit: None,
+        offset: None,
+    }
+}
+
+/// L2-11: the RAMS home card and the quality page count complete records with one predicate
+/// (mode + cause or not determined + mechanism, close-out coding as fallback) under the same
+/// period, class and site.
+#[tokio::test]
+async fn home_card_and_quality_page_share_the_completeness_predicate() {
+    let f = setup().await;
+    scenario(&f).await;
+    let mech = mechanism_id(&f).await;
+    // F2 coded on the record itself; F1 (from OT-2025-0412) coded on its close-out only.
+    code_completely(&f, "f2", mech).await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO work_order_failure_details (work_order_id, failure_mode_id, cause_not_determined, \
+             failure_mechanism_id) VALUES ((SELECT id FROM work_orders WHERE code = 'OT-2025-0412'), {}, 1, {mech})",
+            f.mode_id
+        ),
+    )
+    .await;
+    // F4: mode and cause (not determined) but no mechanism -> incomplete.
+    exec(
+        &f.db,
+        "UPDATE failure_events SET cause_not_determined = 1 WHERE entity_sync_id = 'st-fe-f4'",
+    )
+    .await;
+    let admin = i32::try_from(f.admin).expect("id");
+
+    for (class, org) in [(None, None), (Some(f.class_id), Some(1)), (Some(f.class_id), None)] {
+        let home = fleet_view(&f.db, fleet_filter(class, org)).await.expect("fleet").kpis;
+        let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(class, org), admin)
+            .await
+            .expect("quality");
+        assert_eq!(
+            (home.failure_count, home.records_complete),
+            (page.records, page.records_complete)
+        );
+        assert_eq!((page.records, page.records_complete), (5, 2), "{class:?} {org:?}");
+        assert_eq!(
+            (
+                home.records_missing_mode,
+                home.records_missing_cause,
+                home.records_missing_mechanism
+            ),
+            (
+                page.records_missing_mode,
+                page.records_missing_cause,
+                page.records_missing_mechanism
+            )
+        );
+        assert_eq!(
+            (
+                page.records_missing_mode,
+                page.records_missing_cause,
+                page.records_missing_mechanism
+            ),
+            (1, 2, 3)
+        );
+        close(home.data_quality.expect("dq"), 2.0 / 5.0, 1e-12);
+        // F1 is complete through its close-out coding: it is not in the gap list.
+        assert!(page.coding_gaps.iter().all(|g| g.work_order_code != "OT-2025-0412"));
+    }
+
+    // Another class, another site: both screens are empty.
+    exec(
+        &f.db,
+        "INSERT INTO equipment_classes (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at) \
+         VALUES ('st-class-fan', 'ST_FAN', 'Ventilateur', NULL, 'class', 1, datetime('now'), datetime('now'))",
+    )
+    .await;
+    let fan = scalar(&f.db, "SELECT id FROM equipment_classes WHERE code = 'ST_FAN'").await;
+    let home = fleet_view(&f.db, fleet_filter(Some(fan), None))
+        .await
+        .expect("fleet")
+        .kpis;
+    let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(Some(fan), None), admin)
+        .await
+        .expect("quality");
+    assert_eq!((home.failure_count, page.records, page.records_complete), (0, 0, 0));
+    assert!(home.data_quality.is_none() && page.coding_gaps.is_empty() && page.no_operating_hours.is_empty());
+
+    // The gap list names the first missing field of an incomplete record raised from a work order.
+    exec(
+        &f.db,
+        "UPDATE work_order_failure_details SET failure_mechanism_id = NULL \
+         WHERE work_order_id = (SELECT id FROM work_orders WHERE code = 'OT-2025-0412')",
+    )
+    .await;
+    let page = crate::reliability::study::data_quality::data_quality(&f.db, &quality_filter(None, None), admin)
+        .await
+        .expect("quality");
+    let gap = page
+        .coding_gaps
+        .iter()
+        .find(|g| g.work_order_code == "OT-2025-0412")
+        .expect("F1 listed");
+    assert_eq!(gap.gap, "mechanism_missing");
+    assert_eq!(page.records_complete, 1);
+}
+
+/// MTBF counts eligible failures only; MTTR is the time to restore over failures with both times;
+/// the excluded records are counted under the first reason that applies.
+#[tokio::test]
+async fn fleet_kpis_eligibility_restore_and_exclusions() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    // P-101: restored after 4 h (active repair 1 h); restored after 8 h (active repair 3 h).
+    failure(
+        &f.db,
+        "a",
+        f.p101,
+        "2025-03-01T00:00:00Z",
+        Some("2025-03-01T04:00:00Z"),
+        m,
+        None,
+        2.0,
+    )
+    .await;
+    failure(
+        &f.db,
+        "b",
+        f.p101,
+        "2025-04-01T00:00:00Z",
+        Some("2025-04-01T08:00:00Z"),
+        m,
+        None,
+        6.0,
+    )
+    .await;
+    // P-102: not eligible (no mode), restored after 6 h; restored before it failed; no repair hours.
+    failure(
+        &f.db,
+        "c",
+        f.p102,
+        "2025-05-01T00:00:00Z",
+        Some("2025-05-01T06:00:00Z"),
+        None,
+        None,
+        2.0,
+    )
+    .await;
+    failure(
+        &f.db,
+        "d",
+        f.p102,
+        "2025-06-01T10:00:00Z",
+        Some("2025-06-01T09:00:00Z"),
+        m,
+        None,
+        0.0,
+    )
+    .await;
+    // An eligible record without failure time (dated by detection).
+    failure(&f.db, "e", f.p102, "2025-07-01T00:00:00Z", None, m, None, 4.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET failed_at = NULL WHERE entity_sync_id = 'st-fe-e'",
+    )
+    .await;
+    // A record whose flags are not valid JSON is not eligible (no SQL error).
+    failure(&f.db, "g", f.p101, "2025-08-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET eligible_flags_json = 'not json' WHERE entity_sync_id = 'st-fe-g'",
+    )
+    .await;
+    // A planned stop is never a failure.
+    failure(
+        &f.db,
+        "p",
+        f.p101,
+        "2025-09-01T00:00:00Z",
+        Some("2025-09-01T05:00:00Z"),
+        m,
+        None,
+        5.0,
+    )
+    .await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET is_planned = 1 WHERE entity_sync_id = 'st-fe-p'",
+    )
+    .await;
+
+    let scope = FleetScope::new("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &scope).await.expect("kpis");
+    assert_eq!(k.failure_count, 6);
+    // Eligible: a, b, d, e (c has no mode, g has unreadable flags).
+    assert_eq!((k.eligible_failure_count, k.mtbf_excluded_not_eligible), (4, 2));
+    let hours = 333.0 * 24.0 * 2.0;
+    close(k.mtbf_hours.expect("mtbf"), hours / 4.0, 1e-6);
+    // Restore: a 4 h, b 8 h, c 6 h; d restored before failing; e without failure time; g not restored.
+    assert_eq!(k.restore_count, 3);
+    close(k.mttr_hours.expect("mttr"), 18.0 / 3.0, 1e-9);
+    assert_eq!(
+        (
+            k.restore_excluded_missing_failed_at,
+            k.restore_excluded_missing_restored_at,
+            k.restore_excluded_inconsistent
+        ),
+        (1, 1, 1)
+    );
+    // Active repair (downtime / 2 in the fixture): 1, 3, 1, 2, 1 h; d has none recorded.
+    close(k.mean_active_repair_hours.expect("repair"), 8.0 / 5.0, 1e-9);
+    assert_eq!((k.active_repair_count, k.repair_excluded_missing_hours), (5, 1));
+    let mtbf = hours / 4.0;
+    close(k.availability_operational.expect("ao"), mtbf / (mtbf + 6.0), 1e-12);
+
+    // Windows under 90 days give counts only.
+    let short = FleetScope::new("2025-03-01T00:00:00Z", "2025-03-31T00:00:00Z", Some(f.class_id), None).expect("scope");
+    let k = fleet_kpis(&f.db, &short).await.expect("kpis");
+    assert!(k.window_too_short);
+    assert_eq!(k.failure_count, 1);
+    assert!(k.mtbf_hours.is_none() && k.mttr_hours.is_none());
+    assert!(k.mean_active_repair_hours.is_none() && k.availability_operational.is_none());
+    let rows = fleet_view(
+        &f.db,
+        FleetViewFilter {
+            period_start: "2025-03-01T00:00:00Z".into(),
+            period_end: "2025-03-31T00:00:00Z".into(),
+            ..FleetViewFilter::default()
+        },
+    )
+    .await
+    .expect("fleet")
+    .rows;
+    assert!(rows.iter().all(|r| r.mtbf_hours.is_none() && r.mttr_hours.is_none()));
+}
+
+/// Hours per equipment: operating hours where run-hour data exists, calendar otherwise; the mix is
+/// counted and MTBF uses the hours of every equipment of the fleet.
+#[test]
+fn fleet_kpis_hours_mix_counts() {
+    use std::collections::HashMap;
+
+    use crate::reliability::study::clock::{SOURCE_CALENDAR, SOURCE_METER, SOURCE_RUNTIME_LOGS};
+    use crate::reliability::study::fleet_kpis::{kpis_of, AssetAgg, AssetHours, FleetScope};
+    let scope = FleetScope::new("2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", None, None).expect("scope");
+    let hours: HashMap<i64, AssetHours> = [
+        (
+            1,
+            AssetHours {
+                hours: 4000.0,
+                source: SOURCE_METER,
+            },
+        ),
+        (
+            2,
+            AssetHours {
+                hours: 2000.0,
+                source: SOURCE_RUNTIME_LOGS,
+            },
+        ),
+        (
+            3,
+            AssetHours {
+                hours: 8736.0,
+                source: SOURCE_CALENDAR,
+            },
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let aggs = vec![AssetAgg {
+        equipment_id: 1,
+        failures: 3,
+        eligible: 2,
+        restore_hours: 9.0,
+        restore_count: 3,
+        repair_hours: 4.5,
+        repair_count: 3,
+        ..AssetAgg::default()
+    }];
+    let k = kpis_of(&scope, &aggs, &hours);
+    assert_eq!(
+        (k.equipment_count, k.operating_basis_count, k.calendar_basis_count),
+        (3, 2, 1)
+    );
+    close(k.exposure_hours, 14736.0, 1e-9);
+    close(k.mtbf_hours.expect("mtbf"), 14736.0 / 2.0, 1e-9);
+    close(k.mttr_hours.expect("mttr"), 3.0, 1e-12);
+    close(k.mean_active_repair_hours.expect("repair"), 1.5, 1e-12);
+    // No eligible failure: no MTBF and no A_o (never a made-up 100 %).
+    let k = kpis_of(&scope, &[], &hours);
+    assert!(k.mtbf_hours.is_none() && k.availability_operational.is_none());
+    assert_eq!(k.calendar_basis_count, 1);
 }
 
 // ── Part B: FMECA, RCM, system model, competing modes ───────────────────────────────────────

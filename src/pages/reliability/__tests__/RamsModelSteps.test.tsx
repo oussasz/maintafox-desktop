@@ -775,6 +775,11 @@ describe("RamsDataQualityPage", () => {
       review_issues: [],
       records: 10,
       records_complete: 9,
+      records_missing_mode: 0,
+      records_missing_cause: 0,
+      records_missing_mechanism: 1,
+      org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+      equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
       coding_gaps_truncated: false,
       no_operating_hours_truncated: false,
       review_issues_truncated: false,
@@ -794,12 +799,19 @@ describe("RamsDataQualityPage", () => {
         };
       throw new Error(`unexpected ${cmd}`);
     });
+    // Opened from the RAMS home page with its period, site and class.
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/reliability/data-quality?months=6&site=4&class=7"]}>
         <RamsDataQualityPage />
       </MemoryRouter>,
     );
     expect(await screen.findByText("OT-2025-0412")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("get_reliability_data_quality", {
+      filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+    });
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("6");
+    expect(screen.getByRole("combobox", { name: "Site" })).toHaveValue("4");
+    expect(screen.getByRole("combobox", { name: "Class" })).toHaveValue("7");
     expect(screen.getByText("Mechanism missing")).toBeInTheDocument();
     expect(screen.getByText("9 of 10 with mode, cause and mechanism")).toBeInTheDocument();
 

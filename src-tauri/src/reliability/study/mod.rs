@@ -9,6 +9,7 @@ pub mod data_quality;
 pub mod decision_sync;
 pub mod decisions;
 pub mod domain;
+pub mod fleet_kpis;
 pub mod fleet_view;
 pub mod fmeca;
 pub mod life;

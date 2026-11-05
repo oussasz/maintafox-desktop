@@ -185,7 +185,7 @@ pub async fn apply_reliability_study_decision(
 use crate::reliability::study::advanced::{
     EventTreeInput, EventTreeResult, MarkovInput, MarkovResult, SimulationInput, SimulationResult,
 };
-use crate::reliability::study::data_quality::DataQualityView;
+use crate::reliability::study::data_quality::{DataQualityFilter, DataQualityView};
 use crate::reliability::study::fmeca::{FmecaWorksheet, SaveFmecaItemInput};
 use crate::reliability::study::rcm::{RcmWorksheet, SaveRcmInput};
 use crate::reliability::study::scales::RatingScales;
@@ -349,10 +349,10 @@ pub async fn simulate_reliability_study_system(
 /// Data-quality worklist of the reliability module.
 #[tauri::command]
 pub async fn get_reliability_data_quality(
-    months: Option<i64>,
+    filter: DataQualityFilter,
     state: State<'_, AppState>,
 ) -> AppResult<DataQualityView> {
     let user = require_session!(state);
     require_permission!(state, &user, RAM_VIEW, PermissionScope::Global);
-    data_quality::data_quality(&state.db, months.unwrap_or(24), user.user_id).await
+    data_quality::data_quality(&state.db, &filter, user.user_id).await
 }

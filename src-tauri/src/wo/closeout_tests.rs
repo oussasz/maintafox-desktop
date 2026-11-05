@@ -1443,9 +1443,16 @@ pub(crate) mod tests {
                     .expect("failure event");
             assert_eq!(event.failure_mode_id, Some(mode_id), "a_first: {a_first}");
             // A study query (data quality) reads the coded row's cause and mechanism: no gap.
-            let quality = crate::reliability::study::data_quality::data_quality(&db, 1200, admin_id(&db).await as i32)
-                .await
-                .expect("data quality");
+            let all_time = crate::reliability::study::data_quality::DataQualityFilter {
+                period_start: "1900-01-01T00:00:00Z".into(),
+                period_end: "2100-01-01T00:00:00Z".into(),
+                org_node_id: None,
+                equipment_class_id: None,
+            };
+            let quality =
+                crate::reliability::study::data_quality::data_quality(&db, &all_time, admin_id(&db).await as i32)
+                    .await
+                    .expect("data quality");
             assert!(
                 quality.coding_gaps.iter().all(|g| g.work_order_id != wo_id),
                 "a_first: {a_first}: {:?}",

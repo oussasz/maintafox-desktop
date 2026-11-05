@@ -26,19 +26,46 @@ pub struct FleetViewFilter {
     pub offset: Option<i64>,
 }
 
+/// Fleet reliability figures of a scope (period, class, org node). Definitions:
+/// `study::fleet_kpis` module header (one calculation for RAMS and Analytique).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FleetKpis {
+    /// Window the figures cover (end clipped to now).
+    pub period_start: String,
+    pub period_end: String,
+    /// Window shorter than `fleet_kpis::MIN_RATE_WINDOW_DAYS`: MTBF, MTTR, mean active repair
+    /// and A_o are not given (counts only).
+    pub window_too_short: bool,
     pub equipment_count: i64,
+    /// Unplanned failure records of the window.
     pub failure_count: i64,
     pub downtime_hours: f64,
-    /// A_o = T / (T + downtime) over equipment with a known time base.
+    /// Σ hours of the fleet over the window (operating or calendar, see the basis counts).
+    pub exposure_hours: f64,
+    /// A_o = MTBF / (MTBF + MTTR restore).
     pub availability_operational: Option<f64>,
+    /// Σ hours / MTBF-eligible failures (ISO 14224 `eligible_unplanned_mtbf`).
     pub mtbf_hours: Option<f64>,
+    pub eligible_failure_count: i64,
+    /// Failures left out of the MTBF (not flagged eligible).
+    pub mtbf_excluded_not_eligible: i64,
+    /// Mean time to restore (EN 13306): failure → back in service, over failures with both times.
     pub mttr_hours: Option<f64>,
-    /// Share of failure records with failure mode and cause coded (0–1).
+    pub restore_count: i64,
+    pub restore_excluded_missing_failed_at: i64,
+    pub restore_excluded_missing_restored_at: i64,
+    /// Restored before the failure time (or a time that cannot be read).
+    pub restore_excluded_inconsistent: i64,
+    /// Mean active repair time, over failures with active repair hours recorded.
+    pub mean_active_repair_hours: Option<f64>,
+    pub active_repair_count: i64,
+    pub repair_excluded_missing_hours: i64,
+    /// Share of failure records completely coded: mode, cause (or not determined), mechanism (0–1).
     pub data_quality: Option<f64>,
+    pub records_complete: i64,
     pub records_missing_mode: i64,
     pub records_missing_cause: i64,
+    pub records_missing_mechanism: i64,
     /// Equipment whose hours are operating hours (meter, runtime log or operating schedule).
     pub operating_basis_count: i64,
     /// Equipment counted on calendar time (no operating-hours data).
@@ -56,7 +83,9 @@ pub struct FleetAssetRow {
     pub downtime_hours: f64,
     /// Share of the fleet downtime (0–1).
     pub downtime_share: f64,
+    /// Hours of the equipment / its MTBF-eligible failures (same definition as the fleet figure).
     pub mtbf_hours: Option<f64>,
+    /// Mean time to restore of the equipment (same definition as the fleet figure).
     pub mttr_hours: Option<f64>,
     /// `run_hours_meter` | `runtime_logs` | `operating_schedule` | `calendar`.
     pub time_basis: String,
