@@ -18,8 +18,24 @@ async fn entity_of_batch(state: &State<'_, AppState>, batch_id: i64) -> AppResul
 
 #[tauri::command]
 pub async fn list_bulk_import_entities(state: State<'_, AppState>) -> AppResult<Vec<EntityInfo>> {
-    let _user = require_session!(state);
-    Ok(bulk_import::list_entities())
+    let user = require_session!(state);
+    // Only the import types this user may run: each one names its own permission.
+    let mut allowed = Vec::new();
+    for info in bulk_import::list_entities() {
+        let spec = bulk_import::spec(&info.code)?;
+        if crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user.user_id,
+            spec.permission,
+            &PermissionScope::Global,
+        )
+        .await?
+        {
+            allowed.push(info);
+        }
+    }
+    Ok(allowed)
 }
 
 #[tauri::command]
