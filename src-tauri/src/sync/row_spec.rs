@@ -789,6 +789,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("created_by_id", USER),
             r("submitted_by_id", USER),
             r("approved_by_id", USER),
+            // Who cancelled it (L4-15, migration 272).
+            r("cancelled_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
@@ -1003,9 +1005,12 @@ pub const ROW_SPECS: &[RowSpec] = &[
         // session closed by the stored-state check, a clock anomaly) stay on it too: the session
         // record is local to the device (`app_sessions`) and its id means nothing on another PC; the
         // actor is recorded in the event, on this PC.
+        // The audit of an applied bulk import (`bulk_import::apply_batch`, target `bulk_import_batch`)
+        // stays on this PC too: the staging batch is local-only (`bulk_import_batches`) and its id means
+        // nothing on another PC; the records the import created or updated travel on their own rows.
         row_filter: Some(
             "{row}.action_code NOT IN ('notification.safety_notice_acknowledged', 'sync.conflict_resolved') \
-             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session') \
+             AND COALESCE({row}.target_type, '') NOT IN ('work_permit', 'permit_type', 'stock_location_article', 'stock_reservation', 'app_session', 'bulk_import_batch') \
              AND substr(COALESCE({row}.chain_hash, ''), 1, 3) NOT IN ('L1:', 'L2:')",
         ),
         ..spec(
@@ -1085,6 +1090,11 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // An equipment move (D19, `assets::lifecycle` `asset.moved`): the target is
                         // the equipment, sent as its sync id (equipment rows are never hard-deleted).
                         ("equipment", "equipment"),
+                        // A meter reading cancelled (`assets::meters::cancel_meter_reading`): the
+                        // target is the cancelled reading, sent as its sync id. Readings are
+                        // append-only and never hard-deleted (a cancelled reading stays, with a
+                        // marker row beside it), so the named row is always there.
+                        ("asset_meter_readings", "asset_meter_readings"),
                     ],
                 ),
             ],

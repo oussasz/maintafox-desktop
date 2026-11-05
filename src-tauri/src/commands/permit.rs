@@ -486,6 +486,15 @@ pub async fn list_open_permits_report(state: State<'_, AppState>) -> AppResult<W
     queries::list_open_permits_report_in_scope(&state.db, &scope).await
 }
 
+/// Open permits past their expiry, isolations possibly still in place (L4-08): the user's sites
+/// only, like the open permits.
+#[tauri::command]
+pub async fn list_overdue_permits_report(state: State<'_, AppState>) -> AppResult<WorkPermitListPage> {
+    let user = require_session!(state);
+    let scope = require_anywhere(&state, user.user_id, PTW_VIEW).await?;
+    queries::list_overdue_permits_report_in_scope(&state.db, &scope).await
+}
+
 #[tauri::command]
 pub async fn permit_compliance_kpi_30d(state: State<'_, AppState>) -> AppResult<PermitComplianceKpi30d> {
     let user = require_session!(state);

@@ -462,6 +462,10 @@
     "scopeRequired": "Choose what the plan covers.",
     "readingRequired": "Enter a reading of 0 or more for a meter.",
     "readingLower": "The reading is lower than the last one: say whether the counter rolled over or the meter was replaced.",
+    "jumpTitle": "Unusual value",
+    "jumpBody": "This reading is far above the usual use of this meter since the previous reading. Check the typed value (a typing error would trigger maintenance by mistake), then confirm if it is correct.",
+    "jumpBack": "Correct the value",
+    "jumpConfirm": "Yes, the value is correct",
     "PM_CODE_NOT_IN_LIST": "“{{code}}” is not an active value of the reference list concerned."
   },
   "tolerance": {

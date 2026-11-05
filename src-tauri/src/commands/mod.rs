@@ -14,6 +14,7 @@ pub mod assets;
 pub mod audit_log;
 pub mod auth;
 pub mod backup;
+pub mod bulk_import;
 pub mod computation_jobs;
 pub mod dashboard;
 pub mod data_integrity;

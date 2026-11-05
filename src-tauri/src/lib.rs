@@ -24,6 +24,7 @@ pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod build_identity;
+pub mod bulk_import;
 pub mod clock;
 pub mod commands;
 pub mod data_integrity;
@@ -358,6 +359,7 @@ pub fn run() {
         commands::activity_feed::list_saved_activity_filters,
         commands::activity_feed::get_event_chain,
         commands::audit_log::list_audit_events,
+        commands::audit_log::list_audit_filter_options,
         commands::audit_log::verify_audit_chain,
         commands::audit_log::get_audit_event,
         commands::audit_log::export_audit_log,
@@ -508,6 +510,12 @@ pub fn run() {
         commands::personnel::scan_succession_risk,
         commands::personnel::declare_own_skill,
         commands::personnel::list_personnel_skill_reference_values,
+        commands::bulk_import::list_bulk_import_entities,
+        commands::bulk_import::create_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_preview,
+        commands::bulk_import::apply_bulk_import_batch,
+        commands::bulk_import::get_bulk_import_template,
+        commands::bulk_import::export_bulk_import_data,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,
@@ -819,6 +827,8 @@ pub fn run() {
         commands::assets::create_asset_meter,
         commands::assets::record_meter_reading,
         commands::assets::get_latest_meter_value,
+        commands::assets::assess_meter_reading,
+        commands::assets::cancel_meter_reading,
         commands::assets::list_meter_readings,
         commands::assets::list_asset_document_links,
         commands::assets::list_asset_photos,
@@ -920,6 +930,9 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Parts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::add_part,
         commands::wo::record_part_usage,
+        commands::wo::list_wo_parts_to_issue,
+        commands::wo::issue_wo_part_to_issue,
+        commands::wo::cancel_wo_part_to_issue,
         commands::wo::mark_part_not_used,
         commands::wo::cancel_planned_part,
         commands::wo::set_planned_part_required,
@@ -989,6 +1002,7 @@ pub fn run() {
         commands::permit::update_work_permit,
         commands::permit::set_work_permit_status,
         commands::permit::check_work_permit_approval,
+        commands::permit::list_overdue_permits_report,
         commands::permit::list_permit_isolation_options,
         commands::permit::list_permit_isolations,
         commands::permit::upsert_permit_isolation,

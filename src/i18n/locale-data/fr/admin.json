@@ -112,7 +112,7 @@
       },
       "buyer": {
         "name": "Acheteur",
-        "description": "Demandes d'achat et commandes, réception des livraisons. Personne n'approuve sa propre demande ni sa propre commande ; l'approbation revient à un responsable qui détient le droit d'approbation, dans la limite de son plafond."
+        "description": "Demandes d'achat et commandes. Il n'enregistre pas les livraisons : la réception revient au magasinier, pour que l'achat et la réception restent faits par deux personnes différentes. Personne n'approuve sa propre demande ni sa propre commande ; l'approbation revient à un responsable qui détient le droit d'approbation, dans la limite de son plafond."
       },
       "hseManager": {
         "name": "Responsable HSE",

@@ -2,13 +2,17 @@
  * Audit log (Settings › Activity & audit): the immutable trail of security and compliance
  * actions. FR/EN labels, plain filter names, details as readable lines (hashes under
  * "technical details"), load errors with retry, paging that actually reloads, export through
- * the Save dialog.
+ * the Save dialog. Search by OT / equipment / permit number (resolved by the backend), actions
+ * and people chosen by name from lists read from the trail, the object shown by its code and
+ * title, and the fields an event changed as "Champ : ancienne valeur → nouvelle valeur".
  */
+import type { TFunction } from "i18next";
 import { Download, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuditChainCheck } from "@/components/activity/AuditChainCheck";
+import { AuditChangeList } from "@/components/activity/AuditChangeList";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,9 +39,11 @@ import {
   type AuditEventDetail,
   type AuditEventSummary,
   type AuditFilter,
+  type AuditFilterOptions,
   exportAuditLog,
   getAuditEvent,
   listAuditEvents,
+  listAuditFilterOptions,
 } from "@/services/activity-service";
 import { getSessionInfo } from "@/services/auth-service";
 import { pushAppToast } from "@/store/app-toast-store";
@@ -48,15 +54,30 @@ import {
   AUDIT_RETENTION_OPTIONS,
   authContextLabel,
   eventLabel,
-  humanizeCode,
+  hasEventLabel,
+  payloadChanges,
+  payloadChangesUnavailable,
   payloadLines,
   resultLabel,
   resultTone,
   retentionLabel,
+  targetTypeLabel,
 } from "./activity-labels";
 
 const PAGE_SIZE = 40;
 const ANY = "__any__";
+/** Object kinds the backend resolves to a readable code (`commands::audit_log` TARGET_LABEL_SQL). */
+const RESOLVED_TARGETS = new Set(["work_order", "equipment", "work_permit", "user_account"]);
+
+/** The object of an event as it reads: "OT-2026-0042 — Fuite pompe", else its kind. */
+function objectText(t: TFunction<"activity">, row: AuditEventSummary): string {
+  if (row.target_label) return row.target_label;
+  if (!row.target_type) return "—";
+  const kind = targetTypeLabel(t, row.target_type);
+  return RESOLVED_TARGETS.has(row.target_type) && row.target_id && !row.from_other_device
+    ? t("audit.detail.objectUnknown", { type: kind })
+    : kind;
+}
 
 interface AuditLogViewerProps {
   className?: string;
@@ -77,7 +98,10 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
   const [detailLoadingMap, setDetailLoadingMap] = useState<Record<number, boolean>>({});
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
-  const [actionCode, setActionCode] = useState("");
+  const [action, setAction] = useState("");
+  const [objectSearch, setObjectSearch] = useState("");
+  const [options, setOptions] = useState<AuditFilterOptions | null>(null);
+  const [optionsError, setOptionsError] = useState<unknown>(null);
   const [result, setResult] = useState("");
   const [actorId, setActorId] = useState("");
   const [retentionClass, setRetentionClass] = useState("");
@@ -92,7 +116,8 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
 
   const draftFilter = useMemo<AuditFilter>(() => {
     const out: AuditFilter = { limit: PAGE_SIZE, offset: 0 };
-    if (actionCode.trim()) out.action_code = actionCode.trim();
+    if (action) out.action = action;
+    if (objectSearch.trim()) out.object_search = objectSearch.trim();
     if (result) out.result = result;
     if (retentionClass) out.retention_class = retentionClass;
     if (dateFrom) out.date_from = `${dateFrom}T00:00:00Z`;
@@ -100,13 +125,14 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
     const forcedActor = mySecurityOnly ? currentUserId : null;
     if (typeof forcedActor === "number") {
       out.actor_id = forcedActor;
-    } else if (actorId.trim()) {
+    } else if (actorId) {
       const parsed = Number(actorId);
       if (!Number.isNaN(parsed)) out.actor_id = parsed;
     }
     return out;
   }, [
-    actionCode,
+    action,
+    objectSearch,
     actorId,
     currentUserId,
     dateFrom,
@@ -132,6 +158,20 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
       setLoading(false);
     }
   }, [applied]);
+
+  const loadOptions = useCallback(async () => {
+    setOptionsError(null);
+    try {
+      setOptions(await listAuditFilterOptions());
+    } catch (err) {
+      setOptions(null);
+      setOptionsError(err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOptions();
+  }, [loadOptions]);
 
   useEffect(() => {
     void getSessionInfo()
@@ -209,12 +249,17 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
     onChange: (v: string) => void,
     options: readonly string[],
     optionLabel: (code: string) => string,
+    disabled = false,
   ) => (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-xs text-text-muted">
         {label}
       </Label>
-      <Select value={value || ANY} onValueChange={(v) => onChange(v === ANY ? "" : v)}>
+      <Select
+        value={value || ANY}
+        onValueChange={(v) => onChange(v === ANY ? "" : v)}
+        disabled={disabled}
+      >
         <SelectTrigger id={id} aria-label={label} className="h-10">
           <SelectValue />
         </SelectTrigger>
@@ -237,19 +282,41 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
         <RefreshButton onRefresh={() => void loadData()} loading={loading} />
       </CardHeader>
       <CardContent className="space-y-3">
+        {optionsError != null ? (
+          <ErrorState
+            error={optionsError}
+            title={t("audit.filters.optionsLoadError")}
+            onRetry={() => void loadOptions()}
+            className="py-2"
+          />
+        ) : null}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="space-y-1">
-            <Label htmlFor="audit-filter-action-code" className="text-xs text-text-muted">
-              {t("audit.filters.action")}
+            <Label htmlFor="audit-filter-object" className="text-xs text-text-muted">
+              {t("audit.filters.objectSearch")}
             </Label>
             <Input
-              id="audit-filter-action-code"
+              id="audit-filter-object"
               className="h-10"
-              placeholder={t("audit.filters.actionHint")}
-              value={actionCode}
-              onChange={(e) => setActionCode(e.target.value)}
+              placeholder={t("audit.filters.objectSearchHint")}
+              value={objectSearch}
+              onChange={(e) => setObjectSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setApplied({ ...draftFilter, offset: 0 });
+              }}
             />
           </div>
+          {selectFilter(
+            "audit-filter-action",
+            t("audit.filters.action"),
+            action,
+            setAction,
+            [...(options?.actions ?? [])].sort((a, b) =>
+              eventLabel(t, a).localeCompare(eventLabel(t, b)),
+            ),
+            (c) => eventLabel(t, c),
+            options == null,
+          )}
           {selectFilter(
             "audit-filter-result",
             t("audit.filters.result"),
@@ -258,19 +325,15 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
             AUDIT_RESULT_OPTIONS,
             (c) => resultLabel(t, c),
           )}
-          <div className="space-y-1">
-            <Label htmlFor="audit-filter-actor-id" className="text-xs text-text-muted">
-              {t("audit.filters.userNumber")}
-            </Label>
-            <Input
-              id="audit-filter-actor-id"
-              inputMode="numeric"
-              className="h-10"
-              disabled={mySecurityOnly}
-              value={actorId}
-              onChange={(e) => setActorId(e.target.value)}
-            />
-          </div>
+          {selectFilter(
+            "audit-filter-actor",
+            t("audit.filters.user"),
+            actorId,
+            setActorId,
+            (options?.actors ?? []).map((a) => String(a.id)),
+            (id) => options?.actors.find((a) => String(a.id) === id)?.label ?? id,
+            options == null || mySecurityOnly,
+          )}
           {selectFilter(
             "audit-filter-retention-class",
             t("audit.filters.retention"),
@@ -311,7 +374,8 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
             className="h-10"
             variant="outline"
             onClick={() => {
-              setActionCode("");
+              setAction("");
+              setObjectSearch("");
               setResult("");
               setActorId("");
               setRetentionClass("");
@@ -377,7 +441,10 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
           <ul className="divide-y divide-surface-border rounded-md border border-surface-border">
             {visibleItems.map((row) => {
               const detail = detailsMap[row.id];
-              const lines = payloadLines(detail?.details_json);
+              const lines = payloadLines(detail?.details_json, t, {
+                hideSummary: hasEventLabel(t, row.action_code),
+              });
+              const changes = payloadChanges(detail?.details_json);
               return (
                 <li key={row.id} className="px-3 py-2 text-sm">
                   <button
@@ -390,12 +457,14 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       <span className="block truncate font-medium text-text-primary">
                         {eventLabel(t, row.action_code)}
                       </span>
-                      <span className="block truncate font-mono text-[11px] text-text-muted">
-                        {row.action_code}
-                      </span>
+                      {row.target_type ? (
+                        <span className="block truncate text-xs text-text-muted">
+                          {objectText(t, row)}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="text-xs text-text-secondary">
-                      {row.actor_username ?? t("feed.system")}
+                      {row.actor_display_name ?? row.actor_username ?? t("feed.system")}
                     </span>
                     <StatusChip label={authContextLabel(t, row.auth_context)} tone="neutral" />
                     <StatusChip
@@ -418,8 +487,16 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
                         <dt className="text-text-muted">{t("audit.detail.target")}</dt>
                         <dd>
-                          {row.target_type ? humanizeCode(row.target_type) : "—"}
-                          {row.target_id ? ` · ${row.target_id}` : ""}
+                          {row.target_type ? (
+                            <>
+                              <span className="text-text-muted">
+                                {targetTypeLabel(t, row.target_type)}
+                              </span>
+                              {row.target_label ? ` · ${row.target_label}` : ""}
+                            </>
+                          ) : (
+                            "—"
+                          )}
                         </dd>
                         <dt className="text-text-muted">{t("audit.detail.retention")}</dt>
                         <dd>{retentionLabel(t, row.retention_class)}</dd>
@@ -430,6 +507,14 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                           </div>
                         ))}
                       </dl>
+                      {detail && changes.length > 0 ? <AuditChangeList changes={changes} /> : null}
+                      {detail && changes.length === 0 && row.target_type === "work_order" ? (
+                        <p className="text-text-muted">
+                          {payloadChangesUnavailable(detail.details_json)
+                            ? t("audit.detail.changesUnavailable")
+                            : t("audit.detail.noChanges")}
+                        </p>
+                      ) : null}
                       {row.from_other_device ? (
                         <p className="text-text-muted" data-testid="history-from-other-device">
                           {tShell("sync.history.fromOtherDevice")}
@@ -441,6 +526,12 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                             {t("audit.detail.technical")}
                           </summary>
                           <p className="mt-1 break-all font-mono">
+                            {row.action_code}
+                            {row.target_type
+                              ? ` · ${row.target_type}${row.target_id ? ` #${row.target_id}` : ""}`
+                              : ""}
+                          </p>
+                          <p className="break-all font-mono">
                             {t("audit.detail.before")}: {detail.before_hash ?? "—"}
                           </p>
                           <p className="break-all font-mono">

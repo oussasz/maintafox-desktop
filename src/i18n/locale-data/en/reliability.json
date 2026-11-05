@@ -782,6 +782,35 @@
       "to_check_other": "{{count}} to check",
       "no_operating_hours": "No operating hours"
     },
+    "methods": {
+      "title": "Which analysis?",
+      "hint": "Tick one or more assets of the same kind in the list below, then choose the analysis.",
+      "selectTitle": "No asset ticked",
+      "selectBody": "First tick one or more assets in the list below, then start the analysis again.",
+      "choose": "Choose assets",
+      "start": "Analyse the selection ({{count}})",
+      "weibull": {
+        "title": "Life analysis (Weibull)",
+        "line": "Estimates when and how the asset fails: wear-out, early failure or random failure."
+      },
+      "fmeca": {
+        "title": "FMECA",
+        "line": "Lists the possible failures, their cause and severity, to decide where to act first."
+      },
+      "rcm": {
+        "title": "RCM (reliability-centred maintenance)",
+        "line": "Picks the right action for each failure: inspection, planned replacement or nothing."
+      },
+      "ishikawa": {
+        "title": "Ishikawa (cause tree)",
+        "line": "Looks for the causes of a repeating failure: people, method, equipment, environment, material."
+      },
+      "studies": {
+        "title": "Saved studies",
+        "line": "Resume a study in progress or review the decisions already taken.",
+        "open": "See the studies"
+      }
+    },
     "studies": {
       "title": "Saved studies",
       "hint": "A study keeps its scope, the excluded records with their reason, the costs and the decisions.",

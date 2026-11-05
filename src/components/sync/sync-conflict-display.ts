@@ -32,6 +32,7 @@ export const KNOWN_SYNC_ENTITY_TYPES = new Set([
   "purchase_orders",
   "procurement_requisitions",
   "goods_receipts",
+  "repairable_orders",
   "inventory_suppliers",
   "personnel",
   "personnel_availability_blocks",
@@ -240,7 +241,9 @@ const CODE_FIELDS = [
   "di_code",
   "employee_code",
   "po_number",
-  "requisition_number",
+  "req_number",
+  "gr_number",
+  "order_code",
   "article_code",
   "permit_code",
   "plan_code",
@@ -428,11 +431,27 @@ export function conflictActions(
   return [...primary, ...(withTriage ? (["retry_later", "escalate"] as const) : []), "dismiss"];
 }
 
-/** The number a received record carries (`code` or `employee_code`) — for CODE_CLASH. */
+/**
+ * Columns holding a device-generated number (`sync::code_clash::NUMBERED_TABLES`): work orders,
+ * requests, permits and PM plans (`code`), people, purchase requisitions, purchase orders, goods
+ * receipts and repair orders.
+ */
+const CLASH_NUMBER_FIELDS = [
+  "code",
+  "employee_code",
+  "req_number",
+  "po_number",
+  "gr_number",
+  "order_code",
+];
+
+/** The number a received record carries — for CODE_CLASH. */
 export function clashingNumber(c: SyncConflictRecord): string | null {
   const payload = parsePayload(c.inbound_payload_json);
   if (!payload) return null;
-  const value = payload["code"] ?? payload["employee_code"];
+  const value = CLASH_NUMBER_FIELDS.map((field) => payload[field]).find(
+    (v) => typeof v === "string",
+  );
   return typeof value === "string" ? value : null;
 }
 

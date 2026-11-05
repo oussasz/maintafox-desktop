@@ -1253,6 +1253,26 @@ pub(crate) async fn close_preflight(
         preflight.add("GATE_CLOSEOUT_PARTS_REQUIRED: Consommation de pieces requise. (Parts actuals required.)");
     }
 
+    // (b2) No part "à sortir" left (L3-21): the storekeeper issues it, or cancels it with a reason,
+    // so the parts used on the work order are the parts that left the store.
+    let to_issue = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM work_order_parts \
+             WHERE work_order_id = ? AND pending_issue_qty > 0 AND consumption_status <> 'cancelled'",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("parts to issue count")))?
+        .try_get::<i64>("", "cnt")
+        .map_err(|e| decode_err("parts to issue cnt", e))?;
+    if to_issue > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_PARTS_TO_ISSUE:count={to_issue}: Clôture bloquée : {to_issue} pièce(s) à sortir du magasin. \
+             Le magasinier les sort ou les annule avec un motif. ({to_issue} part(s) still to issue from the store.)"
+        ));
+    }
+
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
         let fd_row = conn
@@ -1589,6 +1609,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     };
 
     let txn = db.begin().await?;
+    // The work order as it was, read in the close's transaction, for the fields the close changes
+    // (audit event `wo.closed`).
+    let before_close = queries::get_work_order(&txn, input.wo_id).await?;
 
     // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -1807,6 +1830,22 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(db, input.wo_id, "wo.closed", Some(input.actor_id), None, None).await;
 
+    let closed = queries::get_work_order(db, input.wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.wo_id.to_string(),
+        })?;
+    // The fields the close changed (status, closing date…), old → new, for the audit trail; only
+    // when the close was the only write since it read the work order (`sole_write_changes`).
+    let detail_json = before_close.as_ref().map(|before| {
+        match crate::wo::audit::sole_write_changes(before, &closed) {
+            Some(changes) => serde_json::json!({ "changes": changes }),
+            None => serde_json::json!({ "changes_unavailable": true }),
+        }
+        .to_string()
+    });
+
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(
         db,
@@ -1815,18 +1854,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             actor_id: Some(actor_i32),
             entity_type: Some("work_order"),
             entity_id: Some(wo_id_str.as_str()),
-            summary: "Work order closed",
+            summary: "OT clôturé",
+            detail_json,
             ..Default::default()
         },
     )
     .await;
 
-    queries::get_work_order(db, input.wo_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })
+    Ok(closed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -512,13 +512,20 @@ pub(crate) mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("part");
 
-        parts::record_actual_usage(&db, part.id, 1.0, Some(10.0))
-            .await
-            .expect("usage");
+        parts::record_actual_usage(
+            &db,
+            part.id,
+            1.0,
+            Some(10.0),
+            crate::wo::parts::StockAuthority::MayMoveStock,
+        )
+        .await
+        .expect("usage");
 
         costs::update_service_cost(
             &db,

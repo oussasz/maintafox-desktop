@@ -124,6 +124,8 @@ export interface RecordPmMeterReadingInput {
   reading_value: number;
   reading_at: string | null;
   kind: PmMeterReadingKind | null;
+  /** Set once the person has confirmed a value far above the meter's usual use. */
+  confirm_jump?: boolean;
 }
 
 const PmPlanSchema = z.object({
@@ -417,8 +419,8 @@ export function isReportedPmError(err: unknown): boolean {
   return err instanceof PmIpcError && err.reported;
 }
 
-function mapInvokeError(err: unknown): never {
-  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, true, ipcErrorDetails(err));
+function mapInvokeError(err: unknown, reported = true): never {
+  if (isIpcError(err)) throw new PmIpcError(err.code, err.message, reported, ipcErrorDetails(err));
   if (err instanceof Error) throw err;
   throw new Error(String(err));
 }
@@ -427,12 +429,14 @@ async function invokeParsed<T>(
   command: string,
   args: Record<string, unknown> | undefined,
   schema: z.ZodType<T>,
+  options?: { notifyOnError?: boolean },
 ): Promise<T> {
   let raw: unknown;
   try {
-    raw = await invoke<unknown>(command, args);
+    raw = await invoke<unknown>(command, args, options);
   } catch (err) {
-    mapInvokeError(err);
+    // Without the global toast the screen reports the failure itself (reported = false).
+    mapInvokeError(err, options?.notifyOnError !== false);
   }
   try {
     return schema.parse(raw);
@@ -610,7 +614,10 @@ export function listPmAssetMeters(equipmentId: number): Promise<PmAssetMeter[]> 
 }
 
 export function recordPmMeterReading(input: RecordPmMeterReadingInput): Promise<PmAssetMeter> {
-  return invokeParsed("record_pm_meter_reading", { input }, PmAssetMeterSchema);
+  // The dialog shows the refusals itself: an unusual value asks for a confirmation, not a toast.
+  return invokeParsed("record_pm_meter_reading", { input }, PmAssetMeterSchema, {
+    notifyOnError: false,
+  });
 }
 
 export function createPmRevisionFromFinding(findingId: number): Promise<PmPlanVersion> {

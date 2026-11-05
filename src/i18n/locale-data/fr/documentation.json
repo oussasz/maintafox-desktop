@@ -66,11 +66,6 @@
   "errors": {
     "fileTooLarge": "Le fichier dépasse {{mb}} Mo."
   },
-  "size": {
-    "bytes": "{{value}} o",
-    "kb": "{{value}} Ko",
-    "mb": "{{value}} Mo"
-  },
   "category": {
     "description": "Documents de la catégorie « {{name}} »."
   }

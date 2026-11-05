@@ -2466,6 +2466,74 @@ pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &Invento
     Ok(reservation_id)
 }
 
+/// Add `quantity` to an open reservation, at its own location (a work-order part used above its
+/// planned quantity, L3-21): the same availability check and RESERVE movement as a new
+/// reservation, so the work-order line keeps one reservation for everything it took and a later
+/// return finds it there.
+pub(crate) async fn top_up_reservation_in<C: ConnectionTrait>(
+    tx: &C,
+    reservation_id: i64,
+    quantity: f64,
+    notes: Option<&str>,
+) -> AppResult<()> {
+    if quantity <= 0.0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
+        ]));
+    }
+    let reservation = load_reservation_by_id(tx, reservation_id).await?;
+    if reservation.status == "released" {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_RESERVATION_RELEASED: Reservation already released.".to_string(),
+        ]));
+    }
+    let warehouse_id = ensure_active_mutation_context(tx, reservation.article_id, reservation.location_id).await?;
+    let (on_hand, reserved) = get_balance_snapshot(tx, reservation.article_id, reservation.location_id).await?;
+    let available = on_hand - reserved;
+    if available < quantity {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_INV_INSUFFICIENT_STOCK:available={available}: Insufficient available stock for reservation (available: {available})."
+        )]));
+    }
+    upsert_balance(
+        tx,
+        reservation.article_id,
+        warehouse_id,
+        reservation.location_id,
+        on_hand,
+        reserved + quantity,
+    )
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE stock_reservations
+         SET quantity_reserved = quantity_reserved + ?,
+             status = CASE WHEN quantity_issued > 0 THEN 'partial' ELSE 'active' END,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE id = ?",
+        [quantity.into(), reservation.id.into()],
+    ))
+    .await?;
+    insert_inventory_transaction(
+        tx,
+        reservation.article_id,
+        warehouse_id,
+        reservation.location_id,
+        Some(reservation.id),
+        "RESERVE",
+        quantity,
+        &reservation.source_type,
+        reservation.source_id,
+        reservation.source_ref.as_deref(),
+        None,
+        notes,
+        None,
+    )
+    .await?;
+    crate::inventory::reservations::recompute_reserved_in(tx, reservation.article_id, reservation.location_id).await?;
+    Ok(())
+}
+
 /// Issue against an existing reservation (WO planned / used parts). Kept for the WO module; it
 /// posts through the same path as the issue desk (`inventory::issue::issue_stock`): lots picked
 /// FEFO for tracked articles, cost at the weighted average, closed periods refused.

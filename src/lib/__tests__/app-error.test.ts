@@ -264,10 +264,12 @@ describe("describeAppError (refused right)", () => {
     await i18n.changeLanguage("fr");
     await i18n.loadNamespaces("admin");
     expect(describeAppError(refused).description).toBe(
-      "Droit requis : Clôturer les ordres de travail",
+      "Droit requis : Clôturer les ordres de travail. Demandez-le à votre administrateur.",
     );
     await i18n.changeLanguage("en");
-    expect(describeAppError(refused).description).toBe("Required right: Close work orders");
+    expect(describeAppError(refused).description).toBe(
+      "Required right: Close work orders. Ask your administrator for it.",
+    );
     expect(describeAppError(refused).technical).toContain(P.OT_CLOSE);
   });
 

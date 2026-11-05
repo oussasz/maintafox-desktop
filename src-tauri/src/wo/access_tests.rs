@@ -137,7 +137,8 @@ async fn fixture() -> Fixture {
     let eq_none = equipment(&db, "NONE", None).await;
     let wo_a = create(&db, eq_a, site, "Leak on site A").await;
     let wo_a1 = create(&db, eq_a1, site, "Noise on line A1").await;
-    let wo_b = create(&db, eq_b, plant, "Leak on site B").await;
+    // "Zebra" occurs in no site-A text: the search test below needs a word only site B's order has.
+    let wo_b = create(&db, eq_b, plant, "Zebra leak on site B").await;
     let wo_none = create(&db, eq_a, plant, "Old work order without site").await;
     // A row from before the node was required: stored without an org node.
     exec(
@@ -253,7 +254,8 @@ async fn a_site_user_lists_their_sites_only_and_is_told_how_many_are_hidden_and_
 
     // The hidden counts ignore the user's filters: a search matching site B's title (or
     // anything else) must not tell a site-A user whether it matched.
-    for search in ["site B", "no work order says this"] {
+    // Every word must match, so the terms hold a word only site B's title has (or none at all).
+    for search in ["zebra", "zebra leak", "no work order says this"] {
         let searched = queries::list_work_orders_in_scope(
             &f.db,
             WoListFilter {
@@ -585,7 +587,7 @@ async fn actions_and_child_records_are_checked_at_the_work_orders_site() {
     let mut parts = Vec::new();
     for wo_id in [f.wo_a, f.wo_b, f.wo_none] {
         parts.push(
-            crate::wo::parts::add_planned_part(&f.db, part(wo_id))
+            crate::wo::parts::add_planned_part(&f.db, part(wo_id), crate::wo::parts::StockAuthority::MayMoveStock)
                 .await
                 .expect("part line")
                 .id,

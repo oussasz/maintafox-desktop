@@ -2384,7 +2384,22 @@ export interface MeterReading {
   source_reference: string | null;
   quality_flag: string;
   created_by_id: number | null;
+  created_by_name: string | null;
   created_at: string;
+  entity_sync_id: string;
+  is_cancelled: boolean;
+  cancel_reason: string | null;
+  cancelled_by_name: string | null;
+  cancelled_at: string | null;
+}
+
+export interface MeterReadingWarning {
+  delta: number;
+  expected_delta: number;
+  rate_per_day: number;
+  days: number;
+  previous_value: number;
+  previous_at: string;
 }
 
 export interface RecordMeterReadingPayload {
@@ -5903,6 +5918,34 @@ export interface WoExecPart {
   is_required: boolean;
   /** Stock unit symbol of the article; null for a free-text line. */
   unit_symbol?: string | null;
+  /**
+   * Used quantity of a stock article not yet issued from the store ("à sortir"): recorded by
+   * someone without the stock right (inv.manage); the storekeeper issues it or cancels it.
+   */
+  pending_issue_qty: number;
+}
+
+/** A work-order part line "à sortir", with its work order, for the storekeeper's issue desk. */
+export interface WoPartToIssue extends WoExecPart {
+  wo_code: string;
+  wo_title: string | null;
+  wo_status_code: string;
+  /** `warehouse/location` codes of the line's stock location, when it has one. */
+  location_label: string | null;
+}
+
+export interface IssueWoPartToIssueInput {
+  wo_part_id: number;
+  /** The quantity issued: the quantity "à sortir", or a correction of it (reason required). */
+  quantity: number;
+  /** The location the part leaves from (a line without a reservation). */
+  stock_location_id: number | null;
+  correction_reason: string | null;
+}
+
+export interface CancelWoPartToIssueInput {
+  wo_part_id: number;
+  reason: string;
 }
 
 // ── Plan vs Actual adherence ──────────────────────────────────────────────────
@@ -11088,6 +11131,8 @@ export interface WorkPermitStatusInput {
   id: number;
   status: WorkPermitStatus;
   expected_row_version: number;
+  /** Required (not blank) when cancelling the permit; ignored otherwise. */
+  reason?: string | null;
 }
 
 export interface PermitSuspendInput {

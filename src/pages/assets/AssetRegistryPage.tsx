@@ -33,6 +33,7 @@ import {
 } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, TruncationNotice } from "@/components/ui/data-state";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
@@ -87,12 +88,18 @@ export function AssetRegistryPage() {
   const runSearch = useAssetSearchStore((s) => s.runSearch);
   const loadMore = useAssetSearchStore((s) => s.loadMore);
   const selectAsset = useAssetSearchStore((s) => s.selectAsset);
+  const selectedAssetId = useAssetSearchStore((s) => s.selectedResultId);
   const openCreateForm = useAssetStore((s) => s.openCreateForm);
   const showCreateForm = useAssetStore((s) => s.showCreateForm);
 
   const [view, setView] = useState<RegistryView>(readView);
   const [showFilters, setShowFilters] = useState(readShowFilters);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [openedFromLink, setOpenedFromLink] = useState(false);
+  // "Retour" only belongs to the asset opened from a link: forget it once the sheet is closed.
+  useEffect(() => {
+    if (selectedAssetId == null) setOpenedFromLink(false);
+  }, [selectedAssetId]);
 
   useEffect(() => {
     void runSearch();
@@ -110,7 +117,10 @@ export function AssetRegistryPage() {
     const raw = searchParams.get("assetId");
     if (!raw) return;
     const id = Number(raw);
-    if (Number.isInteger(id) && id > 0) selectAsset(id);
+    if (Number.isInteger(id) && id > 0) {
+      setOpenedFromLink(hasScreenToReturnTo());
+      selectAsset(id);
+    }
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -385,7 +395,17 @@ export function AssetRegistryPage() {
         </>
       )}
 
-      <AssetDetailDialog />
+      <AssetDetailDialog
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                selectAsset(null);
+                void navigate(-1);
+              },
+            }
+          : {})}
+      />
       <AssetCreateForm />
       <AssetEditForm />
       <WoFormDialog />

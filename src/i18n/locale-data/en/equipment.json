@@ -519,7 +519,8 @@
     "apply": {
       "confirmTitle": "Apply the import?",
       "confirmBody": "{{valid}} valid row(s) and {{warning}} with warnings will be created or updated in the register; {{error}} row(s) in error are not imported. Changed assets do not return to their previous state automatically.",
-      "run": "Apply Import"
+      "run": "Apply Import",
+      "noneImportable": "No valid row to import. Fix the errors in the file or include the rows with warnings."
     },
     "done": {
       "title": "Import Complete",
@@ -547,6 +548,7 @@
     "reasonPlaceholder": "Explain the reason for decommissioning…",
     "blockerBanner": "Cannot decommission — {{count}} open work item(s). Close them first.",
     "blockerDetail": "blocks decommission",
+    "openBlockers": "View list",
     "pmWarning": "will be suspended",
     "iotWarning": "will be unlinked",
     "docInfo": "remain archived",
@@ -686,7 +688,7 @@
     "rollUp": "Include components",
     "rollUpScope_one": "Figures for this asset only.",
     "rollUpScope_other": "Figures for this asset and its components ({{count}} assets).",
-    "openRams": "Open in RAMS",
+    "openRams": "Analyse this asset",
     "kpi": {
       "workOrders": "Work orders",
       "openHint_one": "{{count}} open",
@@ -736,6 +738,22 @@
     "source": "Source",
     "reference": "Reference",
     "referenceHint": "For example the round, work order or sensor that gave the value.",
+    "readBy": "Read by",
+    "cancel": "Cancel this reading",
+    "cancelTitle": "Cancel reading — {{name}}",
+    "cancelIntro": "The reading of {{value}} {{unit}} on {{date}} stays in the history, marked “cancelled”, with your name and the reason. The meter goes back to the previous reading.",
+    "cancelReason": "Reason for cancelling",
+    "cancelReasonHint": "For example: typing error, wrong meter read.",
+    "cancelPmNote": "Maintenance work orders already created from this reading are not deleted: check them.",
+    "cancelThenRecord": "Then enter the correct reading",
+    "cancelConfirm": "Cancel the reading",
+    "cancelOnlyLatest": "Only the latest reading can be cancelled.",
+    "cancelledBadge": "Cancelled",
+    "cancelledBy": "Cancelled by {{name}} on {{date}} — {{reason}}",
+    "jumpTitle": "Unusual value",
+    "jumpBody": "This reading adds {{delta}} {{unit}} since the previous one ({{previous}} {{unit}}), while usual use gives about {{expected}} {{unit}} over the same period. Did you mean {{value}} {{unit}}?",
+    "jumpConfirm": "Yes, the value is correct",
+    "jumpBack": "Correct the value",
     "recordTitle": "New reading — {{name}}",
     "currentValue": "Current value: {{value}} {{unit}}",
     "errors": {
@@ -805,7 +823,6 @@
     "title": "Documents",
     "noPermission": "Viewing documents needs the Documentation view permission.",
     "saved": "{{name}} saved.",
-    "size": "{{kb}} KB",
     "download": "Download",
     "downloadNamed": "Download {{name}}",
     "upload": "Add a document",

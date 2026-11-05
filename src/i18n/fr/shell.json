@@ -26,6 +26,11 @@
   "user": {
     "menu": "Menu utilisateur",
     "profile": "Mon profil",
+    "language": "Langue",
+    "theme": "Affichage",
+    "themeLight": "Clair",
+    "themeDark": "Sombre",
+    "themeSystem": "Comme Windows",
     "settings": "Paramètres",
     "logout": "Déconnexion"
   },
@@ -316,13 +321,13 @@
       "idle": "À jour",
       "scheduled": "Démarrage de la synchronisation",
       "running": "Synchronisation",
-      "degraded": "Attention requise",
+      "degraded": "À vérifier",
       "paused": "En pause",
-      "blocked": "Arrêtée",
+      "blocked": "Sync arrêtée",
       "error": "Erreur de sync",
       "pausedTitle": "La synchronisation a été mise en pause par un opérateur",
-      "blockedTitle": "La synchronisation est arrêtée",
-      "degradedTitle": "La synchronisation demande votre attention (nouvel essai prévu ou conflits à examiner)",
+      "blockedTitle": "La synchronisation est arrêtée. Ouvrez le centre de synchronisation (icône nuage) pour en voir la raison.",
+      "degradedTitle": "La synchronisation demande votre attention : nouvel essai prévu ou conflits à examiner. Ouvrez le centre de synchronisation (icône nuage) pour les examiner.",
       "statusBar": "Sync : {{state}}"
     },
     "panel": {
@@ -409,6 +414,7 @@
       "purchase_orders": "Commande d'achat",
       "procurement_requisitions": "Demande d'achat",
       "goods_receipts": "Réception",
+      "repairable_orders": "Ordre de réparation",
       "inventory_suppliers": "Fournisseur",
       "personnel": "Personne",
       "personnel_availability_blocks": "Absence",
@@ -468,8 +474,13 @@
   "commandPalette": {
     "title": "Palette de commandes",
     "open": "Aller à un module…",
-    "placeholder": "Nom du module (ex. Ordres de travail)…",
-    "noResults": "Aucun module ne correspond à « {{query}} »"
+    "placeholder": "Module, numéro d'OT ou de demande, équipement…",
+    "kind": {
+      "workOrder": "Ordre de travail",
+      "request": "Demande",
+      "equipment": "Équipement"
+    },
+    "noResults": "Aucun résultat pour « {{query}} »"
   },
   "session": {
     "timeRemaining": "Session expire dans {{minutes}} min",
@@ -546,9 +557,14 @@
     "training": "Formations & habilitations",
     "analytics": "Analytique",
     "reliability": "Fiabilité (RAMS)",
+    "ramsWeibull": "Analyse de durée de vie (Weibull)",
+    "ramsFmeca": "AMDEC (défaillances, causes, gravité)",
+    "ramsRcm": "RCM (maintenance fondée sur la fiabilité)",
+    "ramsIshikawa": "Ishikawa (arbre des causes)",
     "budget": "Budget & coûts",
     "archive": "Archivage",
     "lookups": "Données de référence",
+    "imports": "Imports de données",
     "notifications": "Notifications",
     "documentation": "Documentation",
     "activity": "Journal d'activité",

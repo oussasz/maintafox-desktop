@@ -112,7 +112,7 @@
       },
       "buyer": {
         "name": "Buyer",
-        "description": "Purchase requisitions and orders, goods receipts. Nobody approves their own requisition or order; approval goes to a manager who holds the approval right, within their limit."
+        "description": "Purchase requisitions and orders. Does not record deliveries: receiving goes to the storekeeper, so that buying and receiving stay with two different people. Nobody approves their own requisition or order; approval goes to a manager who holds the approval right, within their limit."
       },
       "hseManager": {
         "name": "HSE manager",

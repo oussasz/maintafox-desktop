@@ -159,6 +159,10 @@ function permit(overrides: Partial<WorkPermitRecord> = {}): WorkPermitRecord {
     approved_by_name: null,
     approved_at: null,
     self_approved: false,
+    cancel_reason: null,
+    cancelled_by_id: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     ...overrides,
   };
 }

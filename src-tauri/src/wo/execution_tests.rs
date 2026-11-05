@@ -887,8 +887,10 @@ mod tests {
         // its nature (`set_work_order_type_nature`). Planned part lines: cancel (`cancel_planned_part`)
         // and the required / optional switch (`set_planned_part_required`). Migration 265: work on
         // retired equipment received by sync, to review (`list_retired_equipment_reviews`). The hourly
-        // rate shown before a labour entry is saved (`preview_wo_labor_rate`).
-        assert_eq!(wo_lines.len(), 77, "invoke_handler must contain exactly 77 WO commands");
+        // rate shown before a labour entry is saved (`preview_wo_labor_rate`). Migration 275 (L3-21):
+        // the parts "à sortir" list, issue and cancellation (`list_wo_parts_to_issue`,
+        // `issue_wo_part_to_issue`, `cancel_wo_part_to_issue`).
+        assert_eq!(wo_lines.len(), 80, "invoke_handler must contain exactly 80 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -1592,6 +1594,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await
         .expect("add execution part from stock");
@@ -1626,6 +1629,7 @@ mod tests {
                 origin: None,
                 is_required: true,
             },
+            crate::wo::parts::StockAuthority::MayMoveStock,
         )
         .await;
         assert!(result.is_err(), "issuing more than available must fail");
