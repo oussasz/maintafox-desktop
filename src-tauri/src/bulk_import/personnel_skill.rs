@@ -282,17 +282,19 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow]) -> AppResult<Vec
         let (status, message) = match (row.action.as_str(), n["personnel_id"].as_i64(), n["level"].as_i64()) {
             ("create" | "update", Some(p), Some(level)) => {
                 let rv = n["reference_value_id"].as_i64();
-                let written = match (existing, rv) {
-                    (None, None) => Err(AppError::ValidationFailed(vec![
-                        "GATE_BULK_IMPORT_SKILL_GONE: Cette compétence n'est plus dans la liste de référence."
-                            .to_string(),
-                    ])),
-                    _ => {
-                        crate::personnel::skills::record_imported_skill(db, p, rv.unwrap_or_default(), level, existing)
-                            .await
-                    }
-                };
-                match written {
+                // A row message, shown as it is in the import results (like the other row
+                // messages here), not a refusal of the command.
+                if existing.is_none() && rv.is_none() {
+                    out.push(RowApplied {
+                        row_id: row.id,
+                        status: "failed",
+                        message: "Cette compétence n'est plus dans la liste de référence.".to_string(),
+                    });
+                    continue;
+                }
+                match crate::personnel::skills::record_imported_skill(db, p, rv.unwrap_or_default(), level, existing)
+                    .await
+                {
                     Ok(()) => (if existing.is_some() { "updated" } else { "created" }, String::new()),
                     Err(AppError::Database(e)) => return Err(AppError::Database(e)),
                     Err(e) => ("failed", app_error_text(&e)),

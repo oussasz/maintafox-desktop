@@ -403,7 +403,6 @@
     "GATE_BULK_IMPORT_EMPTY": "The file has no line to import.",
     "GATE_BULK_IMPORT_NOT_FOUND": "This import batch does not exist.",
     "GATE_BULK_IMPORT_STATUS": "This batch was already applied or is no longer valid.",
-    "GATE_BULK_IMPORT_SKILL_GONE": "This skill is no longer in the reference list: check the file again.",
     "GATE_ASSET_IMPORT_CSV_ROW": "Import refused: the CSV file is invalid at line {{line}}.",
     "GATE_ASSET_IMPORT_EMPTY": "Import refused: the batch has no rows.",
     "GATE_ASSET_IMPORT_ORG_UNKNOWN": "Import refused: the location given does not exist in the active organisation.",
