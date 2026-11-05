@@ -193,8 +193,9 @@ export const defaultNavItems: NavItem[] = [
     path: "/imports",
     icon: <FileUp className="h-4 w-4" />,
     requiredPermission: P.ORG_MANAGE,
-    // Each import type names its own right (cost centres: fin.budget); the page lists only those.
-    alsoVisibleWith: [P.FIN_BUDGET],
+    // Each import type names its own right (cost centres: fin.budget; crews: per.manage); the page
+    // lists only those.
+    alsoVisibleWith: [P.FIN_BUDGET, P.PER_MANAGE],
   },
   {
     key: "documentation",

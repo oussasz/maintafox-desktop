@@ -344,7 +344,7 @@ const routes: RouteObject[] = [
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
                   {
-                    element: <PermissionRoute anyOf={[P.ORG_MANAGE, P.FIN_BUDGET]} />,
+                    element: <PermissionRoute anyOf={[P.ORG_MANAGE, P.FIN_BUDGET, P.PER_MANAGE]} />,
                     children: [{ path: "imports", element: <DataImportPage /> }],
                   },
                   { path: "notifications", element: <NotificationsPage /> },
