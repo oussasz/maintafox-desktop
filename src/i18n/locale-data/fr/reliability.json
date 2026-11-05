@@ -730,14 +730,25 @@
     },
     "kpi": {
       "availability": "Disponibilité opérationnelle",
-      "availabilityHint": "Aₒ du parc, {{period}}",
+      "availabilityHint": "Aₒ = MTBF / (MTBF + MTTR), {{period}}",
       "mtbf": "MTBF",
-      "mttr": "MTTR",
-      "mttrHint": "temps de réparation actif moyen",
+      "mtbfHint": "défaillances éligibles (ISO 14224), {{basis}}",
+      "mttr": "MTTR (remise en service)",
+      "mttrHint": "temps moyen de la panne à la remise en service, {{period}}",
+      "repair": "Réparation active moyenne",
+      "repairHint": "temps de réparation active moyen, {{period}}",
       "failures": "Défaillances",
       "failuresHint": "{{hours}} h d'arrêt sur la période",
       "dataQuality": "Qualité des données",
-      "dataQualityHint": "{{mode}} sans mode, {{cause}} sans cause"
+      "dataQualityHint": "complètes = mode + cause + mécanisme ; {{mode}} sans mode, {{cause}} sans cause, {{mechanism}} sans mécanisme",
+      "tooShort": "période trop courte pour le MTBF (moins de {{days}} jours)",
+      "excluded": {
+        "notEligible": "{{count}} exclus : non éligibles au MTBF",
+        "failedAt": "{{count}} exclus : heure de panne manquante",
+        "restoredAt": "{{count}} exclus : heure de remise en service manquante",
+        "inconsistent": "{{count}} exclus : remise en service avant la panne",
+        "repairHours": "{{count}} exclus : temps de réparation manquant"
+      }
     },
     "fleet": {
       "period": "Période",
@@ -749,7 +760,7 @@
       "allClasses": "Toutes les classes",
       "basisOperating": "sur heures de marche",
       "basisCalendar": "sur heures calendaires (pas d'heures de marche)",
-      "basisMixed": "heures de marche ({{operating}} équip.) et calendaires ({{calendar}} équip.)",
+      "basisMixed": "heures de marche : {{operating}} équipements / calendrier : {{calendar}}",
       "studySelection": "Étudier la sélection",
       "studyN_one": "Étudier 1 équipement",
       "studyN_other": "Étudier {{count}} équipements",
@@ -1636,7 +1647,7 @@
       "noHours": "Sans heures de marche",
       "review": "Points de revue",
       "codingTitle": "Codage des défaillances incomplet",
-      "codingHint": "OT correctifs clôturés sans mode, cause ou mécanisme ISO 14224 : ils sortent des analyses ou les affaiblissent.",
+      "codingHint": "Défaillances de la période (mêmes filtres que l'accueil RAMS) issues d'un OT, sans mode, cause (ou « non déterminée ») ou mécanisme ISO 14224 : elles sortent des analyses ou les affaiblissent.",
       "noCodingGap": "Toutes les défaillances de la période sont codées.",
       "closedAt": "Clôture",
       "gap": "Manque",

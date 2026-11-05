@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StudyDataStep } from "@/components/reliability/study/StudyDataStep";
@@ -56,17 +56,32 @@ const fleetView = {
   period_start: "2024-10-01T00:00:00Z",
   period_end: TS,
   kpis: {
-    equipment_count: 2,
+    period_start: "2025-10-01T00:00:00Z",
+    period_end: TS,
+    window_too_short: false,
+    equipment_count: 3,
     failure_count: 10,
     downtime_hours: 244,
+    exposure_hours: 20790,
     availability_operational: 0.964,
     mtbf_hours: 2310,
+    eligible_failure_count: 9,
+    mtbf_excluded_not_eligible: 1,
     mttr_hours: 6.8,
+    restore_count: 8,
+    restore_excluded_missing_failed_at: 0,
+    restore_excluded_missing_restored_at: 2,
+    restore_excluded_inconsistent: 0,
+    mean_active_repair_hours: 3.2,
+    active_repair_count: 10,
+    repair_excluded_missing_hours: 0,
     data_quality: 0.82,
+    records_complete: 8,
     records_missing_mode: 1,
     records_missing_cause: 1,
+    records_missing_mechanism: 2,
     operating_basis_count: 2,
-    calendar_basis_count: 0,
+    calendar_basis_count: 1,
   },
   rows: [
     {
@@ -175,6 +190,26 @@ describe("RamsFleetPage", () => {
     expect(screen.getByText("96.4")).toBeInTheDocument();
     expect(screen.getByText("2,310")).toBeInTheDocument();
     expect(screen.getByText("2 to check")).toBeInTheDocument();
+    // Each figure states its definition, its hours basis and what it left out.
+    expect(
+      screen.getByText(
+        "eligible failures (ISO 14224), operating hours: 2 equipment / calendar: 1 · 1 excluded: not MTBF-eligible",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "mean time from failure to back in service, Last 12 months · 2 excluded: back-in-service time missing",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Mean active repair")).toBeInTheDocument();
+    expect(screen.getByText("3.2")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "complete = mode + cause + mechanism; 1 without mode, 1 without cause, 2 without mechanism",
+      ),
+    ).toBeInTheDocument();
+    // Default window: the last 12 months.
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("12");
     const start = screen.getByRole("button", { name: /Study the selection/ });
     expect(start).toBeDisabled();
 
@@ -241,7 +276,69 @@ describe("RamsFleetPage", () => {
     );
     expect(await screen.findByText("No failures in the period")).toBeInTheDocument();
   });
+
+  it("gives counts only on a window too short for the MTBF", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          kpis: {
+            ...fleetView.kpis,
+            window_too_short: true,
+            mtbf_hours: null,
+            mttr_hours: null,
+            mean_active_repair_hours: null,
+            availability_operational: null,
+          },
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(screen.getAllByText("period too short for the MTBF (under 90 days)").length).toBe(4);
+  });
+
+  it("opens the quality page on the same period, site and class", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+          equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <Routes>
+          <Route path="/reliability" element={<RamsFleetPage />} />
+          <Route path="/reliability/data-quality" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Site" }), { target: { value: "4" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "7" } });
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+        filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Data quality" }));
+    expect(await screen.findByText("?months=12&site=4&class=7")).toBeInTheDocument();
+  });
 });
+
+function LocationProbe() {
+  const location = useLocation();
+  return <p>{location.search}</p>;
+}
 
 const dataset: StudyDataset = {
   study,

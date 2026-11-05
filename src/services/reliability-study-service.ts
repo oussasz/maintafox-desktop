@@ -14,16 +14,40 @@ const optStr = z.string().nullable();
 
 const FilterOptionSchema = z.object({ id: num, label: z.string(), depth: num });
 
+/**
+ * Fleet figures of one scope (period, class, site) — the one live calculation shared by RAMS and
+ * Analytique (`src-tauri/src/reliability/study/fleet_kpis.rs`, definitions there).
+ */
 const FleetKpisSchema = z.object({
+  period_start: z.string(),
+  period_end: z.string(),
+  /** Window under 90 days: MTBF, MTTR, active repair and Aₒ are not given. */
+  window_too_short: z.boolean(),
   equipment_count: num,
   failure_count: num,
   downtime_hours: num,
+  exposure_hours: num,
+  /** Aₒ = MTBF / (MTBF + MTTR restore). */
   availability_operational: optNum,
+  /** Σ hours / MTBF-eligible failures. */
   mtbf_hours: optNum,
+  eligible_failure_count: num,
+  mtbf_excluded_not_eligible: num,
+  /** Mean time to restore: failure → back in service. */
   mttr_hours: optNum,
+  restore_count: num,
+  restore_excluded_missing_failed_at: num,
+  restore_excluded_missing_restored_at: num,
+  restore_excluded_inconsistent: num,
+  mean_active_repair_hours: optNum,
+  active_repair_count: num,
+  repair_excluded_missing_hours: num,
+  /** Complete records (mode + cause or not determined + mechanism) / records. */
   data_quality: optNum,
+  records_complete: num,
   records_missing_mode: num,
   records_missing_cause: num,
+  records_missing_mechanism: num,
   operating_basis_count: num,
   calendar_basis_count: num,
 });
@@ -58,6 +82,7 @@ const FleetViewSchema = z.object({
 });
 
 export type FleetView = z.infer<typeof FleetViewSchema>;
+export type FleetKpis = z.infer<typeof FleetKpisSchema>;
 export type FleetAssetRow = z.infer<typeof FleetAssetRowSchema>;
 export type FilterOption = z.infer<typeof FilterOptionSchema>;
 

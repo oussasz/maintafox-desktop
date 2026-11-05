@@ -17,8 +17,10 @@ import {
   RAMS_SELECT_CLASS,
   RAMS_TABLE_FRAME,
   RamsCallout,
+  RAMS_DEFAULT_MONTHS,
   RamsCard,
   type RamsPeriodMonths,
+  dataQualityHref,
   periodFromMonths,
 } from "@/components/reliability/study/rams-ui";
 import { Button } from "@/components/ui/button";
@@ -53,15 +55,15 @@ const ANALYSIS_METHODS: readonly { key: string; step: AnalysisStep }[] = [
   { key: "rcm", step: "rcm" },
   { key: "ishikawa", step: "fmeca" },
 ];
-/** Data-quality worklist of the reliability module (records without mode / cause, exposure gaps). */
-const DATA_QUALITY_WORKLIST = "/reliability/data-quality";
+/** Shortest window giving MTBF / MTTR / Aₒ (`fleet_kpis::MIN_RATE_WINDOW_DAYS`). */
+const MIN_RATE_WINDOW_DAYS = 90;
 
 export function RamsFleetPage() {
   const { t } = useTranslation("reliability");
   const { formatNumber, formatDecimal, formatPercent, formatDate } = useFormatters();
   const navigate = useNavigate();
   const { can } = usePermissions();
-  const [months, setMonths] = useState<RamsPeriodMonths>(24);
+  const [months, setMonths] = useState<RamsPeriodMonths>(RAMS_DEFAULT_MONTHS);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [classId, setClassId] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -193,6 +195,15 @@ export function RamsFleetPage() {
               calendar: k.calendar_basis_count,
             });
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
+  const qualityHref = dataQualityHref(months, orgNodeId, classId);
+  /** "N exclus : <champ> manquant" parts of a figure, only the non-zero ones. */
+  const exclusions = (parts: readonly (readonly [string, number])[]) =>
+    parts.filter(([, n]) => n > 0).map(([key, n]) => t(`rams.kpi.excluded.${key}`, { count: n }));
+  /** Hint of a rate figure: its definition, then what was left out, or why it is not given. */
+  const rateHint = (definition: string, excluded: string[]) =>
+    k?.window_too_short
+      ? t("rams.kpi.tooShort", { days: MIN_RATE_WINDOW_DAYS })
+      : [definition, ...excluded].join(" · ");
 
   return (
     <ModulePageShell
@@ -214,11 +225,7 @@ export function RamsFleetPage() {
                 : t("rams.fleet.studyN", { count: selected.length })}
             </Button>
           </PermissionGate>
-          <Button
-            variant="outline"
-            className="h-11"
-            onClick={() => navigate(DATA_QUALITY_WORKLIST)}
-          >
+          <Button variant="outline" className="h-11" onClick={() => navigate(qualityHref)}>
             <ShieldCheck className="h-4 w-4" aria-hidden />
             {t("rams.quality.title")}
           </Button>
@@ -362,19 +369,42 @@ export function RamsFleetPage() {
                   : formatDecimal(k.availability_operational * 100, 1)
               }
               unit="%"
-              hint={t("rams.kpi.availabilityHint", { period: periodLabel })}
+              hint={rateHint(t("rams.kpi.availabilityHint", { period: periodLabel }), [])}
             />
             <KpiTile
               label={t("rams.kpi.mtbf")}
               value={hours(k?.mtbf_hours)}
               unit="h"
-              hint={basisHint}
+              hint={rateHint(
+                t("rams.kpi.mtbfHint", { basis: basisHint }),
+                exclusions([["notEligible", k?.mtbf_excluded_not_eligible ?? 0]]),
+              )}
             />
             <KpiTile
               label={t("rams.kpi.mttr")}
               value={k?.mttr_hours == null ? "—" : formatDecimal(k.mttr_hours, 1)}
               unit="h"
-              hint={t("rams.kpi.mttrHint")}
+              hint={rateHint(
+                t("rams.kpi.mttrHint", { period: periodLabel }),
+                exclusions([
+                  ["failedAt", k?.restore_excluded_missing_failed_at ?? 0],
+                  ["restoredAt", k?.restore_excluded_missing_restored_at ?? 0],
+                  ["inconsistent", k?.restore_excluded_inconsistent ?? 0],
+                ]),
+              )}
+            />
+            <KpiTile
+              label={t("rams.kpi.repair")}
+              value={
+                k?.mean_active_repair_hours == null
+                  ? "—"
+                  : formatDecimal(k.mean_active_repair_hours, 1)
+              }
+              unit="h"
+              hint={rateHint(
+                t("rams.kpi.repairHint", { period: periodLabel }),
+                exclusions([["repairHours", k?.repair_excluded_missing_hours ?? 0]]),
+              )}
             />
             <KpiTile
               label={t("rams.kpi.failures")}
@@ -393,8 +423,9 @@ export function RamsFleetPage() {
               hint={t("rams.kpi.dataQualityHint", {
                 mode: k?.records_missing_mode ?? 0,
                 cause: k?.records_missing_cause ?? 0,
+                mechanism: k?.records_missing_mechanism ?? 0,
               })}
-              onOpen={() => navigate(DATA_QUALITY_WORKLIST)}
+              onOpen={() => navigate(qualityHref)}
             />
           </div>
 
