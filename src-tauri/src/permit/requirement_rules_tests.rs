@@ -164,6 +164,15 @@ async fn convert_request(
 async fn with_no_rule_nothing_is_flagged_and_the_conversion_says_so() {
     let db = setup().await;
     let actor = admin(&db).await;
+    // The plant took the shipped rule out of its list (migration 278 seeds it).
+    exec(
+        &db,
+        &format!(
+            "UPDATE reference_values SET is_active = 0 WHERE code = '{}'",
+            rules::CRITICAL_ASSET_RULE_CODE
+        ),
+    )
+    .await;
     let result = convert(&db, actor).await;
     assert!(!result.permit_flag.requires_permit);
     assert_eq!(result.permit_flag.reason_code, reasons::NONE_CONFIGURED);
@@ -1939,4 +1948,227 @@ async fn a_draft_edit_stamped_by_a_rule_keeps_its_old_and_new_values() {
     )
     .await;
     assert!(raw.contains("changes_unavailable"), "{raw}");
+}
+
+/// The pump becomes criticality A (its `EQUIPMENT.CRITICALITY` value).
+async fn make_critical(db: &DatabaseConnection, equipment_id: i64) {
+    exec(
+        db,
+        &format!(
+            "UPDATE equipment SET equipment_criticality_ref_id = (SELECT rv.id FROM reference_values rv \
+               JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+               JOIN reference_domains d ON d.id = rs.domain_id \
+              WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rv.code = 'A') WHERE id = {equipment_id}"
+        ),
+    )
+    .await;
+}
+
+/// L4-10 (CMMS Advisor decision L4 Q7): the shipped rule flags every work order on a machine of
+/// criticality A with the consignation permit, protected like any rule flag.
+#[tokio::test]
+async fn a_work_order_on_a_critical_machine_needs_a_consignation_permit() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    let result = convert(&db, actor).await;
+    assert!(result.permit_flag.requires_permit);
+    assert_eq!(result.permit_flag.reason_code, reasons::RULE_MATCHED);
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+    assert_eq!(result.permit_flag.permit_type_code.as_deref(), Some("loto"));
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+    // No start without the permit.
+    assert!(
+        crate::permit::wo_gate::assert_in_progress_permit_gate(&db, result.wo_id)
+            .await
+            .is_err()
+    );
+}
+
+/// The same machine without criticality A: the shipped rule does not match.
+#[tokio::test]
+async fn a_machine_not_critical_is_not_flagged_by_the_criticality_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    assert!(!result.permit_flag.requires_permit);
+    assert_eq!(result.permit_flag.reason_code, reasons::NO_RULE_MATCHED);
+}
+
+/// A machine assessed critical while a work order on it is still open: the work order is flagged
+/// in the same transaction as the assessment, recorded as an equipment change.
+#[tokio::test]
+async fn an_open_work_order_is_flagged_when_its_machine_becomes_critical() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    assert!(!result.permit_flag.requires_permit);
+    let rv = scalar(&db, "SELECT row_version FROM equipment WHERE id = 1").await;
+    crate::assets::criticality::assess_asset_criticality(
+        &db,
+        crate::assets::criticality::AssessCriticalityPayload {
+            asset_id: 1,
+            scores: crate::assets::criticality::CriticalityScores {
+                safety: 5,
+                environment: 1,
+                production: 3,
+                quality: 1,
+                cost: 1,
+                likelihood: 2,
+            },
+            rationale: Some("Presse : risque d'écrasement".into()),
+            expected_row_version: rv,
+        },
+        actor,
+    )
+    .await
+    .expect("assessed");
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert!(wo.requires_permit);
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {} AND action_code = 'permit_rule_applied' \
+                   AND json_extract(payload_json, '$.cause') = 'equipment_changed'",
+                result.wo_id
+            ),
+        )
+        .await,
+        1
+    );
+}
+
+/// A rule naming a criticality not in the published list is refused when it is saved.
+#[tokio::test]
+async fn a_rule_naming_an_unknown_criticality_is_refused() {
+    let db = setup().await;
+    let err = rules::checked_rule_metadata(
+        &db,
+        "BAD",
+        Some(r#"{"criticality_code":"Z","permit_type_code":"loto"}"#),
+    )
+    .await
+    .expect_err("refused");
+    assert_eq!(code_of(&err), rules::CODE_RULE_INVALID);
+}
+
+/// A machine whose criticality is only the legacy "CRITIQUE" value is read as A.
+#[tokio::test]
+async fn a_legacy_critique_machine_is_critical_for_the_rule() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    exec(
+        &db,
+        "UPDATE equipment SET equipment_criticality_ref_id = NULL, \
+         criticality_value_id = (SELECT lv.id FROM lookup_values lv \
+            JOIN lookup_domains ld ON ld.id = lv.domain_id \
+            WHERE ld.domain_key = 'equipment.criticality' AND lv.code = 'CRITIQUE') \
+         WHERE id = 1",
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+}
+
+/// The plant's own isolation rule comes before the shipped one (sort order 1000), whatever the
+/// codes: the plant's permit type is the one recorded.
+#[tokio::test]
+async fn the_plants_own_isolation_rule_keeps_priority_over_the_shipped_one() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_LOTO",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "loto" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(result.permit_flag.rule_code.as_deref(), Some("PUMPS_LOTO"));
+}
+
+/// A hot-work rule on a critical machine: the isolation type is recorded (AU-04 R5-S3 option A)
+/// and the hot-work type is shown with it.
+#[tokio::test]
+async fn hot_work_on_a_critical_machine_records_the_isolation_and_shows_both() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    make_critical(&db, 1).await;
+    add_rule(
+        &db,
+        "PUMPS_HOT",
+        serde_json::json!({ "equipment_class_code": "PUMP", "permit_type_code": "hot_work" }),
+    )
+    .await;
+    let result = convert(&db, actor).await;
+    assert_eq!(
+        result.permit_flag.rule_code.as_deref(),
+        Some(rules::CRITICAL_ASSET_RULE_CODE)
+    );
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    let shown = rules::matching_permit_types(&db, wo.equipment_id, wo.type_id, Some("loto"))
+        .await
+        .expect("types");
+    assert!(shown.contains(&"loto".to_string()) && shown.contains(&"hot_work".to_string()));
+}
+
+/// The equipment form sets criticality A: its open work orders are flagged in the same save.
+#[tokio::test]
+async fn an_identity_edit_to_criticality_a_flags_the_open_work_orders() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    let rv = scalar(&db, "SELECT row_version FROM equipment WHERE id = 1").await;
+    crate::assets::identity::update_asset_identity(
+        &db,
+        1,
+        crate::assets::identity::UpdateAssetIdentityPayload {
+            criticality_code: Some("A".into()),
+            ..Default::default()
+        },
+        rv,
+        i32::try_from(actor).expect("id"),
+    )
+    .await
+    .expect("updated");
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
+}
+
+/// A criticality changed without passing through this PC's forms (received by sync): the catch-up
+/// after the synchronisation pass flags the open work orders.
+#[tokio::test]
+async fn the_catch_up_flags_work_orders_of_a_machine_become_critical_elsewhere() {
+    let db = setup().await;
+    let actor = admin(&db).await;
+    let result = convert(&db, actor).await;
+    make_critical(&db, 1).await;
+    assert_eq!(rules::catch_up(&db).await, 1);
+    let wo = crate::wo::queries::get_work_order(&db, result.wo_id)
+        .await
+        .expect("q")
+        .expect("wo");
+    assert_eq!(wo.permit_rule_code.as_deref(), Some(rules::CRITICAL_ASSET_RULE_CODE));
 }

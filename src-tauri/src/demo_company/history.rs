@@ -338,6 +338,9 @@ async fn pm_generation(ctx: &mut Ctx<'_>, company: &Company, sim: &mut Sim) -> A
             crew: Vec::new(),
             parts: Vec::new(),
             started: None,
+            loto: false,
+            permit_id: 0,
+            isolation_id: 0,
             stage: PmStage::Plan,
         };
         sim.schedule(plan_at, Job::Pm(Box::new(job)));
@@ -736,84 +739,10 @@ impl Corrective {
                 Ok(Some(start))
             }
             CStage::Permit => {
-                let hse = company.user(site, Duty::Hse);
-                let permit = crate::permit::queries::create_work_permit(
-                    db,
-                    de(json!({
-                        "permit_type_id": company.refs.loto_permit_type,
-                        "asset_id": asset.id,
-                        "entity_id": null,
-                        "linked_work_order_id": self.wo_id,
-                        "expires_at": rfc(ctx.last + Duration::hours(12)),
-                    }))?,
-                    // Requested by the technician who does the work…
-                    responsible,
-                )
-                .await?;
-                self.permit_id = permit.id;
-                ctx.count("permis de travail (consignation)", 1);
-                // …submitted by them, approved by the HSE officer (four-eyes), issued by the team
-                // leader (separation between who approves and who issues).
-                for (status, actor) in [
-                    ("pending_review", responsible),
-                    ("approved", hse),
-                    ("issued", supervisor),
-                ] {
-                    ctx.tick()?;
-                    let rv = row_version(db, "work_permits", self.permit_id).await?;
-                    crate::permit::queries::set_work_permit_status(
-                        db,
-                        de(json!({ "id": self.permit_id, "status": status, "expected_row_version": rv }))?,
-                        actor,
-                    )
-                    .await?;
-                }
-                let hydraulic = matches!(asset.class, "PRESS" | "PUMP");
-                ctx.tick()?;
-                let isolation = crate::permit::queries::upsert_permit_isolation(
-                    db,
-                    de(json!({
-                        "id": null,
-                        "permit_id": self.permit_id,
-                        "isolation_point": if hydraulic {
-                            format!("Vanne d'isolement centrale hydraulique {}", asset.code)
-                        } else {
-                            format!("Sectionneur d'alimentation armoire {}", asset.code)
-                        },
-                        "energy_type_id": if hydraulic { company.refs.energy_hydraulic } else { company.refs.energy_electrical },
-                        "isolation_method_id": if hydraulic { company.refs.method_valve } else { company.refs.method_breaker },
-                        "lock_number": null,
-                    }))?,
-                )
-                .await?;
-                self.isolation_id = isolation.id;
-                let lock = format!("CAD-{}-{:03}", site, sim.rng.gen_range(1..60));
-                ctx.tick()?;
-                let rv = row_version(db, "permit_isolations", self.isolation_id).await?;
-                // Applied by the technician who does the work…
-                crate::permit::queries::apply_permit_isolation(
-                    db,
-                    de(json!({ "isolation_id": self.isolation_id, "expected_row_version": rv, "lock_number": lock }))?,
-                    responsible,
-                )
-                .await?;
-                ctx.at(ctx.last + sim.minutes(5, 15))?;
-                let rv = row_version(db, "permit_isolations", self.isolation_id).await?;
-                // …verified by the HSE officer (a different person).
-                crate::permit::queries::verify_permit_isolation(
-                    db,
-                    de(json!({ "isolation_id": self.isolation_id, "expected_row_version": rv, "lock_number": null }))?,
-                    hse,
-                )
-                .await?;
-                ctx.tick()?;
-                let rv = row_version(db, "work_permits", self.permit_id).await?;
-                crate::permit::queries::set_work_permit_status(
-                    db,
-                    de(json!({ "id": self.permit_id, "status": "active", "expected_row_version": rv }))?,
-                    supervisor,
-                )
-                .await?;
+                let (permit_id, isolation_id) =
+                    lock_out(ctx, company, sim, asset, self.wo_id, responsible, supervisor).await?;
+                self.permit_id = permit_id;
+                self.isolation_id = isolation_id;
                 self.stage = CStage::Start;
                 Ok(Some(ctx.last + sim.minutes(5, 20)))
             }
@@ -943,54 +872,15 @@ impl Corrective {
                 Ok(Some(ctx.last + sim.minutes(20, 90)))
             }
             CStage::RemoveIsolation => {
-                let hse = company.user(site, Duty::Hse);
-                let rv = row_version(db, "permit_isolations", self.isolation_id).await?;
-                // The technician who fitted the lock takes it off ("J'ai retiré mon cadenas")…
-                crate::permit::queries::record_permit_isolation_removed(
-                    db,
-                    de(json!({ "isolation_id": self.isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+                release_lockout(
+                    ctx,
+                    company,
+                    sim,
+                    site,
+                    self.permit_id,
+                    self.isolation_id,
                     responsible,
-                )
-                .await?;
-                ctx.at(ctx.last + sim.minutes(3, 10))?;
-                let rv = row_version(db, "permit_isolations", self.isolation_id).await?;
-                // …and the removal is verified by a third person: the team leader, neither the
-                // technician who applied and removed the lock nor the HSE officer who verified it.
-                crate::permit::queries::verify_permit_isolation_removal(
-                    db,
-                    de(json!({ "isolation_id": self.isolation_id, "expected_row_version": rv, "lock_number": null }))?,
                     supervisor,
-                )
-                .await?;
-                ctx.tick()?;
-                let rv = row_version(db, "work_permits", self.permit_id).await?;
-                crate::permit::queries::set_work_permit_status(
-                    db,
-                    de(json!({ "id": self.permit_id, "status": "closed", "expected_row_version": rv }))?,
-                    hse,
-                )
-                .await?;
-                ctx.tick()?;
-                crate::permit::queries::append_permit_handover_log(
-                    db,
-                    de(json!({
-                        "permit_id": self.permit_id,
-                        "handed_from_role": "EXECUTANT",
-                        "handed_to_role": "EMETTEUR",
-                        "confirmation_note": "Travaux terminés, consignation levée, machine restituée à l'émetteur du permis.",
-                        // The hand-back is received by the team leader who issued the permit: the
-                        // receiver must hold the permit close right at the site.
-                        "received_by_id": supervisor,
-                    }))?,
-                    responsible,
-                )
-                .await?;
-                ctx.tick()?;
-                let rv = row_version(db, "work_permits", self.permit_id).await?;
-                crate::permit::queries::set_work_permit_status(
-                    db,
-                    de(json!({ "id": self.permit_id, "status": "handed_back", "expected_row_version": rv }))?,
-                    hse,
                 )
                 .await?;
                 self.stage = CStage::Verify;
@@ -1061,6 +951,169 @@ impl Corrective {
         }
         Ok(())
     }
+}
+
+/// A consignation (LOTO) permit for a work order, as on site: requested and submitted by the
+/// technician, approved by the HSE officer, issued by the team leader, the isolation applied by the
+/// technician and verified by the HSE officer, then the permit activated. Returns the permit and its
+/// isolation.
+async fn lock_out(
+    ctx: &mut Ctx<'_>,
+    company: &Company,
+    sim: &mut Sim,
+    asset: &AssetInfo,
+    wo_id: i64,
+    responsible: i64,
+    supervisor: i64,
+) -> AppResult<(i64, i64)> {
+    let db = ctx.db;
+    let site = asset.site;
+    let hse = company.user(site, Duty::Hse);
+    let permit = crate::permit::queries::create_work_permit(
+        db,
+        de(json!({
+            "permit_type_id": company.refs.loto_permit_type,
+            "asset_id": asset.id,
+            "entity_id": null,
+            "linked_work_order_id": wo_id,
+            "expires_at": rfc(ctx.last + Duration::hours(12)),
+        }))?,
+        // Requested by the technician who does the work…
+        responsible,
+    )
+    .await?;
+    let permit_id = permit.id;
+    ctx.count("permis de travail (consignation)", 1);
+    // …submitted by them, approved by the HSE officer (four-eyes), issued by the team
+    // leader (separation between who approves and who issues).
+    for (status, actor) in [
+        ("pending_review", responsible),
+        ("approved", hse),
+        ("issued", supervisor),
+    ] {
+        ctx.tick()?;
+        let rv = row_version(db, "work_permits", permit_id).await?;
+        crate::permit::queries::set_work_permit_status(
+            db,
+            de(json!({ "id": permit_id, "status": status, "expected_row_version": rv }))?,
+            actor,
+        )
+        .await?;
+    }
+    let hydraulic = matches!(asset.class, "PRESS" | "PUMP");
+    ctx.tick()?;
+    let isolation = crate::permit::queries::upsert_permit_isolation(
+        db,
+        de(json!({
+            "id": null,
+            "permit_id": permit_id,
+            "isolation_point": if hydraulic {
+                format!("Vanne d'isolement centrale hydraulique {}", asset.code)
+            } else {
+                format!("Sectionneur d'alimentation armoire {}", asset.code)
+            },
+            "energy_type_id": if hydraulic { company.refs.energy_hydraulic } else { company.refs.energy_electrical },
+            "isolation_method_id": if hydraulic { company.refs.method_valve } else { company.refs.method_breaker },
+            "lock_number": null,
+        }))?,
+    )
+    .await?;
+    let isolation_id = isolation.id;
+    let lock = format!("CAD-{}-{:03}", site, sim.rng.gen_range(1..60));
+    ctx.tick()?;
+    let rv = row_version(db, "permit_isolations", isolation_id).await?;
+    // Applied by the technician who does the work…
+    crate::permit::queries::apply_permit_isolation(
+        db,
+        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": lock }))?,
+        responsible,
+    )
+    .await?;
+    ctx.at(ctx.last + sim.minutes(5, 15))?;
+    let rv = row_version(db, "permit_isolations", isolation_id).await?;
+    // …verified by the HSE officer (a different person).
+    crate::permit::queries::verify_permit_isolation(
+        db,
+        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+        hse,
+    )
+    .await?;
+    ctx.tick()?;
+    let rv = row_version(db, "work_permits", permit_id).await?;
+    crate::permit::queries::set_work_permit_status(
+        db,
+        de(json!({ "id": permit_id, "status": "active", "expected_row_version": rv }))?,
+        supervisor,
+    )
+    .await?;
+    Ok((permit_id, isolation_id))
+}
+
+/// The end of a consignation: the technician removes their lock, the team leader verifies the
+/// removal, the permit is closed and handed back.
+#[allow(clippy::too_many_arguments)]
+async fn release_lockout(
+    ctx: &mut Ctx<'_>,
+    company: &Company,
+    sim: &mut Sim,
+    site: &'static str,
+    permit_id: i64,
+    isolation_id: i64,
+    responsible: i64,
+    supervisor: i64,
+) -> AppResult<()> {
+    let db = ctx.db;
+    let hse = company.user(site, Duty::Hse);
+    let rv = row_version(db, "permit_isolations", isolation_id).await?;
+    // The technician who fitted the lock takes it off ("J'ai retiré mon cadenas")…
+    crate::permit::queries::record_permit_isolation_removed(
+        db,
+        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+        responsible,
+    )
+    .await?;
+    ctx.at(ctx.last + sim.minutes(3, 10))?;
+    let rv = row_version(db, "permit_isolations", isolation_id).await?;
+    // …and the removal is verified by a third person: the team leader, neither the
+    // technician who applied and removed the lock nor the HSE officer who verified it.
+    crate::permit::queries::verify_permit_isolation_removal(
+        db,
+        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+        supervisor,
+    )
+    .await?;
+    ctx.tick()?;
+    let rv = row_version(db, "work_permits", permit_id).await?;
+    crate::permit::queries::set_work_permit_status(
+        db,
+        de(json!({ "id": permit_id, "status": "closed", "expected_row_version": rv }))?,
+        hse,
+    )
+    .await?;
+    ctx.tick()?;
+    crate::permit::queries::append_permit_handover_log(
+        db,
+        de(json!({
+            "permit_id": permit_id,
+            "handed_from_role": "EXECUTANT",
+            "handed_to_role": "EMETTEUR",
+            "confirmation_note": "Travaux terminés, consignation levée, machine restituée à l'émetteur du permis.",
+            // The hand-back is received by the team leader who issued the permit: the
+            // receiver must hold the permit close right at the site.
+            "received_by_id": supervisor,
+        }))?,
+        responsible,
+    )
+    .await?;
+    ctx.tick()?;
+    let rv = row_version(db, "work_permits", permit_id).await?;
+    crate::permit::queries::set_work_permit_status(
+        db,
+        de(json!({ "id": permit_id, "status": "handed_back", "expected_row_version": rv }))?,
+        hse,
+    )
+    .await?;
+    Ok(())
 }
 
 fn story_uses_parts(story: usize) -> bool {
@@ -1270,6 +1323,10 @@ struct PmJob {
     crew: Vec<i64>,
     parts: Vec<(i64, f64)>,
     started: Option<DateTime<Utc>>,
+    /// The work order requires a permit (the plant's rules, e.g. a machine of criticality A).
+    loto: bool,
+    permit_id: i64,
+    isolation_id: i64,
     stage: PmStage,
 }
 
@@ -1407,6 +1464,23 @@ impl PmJob {
                 Ok(Some(start))
             }
             PmStage::Start => {
+                // The plant's permit rules decide whether a lockout is needed (criticality A).
+                self.loto = scalar_i64(
+                    db,
+                    "SELECT requires_permit FROM work_orders WHERE id = ?",
+                    vec![self.wo_id.into()],
+                )
+                .await?
+                .unwrap_or(0)
+                    != 0;
+                if self.loto {
+                    let supervisor = company.user(site, Duty::Supervisor);
+                    let (permit_id, isolation_id) =
+                        lock_out(ctx, company, sim, &self.asset, self.wo_id, responsible, supervisor).await?;
+                    self.permit_id = permit_id;
+                    self.isolation_id = isolation_id;
+                    ctx.at(ctx.last + sim.minutes(5, 20))?;
+                }
                 let rv = row_version(db, "work_orders", self.wo_id).await?;
                 crate::wo::execution::start_wo(
                     db,
@@ -1460,6 +1534,21 @@ impl PmJob {
                     }))?,
                 )
                 .await?;
+                if self.loto {
+                    ctx.at(ctx.last + sim.minutes(10, 30))?;
+                    let supervisor = company.user(site, Duty::Supervisor);
+                    release_lockout(
+                        ctx,
+                        company,
+                        sim,
+                        site,
+                        self.permit_id,
+                        self.isolation_id,
+                        responsible,
+                        supervisor,
+                    )
+                    .await?;
+                }
                 ctx.at(ctx.last + sim.minutes(15, 45))?;
                 verify(ctx, self.wo_id, company.user(site, Duty::Supervisor)).await?;
                 ctx.at(ctx.last + sim.minutes(10, 40))?;

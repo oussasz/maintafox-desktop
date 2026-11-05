@@ -15,10 +15,16 @@
 //!
 //! - `equipment_class_code`: a code of the published `EQUIPMENT.CLASS` list (optional);
 //! - `work_type_code`: a code of the published `WORK.ORDER_TYPES` list (optional);
-//! - at least one of the two; a rule naming both matches only when both match;
+//! - `criticality_code`: a code of the published `EQUIPMENT.CRITICALITY` list (optional): the
+//!   equipment's criticality (its `EQUIPMENT.CRITICALITY` value, else its legacy criticality read
+//!   as A–D);
+//! - at least one of the three; a rule naming several matches only when all of them match;
 //! - `permit_type_code`: a permit type (`permit_types.code`), required.
 //!
-//! The list ships empty: with no rule nothing is flagged by a rule, and the conversion says so
+//! The list ships with one rule, [`CRITICAL_ASSET_RULE_CODE`]: every work order on an equipment
+//! of criticality A needs a consignation permit (CMMS Advisor decision L4 Q7, migration 278). The
+//! plant sees it in Données de référence like its own rules. With no rule nothing is flagged by a
+//! rule, and the conversion says so
 //! (`PERMIT_RULES_NONE_CONFIGURED`). A rule is checked when it is saved and when its list is
 //! validated for publishing; a published rule that no longer reads (received from another PC,
 //! or a class removed since) is reported by the conversion, never guessed.
@@ -64,11 +70,90 @@ pub async fn ensure_permit_requirement_rules(db: &impl ConnectionTrait) -> AppRe
     ensure_published_set(db, DOMAIN).await
 }
 
+/// Code of the shipped rule: an equipment of criticality A needs a consignation permit.
+pub const CRITICAL_ASSET_RULE_CODE: &str = "CRITICITE_A";
+/// The criticality the shipped rule matches (`EQUIPMENT.CRITICALITY`).
+pub const CRITICAL_ASSET_CRITICALITY: &str = "A";
+/// Place of the shipped rule in the list: after the plant's own rules (the list's order decides
+/// between two matching isolation rules), the same on every PC so each records the same rule.
+pub const CRITICAL_ASSET_RULE_SORT_ORDER: i64 = 1000;
+/// The permit type the shipped rule calls for, when the plant still has it.
+pub const CRITICAL_ASSET_PERMIT_TYPE: &str = "loto";
+
+/// Seeds [`CRITICAL_ASSET_RULE_CODE`] into the latest published set of the list (migration 278
+/// only — never the integrity pass, so a rule the plant removed or deactivated is not brought back):
+/// criticality A → the `loto` permit type, else the first permit type (by code) that requires an
+/// energy isolation; with no such type nothing is seeded (logged), since no rule can name a permit
+/// the plant does not have. Same seeded sync identity on every PC; skipped when a value with that
+/// identity or that code is already in the list. Returns whether it was seeded.
+pub async fn seed_critical_asset_rule(db: &impl ConnectionTrait) -> AppResult<bool> {
+    ensure_permit_requirement_rules(db).await?;
+    let permit_type: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT code FROM permit_types WHERE COALESCE(requires_energy_isolation, 0) = 1 \
+              ORDER BY CASE WHEN code = ? THEN 0 ELSE 1 END, code LIMIT 1",
+            [CRITICAL_ASSET_PERMIT_TYPE.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code"))
+        .transpose()?;
+    let Some(permit_type) = permit_type else {
+        tracing::warn!(
+            target: "maintafox",
+            "no permit type requires an energy isolation: the critical-equipment permit rule is not seeded"
+        );
+        return Ok(false);
+    };
+    let sync_id = crate::sync::identity::seeded_entity_sync_id(
+        "reference_values",
+        &format!("{DOMAIN}:{CRITICAL_ASSET_RULE_CODE}"),
+    );
+    let meta = serde_json::json!({
+        "origin": "shipped",
+        "equipment_class_code": null,
+        "work_type_code": null,
+        "criticality_code": CRITICAL_ASSET_CRITICALITY,
+        "permit_type_code": permit_type,
+    });
+    let written = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, \
+                description, sort_order, color_hex, icon_name, semantic_tag, external_code, is_active, \
+                metadata_json) \
+             SELECT ?, rs.id, NULL, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, ? \
+               FROM reference_domains d \
+               JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
+              WHERE UPPER(TRIM(d.code)) = ? \
+                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.entity_sync_id = ?) \
+                AND NOT EXISTS (SELECT 1 FROM reference_values rv WHERE rv.set_id = rs.id \
+                                  AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?))) \
+              ORDER BY rs.version_no DESC LIMIT 1",
+            [
+                sync_id.clone().into(),
+                CRITICAL_ASSET_RULE_CODE.into(),
+                "Équipement critique (A) : permis de consignation".into(),
+                "Tout OT sur un équipement de criticité A exige un permis de consignation (LOTO). \
+                 L'exigence ne se lève sur un OT qu'avec le droit de délivrer les permis et un motif."
+                    .into(),
+                CRITICAL_ASSET_RULE_SORT_ORDER.into(),
+                meta.to_string().into(),
+                DOMAIN.into(),
+                sync_id.into(),
+                CRITICAL_ASSET_RULE_CODE.into(),
+            ],
+        ))
+        .await?;
+    Ok(written.rows_affected() > 0)
+}
+
 /// What a rule matches and the permit it calls for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuleSpec {
     pub equipment_class_code: Option<String>,
     pub work_type_code: Option<String>,
+    pub criticality_code: Option<String>,
     pub permit_type_code: String,
 }
 
@@ -88,13 +173,15 @@ pub fn parse_rule(metadata_json: Option<&str>) -> Result<RuleSpec, String> {
         .ok_or_else(|| "the rule has no settings".to_string())?;
     let equipment_class_code = text(&obj, "equipment_class_code");
     let work_type_code = text(&obj, "work_type_code");
-    if equipment_class_code.is_none() && work_type_code.is_none() {
-        return Err("the rule names neither an equipment class nor a work type".into());
+    let criticality_code = text(&obj, "criticality_code");
+    if equipment_class_code.is_none() && work_type_code.is_none() && criticality_code.is_none() {
+        return Err("the rule names neither an equipment class, a work type nor a criticality".into());
     }
     let permit_type_code = text(&obj, "permit_type_code").ok_or_else(|| "the rule names no permit type".to_string())?;
     Ok(RuleSpec {
         equipment_class_code,
         work_type_code,
+        criticality_code,
         permit_type_code,
     })
 }
@@ -130,6 +217,13 @@ pub async fn rule_problem(db: &impl ConnectionTrait, metadata_json: Option<&str>
         if !published_code_exists(db, crate::wo::types::WORK_ORDER_TYPES_DOMAIN, work_type).await? {
             return Ok(Some(format!(
                 "work type '{work_type}' is not in the published work type list"
+            )));
+        }
+    }
+    if let Some(criticality) = &rule.criticality_code {
+        if !published_code_exists(db, crate::assets::taxonomy_reference::DOMAIN_CRITICALITY, criticality).await? {
+            return Ok(Some(format!(
+                "criticality '{criticality}' is not in the published criticality list"
             )));
         }
     }
@@ -184,6 +278,11 @@ pub async fn checked_rule_metadata(
             .map_or(serde_json::Value::Null, serde_json::Value::String),
     );
     obj.insert(
+        "criticality_code".into(),
+        rule.criticality_code
+            .map_or(serde_json::Value::Null, serde_json::Value::String),
+    );
+    obj.insert(
         "permit_type_code".into(),
         serde_json::Value::String(rule.permit_type_code),
     );
@@ -228,6 +327,31 @@ async fn equipment_class_code(db: &impl ConnectionTrait, equipment_id: i64) -> A
         ))
         .await?
         .and_then(|r| r.try_get::<Option<String>>("", "code").ok().flatten()))
+}
+
+/// The equipment's criticality code: its `EQUIPMENT.CRITICALITY` value, else its legacy criticality
+/// read as A–D (`assets::identity::normalize_criticality_to_canon`; a legacy code that does not read
+/// gives none, as on the equipment screen, which asks for it to be reviewed).
+async fn equipment_criticality_code(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<Option<String>> {
+    let Some(row) = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rc.code AS ref_code, lv.code AS legacy_code FROM equipment e \
+               LEFT JOIN reference_values rc ON rc.id = e.equipment_criticality_ref_id \
+               LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id \
+              WHERE e.id = ?",
+            [equipment_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(None);
+    };
+    if let Some(code) = row.try_get::<Option<String>>("", "ref_code")? {
+        return Ok(Some(code));
+    }
+    Ok(row
+        .try_get::<Option<String>>("", "legacy_code")?
+        .and_then(|legacy| crate::assets::identity::normalize_criticality_to_canon(&legacy).ok()))
 }
 
 /// One rule of the published list, read once for every work order it is applied to.
@@ -343,7 +467,7 @@ pub async fn evaluate_with(
     }
     outcome.reason_code = reasons::NO_RULE_MATCHED.into();
 
-    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
+    let facts = work_facts(db, equipment_id, work_type_id).await?;
 
     let mut chosen_isolation = false;
     for published in &rules.0 {
@@ -355,7 +479,7 @@ pub async fn evaluate_with(
         if published.unresolved {
             outcome.unresolved_rule_codes.push(code.clone());
         }
-        let matches = rule_matches(&rule, class.as_deref(), work_type.as_deref());
+        let matches = rule_matches(&rule, &facts);
         // The rule recorded: the first matching rule whose permit type requires an energy isolation,
         // else the first matching rule (CMMS Advisor decision on AU-04 R5-S3, option A: an isolation
         // type always outranks one without; otherwise the list's order wins).
@@ -399,10 +523,10 @@ pub async fn matching_permit_types(
     if rules.is_empty() {
         return Ok(Vec::new());
     }
-    let (class, work_type) = class_and_work_type(db, equipment_id, work_type_id).await?;
+    let facts = work_facts(db, equipment_id, work_type_id).await?;
     let mut types: Vec<String> = Vec::new();
     for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
-        if rule_matches(rule, class.as_deref(), work_type.as_deref()) && !types.contains(&rule.permit_type_code) {
+        if rule_matches(rule, &facts) && !types.contains(&rule.permit_type_code) {
             types.push(rule.permit_type_code.clone());
         }
     }
@@ -412,16 +536,23 @@ pub async fn matching_permit_types(
     Ok(if types.len() > 1 { types } else { Vec::new() })
 }
 
-/// The equipment class code and the work type code a rule is matched against (check 6, C6-N4: one
-/// reading for [`evaluate_with`] and [`matching_permit_types`]).
-async fn class_and_work_type(
-    db: &impl ConnectionTrait,
-    equipment_id: Option<i64>,
-    work_type_id: i64,
-) -> AppResult<(Option<String>, Option<String>)> {
-    let class = match equipment_id {
-        Some(id) => equipment_class_code(db, id).await?,
-        None => None,
+/// What a rule is matched against: the equipment's class and criticality, and the work type.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkFacts {
+    pub class: Option<String>,
+    pub work_type: Option<String>,
+    pub criticality: Option<String>,
+}
+
+/// The facts of a work order a rule is matched against (check 6, C6-N4: one reading for
+/// [`evaluate_with`] and [`matching_permit_types`]).
+async fn work_facts(db: &impl ConnectionTrait, equipment_id: Option<i64>, work_type_id: i64) -> AppResult<WorkFacts> {
+    let (class, criticality) = match equipment_id {
+        Some(id) => (
+            equipment_class_code(db, id).await?,
+            equipment_criticality_code(db, id).await?,
+        ),
+        None => (None, None),
     };
     let work_type: Option<String> = db
         .query_one(Statement::from_sql_and_values(
@@ -431,16 +562,30 @@ async fn class_and_work_type(
         ))
         .await?
         .and_then(|r| r.try_get::<String>("", "code").ok());
-    Ok((class, work_type))
+    Ok(WorkFacts {
+        class,
+        work_type,
+        criticality,
+    })
 }
 
-/// Whether a rule matches this equipment class and work type: each one it names matches (a rule
-/// naming both matches only when both match). The single matching of [`evaluate_with`] and
+/// Whether a rule matches these facts: each one it names matches (a rule naming several matches
+/// only when all of them match). The single matching of [`evaluate_with`] and
 /// [`matching_permit_types`] (check 6, C6-N4).
-fn rule_matches(rule: &RuleSpec, class: Option<&str>, work_type: Option<&str>) -> bool {
-    let class_ok = rule.equipment_class_code.as_deref().is_none_or(|c| class == Some(c));
-    let type_ok = rule.work_type_code.as_deref().is_none_or(|t| work_type == Some(t));
-    class_ok && type_ok
+fn rule_matches(rule: &RuleSpec, facts: &WorkFacts) -> bool {
+    let class_ok = rule
+        .equipment_class_code
+        .as_deref()
+        .is_none_or(|c| facts.class.as_deref() == Some(c));
+    let type_ok = rule
+        .work_type_code
+        .as_deref()
+        .is_none_or(|t| facts.work_type.as_deref() == Some(t));
+    let criticality_ok = rule
+        .criticality_code
+        .as_deref()
+        .is_none_or(|k| facts.criticality.as_deref() == Some(k));
+    class_ok && type_ok && criticality_ok
 }
 
 /// Rules that did not read, or that name a code not held here, when they are evaluated for a work
@@ -514,6 +659,9 @@ pub async fn record_rule_problems(
 pub mod stamp_causes {
     /// Its equipment or work type changed in a draft edit (`wo::queries::update_wo_draft_fields`).
     pub const DRAFT_EDIT: &str = "draft_edit";
+    /// Its equipment's class or criticality changed here
+    /// ([`super::stamp_open_work_orders_of_equipment`]).
+    pub const EQUIPMENT_CHANGED: &str = "equipment_changed";
     /// The plant's rule list changed on this PC (a rule added, changed or published).
     pub const RULES_CHANGED: &str = "rules_changed";
     /// The plant's rule list was received by synchronisation.
@@ -689,6 +837,48 @@ pub async fn stamp_open_work_orders(
     let mut flagged = Vec::new();
     for id in ids {
         if stamp_matching_rule_with(conn, &rules, id, actor_id, cause)
+            .await?
+            .is_some()
+        {
+            flagged.push(id);
+        }
+    }
+    Ok(flagged)
+}
+
+/// [`stamp_matching_rule`] on the work orders of one equipment that have no plant rule and have not
+/// started: when the equipment's class or criticality changes here (identity edit, criticality
+/// assessment, import), in the same transaction, so a machine that becomes critical gets its permit
+/// requirement on its open work orders at once (CMMS Advisor decision L4 Q7) rather than at the
+/// next catch-up. Returns the work orders flagged.
+pub async fn stamp_open_work_orders_of_equipment(
+    conn: &impl ConnectionTrait,
+    equipment_id: i64,
+    actor_id: Option<i64>,
+) -> AppResult<Vec<i64>> {
+    let rules = PublishedRules::load(conn).await?;
+    if rules.is_empty() {
+        return Ok(Vec::new());
+    }
+    let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
+    let marks = vec!["?"; not_started.len()].join(",");
+    let mut binds: Vec<sea_orm::Value> = vec![equipment_id.into()];
+    binds.extend(not_started.iter().map(|c| sea_orm::Value::from(*c)));
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.id FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+                  WHERE wo.equipment_id = ? AND wo.permit_rule_code IS NULL AND st.code IN ({marks}) \
+                  ORDER BY wo.id"
+            ),
+            binds,
+        ))
+        .await?;
+    let mut flagged = Vec::new();
+    for row in rows {
+        let id: i64 = row.try_get("", "id")?;
+        if stamp_matching_rule_with(conn, &rules, id, actor_id, stamp_causes::EQUIPMENT_CHANGED)
             .await?
             .is_some()
         {
