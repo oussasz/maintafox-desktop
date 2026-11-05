@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter, useNavigate } from "react-router-dom";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -71,22 +71,24 @@ const initial = {
   equipment_id: 9,
 } as unknown as InterventionRequest;
 
-function Screen({ onCancel }: { onCancel: () => void }) {
+type FormProps = Partial<React.ComponentProps<typeof DiCreateForm>>;
+
+function Screen({ onCancel, extra }: { onCancel: () => void; extra: FormProps }) {
   const navigate = useNavigate();
   return (
     <div>
       <button type="button" onClick={() => navigate("/elsewhere")}>
         leave-page
       </button>
-      <DiCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={onCancel} />
+      <DiCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={onCancel} {...extra} />
     </div>
   );
 }
 
-function renderForm(onCancel = vi.fn()) {
+function renderForm(onCancel = vi.fn(), extra: FormProps = {}) {
   const router = createMemoryRouter(
     [
-      { path: "/di", element: <Screen onCancel={onCancel} /> },
+      { path: "/di", element: <Screen onCancel={onCancel} extra={extra} /> },
       { path: "/elsewhere", element: <p>other page</p> },
     ],
     { initialEntries: ["/di"] },
@@ -94,6 +96,12 @@ function renderForm(onCancel = vi.fn()) {
   render(<RouterProvider router={router} />);
   return { onCancel };
 }
+
+/** Lets the form's loads (catalogs, equipment) land inside act. */
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
 
 const typeTitle = (value: string) =>
   fireEvent.change(document.querySelector("#title") as HTMLInputElement, {
@@ -139,5 +147,24 @@ describe("DiCreateForm unsaved input", () => {
     fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
     expect(await screen.findByText("other page")).toBeInTheDocument();
     expect(screen.queryByText("discardGuard.title")).not.toBeInTheDocument();
+  });
+});
+
+describe("DiCreateForm unsaved input in create mode with a prefilled equipment", () => {
+  const prefillAsset = { id: 9, asset_code: "P-01", asset_name: "Pompe", org_node_id: 3 };
+
+  it("does not ask when the form was opened with an equipment and left untouched", async () => {
+    renderForm(vi.fn(), { initial: null, prefillAsset: prefillAsset as never });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
+    expect(await screen.findByText("other page")).toBeInTheDocument();
+  });
+
+  it("asks once something is typed", async () => {
+    renderForm(vi.fn(), { initial: null, prefillAsset: prefillAsset as never });
+    await settle();
+    typeTitle("Nouvelle demande");
+    fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
+    expect(await screen.findByText("discardGuard.title")).toBeInTheDocument();
   });
 });

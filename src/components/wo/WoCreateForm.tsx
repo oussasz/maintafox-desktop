@@ -156,6 +156,7 @@ export function WoCreateForm({
   const [typeCode, setTypeCode] = useState<string>(initial?.type_code ?? "");
   // The plant's sub-types (COMPANY list), each under one maintenance nature.
   const [subtypes, setSubtypes] = useState<WorkOrderSubtypeOption[]>([]);
+  const [subtypesLoaded, setSubtypesLoaded] = useState(false);
   const [subtypeCode, setSubtypeCode] = useState<string>(initial?.subtype_code ?? "");
   const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_code ?? "");
   // The inputs hold local date and time (`datetime-local`); the work order stores UTC instants.
@@ -198,7 +199,10 @@ export function WoCreateForm({
     let cancelled = false;
     listWorkOrderSubtypes()
       .then((rows) => {
-        if (!cancelled) setSubtypes(rows.filter((r) => r.is_active));
+        if (!cancelled) {
+          setSubtypes(rows.filter((r) => r.is_active));
+          setSubtypesLoaded(true);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setSubmitError(describeAppError(err).title);
@@ -215,8 +219,11 @@ export function WoCreateForm({
     [subtypes, selectedNature],
   );
   useEffect(() => {
+    // The stored sub-type is judged only once the types and the sub-type list are both loaded:
+    // before that the list is empty and would wipe a valid choice on opening.
+    if (!subtypesLoaded || typesLoading || woTypesCatalog.length === 0) return;
     if (subtypeCode && !subtypeOptions.some((st) => st.code === subtypeCode)) setSubtypeCode("");
-  }, [subtypeCode, subtypeOptions]);
+  }, [subtypeCode, subtypeOptions, subtypesLoaded, typesLoading, woTypesCatalog.length]);
 
   useEffect(() => {
     if (isEdit) return;

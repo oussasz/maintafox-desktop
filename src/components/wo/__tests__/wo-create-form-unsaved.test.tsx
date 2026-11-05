@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter, useNavigate } from "react-router-dom";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WoCreateForm } from "@/components/wo/WoCreateForm";
+import { listWorkOrderSubtypes, listWorkOrderTypes } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
 vi.mock("react-i18next", () => ({
@@ -61,22 +63,24 @@ const initial = {
   requires_permit: false,
 } as unknown as WorkOrder;
 
-function Screen({ onCancel }: { onCancel: () => void }) {
+type FormProps = Partial<React.ComponentProps<typeof WoCreateForm>>;
+
+function Screen({ onCancel, extra }: { onCancel: () => void; extra: FormProps }) {
   const navigate = useNavigate();
   return (
     <div>
       <button type="button" onClick={() => navigate("/elsewhere")}>
         leave-page
       </button>
-      <WoCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={onCancel} />
+      <WoCreateForm initial={initial} onSubmitted={vi.fn()} onCancel={onCancel} {...extra} />
     </div>
   );
 }
 
-function renderForm(onCancel = vi.fn()) {
+function renderForm(onCancel = vi.fn(), extra: FormProps = {}) {
   const router = createMemoryRouter(
     [
-      { path: "/ot", element: <Screen onCancel={onCancel} /> },
+      { path: "/ot", element: <Screen onCancel={onCancel} extra={extra} /> },
       { path: "/elsewhere", element: <p>other page</p> },
     ],
     { initialEntries: ["/ot"] },
@@ -84,6 +88,12 @@ function renderForm(onCancel = vi.fn()) {
   render(<RouterProvider router={router} />);
   return { onCancel };
 }
+
+/** Lets the form's loads (catalogs, equipment) land inside act. */
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
 
 const typeTitle = (value: string) =>
   fireEvent.change(document.querySelector("#wo-title") as HTMLInputElement, {
@@ -129,5 +139,68 @@ describe("WoCreateForm unsaved input", () => {
     fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
     expect(await screen.findByText("other page")).toBeInTheDocument();
     expect(screen.queryByText("discardGuard.title")).not.toBeInTheDocument();
+  });
+});
+
+const prefillAsset = { id: 7, asset_code: "P-07", asset_name: "Pompe 7", org_node_id: 3 };
+
+describe("WoCreateForm unsaved input in create mode with a prefilled equipment", () => {
+  beforeEach(() => {
+    useWorkOrderTypesCatalog.setState({ types: [], loading: false, error: null });
+    vi.mocked(listWorkOrderTypes).mockResolvedValue([
+      { code: "corrective", label: "Correctif", nature: "corrective", is_active: true },
+    ] as never);
+  });
+
+  it("does not ask when the form was opened with an equipment and left untouched", async () => {
+    renderForm(vi.fn(), { initial: null, prefillAsset: prefillAsset as never });
+    await waitFor(() => expect(listWorkOrderTypes).toHaveBeenCalled());
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
+    expect(await screen.findByText("other page")).toBeInTheDocument();
+  });
+
+  it("asks once something is typed", async () => {
+    renderForm(vi.fn(), { initial: null, prefillAsset: prefillAsset as never });
+    await settle();
+    typeTitle("Nouvel OT");
+    fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
+    expect(await screen.findByText("discardGuard.title")).toBeInTheDocument();
+  });
+});
+
+describe("WoCreateForm opening an edit that has a sub-type", () => {
+  beforeEach(() => {
+    useWorkOrderTypesCatalog.setState({ types: [], loading: false, error: null });
+    vi.mocked(listWorkOrderTypes).mockResolvedValue([
+      { code: "corrective", label: "Correctif", nature: "corrective", is_active: true },
+    ] as never);
+    vi.mocked(listWorkOrderSubtypes).mockResolvedValue([
+      { code: "leak", label: "Fuite", nature: "corrective", is_active: true },
+    ] as never);
+  });
+
+  it("keeps the sub-type and does not ask when nothing was touched", async () => {
+    const withSubtype = { ...initial, type_code: "corrective", subtype_code: "leak" } as WorkOrder;
+    renderForm(vi.fn(), { initial: withSubtype });
+    await waitFor(() => expect(listWorkOrderSubtypes).toHaveBeenCalled());
+    await settle();
+    const save = screen.getByText("form.update").closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(save).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
+    expect(await screen.findByText("other page")).toBeInTheDocument();
+    expect(screen.queryByText("discardGuard.title")).not.toBeInTheDocument();
+  });
+
+  it("saves the stored sub-type unchanged", async () => {
+    const withSubtype = { ...initial, type_code: "corrective", subtype_code: "leak" } as WorkOrder;
+    renderForm(vi.fn(), { initial: withSubtype });
+    await waitFor(() => expect(listWorkOrderSubtypes).toHaveBeenCalled());
+    await settle();
+    const save = screen.getByText("form.update").closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(save).not.toBeDisabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(1));
+    expect(updateDraft).toHaveBeenCalledWith(expect.objectContaining({ subtype_code: "leak" }));
   });
 });
