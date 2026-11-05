@@ -7477,7 +7477,14 @@ async fn a_row_without_the_rule_never_downgrades_a_ruled_safety_work_order() {
     );
     let outcome = apply(&db, "work_orders", "wo-r2-4", &site_cleared).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
-    assert_eq!(rule_state(&db, "wo-r2-4").await, ruled("CORRECTIVE_LOTO", "loto"));
+    let (rule, permit_type, requires, cleared_at) = rule_state(&db, "wo-r2-4").await;
+    assert_eq!(
+        (rule.as_deref(), permit_type.as_deref()),
+        (Some("CORRECTIVE_LOTO"), Some("loto")),
+        "the rule held here is kept"
+    );
+    assert_eq!(requires.as_deref(), Some("0"));
+    assert!(cleared_at.is_some(), "cleared at its site");
     // A holder of the right at another site only is refused.
     let other_site = user(&db, "r2_other_site_issuer").await;
     exec(
@@ -7492,7 +7499,10 @@ async fn a_row_without_the_rule_never_downgrades_a_ruled_safety_work_order() {
         &planning,
         &[
             (super::sync_check::SAFETY_ORIGIN, json!(1)),
-            ("permit_rule_cleared_by_sync_id", json!("scope-user-r2_other_site_issuer")),
+            (
+                "permit_rule_cleared_by_sync_id",
+                json!("scope-user-r2_other_site_issuer"),
+            ),
             ("permit_rule_cleared_at", json!(now())),
             ("permit_rule_clear_reason", json!("Inspection visuelle seulement")),
         ],
@@ -9035,7 +9045,11 @@ async fn a_re_stamp_at_resume_with_a_valid_permit_of_the_new_type_resumes() {
         "{refused:?}"
     );
     assert_eq!(rule_state(&db, "wo-c7n4-5").await, ruled("CORRECTIVE_LOTO", "loto"));
-    let hot = advance_to_issued(&db, create_from_wo(&db, "hot_work", wo_id).await.expect("hot-work permit")).await;
+    let hot = advance_to_issued(
+        &db,
+        create_from_wo(&db, "hot_work", wo_id).await.expect("hot-work permit"),
+    )
+    .await;
     set_status(&db, &hot, "active").await.expect("activate");
     let resumed = resume(&db, wo_id).await.expect("re-stamped and resumed");
     assert_eq!(resumed.status_code.as_deref(), Some("in_progress"));
@@ -9183,9 +9197,12 @@ async fn wo_with_required_set(db: &DatabaseConnection, equipment: &str, types: &
         ),
     )
     .await;
-    let wo_sync = text(db, &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"))
-        .await
-        .expect("wo sync id");
+    let wo_sync = text(
+        db,
+        &format!("SELECT entity_sync_id FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("wo sync id");
     (wo_id, wo_sync)
 }
 
@@ -9206,7 +9223,8 @@ async fn uncleared_here(db: &DatabaseConnection, wo_id: i64) -> Vec<String> {
 #[tokio::test]
 async fn received_permit_types_are_merged_and_their_clearings_judged() {
     let db = setup().await;
-    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-1", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
+    let (wo_id, wo_sync) =
+        wo_with_required_set(&db, "EQ-L410B-1", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
     let requires = || {
         let db = &db;
         async move {
@@ -9249,7 +9267,10 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
         &wo_sync,
         &with(
             base.clone(),
-            &[("permit_required_types_json", lifted_cold(&verifier, "Pas de travail à froid ici"))],
+            &[(
+                "permit_required_types_json",
+                lifted_cold(&verifier, "Pas de travail à froid ici"),
+            )],
         ),
     )
     .await;
@@ -9260,7 +9281,10 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
         &wo_sync,
         &with(
             base.clone(),
-            &[("permit_required_types_json", lifted_cold("user-not-here", "Pas de travail à froid ici"))],
+            &[(
+                "permit_required_types_json",
+                lifted_cold("user-not-here", "Pas de travail à froid ici"),
+            )],
         ),
     )
     .await;
@@ -9269,7 +9293,10 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
         &db,
         "work_orders",
         &wo_sync,
-        &with(base.clone(), &[("permit_required_types_json", lifted_cold(&admin, "court"))]),
+        &with(
+            base.clone(),
+            &[("permit_required_types_json", lifted_cold(&admin, "court"))],
+        ),
     )
     .await;
     assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_INVALID"), "{outcome:?}");
@@ -9287,7 +9314,10 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
         &wo_sync,
         &with(
             base.clone(),
-            &[("permit_required_types_json", lifted_cold(&admin, "Pas de travail à froid ici"))],
+            &[(
+                "permit_required_types_json",
+                lifted_cold(&admin, "Pas de travail à froid ici"),
+            )],
         ),
     )
     .await;
@@ -9311,8 +9341,16 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
             (
                 "permit_required_types_json",
                 required_set_json(&[
-                    ("cold_work", "rule-cold", Some((admin.as_str(), at.as_str(), "Pas de travail à froid ici"))),
-                    ("hot_work", "rule-hot", Some((admin.as_str(), at.as_str(), "Soudure remplacée par un serrage"))),
+                    (
+                        "cold_work",
+                        "rule-cold",
+                        Some((admin.as_str(), at.as_str(), "Pas de travail à froid ici")),
+                    ),
+                    (
+                        "hot_work",
+                        "rule-hot",
+                        Some((admin.as_str(), at.as_str(), "Soudure remplacée par un serrage")),
+                    ),
                     ("loto", "rule-loto", None),
                 ]),
             ),
@@ -9323,9 +9361,12 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
     assert_eq!(uncleared_here(&db, wo_id).await, vec!["loto".to_string()]);
     assert_eq!(requires().await.as_deref(), Some("1"));
     assert!(
-        text(&db, &format!("SELECT permit_rule_cleared_at FROM work_orders WHERE id = {wo_id}"))
-            .await
-            .is_some(),
+        text(
+            &db,
+            &format!("SELECT permit_rule_cleared_at FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .is_some(),
         "the primary rule's clearing is kept"
     );
     assert_eq!(
@@ -9349,7 +9390,8 @@ async fn received_permit_types_are_merged_and_their_clearings_judged() {
 #[tokio::test]
 async fn an_older_pc_lifting_the_primary_rule_keeps_the_other_types_required() {
     let db = setup().await;
-    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-2", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
+    let (wo_id, wo_sync) =
+        wo_with_required_set(&db, "EQ-L410B-2", &[("hot_work", "rule-hot"), ("loto", "rule-loto")]).await;
     let mut older = with(
         wire(&db, "work_orders", &wo_sync).await,
         &[
@@ -9413,7 +9455,11 @@ async fn a_received_start_is_judged_with_the_senders_set() {
             )
         }
     };
-    let both = started(required_set_json(&[("hot_work", "rule-h", None), ("loto", "rule-1", None)])).await;
+    let both = started(required_set_json(&[
+        ("hot_work", "rule-h", None),
+        ("loto", "rule-1", None),
+    ]))
+    .await;
     let outcome = apply(&db, "work_orders", &wo_sync, &both).await;
     assert_eq!(code(&outcome), Some("PERMIT_TYPE_REQUIRED_TO_START"), "{outcome:?}");
     let loto_only = started(required_set_json(&[("loto", "rule-1", None)])).await;

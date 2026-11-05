@@ -443,7 +443,10 @@ mod tests {
         assert!(!set.stored());
         assert_eq!(set.items().len(), 1);
         assert_eq!(set.primary(), Some("loto"));
-        assert_eq!(set.get("loto").expect("primary").clearing, Some(clearing("2026-11-04T08:00:00Z")));
+        assert_eq!(
+            set.get("loto").expect("primary").clearing,
+            Some(clearing("2026-11-04T08:00:00Z"))
+        );
         assert!(set.uncleared_types().is_empty());
         assert!(RequiredSet::from_row(None, Legacy::default()).expect("none").is_empty());
     }
@@ -475,14 +478,16 @@ mod tests {
     fn two_sets_merge_on_their_union() {
         let mut held = RequiredSet::from_matches(&[("loto".into(), "CRITICITE_A".into())]);
         held.clear("loto", clearing("2026-11-04T08:00:00Z"));
-        let received = RequiredSet::from_matches(&[
-            ("hot_work".into(), "SOUDURE".into()),
-            ("loto".into(), "AUTRE".into()),
-        ]);
+        let received =
+            RequiredSet::from_matches(&[("hot_work".into(), "SOUDURE".into()), ("loto".into(), "AUTRE".into())]);
         // The row does not require the permit: the clearing held here is kept.
         let merged = merge(&held, &received, false);
         assert_eq!(merged.items().len(), 2);
-        assert_eq!(merged.get("loto").expect("loto").rule_code, "AUTRE", "the smaller rule code");
+        assert_eq!(
+            merged.get("loto").expect("loto").rule_code,
+            "AUTRE",
+            "the smaller rule code"
+        );
         assert!(merged.get("loto").expect("loto").clearing.is_some());
         assert_eq!(merged.uncleared_types(), vec!["hot_work".to_string()]);
         // Required again by the row: the clearing it does not carry is withdrawn.

@@ -985,7 +985,9 @@ pub(crate) async fn notify_work_order_permit_types_added(
     send_logged_notice(
         conn,
         &route,
-        format!("OT {wo_code} : permis exigé en plus : {types} / Work order {wo_code}: permit now also required: {types}"),
+        format!(
+            "OT {wo_code} : permis exigé en plus : {types} / Work order {wo_code}: permit now also required: {types}"
+        ),
         format!(
             "Les règles de permis de l'usine ({rules}) exigent aussi pour l'OT {wo_code} un permis {types}, en plus de \
              {previous}. Un permis actif de chaque type est nécessaire pour démarrer ou reprendre ce travail. / The \

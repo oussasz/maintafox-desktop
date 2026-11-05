@@ -318,7 +318,10 @@ async fn withdraw_clearing(
     let legacy_cleared = cleared_at.is_some() && (rule.is_some() || safety == 1);
     // The set as stored (a NULL column is the legacy clearing alone, withdrawn with it).
     let withdrawn_types: Vec<String> = if set.stored() {
-        set.withdraw_clearings().into_iter().map(|i| i.permit_type_code).collect()
+        set.withdraw_clearings()
+            .into_iter()
+            .map(|i| i.permit_type_code)
+            .collect()
     } else {
         Vec::new()
     };
@@ -536,7 +539,10 @@ pub async fn void_clearing_on_site_change(
     let mut set = from_query_row(&row, wo_id)?;
     let legacy_cleared = cleared_at.is_some() && (rule.is_some() || safety == 1);
     let voided_types: Vec<String> = if set.stored() {
-        set.withdraw_clearings().into_iter().map(|i| i.permit_type_code).collect()
+        set.withdraw_clearings()
+            .into_iter()
+            .map(|i| i.permit_type_code)
+            .collect()
     } else {
         Vec::new()
     };

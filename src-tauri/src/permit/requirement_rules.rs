@@ -1009,7 +1009,11 @@ pub async fn required_types_without_live_permit(
         .items()
         .iter()
         .filter(|i| i.clearing.is_none())
-        .filter(|i| !live.iter().any(|p| p.permit_type_code.as_deref() == Some(i.permit_type_code.as_str())))
+        .filter(|i| {
+            !live
+                .iter()
+                .any(|p| p.permit_type_code.as_deref() == Some(i.permit_type_code.as_str()))
+        })
         .map(|i| (i.permit_type_code.clone(), i.rule_code.clone()))
         .collect())
 }
@@ -1345,7 +1349,9 @@ pub async fn finding_for_started_without_rule(
     let (rule, permit_type, requires, held_here) = match (found, missing_types.first()) {
         (Some(found), _) => found,
         // Only types missing from its set: the finding names the first of them.
-        (None, Some((missing_type, missing_rule))) => (missing_rule.clone(), missing_type.clone(), requires_now, held_present),
+        (None, Some((missing_type, missing_rule))) => {
+            (missing_rule.clone(), missing_type.clone(), requires_now, held_present)
+        }
         (None, None) => return Ok(None),
     };
     let missing: Vec<&str> = missing_types.iter().map(|(t, _)| t.as_str()).collect();
@@ -1469,7 +1475,9 @@ async fn finding_recorded(
                 permit_type.into(),
                 received_rule.unwrap_or("").into(),
                 received_type.unwrap_or("").into(),
-                serde_json::to_string(missing_types).unwrap_or_else(|_| "[]".into()).into(),
+                serde_json::to_string(missing_types)
+                    .unwrap_or_else(|_| "[]".into())
+                    .into(),
             ],
         ))
         .await?
@@ -1534,7 +1542,9 @@ async fn is_not_started(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<bo
         .await?
         .map(|r| r.try_get::<String>("", "code"))
         .transpose()?;
-    Ok(status.is_some_and(|s| crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&s.as_str())))
+    Ok(status.is_some_and(|s| {
+        crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&s.as_str())
+    }))
 }
 
 /// The primary rule of [`converge_received_rule`].

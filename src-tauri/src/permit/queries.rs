@@ -31,7 +31,6 @@ const WP_STATUSES: &[&str] = &[
 /// open-permits report and the "permit expiring / expired" notification checks share it.
 pub const OPEN_PERMIT_STATUSES_SQL: &str = "('issued', 'active', 'suspended', 'revalidation_required')";
 
-
 /// Statuses in which isolation points may be defined, applied and verified. An `active`
 /// permit must be suspended first so new energy sources are never added under live work.
 const ISOLATION_SETUP_STATUSES: &[&str] = &[
@@ -1735,7 +1734,10 @@ async fn create_work_permit_in(
         if let Some(existing) = open.iter().find(|p| p.permit_type_id == input.permit_type_id) {
             return Err(refused(
                 "PERMIT_WO_ALREADY_HAS_OPEN",
-                format!("Work order already has an open permit of this type ({}).", existing.code),
+                format!(
+                    "Work order already has an open permit of this type ({}).",
+                    existing.code
+                ),
                 &[("permit", existing.code.clone())],
             ));
         }
@@ -2052,7 +2054,10 @@ async fn update_work_permit_in(
         {
             return Err(refused(
                 "PERMIT_WO_ALREADY_HAS_OPEN",
-                format!("Work order already has an open permit of this type ({}).", existing.code),
+                format!(
+                    "Work order already has an open permit of this type ({}).",
+                    existing.code
+                ),
                 &[("permit", existing.code.clone())],
             ));
         }

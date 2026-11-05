@@ -2535,9 +2535,9 @@ pub(crate) async fn inbound_permit_rule_check(
             Some(l) => required_set_of(l).unwrap_or_default(),
             None => crate::permit::required_set::RequiredSet::default(),
         };
-        let site_moved = local
-            .as_ref()
-            .is_some_and(|l| field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id"));
+        let site_moved = local.as_ref().is_some_and(|l| {
+            field(l, "entity_sync_id").is_some() && field(l, "entity_sync_id") != field(&wo, "entity_sync_id")
+        });
         for item in &received_items {
             let Some(clearing) = &item.clearing else {
                 continue;
@@ -2796,11 +2796,7 @@ async fn judge_clearing(
     let reason_ok = reason
         .map(str::trim)
         .is_some_and(|r| r.chars().count() >= requirement::MIN_CLEAR_REASON_CHARS);
-    let Some(cleared_at) = cleared_at
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .and_then(instant)
-    else {
+    let Some(cleared_at) = cleared_at.map(str::trim).filter(|t| !t.is_empty()).and_then(instant) else {
         return invalid("without the time it was cleared");
     };
     if !reason_ok {
@@ -2950,10 +2946,7 @@ async fn keep_required_set(
     if payload.contains_key(COLUMN) {
         let received = required_set_of(&row).map_err(sync_err)?;
         let merged = merge(&held, &received, row_requires);
-        payload.insert(
-            COLUMN.to_string(),
-            merged.to_json().map_or(Value::Null, Value::String),
-        );
+        payload.insert(COLUMN.to_string(), merged.to_json().map_or(Value::Null, Value::String));
         if !merged.uncleared_types().is_empty() {
             payload.insert("requires_permit".into(), Value::from(1_i64));
         }

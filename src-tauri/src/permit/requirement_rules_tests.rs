@@ -2141,7 +2141,10 @@ async fn hot_work_on_a_critical_machine_records_the_isolation_and_shows_both() {
         .await
         .expect("set")
         .expect("wo");
-    assert!(set.contains("loto") && set.contains("hot_work"), "both permit types are required");
+    assert!(
+        set.contains("loto") && set.contains("hot_work"),
+        "both permit types are required"
+    );
     assert_eq!(set.primary(), Some("loto"), "the isolation rule stays the primary one");
 }
 
@@ -2316,15 +2319,23 @@ async fn each_permit_type_is_lifted_on_its_own() {
         .await
         .expect_err("two types not lifted: the type is named");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_TYPE_REQUIRED);
-    let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("hot_work"), "court"), actor)
-        .await
-        .expect_err("short reason");
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), "court"),
+        actor,
+    )
+    .await
+    .expect_err("short reason");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_REASON);
     add_second_site(&db).await;
     let outsider = site_holder(&db, "issuer2", 2, crate::rbac::permissions::PTW_ISSUE).await;
-    let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("hot_work"), reason), outsider)
-        .await
-        .expect_err("the right at another site");
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        outsider,
+    )
+    .await
+    .expect_err("the right at another site");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_RIGHT);
     let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("loto"), reason), actor)
         .await
@@ -2333,27 +2344,36 @@ async fn each_permit_type_is_lifted_on_its_own() {
 
     // The issuer at the work order's site lifts hot work: cold work is still required.
     let issuer = site_holder(&db, "issuer1", 1, crate::rbac::permissions::PTW_ISSUE).await;
-    let lifted = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("hot_work"), reason), issuer)
-        .await
-        .expect("hot work lifted");
+    let lifted = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        issuer,
+    )
+    .await
+    .expect("hot work lifted");
     assert!(lifted.requires_permit, "cold work is still required");
     assert_eq!(lifted.permit_rule_cleared_at, None, "the primary rule is not lifted");
     assert_eq!(required_types(&db, wo_id).await, vec!["cold_work".to_string()]);
-    let set = crate::permit::required_set::read(&db, wo_id).await.expect("set").expect("wo");
+    let set = crate::permit::required_set::read(&db, wo_id)
+        .await
+        .expect("set")
+        .expect("wo");
     let clearing = set.get("hot_work").and_then(|i| i.clearing.clone()).expect("cleared");
     assert_eq!(clearing.by_sync_id.as_deref(), Some("pr-issuer1"));
     assert_eq!(clearing.reason.as_deref(), Some(reason));
     let audit = text_of(
         &db,
-        &format!(
-            "SELECT summary FROM wo_change_events WHERE wo_id = {wo_id} AND action = 'permit_rule_flag_cleared'"
-        ),
+        &format!("SELECT summary FROM wo_change_events WHERE wo_id = {wo_id} AND action = 'permit_rule_flag_cleared'"),
     )
     .await;
     assert!(audit.contains("hot_work") && audit.contains("PUMPS_HOT"), "{audit}");
-    let err = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, Some("hot_work"), reason), issuer)
-        .await
-        .expect_err("already lifted");
+    let err = req::clear_permit_rule_flag(
+        &db,
+        input(scalar(&db, &version_sql).await, Some("hot_work"), reason),
+        issuer,
+    )
+    .await
+    .expect_err("already lifted");
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_ABSENT);
     let err = req::set_permit_requirement(
         &db,
@@ -2369,7 +2389,9 @@ async fn each_permit_type_is_lifted_on_its_own() {
     assert_eq!(code_of(&err), req::CODE_RULE_FLAG_NEEDS_CLEAR);
     // Only hot work live is enough now.
     active_permit(&db, "hot_work", wo_id).await;
-    assert!(crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id).await.is_err());
+    assert!(crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .is_err());
 
     // The last type, the primary one: named by default, the requirement lifted, legacy columns too.
     let last = req::clear_permit_rule_flag(&db, input(scalar(&db, &version_sql).await, None, reason), issuer)
@@ -2471,12 +2493,17 @@ async fn a_type_added_while_on_hold_blocks_the_resume() {
     .await;
     let rv = scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await;
     assert_eq!(
-        rules::prepare_resume(&db, wo_id, Some(actor), rv - 1).await.expect("stale"),
+        rules::prepare_resume(&db, wo_id, Some(actor), rv - 1)
+            .await
+            .expect("stale"),
         0,
         "a stale screen adds nothing"
     );
     assert_eq!(required_types(&db, wo_id).await, vec!["hot_work".to_string()]);
-    assert_eq!(rules::prepare_resume(&db, wo_id, Some(actor), rv).await.expect("added"), 1);
+    assert_eq!(
+        rules::prepare_resume(&db, wo_id, Some(actor), rv).await.expect("added"),
+        1
+    );
     assert_eq!(
         scalar(&db, &format!("SELECT row_version FROM work_orders WHERE id = {wo_id}")).await,
         rv + 1
@@ -2530,7 +2557,11 @@ async fn the_catch_up_adds_a_missing_permit_type() {
         .await
         .expect("q")
         .expect("wo");
-    assert_eq!(wo.permit_rule_code.as_deref(), Some("PUMPS_HOT"), "the primary rule is kept");
+    assert_eq!(
+        wo.permit_rule_code.as_deref(),
+        Some("PUMPS_HOT"),
+        "the primary rule is kept"
+    );
     let payload = text_of(
         &db,
         &format!(
