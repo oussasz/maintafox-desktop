@@ -9694,6 +9694,136 @@ async fn a_received_re_tick_withdraws_the_liftings_and_is_recorded() {
     );
 }
 
+/// Site 2 (`l410b-site-2`) applied here, and the work order's site here (site 1): its org node id.
+async fn second_site_and_held_site(db: &DatabaseConnection, wo_id: i64) -> i64 {
+    exec(
+        db,
+        "INSERT OR IGNORE INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, \
+         updated_at, structure_model_id) VALUES (2, 'l410b-site-2', 'L410B-SITE-2', 'Site 2', 1, 'active', \
+         datetime('now'), datetime('now'), 1)",
+    )
+    .await;
+    let held_site: i64 = text(
+        db,
+        &format!("SELECT CAST(entity_id AS TEXT) FROM work_orders WHERE id = {wo_id}"),
+    )
+    .await
+    .expect("a site here")
+    .parse()
+    .expect("id");
+    assert_ne!(held_site, 2, "held at site 1 here");
+    held_site
+}
+
+/// Security review of L4-10b (844b717e4): a received move to site 2 that carries a new lifting of a
+/// type that is not the primary one, made at site 2, is judged at site 2: refused when the person
+/// who lifted it holds the permit-issue right at site 1 only (nothing adopted, the type still
+/// required), applied when that right covers site 2 (the type lifted, the primary one required).
+#[tokio::test]
+async fn a_received_site_move_with_a_new_lifting_is_judged_at_the_new_site() {
+    let db = setup().await;
+    let types = [("hot_work", "rule-hot"), ("loto", "rule-loto")];
+    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-8", &types).await;
+    let held_site = second_site_and_held_site(&db, wo_id).await;
+    let issuer_here = site_permit_issuer(&db, "l410b_issuer_1", held_site).await;
+    let issuer_there = site_permit_issuer(&db, "l410b_issuer_2", 2).await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    let moved_with_loto_lifted_by = |by: &str| {
+        with(
+            held.clone(),
+            &[
+                ("entity_sync_id", json!("l410b-site-2")),
+                ("requires_permit", json!(1)),
+                ("permit_rule_cleared_by_sync_id", Value::Null),
+                ("permit_rule_cleared_at", Value::Null),
+                ("permit_rule_clear_reason", Value::Null),
+                (
+                    "permit_required_types_json",
+                    required_set_json(&[
+                        ("hot_work", "rule-hot", None),
+                        (
+                            "loto",
+                            "rule-loto",
+                            Some((by, now().as_str(), "Travail fait hors tension au site 2")),
+                        ),
+                    ]),
+                ),
+            ],
+        )
+    };
+
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_with_loto_lifted_by(&issuer_here)).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    assert_eq!(
+        uncleared_here(&db, wo_id).await,
+        vec!["hot_work".to_string(), "loto".to_string()],
+        "the lifting is not adopted"
+    );
+
+    let outcome = apply(&db, "work_orders", &wo_sync, &moved_with_loto_lifted_by(&issuer_there)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(
+        uncleared_here(&db, wo_id).await,
+        vec!["hot_work".to_string()],
+        "loto lifted at site 2"
+    );
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("1"));
+    assert_eq!(
+        text(
+            &db,
+            &format!("SELECT CAST(entity_id AS TEXT) FROM work_orders WHERE id = {wo_id}")
+        )
+        .await
+        .as_deref(),
+        Some("2"),
+        "moved to site 2"
+    );
+}
+
+/// Security review of L4-10b (844b717e4): a PC without migration 279 (no set in its row) moves the
+/// work order to site 2 and lifts its plant rule there (the legacy clearing): judged on the legacy
+/// path at site 2, refused when the person holds the permit-issue right at site 1 only (the type
+/// still required), applied when that right covers site 2 (the primary type lifted in the set too).
+#[tokio::test]
+async fn an_older_pc_moving_and_lifting_the_rule_is_judged_at_the_new_site() {
+    let db = setup().await;
+    let (wo_id, wo_sync) = wo_with_required_set(&db, "EQ-L410B-9", &[("loto", "rule-loto")]).await;
+    let held_site = second_site_and_held_site(&db, wo_id).await;
+    let issuer_here = site_permit_issuer(&db, "l410b_old_issuer_1", held_site).await;
+    let issuer_there = site_permit_issuer(&db, "l410b_old_issuer_2", 2).await;
+    let held = wire(&db, "work_orders", &wo_sync).await;
+    let older_moved_and_lifted_by = |by: &str| {
+        let mut older = with(
+            held.clone(),
+            &[
+                ("entity_sync_id", json!("l410b-site-2")),
+                ("requires_permit", json!(0)),
+                ("permit_rule_cleared_by_sync_id", json!(by)),
+                ("permit_rule_cleared_at", json!(now())),
+                ("permit_rule_clear_reason", json!("Travail fait hors tension au site 2")),
+            ],
+        );
+        older.remove("permit_required_types_json");
+        older
+    };
+
+    let outcome = apply(&db, "work_orders", &wo_sync, &older_moved_and_lifted_by(&issuer_here)).await;
+    assert_eq!(code(&outcome), Some("WO_PERMIT_RULE_CLEAR_UNAUTHORISED"), "{outcome:?}");
+    assert_eq!(uncleared_here(&db, wo_id).await, vec!["loto".to_string()]);
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("1"));
+
+    let outcome = apply(&db, "work_orders", &wo_sync, &older_moved_and_lifted_by(&issuer_there)).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert!(
+        uncleared_here(&db, wo_id).await.is_empty(),
+        "the primary type lifted in the set"
+    );
+    assert_eq!(requires_permit(&db, wo_id).await.as_deref(), Some("0"));
+    crate::permit::wo_gate::assert_in_progress_permit_gate(&db, wo_id)
+        .await
+        .expect("the start is allowed");
+}
+
 /// Security review of L4-10b (9efae6d71): PC A lifted hot work (the primary type) at site 1 while
 /// LOTO stays required; PC B, without that lifting, changed the equipment and moved the work order
 /// to site 2 (requires_permit = 1, no clearing). Applied here, the lifting judged at site 1 does
