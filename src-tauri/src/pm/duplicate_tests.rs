@@ -110,7 +110,8 @@ fn version_input(trigger: &str, interval_note: &str) -> CreatePmPlanVersionInput
             .to_string(),
         ),
         required_parts_json: Some(r#"[{"code":"BRG-001","required":true}]"#.to_string()),
-        required_skills_json: Some("[]".to_string()),
+        // A skill published by the base data (migration 040).
+        required_skills_json: Some(r#"["MECH_GENERAL"]"#.to_string()),
         required_tools_json: Some(r#"["Analyseur de vibrations"]"#.to_string()),
         estimated_duration_hours: Some(2.5),
         planned_crew_size: Some(2),
@@ -291,6 +292,11 @@ async fn a_copy_is_a_new_draft_v1_with_the_published_content_and_none_of_the_his
         crate::pm::wo_content::normalized_required_parts_json(published.required_parts_json.as_deref())
     );
     assert_eq!(version.required_tools_json, published.required_tools_json);
+    assert_eq!(
+        version.required_skills_json.as_deref(),
+        Some(r#"["MECH_GENERAL"]"#),
+        "trade copied"
+    );
     assert_eq!(version.required_skills_json, published.required_skills_json);
     assert_eq!(version.estimated_duration_hours, Some(2.5));
     assert_eq!(version.planned_crew_size, Some(2));
@@ -648,4 +654,105 @@ async fn the_right_is_checked_at_the_site_of_the_target_asset() {
         duplicate::resolve_target(&source, &input).expect("target"),
         ("equipment".to_string(), PUMP_A)
     );
+}
+
+#[tokio::test]
+async fn a_failure_after_the_plan_row_is_written_leaves_nothing_behind() {
+    let db = setup().await;
+    let source_id = source_plan(&db, "PM-ROLLBACK", "fixed", CALENDAR, false).await;
+    // The draft names a skill that is no longer published: the version of the copy is refused
+    // after the plan row of the copy is already inserted in the transaction.
+    exec(
+        &db,
+        "UPDATE reference_values SET is_active = 0
+          WHERE code = 'MECH_GENERAL'
+            AND set_id IN (SELECT rs.id FROM reference_sets rs JOIN reference_domains d ON d.id = rs.domain_id
+                            WHERE d.code = 'PERSONNEL.SKILLS')",
+    )
+    .await;
+    let plans = count(&db, "SELECT COUNT(*) AS n FROM pm_plans").await;
+    let versions = count(&db, "SELECT COUNT(*) AS n FROM pm_plan_versions").await;
+    let audits = count(&db, "SELECT COUNT(*) AS n FROM audit_events").await;
+
+    let err = duplicate::duplicate_pm_plan(&db, copy_input(source_id, "PM-ROLLBACK-B"), Some(1))
+        .await
+        .expect_err("version refused");
+    assert!(gate(&err).starts_with("GATE_PM_SKILL_UNKNOWN"), "{err:?}");
+
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) AS n FROM pm_plans WHERE code = 'PM-ROLLBACK-B'").await,
+        0,
+        "no plan row left"
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM pm_plans").await, plans);
+    assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM pm_plan_versions").await, versions);
+    assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM audit_events").await, audits);
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'pm.plan.duplicated'"
+        )
+        .await,
+        0
+    );
+}
+
+const CALENDAR_WITH_METER: &str = r#"{"interval_value":3,"interval_unit":"month","tolerance":{"unit":"days","early":2,"late":5},"meter":{"asset_meter_id":911,"interval_value":500,"start_reading":100}}"#;
+
+#[tokio::test]
+async fn a_calendar_plan_with_a_meter_block_follows_the_same_meter_rule() {
+    let db = setup().await;
+    for (strategy, code) in [("fixed", "PM-WCF-FIX"), ("floating", "PM-WCF-FLO")] {
+        let source_id = source_plan(&db, code, strategy, CALENDAR_WITH_METER, true).await;
+
+        // A meter of the target pump with the same unit: the block keeps a meter, that one.
+        let mut input = copy_input(source_id, &format!("{code}-B"));
+        input.target_meter_id = Some(METER_B_HOURS);
+        let copy = duplicate::duplicate_pm_plan(&db, input, Some(1))
+            .await
+            .expect("same unit");
+        assert!(!copy.meter_to_choose, "{strategy}");
+        let trigger: Value = serde_json::from_str(&copy.version.trigger_definition_json).unwrap();
+        assert_eq!(trigger["interval_value"], 3, "{strategy}: calendar part copied");
+        assert_eq!(trigger["interval_unit"], "month");
+        assert_eq!(trigger["tolerance"], json!({"unit":"days","early":2,"late":5}));
+        assert_eq!(trigger["meter"]["asset_meter_id"], METER_B_HOURS, "{strategy}");
+        assert_eq!(trigger["meter"]["interval_value"], 500);
+        assert!(
+            trigger["meter"].get("start_reading").is_none(),
+            "{strategy}: reading not copied"
+        );
+
+        // Another unit: refused, nothing written.
+        let mut input = copy_input(source_id, &format!("{code}-KM"));
+        input.target_meter_id = Some(METER_B_KM);
+        let err = duplicate::duplicate_pm_plan(&db, input, Some(1))
+            .await
+            .expect_err("other unit");
+        assert!(
+            gate(&err).starts_with("GATE_PM_COPY_METER_MISMATCH"),
+            "{strategy}: {err:?}"
+        );
+
+        // No meter chosen: the block's meter is left blank and publishing waits for it.
+        let copy = duplicate::duplicate_pm_plan(&db, copy_input(source_id, &format!("{code}-LATER")), Some(1))
+            .await
+            .expect("meter left to choose");
+        assert!(copy.meter_to_choose, "{strategy}");
+        let trigger: Value = serde_json::from_str(&copy.version.trigger_definition_json).unwrap();
+        assert!(trigger["meter"].get("asset_meter_id").is_none(), "{strategy}");
+        assert_eq!(trigger["meter"]["interval_value"], 500);
+        assert_eq!(trigger["interval_value"], 3);
+        approve(&db, copy.plan.id).await;
+        let err = queries::publish_pm_plan_version(
+            &db,
+            PublishPmPlanVersionInput {
+                version_id: copy.version.id,
+                expected_row_version: copy.version.row_version,
+            },
+        )
+        .await
+        .expect_err("publish refused");
+        assert!(gate(&err).starts_with("GATE_PM_METER_REQUIRED"), "{strategy}: {err:?}");
+    }
 }
