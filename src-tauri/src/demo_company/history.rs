@@ -1018,7 +1018,7 @@ async fn lock_out(
         }))?,
     )
     .await?;
-    isolation_id = isolation.id;
+    let isolation_id = isolation.id;
     let lock = format!("CAD-{}-{:03}", site, sim.rng.gen_range(1..60));
     ctx.tick()?;
     let rv = row_version(db, "permit_isolations", isolation_id).await?;
