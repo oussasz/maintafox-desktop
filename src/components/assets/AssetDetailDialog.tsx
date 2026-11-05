@@ -64,7 +64,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusChip } from "@/components/ui/status-chip";
@@ -259,6 +258,24 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                   </PermissionGate>
                 ) : null}
                 <PermissionGate permission={P.EQ_MANAGE}>
+                  <Button
+                    variant="outline"
+                    className="h-11 gap-1.5"
+                    onClick={() => openEditForm(asset)}
+                  >
+                    <Pencil className="h-4 w-4" aria-hidden />
+                    {t("editForm.button")}
+                  </Button>
+                  {!retired ? (
+                    <Button
+                      variant="outline"
+                      className="h-11 gap-1.5 text-status-danger"
+                      onClick={() => setShowDecommission(true)}
+                    >
+                      <AlertTriangle className="h-4 w-4" aria-hidden />
+                      {t("decommission.action")}
+                    </Button>
+                  ) : null}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -270,26 +287,10 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
-                      <DropdownMenuItem className="gap-2" onSelect={() => openEditForm(asset)}>
-                        <Pencil className="h-4 w-4" aria-hidden />
-                        {t("editForm.button")}
-                      </DropdownMenuItem>
                       <DropdownMenuItem className="gap-2" onSelect={() => setShowCommercial(true)}>
                         <Receipt className="h-4 w-4" aria-hidden />
                         {t("commercial.edit")}
                       </DropdownMenuItem>
-                      {!retired ? (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="gap-2 text-status-danger focus:text-status-danger"
-                            onSelect={() => setShowDecommission(true)}
-                          >
-                            <AlertTriangle className="h-4 w-4" aria-hidden />
-                            {t("decommission.action")}
-                          </DropdownMenuItem>
-                        </>
-                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </PermissionGate>
