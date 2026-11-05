@@ -361,8 +361,12 @@ async fn a_copy_is_a_new_draft_v1_with_the_published_content_and_none_of_the_his
         .await
         .expect("audit")
         .expect("audit row");
-    assert_eq!(audit.try_get::<String>("", "target_type").unwrap(), "pm_plans");
-    assert_eq!(audit.try_get::<String>("", "target_id").unwrap(), plan.id.to_string());
+    assert_eq!(audit.try_get::<String>("", "target_type").unwrap(), "pm_plan");
+    let plan_sync_id = crate::sync::identity::optional_entity_sync_id(&db, "pm_plans", plan.id)
+        .await
+        .expect("sync id query")
+        .expect("plan sync id");
+    assert_eq!(audit.try_get::<String>("", "target_id").unwrap(), plan_sync_id);
     assert_eq!(audit.try_get::<Option<i64>>("", "actor_id").unwrap(), Some(1));
     let details: Value = serde_json::from_str(&audit.try_get::<String>("", "details_json").unwrap()).unwrap();
     assert_eq!(details["summary"], "copié de PM-SRC v1");

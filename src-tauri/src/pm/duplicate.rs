@@ -280,12 +280,17 @@ pub async fn duplicate_pm_plan(
         meter_to_choose,
     )
     .await?;
+    // The audit names the new plan by its sync id, the same on every PC: a draft plan can be
+    // deleted later (`commands::pm_delete`), and the audit must not depend on the row staying.
+    let plan_sync_id = crate::sync::identity::optional_entity_sync_id(&tx, "pm_plans", plan_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm plan {plan_id} has no sync id")))?;
     crate::audit::writer::write_audit_event_in(
         &tx,
         crate::audit::writer::AuditEventInput {
             action_code: "pm.plan.duplicated".to_string(),
-            target_type: Some("pm_plans".to_string()),
-            target_id: Some(plan_id.to_string()),
+            target_type: Some("pm_plan".to_string()),
+            target_id: Some(plan_sync_id),
             actor_id,
             auth_context: "session".to_string(),
             result: "success".to_string(),
