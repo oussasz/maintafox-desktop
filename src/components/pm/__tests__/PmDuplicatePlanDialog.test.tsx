@@ -6,10 +6,16 @@ import {
   sourceMeterIdOf,
   versionToCopy,
 } from "@/components/pm/PmDuplicatePlanDialog";
+import { i18n, initI18n } from "@/i18n";
 import type { PmAssetMeter, PmPlanRow } from "@/services/pm-service";
 import type { PmPlanVersion } from "@shared/ipc-types";
 
-vi.mock("react-i18next", async () => (await import("./pm-test-i18n")).pmI18nMock);
+// The real module stays behind the PM test translator, so the app's error texts (`errors`
+// catalogue, read by `appErrorReason`) are the real ones.
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./pm-test-i18n")).pmI18nMock,
+}));
 
 const meter = (id: number, unit: number | null, name: string): PmAssetMeter => ({
   id,
@@ -24,21 +30,30 @@ const meter = (id: number, unit: number | null, name: string): PmAssetMeter => (
   is_primary: true,
 });
 
-// Pump 10 (source) has hour meter 7; pump 20 only a km meter.
+// Pump 10 (source) has hour meter 7; pump 20 only a km meter; pump 30 an hour meter.
 const METERS: Record<number, PmAssetMeter[]> = {
   10: [meter(7, 1, "Heures marche")],
   20: [meter(8, 2, "Kilométrage")],
+  30: [meter(9, 1, "Compteur horaire")],
 };
 
 vi.mock("@/services/pm-service", () => ({
   listPmAssetMeters: vi.fn((id: number) => Promise.resolve(METERS[id] ?? [])),
-  listPmScopeOptions: vi.fn().mockResolvedValue([]),
+  listPmScopeOptions: vi.fn().mockResolvedValue([
+    { id: 3, code: "POMPES", label: "Pompes" },
+    { id: 4, code: "COMP", label: "Compresseurs" },
+  ]),
 }));
 vi.mock("@/components/assets/AssetPicker", () => ({
   AssetPicker: ({ onChange }: { onChange: (a: unknown) => void }) => (
-    <button type="button" onClick={() => onChange({ id: 20, asset_code: "P-20" })}>
-      pick pump 20
-    </button>
+    <>
+      <button type="button" onClick={() => onChange({ id: 20, asset_code: "P-20" })}>
+        pick pump 20
+      </button>
+      <button type="button" onClick={() => onChange({ id: 30, asset_code: "P-30" })}>
+        pick pump 30
+      </button>
+    </>
   ),
 }));
 
@@ -100,20 +115,32 @@ function versionOf(id: number, no: number, status: string, trigger: string): PmP
 
 const METER_TRIGGER = '{"asset_meter_id":7,"interval_value":250}';
 
-function renderDialog(strategy: string, trigger: string) {
-  const onDuplicate = vi.fn().mockResolvedValue({});
+function renderDialog(
+  strategy: string,
+  trigger: string,
+  options: {
+    plan?: Partial<PmPlanRow>;
+    versions?: PmPlanVersion[];
+    onDuplicate?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
+  const onDuplicate = options.onDuplicate ?? vi.fn().mockResolvedValue({});
   const onClose = vi.fn();
   render(
     <PmDuplicatePlanDialog
       open
-      plan={planOf(strategy)}
-      versions={[versionOf(5, 2, "published", trigger), versionOf(6, 3, "draft", "{}")]}
+      plan={{ ...planOf(strategy), ...options.plan }}
+      versions={
+        options.versions ?? [versionOf(5, 2, "published", trigger), versionOf(6, 3, "draft", "{}")]
+      }
       onClose={onClose}
       onDuplicate={onDuplicate}
     />,
   );
   return { onDuplicate, onClose };
 }
+
+const CALENDAR = '{"interval_value":3,"interval_unit":"month"}';
 
 describe("PmDuplicatePlanDialog", () => {
   it("prefills the title, keeps the source pump and its own meter, and creates the copy", async () => {
@@ -160,6 +187,144 @@ describe("PmDuplicatePlanDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
     await waitFor(() => expect(onDuplicate).toHaveBeenCalled());
     expect(onDuplicate.mock.calls[0]?.[0]).toMatchObject({ target_meter_id: null });
+  });
+});
+
+describe("PmDuplicatePlanDialog — guidance and safety", () => {
+  it("starts on the empty Code field", () => {
+    renderDialog("fixed", CALENDAR);
+    expect(screen.getByLabelText("Code")).toHaveFocus();
+  });
+
+  it("says why Dupliquer cannot be pressed: code, then title", () => {
+    renderDialog("fixed", CALENDAR);
+    const duplicate = screen.getByRole("button", { name: "Duplicate" });
+    expect(duplicate).toBeDisabled();
+    expect(screen.getByText("Enter the code of the new plan to duplicate.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "  " } });
+    expect(screen.getByText("Enter the title of the new plan to duplicate.")).toBeInTheDocument();
+    expect(duplicate).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Graissage 2" } });
+    expect(duplicate).toBeEnabled();
+    expect(screen.queryByText(/to duplicate\.$/)).not.toBeInTheDocument();
+  });
+
+  it("says why when the scope is missing on a fanned-out plan", () => {
+    renderDialog("fixed", CALENDAR, { plan: { asset_scope_type: "family", asset_scope_id: null } });
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    expect(screen.getByText("Choose the target scope to duplicate.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
+  });
+
+  it("says why when there is no version to copy", () => {
+    renderDialog("fixed", CALENDAR, { versions: [] });
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    // In the description and under the button.
+    expect(
+      screen.getAllByText("This plan has neither a published version nor a draft to copy."),
+    ).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
+  });
+
+  it("copies a family plan onto the preselected family", async () => {
+    const { onDuplicate } = renderDialog("fixed", CALENDAR, {
+      plan: { asset_scope_type: "family", asset_scope_id: 3, asset_code: null, asset_name: null },
+    });
+    expect(await screen.findByRole("combobox")).toHaveTextContent("POMPES — Pompes");
+    expect(screen.queryByText("Meter of the target equipment")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-FAM" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
+    await waitFor(() => expect(onDuplicate).toHaveBeenCalled());
+    expect(onDuplicate.mock.calls[0]?.[0]).toMatchObject({
+      target_scope_type: "family",
+      target_scope_id: 3,
+      target_meter_id: null,
+    });
+  });
+
+  it("offers Choose later on another pump with a same-unit meter, and sends no meter", async () => {
+    const { onDuplicate } = renderDialog("meter", METER_TRIGGER);
+    fireEvent.click(screen.getByRole("button", { name: "pick pump 30" }));
+    const meterSelect = await screen.findByRole("combobox");
+    await waitFor(() => expect(meterSelect).toHaveTextContent("Choose later"));
+    expect(screen.getByText(/cannot be published until a meter is chosen/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
+    await waitFor(() => expect(onDuplicate).toHaveBeenCalled());
+    expect(onDuplicate.mock.calls[0]?.[0]).toMatchObject({
+      target_scope_id: 30,
+      target_meter_id: null,
+    });
+  });
+
+  it("shows a refusal as a sentence, never as a code, and keeps the dialog open", async () => {
+    const onDuplicate = vi.fn().mockRejectedValue({
+      code: "VALIDATION_FAILED",
+      message: "GATE_PM_PLAN_CODE_TAKEN: Another PM plan already uses the code 'PM-2'.",
+    });
+    initI18n();
+    await i18n.changeLanguage("fr");
+    const { onClose } = renderDialog("fixed", CALENDAR, { onDuplicate });
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Plan PM refusé : un autre plan utilise déjà ce code. Choisissez un autre code.",
+    );
+    expect(alert.textContent).not.toContain("GATE_");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows Duplicating… while the copy is being made", async () => {
+    let finish: (v: unknown) => void = () => {};
+    const onDuplicate = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderDialog("fixed", CALENDAR, { onDuplicate });
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
+    const busy = await screen.findByRole("button", { name: "Duplicating…" });
+    expect(busy).toBeDisabled();
+    finish({});
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Duplicating…" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes at once when nothing was changed", () => {
+    const { onClose } = renderDialog("fixed", CALENDAR);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("asks before Cancel or Escape loses a change, and leaves only on request", () => {
+    const { onClose } = renderDialog("fixed", CALENDAR);
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "PM-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog", { name: "discardGuard.title" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "discardGuard.keep" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Code")).toHaveValue("PM-2");
+
+    fireEvent.keyDown(screen.getByLabelText("Code"), { key: "Escape" });
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "discardGuard.leave" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("asks too when only the target asset was changed", () => {
+    const { onClose } = renderDialog("fixed", CALENDAR);
+    fireEvent.click(screen.getByRole("button", { name: "pick pump 20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

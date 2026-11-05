@@ -38,6 +38,7 @@ import { PmPlanFormDialog } from "@/components/pm/PmPlanFormDialog";
 import { PmPlansView } from "@/components/pm/PmPlansView";
 import { PmRefreshForecastDialog } from "@/components/pm/PmRefreshForecastDialog";
 import { PmVersionFormDialog } from "@/components/pm/PmVersionFormDialog";
+import { pmUnreportedErrorText } from "@/components/pm/pm-errors";
 import {
   PM_ACTIVE_OCCURRENCE_STATUSES,
   PM_LIFECYCLE_STATUSES,
@@ -746,6 +747,15 @@ export function PmPage() {
             ),
             variant: "success",
           });
+          if (result.refreshError != null) {
+            // The copy exists: the refresh failure is said apart, never as a creation error.
+            const reason = pmUnreportedErrorText(result.refreshError);
+            pushAppToast({
+              title: t("messages.planDuplicatedRefreshFailed", { code: result.plan.code }),
+              ...(reason ? { description: reason } : {}),
+              variant: "destructive",
+            });
+          }
           return result;
         }}
       />

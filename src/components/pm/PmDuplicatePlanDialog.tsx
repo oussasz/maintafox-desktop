@@ -4,6 +4,7 @@
  * keeps a meter only when one of the target asset's meters with the same unit is picked here;
  * otherwise the meter stays to choose and the version cannot be published until it is.
  */
+import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -26,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { appErrorReason } from "@/lib/app-error";
 import {
   type DuplicatePmPlanRowResult,
   type PmAssetMeter,
@@ -37,7 +39,6 @@ import {
 import type { AssetSearchResult, DuplicatePmPlanInput, PmPlanVersion } from "@shared/ipc-types";
 
 import { formatPmAsset } from "./pm-cells";
-import { pmUnreportedErrorText } from "./pm-errors";
 
 const METER_LATER = "__later";
 
@@ -105,6 +106,11 @@ export function PmDuplicatePlanDialog({
   const [sourceUnit, setSourceUnit] = useState<number | null | undefined>(undefined);
   const [targetMeters, setTargetMeters] = useState<PmAssetMeter[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The meter preselected for the target (what "no change" means for the discard question). */
+  const [defaultMeterId, setDefaultMeterId] = useState(METER_LATER);
+  const [submitting, setSubmitting] = useState(false);
+  /** "Quitter sans enregistrer ?" shown over the form. */
+  const [asking, setAsking] = useState(false);
 
   const base = plan ? versionToCopy(plan, versions) : null;
   const isEquipment = plan?.asset_scope_type === "equipment";
@@ -120,7 +126,10 @@ export function PmDuplicatePlanDialog({
     setAsset(null);
     setScopeId(plan.asset_scope_id != null ? String(plan.asset_scope_id) : "");
     setMeterId(METER_LATER);
+    setDefaultMeterId(METER_LATER);
     setError(null);
+    setSubmitting(false);
+    setAsking(false);
   }, [open, plan, t]);
 
   // Values of a fanned-out scope (family, location, criticality group), source one preselected.
@@ -189,17 +198,50 @@ export function PmDuplicatePlanDialog({
   // Same asset: its own meter is preselected; another asset: the person picks one.
   useEffect(() => {
     const own = sameUnitMeters.find((m) => m.id === sourceMeterId);
-    setMeterId(own ? String(own.id) : METER_LATER);
+    const preselected = own ? String(own.id) : METER_LATER;
+    setMeterId(preselected);
+    setDefaultMeterId(preselected);
   }, [sameUnitMeters, sourceMeterId]);
 
   if (!plan) return null;
 
   const sourceAsset = formatPmAsset(plan.asset_code, plan.asset_name);
   const meterLater = sourceMeterId != null && meterId === METER_LATER;
+  const prefilledTitle = t("dialogs.duplicatePlan.prefilledTitle", { title: plan.title });
+  const initialScopeId = plan.asset_scope_id != null ? String(plan.asset_scope_id) : "";
+  const busy = Boolean(saving) || submitting;
+  // Changed from what the dialog opened with: closing asks first.
+  const dirty =
+    code.trim() !== "" ||
+    title !== prefilledTitle ||
+    asset != null ||
+    (!isEquipment && scopeId !== initialScopeId) ||
+    meterId !== defaultMeterId;
+  // Why "Dupliquer" cannot be pressed, said under it (first missing item).
+  const blockedReason = !base
+    ? t("dialogs.duplicatePlan.noVersion")
+    : !code.trim()
+      ? t("dialogs.duplicatePlan.whyCode")
+      : !title.trim()
+        ? t("dialogs.duplicatePlan.whyTitle")
+        : !isEquipment && !scopeId
+          ? t("dialogs.duplicatePlan.whyScope")
+          : null;
+
+  function requestClose() {
+    if (busy) return;
+    if (asking) {
+      setAsking(false);
+      return;
+    }
+    if (dirty) setAsking(true);
+    else onClose();
+  }
 
   async function handleSubmit() {
     if (!plan) return;
     setError(null);
+    setSubmitting(true);
     const targetScopeId = isEquipment ? targetEquipmentId : scopeId ? Number(scopeId) : null;
     try {
       await onDuplicate({
@@ -212,13 +254,17 @@ export function PmDuplicatePlanDialog({
       });
       onClose();
     } catch (err) {
-      setError(pmUnreportedErrorText(err));
+      // The copy was not created: the refusal is said here (not sent to the global toast).
+      setError(appErrorReason(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+    <Dialog open={open} onOpenChange={(v) => !v && requestClose()}>
+      {/* Its own discard question: it also covers the asset, scope and meter choices and Cancel. */}
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" confirmDiscard={false}>
         <DialogHeader>
           <DialogTitle>{t("dialogs.duplicatePlan.title", { code: plan.code })}</DialogTitle>
           <DialogDescription>
@@ -230,7 +276,13 @@ export function PmDuplicatePlanDialog({
         <div className="grid gap-3 py-2">
           <div className="grid gap-1">
             <Label htmlFor="pm-dup-code">{t("fields.code")}</Label>
-            <Input id="pm-dup-code" value={code} onChange={(e) => setCode(e.target.value)} />
+            <Input
+              id="pm-dup-code"
+              autoFocus
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
           </div>
           <div className="grid gap-1">
             <Label htmlFor="pm-dup-title">{t("fields.title")}</Label>
@@ -309,20 +361,61 @@ export function PmDuplicatePlanDialog({
             </p>
           ) : null}
         </div>
+        {blockedReason && !busy ? (
+          <p id="pm-dup-why" className="text-right text-sm text-text-muted">
+            {blockedReason}
+          </p>
+        ) : null}
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={requestClose}>
             {t("actions.cancel")}
           </Button>
           <Button
-            disabled={
-              saving || !base || !code.trim() || !title.trim() || (!isEquipment && !scopeId)
-            }
+            disabled={busy || blockedReason != null}
+            aria-describedby={blockedReason ? "pm-dup-why" : undefined}
             onClick={() => void handleSubmit()}
           >
-            {t("actions.duplicate")}
+            {busy ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                {t("dialogs.duplicatePlan.saving")}
+              </>
+            ) : (
+              t("actions.duplicate")
+            )}
           </Button>
         </DialogFooter>
+        {asking ? <DiscardQuestion onKeep={() => setAsking(false)} onLeave={onClose} /> : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The app's "Quitter sans enregistrer ?" question (texts of the shared dialog guard). */
+function DiscardQuestion({ onKeep, onLeave }: { onKeep: () => void; onLeave: () => void }) {
+  const { t } = useTranslation("common");
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-label={t("discardGuard.title")}
+      aria-describedby="pm-dup-discard-text"
+      className="absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-background/90 p-6"
+    >
+      <div className="max-w-sm space-y-4 text-center">
+        <p className="text-base font-semibold">{t("discardGuard.title")}</p>
+        <p id="pm-dup-discard-text" className="text-sm text-text-muted">
+          {t("discardGuard.description")}
+        </p>
+        <div className="flex justify-center gap-2">
+          <Button type="button" variant="outline" autoFocus onClick={onKeep}>
+            {t("discardGuard.keep")}
+          </Button>
+          <Button type="button" variant="destructive" onClick={onLeave}>
+            {t("discardGuard.leave")}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

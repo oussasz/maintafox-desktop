@@ -336,7 +336,11 @@
       "meterNone": "The target equipment has no meter with the same unit: the meter will remain to be chosen.",
       "meterLaterWarning": "Without a meter, the plan cannot be published until a meter is chosen in its version.",
       "notCopied": "Not carried over: due dates, work orders, readings, costs, last-done dates, version history and approvals.",
-      "noVersion": "This plan has neither a published version nor a draft to copy."
+      "noVersion": "This plan has neither a published version nor a draft to copy.",
+      "whyCode": "Enter the code of the new plan to duplicate.",
+      "whyTitle": "Enter the title of the new plan to duplicate.",
+      "whyScope": "Choose the target scope to duplicate.",
+      "saving": "Duplicating…"
     },
     "editPlan": {
       "title": "Edit PM plan",
@@ -437,6 +441,7 @@
     "revisionCreated": "Draft version v{{version}} created from the finding.",
     "planDuplicated": "Plan {{code}} created as a draft from the original plan.",
     "planDuplicatedMeterToChoose": "Plan {{code}} created as a draft. Choose its meter in the version before publishing it.",
+    "planDuplicatedRefreshFailed": "Plan {{code}} was created, but the screen could not be refreshed. Refresh the list to open it.",
     "readingRecorded": "Meter reading recorded; the forecast of the asset was updated."
   },
   "archive": {

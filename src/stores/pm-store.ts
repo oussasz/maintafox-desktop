@@ -68,6 +68,9 @@ import type {
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
 
+/** A created copy, and the failure of the refresh that followed it (`null`: refreshed). */
+export type DuplicatePlanOutcome = DuplicatePmPlanRowResult & { refreshError: unknown };
+
 /** Recurring findings look back over this many days (shown in the section title). */
 export const PM_RECURRING_FINDINGS_WINDOW_DAYS = 90;
 /** Compliance period offered first on the PM page: the home tile's 30 days, so both agree. */
@@ -133,8 +136,12 @@ interface PmStoreState {
   transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrenceRow>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
   createPlan: (input: CreatePmPlanInput) => Promise<PmPlanRow>;
-  /** "Dupliquer ce plan": draft copy (version 1) on the chosen asset; opens the new plan. */
-  duplicatePlan: (input: DuplicatePmPlanInput) => Promise<DuplicatePmPlanRowResult>;
+  /**
+   * "Dupliquer ce plan": draft copy (version 1) on the chosen asset; opens the new plan. Rejects
+   * only when the copy was not created; a failed refresh afterwards is returned in
+   * `refreshError` (the copy exists: asking again would only hit "code already used").
+   */
+  duplicatePlan: (input: DuplicatePmPlanInput) => Promise<DuplicatePlanOutcome>;
   updatePlan: (
     planId: number,
     expectedRowVersion: number,
@@ -422,9 +429,15 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   duplicatePlan: (input) =>
     withSaving(async () => {
       const result = await duplicatePmPlan(input);
-      await get().loadWorkspace();
-      await get().openPlan(result.plan.id);
-      return result;
+      let refreshError: unknown = null;
+      try {
+        await get().loadWorkspace();
+        await get().openPlan(result.plan.id);
+        refreshError = get().error ?? get().detailError ?? null;
+      } catch (err) {
+        refreshError = err;
+      }
+      return { ...result, refreshError };
     }),
 
   updatePlan: (planId, expectedRowVersion, input) =>

@@ -473,9 +473,14 @@ export interface DuplicatePmPlanRowResult {
   meter_to_choose: boolean;
 }
 
-/** "Dupliquer ce plan": a new draft plan (version 1) copied onto the chosen asset. */
+/**
+ * "Dupliquer ce plan": a new draft plan (version 1) copied onto the chosen asset. A refusal is
+ * not sent to the global toast: the copy dialog says it next to its fields.
+ */
 export function duplicatePmPlan(input: DuplicatePmPlanInput): Promise<DuplicatePmPlanRowResult> {
-  return invokeParsed("duplicate_pm_plan", { input }, DuplicatePmPlanResultSchema);
+  return invokeParsed("duplicate_pm_plan", { input }, DuplicatePmPlanResultSchema, {
+    notifyOnError: false,
+  });
 }
 
 export function updatePmPlan(
