@@ -5,7 +5,7 @@
  * otherwise the meter stays to choose and the version cannot be published until it is.
  */
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AssetPicker } from "@/components/assets/AssetPicker";
@@ -391,11 +391,27 @@ export function PmDuplicatePlanDialog({
   );
 }
 
-/** The app's "Quitter sans enregistrer ?" question (texts of the shared dialog guard). */
+/**
+ * The app's "Quitter sans enregistrer ?" question (texts of the shared dialog guard). While it
+ * shows, the fields behind it cannot be reached by keyboard or screen reader (`inert`, as the
+ * shared guard of `DialogContent` does).
+ */
 function DiscardQuestion({ onKeep, onLeave }: { onKeep: () => void; onLeave: () => void }) {
   const { t } = useTranslation("common");
+  const questionEl = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const question = questionEl.current;
+    const root = question?.parentElement;
+    if (!question || !root) return;
+    const behind = Array.from(root.children).filter((el) => el !== question);
+    for (const el of behind) el.setAttribute("inert", "");
+    return () => {
+      for (const el of behind) el.removeAttribute("inert");
+    };
+  }, []);
   return (
     <div
+      ref={questionEl}
       role="alertdialog"
       aria-modal="true"
       aria-label={t("discardGuard.title")}

@@ -319,6 +319,21 @@ describe("PmDuplicatePlanDialog — guidance and safety", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("puts the fields behind the question out of reach while it shows", () => {
+    renderDialog("fixed", CALENDAR);
+    const code = screen.getByLabelText("Code");
+    fireEvent.change(code, { target: { value: "PM-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const question = screen.getByRole("alertdialog");
+    expect(code.closest("[inert]")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Duplicate", hidden: true }).closest("[inert]"),
+    ).not.toBeNull();
+    expect(question.closest("[inert]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "discardGuard.keep" }));
+    expect(code.closest("[inert]")).toBeNull();
+  });
+
   it("asks too when only the target asset was changed", () => {
     const { onClose } = renderDialog("fixed", CALENDAR);
     fireEvent.click(screen.getByRole("button", { name: "pick pump 20" }));
