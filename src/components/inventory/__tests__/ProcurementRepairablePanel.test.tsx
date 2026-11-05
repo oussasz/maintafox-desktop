@@ -12,6 +12,7 @@ import {
 } from "@/components/inventory/ProcurementRepairablePanel";
 import enCommon from "@/i18n/en/common.json";
 import enInventory from "@/i18n/locale-data/en/inventory.json";
+import { useSessionStore } from "@/store/session-store";
 
 const mocks = vi.hoisted(() => ({
   createInventoryMultiLineRequisition: vi.fn(),
@@ -465,6 +466,49 @@ describe("ProcurementRepairablePanel", () => {
     );
     const stillOpen = await screen.findByRole("dialog", { name: "Reject requisition" });
     expect(within(stillOpen).getByLabelText("Rejection reason")).toHaveValue("Duplicate of REQ-2");
+  });
+
+  it("greys Approve in the row menu of the user's own request, with the reason (L5-08)", async () => {
+    // Same rule as `inventory::approvals::ensure_can_approve`: the requester never approves.
+    useSessionStore.setState({ info: { user_id: 7 } as never });
+    try {
+      mocks.listInventoryProcurementRequisitions.mockResolvedValue([
+        {
+          id: 504,
+          req_number: "REQ-4",
+          demand_source_type: "MANUAL",
+          demand_source_id: null,
+          demand_source_ref: null,
+          purchase_priority: "NORMAL",
+          status: "SUBMITTED",
+          posting_state: "PENDING_POSTING",
+          posting_error: null,
+          requested_by_id: 7,
+          requested_by_name: "Amina Haddad",
+          row_version: 1,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ]);
+      render(<ProcurementRepairablePanel />);
+      await screen.findByText("REQ-4");
+      const trigger = screen.getAllByRole("button", {
+        name: enInventory.procurement.requisitions.actions.menu,
+      })[0] as HTMLElement;
+      fireEvent.keyDown(trigger, { key: "Enter" });
+
+      const approve = await screen.findByRole("menuitem", {
+        name: new RegExp(`^${enInventory.procurement.requisitions.actions.approve}`),
+      });
+      const reason = enInventory.procurement.approval.ownDocument;
+      expect(approve).toHaveAttribute("data-disabled");
+      expect(approve).toHaveAttribute("title", reason);
+      expect(approve).toHaveTextContent(reason);
+      fireEvent.click(approve);
+      expect(mocks.transitionInventoryProcurementRequisition).not.toHaveBeenCalled();
+    } finally {
+      useSessionStore.setState({ info: null });
+    }
   });
 
   it("asks before cancelling a draft PO and sends CANCELLED, not CLOSED", async () => {

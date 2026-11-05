@@ -65,6 +65,8 @@ export function ProcurementContextMenu({
               title={action.disabled && action.disabledReason ? action.disabledReason : undefined}
               onClick={(event) => {
                 event.stopPropagation();
+                // A greyed action never runs: its click is blocked only by CSS otherwise.
+                if (action.disabled) return;
                 action.onClick();
               }}
               className={cn(
