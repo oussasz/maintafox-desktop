@@ -818,6 +818,7 @@
     "GATE_DI_REFERENCE_INVALID": "Enregistrement refusé : l'équipement, l'entité ou le demandeur indiqué n'existe pas. Vérifiez ces champs.",
     "GATE_DI_SYMPTOM_REQUIRED": "Le symptôme est obligatoire : choisissez-le dans la liste.",
     "GATE_DI_EDIT_STATUS_INVALID": "Modification impossible : les champs d'une demande ne se modifient que lorsqu'elle est soumise ou retournée pour information.",
+    "GATE_DI_SAFETY_FLAG_KEPT": "Le signalement sécurité d'une demande enregistrée ne peut pas être retiré. Seul le valideur peut abaisser son urgence, avec un motif.",
     "GATE_DI_SUBMIT_STATUS_INVALID": "Envoi en revue impossible : seule une demande soumise ou retournée pour information peut être envoyée en revue.",
     "GATE_DI_ORIGIN_REQUIRED": "Le type d'origine est obligatoire : choisissez-le dans la liste.",
     "GATE_DI_ORIGIN_NOT_PUBLISHED": "Cette origine n'existe pas ou n'est plus active dans les données de référence. Choisissez une origine de la liste.",

@@ -141,6 +141,9 @@ export function DiCreateForm({
   );
   const [observedAt, setObservedAt] = useState(initial?.observed_at ?? "");
   const [safetyFlag, setSafetyFlag] = useState(initial?.safety_flag ?? false);
+  // A request saved flagged "sécurité" stays flagged (the server refuses the untick): only the
+  // reviewer may lower its urgency, with a reason.
+  const safetyFlagLocked = initial?.safety_flag === true;
   const [environmentalFlag, setEnvironmentalFlag] = useState(initial?.environmental_flag ?? false);
   const [qualityFlag, setQualityFlag] = useState(initial?.quality_flag ?? false);
   const [productionImpact, setProductionImpact] = useState(initial?.production_impact ?? false);
@@ -734,14 +737,29 @@ export function DiCreateForm({
 
         {/* Flag checkboxes */}
         <div className="grid grid-cols-2 gap-3">
-          <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="safety_flag"
-              checked={safetyFlag}
-              onCheckedChange={(v) => setSafetyFlag(v === true)}
-            />
-            {t("form.safetyFlag.label")}
-          </label>
+          <div>
+            <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="safety_flag"
+                checked={safetyFlag}
+                disabled={safetyFlagLocked}
+                {...(safetyFlagLocked ? { "aria-describedby": "safety_flag-locked" } : {})}
+                onCheckedChange={(v) => {
+                  if (!safetyFlagLocked) setSafetyFlag(v === true);
+                }}
+              />
+              {t("form.safetyFlag.label")}
+            </label>
+            {safetyFlagLocked ? (
+              <p
+                id="safety_flag-locked"
+                className="mt-1 text-xs text-text-secondary"
+                data-testid="di-safety-flag-locked-hint"
+              >
+                {t("form.safetyFlag.lockedHint")}
+              </p>
+            ) : null}
+          </div>
           <label htmlFor="environmental_flag" className="flex items-center gap-2 text-sm">
             <Checkbox
               id="environmental_flag"

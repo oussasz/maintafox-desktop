@@ -819,6 +819,7 @@
     "GATE_DI_REFERENCE_INVALID": "Save refused: the equipment, entity or requester given does not exist. Check these fields.",
     "GATE_DI_SYMPTOM_REQUIRED": "The symptom is required: choose it from the list.",
     "GATE_DI_EDIT_STATUS_INVALID": "Edit refused: a request's fields can only be changed while it is submitted or returned for information.",
+    "GATE_DI_SAFETY_FLAG_KEPT": "The safety report of a saved request cannot be removed. Only the reviewer can lower its urgency, with a reason.",
     "GATE_DI_SUBMIT_STATUS_INVALID": "Submission to review refused: only a submitted request or one returned for information can be sent to review.",
     "GATE_DI_ORIGIN_REQUIRED": "The origin type is required: choose it from the list.",
     "GATE_DI_ORIGIN_NOT_PUBLISHED": "This origin does not exist or is no longer active in the reference data. Choose an origin from the list.",

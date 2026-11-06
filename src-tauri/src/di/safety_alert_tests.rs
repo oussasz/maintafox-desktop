@@ -271,10 +271,7 @@ async fn ticking_the_flag_later_raises_the_urgency_and_alerts_once() {
     let kept = update_di_draft_fields(&db, lower, None).await.expect("edit");
     assert_eq!(kept.reported_urgency, "urgent");
 
-    // Unticked and ticked again, edited: never a second alert for the request on this PC.
-    let mut untick = draft(di.id, row_version(&db, di.id).await);
-    untick.safety_flag = Some(false);
-    update_di_draft_fields(&db, untick, None).await.expect("untick");
+    // Ticked again with an edit: never a second alert for the request on this PC.
     let mut again = draft(di.id, row_version(&db, di.id).await);
     again.safety_flag = Some(true);
     again.title = Some("Fuite de vapeur importante".into());
@@ -289,6 +286,60 @@ async fn ticking_the_flag_later_raises_the_urgency_and_alerts_once() {
         .await,
         Some(di_safety_alert_key(&sync_id(&db, di.id).await))
     );
+}
+
+#[tokio::test]
+async fn a_saved_flagged_request_cannot_be_unticked_and_keeps_its_urgency() {
+    let db = pc().await;
+    let di = create_intervention_request(&db, input(&db, true, "normal").await)
+        .await
+        .expect("flagged request");
+    assert_eq!(di.reported_urgency, "urgent");
+    let version = row_version(&db, di.id).await;
+
+    // Untick with a lower urgency in the same change: refused, nothing written.
+    let mut untick = draft(di.id, version);
+    untick.safety_flag = Some(false);
+    untick.reported_urgency = Some("low".into());
+    match update_di_draft_fields(&db, untick, None).await {
+        Err(AppError::ValidationFailed(errors)) => assert!(
+            errors.iter().any(|e| e.starts_with("GATE_DI_SAFETY_FLAG_KEPT")),
+            "{errors:?}"
+        ),
+        other => panic!("untick must be refused, got {other:?}"),
+    }
+    let kept = scalar(
+        &db,
+        "SELECT safety_flag FROM intervention_requests WHERE id = ?",
+        vec![di.id.into()],
+    )
+    .await;
+    assert_eq!(kept, 1, "the flag stays");
+    assert_eq!(
+        text(
+            &db,
+            "SELECT reported_urgency FROM intervention_requests WHERE id = ?",
+            vec![di.id.into()],
+        )
+        .await
+        .as_deref(),
+        Some("urgent"),
+        "the urgency is unchanged"
+    );
+    assert_eq!(row_version(&db, di.id).await, version, "nothing written");
+
+    // Untick alone: refused the same way.
+    let mut untick = draft(di.id, version);
+    untick.safety_flag = Some(false);
+    assert!(update_di_draft_fields(&db, untick, None).await.is_err());
+
+    // Sending the flag as it is (ticked) with other edits is accepted.
+    let mut edit = draft(di.id, version);
+    edit.safety_flag = Some(true);
+    edit.title = Some("Fuite de vapeur (bride sud)".into());
+    let edited = update_di_draft_fields(&db, edit, None).await.expect("edit");
+    assert!(edited.safety_flag);
+    assert_eq!(edited.reported_urgency, "urgent");
 }
 
 // ── (b) who is told ─────────────────────────────────────────────────────────────────────────────
@@ -535,6 +586,106 @@ async fn a_flagged_request_received_from_another_pc_alerts_here_once() {
     )
     .await;
     assert_eq!(alert_events(&target).await, 1);
+}
+
+#[tokio::test]
+async fn a_closed_or_converted_flagged_request_received_raises_no_alert_an_open_one_does_once() {
+    let source = pc().await;
+    let target = pc().await;
+    holder(
+        &target,
+        "site_reviewer",
+        Some(crate::rbac::permissions::DI_REVIEW),
+        Some(1),
+    )
+    .await;
+
+    // Closed on the other PC (an old flagged request touched after the upgrade): nothing here.
+    let closed = create_intervention_request(&source, input(&source, true, "normal").await)
+        .await
+        .expect("flagged");
+    exec(
+        &source,
+        "UPDATE intervention_requests SET status = 'closed', closed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        vec![closed.id.into()],
+    )
+    .await;
+    let closed_sid = sync_id(&source, closed.id).await;
+    let outcome = apply(
+        &target,
+        "intervention_requests",
+        &closed_sid,
+        &wire(&source, "intervention_requests", &closed_sid).await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(alert_events(&target).await, 0, "a closed request raises no alert");
+
+    // Turned into a work order on the other PC: nothing here either.
+    let converted = create_intervention_request(&source, input(&source, true, "normal").await)
+        .await
+        .expect("flagged");
+    exec(
+        &source,
+        "UPDATE intervention_requests SET status = 'approved', converted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
+         row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        vec![converted.id.into()],
+    )
+    .await;
+    let converted_sid = sync_id(&source, converted.id).await;
+    let outcome = apply(
+        &target,
+        "intervention_requests",
+        &converted_sid,
+        &wire(&source, "intervention_requests", &converted_sid).await,
+    )
+    .await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    assert_eq!(alert_events(&target).await, 0, "a converted request raises no alert");
+
+    // Open (in review): alerted once, not again on a later change.
+    let open = create_intervention_request(&source, input(&source, true, "normal").await)
+        .await
+        .expect("flagged");
+    exec(
+        &source,
+        "UPDATE intervention_requests SET status = 'in_review', row_version = row_version + 1, \
+         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        vec![open.id.into()],
+    )
+    .await;
+    let open_sid = sync_id(&source, open.id).await;
+    for _ in 0..2 {
+        let outcome = apply(
+            &target,
+            "intervention_requests",
+            &open_sid,
+            &wire(&source, "intervention_requests", &open_sid).await,
+        )
+        .await;
+        assert!(
+            matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+            "{outcome:?}"
+        );
+        exec(
+            &source,
+            "UPDATE intervention_requests SET title = title || '.', row_version = row_version + 1, \
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            vec![open.id.into()],
+        )
+        .await;
+    }
+    assert_eq!(alert_events(&target).await, 1, "an open request is alerted once");
+    assert_eq!(
+        text(
+            &target,
+            "SELECT dedupe_key FROM notification_events WHERE category_code = ?",
+            vec![DI_SAFETY_ALERT_CATEGORY.into()],
+        )
+        .await,
+        Some(di_safety_alert_key(&open_sid))
+    );
 }
 
 // ── (a) review queue and validated urgency ──────────────────────────────────────────────────────

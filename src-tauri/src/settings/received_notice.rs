@@ -1172,21 +1172,29 @@ pub fn di_safety_alert_key(di_sync_id: &str) -> String {
 /// decision on L4-11): a critical notice ([`DI_SAFETY_ALERT_CATEGORY`]) to the request reviewers and
 /// the permit-issue right holders of its site, else the responsibles of its node, kept until each
 /// acknowledges it. Called when the request is created flagged, when the flag is ticked later and
-/// when a flagged request is received by synchronisation: raised once per request on this PC (its
+/// when a flagged request is received by synchronisation, while the request is open (not closed,
+/// not turned into a work order: `di::stats::OPEN_SQL`): raised once per request on this PC (its
 /// key, [`di_safety_alert_key`], is looked for first, whatever became of the earlier alert), never
 /// again on later changes. Written in a savepoint: a notice that cannot be written is logged, the
 /// request is kept (a safety report is never lost because its alert failed).
 pub(crate) async fn announce_di_safety_alert(conn: &impl ConnectionTrait, di_id: i64) {
+    // Only an open request (`di::stats::OPEN_SQL`, the DI module's one rule: not closed, not turned
+    // into a work order) is alerted: a closed or converted flagged request changed later, or received
+    // by synchronisation after an upgrade, raises nothing (L4-11 security review).
     let found = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT ir.entity_sync_id, ir.code, ir.title, ir.safety_flag, \
-                    COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency, \
-                    eq.asset_id_code AS equipment, org.name AS site \
-               FROM intervention_requests ir \
-               LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
-               LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
-              WHERE ir.id = ?",
+            format!(
+                "SELECT ir.entity_sync_id, ir.code, ir.title, ir.safety_flag, \
+                        CASE WHEN {open} THEN 1 ELSE 0 END AS is_open, \
+                        COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency, \
+                        eq.asset_id_code AS equipment, org.name AS site \
+                   FROM intervention_requests ir \
+                   LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
+                   LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
+                  WHERE ir.id = ?",
+                open = crate::di::stats::OPEN_SQL,
+            ),
             [di_id.into()],
         ))
         .await;
@@ -1199,7 +1207,7 @@ pub(crate) async fn announce_di_safety_alert(conn: &impl ConnectionTrait, di_id:
         }
     };
     let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten();
-    if row.try_get::<i64>("", "safety_flag").unwrap_or(0) == 0 {
+    if row.try_get::<i64>("", "safety_flag").unwrap_or(0) == 0 || row.try_get::<i64>("", "is_open").unwrap_or(0) == 0 {
         return;
     }
     let Some(di_sync) = get("entity_sync_id") else {

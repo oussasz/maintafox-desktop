@@ -170,7 +170,8 @@
     },
     "safetyFlag": {
       "label": "Enjeu sécurité",
-      "minUrgencyHint": "Signalement sécurité : urgence au moins Urgente."
+      "minUrgencyHint": "Signalement sécurité : urgence au moins Urgente.",
+      "lockedHint": "Un signalement sécurité enregistré ne se retire pas. Seul le valideur peut abaisser l'urgence, avec un motif."
     },
     "environmentalFlag": {
       "label": "Enjeu environnemental"

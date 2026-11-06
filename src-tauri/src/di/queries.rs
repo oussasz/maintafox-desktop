@@ -818,6 +818,17 @@ pub async fn update_di_draft_fields(
         )]));
     }
 
+    // 2b. Guard: a request flagged "sécurité" stays flagged. Its urgency can only be lowered below
+    // Urgent by the reviewer's decision, which needs a reason and is audited (`di::review`); an
+    // untick here would drop the flag and its urgency floor without either (L4-11 security review).
+    if current.safety_flag && input.safety_flag == Some(false) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_DI_SAFETY_FLAG_KEPT: Le signalement sécurité d'une demande enregistrée ne peut pas être retiré. \
+             Seul le valideur peut abaisser son urgence, avec un motif."
+                .into(),
+        ]));
+    }
+
     // 3. Build dynamic SET clause
     let mut sets: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -873,7 +884,8 @@ pub async fn update_di_draft_fields(
     // A request flagged "sécurité" (now, or ticked by this change) is urgent at least: the urgency
     // sent is raised, and a lower urgency held is raised when the flag is ticked (CMMS Advisor
     // decision on L4-11).
-    let flagged = input.safety_flag.unwrap_or(current.safety_flag);
+    // (An untick of a flagged request was refused above: `flagged` is never lowered here.)
+    let flagged = current.safety_flag || input.safety_flag == Some(true);
     if let Some(ref reported_urgency) = input.reported_urgency {
         let level = crate::reference::urgency_scale::validate_urgency_code(reported_urgency)?;
         let level = super::domain::safety_urgency_floor(flagged, level);

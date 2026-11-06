@@ -841,8 +841,9 @@ pub(crate) async fn after_upsert(
             crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
                 .await?;
             // Received flagged: its safety alert is raised here, once per request on this PC (the
-            // key is looked for first; CMMS Advisor decision on L4-11). Not for plant history: a
-            // request new here received by the snapshot of this PC's first join.
+            // key is looked for first; CMMS Advisor decision on L4-11). Only while it is open (a
+            // closed or converted request raises nothing: `announce_di_safety_alert`), and not for
+            // plant history: a request new here received by the snapshot of this PC's first join.
             let first_join_history = match row {
                 RowLocator::Identity(sync_id) if inserted => {
                     crate::sync::plant_join::first_join_snapshot_row(conn, "intervention_requests", sync_id).await?

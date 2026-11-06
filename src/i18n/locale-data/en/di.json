@@ -170,7 +170,8 @@
     },
     "safetyFlag": {
       "label": "Safety concern",
-      "minUrgencyHint": "Safety report: urgency at least Urgent."
+      "minUrgencyHint": "Safety report: urgency at least Urgent.",
+      "lockedHint": "A saved safety report cannot be removed. Only the reviewer can lower the urgency, with a reason."
     },
     "environmentalFlag": {
       "label": "Environmental concern"

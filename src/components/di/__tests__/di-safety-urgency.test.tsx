@@ -1,6 +1,6 @@
 // L4-11 (CMMS Advisor decision, 2026-11-06): a request flagged "sécurité" is urgent at least. The
 // request form chooses "Urgent" when the flag is ticked (a more urgent level stays), offers no less
-// urgent level and says why; the screening dialog asks for the review reason before a flagged
+// urgent level and says why; a request saved flagged cannot be unticked; the screening dialog asks for the review reason before a flagged
 // request is validated below "Urgent".
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -182,17 +182,30 @@ describe("DiCreateForm — safety flag", () => {
     expect(urgencyValue()).toBe("emergency");
   });
 
-  it("offers every level again once the flag is unticked", async () => {
+  it("a request saved flagged cannot be unticked and says why", async () => {
     renderRouted(
       <DiCreateForm initial={request("urgent", true)} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
     );
     await settle();
-    expect(screen.getByRole("button", { name: "reported_urgency:low" })).toBeDisabled();
-    fireEvent.click(document.querySelector("#safety_flag") as HTMLElement);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "reported_urgency:low" })).toBeEnabled(),
+    const box = document.querySelector("#safety_flag") as HTMLButtonElement;
+    expect(box).toBeDisabled();
+    expect(screen.getByTestId("di-safety-flag-locked-hint")).toHaveTextContent(
+      "form.safetyFlag.lockedHint",
     );
-    expect(screen.queryByTestId("di-safety-urgency-hint")).not.toBeInTheDocument();
+    fireEvent.click(box);
+    await settle();
+    expect(box).toBeDisabled();
+    expect(screen.getByTestId("di-safety-urgency-hint")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "reported_urgency:low" })).toBeDisabled();
+  });
+
+  it("an unflagged saved request shows no lock hint", async () => {
+    renderRouted(
+      <DiCreateForm initial={request("high")} onSubmitted={vi.fn()} onCancel={vi.fn()} />,
+    );
+    await settle();
+    expect(document.querySelector("#safety_flag")).toBeEnabled();
+    expect(screen.queryByTestId("di-safety-flag-locked-hint")).not.toBeInTheDocument();
   });
 });
 
