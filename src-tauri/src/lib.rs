@@ -1171,6 +1171,8 @@ pub fn run() {
         commands::qualification::list_training_expiry_alert_events,
         commands::qualification::scan_training_expiry_alerts,
         commands::qualification::list_certification_expiry_drilldown,
+        commands::qualification::list_pending_qualifications,
+        commands::qualification::validate_pending_qualifications,
         commands::inspection::list_inspection_templates,
         commands::inspection::list_inspection_template_versions,
         commands::inspection::list_inspection_checkpoints,

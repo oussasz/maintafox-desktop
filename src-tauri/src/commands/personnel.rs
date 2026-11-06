@@ -30,7 +30,7 @@ async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppRe
     linked_personnel_id_in(&state.db, user_id).await
 }
 
-async fn linked_personnel_id_in(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Option<i64>> {
+pub(crate) async fn linked_personnel_id_in(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

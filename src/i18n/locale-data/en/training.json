@@ -6,6 +6,7 @@
   "tabs": {
     "matrix": "Matrix",
     "expiry": "Expiries & renewals",
+    "validation": "To validate",
     "sessions": "Training sessions",
     "requirements": "Job requirements",
     "catalog": "Catalogue",
@@ -252,6 +253,37 @@
     "expiresInDays_other": "Expires in {{count}} days",
     "empty": "Nothing to renew",
     "emptyHint": "No certification expires within {{count}} days and none waits for verification."
+  },
+  "validation": {
+    "intro": "Skills recorded without validation (an import brings them in that way) and certificates waiting for verification. Check each line against its evidence, tick it and validate the selection: each line is recorded in the audit log.",
+    "search": "Search a person…",
+    "kind": "Kind",
+    "allKinds": "Skills and certificates",
+    "skills": "Skills",
+    "certifications": "Certificates",
+    "item": "Skill or certificate",
+    "allItems": "All skills and certificates",
+    "importedOnly": "Imported only",
+    "skill": "skill",
+    "certification": "certificate",
+    "imported": "imported",
+    "until": "until {{date}}",
+    "noEnd": "no end date",
+    "selectAll": "Select the {{count}} lines shown",
+    "selectLine": "Select {{item}} for {{name}}",
+    "readOnly": "Validating needs the right to certify qualifications.",
+    "validate_one": "Validate {{count}} line",
+    "validate_other": "Validate {{count}} lines",
+    "confirmTitle": "Validate the selection?",
+    "confirmBody": "{{skills}} skill(s) and {{certifications}} certificate(s) become valid and count for job requirements. Each line is validated exactly as shown and recorded in the audit log under your name.",
+    "done_one": "{{count}} line validated.",
+    "done_other": "{{count}} lines validated.",
+    "someRefused_one": "{{count}} line was not validated: see the reason under it.",
+    "someRefused_other": "{{count}} lines were not validated: see the reason under each.",
+    "refusedUnknown": "This line could not be validated.",
+    "empty": "Nothing to validate",
+    "emptyHint": "Every skill is validated and every certificate verified, or no line matches the filters.",
+    "skillsNeedLink": "Skills can be validated only by an account linked to a personnel record."
   },
   "sessions": {
     "peopleRestricted": "Reading people requires the personnel view right: this choice is not available to you.",
@@ -536,6 +568,9 @@
     "WO_PART_TO_ISSUE_QUANTITY_INVALID": "The issued quantity must be greater than zero; to issue nothing, cancel the line with a reason.",
     "WO_PART_TO_ISSUE_REASON_REQUIRED": "Give the reason (at least {{min}} characters).",
     "WO_PART_TO_ISSUE_LOCATION_REQUIRED": "Choose the stock location the part leaves from.",
-    "WO_PART_TO_ISSUE_WO_LOCKED": "The work order is {{status}}: nothing can be issued to it any more."
+    "WO_PART_TO_ISSUE_WO_LOCKED": "The work order is {{status}}: nothing can be issued to it any more.",
+    "QUAL_VALIDATION_CHANGED": "This line changed or was validated elsewhere since the list was shown: check it again.",
+    "QUAL_VALIDATION_KIND_UNKNOWN": "This kind of line cannot be validated here.",
+    "QUAL_VALIDATION_FAILED": "This line could not be recorded (storage error): try again; if it fails again, contact your administrator."
   }
 }

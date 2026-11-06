@@ -6,6 +6,7 @@
   "tabs": {
     "matrix": "Matrice",
     "expiry": "Échéances et recyclages",
+    "validation": "À valider",
     "sessions": "Sessions de formation",
     "requirements": "Exigences des travaux",
     "catalog": "Catalogue",
@@ -252,6 +253,37 @@
     "expiresInDays_other": "Échue dans {{count}} jours",
     "empty": "Rien à recycler",
     "emptyHint": "Aucune habilitation n'arrive à échéance sous {{count}} jours et aucune n'attend de vérification."
+  },
+  "validation": {
+    "intro": "Compétences enregistrées sans validation (un import les crée ainsi) et certificats en attente de vérification. Contrôlez chaque ligne avec son justificatif, cochez-la et validez la sélection : chaque ligne est inscrite au journal d'audit.",
+    "search": "Rechercher une personne…",
+    "kind": "Type",
+    "allKinds": "Compétences et certificats",
+    "skills": "Compétences",
+    "certifications": "Certificats",
+    "item": "Compétence ou certificat",
+    "allItems": "Toutes les compétences et tous les certificats",
+    "importedOnly": "Importées seulement",
+    "skill": "compétence",
+    "certification": "certificat",
+    "imported": "importée",
+    "until": "jusqu'au {{date}}",
+    "noEnd": "sans date de fin",
+    "selectAll": "Sélectionner les {{count}} lignes affichées",
+    "selectLine": "Sélectionner {{item}} pour {{name}}",
+    "readOnly": "La validation demande le droit de certifier les qualifications.",
+    "validate_one": "Valider {{count}} ligne",
+    "validate_other": "Valider {{count}} lignes",
+    "confirmTitle": "Valider la sélection ?",
+    "confirmBody": "{{skills}} compétence(s) et {{certifications}} certificat(s) deviennent valides et comptent pour les exigences des travaux. Chaque ligne est validée telle qu'affichée et inscrite au journal d'audit à votre nom.",
+    "done_one": "{{count}} ligne validée.",
+    "done_other": "{{count}} lignes validées.",
+    "someRefused_one": "{{count}} ligne n'a pas été validée : voyez le motif sous la ligne.",
+    "someRefused_other": "{{count}} lignes n'ont pas été validées : voyez le motif sous chacune.",
+    "refusedUnknown": "Cette ligne n'a pas pu être validée.",
+    "empty": "Rien à valider",
+    "emptyHint": "Toutes les compétences sont validées et tous les certificats vérifiés, ou aucune ligne ne correspond aux filtres.",
+    "skillsNeedLink": "Seul un compte relié à une fiche personnel peut valider des compétences."
   },
   "sessions": {
     "peopleRestricted": "Lire la liste du personnel demande le droit de consultation du personnel : ce choix n'est pas disponible pour vous.",
@@ -536,6 +568,9 @@
     "WO_PART_TO_ISSUE_QUANTITY_INVALID": "La quantité sortie doit être supérieure à zéro ; pour ne rien sortir, annulez la ligne avec un motif.",
     "WO_PART_TO_ISSUE_REASON_REQUIRED": "Indiquez le motif (au moins {{min}} caractères).",
     "WO_PART_TO_ISSUE_LOCATION_REQUIRED": "Choisissez l’emplacement de stock d’où la pièce est sortie.",
-    "WO_PART_TO_ISSUE_WO_LOCKED": "L’OT est {{status}} : rien ne peut plus lui être sorti."
+    "WO_PART_TO_ISSUE_WO_LOCKED": "L’OT est {{status}} : rien ne peut plus lui être sorti.",
+    "QUAL_VALIDATION_CHANGED": "Cette ligne a changé ou a été validée ailleurs depuis l'affichage de la liste : vérifiez-la à nouveau.",
+    "QUAL_VALIDATION_KIND_UNKNOWN": "Ce type de ligne ne peut pas être validé ici.",
+    "QUAL_VALIDATION_FAILED": "Cette ligne n'a pas pu être enregistrée (erreur de stockage) : réessayez ; si l'erreur revient, contactez votre administrateur."
   }
 }
