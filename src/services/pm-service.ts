@@ -5,6 +5,7 @@ import { ipcErrorDetails } from "@/utils/errors";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
+  DuplicatePmPlanInput,
   ExecutePmOccurrenceInput,
   ExecutePmOccurrenceResult,
   GeneratePmOccurrencesInput,
@@ -458,6 +459,28 @@ export function getPmPlan(planId: number): Promise<PmPlanRow> {
 
 export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlanRow> {
   return invokeParsed("create_pm_plan", { input }, PmPlanSchema);
+}
+
+const DuplicatePmPlanResultSchema = z.object({
+  plan: PmPlanSchema,
+  version: PmPlanVersionSchema,
+  meter_to_choose: z.boolean(),
+});
+
+export interface DuplicatePmPlanRowResult {
+  plan: PmPlanRow;
+  version: PmPlanVersion;
+  meter_to_choose: boolean;
+}
+
+/**
+ * "Dupliquer ce plan": a new draft plan (version 1) copied onto the chosen asset. A refusal is
+ * not sent to the global toast: the copy dialog says it next to its fields.
+ */
+export function duplicatePmPlan(input: DuplicatePmPlanInput): Promise<DuplicatePmPlanRowResult> {
+  return invokeParsed("duplicate_pm_plan", { input }, DuplicatePmPlanResultSchema, {
+    notifyOnError: false,
+  });
 }
 
 export function updatePmPlan(

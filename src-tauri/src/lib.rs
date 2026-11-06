@@ -527,6 +527,7 @@ pub fn run() {
         commands::pm::list_pm_plans,
         commands::pm::get_pm_plan,
         commands::pm::create_pm_plan,
+        commands::pm::duplicate_pm_plan,
         commands::pm::update_pm_plan,
         commands::pm::transition_pm_plan_lifecycle,
         commands::pm::list_pm_plan_versions,

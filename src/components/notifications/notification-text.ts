@@ -74,6 +74,8 @@ export const MESSAGE_KEYS = [
   "wo_permit_rule_other_on_arrival",
   // The permit type of a work order's plant rule changed here (permit issuers of its site).
   "wo_permit_rule_type_changed",
+  // Permit types added to those a work order already required (permit issuers of its site).
+  "wo_permit_types_added",
   // An inspection anomaly cancelled after it was routed (its follow-up's responsible).
   "insp_anomaly_origin_cancelled",
   // A work order or request open on retired equipment, crossed in sync (planner / reviewer, the

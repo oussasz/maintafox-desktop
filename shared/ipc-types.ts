@@ -3926,6 +3926,25 @@ export interface CreatePmPlanInput {
   is_active?: boolean;
 }
 
+/** "Dupliquer ce plan" (L6-11): a draft v1 copy of a plan onto a target asset or scope. */
+export interface DuplicatePmPlanInput {
+  source_plan_id: number;
+  code: string;
+  title: string;
+  /** Target scope; the source plan's scope when omitted. */
+  target_scope_type?: string | null;
+  target_scope_id?: number | null;
+  /** Meter of the target asset with the source meter's unit; omitted: to choose before publishing. */
+  target_meter_id?: number | null;
+}
+
+export interface DuplicatePmPlanResult {
+  plan: PmPlan;
+  version: PmPlanVersion;
+  /** The trigger counts on a meter still to choose before publishing. */
+  meter_to_choose: boolean;
+}
+
 export interface UpdatePmPlanInput {
   title?: string | null;
   description?: string | null;
@@ -5256,6 +5275,25 @@ export type WoStatus =
 
 export type WoMacroState = "open" | "executing" | "completed" | "closed" | "cancelled";
 
+/**
+ * One permit type the plant's rules require of a work order (Rust `wo::domain::RequiredPermitView`):
+ * `live` (a permit of that type is linked and not ended), `missing` (none: the start and the
+ * resume are refused) or `cleared` (lifted with the permit-issue right at the site and a reason).
+ */
+export interface RequiredPermitView {
+  permit_type_code: string;
+  permit_type_name: string;
+  rule_code: string;
+  /** The primary rule (`permit_rule_code`): shown first. */
+  primary: boolean;
+  cleared_at: string | null;
+  cleared_by_name: string | null;
+  clear_reason: string | null;
+  live_permit_code: string | null;
+  live_permit_status: string | null;
+  state: "live" | "missing" | "cleared";
+}
+
 export interface WorkOrder {
   id: number;
   code: string;
@@ -5394,11 +5432,11 @@ export interface WorkOrder {
    */
   deisolation_pending?: boolean;
   /**
-   * The permit types of every plant rule that matches this work order now, when they differ
-   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
-   * `permit::requirement_rules::matching_permit_types`).
+   * Every permit type the plant's rules require of this work order (Rust `permit::required_set`,
+   * CMMS Advisor 2026-11-04), each live, missing or cleared: filled by `get_wo` and by the clearing
+   * of a type (Rust `permit::wo_gate::required_permit_views`).
    */
-  permit_rule_matching_types?: string[];
+  required_permits?: RequiredPermitView[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
