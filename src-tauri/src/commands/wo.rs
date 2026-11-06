@@ -589,8 +589,16 @@ pub async fn update_wo_draft(
 
 #[tauri::command]
 pub async fn cancel_wo(
-    mut input: crate::wo::domain::WoCancelInput,
+    input: crate::wo::domain::WoCancelInput,
     state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    cancel_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn cancel_wo_impl(
+    state: &AppState,
+    mut input: crate::wo::domain::WoCancelInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // Cancelling is an execution action: its right, then its assignee / team / planner / approver;
@@ -991,12 +999,20 @@ pub async fn emergency_reassign_wo(
 
 #[tauri::command]
 pub async fn start_wo(
-    mut input: execution::WoStartInput,
+    input: execution::WoStartInput,
     state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    start_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn start_wo_impl(
+    state: &AppState,
+    mut input: execution::WoStartInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // An execution action (L5-08): the edit right, then the execution-actor rule.
-    require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    require_execution_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
     let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
@@ -1181,8 +1197,13 @@ pub async fn evaluate_wo_completion_gates(
 
 #[tauri::command]
 pub async fn add_labor(input: labor::AddLaborInput, state: State<'_, AppState>) -> AppResult<labor::WoIntervener> {
+    add_labor_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn add_labor_impl(state: &AppState, input: labor::AddLaborInput) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
     // Someone who does not carry out this work order books their own hours only.
     execution_actor::require_labor_for(
         &state.db,
@@ -1296,9 +1317,19 @@ pub async fn close_labor(
     actor_id: i64,
     state: State<'_, AppState>,
 ) -> AppResult<labor::WoIntervener> {
+    close_labor_impl(state.inner(), intervener_id, ended_at, actor_id).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn close_labor_impl(
+    state: &AppState,
+    intervener_id: i64,
+    ended_at: String,
+    actor_id: i64,
+) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
     require_on_child(
-        &state,
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Labor,
@@ -1382,17 +1413,27 @@ pub async fn record_part_usage(
     unit_cost: Option<f64>,
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
+    record_part_usage_impl(state.inner(), wo_part_id, quantity_used, unit_cost).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn record_part_usage_impl(
+    state: &AppState,
+    wo_part_id: i64,
+    quantity_used: f64,
+    unit_cost: Option<f64>,
+) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
     // An execution action (L5-08): the edit right, then the execution-actor rule.
     require_execution_on_child(
-        &state,
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Part,
         wo_part_id,
     )
     .await?;
-    let authority = stock_authority(&state, user.user_id).await?;
+    let authority = stock_authority(state, user.user_id).await?;
     parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost, authority).await
 }
 
@@ -1416,6 +1457,14 @@ pub async fn list_wo_parts_to_issue(state: State<'_, AppState>) -> AppResult<Vec
 pub async fn issue_wo_part_to_issue(
     input: parts::IssuePartToIssueInput,
     state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    issue_wo_part_to_issue_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn issue_wo_part_to_issue_impl(
+    state: &AppState,
+    input: parts::IssuePartToIssueInput,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
     require_permission!(
@@ -1442,10 +1491,21 @@ pub async fn cancel_wo_part_to_issue(
     input: parts::CancelPartToIssueInput,
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
+    cancel_wo_part_to_issue_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn cancel_wo_part_to_issue_impl(
+    state: &AppState,
+    input: parts::CancelPartToIssueInput,
+) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    if stock_authority(&state, user.user_id).await? == parts::StockAuthority::RequestOnly {
-        require_on_child(
-            &state,
+    if stock_authority(state, user.user_id).await? == parts::StockAuthority::RequestOnly {
+        // Without the stock right, withdrawing the use is an execution action on the work order
+        // (it resets the recorded use, L5-08): its edit right, then the execution-actor rule. The
+        // storekeeper's path (`inv.manage`) is unchanged.
+        require_execution_on_child(
+            state,
             user.user_id,
             crate::rbac::permissions::OT_EDIT,
             access::WoChild::Part,
@@ -1569,10 +1629,32 @@ pub async fn complete_task(
     follow_up_work_order_id: Option<i64>,
     state: State<'_, AppState>,
 ) -> AppResult<tasks::WoTask> {
+    complete_task_impl(
+        state.inner(),
+        task_id,
+        actor_id,
+        result_code,
+        notes,
+        finding_note,
+        follow_up_work_order_id,
+    )
+    .await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn complete_task_impl(
+    state: &AppState,
+    task_id: i64,
+    actor_id: i64,
+    result_code: String,
+    notes: Option<String>,
+    finding_note: Option<String>,
+    follow_up_work_order_id: Option<i64>,
+) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
     // A task result is an execution action: the edit right, then the execution-actor rule.
     require_execution_on_child(
-        &state,
+        state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
         access::WoChild::Task,

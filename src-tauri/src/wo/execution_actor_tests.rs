@@ -563,3 +563,229 @@ async fn the_creator_cancels_their_own_draft_but_not_once_it_is_released() {
     .expect_err("no such right");
     assert_eq!(code_of(&err), "PERMISSION_DENIED");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Through the commands (review of 8a77d5784): each wiring style refuses a colleague who does
+// not carry out the work order and lets an actor through.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// An application state signed in as `user_id` (a session row stored, as at sign-in).
+pub(super) async fn state_for(db: &DatabaseConnection, user_id: i32) -> crate::state::AppState {
+    let state = crate::state::AppState::new(db.clone());
+    let (session_id, expires) = {
+        let mut guard = state.session.write().await;
+        guard.create_session(crate::auth::session_manager::AuthenticatedUser {
+            user_id,
+            username: format!("user-{user_id}"),
+            display_name: None,
+            is_admin: false,
+            force_password_change: false,
+            tenant_id: "tenant-test".into(),
+            token_tenant_id: "tenant-test".into(),
+        });
+        let current = guard.current.as_ref().expect("session");
+        (current.session_db_id.clone(), current.expires_at.to_rfc3339())
+    };
+    crate::auth::session_manager::create_session_record(db, &session_id, user_id, &expires)
+        .await
+        .expect("stored session");
+    state
+}
+
+/// Refused by the execution-actor rule (not by a right, a status or anything else).
+fn is_actor_refusal(err: &AppError) -> bool {
+    [
+        codes::ASSIGNED_PERSON,
+        codes::ASSIGNED_TEAM,
+        codes::ASSIGNED_PERSON_TEAM,
+        codes::UNASSIGNED,
+    ]
+    .contains(&code_of(err).as_str())
+}
+
+/// Past every right check: any refusal left is the work order's own rules, not who acts.
+fn passed_the_gate<T: std::fmt::Debug>(result: &Result<T, AppError>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(err) => !is_actor_refusal(err) && !matches!(err, AppError::PermissionDenied(_)),
+    }
+}
+
+async fn set_status(db: &DatabaseConnection, wo: i64, code: &str) {
+    exec(
+        db,
+        &format!(
+            "UPDATE work_orders SET status_id = (SELECT id FROM work_order_statuses WHERE code = '{code}') \
+             WHERE id = {wo}"
+        ),
+    )
+    .await;
+}
+
+async fn row_version(db: &DatabaseConnection, wo: i64) -> i64 {
+    scalar(db, &format!("SELECT row_version FROM work_orders WHERE id = {wo}")).await
+}
+
+#[tokio::test]
+async fn start_wo_refuses_a_colleague_and_lets_the_assignee_through() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "ready").await;
+    let input = |who: i32, rv: i64| crate::wo::execution::WoStartInput {
+        wo_id: f.wo,
+        actor_id: i64::from(who),
+        expected_row_version: rv,
+    };
+    let rv = row_version(&f.db, f.wo).await;
+    let err = crate::commands::wo::start_wo_impl(&state_for(&f.db, f.colleague).await, input(f.colleague, rv))
+        .await
+        .expect_err("colleague refused");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    assert_eq!(row_version(&f.db, f.wo).await, rv, "nothing written");
+    let started = crate::commands::wo::start_wo_impl(&state_for(&f.db, f.assignee).await, input(f.assignee, rv)).await;
+    assert!(passed_the_gate(&started), "{started:?}");
+}
+
+#[tokio::test]
+async fn close_wo_refuses_a_colleague_with_the_close_right_and_lets_the_approver_through() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "completed").await;
+    let rv = row_version(&f.db, f.wo).await;
+    let close = |who: i32| crate::wo::closeout::WoCloseInput {
+        wo_id: f.wo,
+        actor_id: i64::from(who),
+        expected_row_version: rv,
+        ..Default::default()
+    };
+    let err =
+        crate::commands::wo::close_wo_impl(&state_for(&f.db, f.colleague_closer).await, close(f.colleague_closer))
+            .await
+            .expect_err("colleague refused");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    // The assignee without ot.close: refused for the right.
+    let err = crate::commands::wo::close_wo_impl(&state_for(&f.db, f.assignee).await, close(f.assignee))
+        .await
+        .expect_err("no close right");
+    assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+    let closed = crate::commands::wo::close_wo_impl(&state_for(&f.db, f.approver).await, close(f.approver)).await;
+    assert!(passed_the_gate(&closed), "{closed:?}");
+}
+
+#[tokio::test]
+async fn labour_commands_book_and_close_only_a_colleague_own_hours() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "in_progress").await;
+    let state = state_for(&f.db, f.colleague).await;
+    let book = |who: i32| crate::wo::labor::AddLaborInput {
+        wo_id: f.wo,
+        intervener_id: i64::from(who),
+        skill_id: None,
+        started_at: Some("2026-11-05T08:00:00Z".into()),
+        ended_at: None,
+        hours_worked: None,
+        hourly_rate: None,
+        notes: None,
+    };
+    let err = crate::commands::wo::add_labor_impl(&state, book(f.assignee))
+        .await
+        .expect_err("hours of the assignee");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    let own = crate::commands::wo::add_labor_impl(&state, book(f.colleague))
+        .await
+        .expect("own hours");
+
+    let theirs = labour_entry(&f.db, f.wo, f.assignee, Some(f.assignee_card), "cmd-theirs").await;
+    let err = crate::commands::wo::close_labor_impl(&state, theirs, "2026-11-05T10:00:00Z".into(), 0)
+        .await
+        .expect_err("the assignee's entry");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    crate::commands::wo::close_labor_impl(&state, own.id, "2026-11-05T10:00:00Z".into(), 0)
+        .await
+        .expect("own entry closed");
+    // The assignee books a colleague's hours (the command's own rules for others apply).
+    let booked = crate::commands::wo::add_labor_impl(&state_for(&f.db, f.assignee).await, book(f.colleague)).await;
+    assert!(passed_the_gate(&booked), "{booked:?}");
+}
+
+#[tokio::test]
+async fn complete_task_refuses_a_colleague_and_lets_a_team_member_record_the_result() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "in_progress").await;
+    let task = task_of(&f.db, f.wo).await;
+    let result = |state: crate::state::AppState| async move {
+        crate::commands::wo::complete_task_impl(&state, task, 0, "ok".into(), None, None, None).await
+    };
+    let err = result(state_for(&f.db, f.colleague).await)
+        .await
+        .expect_err("colleague refused");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    let done = result(state_for(&f.db, f.member).await).await;
+    assert!(passed_the_gate(&done), "{done:?}");
+}
+
+#[tokio::test]
+async fn cancel_wo_lets_the_creator_cancel_a_draft_and_refuses_a_colleague() {
+    let f = fixture().await;
+    let wo = new_wo(&f.db, &f.t, f.colleague, "Draft by colleague").await;
+    let cancel = |who: i32, rv: i64| crate::wo::domain::WoCancelInput {
+        id: wo,
+        expected_row_version: rv,
+        actor_id: i64::from(who),
+        cancel_reason: "Saisi en double".into(),
+    };
+    let rv = row_version(&f.db, wo).await;
+    let err = crate::commands::wo::cancel_wo_impl(&state_for(&f.db, f.member).await, cancel(f.member, rv))
+        .await
+        .expect_err("not their draft");
+    assert!(is_actor_refusal(&err), "{err:?}");
+    let cancelled = crate::commands::wo::cancel_wo_impl(&state_for(&f.db, f.colleague).await, cancel(f.colleague, rv))
+        .await
+        .expect("creator cancels the draft");
+    assert_eq!(cancelled.status_code.as_deref(), Some("cancelled"));
+}
+
+#[tokio::test]
+async fn a_crew_assignment_ending_today_as_a_date_still_counts_today() {
+    let f = fixture().await;
+    let ending_today = user(&f.db, "exa_ending_today").await;
+    let tech = scalar(&f.db, "SELECT id FROM roles WHERE name = 'EXA technician A'").await;
+    assign(&f.db, ending_today, tech, "org_node", Some(f.t.site_a)).await;
+    let card = personnel_for(&f.db, ending_today, "ENDING").await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO personnel_team_assignments (personnel_id, team_id, role_code, allocation_percent, is_lead, \
+                valid_from, valid_to) VALUES ({card}, {}, 'member', 100.0, 0, '2020-01-01', date('now'))",
+            f.team
+        ),
+    )
+    .await;
+    execute(&f, ending_today, OT_EDIT, f.wo)
+        .await
+        .expect("in force to the end of its last day");
+    // Ended yesterday (a date), or a moment ago (a timestamp): no longer a member.
+    exec(
+        &f.db,
+        &format!("UPDATE personnel_team_assignments SET valid_to = date('now', '-1 day') WHERE personnel_id = {card}"),
+    )
+    .await;
+    assert!(execute(&f, ending_today, OT_EDIT, f.wo).await.is_err());
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE personnel_team_assignments SET valid_to = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 minute') \
+             WHERE personnel_id = {card}"
+        ),
+    )
+    .await;
+    assert!(execute(&f, ending_today, OT_EDIT, f.wo).await.is_err());
+    // Starting tomorrow (a date): not yet.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE personnel_team_assignments SET valid_from = date('now', '+1 day'), valid_to = NULL \
+             WHERE personnel_id = {card}"
+        ),
+    )
+    .await;
+    assert!(execute(&f, ending_today, OT_EDIT, f.wo).await.is_err());
+}

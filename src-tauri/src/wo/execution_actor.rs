@@ -78,20 +78,20 @@ impl NotActor {
     pub fn into_error(self) -> AppError {
         let message = match self.code.as_str() {
             codes::ASSIGNED_PERSON => format!(
-                "OT assigné à {} — seule la saisie de vos heures et d'une note est possible.",
+                "OT assigné à {} — seule la saisie de vos propres heures est possible.",
                 self.params.get("assignee").map_or("", String::as_str)
             ),
             codes::ASSIGNED_TEAM => format!(
-                "OT assigné à l'équipe {} — seule la saisie de vos heures et d'une note est possible.",
+                "OT assigné à l'équipe {} — seule la saisie de vos propres heures est possible.",
                 self.params.get("team").map_or("", String::as_str)
             ),
             codes::ASSIGNED_PERSON_TEAM => format!(
-                "OT assigné à {} (équipe {}) — seule la saisie de vos heures et d'une note est possible.",
+                "OT assigné à {} (équipe {}) — seule la saisie de vos propres heures est possible.",
                 self.params.get("assignee").map_or("", String::as_str),
                 self.params.get("team").map_or("", String::as_str)
             ),
             _ => "OT assigné à personne : seuls son planificateur et les approbateurs du site l'exécutent ; \
-                  seule la saisie de vos heures et d'une note est possible."
+                  seule la saisie de vos propres heures est possible."
                 .to_string(),
         };
         crate::errors::org_validation_failed(&self.code, format!("{}: {message}", self.code), self.params)
@@ -168,23 +168,35 @@ async fn wo_people(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<WoPeople>
 }
 
 /// Whether the login `user_id` (active) is a member of `team_id` now: a crew assignment in force
-/// (`notifications::router::team_member_user_ids`, same clock and validity rule).
+/// (the assignment table holds both plain dates and full timestamps, `personnel::queries`).
 async fn is_team_member(db: &impl ConnectionTrait, user_id: i64, team_id: i64) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS x FROM personnel_team_assignments x \
-               JOIN user_accounts ua ON ua.personnel_id = x.personnel_id \
-              WHERE ua.id = ? AND x.team_id = ? \
-                AND ua.is_active = 1 AND ua.deleted_at IS NULL \
-                AND (x.valid_from IS NULL OR x.valid_from <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
-                AND (x.valid_to IS NULL OR x.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
-              LIMIT 1",
+            format!(
+                "SELECT 1 AS x FROM personnel_team_assignments x \
+                   JOIN user_accounts ua ON ua.personnel_id = x.personnel_id \
+                  WHERE ua.id = ? AND x.team_id = ? \
+                    AND ua.is_active = 1 AND ua.deleted_at IS NULL \
+                    AND {IN_FORCE_NOW_SQL} \
+                  LIMIT 1"
+            ),
             [user_id.into(), team_id.into()],
         ))
         .await?
         .is_some())
 }
+
+/// A crew assignment (alias `x`) in force now. A plain date (`YYYY-MM-DD`) counts for that whole
+/// day: from its start for `valid_from`, to its end for `valid_to`, as `personnel::queries` reads
+/// them (`date(...)`). A timestamp (the end written when someone leaves a crew) counts to the
+/// instant. Read with `julianday`, so `T`/space and a trailing `Z` compare alike.
+const IN_FORCE_NOW_SQL: &str = "(x.valid_from IS NULL OR TRIM(x.valid_from) = '' \
+       OR (LENGTH(TRIM(x.valid_from)) <= 10 AND date(x.valid_from) <= date('now')) \
+       OR (LENGTH(TRIM(x.valid_from)) > 10 AND julianday(x.valid_from) <= julianday('now'))) \
+   AND (x.valid_to IS NULL OR TRIM(x.valid_to) = '' \
+       OR (LENGTH(TRIM(x.valid_to)) <= 10 AND date(x.valid_to) >= date('now')) \
+       OR (LENGTH(TRIM(x.valid_to)) > 10 AND julianday(x.valid_to) >= julianday('now')))";
 
 /// Whether `scope` covers the anchor (the site rule of `scope::check_anchor`, as a yes / no).
 async fn scope_covers(db: &impl ConnectionTrait, scope: &AccessScope, anchor: Anchor) -> AppResult<bool> {
