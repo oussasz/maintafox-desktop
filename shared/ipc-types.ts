@@ -5618,6 +5618,21 @@ export interface WoGetResponse {
   transitions: WoTransitionRow[];
 }
 
+/** Why the signed-in user carries out a work order (`get_wo_execution_standing`, L5-08). */
+export type WoExecutionActorRole = "assignee" | "team_member" | "planner" | "approver";
+
+/**
+ * Whether the signed-in user carries out the work order (its assignee, a member of its team, its
+ * planner, or an `ot.approve` holder at its site), and else why not: a `GATE_WO_EXECUTION_*` code
+ * with the names it shows (`assignee`, `team`).
+ */
+export interface WoExecutionStanding {
+  actor: WoExecutionActorRole | null;
+  refusal: { code: string; params: Record<string, string> } | null;
+  /** The user created this work order and it is not released yet (a draft): they may cancel it. */
+  own_draft: boolean;
+}
+
 export interface WoCancelInput {
   id: number;
   expected_row_version: number;

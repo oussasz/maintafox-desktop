@@ -105,6 +105,7 @@ import type {
 import { P } from "@shared/rbac/permissions.generated";
 
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
+import { useWoExecutionStanding } from "./use-wo-execution-standing";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
 import { woActionFailureText } from "./wo-action-error";
 
@@ -478,12 +479,20 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
     const { can } = usePermissions();
     const actorId = info?.user_id ?? null;
     const loggingEnabled = LOGGING_EDITABLE_STATUSES.has(statusCode);
-    const controlsDisabled = !canEdit || !loggingEnabled || busy;
+    // Execution actions (L5-08): someone who does not carry out this work order (neither its
+    // assignee, a member of its team, its planner nor an approver at its site) sees parts, tools,
+    // downtime and task results greyed with who it is assigned to; their own labour stays open.
+    const execution = useWoExecutionStanding(wo);
+    const executionBlocked = execution.blocker !== null;
+    const controlsDisabled = !canEdit || !loggingEnabled || busy || executionBlocked;
     // Task results, NOK evidence, task reopening, tool use and labour are recorded in progress and on
     // hold (backend `TASK_RECORDING_STATUSES`, CMMS Advisor O3); recording during a hold never
     // resumes the work order.
     const recordingEnabled = isRecordingStatus(statusCode);
+    // Labour: open to anyone holding the edit right (their own hours only, checked by the backend).
     const recordingDisabled = !canEdit || !recordingEnabled || busy;
+    /** Task results and tool use: execution actions. */
+    const taskResultDisabled = recordingDisabled || executionBlocked;
 
     const handleRefreshState = useCallback(
       async (next: WorkOrder) => {
@@ -1016,6 +1025,14 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     return (
       <div className="space-y-8">
+        {execution.blocker && canEdit ? (
+          <p
+            id="wo-execution-controls-blocker"
+            className="rounded-md border border-surface-border px-3 py-2 text-sm text-text-muted"
+          >
+            {execution.blocker}
+          </p>
+        ) : null}
         {error && (
           <div className="rounded-md border border-tone-danger-border bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
             {error}
@@ -1467,7 +1484,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         [task.id]: v as TaskResultCode,
                       }))
                     }
-                    disabled={recordingDisabled || Boolean(task.completed_at)}
+                    disabled={taskResultDisabled || Boolean(task.completed_at)}
                   >
                     <SelectTrigger className="h-8">
                       <SelectValue />
@@ -1488,7 +1505,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       size="sm"
                       variant="outline"
                       onClick={() => void handleCompleteTask(task)}
-                      disabled={recordingDisabled || !actorId}
+                      disabled={taskResultDisabled || !actorId}
+                      title={execution.blocker ?? undefined}
+                      aria-describedby={
+                        execution.blocker ? "wo-execution-controls-blocker" : undefined
+                      }
                     >
                       {taskResultCodes[task.id] === "cancelled"
                         ? t("execution.cancelTask")
@@ -1503,7 +1524,11 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         setReopenTaskId(task.id);
                         setReopenComment("");
                       }}
-                      disabled={recordingDisabled}
+                      disabled={taskResultDisabled}
+                      title={execution.blocker ?? undefined}
+                      aria-describedby={
+                        execution.blocker ? "wo-execution-controls-blocker" : undefined
+                      }
                     >
                       {t("execution.reopenTask")}
                     </Button>
@@ -1550,7 +1575,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         size="sm"
                         variant="outline"
                         onClick={() => void handleReopenTask(task)}
-                        disabled={recordingDisabled || reopenComment.trim() === ""}
+                        disabled={taskResultDisabled || reopenComment.trim() === ""}
                       >
                         {t("execution.reopenTaskConfirm")}
                       </Button>
@@ -1764,7 +1789,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                 setAddToolDialogError(null);
                 setShowAddToolDialog(true);
               }}
-              disabled={recordingDisabled}
+              disabled={taskResultDisabled}
             >
               {t("execution.tools.add")}
             </Button>
@@ -1814,7 +1839,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="outline"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolUsed(tool.id)}
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       >
                         {t("execution.tools.markUsed")}
                       </Button>
@@ -1823,7 +1848,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         variant="ghost"
                         className="h-6 px-2 text-xs"
                         onClick={() => void handleMarkToolNotUsed(tool.id)}
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       >
                         {t("execution.tools.markNotUsed")}
                       </Button>
