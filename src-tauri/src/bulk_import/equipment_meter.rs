@@ -4,11 +4,13 @@
 //! - A new meter gets its type (equipment.meter_type), its unit (MEASURE.UNITS) and, when the file
 //!   gives one, its initial reading recorded as a real dated reading (source IMPORT), written in the
 //!   same transaction as the meter.
-//! - An existing meter may get a new label. Its type or unit changes only while it has no reading;
-//!   its initial reading is recorded only while it has none ("déjà relevé" otherwise).
-//! - "principal = oui" makes the meter the equipment's primary meter only when it has none: a
-//!   second primary meter is refused, never switched silently. The import never removes a primary
-//!   flag and never deactivates a meter (the screen has no such action).
+//! - An existing meter is never edited (the screen has no meter edit yet; Advisor 2026-11-06): the
+//!   import only records its first dated reading while it has none ("déjà relevé" otherwise).
+//!   Values identical to the meter's are "inchangé"; a different label, type, unit or primary
+//!   flag refuses the line. A line on an inactive meter is refused (the screen takes no reading
+//!   on it).
+//! - "principal = oui" makes a new meter the equipment's primary meter only when it has none: a
+//!   second primary meter is refused, never switched silently.
 
 use std::collections::{HashMap, HashSet};
 
@@ -92,6 +94,7 @@ struct Stored {
     meter_type: String,
     unit_id: Option<i64>,
     is_primary: bool,
+    is_active: bool,
     has_reading: bool,
     name: String,
 }
@@ -228,7 +231,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     {
         let equipment_id: i64 = r.try_get("", "equipment_id")?;
         let is_primary = r.try_get::<i64>("", "is_primary")? == 1;
-        if is_primary && r.try_get::<i64>("", "is_active")? == 1 {
+        let is_active = r.try_get::<i64>("", "is_active")? == 1;
+        if is_primary && is_active {
             has_primary.insert(equipment_id);
         }
         let Some(code) = r.try_get::<Option<String>>("", "meter_code")? else {
@@ -240,6 +244,7 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             meter_type: r.try_get("", "meter_type")?,
             unit_id: r.try_get("", "unit_value_id")?,
             is_primary,
+            is_active,
             has_reading: r.try_get::<i64>("", "has_reading")? == 1,
             name: r.try_get("", "name")?,
         };
@@ -248,7 +253,8 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         }
     }
 
-    let today = crate::clock::now().date_naive();
+    // The file's dates are plant-local days (see `reading_at`).
+    let today = crate::clock::now_local().date_naive();
     let mut first_row_of: HashMap<(i64, String), usize> = HashMap::new();
     // Equipment made primary by an earlier line of the file.
     let mut primary_in_file: HashMap<i64, usize> = HashMap::new();
@@ -423,19 +429,24 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             }
         };
 
-        // Changes on an existing meter.
+        // An existing meter is not edited by an import: identical values are "inchangé", a
+        // different one refuses the line; only its first reading may be recorded.
         let mut record_reading = reading.is_some();
         if let Some(m) = &existing {
-            if meter_type.as_ref().is_some_and(|t| *t != m.meter_type) && m.has_reading {
+            if !m.is_active {
                 messages.push(RowMessage::error(
-                    "METER_IMPORT_TYPE_LOCKED",
-                    "Ce compteur a déjà des relevés : son type ne change plus.",
+                    "METER_IMPORT_INACTIVE",
+                    "Ce compteur est désactivé : il ne reçoit plus de relevé.",
                 ));
             }
-            if unit_id.is_some() && unit_id != m.unit_id && m.has_reading {
+            let differs = name.as_deref().is_some_and(|n| n != m.name)
+                || meter_type.as_ref().is_some_and(|t| *t != m.meter_type)
+                || (unit_id.is_some() && unit_id != m.unit_id)
+                || primary.is_some_and(|p| p != m.is_primary);
+            if differs {
                 messages.push(RowMessage::error(
-                    "METER_IMPORT_UNIT_LOCKED",
-                    "Ce compteur a déjà des relevés : son unité ne change plus.",
+                    "METER_IMPORT_EXISTING_CHANGE",
+                    "Un compteur existant ne se modifie pas par import : il n'y a pas encore de modification de compteur à l'écran.",
                 ));
             }
             if reading.is_some() && m.has_reading {
@@ -445,20 +456,14 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                     "Déjà relevé : le relevé initial du fichier est ignoré.",
                 ));
             }
-            if primary == Some(false) && m.is_primary {
-                messages.push(RowMessage::error(
-                    "METER_IMPORT_PRIMARY_REMOVE",
-                    "Ce compteur est le compteur principal de l'équipement : l'import ne retire pas ce choix.",
-                ));
-            }
         }
-        let make_primary = primary == Some(true) && !existing.as_ref().is_some_and(|m| m.is_primary);
+        let make_primary = existing.is_none() && primary == Some(true);
         if make_primary {
             if let Some(eq) = equipment_id {
                 if has_primary.contains(&eq) {
                     messages.push(RowMessage::error(
                         "METER_IMPORT_PRIMARY_TAKEN",
-                        "Cet équipement a déjà un compteur principal : changez-le à l'écran.",
+                        "Cet équipement a déjà un compteur principal : un second n'est pas possible.",
                     ));
                 } else if let Some(first) = primary_in_file.get(&eq) {
                     messages.push(RowMessage::error(
@@ -468,23 +473,22 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                             first + 2
                         ),
                     ));
-                } else {
-                    primary_in_file.insert(eq, i);
                 }
             }
         }
 
         let has_error = messages.iter().any(|m| m.severity == "error");
+        // Only a line that will be written claims the equipment's primary flag.
+        if make_primary && !has_error {
+            if let Some(eq) = equipment_id {
+                primary_in_file.insert(eq, i);
+            }
+        }
         let ex = existing.as_ref();
-        // Only the fields that change are written.
-        let new_name = name.filter(|n| ex.is_none_or(|m| *n != m.name));
-        let new_type = meter_type.filter(|t| ex.is_none_or(|m| *t != m.meter_type));
-        let new_unit = unit_id.filter(|u| ex.is_none_or(|m| Some(*u) != m.unit_id));
-        let changes = new_name.is_some() || new_type.is_some() || new_unit.is_some() || make_primary || record_reading;
         let action = match (has_error, ex) {
             (true, _) => "skip",
             (false, None) => "create",
-            (false, Some(_)) if changes => "update",
+            (false, Some(_)) if record_reading => "update",
             _ => "skip",
         };
         out.push(RowOutcome {
@@ -493,9 +497,9 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                 "equipment_id": equipment_id,
                 "meter_code": cell("meter_code"),
                 "existing_id": ex.map(|m| m.id),
-                "name": new_name,
-                "meter_type": new_type,
-                "unit_id": new_unit,
+                "name": if ex.is_none() { name } else { None },
+                "meter_type": if ex.is_none() { meter_type } else { None },
+                "unit_id": if ex.is_none() { unit_id } else { None },
                 "make_primary": make_primary,
                 "reading": if record_reading { reading } else { None },
                 "reading_at": if record_reading { reading_day.map(reading_at) } else { None },
@@ -537,9 +541,9 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
     Ok(out)
 }
 
-/// Writes one line in one transaction (meter, primary flag and first reading together). Each
-/// write re-checks what the preview saw, so a change made elsewhere since fails this line only.
-/// `Ok(Err(text))`: refused, nothing written.
+/// Writes one line in one transaction (a new meter and its first reading together, or the first
+/// reading of an existing meter). Each write re-checks what the preview saw, so a change made
+/// elsewhere since fails this line only. `Ok(Err(text))`: refused, nothing written.
 async fn write_line(
     db: &DatabaseConnection,
     n: &serde_json::Value,
@@ -548,116 +552,28 @@ async fn write_line(
     let Some(equipment_id) = n["equipment_id"].as_i64() else {
         return Ok(Err("Ligne incomplète."));
     };
-    let make_primary = n["make_primary"].as_bool() == Some(true);
     let now = crate::clock::now().to_rfc3339();
     let txn = db.begin().await?;
     let meter_id = match n["existing_id"].as_i64() {
-        None => {
-            let (Some(code), Some(name), Some(meter_type)) =
-                (n["meter_code"].as_str(), n["name"].as_str(), n["meter_type"].as_str())
-            else {
-                return Ok(Err("Ligne incomplète."));
-            };
-            // No meter with this code on the equipment (letter case aside) and, for a primary
-            // meter, no active primary meter: both as the preview saw them.
-            let inserted = txn
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO equipment_meters \
-                     (entity_sync_id, equipment_id, name, meter_code, meter_type, unit_value_id, current_reading, \
-                      is_primary, is_active, created_at, updated_at) \
-                     SELECT ?, e.id, ?, ?, ?, ?, 0, ?, 1, ?, ? FROM equipment e \
-                     WHERE e.id = ? AND e.deleted_at IS NULL \
-                       AND NOT EXISTS (SELECT 1 FROM equipment_meters m WHERE m.equipment_id = e.id \
-                                       AND LOWER(TRIM(m.meter_code)) = LOWER(TRIM(?))) \
-                       AND (? = 0 OR NOT EXISTS (SELECT 1 FROM equipment_meters m WHERE m.equipment_id = e.id \
-                                                 AND m.is_primary = 1 AND m.is_active = 1))",
-                    [
-                        crate::sync::identity::new_entity_sync_id().into(),
-                        name.into(),
-                        code.into(),
-                        meter_type.into(),
-                        n["unit_id"].as_i64().into(),
-                        i64::from(make_primary).into(),
-                        now.clone().into(),
-                        now.clone().into(),
-                        equipment_id.into(),
-                        code.into(),
-                        i64::from(make_primary).into(),
-                    ],
-                ))
-                .await?;
-            if inserted.rows_affected() != 1 {
+        None => match insert_meter(&txn, equipment_id, n, &now).await? {
+            Ok(id) => id,
+            Err(text) => {
                 txn.rollback().await?;
-                return Ok(Err(
-                    "L'équipement ou ses compteurs ont changé depuis la vérification du fichier : vérifiez le fichier à nouveau.",
-                ));
+                return Ok(Err(text));
             }
-            crate::db::inserted_id(&inserted)?
-        }
-        Some(id) => {
-            let mut sets: Vec<&str> = Vec::new();
-            let mut values: Vec<sea_orm::Value> = Vec::new();
-            if let Some(name) = n["name"].as_str() {
-                sets.push("name = ?");
-                values.push(name.into());
-            }
-            if let Some(t) = n["meter_type"].as_str() {
-                sets.push("meter_type = ?");
-                values.push(t.into());
-            }
-            if let Some(u) = n["unit_id"].as_i64() {
-                sets.push("unit_value_id = ?");
-                values.push(u.into());
-            }
-            if make_primary {
-                sets.push("is_primary = 1");
-            }
-            if !sets.is_empty() {
-                sets.push("updated_at = ?");
-                values.push(now.clone().into());
-                values.push(id.into());
-                values.push(equipment_id.into());
-                // A type or unit changes only while the meter has no reading; the primary flag
-                // only while the equipment has no other active primary meter.
-                let type_or_unit = n["meter_type"].is_string() || n["unit_id"].is_i64();
-                let sql = format!(
-                    "UPDATE equipment_meters SET {} WHERE id = ? AND equipment_id = ? \
-                     AND ({} OR NOT EXISTS (SELECT 1 FROM asset_meter_readings mr WHERE mr.meter_id = equipment_meters.id)) \
-                     AND ({} OR NOT EXISTS (SELECT 1 FROM equipment_meters o WHERE o.equipment_id = equipment_meters.equipment_id \
-                                            AND o.id <> equipment_meters.id AND o.is_primary = 1 AND o.is_active = 1))",
-                    sets.join(", "),
-                    if type_or_unit { "0" } else { "1" },
-                    if make_primary { "0" } else { "1" },
-                );
-                let written = txn
-                    .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
-                    .await?;
-                if written.rows_affected() != 1 {
-                    txn.rollback().await?;
-                    return Ok(Err(
-                        "Ce compteur a changé depuis la vérification du fichier (relevé ou compteur principal) : vérifiez le fichier à nouveau.",
-                    ));
-                }
-            }
-            id
-        }
+        },
+        Some(id) => id,
     };
 
     if let (Some(value), Some(at)) = (n["reading"].as_f64(), n["reading_at"].as_str()) {
         // The meter's first reading, as the reading screen records one when there is no earlier
         // reading (`assets::meters`): a normal reading, its own lifetime value, the meter's current
-        // value. Recorded only while the meter still has no reading.
+        // value. Recorded only on an active meter that still has no reading.
         let inserted = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO asset_meter_readings \
-                 (meter_id, reading_value, reading_at, source_type, source_reference, quality_flag, created_by_id, \
-                  created_at, reading_kind, lifetime_value, entity_sync_id) \
-                 SELECT ?, ?, ?, 'IMPORT', 'Import', 'accepted', ?, ?, 'normal', ?, ? \
-                 WHERE NOT EXISTS (SELECT 1 FROM asset_meter_readings WHERE meter_id = ?)",
+                "INSERT INTO asset_meter_readings                  (meter_id, reading_value, reading_at, source_type, source_reference, quality_flag, created_by_id,                   created_at, reading_kind, lifetime_value, entity_sync_id)                  SELECT m.id, ?, ?, 'IMPORT', 'Import', 'accepted', ?, ?, 'normal', ?, ?                  FROM equipment_meters m WHERE m.id = ? AND m.is_active = 1                    AND NOT EXISTS (SELECT 1 FROM asset_meter_readings r WHERE r.meter_id = m.id)",
                 [
-                    meter_id.into(),
                     value.into(),
                     at.into(),
                     i64::from(user_id).into(),
@@ -671,19 +587,75 @@ async fn write_line(
         if inserted.rows_affected() != 1 {
             txn.rollback().await?;
             return Ok(Err(
-                "Ce compteur a reçu un relevé depuis la vérification du fichier : vérifiez le fichier à nouveau.",
+                "Ce compteur a reçu un relevé ou a été désactivé depuis la vérification du fichier : vérifiez le fichier à nouveau.",
             ));
         }
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE equipment_meters SET current_reading = ?, reading_offset = 0, last_read_at = ?, updated_at = ? \
-             WHERE id = ?",
+            "UPDATE equipment_meters SET current_reading = ?, reading_offset = 0, last_read_at = ?, updated_at = ?              WHERE id = ?",
             [value.into(), at.into(), now.into(), meter_id.into()],
         ))
         .await?;
     }
     txn.commit().await?;
     Ok(Ok(equipment_id))
+}
+
+/// Inserts a new meter inside the line's transaction, re-checking what the preview saw: the
+/// equipment still live, the code still free on it (compared with `key()`, letter case aside),
+/// the type and the unit still active, and, for a primary meter, no active primary meter yet.
+async fn insert_meter(
+    txn: &impl ConnectionTrait,
+    equipment_id: i64,
+    n: &serde_json::Value,
+    now: &str,
+) -> AppResult<Result<i64, &'static str>> {
+    let (Some(code), Some(name), Some(meter_type), Some(unit_id)) = (
+        n["meter_code"].as_str(),
+        n["name"].as_str(),
+        n["meter_type"].as_str(),
+        n["unit_id"].as_i64(),
+    ) else {
+        return Ok(Err("Ligne incomplète."));
+    };
+    let changed = "L'équipement, ses compteurs, le type ou l'unité ont changé depuis la vérification du fichier : vérifiez le fichier à nouveau.";
+    for r in txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT meter_code FROM equipment_meters WHERE equipment_id = ? AND meter_code IS NOT NULL",
+            [equipment_id.into()],
+        ))
+        .await?
+    {
+        if key(&r.try_get::<String>("", "meter_code")?) == key(code) {
+            return Ok(Err(changed));
+        }
+    }
+    let make_primary = i64::from(n["make_primary"].as_bool() == Some(true));
+    let inserted = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO equipment_meters              (entity_sync_id, equipment_id, name, meter_code, meter_type, unit_value_id, current_reading,               is_primary, is_active, created_at, updated_at)              SELECT ?, e.id, ?, ?, ?, ?, 0, ?, 1, ?, ? FROM equipment e              WHERE e.id = ? AND e.deleted_at IS NULL                AND EXISTS (SELECT 1 FROM lookup_values lv JOIN lookup_domains ld ON ld.id = lv.domain_id                            WHERE ld.domain_key = 'equipment.meter_type' AND lv.code = ?                              AND lv.is_active = 1 AND lv.deleted_at IS NULL)                AND EXISTS (SELECT 1 FROM reference_values u JOIN reference_sets rs ON rs.id = u.set_id                            WHERE u.id = ? AND u.is_active = 1 AND rs.status = 'published')                AND (? = 0 OR NOT EXISTS (SELECT 1 FROM equipment_meters m WHERE m.equipment_id = e.id                                          AND m.is_primary = 1 AND m.is_active = 1))",
+            [
+                crate::sync::identity::new_entity_sync_id().into(),
+                name.into(),
+                code.into(),
+                meter_type.into(),
+                unit_id.into(),
+                make_primary.into(),
+                now.into(),
+                now.into(),
+                equipment_id.into(),
+                meter_type.into(),
+                unit_id.into(),
+                make_primary.into(),
+            ],
+        ))
+        .await?;
+    if inserted.rows_affected() != 1 {
+        return Ok(Err(changed));
+    }
+    Ok(Ok(crate::db::inserted_id(&inserted)?))
 }
 
 pub async fn export(db: &DatabaseConnection) -> AppResult<Vec<Vec<String>>> {

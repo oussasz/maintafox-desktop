@@ -203,35 +203,86 @@ mod tests {
         )
         .await;
         assert_eq!(codes(&p, 2, "error"), ["METER_IMPORT_PRIMARY_TAKEN"]);
-        assert_eq!(codes(&p, 3, "error"), ["METER_IMPORT_PRIMARY_REMOVE"]);
+        // Removing the flag is an edit of an existing meter: refused.
+        assert_eq!(codes(&p, 3, "error"), ["METER_IMPORT_EXISTING_CHANGE"]);
     }
 
     #[tokio::test]
-    async fn an_existing_meter_keeps_type_unit_and_readings_once_read() {
+    async fn an_existing_meter_only_gets_its_first_reading() {
         let db = setup().await;
-        let p = run(&db, &["MT-P1;HRS;Heures;HOURS;h;100;01/01/2026;"]).await;
+        let p = run(&db, &["MT-P1;HRS;Heures;HOURS;h;;;"]).await;
         apply(&db, &p).await;
 
-        // Label change: an update; the reading is ignored (already read).
-        let p = run(&db, &["MT-P1;hrs;Heures de marche;HOURS;h;500;01/02/2026;"]).await;
+        // Same values plus a first reading: the reading is recorded, nothing else changes.
+        let p = run(&db, &["MT-P1;hrs;Heures;HOURS;h;100;01/01/2026;non"]).await;
         assert_eq!(action(&p, 2), "update", "{:?}", p.rows);
-        assert_eq!(codes(&p, 2, "warning"), ["METER_IMPORT_ALREADY_READ"]);
         let r = apply(&db, &p).await;
         assert_eq!((r.updated, r.failed), (1, 0));
+        assert_eq!(scalar(&db, "SELECT COUNT(*) FROM asset_meter_readings").await, 1);
+
+        // Read once: the file's reading is ignored, the line does nothing.
+        let p = run(&db, &["MT-P1;HRS;Heures;HOURS;h;500;01/02/2026;"]).await;
+        assert_eq!(action(&p, 2), "skip");
+        assert_eq!(codes(&p, 2, "warning"), ["METER_IMPORT_ALREADY_READ"]);
+        assert!(codes(&p, 2, "error").is_empty());
+
+        // Any different label, type, unit or primary flag: refused (no meter edit on the screen).
+        let p = run(
+            &db,
+            &[
+                "MT-P1;HRS;Heures de marche;HOURS;h;;;",
+                "MT-P1;HRS;Heures;CYCLES;h;;;",
+                "MT-P1;HRS;Heures;HOURS;km;;;",
+                "MT-P1;HRS;Heures;HOURS;h;;;oui",
+            ],
+        )
+        .await;
+        for row in 2..=5 {
+            assert!(
+                codes(&p, row, "error").contains(&"METER_IMPORT_EXISTING_CHANGE".to_string()),
+                "row {row}: {:?}",
+                p.rows
+            );
+        }
         assert_eq!(
             text(&db, "SELECT name FROM equipment_meters WHERE meter_code = 'HRS'")
                 .await
                 .as_deref(),
-            Some("Heures de marche")
+            Some("Heures")
         );
-        assert_eq!(
-            scalar(&db, "SELECT COUNT(*) FROM asset_meter_readings").await,
-            1,
-            "the file's second reading is not recorded"
-        );
+    }
 
-        let p = run(&db, &["MT-P1;HRS;Heures de marche;CYCLES;h;;;"]).await;
-        assert_eq!(codes(&p, 2, "error"), ["METER_IMPORT_TYPE_LOCKED"]);
+    #[tokio::test]
+    async fn a_line_on_an_inactive_meter_is_refused() {
+        let db = setup().await;
+        let p = run(&db, &["MT-P1;HRS;Heures;HOURS;h;;;"]).await;
+        apply(&db, &p).await;
+        exec(
+            &db,
+            "UPDATE equipment_meters SET is_active = 0 WHERE meter_code = 'HRS'",
+        )
+        .await;
+        let p = run(&db, &["MT-P1;HRS;Heures;HOURS;h;10;01/01/2026;"]).await;
+        assert_eq!(codes(&p, 2, "error"), ["METER_IMPORT_INACTIVE"]);
+    }
+
+    #[tokio::test]
+    async fn a_code_taken_elsewhere_since_the_check_fails_only_its_line() {
+        let db = setup().await;
+        let p = run(&db, &["MT-P1;ÉLEC;Énergie;CUSTOM;h;;;", "MT-P2;HRS;Heures;HOURS;h;;;"]).await;
+        assert_eq!(action(&p, 2), "create");
+        // The same code, letter case aside (accented capital), is created on the screen meanwhile.
+        exec(
+            &db,
+            "INSERT INTO equipment_meters (entity_sync_id, equipment_id, name, meter_code, meter_type, current_reading,              is_primary, is_active, created_at, updated_at)              SELECT 'mt-m-x', id, 'Énergie', 'élec', 'CUSTOM', 0, 0, 1, datetime('now'), datetime('now')              FROM equipment WHERE asset_id_code = 'MT-P1'",
+        )
+        .await;
+        let r = apply(&db, &p).await;
+        assert_eq!((r.created, r.failed), (1, 1));
+        assert_eq!(
+            scalar(&db, "SELECT COUNT(*) FROM equipment_meters WHERE name = 'Énergie'").await,
+            1
+        );
     }
 
     #[tokio::test]
