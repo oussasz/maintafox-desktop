@@ -128,6 +128,14 @@ pub struct Validator {
     pub personnel_id: Option<i64>,
 }
 
+/// The validation list and whether the user can validate skills at all: a skill names its
+/// validator's personnel record, so an account without one validates certificates only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingQualificationList {
+    pub lines: Vec<PendingQualification>,
+    pub validator_linked: bool,
+}
+
 /// Validates the lines one by one. A line that cannot be validated is reported with its code and
 /// the others go on. Duplicates in the request count once.
 pub async fn validate_qualifications<C>(
@@ -149,9 +157,15 @@ where
             KIND_CERTIFICATION => verify_certification(db, item, validator).await,
             _ => Ok(Err("QUAL_VALIDATION_KIND_UNKNOWN")),
         };
-        let (validated, code) = match outcome? {
-            Ok(()) => (true, None),
-            Err(code) => (false, Some(code.to_string())),
+        // A storage or audit failure on one line is reported on that line (its transaction is
+        // rolled back): the lines already validated stay reported as such, the others go on.
+        let (validated, code) = match outcome {
+            Ok(Ok(())) => (true, None),
+            Ok(Err(code)) => (false, Some(code.to_string())),
+            Err(e) => {
+                tracing::error!(error = %e, kind = %item.kind, id = item.id, "qualification validation failed");
+                (false, Some("QUAL_VALIDATION_FAILED".to_string()))
+            }
         };
         out.push(QualificationValidationResult {
             kind: item.kind.clone(),

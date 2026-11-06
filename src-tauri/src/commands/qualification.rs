@@ -7,7 +7,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
 use crate::qualification::bulk_validation::{
-    self, PendingQualification, QualificationValidationItem, QualificationValidationResult,
+    self, PendingQualificationList, QualificationValidationItem, QualificationValidationResult,
 };
 use crate::qualification::domain::{
     CertificationExpiryDrilldownRow, CertificationType, CertificationTypeUpsertInput, CrewPermitSkillGapInput,
@@ -177,7 +177,7 @@ pub async fn upsert_personnel_certification(
 /// The validation list: unvalidated skills and certificates waiting for verification (names
 /// people, so it needs the training view right).
 #[tauri::command]
-pub async fn list_pending_qualifications(state: State<'_, AppState>) -> AppResult<Vec<PendingQualification>> {
+pub async fn list_pending_qualifications(state: State<'_, AppState>) -> AppResult<PendingQualificationList> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -185,7 +185,14 @@ pub async fn list_pending_qualifications(state: State<'_, AppState>) -> AppResul
         crate::rbac::permissions::TRN_VIEW,
         PermissionScope::Global
     );
-    bulk_validation::list_pending_qualifications(&state.db).await
+    let lines = bulk_validation::list_pending_qualifications(&state.db).await?;
+    let validator_linked = crate::commands::personnel::linked_personnel_id_in(&state.db, user.user_id)
+        .await?
+        .is_some();
+    Ok(PendingQualificationList {
+        lines,
+        validator_linked,
+    })
 }
 
 /// Validates a selection from the validation list, line by line (each audited). Validating is a

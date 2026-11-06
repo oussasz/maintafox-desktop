@@ -109,7 +109,7 @@ describe("PendingValidationPanel", () => {
 
   it("shows the lines read-only without the right to certify", async () => {
     granted.add(P.TRN_VIEW);
-    listMock.mockResolvedValue([skill, cert]);
+    listMock.mockResolvedValue({ lines: [skill, cert], validator_linked: true });
     render(<PendingValidationPanel />);
     expect(await screen.findByText("Hydraulics")).toBeInTheDocument();
     expect(screen.getByText(enTraining.validation.readOnly)).toBeInTheDocument();
@@ -119,7 +119,7 @@ describe("PendingValidationPanel", () => {
   it("validates the ticked certificate behind the step-up and shows a refused line's reason", async () => {
     granted.add(P.TRN_VIEW);
     granted.add(P.TRN_CERTIFY);
-    listMock.mockResolvedValue([skill, cert]);
+    listMock.mockResolvedValue({ lines: [skill, cert], validator_linked: true });
     validateMock.mockResolvedValue([
       { kind: "certification", id: 20, validated: false, code: "QUAL_VALIDATION_CHANGED" },
     ]);
@@ -139,7 +139,7 @@ describe("PendingValidationPanel", () => {
     granted.add(P.TRN_VIEW);
     granted.add(P.TRN_CERTIFY);
     granted.add(P.PER_MANAGE);
-    listMock.mockResolvedValue([skill, cert]);
+    listMock.mockResolvedValue({ lines: [skill, cert], validator_linked: true });
     validateMock.mockResolvedValue([{ kind: "skill", id: 10, validated: true, code: null }]);
     render(<PendingValidationPanel />);
     fireEvent.click(await screen.findByRole("checkbox", { name: /Select Hydraulics/ }));
@@ -151,5 +151,33 @@ describe("PendingValidationPanel", () => {
     await waitFor(() => expect(validateMock).toHaveBeenCalledWith([skill]));
     // Skills only: no step-up asked.
     expect(withStepUp).not.toHaveBeenCalled();
+  });
+
+  it("keeps skill lines unticked for an account without a personnel record", async () => {
+    granted.add(P.TRN_VIEW);
+    granted.add(P.TRN_CERTIFY);
+    granted.add(P.PER_MANAGE);
+    listMock.mockResolvedValue({ lines: [skill, cert], validator_linked: false });
+    render(<PendingValidationPanel />);
+    expect(await screen.findByRole("checkbox", { name: /Select Hydraulics/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Select Habilitation BR/ })).toBeEnabled();
+    expect(screen.getByText(enTraining.validation.skillsNeedLink)).toBeInTheDocument();
+  });
+
+  it("drops the tick of a line whose content changed on reload", async () => {
+    granted.add(P.TRN_VIEW);
+    granted.add(P.TRN_CERTIFY);
+    listMock.mockResolvedValue({ lines: [cert], validator_linked: true });
+    const { rerender } = render(<PendingValidationPanel refreshKey={0} />);
+    const box = await screen.findByRole("checkbox", { name: /Select Habilitation BR/ });
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    // Edited elsewhere: a new version of the same certificate.
+    listMock.mockResolvedValue({ lines: [{ ...cert, row_version: 2 }], validator_linked: true });
+    rerender(<PendingValidationPanel refreshKey={1} />);
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /Select Habilitation BR/ })).not.toBeChecked(),
+    );
+    expect(screen.getByRole("button", { name: "Validate 0 lines" })).toBeDisabled();
   });
 });

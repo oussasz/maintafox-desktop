@@ -332,9 +332,16 @@ const QualificationValidationResultSchema = z.object({
 });
 export type QualificationValidationResult = z.infer<typeof QualificationValidationResultSchema>;
 
-export async function listPendingQualifications(): Promise<PendingQualification[]> {
+const PendingQualificationListSchema = z.object({
+  lines: z.array(PendingQualificationSchema),
+  /** False when the account has no personnel record: skills cannot be validated then. */
+  validator_linked: z.boolean(),
+});
+export type PendingQualificationList = z.infer<typeof PendingQualificationListSchema>;
+
+export async function listPendingQualifications(): Promise<PendingQualificationList> {
   const raw = await invoke<unknown>("list_pending_qualifications");
-  return z.array(PendingQualificationSchema).parse(raw);
+  return PendingQualificationListSchema.parse(raw);
 }
 
 /** Validates the lines exactly as shown: a line changed since is refused (code per line). */

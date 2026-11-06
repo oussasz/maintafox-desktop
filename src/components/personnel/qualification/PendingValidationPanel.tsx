@@ -41,6 +41,11 @@ function lineKey(l: { kind: string; id: number }): string {
   return `${l.kind}:${l.id}`;
 }
 
+/** What the line says: a tick holds only while the line still says it (re-checked on reload). */
+function lineContent(l: PendingQualification): string {
+  return [l.proficiency_level ?? "", l.valid_to ?? "", l.row_version ?? ""].join("|");
+}
+
 function isCancelled(err: unknown): boolean {
   return err instanceof Error && err.message === "Step-up cancelled by user";
 }
@@ -57,10 +62,8 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
   const { can } = usePermissions();
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const canCertify = can(P.TRN_CERTIFY);
-  // Validating a skill also records it on the personnel sheet, as on the sheet itself.
-  const canValidateSkills = canCertify && can(P.PER_MANAGE);
-
   const [lines, setLines] = useState<PendingQualification[] | null>(null);
+  const [validatorLinked, setValidatorLinked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [kind, setKind] = useState<KindFilter>(ALL);
@@ -68,7 +71,8 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
   const [team, setTeam] = useState<string>(ALL);
   const [importedOnly, setImportedOnly] = useState(false);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Ticked lines, with the content they had when ticked.
+  const [selected, setSelected] = useState<Map<string, string>>(new Map());
   const [confirming, setConfirming] = useState(false);
   const [refused, setRefused] = useState<Map<string, string>>(new Map());
   const [lastValidated, setLastValidated] = useState<number | null>(null);
@@ -78,10 +82,12 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
     setError(null);
     try {
       const next = await listPendingQualifications();
-      setLines(next);
-      // A ticked line no longer waiting (validated elsewhere) leaves the selection.
-      const still = new Set(next.map(lineKey));
-      setSelected((s) => new Set([...s].filter((k) => still.has(k))));
+      setLines(next.lines);
+      setValidatorLinked(next.validator_linked);
+      // A ticked line no longer waiting (validated elsewhere) or changed since it was ticked
+      // leaves the selection: it is checked against its evidence again before validating.
+      const now = new Map(next.lines.map((l) => [lineKey(l), lineContent(l)]));
+      setSelected((s) => new Map([...s].filter(([k, c]) => now.get(k) === c)));
     } catch (err) {
       setError(err);
     } finally {
@@ -120,32 +126,36 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
     );
   }, [lines, kind, item, team, importedOnly, search]);
 
+  // Validating a skill also records it on the personnel sheet (as on the sheet itself) and names
+  // the validator's personnel record: an account without one validates certificates only.
+  const canValidateSkills = canCertify && can(P.PER_MANAGE) && validatorLinked;
+  const ticked = (l: PendingQualification) => selected.get(lineKey(l)) === lineContent(l);
+
   const selectable = useCallback(
     (l: PendingQualification) => canCertify && (l.kind !== "skill" || canValidateSkills),
     [canCertify, canValidateSkills],
   );
 
   const visibleSelectable = visible.filter(selectable);
-  const allVisibleTicked =
-    visibleSelectable.length > 0 && visibleSelectable.every((l) => selected.has(lineKey(l)));
+  const allVisibleTicked = visibleSelectable.length > 0 && visibleSelectable.every(ticked);
   // Only ticked lines still in view are validated: a filter change never validates hidden lines.
-  const chosen = visibleSelectable.filter((l) => selected.has(lineKey(l)));
+  const chosen = visibleSelectable.filter(ticked);
   const chosenSkills = chosen.filter((l) => l.kind === "skill").length;
   const chosenCerts = chosen.length - chosenSkills;
 
   const toggle = (l: PendingQualification, on: boolean) =>
     setSelected((s) => {
-      const n = new Set(s);
-      if (on) n.add(lineKey(l));
+      const n = new Map(s);
+      if (on) n.set(lineKey(l), lineContent(l));
       else n.delete(lineKey(l));
       return n;
     });
 
   const toggleAll = (on: boolean) =>
     setSelected((s) => {
-      const n = new Set(s);
+      const n = new Map(s);
       for (const l of visibleSelectable) {
-        if (on) n.add(lineKey(l));
+        if (on) n.set(lineKey(l), lineContent(l));
         else n.delete(lineKey(l));
       }
       return n;
@@ -161,6 +171,8 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
     } catch (err) {
       // A cancelled step-up closes quietly; other failures are reported by the global toast.
       if (isCancelled(err) || isStepUpRequiredError(err)) return;
+      // Show the list as it now stands before the failure is reported.
+      await load();
       throw err;
     }
     const nextRefused = new Map<string, string>();
@@ -265,6 +277,9 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
             ) : (
               <span className="text-sm text-text-muted">{t("validation.readOnly")}</span>
             )}
+            {canCertify && can(P.PER_MANAGE) && !validatorLinked ? (
+              <span className="text-xs text-text-muted">{t("validation.skillsNeedLink")}</span>
+            ) : null}
             {canCertify ? (
               <Button size="sm" disabled={chosen.length === 0} onClick={() => setConfirming(true)}>
                 {t("validation.validate", { count: chosen.length })}
@@ -283,7 +298,7 @@ export function PendingValidationPanel({ refreshKey = 0, onChanged }: PendingVal
                         name: l.full_name,
                         item: l.item_label,
                       })}
-                      checked={selected.has(key)}
+                      checked={ticked(l)}
                       onCheckedChange={(on) => toggle(l, on)}
                       disabled={!selectable(l)}
                     />

@@ -264,3 +264,29 @@ async fn lines_of_inactive_people_and_unknown_kinds_are_refused() {
     assert_eq!(results[0].code.as_deref(), Some("QUAL_VALIDATION_CHANGED"));
     assert_eq!(results[1].code.as_deref(), Some("QUAL_VALIDATION_KIND_UNKNOWN"));
 }
+
+#[tokio::test]
+async fn a_storage_failure_on_one_line_is_reported_on_it_and_the_others_go_on() {
+    let f = setup().await;
+    // The certificate write fails (a storage error, not a refusal).
+    exec(
+        &f.db,
+        &format!(
+            "CREATE TRIGGER bv_fail BEFORE UPDATE ON personnel_certifications WHEN OLD.id = {} \
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+            f.cert_row
+        ),
+    )
+    .await;
+    let results = validate_qualifications(
+        &f.db,
+        &[cert_item(f.cert_row, 1), skill_item(f.skill_row, 3, None)],
+        by(Some(f.validator)),
+    )
+    .await
+    .expect("validate");
+    assert_eq!(results[0].code.as_deref(), Some("QUAL_VALIDATION_FAILED"));
+    assert!(results[1].validated, "{results:?}");
+    assert_eq!(audit_count(&f.db, "qualification.certificate_verified").await, 0);
+    assert_eq!(audit_count(&f.db, "qualification.skill_validated").await, 1);
+}
