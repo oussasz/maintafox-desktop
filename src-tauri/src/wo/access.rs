@@ -159,6 +159,22 @@ pub async fn child_anchor(db: &impl ConnectionTrait, child: WoChild, id: i64) ->
     Ok(Anchor::of(node))
 }
 
+/// The work order a child record belongs to; not found when the record does not exist.
+pub async fn child_wo_id(db: &impl ConnectionTrait, child: WoChild, id: i64) -> AppResult<i64> {
+    db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!("SELECT work_order_id FROM {} WHERE id = ?", child.table()),
+        [id.into()],
+    ))
+    .await?
+    .map(|row| row.try_get::<i64>("", "work_order_id"))
+    .transpose()?
+    .ok_or_else(|| AppError::NotFound {
+        entity: child.entity().into(),
+        id: id.to_string(),
+    })
+}
+
 /// The org node an equipment is installed at (`None`: not installed anywhere, or no such
 /// equipment — the create / update validation reports the latter).
 pub async fn equipment_node(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<Option<i64>> {

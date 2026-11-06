@@ -721,4 +721,63 @@ mod tests {
         assert_eq!(lowered.pending_issue_qty, 1.0, "the use is now to issue in full");
         assert_eq!(issues(&db, article_id).await, 0);
     }
+
+    /// L5-08 (CMMS Advisor 2026-11-06): the issue desk is outside the execution-actor rule. A
+    /// storekeeper who does not carry out the work order (not its assignee, team, planner or an
+    /// approver) is refused its execution actions, and still issues its "à sortir" lines.
+    #[tokio::test]
+    async fn the_storekeeper_issues_a_part_of_a_work_order_they_do_not_carry_out() {
+        use crate::auth::scope_tests::{assign, role, user};
+        use crate::rbac::permissions::{INV_MANAGE, INV_VIEW, OT_EDIT, OT_VIEW};
+
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_id, location_id) = seed_stock_article(&db, "TI-STORE-1", 10.0).await;
+        let planned = parts::add_planned_part(&db, input(wo_id, article_id, Some(location_id), 2.0), RequestOnly)
+            .await
+            .expect("plan");
+        set_wo_status(&db, wo_id, "in_progress").await;
+        parts::record_actual_usage(&db, planned.id, 2.0, None, RequestOnly)
+            .await
+            .expect("record use");
+        let technician = admin_id(&db).await;
+        exec(
+            &db,
+            "UPDATE work_orders SET primary_responsible_id = ?, assigned_team_id = NULL, planner_id = NULL \
+             WHERE id = ?",
+            vec![technician.into(), wo_id.into()],
+        )
+        .await;
+
+        let storekeeper = user(&db, "store_l5_08").await;
+        let store_role = role(&db, "Store L5-08", &[INV_VIEW, INV_MANAGE, OT_VIEW, OT_EDIT]).await;
+        assign(&db, storekeeper, store_role, "tenant", None).await;
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        let map = crate::auth::scope::access_map_cached(&db, &cache, storekeeper)
+            .await
+            .expect("rights");
+        let refused = crate::wo::execution_actor::check_actor(&db, &map, i64::from(storekeeper), wo_id)
+            .await
+            .expect_err("not an execution actor");
+        assert_eq!(
+            crate::auth::scope_tests::code_of(&refused),
+            crate::wo::execution_actor::codes::ASSIGNED_PERSON
+        );
+
+        let issued = parts::issue_part_to_issue(
+            &db,
+            IssuePartToIssueInput {
+                wo_part_id: planned.id,
+                quantity: 2.0,
+                stock_location_id: None,
+                correction_reason: None,
+            },
+            i64::from(storekeeper),
+        )
+        .await
+        .expect("the storekeeper issues");
+        assert_eq!(issued.pending_issue_qty, 0.0);
+        assert_eq!(issued.quantity_issued, 2.0);
+        assert_eq!(on_hand(&db, article_id, location_id).await, 8.0);
+    }
 }

@@ -902,6 +902,7 @@ pub fn run() {
         commands::wo::list_wo,
         commands::wo::list_retired_equipment_reviews,
         commands::wo::get_wo,
+        commands::wo::get_wo_execution_standing,
         commands::wo::create_wo,
         commands::wo::update_wo_draft,
         commands::wo::cancel_wo,
