@@ -19,6 +19,9 @@ pub mod personnel_certification;
 pub mod personnel_skill;
 #[cfg(test)]
 mod personnel_skill_tests;
+pub mod stock_store;
+#[cfg(test)]
+mod stock_store_tests;
 pub mod team;
 pub mod team_member;
 #[cfg(test)]
@@ -65,6 +68,8 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &personnel_skill::SPEC,
     &personnel_certification::SPEC,
     &equipment_meter::SPEC,
+    &stock_store::STORE_SPEC,
+    &stock_store::LOCATION_SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -493,6 +498,8 @@ async fn validate(
         "personnel_skill" => personnel_skill::validate(db, rows).await,
         "personnel_certification" => personnel_certification::validate(db, rows).await,
         "equipment_meter" => equipment_meter::validate(db, rows).await,
+        "stock_store" => stock_store::validate_stores(db, rows).await,
+        "stock_location" => stock_store::validate_locations(db, rows).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -691,6 +698,8 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "personnel_skill" => personnel_skill::apply(db, &todo).await,
         "personnel_certification" => personnel_certification::apply(db, &todo).await,
         "equipment_meter" => equipment_meter::apply(db, &todo, user_id).await,
+        "stock_store" => stock_store::apply_stores(db, &todo).await,
+        "stock_location" => stock_store::apply_locations(db, &todo).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -810,6 +819,8 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "personnel_skill" => personnel_skill::export(db).await?,
         "personnel_certification" => personnel_certification::export(db).await?,
         "equipment_meter" => equipment_meter::export(db).await?,
+        "stock_store" => stock_store::export_stores(db).await?,
+        "stock_location" => stock_store::export_locations(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {
