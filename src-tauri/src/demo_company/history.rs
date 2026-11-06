@@ -603,6 +603,19 @@ impl Corrective {
                     vec![self.di_id.into()],
                 )
                 .await?;
+                // A safety report was raised to at least "urgent" when it was saved; the supervisor
+                // confirms that urgency rather than lowering it (lowering needs a review reason).
+                let validated = if self.loto {
+                    super::scalar_text(
+                        db,
+                        "SELECT reported_urgency FROM intervention_requests WHERE id = ?",
+                        vec![self.di_id.into()],
+                    )
+                    .await?
+                    .unwrap_or_else(|| self.urgency.to_string())
+                } else {
+                    self.urgency.to_string()
+                };
                 if self.rejected {
                     crate::di::review::close_di(
                         db,
@@ -625,7 +638,7 @@ impl Corrective {
                         "di_id": self.di_id,
                         "actor_id": supervisor,
                         "expected_row_version": rv,
-                        "validated_urgency": self.urgency,
+                        "validated_urgency": validated,
                         "classification_code_id": symptom,
                         "reviewer_note": null,
                     }))?,
