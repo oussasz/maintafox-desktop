@@ -75,6 +75,8 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { NonStockPartStatus, NON_STOCK_TYPE_CODE } from "./NonStockPartStatus";
+import { WoNonStockPurchaseDialog } from "./WoNonStockPurchaseDialog";
 import { WoPermitRequirementField } from "./WoPermitRequirementField";
 import {
   WoPermitRuleNote,
@@ -128,6 +130,9 @@ interface PartDraft {
   origin: string;
   /** A used or issued quantity is recorded on the line. */
   has_use: boolean;
+  /** Hors-stock part bought for this work order (L3-04): received, never reserved from stock. */
+  is_non_stock: boolean;
+  non_stock_received_qty: number;
   persisted: boolean;
 }
 
@@ -212,7 +217,7 @@ function toPartDraft(part: WoExecPart): PartDraft {
     article_id: part.article_id ?? null,
     article_ref: part.article_ref ?? "",
     stock_location_id: part.stock_location_id ?? null,
-    article_query: part.article_ref ?? "",
+    article_query: part.article_ref ?? part.article_label ?? "",
     quantity_planned: String(part.quantity_planned),
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
     reservation_id: part.reservation_id ?? null,
@@ -221,6 +226,8 @@ function toPartDraft(part: WoExecPart): PartDraft {
     unit_symbol: part.unit_symbol ?? null,
     origin: part.origin ?? "planned",
     has_use: (part.quantity_used ?? 0) > 0 || part.quantity_issued > 0,
+    is_non_stock: part.is_non_stock,
+    non_stock_received_qty: part.non_stock_received_qty,
     persisted: true,
   };
 }
@@ -298,6 +305,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const [articleOptions, setArticleOptions] = useState<InventoryArticle[]>([]);
     const [locationOptions, setLocationOptions] = useState<StockLocation[]>([]);
     const [activeArticleField, setActiveArticleField] = useState<string | null>(null);
+    const [nonStockOpen, setNonStockOpen] = useState(false);
 
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -505,7 +513,13 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
             listInventoryLocations(null),
           ]);
           if (cancelled) return;
-          setArticleOptions(articlesRows.filter((row) => row.is_active === 1));
+          // A hors-stock article is bought for one work order ("Acheter une pièce hors stock"),
+          // never planned from the store.
+          setArticleOptions(
+            articlesRows.filter(
+              (row) => row.is_active === 1 && row.stocking_type_code !== NON_STOCK_TYPE_CODE,
+            ),
+          );
           setLocationOptions(locationRows.filter((row) => row.is_active === 1));
         } catch {
           if (cancelled) return;
@@ -966,6 +980,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           unit_symbol: null,
           origin: "planned",
           has_use: false,
+          is_non_stock: false,
+          non_stock_received_qty: 0,
           persisted: false,
         },
       ]);
@@ -1507,14 +1523,24 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">5. {t("planning.partsPlan")}</h3>
             {isPlanningEditable && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={addPartRow}
-                disabled={tasksPartsDisabled}
-              >
-                {t("planning.addRow")}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setNonStockOpen(true)}
+                  disabled={tasksPartsDisabled}
+                >
+                  {t("nonStockPurchase.open")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={addPartRow}
+                  disabled={tasksPartsDisabled}
+                >
+                  {t("planning.addRow")}
+                </Button>
+              </div>
             )}
           </div>
 
@@ -1660,7 +1686,12 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                     {savedPending && part.reservation_id != null ? (
                       <p className="text-xs text-muted-foreground">{t("planning.stockReserved")}</p>
                     ) : null}
-                    {savedPending && part.reservation_id == null ? (
+                    {savedPending && part.is_non_stock ? (
+                      <NonStockPartStatus
+                        received={part.non_stock_received_qty}
+                        planned={parseNumber(part.quantity_planned) ?? 0}
+                      />
+                    ) : savedPending && part.reservation_id == null ? (
                       <p className="text-xs text-tone-warning-fg">
                         {t("planning.noStockReservation")}
                       </p>
@@ -1756,6 +1787,14 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           <div className="text-right text-sm font-semibold">
             {t("planning.plannedTotalCost")}: {formatCurrency(plannedCost)}
           </div>
+          <WoNonStockPurchaseDialog
+            woId={wo.id}
+            open={nonStockOpen}
+            onOpenChange={setNonStockOpen}
+            onCreated={(created) => {
+              setParts((current) => [...current, toPartDraft(created.part)]);
+            }}
+          />
           <ConfirmDialog
             open={partToCancel !== null}
             onOpenChange={(open) => {

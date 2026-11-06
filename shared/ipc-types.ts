@@ -5923,6 +5923,56 @@ export interface WoExecPart {
    * someone without the stock right (inv.manage); the storekeeper issues it or cancels it.
    */
   pending_issue_qty: number;
+  /**
+   * Hors-stock article (stocking type NON_STOCK, L3-04): bought for this work order, received
+   * without any stock movement; its use is the receipt.
+   */
+  is_non_stock: boolean;
+  /** Hors-stock quantity received from the supplier ("reçu"). */
+  non_stock_received_qty: number;
+  /** Optional "remis à <personne>" of a received hors-stock part. */
+  handed_to_personnel_id: number | null;
+}
+
+/** A hors-stock article (L3-04): bought for one work order, never in the store. */
+export interface NonStockArticle {
+  id: number;
+  article_code: string;
+  article_name: string;
+  unit_value_id: number | null;
+  unit_symbol: string | null;
+  origin_work_order_id: number | null;
+  origin_work_order_code: string | null;
+  /** null | "TO_REVIEW" | "REVIEWED" | "DUPLICATE" */
+  catalogue_review_state: string | null;
+  duplicate_of_article_id: number | null;
+  is_active: boolean;
+}
+
+/** Ask for a hors-stock part on a work order: reuse `article_id`, or describe a new one. */
+export interface CreateWoNonStockPurchaseInput {
+  work_order_id: number;
+  article_id: number | null;
+  article_name: string | null;
+  unit_value_id: number | null;
+  quantity: number;
+  /** Estimated unit price (tenant currency): approval amount and starting order price. */
+  estimated_unit_cost: number | null;
+  notes: string | null;
+  reason: string | null;
+}
+
+export interface WoNonStockPurchase {
+  part: WoExecPart;
+  article: NonStockArticle;
+  requisition: { id: number; req_number: string; status: string };
+}
+
+/** Catalogue review of a hors-stock article. */
+export interface ReviewNonStockArticleInput {
+  article_id: number;
+  action: "KEEP" | "PROMOTE" | "DUPLICATE";
+  duplicate_of_article_id: number | null;
 }
 
 /** A work-order part line "à sortir", with its work order, for the storekeeper's issue desk. */
