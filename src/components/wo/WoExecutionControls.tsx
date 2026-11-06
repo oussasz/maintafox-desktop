@@ -1543,7 +1543,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFindingNotes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       />
                       <Input
                         placeholder={t("execution.taskFollowUpPlaceholder")}
@@ -1552,7 +1552,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         onChange={(e) =>
                           setTaskFollowUpCodes((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }
-                        disabled={recordingDisabled}
+                        disabled={taskResultDisabled}
                       />
                       {task.is_mandatory ? (
                         <p className="text-xs text-muted-foreground md:col-span-2">
