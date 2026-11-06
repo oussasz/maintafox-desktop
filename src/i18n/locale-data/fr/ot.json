@@ -818,6 +818,11 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
     "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques FMECA n'ont pas été consommées. Le signataire doit être Superviseur/Admin, distinct du clôturant et ré-authentifié.",
     "closeWo": "Fermer l'OT",
+    "blocked": {
+      "closed": "L'OT est clôturé : ses détails ne se modifient plus.",
+      "cancelled": "L'OT est annulé : ses détails ne se modifient plus.",
+      "rightRequired": "Droit requis : {{right}}."
+    },
     "confirmVerifyTitle": "Enregistrer la vérification technique ?",
     "confirmVerifyDescription": "{{code}} : résultat « {{result}} »{{rts}}. La vérification est enregistrée à votre nom dans le journal d'audit.",
     "confirmVerifyReturnToService": ", équipement remis en service",
