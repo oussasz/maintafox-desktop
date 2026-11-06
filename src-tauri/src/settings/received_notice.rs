@@ -100,6 +100,14 @@ pub const WO_PERMIT_RULE_MISSING_CATEGORY: &str = "wo_permit_rule_missing";
 /// ([`announce_anomaly_origin_cancelled`]).
 pub const ANOMALY_ORIGIN_CANCELLED_CATEGORY: &str = "insp_anomaly_origin_cancelled";
 
+/// Notification category of a request flagged "sécurité" (CMMS Advisor decision on L4-11,
+/// migration 282): told at once, critical, to the request reviewers (`di.review`) and the
+/// permit-issue right holders (`ptw.issue`) of the request's site (plant-wide ones included);
+/// nobody there: the responsibles of its node. Raised on the PC where the request is created or
+/// flagged and on each PC that receives it flagged, once per request on each PC
+/// ([`announce_di_safety_alert`]).
+pub const DI_SAFETY_ALERT_CATEGORY: &str = "di_safety_alert";
+
 /// Every category of a persistent safety notice: kept for each recipient until they acknowledge it,
 /// never muted, re-routed, expired, archived or deleted before, and local to each PC. The SQL of
 /// the notification modules names them through [`safety_notice_categories_sql`].
@@ -111,6 +119,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
     PERMIT_ENDED_UNDER_WORK_CATEGORY,
     WO_PERMIT_RULE_MISSING_CATEGORY,
     ANOMALY_ORIGIN_CANCELLED_CATEGORY,
+    DI_SAFETY_ALERT_CATEGORY,
 ];
 
 /// SQL list of [`SAFETY_NOTICE_CATEGORIES`], for the constant SQL of the notification modules
@@ -119,7 +128,7 @@ pub const SAFETY_NOTICE_CATEGORIES: &[&str] = &[
 macro_rules! safety_notice_categories_sql {
     () => {
         "('safety_rule_received', 'loto_forced_removal', 'pm_concurrent_versions', 'permit_suspended_work_held', \
-         'permit_ended_under_work', 'wo_permit_rule_missing', 'insp_anomaly_origin_cancelled')"
+         'permit_ended_under_work', 'wo_permit_rule_missing', 'insp_anomaly_origin_cancelled', 'di_safety_alert')"
     };
 }
 
@@ -420,6 +429,7 @@ pub(crate) async fn ensure_notice_rows(conn: &impl ConnectionTrait) -> AppResult
             ANOMALY_ORIGIN_CANCELLED_CATEGORY,
             "Originating inspection anomaly cancelled",
         ),
+        (DI_SAFETY_ALERT_CATEGORY, "Request flagged for safety"),
     ] {
         ensure_category_rows(conn, category, label).await?;
     }
@@ -1152,6 +1162,122 @@ async fn received_anomaly_cancel(
     Ok(())
 }
 
+/// De-duplication key of the safety alert of the request with sync id `di_sync_id`: one alert per
+/// request on each PC ([`announce_di_safety_alert`]).
+pub fn di_safety_alert_key(di_sync_id: &str) -> String {
+    format!("{DI_SAFETY_ALERT_CATEGORY}:{di_sync_id}")
+}
+
+/// The safety alert of request `di_id` (local id) when it is flagged "sécurité" (CMMS Advisor
+/// decision on L4-11): a critical notice ([`DI_SAFETY_ALERT_CATEGORY`]) to the request reviewers and
+/// the permit-issue right holders of its site, else the responsibles of its node, kept until each
+/// acknowledges it. Called when the request is created flagged, when the flag is ticked later and
+/// when a flagged request is received by synchronisation: raised once per request on this PC (its
+/// key, [`di_safety_alert_key`], is looked for first, whatever became of the earlier alert), never
+/// again on later changes. Written in a savepoint: a notice that cannot be written is logged, the
+/// request is kept (a safety report is never lost because its alert failed).
+pub(crate) async fn announce_di_safety_alert(conn: &impl ConnectionTrait, di_id: i64) {
+    let found = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ir.entity_sync_id, ir.code, ir.title, ir.safety_flag, \
+                    COALESCE(ir.validated_urgency, ir.reported_urgency) AS urgency, \
+                    eq.asset_id_code AS equipment, org.name AS site \
+               FROM intervention_requests ir \
+               LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
+               LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
+              WHERE ir.id = ?",
+            [di_id.into()],
+        ))
+        .await;
+    let row = match found {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::error!(di_id, error = %err, "request safety alert: request not read");
+            return;
+        }
+    };
+    let get = |c: &str| row.try_get::<Option<String>>("", c).ok().flatten();
+    if row.try_get::<i64>("", "safety_flag").unwrap_or(0) == 0 {
+        return;
+    }
+    let Some(di_sync) = get("entity_sync_id") else {
+        tracing::error!(di_id, "request safety alert: request without a sync id");
+        return;
+    };
+    let key = di_safety_alert_key(&di_sync);
+    let already = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM notification_events WHERE category_code = ? AND dedupe_key = ?",
+            [DI_SAFETY_ALERT_CATEGORY.into(), key.clone().into()],
+        ))
+        .await;
+    match already {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(err) => {
+            tracing::error!(di_id, error = %err, "request safety alert: earlier alert not read");
+            return;
+        }
+    }
+    let code = get("code").unwrap_or_else(|| di_id.to_string());
+    let title = get("title").unwrap_or_default();
+    let equipment = get("equipment").unwrap_or_default();
+    let site = get("site").unwrap_or_default();
+    let urgency = get("urgency")
+        .and_then(|u| crate::reference::urgency_scale::legacy_urgency_code(&u))
+        .map(|u| u.as_str().to_string());
+    let route = NoticeRoute {
+        category: DI_SAFETY_ALERT_CATEGORY,
+        // The request routes its site (`notifications::router`, org node of the request).
+        source_module: "di",
+        source_record_id: di_id.to_string(),
+        entity_type: "intervention_requests",
+        entity_sync_id: &di_sync,
+        org_node_id: None,
+    };
+    let message = NotificationMessage::new(
+        DI_SAFETY_ALERT_CATEGORY,
+        json!({ "code": code, "title": title, "equipment": equipment, "site": site }),
+    )
+    .with_urgency(urgency);
+    let written = async {
+        conn.execute_unprepared("SAVEPOINT di_safety_alert").await?;
+        match emit_notice_with(
+            conn,
+            &route,
+            "critical",
+            Some(key.clone()),
+            format!("Signalement sécurité : {code} / Safety report: {code}"),
+            format!(
+                "La demande {code} « {title} » ({equipment}, {site}) signale un danger pour la sécurité. \
+                 Traitez-la en priorité. / Request {code} “{title}” ({equipment}, {site}) reports a \
+                 safety hazard. Handle it first."
+            ),
+            &format!("/requests?openDi={di_id}"),
+            &message,
+        )
+        .await
+        {
+            Ok(()) => {
+                conn.execute_unprepared("RELEASE di_safety_alert").await?;
+                Ok(())
+            }
+            Err(err) => {
+                conn.execute_unprepared("ROLLBACK TO di_safety_alert").await?;
+                conn.execute_unprepared("RELEASE di_safety_alert").await?;
+                Err(err)
+            }
+        }
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::error!(di_id, error = %err, "request safety alert not written; the request is kept");
+    }
+}
+
 /// Notification category of a reliability decision refused at synchronisation after a work order
 /// was created from it, or a PM version from it was published (AU-76b, CMMS Advisor Q6 and S4
 /// option A): the work order is kept (never cancelled by the refusal) and the published version
@@ -1396,6 +1522,22 @@ async fn emit_notice(
     action_url: &str,
     message: &NotificationMessage,
 ) -> AppResult<()> {
+    emit_notice_with(conn, route, "warning", None, title, body, action_url, message).await
+}
+
+/// [`emit_notice`] with its severity and a de-duplication key kept on the event (the caller checks
+/// it first: a notice raised once per record).
+#[allow(clippy::too_many_arguments)]
+async fn emit_notice_with(
+    conn: &impl ConnectionTrait,
+    route: &NoticeRoute<'_>,
+    severity: &str,
+    dedupe_key: Option<String>,
+    title: String,
+    body: String,
+    action_url: &str,
+    message: &NotificationMessage,
+) -> AppResult<()> {
     let (entity_type, entity_sync_id) = (route.entity_type, route.entity_sync_id);
     // Every change applied here gets its own notice: the hook runs only when the received row
     // changes the value held here, and a row already applied stops before it (Unchanged). The fixed
@@ -1412,8 +1554,8 @@ async fn emit_notice(
             source_record_id: Some(route.source_record_id.clone()),
             event_code: route.category.to_string(),
             category_code: route.category.to_string(),
-            severity: "warning".to_string(),
-            dedupe_key: None,
+            severity: severity.to_string(),
+            dedupe_key,
             payload_json: Some(
                 json!({
                     "entity_type": entity_type,

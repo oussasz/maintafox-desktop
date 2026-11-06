@@ -831,6 +831,7 @@
     "GATE_DI_SYSTEM_SYMPTOM_MISSING": "Automatic request creation refused: no active symptom is published in the reference data. Publish at least one symptom.",
     "GATE_DI_CLASSIFICATION_NOT_FOUND": "Classification not found (no. {{id}}). Choose an existing classification.",
     "GATE_DI_REVIEWER_NOTE_REQUIRED": "Return refused: the reviewer's note is required. Tell the requester what is missing.",
+    "GATE_DI_SAFETY_URGENCY_REASON_REQUIRED": "Safety report: an urgency below “Urgent” requires the review reason. Say why in the reviewer's note.",
     "GATE_DI_RESPONSE_REQUIRED": "Resubmission refused: the answer to the reviewer is required. Answer the question before resubmitting the request.",
     "GATE_DI_RESUBMIT_STATUS_INVALID": "Resubmission refused: only a request returned for information can be resubmitted.",
     "GATE_DI_DEFER_REASON_REQUIRED": "Deferral refused: the deferral reason is required.",

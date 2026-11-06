@@ -830,6 +830,7 @@
     "GATE_DI_SYSTEM_SYMPTOM_MISSING": "Création automatique de la demande impossible : aucun symptôme actif n'est publié dans les données de référence. Publiez au moins un symptôme.",
     "GATE_DI_CLASSIFICATION_NOT_FOUND": "Classification introuvable (n° {{id}}). Choisissez une classification existante.",
     "GATE_DI_REVIEWER_NOTE_REQUIRED": "Retour impossible : la note du réviseur est obligatoire. Indiquez au demandeur ce qui manque.",
+    "GATE_DI_SAFETY_URGENCY_REASON_REQUIRED": "Signalement sécurité : une urgence inférieure à « Urgent » exige le motif de la revue. Indiquez pourquoi dans la note du réviseur.",
     "GATE_DI_RESPONSE_REQUIRED": "Renvoi impossible : la réponse au réviseur est obligatoire. Répondez à sa question avant de renvoyer la demande.",
     "GATE_DI_RESUBMIT_STATUS_INVALID": "Renvoi impossible : seule une demande retournée pour information peut être renvoyée.",
     "GATE_DI_DEFER_REASON_REQUIRED": "Report impossible : le motif de report est obligatoire.",

@@ -169,7 +169,8 @@
       "partialUploadFailed": "{{failed}} of {{total}} file(s) could not be uploaded. You can retry from the request detail."
     },
     "safetyFlag": {
-      "label": "Safety concern"
+      "label": "Safety concern",
+      "minUrgencyHint": "Safety report: urgency at least Urgent."
     },
     "environmentalFlag": {
       "label": "Environmental concern"
@@ -663,6 +664,8 @@
     "validatedUrgency": "Validated urgency",
     "urgencyChanged": "Changed from the reported urgency ({{reported}}).",
     "urgencyAsReported": "Same as the urgency reported by the requester.",
+    "safetyBelowUrgent": "Safety report: an urgency below “Urgent” requires the review reason (note below). It is recorded in the request's history.",
+    "noteRequired": "Review reason (required)",
     "classification": "Classification",
     "classificationLoading": "Loading classification…",
     "classificationPlaceholder": "Choose a classification",

@@ -17,6 +17,7 @@ import { AssetPicker } from "@/components/assets/AssetPicker";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { urgencyLevelLabel, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
+import { SAFETY_MIN_URGENCY } from "@/components/di/di-safety";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import {
   EntityFormAttachments,
@@ -151,8 +152,16 @@ export function DiCreateForm({
 
   // Open requests already raised on the same asset (duplicate warning)
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
-  const { levelOf, language } = useUrgencyScale();
+  const { levelOf, rankOf, language } = useUrgencyScale();
   const urgencyLevel = levelOf(urgency);
+  const safetyMinRank = levelOf(SAFETY_MIN_URGENCY)?.rank;
+
+  // A request flagged "sécurité" is urgent at least: ticking the flag (or a flagged request whose
+  // urgency is lower or not chosen) takes "Urgent"; a more urgent level stays.
+  useEffect(() => {
+    if (!safetyFlag || safetyMinRank == null) return;
+    if (!urgency || rankOf(urgency) > safetyMinRank) setUrgency(SAFETY_MIN_URGENCY);
+  }, [safetyFlag, safetyMinRank, urgency, rankOf]);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -643,7 +652,17 @@ export function DiCreateForm({
             placeholder={t("form.priority.placeholder")}
             aria-invalid={Boolean(fieldError("reported_urgency"))}
             aria-describedby="reported_urgency-hint"
+            {...(safetyFlag && safetyMinRank != null ? { leastUrgentRank: safetyMinRank } : {})}
           />
+          {safetyFlag ? (
+            <p
+              id="reported_urgency-safety"
+              className="mt-1 text-xs font-medium text-status-danger"
+              data-testid="di-safety-urgency-hint"
+            >
+              {t("form.safetyFlag.minUrgencyHint")}
+            </p>
+          ) : null}
           <p id="reported_urgency-hint" className="mt-1 text-xs text-text-secondary">
             {urgencyLevel
               ? [

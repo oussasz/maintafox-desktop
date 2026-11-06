@@ -470,10 +470,13 @@ pub async fn list_intervention_requests_in_scope(
     let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
-    // A work queue is worked most urgent first, then oldest first (first in, first out); the
-    // other lists show the latest requests first.
+    // A work queue is worked safety reports first (CMMS Advisor decision on L4-11), then most urgent
+    // first, then oldest first (first in, first out); the other lists show the latest requests first.
     let order_sql = match queue {
-        Some(q) if q != "mine" => format!("{} ASC, ir.submitted_at ASC, ir.id ASC", urgency_rank_sql()),
+        Some(q) if q != "mine" => format!(
+            "ir.safety_flag DESC, {} ASC, ir.submitted_at ASC, ir.id ASC",
+            urgency_rank_sql()
+        ),
         _ => "ir.submitted_at DESC, ir.id DESC".to_string(),
     };
     let data_sql = format!(
@@ -652,6 +655,9 @@ pub async fn create_intervention_request_in(
     let symptom_code_id = crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
     // Shared DI / OT urgency scale (`WORK.URGENCY`).
     let reported_urgency = crate::reference::urgency_scale::validate_urgency_code(&input.reported_urgency)?;
+    // A request flagged "sécurité" is urgent at least (CMMS Advisor decision on L4-11): raised,
+    // never refused, so a safety report is never lost on its urgency.
+    let reported_urgency = super::domain::safety_urgency_floor(input.safety_flag, reported_urgency);
 
     // Decision O7: every new request names its org node (its anchor for site-scoped roles).
     super::access::require_org_node(input.org_node_id)?;
@@ -771,6 +777,12 @@ pub async fn create_intervention_request_in(
     ))
     .await?;
 
+    // Flagged "sécurité": its reviewers and the permit issuers of its site are told at once, in
+    // this transaction (`settings::received_notice::announce_di_safety_alert`).
+    if di.safety_flag {
+        crate::settings::received_notice::announce_di_safety_alert(db, di.id).await;
+    }
+
     Ok(di)
 }
 
@@ -858,10 +870,23 @@ pub async fn update_di_draft_fields(
         sets.push("quality_flag = ?".into());
         values.push(i64::from(quality_flag).into());
     }
+    // A request flagged "sécurité" (now, or ticked by this change) is urgent at least: the urgency
+    // sent is raised, and a lower urgency held is raised when the flag is ticked (CMMS Advisor
+    // decision on L4-11).
+    let flagged = input.safety_flag.unwrap_or(current.safety_flag);
     if let Some(ref reported_urgency) = input.reported_urgency {
         let level = crate::reference::urgency_scale::validate_urgency_code(reported_urgency)?;
+        let level = super::domain::safety_urgency_floor(flagged, level);
         sets.push("reported_urgency = ?".into());
         values.push(level.as_str().into());
+    } else if flagged {
+        let held = crate::reference::urgency_scale::legacy_urgency_code(&current.reported_urgency)
+            .unwrap_or(crate::reference::urgency_scale::UrgencyCode::Normal);
+        let raised = super::domain::safety_urgency_floor(true, held);
+        if raised != held {
+            sets.push("reported_urgency = ?".into());
+            values.push(raised.as_str().into());
+        }
     }
     if let Some(ref observed_at) = input.observed_at {
         sets.push("observed_at = ?".into());
@@ -911,6 +936,8 @@ pub async fn update_di_draft_fields(
     if input.safety_flag == Some(true) && !current.safety_flag {
         crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(&txn, input.id, actor_id)
             .await?;
+        // Its safety alert, once per request on this PC (CMMS Advisor decision on L4-11).
+        crate::settings::received_notice::announce_di_safety_alert(&txn, input.id).await;
     }
 
     // 5. Re-fetch and return updated row

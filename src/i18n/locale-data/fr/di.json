@@ -169,7 +169,8 @@
       "partialUploadFailed": "{{failed}} fichier(s) sur {{total}} n'ont pas pu être téléversé(s). Vous pouvez réessayer depuis le détail de la demande."
     },
     "safetyFlag": {
-      "label": "Enjeu sécurité"
+      "label": "Enjeu sécurité",
+      "minUrgencyHint": "Signalement sécurité : urgence au moins Urgente."
     },
     "environmentalFlag": {
       "label": "Enjeu environnemental"
@@ -663,6 +664,8 @@
     "validatedUrgency": "Urgence retenue",
     "urgencyChanged": "Modifiée par rapport à l'urgence déclarée ({{reported}}).",
     "urgencyAsReported": "Identique à l'urgence déclarée par le demandeur.",
+    "safetyBelowUrgent": "Signalement sécurité : une urgence inférieure à « Urgent » exige le motif de la revue (note ci-dessous). Elle est enregistrée dans l'historique de la demande.",
+    "noteRequired": "Motif de la revue (obligatoire)",
     "classification": "Classification",
     "classificationLoading": "Chargement de la classification…",
     "classificationPlaceholder": "Choisir une classification",
