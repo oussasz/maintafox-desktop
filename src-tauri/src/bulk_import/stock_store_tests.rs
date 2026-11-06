@@ -88,7 +88,8 @@ mod tests {
             ("Annexe".to_string(), 0)
         );
 
-        export_reimports_as_nothing_to_do(&db, "stock_store", 2).await;
+        // The migrations' own store MAIN is exported too.
+        export_reimports_as_nothing_to_do(&db, "stock_store", 3).await;
     }
 
     #[tokio::test]
@@ -165,7 +166,8 @@ mod tests {
             ("Allée A annexe".to_string(), 1)
         );
 
-        export_reimports_as_nothing_to_do(&db, "stock_location", 2).await;
+        // The migrations' own location MAIN / MAIN-BIN is exported too.
+        export_reimports_as_nothing_to_do(&db, "stock_location", 3).await;
     }
 
     #[tokio::test]

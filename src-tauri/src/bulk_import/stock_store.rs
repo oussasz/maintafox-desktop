@@ -40,7 +40,7 @@ pub const STORE_SPEC: EntitySpec = EntitySpec {
         Column {
             key: "name",
             header: "libellé",
-            required: true,
+            required: false,
             aliases: &["libelle", "nom", "designation", "name"],
             hint: "Nom affiché du magasin. Obligatoire pour un nouveau magasin.",
         },
