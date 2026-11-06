@@ -299,6 +299,7 @@
     "save": "Enregistrer la planification",
     "endBeforeStart": "La date de fin doit être après la date de début",
     "plannerId": "Planificateur",
+    "plannerRightRequired": "Seul un approbateur ou un planificateur peut choisir le planificateur de l'OT.",
     "plannedStart": "Début prévu",
     "plannedEnd": "Fin prévue",
     "selectShift": "Sélectionner le poste",

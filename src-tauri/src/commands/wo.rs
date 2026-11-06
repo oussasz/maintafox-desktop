@@ -277,6 +277,17 @@ pub async fn create_wo(
         input.equipment_id,
     )
     .await?;
+    // Naming the planner needs ot.approve or plan.confirm at the new work order's site (CMMS
+    // Advisor 2026-11-06): refused, never dropped silently.
+    execution_actor::require_people_on_create(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.entity_id,
+        input.equipment_id,
+        input.planner_id,
+    )
+    .await?;
 
     // ── Validate required fields ─────────────────────────────────────────
     let mut errors: Vec<String> = Vec::new();
@@ -675,11 +686,29 @@ pub(crate) async fn cancel_wo_impl(
 
 #[tauri::command]
 pub async fn plan_wo(
-    mut input: execution::WoPlanInput,
+    input: execution::WoPlanInput,
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
+    plan_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn plan_wo_impl(
+    state: &AppState,
+    mut input: execution::WoPlanInput,
+) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    require_on_wo(state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // Changing the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06);
+    // the planner already recorded passes, so the dates and the rest are planned as before.
+    execution_actor::require_planner_change(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        input.wo_id,
+        Some(input.planner_id),
+    )
+    .await?;
     // The actor is the signed-in user, never an id sent by the screen.
     input.actor_id = i64::from(user.user_id);
     let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();

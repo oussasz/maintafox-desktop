@@ -1131,6 +1131,7 @@
     "GATE_WO_EXECUTION_ASSIGNED_TEAM": "OT assigné à l'équipe {{team}} — seule la saisie de vos propres heures est possible.",
     "GATE_WO_EXECUTION_ASSIGNED_PERSON_TEAM": "OT assigné à {{assignee}} (équipe {{team}}) — seule la saisie de vos propres heures est possible.",
     "GATE_WO_EXECUTION_UNASSIGNED": "OT assigné à personne : seuls son planificateur et les approbateurs du site l'exécutent — seule la saisie de vos propres heures est possible.",
+    "GATE_WO_PEOPLE_RIGHT_REQUIRED": "Seul un approbateur ou un planificateur peut choisir le responsable, l'équipe ou le planificateur de l'OT.",
     "GATE_UNIT_IMPORT_METADATA_INVALID": "La colonne metadata_json n'est pas un objet JSON valide : corrigez-la dans le fichier.",
     "GATE_UNIT_IMPORT_REVIEW_FLAG": "Le statut \u00ab \u00e0 revoir \u00bb ne s'importe pas : retirez review_required de metadata_json dans le fichier.",
     "GATE_REL_FTA_NO_EXPOSURE": "Arbre de d\u00e9faillance refus\u00e9 : l'\u00e9quipement n\u00b0 {{equipment_id}} n'a pas d'heures de fonctionnement sur les {{lookback_days}} derniers jours. Affectez-lui un horaire d'exploitation ou saisissez ses heures de marche, ou allongez la p\u00e9riode d'historique.",

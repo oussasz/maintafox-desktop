@@ -246,8 +246,16 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
     const people = useWoPeopleOptions();
     // Emergency reassignment is offered from the user's rights at this work order's site.
-    const { can: canAtSite } = useWoAccess(wo);
+    const siteAccess = useWoAccess(wo);
+    const canAtSite = siteAccess.can;
     const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
+    // Naming the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06,
+    // `plan_wo`): greyed with the reason once the rights are read; the recorded planner is kept.
+    const mayChoosePlanner = canAtSite(P.OT_APPROVE) || canAtSite(P.PLAN_CONFIRM);
+    const plannerBlocker =
+      !siteAccess.loading && !siteAccess.failed && !mayChoosePlanner
+        ? t("planning.plannerRightRequired")
+        : null;
 
     const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
     const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -350,10 +358,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     }, [wo]);
 
     useEffect(() => {
-      if (!plannerId && info?.user_id) {
+      // Proposed as planner only to someone who may name one (never a self-promotion).
+      if (!plannerId && info?.user_id && mayChoosePlanner) {
         setPlannerId(String(info.user_id));
       }
-    }, [plannerId, info?.user_id]);
+    }, [plannerId, info?.user_id, mayChoosePlanner]);
 
     useEffect(() => {
       let cancelled = false;
@@ -1162,9 +1171,12 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               <Select
                 value={plannerId || "__none"}
                 onValueChange={(value) => setPlannerId(value === "__none" ? "" : value)}
-                disabled={allFieldsDisabled}
+                disabled={allFieldsDisabled || !mayChoosePlanner}
               >
-                <SelectTrigger>
+                <SelectTrigger
+                  title={plannerBlocker ?? undefined}
+                  aria-describedby={plannerBlocker ? "wo-planner-blocker" : undefined}
+                >
                   <SelectValue placeholder={t("planning.plannerId")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -1176,6 +1188,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   ))}
                 </SelectContent>
               </Select>
+              {plannerBlocker ? (
+                <p id="wo-planner-blocker" className="text-xs text-text-muted">
+                  {plannerBlocker}
+                </p>
+              ) : null}
             </div>
             {!hasCommitment ? (
               <>

@@ -789,3 +789,110 @@ async fn a_crew_assignment_ending_today_as_a_date_still_counts_today() {
     .await;
     assert!(execute(&f, ending_today, OT_EDIT, f.wo).await.is_err());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Naming the planner (CMMS Advisor 2026-11-06): ot.approve or plan.confirm at the site
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn plan_input(wo: i64, rv: i64, planner: i32) -> crate::wo::execution::WoPlanInput {
+    crate::wo::execution::WoPlanInput {
+        wo_id: wo,
+        actor_id: 0,
+        expected_row_version: rv,
+        planner_id: i64::from(planner),
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        shift_class_version_id: None,
+        clear_shift: false,
+        expected_duration_hours: Some(2.0),
+        planned_crew_size: None,
+        clear_crew_size: false,
+        urgency_code: None,
+        planned_downtime_hours: None,
+    }
+}
+
+fn is_people_refusal(err: &AppError) -> bool {
+    matches!(err, AppError::ValidationFailed(msgs) if msgs.iter().any(|m| m.starts_with(codes::PEOPLE_RIGHT_REQUIRED)))
+}
+
+#[tokio::test]
+async fn a_colleague_cannot_name_themselves_planner_and_an_unchanged_planner_passes() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "planning").await;
+    let rv = row_version(&f.db, f.wo).await;
+    let err =
+        crate::commands::wo::plan_wo_impl(&state_for(&f.db, f.colleague).await, plan_input(f.wo, rv, f.colleague))
+            .await
+            .expect_err("self-promotion refused");
+    assert!(is_people_refusal(&err), "{err:?}");
+    assert_eq!(row_version(&f.db, f.wo).await, rv, "nothing written");
+    // The planner already recorded: the colleague plans the dates as before.
+    let kept =
+        crate::commands::wo::plan_wo_impl(&state_for(&f.db, f.colleague).await, plan_input(f.wo, rv, f.planner)).await;
+    assert!(
+        !matches!(&kept, Err(e) if is_people_refusal(e)),
+        "unchanged planner passes: {kept:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_approver_or_a_plan_confirm_holder_names_the_planner() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "planning").await;
+    let confirmer = user(&f.db, "exa_confirmer").await;
+    let confirm_role = role(
+        &f.db,
+        "EXA plan confirm A",
+        &[
+            OT_VIEW,
+            OT_EDIT,
+            crate::rbac::permissions::PLAN_EDIT,
+            crate::rbac::permissions::PLAN_CONFIRM,
+        ],
+    )
+    .await;
+    assign(&f.db, confirmer, confirm_role, "org_node", Some(f.t.site_a)).await;
+    for who in [f.approver, confirmer] {
+        let rv = row_version(&f.db, f.wo).await;
+        let planned =
+            crate::commands::wo::plan_wo_impl(&state_for(&f.db, who).await, plan_input(f.wo, rv, f.colleague)).await;
+        assert!(
+            !matches!(&planned, Err(e) if is_people_refusal(e)),
+            "user {who} may name the planner: {planned:?}"
+        );
+        assert!(passed_the_gate(&planned), "{planned:?}");
+    }
+    // plan.confirm on another site does not count.
+    let other = user(&f.db, "exa_confirmer_b").await;
+    assign(&f.db, other, confirm_role, "org_node", Some(f.t.site_b)).await;
+    let tech = scalar(&f.db, "SELECT id FROM roles WHERE name = 'EXA technician A'").await;
+    assign(&f.db, other, tech, "org_node", Some(f.t.site_a)).await;
+    let err = actor::check_planner_change(&f.db, &map_of(&f.db, other).await, f.wo, Some(i64::from(other)))
+        .await
+        .expect_err("right on another site");
+    assert!(is_people_refusal(&err), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_planner_given_at_creation_needs_the_right_at_the_new_site() {
+    let f = fixture().await;
+    let colleague = map_of(&f.db, f.colleague).await;
+    let approver = map_of(&f.db, f.approver).await;
+    let site = Some(f.t.site_a);
+    actor::check_people_on_create(&f.db, &colleague, site, None, None)
+        .await
+        .expect("no planner given: nothing to check");
+    let err = actor::check_people_on_create(&f.db, &colleague, site, None, Some(i64::from(f.colleague)))
+        .await
+        .expect_err("colleague names a planner");
+    assert!(is_people_refusal(&err), "{err:?}");
+    actor::check_people_on_create(&f.db, &approver, site, None, Some(i64::from(f.colleague)))
+        .await
+        .expect("approver names a planner");
+    let err = actor::check_people_on_create(&f.db, &approver, Some(f.t.site_b), None, Some(i64::from(f.colleague)))
+        .await
+        .expect_err("approver of site A on site B");
+    assert!(is_people_refusal(&err), "{err:?}");
+}

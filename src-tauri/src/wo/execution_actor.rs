@@ -40,7 +40,7 @@ use tokio::sync::RwLock;
 use crate::auth::scope::{self, AccessMap, AccessScope, Anchor};
 use crate::errors::{AppError, AppResult};
 use crate::rbac::cache::PermissionCache;
-use crate::rbac::permissions::OT_APPROVE;
+use crate::rbac::permissions::{OT_APPROVE, PLAN_CONFIRM};
 use crate::wo::access::{self, WoChild};
 use crate::wo::workflow::WoStatus;
 
@@ -54,6 +54,8 @@ pub mod codes {
     pub const ASSIGNED_PERSON_TEAM: &str = "GATE_WO_EXECUTION_ASSIGNED_PERSON_TEAM";
     /// Assigned to nobody: its planner or an approver only.
     pub const UNASSIGNED: &str = "GATE_WO_EXECUTION_UNASSIGNED";
+    /// Choosing the planner, the assignee or the team without `ot.approve` / `plan.confirm`.
+    pub const PEOPLE_RIGHT_REQUIRED: &str = "GATE_WO_PEOPLE_RIGHT_REQUIRED";
 }
 
 /// Why the user is an execution actor of the work order.
@@ -367,6 +369,96 @@ pub async fn check_labor_entry(
     let booked_user: Option<i64> = row.try_get("", "intervener_id")?;
     let booked_personnel: Option<i64> = row.try_get("", "personnel_id")?;
     check_labor_for(db, map, user_id, wo_id, booked_user, booked_personnel).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Who is named on the work order (CMMS Advisor 2026-11-06)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Whether the user may choose the planner, the assignee or the team of a work order anchored at
+/// `anchor`: `ot.approve` or `plan.confirm` there (the site rule of the actor check). Without it,
+/// someone could make themselves an execution actor by naming themselves.
+pub async fn may_choose_people(db: &impl ConnectionTrait, map: &AccessMap, anchor: Anchor) -> AppResult<bool> {
+    for permission in [OT_APPROVE, PLAN_CONFIRM] {
+        if scope_covers(db, &map.scope_of(permission), anchor).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn people_refusal() -> AppError {
+    AppError::ValidationFailed(vec![format!(
+        "{}: Seul un approbateur ou un planificateur peut choisir le responsable, l'équipe ou le planificateur de l'OT.",
+        codes::PEOPLE_RIGHT_REQUIRED
+    )])
+}
+
+/// A planner given at creation: refused without the right at the new work order's site (none
+/// given: nothing to check; the system flows create without one). Exceptions to come with L1-05
+/// (not on this branch): the dépannage self-assignment, assigning others through
+/// `ot.emergency_assign`, and the dépannage "join".
+pub async fn check_people_on_create(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    entity_id: Option<i64>,
+    equipment_id: Option<i64>,
+    planner_id: Option<i64>,
+) -> AppResult<()> {
+    if planner_id.is_none() {
+        return Ok(());
+    }
+    let anchor = Anchor::of(access::new_wo_node(db, entity_id, equipment_id).await?);
+    if may_choose_people(db, map, anchor).await? {
+        Ok(())
+    } else {
+        Err(people_refusal())
+    }
+}
+
+/// A planner set on a work order (`plan_wo`): an unchanged value passes; a change needs the right
+/// at the work order's site. Exceptions to come with L1-05 (not on this branch): the dépannage
+/// self-assignment, assigning others through `ot.emergency_assign`, and the dépannage "join".
+pub async fn check_planner_change(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    wo_id: i64,
+    planner_id: Option<i64>,
+) -> AppResult<()> {
+    let wo = wo_people(db, wo_id).await?;
+    if planner_id.filter(|&id| id > 0) == wo.planner {
+        return Ok(());
+    }
+    if may_choose_people(db, map, wo.anchor).await? {
+        Ok(())
+    } else {
+        Err(people_refusal())
+    }
+}
+
+/// [`check_people_on_create`] with the user's cached rights.
+pub async fn require_people_on_create(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    entity_id: Option<i64>,
+    equipment_id: Option<i64>,
+    planner_id: Option<i64>,
+) -> AppResult<()> {
+    let map = access_map(db, cache, user_id).await?;
+    check_people_on_create(db, &map, entity_id, equipment_id, planner_id).await
+}
+
+/// [`check_planner_change`] with the user's cached rights.
+pub async fn require_planner_change(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    wo_id: i64,
+    planner_id: Option<i64>,
+) -> AppResult<()> {
+    let map = access_map(db, cache, user_id).await?;
+    check_planner_change(db, &map, wo_id, planner_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

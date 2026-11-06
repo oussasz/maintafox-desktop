@@ -299,6 +299,7 @@
     "save": "Save planning",
     "endBeforeStart": "End date must be after start date",
     "plannerId": "Planner",
+    "plannerRightRequired": "Only an approver or a planner can choose the work order's planner.",
     "plannedStart": "Planned start",
     "plannedEnd": "Planned end",
     "selectShift": "Select shift",
