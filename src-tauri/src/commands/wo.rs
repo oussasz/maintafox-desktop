@@ -205,15 +205,9 @@ pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::W
         Anchor::of(wo.entity_id),
     )
     .await?;
-    // Several plant rules naming different permit types match it, or the rule it carries (received
-    // from another PC) names a type the list here does not give: shown with its rule (display only).
-    wo.permit_rule_matching_types = crate::permit::requirement_rules::matching_permit_types(
-        &state.db,
-        wo.equipment_id,
-        wo.type_id,
-        wo.permit_rule_permit_type.as_deref(),
-    )
-    .await?;
+    // Every permit type the plant's rules require of it, each live, missing or cleared (judged as the
+    // start gate judges it; CMMS Advisor 2026-11-04).
+    wo.required_permits = crate::permit::wo_gate::required_permit_views(&state.db, id).await?;
 
     let transitions = queries::get_wo_transition_log(&state.db, id).await?;
     // Read after the work order: a coding saved in between moved the version, so the next
@@ -703,10 +697,11 @@ pub async fn set_wo_permit_requirement(
     Ok(wo)
 }
 
-/// Clear the permit flag a plant rule set when the work order was converted from a request, or the
-/// permit requirement carried from a request flagged "sécurité" (migration 255). Needs the
-/// permit-issue right (`ptw.issue`) — editing the work order is not enough — and a reason of 10
-/// characters or more; recorded on the work order and in its audit trail.
+/// Clear one permit type a plant rule requires of the work order (`input.permit_type_code`, or its
+/// only type not lifted), or the permit requirement carried from a request flagged "sécurité"
+/// (migration 255). Needs the permit-issue right (`ptw.issue`) at the work order's site — editing the
+/// work order is not enough — and a reason of 10 characters or more; recorded on the work order and
+/// in its audit trail.
 #[tauri::command]
 pub async fn clear_wo_permit_rule_flag(
     input: crate::wo::workflow::actions::permit_requirement::WoPermitRuleClearInput,
@@ -714,13 +709,17 @@ pub async fn clear_wo_permit_rule_flag(
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // A safety gate: `ptw.issue` at the work order's site (plant-wide for a work order without a
-    // site), with the entitlement and licence checks. The action re-checks, in its transaction,
-    // the right its origin needs: plant-wide for a plant rule (a site role does not lift a plant
-    // rule), at the work order's site for a safety request (CMMS Advisor decision D1).
+    // site), with the entitlement and licence checks. The action re-checks it in its transaction,
+    // for a plant rule's permit type as for a safety request (lead decision D-a, CMMS Advisor
+    // decision D1).
     require_on_wo(&state, user.user_id, crate::rbac::permissions::PTW_ISSUE, input.wo_id).await?;
     let actor_id = i64::from(user.user_id);
-    // The action writes the audit trail entry (origin, reason, site) in its own transaction.
-    crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await
+    // The action writes the audit trail entry (origin, type, reason, site) in its own transaction.
+    let mut wo =
+        crate::wo::workflow::actions::permit_requirement::clear_permit_rule_flag(&state.db, input, actor_id).await?;
+    // The screen shows the permit types left to obtain at once.
+    wo.required_permits = crate::permit::wo_gate::required_permit_views(&state.db, wo.id).await?;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

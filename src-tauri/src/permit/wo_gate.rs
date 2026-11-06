@@ -1,8 +1,9 @@
 //! Permit gate of work order execution: an OT starts, resumes or is reopened to in-progress only
 //! when every live permit linked to it is active and ready to protect the work (not expired, LOTO
 //! isolations all applied and verified, none removed) — whether or not the OT is flagged as
-//! requiring a permit — and, when it requires one, at least one exists; when a plant rule flagged it
-//! at conversion (and the flag was not cleared), at least one is of the rule's permit type. A live
+//! requiring a permit — and, when it requires one, at least one exists; for every permit type the
+//! plant's rules require of it and not cleared (`permit::required_set`, CMMS Advisor 2026-11-04),
+//! at least one is of that type. A live
 //! permit that expires before the end of the work refuses the start too (owner decision: the work
 //! would outlive its protection). The end of the work (CMMS Advisor decision, see [`work_end`]) is
 //! the later of the planned end and the moment of the start, resume or reopening plus the expected
@@ -44,8 +45,7 @@ pub async fn assert_in_progress_permit_gate_with(
             "SELECT requires_permit, planned_end, \
              CASE WHEN typeof(expected_duration_hours) IN ('real', 'integer') THEN expected_duration_hours END AS hours_number, \
              CASE typeof(expected_duration_hours) WHEN 'text' THEN expected_duration_hours \
-                  WHEN 'blob' THEN 'blob' END AS hours_text, \
-             CASE WHEN permit_rule_cleared_at IS NULL THEN permit_rule_permit_type END AS rule_permit_type \
+                  WHEN 'blob' THEN 'blob' END AS hours_text \
              FROM work_orders WHERE id = ?",
             [wo_id.into()],
         ))
@@ -57,9 +57,6 @@ pub async fn assert_in_progress_permit_gate_with(
     let requires: i64 = row
         .try_get("", "requires_permit")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
-    let rule_permit_type: Option<String> = row
-        .try_get("", "rule_permit_type")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("rule_permit_type decode: {e}")))?;
     let planned_end: Option<String> = row
         .try_get("", "planned_end")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("planned_end decode: {e}")))?;
@@ -76,16 +73,18 @@ pub async fn assert_in_progress_permit_gate_with(
         None => Hours::from_text(hours_text.as_deref()),
     };
     let required = requires == 1;
+    // Every permit type the plant's rules require of it and not cleared. Read from its legacy
+    // columns alone (a row written before migration 279), only while it requires a permit, as
+    // before; from its set, always (a set with a type not cleared keeps the permit required).
+    let set = super::required_set::read(db, wo_id).await?.unwrap_or_default();
+    let required_types = if required || set.stored() {
+        set.uncleared_types()
+    } else {
+        Vec::new()
+    };
     // The work starts or resumes at `at`: the end it must be covered until.
     let end = work_end(planned_end.as_deref(), &expected, remaining_hours, at);
-    assert_live_permits_ready(
-        db,
-        wo_id,
-        required,
-        rule_permit_type.filter(|_| required).as_deref(),
-        &end,
-    )
-    .await
+    assert_live_permits_ready(db, wo_id, required, &required_types, &end).await
 }
 
 /// Stable code: a live permit of the work order expires before its planned end.
@@ -339,14 +338,15 @@ fn covers_the_work(permit_code: &str, expires_at: Option<&str>, end: &WorkEnd) -
 }
 
 /// Every live permit linked to the work order is active and ready (a permit that exists protects
-/// the work, flag or not); when the OT requires a permit, at least one exists, and when a plant rule
-/// names the permit type, at least one is of that type (a permit of another type does not protect
-/// the hazard the rule is about); no live permit expires before the end of the work.
+/// the work, flag or not); when the OT requires a permit, at least one exists, and for every permit
+/// type the plant's rules require (`required_types`), at least one is of that type (a permit of
+/// another type does not protect the hazard the rule is about); no live permit expires before the
+/// end of the work.
 async fn assert_live_permits_ready(
     db: &impl ConnectionTrait,
     wo_id: i64,
     required: bool,
-    rule_permit_type: Option<&str>,
+    required_types: &[String],
     end: &WorkEnd,
 ) -> AppResult<()> {
     let permits = list_live_permits_linked_to_work_order(db, wo_id).await?;
@@ -357,31 +357,39 @@ async fn assert_live_permits_ready(
             HashMap::new(),
         ));
     }
-    if let Some(permit_type) = rule_permit_type {
-        if !permits
-            .iter()
-            .any(|p| p.permit_type_code.as_deref() == Some(permit_type))
-        {
-            let name = db
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT name FROM permit_types WHERE code = ?",
-                    [permit_type.into()],
-                ))
-                .await?
-                .and_then(|r| r.try_get::<String>("", "name").ok())
-                .unwrap_or_else(|| permit_type.to_string());
-            return Err(org_validation_failed(
-                "PERMIT_TYPE_REQUIRED_TO_START",
-                format!(
-                    "A permit rule requires a {name} permit for this work order: link an active permit of that type before starting or resuming it."
-                ),
-                HashMap::from([
-                    ("permit_type".to_string(), permit_type.to_string()),
-                    ("permit_type_name".to_string(), name),
-                ]),
-            ));
+    // A type is live when one of the live permits is of that type; every live permit is then
+    // judged below (active, ready, covering the work).
+    let missing: Vec<&str> = required_types
+        .iter()
+        .map(String::as_str)
+        .filter(|t| !permits.iter().any(|p| p.permit_type_code.as_deref() == Some(*t)))
+        .collect();
+    if let Some(first) = missing.first() {
+        let mut names: Vec<String> = Vec::with_capacity(missing.len());
+        for permit_type in &missing {
+            names.push(permit_type_name(db, permit_type).await?);
         }
+        let message = if missing.len() == 1 {
+            format!(
+                "A permit rule requires a {} permit for this work order: link an active permit of that type before starting or resuming it.",
+                names[0]
+            )
+        } else {
+            format!(
+                "The plant's permit rules require a permit of each of these types for this work order: {}. Link an active permit of each type before starting or resuming it.",
+                names.join(", ")
+            )
+        };
+        return Err(org_validation_failed(
+            "PERMIT_TYPE_REQUIRED_TO_START",
+            message,
+            HashMap::from([
+                ("permit_type".to_string(), first.to_string()),
+                ("permit_type_name".to_string(), names[0].clone()),
+                ("missing_types".to_string(), missing.join(", ")),
+                ("missing_type_names".to_string(), names.join(", ")),
+            ]),
+        ));
     }
     for p in &permits {
         let params = || {
@@ -414,6 +422,75 @@ async fn assert_live_permits_ready(
         covers_the_work(&p.code, p.expires_at.as_deref(), end)?;
     }
     Ok(())
+}
+
+/// Every permit type the plant's rules require of the work order, as its screen shows it, judged
+/// with the gate's own reading: a type is `live` when a permit of that type linked to it has not
+/// ended ([`list_live_permits_linked_to_work_order`], the permits the gate judges), `cleared` when
+/// lifted, else `missing`. The primary rule's type first, then by type.
+pub async fn required_permit_views(
+    db: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Vec<crate::wo::domain::RequiredPermitView>> {
+    let Some(set) = super::required_set::read(db, wo_id).await? else {
+        return Ok(Vec::new());
+    };
+    if set.is_empty() {
+        return Ok(Vec::new());
+    }
+    let permits = list_live_permits_linked_to_work_order(db, wo_id).await?;
+    let mut views = Vec::with_capacity(set.items().len());
+    for item in set.items() {
+        let live = permits
+            .iter()
+            .find(|p| p.permit_type_code.as_deref() == Some(item.permit_type_code.as_str()));
+        let cleared_by_name = match item.clearing.as_ref().and_then(|c| c.by_sync_id.as_deref()) {
+            Some(sync_id) => db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT COALESCE(NULLIF(TRIM(display_name), ''), username) AS name FROM user_accounts \
+                      WHERE entity_sync_id = ?",
+                    [sync_id.into()],
+                ))
+                .await?
+                .and_then(|r| r.try_get::<Option<String>>("", "name").ok().flatten()),
+            None => None,
+        };
+        let state = if item.clearing.is_some() {
+            "cleared"
+        } else if live.is_some() {
+            "live"
+        } else {
+            "missing"
+        };
+        views.push(crate::wo::domain::RequiredPermitView {
+            permit_type_code: item.permit_type_code.clone(),
+            permit_type_name: permit_type_name(db, &item.permit_type_code).await?,
+            rule_code: item.rule_code.clone(),
+            primary: set.primary() == Some(item.permit_type_code.as_str()),
+            cleared_at: item.clearing.as_ref().map(|c| c.at.clone()),
+            cleared_by_name,
+            clear_reason: item.clearing.as_ref().and_then(|c| c.reason.clone()),
+            live_permit_code: live.map(|p| p.code.clone()),
+            live_permit_status: live.map(|p| p.status.clone()),
+            state: state.to_string(),
+        });
+    }
+    views.sort_by_key(|v| !v.primary);
+    Ok(views)
+}
+
+/// The name of a permit type here (its code when it is not known here yet).
+pub(crate) async fn permit_type_name(db: &impl ConnectionTrait, code: &str) -> AppResult<String> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT name FROM permit_types WHERE code = ?",
+            [code.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "name").ok())
+        .unwrap_or_else(|| code.to_string()))
 }
 
 /// What the permits of a work order still hold on the plant at the end of the work (owner decision
