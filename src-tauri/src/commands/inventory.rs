@@ -369,6 +369,39 @@ pub async fn update_inventory_article(
     queries::update_article(&state.db, article_id, expected_row_version, input).await
 }
 
+/// Hors-stock articles (L3-04), those "à revoir" first — inv.view.
+#[tauri::command]
+pub async fn list_non_stock_articles(
+    to_review_only: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::non_stock::NonStockArticle>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_VIEW,
+        PermissionScope::Global
+    );
+    crate::inventory::non_stock::list_non_stock_articles(&state.db, to_review_only.unwrap_or(false)).await
+}
+
+/// Catalogue review of a hors-stock article: keep, promote to stocked, or mark a duplicate —
+/// inv.manage, the article edit right. Nothing is deleted.
+#[tauri::command]
+pub async fn review_non_stock_article(
+    input: crate::inventory::non_stock::ReviewNonStockArticleInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::non_stock::NonStockArticle> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_MANAGE,
+        PermissionScope::Global
+    );
+    crate::inventory::non_stock::review_non_stock_article(&state.db, input, user.user_id.into()).await
+}
+
 #[tauri::command]
 pub async fn list_inventory_stock_balances(
     filter: InventoryStockFilter,

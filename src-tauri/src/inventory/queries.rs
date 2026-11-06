@@ -1920,6 +1920,7 @@ pub async fn adjust_stock_full(
     input: InventoryStockAdjustInput,
     options: AdjustStockOptions,
 ) -> AppResult<InventoryStockBalance> {
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let unit_cost = options.unit_cost;
     let posting_date = crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
     let tracking = crate::inventory::lots::article_tracking(db, input.article_id).await?;
@@ -2394,6 +2395,7 @@ pub async fn reserve_stock<C: ConnectionTrait + TransactionTrait>(
 
 /// Reserves stock inside the caller's transaction and returns the reservation id.
 pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryReserveInput) -> AppResult<i64> {
+    crate::inventory::non_stock::ensure_store_article(tx, input.article_id).await?;
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
@@ -3189,6 +3191,7 @@ pub async fn transfer_stock(
             &[],
         ));
     }
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let note = input.notes.as_deref().map(str::trim).unwrap_or_default().to_string();
     if note.chars().count() < TRANSFER_NOTE_MIN_CHARS {
         return Err(transfer_refusal(
@@ -3584,6 +3587,9 @@ pub async fn evaluate_reorder(
          JOIN warehouses w ON w.is_active = 1
          LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.warehouse_id = w.id
          WHERE a.is_active = 1
+           -- A hors-stock article (L3-04) is bought for a work order, never reordered.
+           AND NOT EXISTS (SELECT 1 FROM lookup_values nslv
+                            WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK')
            AND (
              -- An article is judged in the stores that stock it (a balance row), so an empty
              -- extra store does not flag every article.

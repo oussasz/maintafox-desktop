@@ -1303,6 +1303,57 @@ pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) ->
     parts::add_planned_part(&state.db, input, authority).await
 }
 
+// ── Hors-stock purchase charged to the work order (L3-04) ──────────────────────────────────
+
+/// Hors-stock articles to reuse before creating one — ot.view.
+#[tauri::command]
+pub async fn search_non_stock_articles(
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::non_stock::NonStockArticle>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::inventory::non_stock::search_non_stock_articles(&state.db, query).await
+}
+
+/// Ask for a hors-stock part on the work order: article (reused or created "à revoir"), work-order
+/// line and requisition in one step — ot.edit at the work order's site. The requisition then goes
+/// through the normal approvals; the buyer orders it.
+#[tauri::command]
+pub async fn create_wo_non_stock_purchase(
+    input: crate::inventory::non_stock::CreateWoNonStockPurchaseInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::non_stock::WoNonStockPurchase> {
+    let user = require_session!(state);
+    require_on_wo(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.work_order_id,
+    )
+    .await?;
+    crate::inventory::non_stock::create_wo_non_stock_purchase(&state.db, input, user.user_id.into()).await
+}
+
+/// "Remis à <personne>" on a received hors-stock line — ot.edit at the work order's site.
+#[tauri::command]
+pub async fn set_wo_part_handed_to(
+    wo_part_id: i64,
+    personnel_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        wo_part_id,
+    )
+    .await?;
+    crate::inventory::non_stock::set_part_handed_to(&state.db, wo_part_id, personnel_id).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Q) record_part_usage — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════

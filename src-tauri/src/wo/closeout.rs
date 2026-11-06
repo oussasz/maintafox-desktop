@@ -1273,6 +1273,17 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // (b3) No hors-stock purchase still open (L3-04): receive it, or cancel the request or order
+    // with a reason, so the parts actual of the work order is complete.
+    let open_purchases = crate::inventory::non_stock::open_purchase_line_count(conn, wo_id).await?;
+    if open_purchases > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_NON_STOCK_OPEN:count={open_purchases}: Clôture bloquée : {open_purchases} \
+             achat(s) hors stock encore ouvert(s). Réceptionnez-les ou annulez la demande ou la \
+             commande avec un motif. ({open_purchases} hors-stock purchase(s) still open.)"
+        ));
+    }
+
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
         let fd_row = conn

@@ -559,6 +559,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
         &[
             r("article_id", "articles"),
             r("stock_location_id", "stock_locations"),
+            // Who a received hors-stock part was handed to (migration 280).
+            r("handed_to_personnel_id", "personnel"),
             unmapped("cost_override_by_id"),
         ],
     ),
@@ -1310,7 +1312,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("user_analytics_dashboard_layouts", &[r("user_id", USER)]),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
-    spec("articles", &[]),
+    spec(
+        "articles",
+        &[
+            // A hors-stock article created from a work order, and the article a duplicate
+            // duplicates (migration 280). The origin is only a link back: written once known.
+            soft("origin_work_order_id", "work_orders"),
+            r("duplicate_of_article_id", "articles"),
+        ],
+    ),
     spec("unit_conversions", &[]),
     spec("inventory_lots", &[]),
     spec("currency_exchange_rates", &[]),

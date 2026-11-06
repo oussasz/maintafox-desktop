@@ -413,6 +413,7 @@ pub async fn upsert_count_line(
             "GATE_INV_COUNTED_NEGATIVE: counted_qty must be >= 0.".to_string(),
         ]));
     }
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let session = ensure_count_session(db, input.session_id).await?;
     if session.status != "draft" && session.status != "counting" {
         return Err(AppError::ValidationFailed(vec![
