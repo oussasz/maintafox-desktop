@@ -191,6 +191,7 @@
       "WO_MANDATORY_TASK_REMOVED": "Mandatory task deleted or made optional on another PC after planning here",
       "PERMIT_TYPE_REQUIRED_TO_START": "A work order started without a permit of the type a plant rule requires",
       "WO_PERMIT_RULE_CHANGED": "The plant rule that requires a work order's permit was removed or changed elsewhere",
+      "WO_DEPANNAGE_FACTS_INVALID": "A breakdown work order received without its breakdown time or its \"machine stopped\", with a breakdown time later than the moment it was written, or turned back into an ordinary work order: check its facts with the person who reported it",
       "INSP_ANOMALY_PERMIT_REVIEW_CLEARED": "An inspection finding received with its \"permit review required\" cleared",
       "INSP_ANOMALY_LINK_CHANGED": "An inspection finding received with the request or work order raised from it removed or replaced",
       "INSP_ANOMALY_DECISION_INVALID": "An inspection finding received closed without a decision, or a decided finding changed elsewhere (it is decided by routing it to a request or work order, or deferring it)",

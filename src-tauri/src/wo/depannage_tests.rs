@@ -980,3 +980,182 @@ async fn a_received_depannage_waiting_for_its_permit_is_applied() {
     assert_eq!(kept.status_code.as_deref(), Some("ready"));
     assert!(kept.is_depannage && kept.requires_permit);
 }
+
+// ── Review fixes (L1-05 A) ────────────────────────────────────────────────────────────────────────
+
+/// Everything a dépannage writes, counted.
+async fn footprint(db: &DatabaseConnection) -> [i64; 7] {
+    let mut out = [0; 7];
+    for (slot, table) in out.iter_mut().zip([
+        "work_orders",
+        "wo_state_transition_log",
+        "wo_action_events",
+        "wo_change_events",
+        "work_permits",
+        "notification_events",
+        "notifications",
+    ]) {
+        *slot = scalar(db, &format!("SELECT COUNT(*) FROM {table}")).await;
+    }
+    out
+}
+
+/// A qualification the assignee does not hold, asked by the dépannage's own work type: refused,
+/// and nothing is left behind — no work order, no transition, no event, no permit draft, no notice.
+#[tokio::test]
+async fn a_qualification_refusal_leaves_nothing_behind() {
+    let f = fixture().await;
+    rule_on_depannage_type(&f.db, "DEP_HOT_WORK", "hot_work").await;
+    let work_type =
+        crate::wo::types::default_type_for_nature(&f.db, crate::wo::types::MaintenanceNature::CorrectiveImmediate)
+            .await
+            .expect("dépannage type");
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO qualification_requirements (entity_sync_id, target_kind, work_order_type_id,
+                skill_reference_value_id, coverage, created_at, updated_at)
+             SELECT 'dep-qual-type-req', 'work_order_type', {}, rv.id, 'each', '2026-01-01T00:00:00Z',
+                    '2026-01-01T00:00:00Z'
+               FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id
+               JOIN reference_domains d ON d.id = rs.domain_id
+              WHERE d.code = 'PERSONNEL.SKILLS' AND rs.status = 'published' AND rv.is_active = 1
+              ORDER BY rv.id LIMIT 1",
+            work_type.id
+        ),
+    )
+    .await;
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT COUNT(*) FROM qualification_requirements WHERE entity_sync_id = 'dep-qual-type-req'"
+        )
+        .await,
+        1,
+        "a skill to require"
+    );
+    let issuing_lead = holder(
+        &f.db,
+        "dep_issuing_lead",
+        f.t.site_a,
+        &[
+            OT_VIEW,
+            OT_CREATE,
+            OT_EDIT,
+            OT_EMERGENCY_ASSIGN,
+            crate::rbac::permissions::PTW_ISSUE,
+        ],
+    )
+    .await;
+    let before = footprint(&f.db).await;
+
+    let mut i = input(&f, issuing_lead);
+    i.assignee_id = Some(i64::from(f.colleague));
+    i.permit_drafting = Some(map_of(&f.db, issuing_lead).await);
+    let err = depannage::start_depannage(&f.db, i).await.unwrap_err();
+    refused_with(&err, "QUALIFICATION_");
+    assert_eq!(footprint(&f.db).await, before, "rolled back entirely");
+}
+
+/// Once the permit draft is being written, a failure is no longer "no draft": the dépannage fails
+/// and nothing is kept (no work order with a draft half written).
+#[tokio::test]
+async fn a_failure_while_writing_a_permit_draft_fails_the_depannage() {
+    let f = fixture().await;
+    rule_on_depannage_type(&f.db, "DEP_HOT_WORK", "hot_work").await;
+    let issuing_tech = holder(
+        &f.db,
+        "dep_issuing_tech",
+        f.t.site_a,
+        &[OT_VIEW, OT_CREATE, OT_EDIT, crate::rbac::permissions::PTW_ISSUE],
+    )
+    .await;
+    // The written draft disappears before it is read back (`require_work_permit`: not found).
+    exec(
+        &f.db,
+        "CREATE TRIGGER dep_test_lose_draft AFTER UPDATE OF code ON work_permits          BEGIN DELETE FROM work_permits WHERE id = NEW.id; END",
+    )
+    .await;
+    let before = footprint(&f.db).await;
+    let mut i = input(&f, issuing_tech);
+    i.permit_drafting = Some(map_of(&f.db, issuing_tech).await);
+    let err = depannage::start_depannage(&f.db, i).await.unwrap_err();
+    assert!(matches!(err, AppError::NotFound { .. }), "{err:?}");
+    assert_eq!(footprint(&f.db).await, before, "rolled back entirely");
+}
+
+/// The assignment is in the work order's history as an assignment, with its origin; someone else
+/// assigned is told at once through the assignment notice, once (the watcher's round adds none);
+/// a user who assigns themself is not told.
+#[tokio::test]
+async fn the_assignment_is_in_the_history_and_another_assignee_is_told() {
+    let f = fixture().await;
+    let mut i = input(&f, f.lead);
+    i.assignee_id = Some(i64::from(f.colleague));
+    let wo_id = depannage::start_depannage(&f.db, i).await.expect("dépannage").wo.id;
+
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_action_events WHERE wo_id = {wo_id} AND action_code = 'emergency_reassigned'                    AND actor_id = {} AND json_extract(payload_json, '$.origin') = 'depannage'                    AND json_extract(payload_json, '$.primary_responsible_id') = {}",
+                f.lead, f.colleague
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!(
+                "SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {wo_id} AND action = 'assigned'                    AND actor_id = {} AND json_extract(details_json, '$.origin') = 'depannage'                    AND json_extract(details_json, '$.changes[0].field') = 'primary_responsible'",
+                f.lead
+            )
+        )
+        .await,
+        1
+    );
+    assert!(
+        told(&f.db, "wo_assigned", wo_id, f.colleague).await,
+        "the assignee is told"
+    );
+    assert!(!told(&f.db, "wo_assigned", wo_id, f.lead).await, "not the lead");
+    // Derived on each PC, never sent by synchronisation (as the watcher writes it).
+    assert_eq!(scalar(&f.db, "SELECT COUNT(*) FROM sync_capture_suppression").await, 0);
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT COUNT(*) FROM sync_outbox WHERE entity_sync_id IN ( \
+                SELECT entity_sync_id FROM notification_events WHERE category_code = 'wo_assigned' \
+                UNION SELECT n.entity_sync_id FROM notifications n \
+                  JOIN notification_events e ON e.id = n.notification_event_id WHERE e.category_code = 'wo_assigned')"
+        )
+        .await,
+        0
+    );
+    crate::notifications::watchers::run_watcher(&f.db, "wo_assigned", chrono::Utc::now(), true)
+        .await
+        .expect("watcher round");
+    assert_eq!(events_of(&f.db, "wo_assigned", wo_id).await, 1, "told once");
+
+    let own = depannage::start_depannage(&f.db, input(&f, f.tech))
+        .await
+        .expect("own")
+        .wo
+        .id;
+    assert_eq!(
+        events_of(&f.db, "wo_assigned", own).await,
+        0,
+        "not told of their own dépannage"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {own} AND action = 'assigned'")
+        )
+        .await,
+        1,
+        "in the history all the same"
+    );
+}

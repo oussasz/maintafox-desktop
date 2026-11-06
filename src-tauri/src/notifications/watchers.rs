@@ -207,18 +207,36 @@ pub async fn candidates(
     lead_minutes: Option<i64>,
     fr: bool,
 ) -> Result<Vec<Candidate>> {
+    candidates_of(conn, watcher, now, lead_minutes, fr, None).await
+}
+
+/// [`candidates`]; with `only_wo`, those of that one work order (watchers of work orders only).
+async fn candidates_of(
+    conn: &impl ConnectionTrait,
+    watcher: &str,
+    now: DateTime<Utc>,
+    lead_minutes: Option<i64>,
+    fr: bool,
+    only_wo: Option<i64>,
+) -> Result<Vec<Candidate>> {
     let severity = category_severity(conn, watcher).await?;
     let mut out = Vec::new();
     match watcher {
         "wo_assigned" | "wo_overdue" => {
             let overdue = watcher == "wo_overdue";
-            let (cond, values): (&str, Vec<sea_orm::Value>) = if overdue {
+            let (cond, mut values): (&str, Vec<sea_orm::Value>) = if overdue {
                 (
                     "wo.planned_end IS NOT NULL AND wo.planned_end < ?",
                     vec![ts(now).into()],
                 )
             } else {
                 ("wo.primary_responsible_id IS NOT NULL", Vec::new())
+            };
+            let only = if let Some(wo_id) = only_wo {
+                values.push(wo_id.into());
+                " AND wo.id = ?"
+            } else {
+                ""
             };
             let rows = conn
                 .query_all(Statement::from_sql_and_values(
@@ -229,7 +247,7 @@ pub async fn candidates(
                          FROM work_orders wo JOIN work_order_statuses s ON s.id = wo.status_id \
                          LEFT JOIN user_accounts ua ON ua.id = wo.primary_responsible_id \
                          LEFT JOIN reference_values ul ON ul.id = wo.urgency_id \
-                         WHERE {WO_OPEN} AND wo.entity_sync_id IS NOT NULL AND {cond}"
+                         WHERE {WO_OPEN} AND wo.entity_sync_id IS NOT NULL AND {cond}{only}"
                     ),
                     values,
                 ))
@@ -644,6 +662,102 @@ async fn watching_since(
     Ok(Some(parse_time(&raw).unwrap_or(now)))
 }
 
+/// Raises the event of one occurrence, with the identity every device gives it. Returns whether it
+/// was already true when this device started watching (listed as read).
+async fn raise(
+    conn: &impl ConnectionTrait,
+    watcher: &str,
+    c: &Candidate,
+    dedupe_key: String,
+    since_watch: Option<DateTime<Utc>>,
+) -> Result<bool> {
+    let already_true = match (c.since, since_watch) {
+        (Some(began), Some(watching)) => began < watching,
+        _ => true,
+    };
+    let identity = seeded_entity_sync_id("notification_events", &format!("{watcher}|{}", c.record_key));
+    let input = NotificationEventInput {
+        source_module: c.source_module.to_string(),
+        source_record_id: c.record_id.map(|id| id.to_string()),
+        event_code: watcher.to_string(),
+        category_code: watcher.to_string(),
+        severity: c.severity.clone(),
+        dedupe_key: Some(dedupe_key),
+        payload_json: None,
+        title: c.title.clone(),
+        body: Some(c.body.clone()),
+        action_url: Some(c.action_url.clone()),
+    };
+    let message = NotificationMessage::new(c.message_key, c.params.clone()).with_urgency(c.urgency.clone());
+    let arrival = if already_true {
+        Arrival::AlreadyTrue
+    } else {
+        Arrival::New
+    };
+    emitter::emit(conn, &input, Some(identity), Some(&message), arrival).await?;
+    Ok(already_true)
+}
+
+/// The `wo_assigned` notice of one work order now, instead of at the watcher's next round: the
+/// same occurrence (same identity and de-duplication key on every device), so the round finds it
+/// open and raises nothing more. Nothing when the rule is inactive, the work order is not open or
+/// has no responsible, or the notice is already open. Written with capture suppressed, as the
+/// watcher writes it (each device derives its own); the caller's suppression is left as it is.
+pub(crate) async fn raise_wo_assigned_now(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    now: DateTime<Utc>,
+    fr: bool,
+) -> Result<bool> {
+    const WATCHER: &str = "wo_assigned";
+    if !rule_of(conn, WATCHER).await?.is_some_and(|(active, _)| active) {
+        return Ok(false);
+    }
+    let suppressed = conn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT 1 AS s FROM sync_capture_suppression LIMIT 1".to_string(),
+        ))
+        .await?
+        .is_some();
+    if !suppressed {
+        crate::sync::capture::begin_suppression(conn).await?;
+    }
+    let raised = raise_wo_assigned_suppressed(conn, wo_id, now, fr).await;
+    if !suppressed {
+        crate::sync::capture::end_suppression(conn).await?;
+    }
+    raised
+}
+
+async fn raise_wo_assigned_suppressed(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    now: DateTime<Utc>,
+    fr: bool,
+) -> Result<bool> {
+    const WATCHER: &str = "wo_assigned";
+    let since_watch = watching_since(conn, WATCHER, true, now).await?;
+    let (from, _) = key_range(WATCHER);
+    let mut raised = false;
+    for c in candidates_of(conn, WATCHER, now, None, fr, Some(wo_id)).await? {
+        let dedupe_key = format!("{from}{}", c.record_key);
+        let open = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS o FROM notification_events WHERE dedupe_key = ? AND resolved_at IS NULL",
+                [dedupe_key.clone().into()],
+            ))
+            .await?
+            .is_some();
+        if !open {
+            raise(conn, WATCHER, &c, dedupe_key, since_watch).await?;
+            raised = true;
+        }
+    }
+    Ok(raised)
+}
+
 /// One round of one watcher. The caller holds a transaction with capture suppressed.
 pub async fn run_watcher(
     conn: &impl ConnectionTrait,
@@ -681,30 +795,7 @@ pub async fn run_watcher(
         if open.contains(&dedupe_key) {
             continue;
         }
-        let already_true = match (c.since, since_watch) {
-            (Some(began), Some(watching)) => began < watching,
-            _ => true,
-        };
-        let identity = seeded_entity_sync_id("notification_events", &format!("{watcher}|{}", c.record_key));
-        let input = NotificationEventInput {
-            source_module: c.source_module.to_string(),
-            source_record_id: c.record_id.map(|id| id.to_string()),
-            event_code: watcher.to_string(),
-            category_code: watcher.to_string(),
-            severity: c.severity.clone(),
-            dedupe_key: Some(dedupe_key),
-            payload_json: None,
-            title: c.title.clone(),
-            body: Some(c.body.clone()),
-            action_url: Some(c.action_url.clone()),
-        };
-        let message = NotificationMessage::new(c.message_key, c.params.clone()).with_urgency(c.urgency.clone());
-        let arrival = if already_true {
-            Arrival::AlreadyTrue
-        } else {
-            Arrival::New
-        };
-        emitter::emit(conn, &input, Some(identity), Some(&message), arrival).await?;
+        let already_true = raise(conn, watcher, c, dedupe_key, since_watch).await?;
         if already_true {
             report.already_true += 1;
         } else {

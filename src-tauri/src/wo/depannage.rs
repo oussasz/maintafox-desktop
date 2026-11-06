@@ -268,19 +268,103 @@ async fn refuse_unknown_assignee(conn: &impl ConnectionTrait, user_id: i64) -> A
     }
 }
 
+/// Origin of the dépannage's assignment in the work order's history (`origin` of the event, as
+/// `wo::workflow::actions::assign` records `assign` / `emergency_reassign`).
+pub const ASSIGNMENT_ORIGIN: &str = "depannage";
+
+/// The assignment in the work order's history, as an assignment records it: the action event of an
+/// assignment (`emergency_reassigned`, the event `wo::workflow::actions::assign` writes, with its
+/// `origin`) and the history entry "Affecté" (responsible: none → the assignee), both written with
+/// the dépannage or not at all.
+async fn record_assignment(txn: &impl ConnectionTrait, wo_id: i64, actor: i64, assignee: i64) -> AppResult<()> {
+    let wo = get_work_order(txn, wo_id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrder".into(),
+        id: wo_id.to_string(),
+    })?;
+    let status = wo
+        .status_code
+        .clone()
+        .unwrap_or_else(|| WoStatus::Draft.as_str().to_string());
+    let payload = serde_json::json!({
+        "origin": ASSIGNMENT_ORIGIN,
+        "override_reason": serde_json::Value::Null,
+        "assigned_team_id": serde_json::Value::Null,
+        "primary_responsible_id": assignee,
+        "skips_planning_gates": true,
+        "shift_cleared": serde_json::Value::Null,
+    })
+    .to_string();
+    emit_action_event(
+        txn,
+        wo_id,
+        "emergency_reassigned",
+        Some(actor),
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    let shown = wo
+        .responsible_display_name
+        .as_deref()
+        .or(wo.responsible_username.as_deref())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map_or(serde_json::Value::Null, |n| serde_json::Value::String(n.to_string()));
+    crate::wo::audit::insert_wo_change_event(
+        txn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "assigned".into(),
+            actor_id: Some(actor),
+            summary: Some("Assigned by the dépannage".into()),
+            details_json: Some(
+                serde_json::json!({
+                    "origin": ASSIGNMENT_ORIGIN,
+                    "primary_responsible_id": assignee,
+                    "changes": [{ "field": "primary_responsible", "old": serde_json::Value::Null, "new": shown }],
+                })
+                .to_string(),
+            ),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// The assignee, when it is not the user who started the dépannage, is told at once through the
+/// work-order assignment notice (`wo_assigned`, `notifications::watchers::raise_wo_assigned_now`:
+/// the watcher's own occurrence, so it is never told twice). Fire-and-log, as every notification.
+async fn notify_assignee(txn: &impl ConnectionTrait, wo_id: i64, actor: i64, assignee: i64, fr: bool) {
+    if assignee == actor {
+        return;
+    }
+    if let Err(err) = crate::notifications::watchers::raise_wo_assigned_now(txn, wo_id, crate::clock::now(), fr).await {
+        tracing::warn!(error = %err, wo_id, "dépannage assignment notification failed");
+    }
+}
+
 /// Creates the dépannage and starts it — or leaves it ready, waiting for its permit — in one
 /// transaction (rolled back on any refusal).
 pub async fn start_depannage(db: &DatabaseConnection, input: WoDepannageInput) -> AppResult<WoDepannageStartResult> {
+    // The language of the notices' fallback texts, as the notification watchers choose it.
+    let fr = crate::pm::wo_content::tenant_text_locale(db)
+        .await
+        .map(|l| l.to_ascii_lowercase().starts_with("fr"))
+        .unwrap_or(true);
     let txn = db.begin().await?;
-    let result = start_depannage_in(&txn, input).await?;
+    let result = start_depannage_in(&txn, input, fr).await?;
     txn.commit().await?;
     Ok(result)
 }
 
-/// [`start_depannage`] in the caller's transaction.
+/// [`start_depannage`] in the caller's transaction; `fr`: the notices' fallback texts in French.
 pub async fn start_depannage_in(
     txn: &impl ConnectionTrait,
     input: WoDepannageInput,
+    fr: bool,
 ) -> AppResult<WoDepannageStartResult> {
     let (breakdown_at, breakdown_old_warning, machine_stopped) = checked_facts(&input, now_utc_second())?;
     let actor = input.actor_id;
@@ -339,6 +423,7 @@ pub async fn start_depannage_in(
 
     // The assignee holds what the work order requires (or an override is recorded for them).
     crate::qualification::gate::enforce_user_on_work_order(txn, assignee, wo_id).await?;
+    record_assignment(txn, wo_id, actor, assignee).await?;
 
     // draft → planning → ready: through the state machine, recorded as automatic, no approver.
     let auto_payload = serde_json::json!({ "reason_code": AUTO_REASON_CODE }).to_string();
@@ -392,6 +477,7 @@ pub async fn start_depannage_in(
         let type_names = permit_type_names(txn, &requirement.permit_types).await?;
         notify_waiting(txn, &wo, &type_names).await;
         notify_permit_needed(txn, &wo, &type_names, &drafts).await;
+        notify_assignee(txn, wo_id, actor, assignee, fr).await;
         return Ok(WoDepannageStartResult {
             wo,
             breakdown_old_warning,
@@ -418,6 +504,7 @@ pub async fn start_depannage_in(
     .await?;
 
     notify_started(txn, &wo).await;
+    notify_assignee(txn, wo_id, actor, assignee, fr).await;
     Ok(WoDepannageStartResult {
         wo,
         breakdown_old_warning,
@@ -427,9 +514,10 @@ pub async fn start_depannage_in(
     })
 }
 
-/// A refusal of a permit draft (no right at the site, a site or an expiry the permit rules do not
-/// accept): no draft, the dépannage goes on and the issuers create the permit. Anything else (the
-/// database) still fails the dépannage.
+/// A refusal of a permit draft by its checks, before anything is written (no right at the site, a
+/// site or an expiry the permit rules do not accept, an open permit already linked): no draft, the
+/// dépannage goes on and the issuers create the permit. Anything else (the database), and any error
+/// of the write itself, still fails the dépannage.
 fn draft_refused(err: &AppError) -> bool {
     matches!(
         err,
@@ -488,12 +576,16 @@ async fn draft_permits(
             linked_work_order_id: Some(wo_id),
             expires_at: Some(expires_at),
         };
-        let created = match crate::permit::access::check_create_at(txn, map, &permit).await {
-            Ok(()) => crate::permit::queries::create_work_permit_in(txn, permit, actor).await,
+        // Only the refusals of the checks, before anything is written, mean "no draft": once the
+        // insert has begun, any error fails the dépannage (no draft left half written).
+        let checked = match crate::permit::access::check_create_at(txn, map, &permit).await {
+            Ok(()) => crate::permit::queries::check_work_permit_create(txn, &permit).await,
             Err(err) => Err(err),
         };
-        match created {
-            Ok(draft) => drafts.push(draft),
+        match checked {
+            Ok(checked) => {
+                drafts.push(crate::permit::queries::insert_work_permit(txn, &permit, checked, actor).await?);
+            }
             Err(err) if draft_refused(&err) => {
                 tracing::info!(wo_id, permit_type = %code, error = %err, "dépannage: no permit draft");
             }

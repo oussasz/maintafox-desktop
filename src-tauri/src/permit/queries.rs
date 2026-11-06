@@ -1722,11 +1722,30 @@ pub(crate) async fn create_work_permit_in(
     input: WorkPermitCreateInput,
     actor_id: i64,
 ) -> AppResult<WorkPermit> {
+    let checked = check_work_permit_create(db, &input).await?;
+    insert_work_permit(db, &input, checked, actor_id).await
+}
+
+/// What the checks of a new permit settled: its equipment, its org node and its expiry.
+#[derive(Debug, Clone)]
+pub(crate) struct CheckedPermitCreate {
+    asset_id: i64,
+    entity_id: i64,
+    expires_at: String,
+}
+
+/// The rules of a new permit, before anything is written: the type exists, the equipment and node
+/// (and the linked work order's equipment) agree, the expiry is accepted for the type, and the
+/// linked work order has no open permit. A refusal here writes nothing.
+pub(crate) async fn check_work_permit_create(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+) -> AppResult<CheckedPermitCreate> {
     // The type must exist (NotFound otherwise).
     let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
-    let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
+    let (asset_id, entity_id) = resolve_permit_scope(db, input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
-    let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
+    let expires_at = checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?;
 
     // A work order has at most one open permit of each type: the plant's rules can require several
     // types of it, and its start needs a live permit of each (`permit::required_set`, CMMS Advisor
@@ -1744,7 +1763,27 @@ pub(crate) async fn create_work_permit_in(
             ));
         }
     }
+    Ok(CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    })
+}
 
+/// Writes the permit draft [`check_work_permit_create`] accepted. Any error here is a failure of
+/// the write itself (the caller's transaction must not be committed), never a refusal.
+pub(crate) async fn insert_work_permit(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+    checked: CheckedPermitCreate,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
+    let CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    } = checked;
+    let expires_at = Some(expires_at);
     let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
     let insert_result = db.execute(Statement::from_sql_and_values(

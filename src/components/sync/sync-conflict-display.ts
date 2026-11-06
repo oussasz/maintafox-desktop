@@ -168,6 +168,9 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "WO_MANDATORY_TASK_REMOVED",
   "PERMIT_TYPE_REQUIRED_TO_START",
   "WO_PERMIT_RULE_CHANGED",
+  // A received dépannage without its breakdown time or "machine arrêtée", or turned back into an
+  // ordinary work order (`wo::depannage::inbound_depannage_check`).
+  "WO_DEPANNAGE_FACTS_INVALID",
   // A received inspection finding that breaks the decision rules (AU-72).
   "INSP_ANOMALY_PERMIT_REVIEW_CLEARED",
   "INSP_ANOMALY_LINK_CHANGED",
