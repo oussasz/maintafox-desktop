@@ -47,7 +47,7 @@
 //! `wo::retired_equipment_review`, and its dépannage facts by [`inbound_depannage_check`].
 
 use chrono::{DateTime, Duration, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::scope::AccessMap;
@@ -186,7 +186,7 @@ pub fn checked_breakdown_at(raw: Option<&str>, now: DateTime<Utc>) -> Result<(St
     };
     let Some(at) = planned_time(raw, PlannedBound::Start) else {
         return Err(format!(
-            "{CODE_BREAKDOWN_AT_UNREADABLE}:value={raw}: La date de constat de la panne n'est pas une date et heure lisible."
+            "{CODE_BREAKDOWN_AT_UNREADABLE}: La date de constat de la panne n'est pas une date et heure lisible."
         ));
     };
     if at > now + Duration::minutes(MAX_CLOCK_SKEW_MINUTES) {
@@ -336,8 +336,10 @@ async fn record_assignment(txn: &impl ConnectionTrait, wo_id: i64, actor: i64, a
 
 /// The assignee, when it is not the user who started the dépannage, is told at once through the
 /// work-order assignment notice (`wo_assigned`, `notifications::watchers::raise_wo_assigned_now`:
-/// the watcher's own occurrence, so it is never told twice). Fire-and-log, as every notification.
-async fn notify_assignee(txn: &impl ConnectionTrait, wo_id: i64, actor: i64, assignee: i64, fr: bool) {
+/// the watcher's own occurrence, so it is never told twice). A user who assigns themself is not
+/// told at once; the watcher's next `wo_assigned` round may still raise it. Fire-and-log, as every
+/// notification: the notice runs in its own savepoint, so a failure leaves nothing of it.
+async fn notify_assignee(txn: &DatabaseTransaction, wo_id: i64, actor: i64, assignee: i64, fr: bool) {
     if assignee == actor {
         return;
     }
@@ -362,7 +364,7 @@ pub async fn start_depannage(db: &DatabaseConnection, input: WoDepannageInput) -
 
 /// [`start_depannage`] in the caller's transaction; `fr`: the notices' fallback texts in French.
 pub async fn start_depannage_in(
-    txn: &impl ConnectionTrait,
+    txn: &DatabaseTransaction,
     input: WoDepannageInput,
     fr: bool,
 ) -> AppResult<WoDepannageStartResult> {
@@ -532,7 +534,8 @@ fn draft_refused(err: &AppError) -> bool {
 }
 
 /// One permit draft per required type, linked to the work order and its equipment, written by the
-/// permit creation itself (`permit::queries::create_work_permit_in`) after the check of a permit
+/// permit creation itself (`permit::queries::check_work_permit_create`, then
+/// `permit::queries::insert_work_permit`) after the check of a permit
 /// created by hand at the work order's site (`permit::access::check_create_at`). Its expiry is the
 /// type's maximum duration from now, as the create form proposes it; a type without one gets no
 /// draft. None at all without `rights`.

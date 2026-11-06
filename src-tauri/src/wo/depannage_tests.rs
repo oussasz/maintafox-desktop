@@ -1086,7 +1086,8 @@ async fn a_failure_while_writing_a_permit_draft_fails_the_depannage() {
 
 /// The assignment is in the work order's history as an assignment, with its origin; someone else
 /// assigned is told at once through the assignment notice, once (the watcher's round adds none);
-/// a user who assigns themself is not told.
+/// a user who assigns themself is not told at once (the watcher's next `wo_assigned` round may
+/// still raise it; that round is not run here).
 #[tokio::test]
 async fn the_assignment_is_in_the_history_and_another_assignee_is_told() {
     let f = fixture().await;
@@ -1147,7 +1148,7 @@ async fn the_assignment_is_in_the_history_and_another_assignee_is_told() {
     assert_eq!(
         events_of(&f.db, "wo_assigned", own).await,
         0,
-        "not told of their own dépannage"
+        "not told at once of their own dépannage"
     );
     assert_eq!(
         scalar(
@@ -1157,5 +1158,45 @@ async fn the_assignment_is_in_the_history_and_another_assignee_is_told() {
         .await,
         1,
         "in the history all the same"
+    );
+}
+
+/// An assignment notice that fails after its event is written (here its recipient's notification
+/// is refused) leaves nothing of it: no event whose de-duplication key would keep the watcher from
+/// raising it, capture switched back on. The dépannage itself stands, and the watcher's next round
+/// tells the assignee.
+#[tokio::test]
+async fn a_failed_assignment_notice_leaves_nothing_behind() {
+    let f = fixture().await;
+    exec(
+        &f.db,
+        "CREATE TRIGGER dep_test_refuse_assigned AFTER INSERT ON notifications \
+           WHEN (SELECT category_code FROM notification_events WHERE id = NEW.notification_event_id) = 'wo_assigned' \
+         BEGIN SELECT RAISE(ABORT, 'forced'); END",
+    )
+    .await;
+    let mut i = input(&f, f.lead);
+    i.assignee_id = Some(i64::from(f.colleague));
+    let wo_id = depannage::start_depannage(&f.db, i).await.expect("dépannage").wo.id;
+
+    assert_eq!(events_of(&f.db, "wo_assigned", wo_id).await, 0, "no half-written event");
+    assert_eq!(scalar(&f.db, "SELECT COUNT(*) FROM sync_capture_suppression").await, 0);
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM wo_change_events WHERE wo_id = {wo_id} AND action = 'assigned'")
+        )
+        .await,
+        1,
+        "the assignment stands"
+    );
+
+    exec(&f.db, "DROP TRIGGER dep_test_refuse_assigned").await;
+    crate::notifications::watchers::run_watcher(&f.db, "wo_assigned", chrono::Utc::now(), true)
+        .await
+        .expect("watcher round");
+    assert!(
+        told(&f.db, "wo_assigned", wo_id, f.colleague).await,
+        "the watcher tells the assignee"
     );
 }

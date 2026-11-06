@@ -33,7 +33,7 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde_json::json;
 
 use crate::errors::AppError;
@@ -703,12 +703,32 @@ async fn raise(
 /// open and raises nothing more. Nothing when the rule is inactive, the work order is not open or
 /// has no responsible, or the notice is already open. Written with capture suppressed, as the
 /// watcher writes it (each device derives its own); the caller's suppression is left as it is.
+///
+/// All of it runs in a savepoint of the caller's transaction: on any error nothing stays — no
+/// half-written event whose de-duplication key would keep the watcher from ever raising it, and
+/// capture is as the caller had it.
 pub(crate) async fn raise_wo_assigned_now(
-    conn: &impl ConnectionTrait,
+    txn: &DatabaseTransaction,
     wo_id: i64,
     now: DateTime<Utc>,
     fr: bool,
 ) -> Result<bool> {
+    let savepoint = txn.begin().await?;
+    match raise_wo_assigned_in(&savepoint, wo_id, now, fr).await {
+        Ok(raised) => {
+            savepoint.commit().await?;
+            Ok(raised)
+        }
+        Err(err) => {
+            if let Err(rollback) = savepoint.rollback().await {
+                tracing::warn!(error = %rollback, wo_id, "wo_assigned notice: savepoint rollback failed");
+            }
+            Err(err)
+        }
+    }
+}
+
+async fn raise_wo_assigned_in(conn: &impl ConnectionTrait, wo_id: i64, now: DateTime<Utc>, fr: bool) -> Result<bool> {
     const WATCHER: &str = "wo_assigned";
     if !rule_of(conn, WATCHER).await?.is_some_and(|(active, _)| active) {
         return Ok(false);
