@@ -13,6 +13,7 @@ import enPermits from "@/i18n/locale-data/en/permits.json";
 import type * as CloseoutService from "@/services/wo-closeout-service";
 import type * as WoService from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { WoCloseOutPanel } from "../WoCloseOutPanel";
 
@@ -113,7 +114,7 @@ function show(wo: WorkOrder, canEdit: boolean) {
 describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    rights.held = new Set(["ot.view", "ot.edit", "ot.close"]);
+    rights.held = new Set([P.OT_VIEW, P.OT_EDIT, P.OT_CLOSE]);
     rights.loading = false;
     rights.failed = false;
     closeout.getWoAnalyticsSnapshot.mockResolvedValue(null);
@@ -158,7 +159,7 @@ describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
   });
 
   it("offers closing to a holder of ot.close without ot.edit, as close_wo does", async () => {
-    rights.held = new Set(["ot.view", "ot.close"]);
+    rights.held = new Set([P.OT_VIEW, P.OT_CLOSE]);
     show(WO, false);
     const editReason = rightText(enAdmin.permissions.items.ot_edit.label);
     await waitFor(() => expect(saveButton()).toHaveAttribute("title", editReason));
@@ -180,7 +181,7 @@ describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
   });
 
   it("greys closing with the right it needs for a user without ot.close", async () => {
-    rights.held = new Set(["ot.view", "ot.edit"]);
+    rights.held = new Set([P.OT_VIEW, P.OT_EDIT]);
     show(WO, true);
     await waitFor(() => expect(saveButton()).toBeEnabled());
     const close = closeButton();
@@ -193,7 +194,7 @@ describe("WoCloseOutPanel actions by right and state (L5-08)", () => {
   });
 
   it("greys saving the details with the right it needs for a user without ot.edit", async () => {
-    rights.held = new Set(["ot.view"]);
+    rights.held = new Set([P.OT_VIEW]);
     show(WO, false);
     const reason = rightText(enAdmin.permissions.items.ot_edit.label);
     await waitFor(() => expect(saveButton()).toHaveAttribute("title", reason));
