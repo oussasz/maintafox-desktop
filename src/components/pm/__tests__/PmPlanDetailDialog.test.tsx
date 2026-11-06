@@ -156,6 +156,7 @@ function renderDialog(overrides: Partial<Parameters<typeof PmPlanDetailDialog>[0
     onRetryDetail: vi.fn(),
     onClose: vi.fn(),
     onEditPlan: vi.fn(),
+    onDuplicatePlan: vi.fn(),
     onDeletePlan: vi.fn(),
     onLifecycle: vi.fn(),
     onNewVersion: vi.fn(),

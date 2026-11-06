@@ -136,6 +136,7 @@
       "pm__occurrence__missed": "PM occurrence missed",
       "pm__occurrence__generated": "PM occurrence generated",
       "pm__occurrence__deferred": "PM occurrence deferred",
+      "pm__plan__duplicated": "PM plan duplicated",
       "pm__missed": "PM missed",
       "pm__follow_up_created": "Follow-up created from PM",
       "pm__finding__follow_up_created": "Follow-up created from a PM finding",
@@ -341,7 +342,8 @@
       "schedule_commitment": "Schedule commitment",
       "mobile_phone": "Mobile phone",
       "licensing_trust_key": "Licensing trust key",
-      "license_admin_action": "Licence action"
+      "license_admin_action": "Licence action",
+      "pm_plan": "PM plan"
     },
     "field": {
       "status": "Status",
@@ -369,6 +371,10 @@
     },
     "detailKey": {
       "summary": "Summary",
+      "plan_code": "Plan code",
+      "source_plan_code": "Original plan",
+      "source_version_no": "Original version",
+      "meter_to_choose": "Meter to choose",
       "actor_name": "Author",
       "detail": "Detail",
       "reason": "Reason",

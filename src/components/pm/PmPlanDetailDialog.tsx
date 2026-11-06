@@ -70,6 +70,8 @@ interface PmPlanDetailDialogProps {
   onRetryDetail: () => void;
   onClose: () => void;
   onEditPlan: () => void;
+  /** "Dupliquer ce plan": opens the copy dialog. */
+  onDuplicatePlan: () => void;
   onDeletePlan: () => void;
   onLifecycle: (next: string) => void;
   onNewVersion: () => void;
@@ -103,6 +105,7 @@ export function PmPlanDetailDialog({
   onRetryDetail,
   onClose,
   onEditPlan,
+  onDuplicatePlan,
   onDeletePlan,
   onLifecycle,
   onNewVersion,
@@ -408,6 +411,17 @@ export function PmPlanDetailDialog({
                 size="md"
               />
             ) : null}
+            <PermissionGate permission={P.PM_CREATE}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                disabled={saving}
+                onClick={onDuplicatePlan}
+              >
+                {t("actions.duplicatePlan")}
+              </Button>
+            </PermissionGate>
           </div>
         </DialogHeader>
 
