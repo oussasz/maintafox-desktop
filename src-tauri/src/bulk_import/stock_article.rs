@@ -166,9 +166,10 @@ pub const SPEC: EntitySpec = EntitySpec {
 // ─── Reference lists ──────────────────────────────────────────────────────────
 
 /// Values of a lookup domain (deleted ones left out) by code key and label keys: (id, active).
-/// A label shared with another value keeps the active one.
+/// A code always wins over another value's label; between labels, the active value wins.
 async fn lookup(db: &impl ConnectionTrait, domain: &str) -> AppResult<HashMap<String, (i64, bool)>> {
     let mut out = HashMap::new();
+    let mut labels: Vec<(String, (i64, bool))> = Vec::new();
     for r in db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -186,9 +187,12 @@ async fn lookup(db: &impl ConnectionTrait, domain: &str) -> AppResult<HashMap<St
         out.entry(key(&code)).or_insert((id, active));
         for col in ["label", "fr_label", "en_label"] {
             if let Some(label) = r.try_get::<Option<String>>("", col)? {
-                out.entry(key(&label)).or_insert((id, active));
+                labels.push((key(&label), (id, active)));
             }
         }
+    }
+    for (k, v) in labels {
+        out.entry(k).or_insert(v);
     }
     Ok(out)
 }
@@ -962,9 +966,9 @@ async fn write_source(db: &DatabaseConnection, article_id: i64, w: &Wanted) -> A
 /// The article with this code (letter case aside), read again at apply time. `Err` when several
 /// articles match.
 async fn article_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Result<Option<InventoryArticle>, String>> {
-    // Matched in Rust (any letter case, accented letters included), then read in full by its
-    // stored code: SQLite's LOWER only folds ASCII letters.
-    let mut ids: Vec<(i64, String)> = Vec::new();
+    // Matched in Rust (any letter case, accented letters included), then read in full by id:
+    // SQLite's LOWER only folds ASCII letters.
+    let mut ids: Vec<i64> = Vec::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -974,22 +978,16 @@ async fn article_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Resul
     {
         let stored: String = r.try_get("", "article_code")?;
         if key(&stored) == key(code) {
-            ids.push((r.try_get("", "id")?, stored));
+            ids.push(r.try_get("", "id")?);
         }
     }
     if ids.len() > 1 {
         return Ok(Err(ambiguous_text(code)));
     }
-    let Some((id, stored)) = ids.pop() else {
+    let Some(id) = ids.pop() else {
         return Ok(Ok(None));
     };
-    Ok(Ok(queries::list_articles(
-        db,
-        InventoryArticleFilter { search: Some(stored) },
-    )
-    .await?
-    .into_iter()
-    .find(|a| a.id == id)))
+    Ok(Ok(queries::get_article_by_id(db, id).await?))
 }
 
 /// Writes the article fields of one line: `Ok((status, article id))` or the reason it was refused.

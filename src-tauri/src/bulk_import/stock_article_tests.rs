@@ -302,6 +302,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_code_with_an_accented_capital_is_updated() {
+        let db = db_with_lists().await;
+        let (_, res) = run(
+            &db,
+            &format!(
+                "{HEADER}\n{}\n",
+                line("écrou-12", "Écrou M12;U;;;;;;;;;;;stocké;TVA_20;")
+            ),
+        )
+        .await;
+        assert_eq!((res.created, res.failed), (1, 0));
+        // Stored in capitals by the article form; found again whatever the letter case.
+        let (_, res) = run(
+            &db,
+            &format!("{HEADER}\n{}\n", line("écrou-12", "Écrou M12 inox;;;;;;;;;;;;;;")),
+        )
+        .await;
+        assert_eq!((res.updated, res.failed), (1, 0));
+        assert_eq!(article(&db, "ÉCROU-12").await.0, "Écrou M12 inox");
+    }
+
+    #[tokio::test]
     async fn the_unit_of_an_article_with_movements_is_not_changed() {
         let db = db_with_lists().await;
         run(

@@ -1062,27 +1062,42 @@ pub async fn list_articles(
     db: &DatabaseConnection,
     filter: InventoryArticleFilter,
 ) -> AppResult<Vec<InventoryArticle>> {
+    match filter.search {
+        Some(search) => {
+            let q = format!("%{}%", search.trim().to_lowercase());
+            articles_where(
+                db,
+                "WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ?",
+                vec![q.clone().into(), q.into()],
+            )
+            .await
+        }
+        None => articles_where(db, "", Vec::new()).await,
+    }
+}
+
+/// One article by id. Saving reads the article back by id, not through the text search: SQLite's
+/// LOWER only folds ASCII letters, so the search misses codes with an accented capital (ÉCROU).
+pub async fn get_article_by_id(db: &DatabaseConnection, article_id: i64) -> AppResult<Option<InventoryArticle>> {
+    Ok(articles_where(db, "WHERE a.id = ?", vec![article_id.into()])
+        .await?
+        .pop())
+}
+
+async fn articles_where(
+    db: &DatabaseConnection,
+    where_sql: &str,
+    values: Vec<Value>,
+) -> AppResult<Vec<InventoryArticle>> {
     let article_list_select = article_list_select();
     let triggers = reorder_triggers_by_article(db).await?;
-    let rows = if let Some(search) = filter.search {
-        let q = format!("%{}%", search.trim().to_lowercase());
-        db.query_all(Statement::from_sql_and_values(
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!(
-                "{article_list_select} \
-                 WHERE LOWER(a.article_code) LIKE ? OR LOWER(a.article_name) LIKE ? \
-                 ORDER BY a.article_code ASC"
-            ),
-            [q.clone().into(), q.into()],
+            format!("{article_list_select} {where_sql} ORDER BY a.article_code ASC"),
+            values,
         ))
-        .await?
-    } else {
-        db.query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            format!("{article_list_select} ORDER BY a.article_code ASC"),
-        ))
-        .await?
-    };
+        .await?;
 
     rows.into_iter()
         .map(|row| {
@@ -1322,17 +1337,8 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
 
     tx.commit().await?;
 
-    let mut rows = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(code.clone()),
-        },
-    )
-    .await?;
-
-    rows.retain(|r| r.id == article_id);
-    rows.into_iter()
-        .next()
+    get_article_by_id(db, article_id)
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created article not found")))
 }
 
@@ -1401,31 +1407,12 @@ pub async fn update_article(
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
 
-    let before_code_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT article_code FROM articles WHERE id = ?",
-            [article_id.into()],
-        ))
+    let before = get_article_by_id(db, article_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InventoryArticle".to_string(),
             id: article_id.to_string(),
         })?;
-    let before_code: String = before_code_row.try_get("", "article_code")?;
-    let before = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(before_code.clone()),
-        },
-    )
-    .await?
-    .into_iter()
-    .find(|a| a.id == article_id)
-    .ok_or_else(|| AppError::NotFound {
-        entity: "InventoryArticle".to_string(),
-        id: article_id.to_string(),
-    })?;
 
     let conflicting = db
         .query_one(Statement::from_sql_and_values(
@@ -1539,16 +1526,8 @@ pub async fn update_article(
 
     tx.commit().await?;
 
-    let rows = list_articles(
-        db,
-        InventoryArticleFilter {
-            search: Some(code.clone()),
-        },
-    )
-    .await?;
-
-    rows.into_iter()
-        .find(|r| r.id == article_id)
+    get_article_by_id(db, article_id)
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated article not found")))
 }
 
