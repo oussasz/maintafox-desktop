@@ -165,26 +165,28 @@ pub const SPEC: EntitySpec = EntitySpec {
 
 // ─── Reference lists ──────────────────────────────────────────────────────────
 
-/// Active values of a lookup domain by code key and label keys: (id, code).
-async fn lookup(db: &impl ConnectionTrait, domain: &str) -> AppResult<HashMap<String, (i64, String)>> {
+/// Values of a lookup domain (deleted ones left out) by code key and label keys: (id, active).
+/// A label shared with another value keeps the active one.
+async fn lookup(db: &impl ConnectionTrait, domain: &str) -> AppResult<HashMap<String, (i64, bool)>> {
     let mut out = HashMap::new();
     for r in db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT lv.id, lv.code, lv.label, lv.fr_label, lv.en_label FROM lookup_values lv \
+            "SELECT lv.id, lv.code, lv.label, lv.fr_label, lv.en_label, lv.is_active FROM lookup_values lv \
              JOIN lookup_domains ld ON ld.id = lv.domain_id \
-             WHERE ld.domain_key = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL \
-             ORDER BY lv.sort_order, lv.id",
+             WHERE ld.domain_key = ? AND lv.deleted_at IS NULL \
+             ORDER BY lv.is_active DESC, lv.sort_order, lv.id",
             [domain.into()],
         ))
         .await?
     {
         let id: i64 = r.try_get("", "id")?;
+        let active = r.try_get::<i64>("", "is_active")? != 0;
         let code: String = r.try_get("", "code")?;
-        out.insert(key(&code), (id, code.clone()));
+        out.entry(key(&code)).or_insert((id, active));
         for col in ["label", "fr_label", "en_label"] {
             if let Some(label) = r.try_get::<Option<String>>("", col)? {
-                out.entry(key(&label)).or_insert_with(|| (id, code.clone()));
+                out.entry(key(&label)).or_insert((id, active));
             }
         }
     }
@@ -192,41 +194,50 @@ async fn lookup(db: &impl ConnectionTrait, domain: &str) -> AppResult<HashMap<St
 }
 
 /// Stocking type from a code, a label, or the short words "stocké" / "hors stock".
-fn stocking_type(raw: &str, types: &HashMap<String, (i64, String)>) -> Option<(i64, String)> {
+fn stocking_type(raw: &str, types: &HashMap<String, (i64, bool)>) -> Option<(i64, bool)> {
     let wanted = match normalize_header(raw).as_str() {
         "stocke" | "stock" => "stocked".to_string(),
         "hors_stock" | "non_stocke" | "non_stock" => "non_stock".to_string(),
         _ => key(raw),
     };
-    types.get(&wanted).cloned()
+    types.get(&wanted).copied()
 }
 
 struct Lists {
     units: HashMap<String, (i64, bool)>,
     units_ambiguous: HashSet<String>,
     families: HashMap<String, (i64, bool)>,
-    criticality: HashMap<String, (i64, String)>,
-    stocking: HashMap<String, (i64, String)>,
-    tax: HashMap<String, (i64, String)>,
+    family_active: HashMap<i64, (String, bool)>,
+    criticality: HashMap<String, (i64, bool)>,
+    stocking: HashMap<String, (i64, bool)>,
+    tax: HashMap<String, (i64, bool)>,
     /// Suppliers by code key: (id, active); codes held twice (letter case aside) are in `suppliers_ambiguous`.
     suppliers: HashMap<String, (i64, bool)>,
     suppliers_ambiguous: HashSet<String>,
+    /// Stores and locations by id: (code, active), for the article's preferred store hint.
+    stores: HashMap<i64, (String, bool)>,
+    locations: HashMap<i64, (String, bool)>,
+}
+
+async fn active_by_id(db: &impl ConnectionTrait, sql: &str) -> AppResult<HashMap<i64, (String, bool)>> {
+    let mut out = HashMap::new();
+    for r in db
+        .query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await?
+    {
+        let active: i64 = r.try_get("", "is_active")?;
+        out.insert(r.try_get("", "id")?, (r.try_get("", "code")?, active != 0));
+    }
+    Ok(out)
 }
 
 async fn lists(db: &impl ConnectionTrait) -> AppResult<Lists> {
     let (units, units_ambiguous) = units(db).await?;
-    let mut families = HashMap::new();
-    for r in db
-        .query_all(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT id, code, is_active FROM article_families".to_string(),
-        ))
-        .await?
-    {
-        let code: String = r.try_get("", "code")?;
-        let active: i64 = r.try_get("", "is_active")?;
-        families.insert(key(&code), (r.try_get("", "id")?, active != 0));
-    }
+    let family_active = active_by_id(db, "SELECT id, code, is_active FROM article_families").await?;
+    let families = family_active
+        .iter()
+        .map(|(id, (code, active))| (key(code), (*id, *active)))
+        .collect();
     let mut suppliers = HashMap::new();
     let mut suppliers_ambiguous = HashSet::new();
     for r in db
@@ -249,11 +260,14 @@ async fn lists(db: &impl ConnectionTrait) -> AppResult<Lists> {
         units,
         units_ambiguous,
         families,
+        family_active,
         criticality: lookup(db, "equipment.criticality").await?,
         stocking: lookup(db, "inventory.stocking_type").await?,
         tax: lookup(db, "inventory.tax_category").await?,
         suppliers,
         suppliers_ambiguous,
+        stores: active_by_id(db, "SELECT id, code, is_active FROM warehouses").await?,
+        locations: active_by_id(db, "SELECT id, code, is_active FROM stock_locations").await?,
     })
 }
 
@@ -526,6 +540,85 @@ fn threshold_messages(input: &InventoryArticleInput) -> Vec<RowMessage> {
         .collect()
 }
 
+/// How a reference cell resolves against the article's current value.
+enum Picked {
+    Unknown,
+    /// Retired, and not the article's current value.
+    Inactive,
+    /// Retired, but the article already has it: nothing changes.
+    Same,
+    Set(i64),
+}
+
+fn pick(found: Option<(i64, bool)>, current: Option<i64>) -> Picked {
+    match found {
+        None => Picked::Unknown,
+        Some((id, true)) => Picked::Set(id),
+        Some((id, false)) if Some(id) == current => Picked::Same,
+        Some(_) => Picked::Inactive,
+    }
+}
+
+/// Values the line keeps from the article that the article form refuses on save once they are
+/// retired: the family and the preferred store and location.
+fn kept_value_messages(input: &InventoryArticleInput, l: &Lists) -> Vec<RowMessage> {
+    let mut out = Vec::new();
+    if let Some((code, false)) = input.family_id.and_then(|id| l.family_active.get(&id)) {
+        out.push(RowMessage::error(
+            "ARTICLE_IMPORT_FAMILY_INACTIVE",
+            format!(
+                "La famille « {code} » de cet article est inactive : indiquez une famille active dans la colonne famille, ou réactivez-la."
+            ),
+        ));
+    }
+    let store = input.preferred_warehouse_id.and_then(|id| l.stores.get(&id));
+    let location = input.preferred_location_id.and_then(|id| l.locations.get(&id));
+    for (what, found) in [("magasin", store), ("emplacement", location)] {
+        if let Some((code, false)) = found {
+            out.push(RowMessage::error(
+                "ARTICLE_IMPORT_PREFERRED_STORE_INACTIVE",
+                format!(
+                    "Le {what} préféré « {code} » de cet article est inactif : corrigez-le sur la fiche article avant d'importer."
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// A refusal of the article form, in plain French for the import report.
+fn app_error_text(e: &AppError) -> String {
+    let AppError::ValidationFailed(v) = e else {
+        return format!("Enregistrement impossible : {e}");
+    };
+    v.iter()
+        .map(|msg| {
+            let code = msg.split(':').next().unwrap_or_default().trim();
+            match code {
+                "GATE_RECORD_CHANGED_ELSEWHERE" => {
+                    "L'article a été modifié ailleurs entre-temps : relancez l'import.".to_string()
+                }
+                "GATE_INV_CODE_EXISTS" => "Ce code article existe déjà.".to_string(),
+                "GATE_INV_THRESHOLDS" | "GATE_INV_THRESHOLD_NEGATIVE" => {
+                    "Les seuils de stock sont incohérents (mini, point de commande, maxi).".to_string()
+                }
+                "GATE_INV_FAMILY_INACTIVE" | "GATE_INV_FAMILY_UNKNOWN" => {
+                    "La famille de l'article est inactive ou n'existe plus.".to_string()
+                }
+                "GATE_INV_LOCATION_INACTIVE" | "GATE_INV_LOCATION_UNKNOWN" => {
+                    "Le magasin ou l'emplacement préféré de l'article est inactif ou n'existe plus.".to_string()
+                }
+                "GATE_SUPPLIER_INACTIVE" => "Le fournisseur est inactif.".to_string(),
+                c if c.starts_with("GATE_INV_LOOKUP") || c.starts_with("GATE_UNIT") => {
+                    "Une valeur de référence de la ligne n'est plus valable (unité, criticité, type de stockage ou catégorie fiscale).".to_string()
+                }
+                _ => format!("Enregistrement refusé par la fiche article ({code})."),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn has_error(m: &[RowMessage]) -> bool {
     m.iter().any(|x| x.severity == "error")
 }
@@ -597,53 +690,59 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                 }
             }
         }
+        // A retired value is accepted only as the one the article already has (nothing changes).
         if let Some(f) = get("family") {
-            match l.families.get(&key(&f)) {
-                None => m.push(RowMessage::error(
+            match pick(l.families.get(&key(&f)).copied(), before.and_then(|a| a.family_id)) {
+                Picked::Unknown => m.push(RowMessage::error(
                     "ARTICLE_IMPORT_FAMILY",
                     format!("La famille « {f} » n'existe pas : créez-la d'abord dans Stock > Familles d'articles."),
                 )),
-                Some((id, active)) => {
-                    if !active && before.is_none_or(|a| a.family_id != Some(*id)) {
-                        m.push(RowMessage::error(
-                            "ARTICLE_IMPORT_FAMILY_INACTIVE",
-                            format!("La famille « {f} » est inactive."),
-                        ));
-                    } else {
-                        w.family_id = Some(*id);
-                    }
-                }
+                Picked::Inactive => m.push(RowMessage::error(
+                    "ARTICLE_IMPORT_FAMILY_INACTIVE",
+                    format!("La famille « {f} » est inactive."),
+                )),
+                Picked::Same => {}
+                Picked::Set(id) => w.family_id = Some(id),
             }
         }
         if let Some(v) = get("criticality") {
-            match l.criticality.get(&key(&v)) {
-                None => m.push(RowMessage::error(
+            match pick(
+                l.criticality.get(&key(&v)).copied(),
+                before.and_then(|a| a.criticality_value_id),
+            ) {
+                Picked::Unknown | Picked::Inactive => m.push(RowMessage::error(
                     "ARTICLE_IMPORT_CRITICALITY",
                     format!(
                         "La criticité « {v} » n'existe pas ou est inactive : ajoutez-la d'abord dans Données de référence."
                     ),
                 )),
-                Some((id, _)) => w.criticality_id = Some(*id),
+                Picked::Same => {}
+                Picked::Set(id) => w.criticality_id = Some(id),
             }
         }
         if let Some(v) = get("tax_category") {
-            match l.tax.get(&key(&v)) {
-                None => m.push(RowMessage::error(
+            match pick(
+                l.tax.get(&key(&v)).copied(),
+                before.map(|a| a.tax_category_value_id),
+            ) {
+                Picked::Unknown | Picked::Inactive => m.push(RowMessage::error(
                     "ARTICLE_IMPORT_TAX",
                     format!(
                         "La catégorie fiscale « {v} » n'existe pas ou est inactive : ajoutez-la d'abord dans Données de référence."
                     ),
                 )),
-                Some((id, _)) => w.tax_id = Some(*id),
+                Picked::Same => {}
+                Picked::Set(id) => w.tax_id = Some(id),
             }
         }
         if let Some(v) = get("stocking_type") {
-            match stocking_type(&v, &l.stocking) {
-                None => m.push(RowMessage::error(
+            match pick(stocking_type(&v, &l.stocking), before.map(|a| a.stocking_type_value_id)) {
+                Picked::Unknown | Picked::Inactive => m.push(RowMessage::error(
                     "ARTICLE_IMPORT_STOCKING",
                     format!("Type de stockage « {v} » inconnu : mettez stocké ou hors stock."),
                 )),
-                Some((id, _)) => w.stocking_id = Some(id),
+                Picked::Same => {}
+                Picked::Set(id) => w.stocking_id = Some(id),
             }
         }
         for (field, header, above_zero) in [
@@ -688,6 +787,15 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                             "ARTICLE_IMPORT_SUPPLIER",
                             format!("Le fournisseur « {s} » n'existe pas : importez d'abord les fournisseurs."),
                         )),
+                        // A deactivated supplier that is already the preferred one, with the same
+                        // reference (or none), changes nothing and is accepted.
+                        Some((id, false))
+                            if cur.and_then(|c| c.preferred.as_ref()).is_some_and(|(pid, _, pref)| {
+                                pid == id && w.supplier_ref.as_ref().is_none_or(|r| Some(r) == pref.as_ref())
+                            }) =>
+                        {
+                            w.supplier_ref = None;
+                        }
                         Some((_, false)) => m.push(RowMessage::error(
                             "ARTICLE_IMPORT_SUPPLIER_INACTIVE",
                             format!("Le fournisseur « {s} » est inactif."),
@@ -749,10 +857,14 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
                 ));
             }
         }
-        // Thresholds on the values the article will have once the line is applied.
+        // Thresholds, family and preferred store on the values the article will have once the line
+        // is applied: the article form re-checks all of them on every save.
         if first && !has_error(&m) {
             if let Some(input) = w.input(&code, before) {
                 m.extend(threshold_messages(&input));
+                if before.is_none_or(|a| w.article_changes(a)) {
+                    m.extend(kept_value_messages(&input, &l));
+                }
             }
         }
         if first && !has_error(&m) {
@@ -785,18 +897,32 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
     Ok(out)
 }
 
-fn app_error_text(e: &AppError) -> String {
-    match e {
-        AppError::ValidationFailed(v) => v.join(" "),
-        other => other.to_string(),
-    }
-}
-
-/// Writes the preferred supplier source; the other fields of an existing source are kept.
+/// Writes the preferred supplier source when the line changes it; the other fields of an existing
+/// source are kept.
 async fn write_source(db: &DatabaseConnection, article_id: i64, w: &Wanted) -> AppResult<()> {
     let Some(supplier_id) = w.supplier_id else {
         return Ok(());
     };
+    let preferred: Option<Preferred> = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT sas.supplier_id, s.code, sas.supplier_article_code \
+             FROM inventory_supplier_article_sources sas JOIN inventory_suppliers s ON s.id = sas.supplier_id \
+             WHERE sas.article_id = ? AND sas.is_preferred = 1 ORDER BY sas.id DESC LIMIT 1",
+            [article_id.into()],
+        ))
+        .await?
+        .map(|r| -> AppResult<Preferred> {
+            Ok((
+                r.try_get("", "supplier_id")?,
+                r.try_get("", "code")?,
+                r.try_get("", "supplier_article_code")?,
+            ))
+        })
+        .transpose()?;
+    if !w.source_changes(preferred.as_ref()) {
+        return Ok(());
+    }
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -836,20 +962,34 @@ async fn write_source(db: &DatabaseConnection, article_id: i64, w: &Wanted) -> A
 /// The article with this code (letter case aside), read again at apply time. `Err` when several
 /// articles match.
 async fn article_by_code(db: &DatabaseConnection, code: &str) -> AppResult<Result<Option<InventoryArticle>, String>> {
-    let mut found: Vec<InventoryArticle> = queries::list_articles(
+    // Matched in Rust (any letter case, accented letters included), then read in full by its
+    // stored code: SQLite's LOWER only folds ASCII letters.
+    let mut ids: Vec<(i64, String)> = Vec::new();
+    for r in db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, article_code FROM articles".to_string(),
+        ))
+        .await?
+    {
+        let stored: String = r.try_get("", "article_code")?;
+        if key(&stored) == key(code) {
+            ids.push((r.try_get("", "id")?, stored));
+        }
+    }
+    if ids.len() > 1 {
+        return Ok(Err(ambiguous_text(code)));
+    }
+    let Some((id, stored)) = ids.pop() else {
+        return Ok(Ok(None));
+    };
+    Ok(Ok(queries::list_articles(
         db,
-        InventoryArticleFilter {
-            search: Some(code.to_string()),
-        },
+        InventoryArticleFilter { search: Some(stored) },
     )
     .await?
     .into_iter()
-    .filter(|a| key(&a.article_code) == key(code))
-    .collect();
-    if found.len() > 1 {
-        return Ok(Err(ambiguous_text(code)));
-    }
-    Ok(Ok(found.pop()))
+    .find(|a| a.id == id)))
 }
 
 /// Writes the article fields of one line: `Ok((status, article id))` or the reason it was refused.

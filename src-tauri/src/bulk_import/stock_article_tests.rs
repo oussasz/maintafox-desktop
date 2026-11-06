@@ -264,6 +264,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retired_values_the_article_keeps_round_trip_but_block_a_change() {
+        let db = db_with_lists().await;
+        run(
+            &db,
+            &format!(
+                "{HEADER}\n{}\n",
+                line("A1", "Article;U;ROUL;;;F1;R-1;;;;;;stocké;TVA_7;")
+            ),
+        )
+        .await;
+        // The family, the tax category and the supplier are retired after the article was made.
+        for sql in [
+            "UPDATE article_families SET is_active = 0 WHERE code = 'ROUL'",
+            "UPDATE lookup_values SET is_active = 0 WHERE code = 'TVA_7'",
+            "UPDATE inventory_suppliers SET is_active = 0 WHERE code = 'F1'",
+        ] {
+            db.execute(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+                .await
+                .expect("retire");
+        }
+
+        // The export still re-imports as "nothing to do".
+        let table = bulk_import::export(&db, "stock_article").await.expect("export");
+        let mut csv = table.header.join(";");
+        for row in &table.rows {
+            csv.push('\n');
+            csv.push_str(&row.join(";"));
+        }
+        all_skip(&db, &csv).await;
+
+        // Any change of the article is refused in the preview, since the article form refuses to
+        // save it with a retired family.
+        let (codes, res) = run(&db, &format!("{HEADER}\n{}\n", line("A1", ";;;;;;;;3;;;;;;"))).await;
+        assert_eq!(codes[0], vec!["ARTICLE_IMPORT_FAMILY_INACTIVE"]);
+        assert_eq!((res.updated, res.failed), (0, 0));
+    }
+
+    #[tokio::test]
     async fn the_unit_of_an_article_with_movements_is_not_changed() {
         let db = db_with_lists().await;
         run(
