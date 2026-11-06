@@ -397,11 +397,16 @@ async fn count_kpi_eligible_failure_events(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS c FROM failure_events
-             WHERE equipment_id = ?
-               AND CAST(json_extract(eligible_flags_json, '$.eligible_unplanned_mtbf') AS INTEGER) = 1
-               AND COALESCE(failed_at, detected_at, created_at) >= ?
-               AND COALESCE(failed_at, detected_at, created_at) <= ?",
+            // Failures counted in the MTBF: every unplanned one (`compute::counts_in_mtbf`, live),
+            // not the stored flag.
+            format!(
+                "SELECT COUNT(*) AS c FROM failure_events
+                 WHERE equipment_id = ?
+                   AND {}
+                   AND COALESCE(failed_at, detected_at, created_at) >= ?
+                   AND COALESCE(failed_at, detected_at, created_at) <= ?",
+                crate::reliability::compute::COUNTS_IN_MTBF_SQL
+            ),
             [equipment_id.into(), period_start.into(), period_end.into()],
         ))
         .await?
@@ -409,6 +414,8 @@ async fn count_kpi_eligible_failure_events(
     row.try_get("", "c").map_err(decode)
 }
 
+/// Marks the demo work-order failures verified. It only rewrites the stored flag (provenance); no
+/// figure reads that flag any more (the MTBF counts every unplanned failure, decided live).
 async fn sql_promote_failure_event_eligibility(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

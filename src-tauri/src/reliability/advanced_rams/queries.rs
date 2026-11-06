@@ -14,7 +14,7 @@ use crate::reliability::advanced_rams::domain::{
     UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput, UpsertRcmDecisionInput, WeibullCurvePoint,
     WeibullDashboardInput, WeibullDashboardPayload, WeibullFitRecord, WeibullFitRunInput, WeibullPmMarker,
 };
-use crate::reliability::compute::eligible_unplanned_mtbf;
+use crate::reliability::compute::COUNTS_IN_MTBF_SQL;
 use crate::reliability::exposure_inference::{load_exposure_basis, ExposureBasis};
 use crate::reliability::readiness_gate::{
     evaluate_equipment_readiness, ReliabilityReadinessGate, ReliabilityReadinessInput,
@@ -84,8 +84,8 @@ pub fn weibull_observations_from_events(
     (out, dropped)
 }
 
-/// Eligible (`eligible_unplanned_mtbf`) failure events for one equipment, optionally one failure mode,
-/// ordered by failure time.
+/// Failure events counted in the MTBF (every unplanned failure, `compute::counts_in_mtbf`, decided
+/// live from the record) for one equipment, optionally one failure mode, ordered by failure time.
 pub async fn load_weibull_source_events(
     db: &DatabaseConnection,
     equipment_id: i64,
@@ -93,9 +93,9 @@ pub async fn load_weibull_source_events(
     period_end: Option<&str>,
     failure_mode_id: Option<i64>,
 ) -> AppResult<Vec<WeibullSourceEvent>> {
-    let mut sql = String::from(
-        "SELECT id, COALESCE(failed_at, detected_at, created_at) AS ts, restored_at, eligible_flags_json
-         FROM failure_events WHERE equipment_id = ?",
+    let mut sql = format!(
+        "SELECT id, COALESCE(failed_at, detected_at, created_at) AS ts, restored_at
+         FROM failure_events WHERE equipment_id = ? AND {COUNTS_IN_MTBF_SQL}"
     );
     let mut vals: Vec<sea_orm::Value> = vec![equipment_id.into()];
     if let Some(ps) = period_start {
@@ -116,12 +116,6 @@ pub async fn load_weibull_source_events(
         .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
-        let flags: String = r
-            .try_get("", "eligible_flags_json")
-            .map_err(|e| decode_err("eligible_flags_json", e))?;
-        if !eligible_unplanned_mtbf(&flags) {
-            continue;
-        }
         let ts: String = r.try_get("", "ts").map_err(|e| decode_err("ts", e))?;
         let restored: Option<String> = r.try_get("", "restored_at").map_err(|e| decode_err("restored_at", e))?;
         out.push(WeibullSourceEvent {
@@ -182,6 +176,8 @@ pub async fn run_and_store_weibull_fit(
             period_start: input.period_start.clone(),
             period_end: input.period_end.clone(),
             min_sample_n: None,
+            // The fit takes only this mode's failures: the gate checks those.
+            failure_mode_id: input.failure_mode_id,
         },
     )
     .await?;
@@ -1689,6 +1685,7 @@ async fn readiness_for_live_values(db: &DatabaseConnection, equipment_id: i64) -
             period_start: None,
             period_end: None,
             min_sample_n: None,
+            failure_mode_id: None,
         },
     )
     .await
