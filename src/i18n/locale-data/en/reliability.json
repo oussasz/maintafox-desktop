@@ -907,7 +907,7 @@
       "reason": {
         "analyst": "Excluded by the analyst",
         "analyst_included": "Included by the analyst",
-        "not_eligible": "Excluded by default: no mode or cause not determined",
+        "not_eligible": "Excluded by default: no failure mode",
         "no_known_start": "Age unknown: no earlier renewal known (its repair starts the next age)",
         "zero_age": "Zero age: no operating hours since the previous renewal",
         "pm_not_confirmed": "To confirm: did this preventive work replace the part?"

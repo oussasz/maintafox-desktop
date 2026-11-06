@@ -907,7 +907,7 @@
       "reason": {
         "analyst": "Exclue par l'analyste",
         "analyst_included": "Incluse par l'analyste",
-        "not_eligible": "Exclue d'office : mode absent ou cause indéterminée",
+        "not_eligible": "Exclue d'office : mode de défaillance absent",
         "no_known_start": "Âge inconnu : aucune remise à neuf connue avant (sa réparation sert de départ à la suivante)",
         "zero_age": "Âge nul : aucune heure de marche depuis la remise à neuf précédente",
         "pm_not_confirmed": "À confirmer : ce préventif a-t-il remplacé la pièce ?"

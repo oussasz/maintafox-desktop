@@ -18,7 +18,7 @@
       "saveLayout": "Enregistrer",
       "cancel": "Annuler",
       "widgetsSection": "Blocs affichés",
-      "reliabilityHint": "Valeurs regroupées du parc à partir des instantanés de fiabilité des {{days}} derniers jours (limitées à l’organisation choisie). Les écarts comparent aux {{days}} jours précédents.",
+      "reliabilityHint": "Calcul en direct sur les défaillances, {{period}} (limité à l’organisation choisie) : le même calcul que l’accueil RAMS. Les écarts comparent à la période précédente de même durée. Instantanés et taille d’échantillon : série issue des instantanés de fiabilité rafraîchis sur la période.",
       "vsPrior": "vs préc.",
       "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
       "sections": {
@@ -33,6 +33,7 @@
         "days7": "7 jours",
         "days30": "30 jours",
         "days90": "90 jours",
+        "months12": "12 mois",
         "orgScope": "Organisation",
         "allOrgs": "Toutes les organisations"
       },
@@ -48,12 +49,8 @@
         "pmOverdue": "PM en retard",
         "pmDueToday": "PM dues aujourd’hui",
         "pmDueNext7d": "PM dues sous 7 jours",
-        "mtbf": "MTBF parc (h)",
-        "mttr": "MTTR parc (h)",
-        "availability": "Disponibilité opérationnelle parc (A_o)",
-        "dataQuality": "Qualité des données",
-        "snapshots": "Instantanés",
-        "failureEvents": "Événements de défaillance",
+        "sampleSize": "Taille d’échantillon",
+        "snapshots": "Équipements avec instantané",
         "maintenanceCost": "Coût OT valorisé au budget"
       },
       "badActors": {
@@ -74,6 +71,7 @@
         "today": "Aujourd’hui",
         "next7": "7 prochains jours",
         "horizon": "{{days}} derniers jours",
+        "snapshots": "{{period}} · série issue des instantanés",
         "inService": "Enregistrés, non supprimés",
         "overdue": "DI ouvertes > 7 jours + PM en retard + OT en retard",
         "costSettled": "Comptabilisé au budget par la Finance, {{days}} derniers jours",
