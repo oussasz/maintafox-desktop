@@ -605,17 +605,15 @@ impl Corrective {
                 .await?;
                 // A safety report was raised to at least "urgent" when it was saved; the supervisor
                 // confirms that urgency rather than lowering it (lowering needs a review reason).
-                let validated = if self.loto {
-                    super::scalar_text(
-                        db,
-                        "SELECT reported_urgency FROM intervention_requests WHERE id = ?",
-                        vec![self.di_id.into()],
-                    )
-                    .await?
-                    .unwrap_or_else(|| self.urgency.to_string())
-                } else {
-                    self.urgency.to_string()
-                };
+                // The flag is read from the request itself: one raised from an inspection anomaly can be
+                // flagged whatever this story says.
+                let validated = super::scalar_text(
+                    db,
+                    "SELECT reported_urgency FROM intervention_requests WHERE id = ? AND safety_flag = 1",
+                    vec![self.di_id.into()],
+                )
+                .await?
+                .unwrap_or_else(|| self.urgency.to_string());
                 if self.rejected {
                     crate::di::review::close_di(
                         db,
