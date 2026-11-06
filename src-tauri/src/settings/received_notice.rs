@@ -957,6 +957,57 @@ pub(crate) async fn notify_work_order_rule_type_changed(
     .await;
 }
 
+/// Permit types were added to the set a work order requires (`permit::requirement_rules::
+/// add_matching_types`, CMMS Advisor 2026-11-04) while it already required others: the permit-issue
+/// right holders of its site are told, once for the types added together, each until they
+/// acknowledge it ([`WO_PERMIT_RULE_MISSING_CATEGORY`], its audience and fallback): the permit
+/// planned for the work may not cover them. The addition is recorded in the work order's history and
+/// audit trail; a notice that cannot be written is logged.
+pub(crate) async fn notify_work_order_permit_types_added(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    wo_sync_id: &str,
+    wo_code: &str,
+    added: &[(String, String)],
+    before: &[String],
+) {
+    let types = added.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(", ");
+    let rules = added.iter().map(|(_, r)| r.as_str()).collect::<Vec<_>>().join(", ");
+    let previous = before.join(", ");
+    let route = NoticeRoute {
+        category: WO_PERMIT_RULE_MISSING_CATEGORY,
+        source_module: "work_orders",
+        source_record_id: wo_id.to_string(),
+        entity_type: "work_orders",
+        entity_sync_id: wo_sync_id,
+        org_node_id: None,
+    };
+    send_logged_notice(
+        conn,
+        &route,
+        format!(
+            "OT {wo_code} : permis exigé en plus : {types} / Work order {wo_code}: permit now also required: {types}"
+        ),
+        format!(
+            "Les règles de permis de l'usine ({rules}) exigent aussi pour l'OT {wo_code} un permis {types}, en plus de \
+             {previous}. Un permis actif de chaque type est nécessaire pour démarrer ou reprendre ce travail. / The \
+             plant's permit rules ({rules}) also require a {types} permit for work order {wo_code}, besides \
+             {previous}. An active permit of each type is needed to start or resume this work."
+        ),
+        &format!("/work-orders?openWo={wo_id}"),
+        &NotificationMessage::new(
+            "wo_permit_types_added",
+            json!({
+                "code": wo_code,
+                "permit_types": types,
+                "rules": rules,
+                "previous_permit_types": previous,
+            }),
+        ),
+    )
+    .await;
+}
+
 /// Writes a notice in a savepoint of the caller's transaction; a notice that cannot be written is
 /// logged and the change it tells of is kept (it is never held back by its notice).
 async fn send_logged_notice(

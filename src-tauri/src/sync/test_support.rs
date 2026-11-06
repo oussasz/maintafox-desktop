@@ -502,6 +502,7 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "permit_rule_code", "NULL"),
     ("work_orders", "permit_rule_permit_type", "NULL"),
     ("work_orders", "permit_rule_cleared_at", "NULL"),
+    ("work_orders", "permit_required_types_json", "NULL"),
     // Nor a permit requirement from a request flagged "sécurité" (migration 255, judged on arrival
     // the same way).
     ("work_orders", "permit_from_safety_di", "0"),

@@ -6,9 +6,23 @@
 //! without a blocking surprise is applied. Rows are keyed by the business codes the user can see.
 //! An import never deletes a row that is missing from the file.
 
+pub mod cost_centre;
+#[cfg(test)]
+mod cost_centre_tests;
+pub mod equipment_meter;
+#[cfg(test)]
+mod equipment_meter_tests;
 pub mod org_tree;
 #[cfg(test)]
 mod org_tree_tests;
+pub mod personnel_certification;
+pub mod personnel_skill;
+#[cfg(test)]
+mod personnel_skill_tests;
+pub mod team;
+pub mod team_member;
+#[cfg(test)]
+mod team_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -43,7 +57,15 @@ pub struct EntitySpec {
     pub columns: &'static [Column],
 }
 
-pub const ENTITIES: &[&EntitySpec] = &[&org_tree::SPEC];
+pub const ENTITIES: &[&EntitySpec] = &[
+    &org_tree::SPEC,
+    &cost_centre::SPEC,
+    &team::SPEC,
+    &team_member::SPEC,
+    &personnel_skill::SPEC,
+    &personnel_certification::SPEC,
+    &equipment_meter::SPEC,
+];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
     ENTITIES
@@ -331,6 +353,40 @@ fn map_columns(
     Ok((rows, ignored))
 }
 
+/// A date cell: `JJ/MM/AAAA` (or `J/M/AAAA`), ISO `AAAA-MM-JJ`, or an Excel date serial; a time
+/// after the date is ignored. The year needs four digits. A bare number is read as an Excel date
+/// only between 1950 and 2100, so a stray year or count is never turned into a date. `Err` when
+/// the cell is not a date.
+pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<chrono::NaiveDate>, ()> {
+    use chrono::NaiveDate;
+    let Some(text) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let day = text.split(['T', ' ']).next().unwrap_or(text);
+    if day.rsplit('/').next().is_some_and(|y| y.len() == 4) {
+        if let Ok(d) = NaiveDate::parse_from_str(day, "%d/%m/%Y") {
+            return Ok(Some(d));
+        }
+    }
+    if day.split('-').next().is_some_and(|y| y.len() == 4) {
+        if let Ok(d) = NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+            return Ok(Some(d));
+        }
+    }
+    // Excel stores a date as the number of days since 30/12/1899 (18264 = 01/01/1950,
+    // 73051 = 01/01/2100).
+    if let Ok(serial) = text.parse::<f64>() {
+        if (18_264.0..73_051.0).contains(&serial) {
+            let base = NaiveDate::from_ymd_opt(1899, 12, 30).ok_or(())?;
+            return base
+                .checked_add_signed(chrono::Duration::days(serial.trunc() as i64))
+                .map(Some)
+                .ok_or(());
+        }
+    }
+    Err(())
+}
+
 // ─── Batches ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -431,6 +487,12 @@ async fn validate(
 ) -> AppResult<Vec<RowOutcome>> {
     match entity {
         "org_tree" => org_tree::validate(db, rows).await,
+        "cost_centre" => cost_centre::validate(db, rows).await,
+        "team" => team::validate(db, rows).await,
+        "team_member" => team_member::validate(db, rows).await,
+        "personnel_skill" => personnel_skill::validate(db, rows).await,
+        "personnel_certification" => personnel_certification::validate(db, rows).await,
+        "equipment_meter" => equipment_meter::validate(db, rows).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -623,6 +685,12 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
 
     let applied = match batch.entity.as_str() {
         "org_tree" => org_tree::apply(db, &todo, user_id).await,
+        "cost_centre" => cost_centre::apply(db, &todo).await,
+        "team" => team::apply(db, &todo).await,
+        "team_member" => team_member::apply(db, &todo, user_id).await,
+        "personnel_skill" => personnel_skill::apply(db, &todo).await,
+        "personnel_certification" => personnel_certification::apply(db, &todo).await,
+        "equipment_meter" => equipment_meter::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -736,6 +804,12 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
     let spec = spec(entity)?;
     let rows = match spec.code {
         "org_tree" => org_tree::export(db).await?,
+        "cost_centre" => cost_centre::export(db).await?,
+        "team" => team::export(db).await?,
+        "team_member" => team_member::export(db).await?,
+        "personnel_skill" => personnel_skill::export(db).await?,
+        "personnel_certification" => personnel_certification::export(db).await?,
+        "equipment_meter" => equipment_meter::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {

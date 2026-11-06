@@ -5,7 +5,7 @@
       "outsideScope_other": "{{count}} OT ne sont pas affichés : hors de vos sites.",
       "withoutSite_one": "{{count}} OT n’est pas affiché : il n’a pas de site.",
       "withoutSite_other": "{{count}} OT ne sont pas affichés : ils n’ont pas de site.",
-      "allWorkOrders": "Ces nombres portent sur tous les OT, quels que soient les filtres ou la recherche.",
+      "allWorkOrders": "Total calculé sur tous les OT, sans tenir compte des filtres.",
       "askPlantWide": "Demandez à un utilisateur ayant un rôle valable pour toute l’usine pour les voir."
     },
     "noSite": {
@@ -16,7 +16,16 @@
   "permitRule": {
     "requiredBy": "Permis exigé par la règle {{rule}} (type de permis {{permitType}}).",
     "requiredByNoType": "Permis exigé par la règle {{rule}}.",
-    "severalTypes": "Plusieurs règles de permis : {{types}}",
+    "listTitle": "Permis exigés par les règles de l'usine : un permis vivant de chaque type pour démarrer ou reprendre.",
+    "listRule": "règle {{rule}}",
+    "listPrimary": "principale",
+    "listLive": "Permis {{permit}} ({{status}})",
+    "listMissing": "Aucun permis de ce type lié",
+    "listCleared": "Levée le {{date}} par {{by}} : {{reason}}",
+    "listClearedNoName": "Levée le {{date}} : {{reason}}",
+    "listClear": "Lever",
+    "clearTypeTitle": "Lever l'exigence du permis {{permitType}} ?",
+    "clearTypeBody": "{{code}} n'exigera plus de permis {{permitType}} (règle {{rule}}). Les autres permis exigés le restent. Le motif, la date et votre nom sont conservés sur l'OT et dans son historique.",
     "requiredShort": "Requis (règle {{rule}})",
     "clearHint": "Seule une personne habilitée à délivrer les permis peut lever cette exigence, avec un motif, avant le démarrage.",
     "checkboxLocked": "Exigé par la règle {{rule}} : se lève avec « Lever l'exigence » ci-dessous.",
@@ -837,6 +846,11 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Confirmation du mot de passe signataire",
     "fmecaOverrideHint": "Requis uniquement si les pièces suggérées critiques FMECA n'ont pas été consommées. Le signataire doit être Superviseur/Admin, distinct du clôturant et ré-authentifié.",
     "closeWo": "Fermer l'OT",
+    "blocked": {
+      "closed": "L'OT est clôturé : ses détails ne se modifient plus.",
+      "cancelled": "L'OT est annulé : ses détails ne se modifient plus.",
+      "rightRequired": "Droit requis : {{right}}."
+    },
     "confirmVerifyTitle": "Enregistrer la vérification technique ?",
     "confirmVerifyDescription": "{{code}} : résultat « {{result}} »{{rts}}. La vérification est enregistrée à votre nom dans le journal d'audit.",
     "confirmVerifyReturnToService": ", équipement remis en service",

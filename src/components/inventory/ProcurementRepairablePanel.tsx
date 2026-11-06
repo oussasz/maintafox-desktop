@@ -251,7 +251,9 @@ const PO_KANBAN_STATUSES = [
 /**
  * Board moves = the one-click lifecycle steps the row menu already offers (submit, approve),
  * run through the same `transition_*` command and server guards. Reject (reason), cancel and
- * close (confirmation) stay dialog-only and are never offered as a drop target.
+ * close (confirmation) stay dialog-only and are never offered as a drop target. "Approved" is no
+ * drop target for a document the signed-in user may not approve (their own, or a missing right):
+ * the row menu's greyed-out Approve says why.
  */
 const BOARD_ONE_CLICK_MOVES: Record<string, string> = {
   DRAFT: "SUBMITTED",
@@ -2206,7 +2208,14 @@ export const ProcurementRepairablePanel = forwardRef<
                         columns={reqKanbanColumns}
                         cards={reqKanbanCards}
                         enableDrag={canProcure}
-                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        canDrop={(card, from, to) =>
+                          isBoardOneClickMove(from, to) &&
+                          (to !== "APPROVED" ||
+                            approvalBlockerFor(
+                              requisitions.find((r) => String(r.id) === card.id)?.requested_by_id ??
+                                null,
+                            ) === null)
+                        }
                         onDrop={async (card, _from, to) => {
                           const row = requisitions.find((r) => String(r.id) === card.id);
                           if (!row) return false;
@@ -2284,7 +2293,14 @@ export const ProcurementRepairablePanel = forwardRef<
                         columns={poKanbanColumns}
                         cards={poKanbanCards}
                         enableDrag={canProcure}
-                        canDrop={(_card, from, to) => isBoardOneClickMove(from, to)}
+                        canDrop={(card, from, to) =>
+                          isBoardOneClickMove(from, to) &&
+                          (to !== "APPROVED" ||
+                            approvalBlockerFor(
+                              purchaseOrders.find((r) => String(r.id) === card.id)?.ordered_by_id ??
+                                null,
+                            ) === null)
+                        }
                         onDrop={async (card, _from, to) => {
                           const row = purchaseOrders.find((r) => String(r.id) === card.id);
                           if (!row) return false;

@@ -1772,15 +1772,16 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
     assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
 }
 
-/// Editing a permit cannot link it to a work order that already has an open permit (same rule
-/// as creation); refusals of the permit rules are coded.
+/// Editing a permit cannot link it to a work order that already has an open permit of its type
+/// (same rule as creation: one open permit per type, L4-10b); refusals of the permit rules are
+/// coded.
 #[tokio::test]
 async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-PTW-80").await;
     let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
     let first = create_from_wo(&db, "loto", wo_id).await.expect("first permit");
-    let other = create_permit(&db, "hot_work", asset).await;
+    let other = create_permit(&db, "loto", asset).await;
     let res = queries::update_work_permit(
         &db,
         WorkPermitUpdateInput {
@@ -2218,6 +2219,15 @@ fn session_user(id: i64, username: &str, is_admin: bool) -> crate::auth::session
     }
 }
 
+/// The command path checks the licence matrix, which refuses writes from a device that has no
+/// trusted binding for the user. Bind this device here so the test never depends on the network.
+async fn trust_this_device(db: &DatabaseConnection, user_id: i64) {
+    let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
+    crate::auth::device::register_device_trust(db, i32::try_from(user_id).expect("fits"), &fingerprint, None)
+        .await
+        .expect("trust register");
+}
+
 /// The command asks `adm.settings` and a step-up only when the setting changes.
 #[tokio::test]
 async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_chain() {
@@ -2233,6 +2243,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     let issuer_id = user_with(&db, "ptw_issuer_only", &[crate::rbac::permissions::PTW_ISSUE]).await;
     let issuer = session_user(issuer_id, "ptw_issuer_only", false);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, issuer_id).await;
     state.session.write().await.create_session(issuer.clone());
     let renamed = crate::commands::permit::upsert_permit_type_impl(&state, &issuer, chain_input(&hot, None, None))
         .await
@@ -2249,6 +2260,7 @@ async fn the_command_asks_adm_settings_and_step_up_to_change_the_three_person_ch
     // The administrator: refused until the step-up, then accepted (and audited).
     let admin = session_user(APPLIER, "admin", true);
     let state = crate::state::AppState::new(db.clone());
+    trust_this_device(&db, APPLIER).await;
     state.session.write().await.create_session(admin.clone());
     let err = crate::commands::permit::upsert_permit_type_impl(
         &state,

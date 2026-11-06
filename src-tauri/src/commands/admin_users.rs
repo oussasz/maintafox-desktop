@@ -124,6 +124,11 @@ pub struct AssignRoleScopeInput {
     pub scope_reference: Option<String>,
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,
+    /// Plant-wide assignments of the same user to end with this grant, when the new scope is
+    /// narrower than the whole plant (L5-07: a site role replaces the plant-wide one). Ended like
+    /// a withdrawal, in the same transaction as the grant; empty keeps them.
+    #[serde(default)]
+    pub end_plant_wide_assignment_ids: Vec<i64>,
 }
 
 // ── Role DTOs ────────────────────────────────────────────────────────────────
@@ -1582,6 +1587,149 @@ pub(crate) async fn ensure_role_allowed_at_scope<C: ConnectionTrait>(
     Ok(())
 }
 
+/// Admin ledger action of a plant-wide assignment ended because a narrower one replaced it (L5-07).
+pub(crate) const ROLE_REPLACED_ACTION: &str = "role_replaced";
+
+/// SQL condition: the org node `top` belongs to the active structure model (the one the
+/// permission checks follow).
+const ACTIVE_MODEL_NODE_SQL: &str = "top.deleted_at IS NULL AND EXISTS (SELECT 1 FROM org_structure_models m \
+     WHERE m.id = top.structure_model_id AND m.status = 'active')";
+
+/// SQL condition: the org node `top` is the single top node of the active organisation (the one
+/// made at activation, every site sits under it), so a role on it covers the whole plant. With
+/// several top nodes, each is only a part of the plant.
+const SINGLE_TOP_NODE_SQL: &str = "top.parent_id IS NULL AND top.deleted_at IS NULL \
+     AND EXISTS (SELECT 1 FROM org_structure_models m \
+         WHERE m.id = top.structure_model_id AND m.status = 'active') \
+     AND NOT EXISTS (SELECT 1 FROM org_nodes other WHERE other.parent_id IS NULL \
+         AND other.deleted_at IS NULL AND other.id <> top.id \
+         AND other.structure_model_id = top.structure_model_id)";
+
+/// SQL condition: the assignment `usa` covers the whole plant (plant-wide scope, or the single top
+/// node of the organisation).
+fn covers_whole_plant_sql() -> String {
+    format!(
+        "(usa.scope_type = 'tenant' \
+         OR (usa.scope_type IN ('entity', 'site', 'org_node') AND EXISTS ( \
+             SELECT 1 FROM org_nodes top WHERE CAST(top.id AS TEXT) = usa.scope_reference \
+               AND {SINGLE_TOP_NODE_SQL})))"
+    )
+}
+
+/// A plant-wide assignment ended in favour of a narrower one.
+struct EndedPlantWide {
+    id: i64,
+    role_id: i64,
+    role_name: String,
+    scope_type: String,
+    scope_reference: Option<String>,
+}
+
+/// Whether a scope is narrower than the whole plant: a team, or an org node of the active
+/// structure other than its single top node. A node outside the active structure replaces nothing.
+async fn scope_is_narrower_than_plant<C: ConnectionTrait>(
+    conn: &C,
+    scope_type: &str,
+    scope_reference: Option<&str>,
+) -> AppResult<bool> {
+    match scope_type {
+        "tenant" => Ok(false),
+        "team" => Ok(true),
+        _ => {
+            let reference = scope_reference.unwrap_or("");
+            let active = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {ACTIVE_MODEL_NODE_SQL}"
+                    ),
+                    [reference.into()],
+                ))
+                .await?
+                .is_some();
+            if !active {
+                return Ok(false);
+            }
+            let whole_plant = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT 1 AS ok FROM org_nodes top WHERE CAST(top.id AS TEXT) = ? AND {SINGLE_TOP_NODE_SQL}"
+                    ),
+                    [reference.into()],
+                ))
+                .await?
+                .is_some();
+            Ok(!whole_plant)
+        }
+    }
+}
+
+/// End, inside the grant's transaction, the plant-wide assignments the administrator chose to
+/// replace with a narrower one. Each must belong to the same user, be in force (or start later),
+/// not be an emergency grant and cover the whole plant; anything else refuses the whole grant.
+/// The rows are ended like a withdrawal (`deleted_at`), never deleted: history and sync keep them.
+async fn end_replaced_plant_wide<C: ConnectionTrait>(
+    conn: &C,
+    user_id: i64,
+    new_scope_type: &str,
+    new_scope_reference: Option<&str>,
+    ids: &[i64],
+    now: &str,
+) -> AppResult<Vec<EndedPlantWide>> {
+    let mut unique: Vec<i64> = ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !scope_is_narrower_than_plant(conn, new_scope_type, new_scope_reference).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_ADMIN_REPLACE_NOT_NARROWER: Only a role limited to part of the plant replaces a plant-wide role."
+                .into(),
+        ]));
+    }
+    let mut ended = Vec::with_capacity(unique.len());
+    for id in unique {
+        let row = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT usa.id, usa.role_id, r.name AS role_name, usa.scope_type, usa.scope_reference \
+                     FROM user_scope_assignments usa \
+                     INNER JOIN roles r ON r.id = usa.role_id \
+                     WHERE usa.id = ? AND usa.user_id = ? AND usa.deleted_at IS NULL \
+                       AND usa.is_emergency = 0 \
+                       AND (usa.valid_to IS NULL OR usa.valid_to >= ?) \
+                       AND {}",
+                    covers_whole_plant_sql()
+                ),
+                [id.into(), user_id.into(), now.into()],
+            ))
+            .await?;
+        let Some(row) = row else {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "GATE_ADMIN_REPLACE_NOT_PLANT_WIDE: Assignment {id} is not a plant-wide role of this account in force."
+            )]));
+        };
+        ended.push(EndedPlantWide {
+            id: row.try_get("", "id")?,
+            role_id: row.try_get("", "role_id")?,
+            role_name: row.try_get("", "role_name")?,
+            scope_type: row.try_get("", "scope_type")?,
+            scope_reference: row.try_get::<Option<String>>("", "scope_reference")?,
+        });
+        conn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_scope_assignments SET deleted_at = ?, updated_at = ? \
+             WHERE id = ? AND deleted_at IS NULL",
+            [now.into(), now.into(), id.into()],
+        ))
+        .await?;
+    }
+    Ok(ended)
+}
+
 pub(crate) async fn assign_role_scope_impl(
     state: &AppState,
     caller: &AuthenticatedUser,
@@ -1681,6 +1829,17 @@ pub(crate) async fn assign_role_scope_impl(
         ],
     ))
     .await?;
+    // A narrower grant may end the plant-wide roles the administrator chose (L5-07), same
+    // transaction: never both in force by a partial failure, never neither.
+    let ended_plant_wide = end_replaced_plant_wide(
+        &tx,
+        input.user_id,
+        &input.scope_type,
+        scope_reference_input.as_deref(),
+        &input.end_plant_wide_assignment_ids,
+        &now,
+    )
+    .await?;
 
     // INSERT — partial unique index `uidx_usa_user_role_scope` (deleted_at IS NULL)
     // prevents duplicate *active* rows for the same role + scope.
@@ -1755,12 +1914,41 @@ pub(crate) async fn assign_role_scope_impl(
         .await?;
     }
 
+    for old in &ended_plant_wide {
+        crate::commands::admin_governance::write_admin_event(
+            &tx,
+            i64::from(caller.user_id),
+            &crate::commands::admin_governance::AdminEventRecord {
+                action: ROLE_REPLACED_ACTION,
+                target_user_id: Some(user_id_for_audit),
+                target_role_id: Some(old.role_id),
+                scope_type: Some(old.scope_type.as_str()),
+                scope_reference: old.scope_reference.as_deref(),
+                summary: Some(format!(
+                    "Plant-wide role '{}' ended: replaced by a role limited to part of the plant",
+                    old.role_name
+                )),
+                diff: Some(serde_json::json!({
+                    "assignment_id": old.id,
+                    "replaced_by_assignment_id": new_id,
+                    "replaced_by_role_id": role_id_for_audit,
+                    "replaced_by_scope_type": scope_type_for_audit,
+                    "replaced_by_scope_reference": scope_reference_for_audit,
+                })),
+                step_up_used: true,
+            },
+            crate::commands::admin_governance::APPLY_RESULT_APPLIED,
+        )
+        .await?;
+    }
+
     let detail_json = serde_json::json!({
         "role_id": role_id_for_audit,
         "scope_type": scope_type_for_audit,
         "assignment_id": new_id,
         "valid_from": valid_from,
         "valid_to": valid_to,
+        "ended_plant_wide_assignment_ids": ended_plant_wide.iter().map(|e| e.id).collect::<Vec<_>>(),
     });
     let detail_str = detail_json.to_string();
 
@@ -1801,6 +1989,29 @@ pub(crate) async fn assign_role_scope_impl(
                 entity_id: Some(target_str.as_str()),
                 summary: "Role scope assignment created",
                 detail_json: Some(detail_str.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    for old in &ended_plant_wide {
+        let target_str = old.id.to_string();
+        let detail = serde_json::json!({
+            "assignment_id": old.id,
+            "user_id": user_id_for_audit,
+            "role_id": old.role_id,
+            "replaced_by_assignment_id": new_id,
+        })
+        .to_string();
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::ROLE_REPLACED,
+                actor_id: Some(caller.user_id),
+                entity_type: Some("user_scope_assignment"),
+                entity_id: Some(target_str.as_str()),
+                summary: "Plant-wide role assignment replaced by a narrower one",
+                detail_json: Some(detail),
                 ..Default::default()
             },
         )

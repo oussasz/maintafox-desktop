@@ -37,6 +37,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { DI_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -264,6 +265,30 @@ export function DiCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field, a chosen photo or file differs from what the form opened with. An equipment
+  // passed in by the caller is not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    originType !== (initial?.origin_type ?? "") ||
+    requestType !== (initial?.request_type ?? "") ||
+    urgency !== (initial?.reported_urgency ?? "") ||
+    impactLevel !== (initial?.impact_level ?? "") ||
+    symptomCodeId !== (initial?.symptom_code_id ?? null) ||
+    observedAt !== (initial?.observed_at ?? "") ||
+    safetyFlag !== (initial?.safety_flag ?? false) ||
+    environmentalFlag !== (initial?.environmental_flag ?? false) ||
+    qualityFlag !== (initial?.quality_flag ?? false) ||
+    productionImpact !== (initial?.production_impact ?? false) ||
+    pendingPhotos.length > 0 ||
+    pendingFiles.length > 0 ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
@@ -307,6 +332,7 @@ export function DiCreateForm({
           reported_urgency: urgency,
           observed_at: observedAt || null,
         });
+        markSaved();
         const updated = useDiStore.getState().activeDi?.di;
         onSubmitted(updated && updated.id === initial.id ? updated : initial);
       } else {
@@ -329,6 +355,7 @@ export function DiCreateForm({
           submitter_id: info.user_id,
         };
         const di = await submitNewDi(input);
+        markSaved();
 
         const photos = orderImagesForUpload(pendingPhotos).filter((p) => Boolean(p.path));
         const files = pendingFiles.filter((f) => Boolean(f.path));
@@ -406,6 +433,7 @@ export function DiCreateForm({
     pendingFiles,
     submitNewDi,
     updateDraft,
+    markSaved,
     onSubmitted,
     t,
   ]);
@@ -778,7 +806,7 @@ export function DiCreateForm({
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-2 pt-2 border-t border-surface-border">
-        <Button variant="outline" onClick={onCancel} disabled={busy}>
+        <Button variant="outline" onClick={requestCancel} disabled={busy}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -789,6 +817,7 @@ export function DiCreateForm({
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </div>
+      {guard}
     </div>
   );
 }

@@ -175,7 +175,22 @@ export const WorkOrderSchema = z.object({
   schedule_frozen: z.boolean().nullable().optional(),
   lifecycle_state: z.string().nullable().optional(),
   deisolation_pending: z.boolean().optional(),
-  permit_rule_matching_types: z.array(z.string()).optional(),
+  required_permits: z
+    .array(
+      z.object({
+        permit_type_code: z.string(),
+        permit_type_name: z.string(),
+        rule_code: z.string(),
+        primary: z.boolean(),
+        cleared_at: z.string().nullable(),
+        cleared_by_name: z.string().nullable(),
+        clear_reason: z.string().nullable(),
+        live_permit_code: z.string().nullable(),
+        live_permit_status: z.string().nullable(),
+        state: z.enum(["live", "missing", "cleared"]),
+      }),
+    )
+    .optional(),
   source_inspection_round_id: z.number().nullable().optional(),
   source_inspection_round_code: z.string().nullable().optional(),
   source_inspection_round_title: z.string().nullable().optional(),
@@ -469,11 +484,17 @@ export interface WoPermitRuleClearInput {
   expected_row_version: number;
   /** Why the plant rule does not apply here (10 characters or more). */
   reason: string;
+  /**
+   * The permit type whose requirement is lifted (one at a time). Omitted: the work order's only
+   * type not lifted, or its safety-request requirement.
+   */
+  permit_type_code?: string;
 }
 
 /**
- * Clears the permit flag a plant rule set at conversion (`ptw.issue`, a reason, before execution
- * starts); kept on the work order and in its audit trail.
+ * Clears one permit type a plant rule requires of the work order, or its safety-request
+ * requirement (`ptw.issue` at its site, a reason, before execution starts); kept on the work order
+ * and in its audit trail.
  */
 export async function clearWoPermitRuleFlag(input: WoPermitRuleClearInput): Promise<WorkOrder> {
   try {

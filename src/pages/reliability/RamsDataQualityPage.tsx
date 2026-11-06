@@ -1,11 +1,12 @@
 /**
  * Reliability module — data quality: what keeps failure records out of the analyses, each with
  * the record to open or the action that fixes it (replaces the former "foundation" screen).
+ * Period, site and class come from the RAMS home page (same filters, same completeness figure).
  */
 import { ArrowLeft, ClipboardCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -14,9 +15,13 @@ import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import {
   RAMS_FILTER_LABEL,
+  RAMS_PERIOD_MONTHS,
   RAMS_SELECT_CLASS,
   RAMS_TABLE_FRAME,
   RamsCard,
+  dataQualityParams,
+  dataQualitySearch,
+  periodFromMonths,
 } from "@/components/reliability/study/rams-ui";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -46,8 +51,6 @@ import {
 } from "@/services/reliability-service";
 import { P } from "@shared/rbac/permissions.generated";
 
-const PERIODS = [12, 24, 36] as const;
-
 /** `YYYY-MM-DD` of a date in the local calendar. */
 function localDay(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -58,7 +61,23 @@ export function RamsDataQualityPage() {
   const { t } = useTranslation("reliability");
   const { formatDate, formatNumber, formatDecimal } = useFormatters();
   const navigate = useNavigate();
-  const [months, setMonths] = useState<number>(24);
+  // The filters live in the address, so the link from the RAMS home page opens the same scope.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { months, orgNodeId, classId } = dataQualityParams(searchParams);
+  const setFilters = (next: {
+    months?: number;
+    orgNodeId?: number | null;
+    classId?: number | null;
+  }) =>
+    setSearchParams(
+      dataQualitySearch(
+        next.months ?? months,
+        next.orgNodeId === undefined ? orgNodeId : next.orgNodeId,
+        next.classId === undefined ? classId : next.classId,
+      ),
+      { replace: true },
+    );
+  const period = useMemo(() => periodFromMonths(months), [months]);
   const [view, setView] = useState<DataQualityView | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -76,13 +95,20 @@ export function RamsDataQualityPage() {
     setLoading(true);
     setError(null);
     try {
-      setView(await getReliabilityDataQuality(months));
+      setView(
+        await getReliabilityDataQuality({
+          period_start: period.start,
+          period_end: period.end,
+          org_node_id: orgNodeId,
+          equipment_class_id: classId,
+        }),
+      );
     } catch (e) {
       setError(e);
     } finally {
       setLoading(false);
     }
-  }, [months]);
+  }, [period, orgNodeId, classId]);
 
   useEffect(() => {
     void load();
@@ -104,6 +130,11 @@ export function RamsDataQualityPage() {
 
   const hoursN = Number(hours.replace(",", "."));
   const share = view && view.records > 0 ? view.records_complete / view.records : null;
+  /** Incomplete records of the scope (all sources), the same count as the RAMS home card. */
+  const incomplete = view ? Math.max(0, view.records - view.records_complete) : 0;
+  /** Incomplete records not raised from a work order (imported): not in the work-order list. */
+  const notListed =
+    view && !view.coding_gaps_truncated ? Math.max(0, incomplete - view.coding_gaps.length) : 0;
   /** "300+" when the backend stopped the list at its maximum. */
   const atLeast = (n: number, truncated: boolean) =>
     truncated ? `${formatNumber(n)}+` : formatNumber(n);
@@ -126,11 +157,45 @@ export function RamsDataQualityPage() {
             <select
               className={RAMS_SELECT_CLASS}
               value={months}
-              onChange={(e) => setMonths(Number(e.target.value))}
+              onChange={(e) => setFilters({ months: Number(e.target.value) })}
             >
-              {PERIODS.map((m) => (
+              {RAMS_PERIOD_MONTHS.map((m) => (
                 <option key={m} value={m}>
                   {t("rams.fleet.periodMonths", { count: m })}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className={RAMS_FILTER_LABEL}>{t("rams.fleet.site")}</span>
+            <select
+              className={RAMS_SELECT_CLASS}
+              value={orgNodeId ?? ""}
+              onChange={(e) =>
+                setFilters({ orgNodeId: e.target.value ? Number(e.target.value) : null })
+              }
+            >
+              <option value="">{t("rams.fleet.allSites")}</option>
+              {(view?.org_nodes ?? []).map((n) => (
+                <option key={n.id} value={n.id}>
+                  {`${"  ".repeat(Math.max(0, n.depth))}${n.label}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className={RAMS_FILTER_LABEL}>{t("rams.fleet.class")}</span>
+            <select
+              className={RAMS_SELECT_CLASS}
+              value={classId ?? ""}
+              onChange={(e) =>
+                setFilters({ classId: e.target.value ? Number(e.target.value) : null })
+              }
+            >
+              <option value="">{t("rams.fleet.allClasses")}</option>
+              {(view?.equipment_classes ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
                 </option>
               ))}
             </select>
@@ -156,8 +221,13 @@ export function RamsDataQualityPage() {
             />
             <KpiTile
               label={t("rams.quality.codingGaps")}
-              value={atLeast(view.coding_gaps.length, view.coding_gaps_truncated)}
-              {...(view.coding_gaps_truncated ? { hint: t("rams.quality.truncated") } : {})}
+              value={formatNumber(incomplete)}
+              hint={t("rams.quality.codingGapsHint", {
+                mode: view.records_missing_mode,
+                cause: view.records_missing_cause,
+                mechanism: view.records_missing_mechanism,
+              })}
+              {...(incomplete > 0 ? { tone: "warning" as const } : {})}
             />
             <KpiTile
               label={t("rams.quality.noHours")}
@@ -176,9 +246,18 @@ export function RamsDataQualityPage() {
             subtitle={t("rams.quality.codingHint")}
             headingId="dq-coding"
           >
-            {view.coding_gaps.length === 0 ? (
+            {incomplete === 0 ? (
               <p className="text-sm text-text-muted">{t("rams.quality.noCodingGap")}</p>
-            ) : (
+            ) : null}
+            {notListed > 0 ? (
+              <p className="mb-3 text-sm text-text-secondary">
+                {t("rams.quality.notListed", { count: notListed })}
+              </p>
+            ) : null}
+            {view.coding_gaps_truncated ? (
+              <p className="mb-3 text-sm text-text-secondary">{t("rams.quality.truncated")}</p>
+            ) : null}
+            {view.coding_gaps.length === 0 ? null : (
               <div className={RAMS_TABLE_FRAME}>
                 <div className="max-h-[420px] overflow-auto">
                   <table className="w-full text-sm" aria-labelledby="dq-coding">

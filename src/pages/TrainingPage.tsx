@@ -3,6 +3,7 @@
  * requirements and Maximo labour qualifications:
  * - matrix of people × certifications and skills with expiry colours;
  * - expiries and renewal plan (grouped by certification, plan a session for those concerned);
+ * - the validation list: unvalidated skills and certificates to verify, validated in bulk;
  * - training sessions, attendance and results (a pass issues the certification);
  * - what jobs require (work-order types, permit types, LOTO roles);
  * - the certification catalogue; the log of supervisor overrides; the user's own record.
@@ -17,6 +18,7 @@ import { CertificationCatalogPanel } from "@/components/personnel/qualification/
 import { ExpiryRenewalPanel } from "@/components/personnel/qualification/ExpiryRenewalPanel";
 import { MyQualificationsPanel } from "@/components/personnel/qualification/MyQualificationsPanel";
 import { OverrideLogPanel } from "@/components/personnel/qualification/OverrideLogPanel";
+import { PendingValidationPanel } from "@/components/personnel/qualification/PendingValidationPanel";
 import { QualificationMatrixView } from "@/components/personnel/qualification/QualificationMatrixView";
 import { QualificationRequirementsPanel } from "@/components/personnel/qualification/QualificationRequirementsPanel";
 import { TrainingSessionsPanel } from "@/components/personnel/qualification/TrainingSessionsPanel";
@@ -31,6 +33,7 @@ import { P } from "@shared/rbac/permissions.generated";
 type TrainingTab =
   | "matrix"
   | "expiry"
+  | "validation"
   | "sessions"
   | "requirements"
   | "catalog"
@@ -79,6 +82,7 @@ function TrainingWorkspace() {
   const tabs: { value: TrainingTab; label: string; visible: boolean }[] = [
     { value: "matrix", label: t("tabs.matrix"), visible: canView },
     { value: "expiry", label: t("tabs.expiry"), visible: canView },
+    { value: "validation", label: t("tabs.validation"), visible: canView },
     { value: "sessions", label: t("tabs.sessions"), visible: canView },
     { value: "requirements", label: t("tabs.requirements"), visible: canView },
     { value: "catalog", label: t("tabs.catalog"), visible: canView },
@@ -123,6 +127,12 @@ function TrainingWorkspace() {
             </TabsContent>
             <TabsContent value="expiry">
               <ExpiryRenewalPanel refreshKey={refreshKey} onPlanSession={planSession} />
+            </TabsContent>
+            <TabsContent value="validation">
+              <PendingValidationPanel
+                refreshKey={refreshKey}
+                onChanged={() => setRefreshKey((k) => k + 1)}
+              />
             </TabsContent>
             <TabsContent value="sessions">
               <TrainingSessionsPanel

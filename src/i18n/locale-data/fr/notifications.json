@@ -329,6 +329,10 @@
       "title": "Décision de fiabilité refusée : plan {{plan}} v{{version}} publié, à revoir",
       "body": "La décision « {{decision}} » a été refusée à la synchronisation (son approbation n'est pas valable sur un poste). La version {{version}} du plan {{plan}}, publiée à partir d'elle, reste en vigueur : revoyez-la et publiez une autre version si elle ne convient pas."
     },
+    "wo_permit_types_added": {
+      "title": "OT {{code}} : permis exigé en plus : {{permit_types}}",
+      "body": "Les règles de permis de l'usine ({{rules}}) exigent aussi pour l'OT {{code}} un permis {{permit_types}}, en plus de {{previous_permit_types}}. Un permis actif de chaque type est nécessaire pour démarrer ou reprendre ce travail."
+    },
     "wo_permit_rule_type_changed": {
       "title": "OT {{code}} : permis exigé changé de {{previous_permit_type}} à {{permit_type}}",
       "body": "Les règles de permis de l'usine appliquées ici donnent à l'OT {{code}} la règle {{rule}} (permis {{permit_type}}) au lieu de {{previous_rule}} (permis {{previous_permit_type}}). Vérifiez le permis prévu pour ce travail."

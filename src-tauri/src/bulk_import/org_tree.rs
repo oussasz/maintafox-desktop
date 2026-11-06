@@ -80,11 +80,11 @@ struct Line {
     messages: Vec<RowMessage>,
 }
 
-fn key(s: &str) -> String {
+pub(super) fn key(s: &str) -> String {
     s.trim().to_lowercase()
 }
 
-fn parse_active(raw: Option<&String>) -> Result<Option<bool>, ()> {
+pub(super) fn parse_active(raw: Option<&String>) -> Result<Option<bool>, ()> {
     match raw.map(|s| key(s)) {
         None => Ok(None),
         Some(v) if matches!(v.as_str(), "oui" | "o" | "yes" | "y" | "1" | "true" | "vrai") => Ok(Some(true)),

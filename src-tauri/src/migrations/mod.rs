@@ -255,6 +255,8 @@ mod m20261104_000272_permit_cancel_reason;
 mod m20261104_000273_bulk_import;
 mod m20261104_000274_permit_type_work_at_height;
 mod m20261104_000275_wo_parts_to_issue;
+mod m20261104_000278_permit_rule_critical_asset;
+mod m20261104_000279_wo_required_permit_types;
 mod m20261105_000280_non_stock_wo_purchase;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -517,6 +519,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261104_000273_bulk_import::Migration),
             Box::new(m20261104_000274_permit_type_work_at_height::Migration),
             Box::new(m20261104_000275_wo_parts_to_issue::Migration),
+            Box::new(m20261104_000278_permit_rule_critical_asset::Migration),
+            Box::new(m20261104_000279_wo_required_permit_types::Migration),
             Box::new(m20261105_000280_non_stock_wo_purchase::Migration),
         ]
     }

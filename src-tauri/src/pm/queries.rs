@@ -122,7 +122,7 @@ fn validate_effective_window(effective_from: &str, effective_to: Option<&str>) -
 }
 
 async fn ensure_lookup_value_in_domain(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     value_id: i64,
     expected_domain_key: &str,
     field_name: &str,
@@ -196,10 +196,16 @@ async fn validate_required_skills_json(db: &impl ConnectionTrait, input: Option<
 /// Checks a usage (meter) specification: a chosen active `asset_meter_id`, or a meter type
 /// (`meter_type`, legacy `meter_source`) resolved per asset at generation time; with an absolute
 /// `threshold_value` (chosen meter only) or a recurring `interval_value`.
+///
+/// `meter_may_be_unset`: a spec naming neither a meter nor a meter type is accepted (still with
+/// its interval or threshold) — only for the draft of a duplicated plan whose target asset has no
+/// meter of the source meter's unit; publishing it stays refused until a meter is chosen
+/// ([`ensure_meter_chosen`]).
 async fn validate_meter_spec(
     db: &impl ConnectionTrait,
     spec: &serde_json::Map<String, Value>,
     allow_absolute: bool,
+    meter_may_be_unset: bool,
 ) -> AppResult<()> {
     let meter_id = spec.get("asset_meter_id").and_then(Value::as_i64).unwrap_or(0);
     let threshold_value = spec.get("threshold_value").and_then(Value::as_f64).unwrap_or(0.0);
@@ -243,6 +249,15 @@ async fn validate_meter_spec(
         .trim()
         .to_lowercase();
     let has_type = meter_type.is_some() || matches!(meter_source.as_str(), "odometer" | "operating_hours");
+    if !has_type && meter_may_be_unset {
+        if interval_value > 0.0 || (allow_absolute && threshold_value > 0.0) {
+            return Ok(());
+        }
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger requires interval_value > 0 (or threshold_value > 0)."
+                .to_string(),
+        ]));
+    }
     if !has_type || interval_value <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_PM_METER_INTERVAL_REQUIRED: Meter trigger requires an asset meter or a meter type, and interval_value > 0.".to_string(),
@@ -268,10 +283,61 @@ async fn validate_meter_spec(
     Ok(())
 }
 
-async fn validate_trigger_definition(
+/// The meter spec of a trigger: the whole definition of a `meter` plan, the optional `meter`
+/// block (whichever comes first) of a `fixed` / `floating` plan; `None` otherwise.
+pub(crate) fn meter_spec_of<'a>(
+    strategy_type: &str,
+    trigger: &'a serde_json::Map<String, Value>,
+) -> Option<&'a serde_json::Map<String, Value>> {
+    match strategy_type {
+        "meter" => Some(trigger),
+        "fixed" | "floating" => trigger.get("meter").and_then(Value::as_object),
+        _ => None,
+    }
+}
+
+/// Whether a trigger counts on a meter that is not chosen yet: neither an asset meter nor a meter
+/// type (only a duplicated plan's draft can be in that state, see [`validate_meter_spec`]).
+pub(crate) fn meter_choice_missing(strategy_type: &str, trigger_definition_json: &str) -> bool {
+    let Ok(Value::Object(trigger)) = serde_json::from_str::<Value>(trigger_definition_json) else {
+        return false;
+    };
+    let Some(spec) = meter_spec_of(strategy_type, &trigger) else {
+        return false;
+    };
+    let has_meter = spec.get("asset_meter_id").and_then(Value::as_i64).unwrap_or(0) > 0;
+    let has_type = spec
+        .get("meter_type")
+        .and_then(Value::as_str)
+        .is_some_and(|t| !t.trim().is_empty());
+    let has_source = matches!(
+        spec.get("meter_source")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str(),
+        "odometer" | "operating_hours"
+    );
+    !(has_meter || has_type || has_source)
+}
+
+/// Publishing refused while the trigger's meter is not chosen (L6-11: a plan duplicated onto an
+/// asset without a meter of the same unit).
+fn ensure_meter_chosen(strategy_type: &str, trigger_definition_json: &str) -> AppResult<()> {
+    if meter_choice_missing(strategy_type, trigger_definition_json) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_PM_METER_REQUIRED: Choose the meter of the trigger before publishing this version.".to_string(),
+        ]));
+    }
+    Ok(())
+}
+
+async fn validate_trigger_definition_with(
     db: &impl ConnectionTrait,
     strategy_type: &str,
     trigger_definition_json: &str,
+    meter_may_be_unset: bool,
 ) -> AppResult<()> {
     let parsed = serde_json::from_str::<Value>(trigger_definition_json).map_err(|_| {
         AppError::ValidationFailed(vec![
@@ -293,10 +359,10 @@ async fn validate_trigger_definition(
                         "GATE_PM_DEFINITION_INVALID: meter (whichever comes first) must be an object.".to_string(),
                     ]));
                 };
-                validate_meter_spec(db, meter, false).await?;
+                validate_meter_spec(db, meter, false, meter_may_be_unset).await?;
             }
         }
-        "meter" => validate_meter_spec(db, obj, true).await?,
+        "meter" => validate_meter_spec(db, obj, true, meter_may_be_unset).await?,
         "event" => {
             let code = obj.get("event_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
@@ -436,7 +502,21 @@ pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<P
 }
 
 pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -> AppResult<PmPlan> {
-    let code = input.code.trim().to_uppercase();
+    let tx = db.begin().await?;
+    let plan_id = create_pm_plan_in(&tx, input).await?;
+    tx.commit().await?;
+    get_pm_plan(db, plan_id).await
+}
+
+/// The plan code as stored: trimmed, upper case (the rule of every new plan).
+pub(crate) fn normalize_plan_code(code: &str) -> String {
+    code.trim().to_uppercase()
+}
+
+/// [`create_pm_plan`] inside the caller's transaction (a duplicated plan is created with its
+/// first version and its audit entry together, `pm::duplicate`); returns the new plan id.
+pub(crate) async fn create_pm_plan_in(tx: &impl ConnectionTrait, input: CreatePmPlanInput) -> AppResult<i64> {
+    let code = normalize_plan_code(&input.code);
     let title = input.title.trim().to_string();
     if code.is_empty() || title.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -446,12 +526,11 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
     let strategy_type = normalize_strategy_type(&input.strategy_type)?;
     let asset_scope_type = normalize_asset_scope_type(&input.asset_scope_type)?;
     if let Some(v) = input.criticality_value_id {
-        ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?;
+        ensure_lookup_value_in_domain(tx, v, "equipment.criticality", "criticality_value_id").await?;
     }
     if let Some(team_id) = input.assigned_team_id {
-        crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+        crate::repository::team_repository::assert_active_crew_exists(tx, team_id).await?;
     }
-    let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plans (entity_sync_id,code,title,description,asset_scope_type,asset_scope_id,strategy_type,criticality_value_id,assigned_team_id,requires_shutdown,requires_permit,is_active,lifecycle_status,row_version)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1)",
@@ -464,9 +543,7 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created pm plan not found")))?;
-    let plan_id: i64 = row.try_get("", "id")?;
-    tx.commit().await?;
-    get_pm_plan(db, plan_id).await
+    Ok(row.try_get("", "id")?)
 }
 
 pub async fn update_pm_plan(
@@ -562,10 +639,27 @@ pub async fn create_pm_plan_version_in(
     pm_plan_id: i64,
     input: CreatePmPlanVersionInput,
 ) -> AppResult<PmPlanVersion> {
+    create_pm_plan_version_in_with(tx, pm_plan_id, input, false).await
+}
+
+/// [`create_pm_plan_version_in`]; `meter_may_be_unset` lets the trigger's meter be left to choose
+/// (the draft of a duplicated plan, `pm::duplicate`: publishing it is refused until it is chosen).
+pub(crate) async fn create_pm_plan_version_in_with(
+    tx: &impl ConnectionTrait,
+    pm_plan_id: i64,
+    input: CreatePmPlanVersionInput,
+    meter_may_be_unset: bool,
+) -> AppResult<PmPlanVersion> {
     let db = tx;
     let plan = get_pm_plan(db, pm_plan_id).await?;
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
-    validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
+    validate_trigger_definition_with(
+        db,
+        &plan.strategy_type,
+        &input.trigger_definition_json,
+        meter_may_be_unset,
+    )
+    .await?;
     validate_required_skills_json(db, input.required_skills_json.as_deref()).await?;
     crate::pm::wo_content::validate_required_parts_json(input.required_parts_json.as_deref())?;
     crate::planning::load::validate_crew_size(input.planned_crew_size)?;
@@ -631,11 +725,13 @@ pub async fn update_pm_plan_version(
     let plan = get_pm_plan(db, plan_id).await?;
     let effective_from = input.effective_from.unwrap_or(row.try_get("", "effective_from")?);
     let effective_to = input.effective_to.or(row.try_get("", "effective_to")?);
-    let trigger_definition_json = input
-        .trigger_definition_json
-        .unwrap_or(row.try_get("", "trigger_definition_json")?);
+    let stored_trigger: String = row.try_get("", "trigger_definition_json")?;
+    // A duplicated plan's draft whose meter is still to choose can be edited before the meter is
+    // chosen; publishing it stays refused until then (`ensure_meter_chosen`).
+    let meter_may_be_unset = meter_choice_missing(&plan.strategy_type, &stored_trigger);
+    let trigger_definition_json = input.trigger_definition_json.unwrap_or(stored_trigger);
     validate_effective_window(&effective_from, effective_to.as_deref())?;
-    validate_trigger_definition(db, &plan.strategy_type, &trigger_definition_json).await?;
+    validate_trigger_definition_with(db, &plan.strategy_type, &trigger_definition_json, meter_may_be_unset).await?;
     let required_skills_json = input.required_skills_json.or(row.try_get("", "required_skills_json")?);
     validate_required_skills_json(db, required_skills_json.as_deref()).await?;
     crate::planning::load::validate_crew_size(input.planned_crew_size)?;
@@ -734,6 +830,8 @@ pub async fn publish_pm_plan_version(
         ]));
     }
     ensure_source_decision_applied(db, &row, input.version_id).await?;
+    let trigger_definition_json: String = row.try_get("", "trigger_definition_json")?;
+    ensure_meter_chosen(&plan.strategy_type, &trigger_definition_json)?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='superseded',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE pm_plan_id=? AND status='published' AND id != ?", [plan_id.into(), input.version_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='published',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?", [input.version_id.into(),input.expected_row_version.into()])).await?;

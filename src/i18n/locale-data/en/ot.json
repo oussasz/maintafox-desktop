@@ -5,7 +5,7 @@
       "outsideScope_other": "{{count}} work orders are not shown: outside your sites.",
       "withoutSite_one": "{{count}} work order is not shown: it has no site.",
       "withoutSite_other": "{{count}} work orders are not shown: they have no site.",
-      "allWorkOrders": "These counts cover all work orders, whatever the filters or search.",
+      "allWorkOrders": "Total over all work orders, ignoring the filters.",
       "askPlantWide": "Ask a user with a plant-wide role to see them."
     },
     "noSite": {
@@ -16,7 +16,16 @@
   "permitRule": {
     "requiredBy": "Permit required by rule {{rule}} (permit type {{permitType}}).",
     "requiredByNoType": "Permit required by rule {{rule}}.",
-    "severalTypes": "Several permit rules: {{types}}",
+    "listTitle": "Permits required by the plant's rules: a live permit of each type to start or resume.",
+    "listRule": "rule {{rule}}",
+    "listPrimary": "primary",
+    "listLive": "Permit {{permit}} ({{status}})",
+    "listMissing": "No permit of this type linked",
+    "listCleared": "Lifted on {{date}} by {{by}}: {{reason}}",
+    "listClearedNoName": "Lifted on {{date}}: {{reason}}",
+    "listClear": "Lift",
+    "clearTypeTitle": "Lift the {{permitType}} permit requirement?",
+    "clearTypeBody": "{{code}} will no longer require a {{permitType}} permit (rule {{rule}}). The other required permits stay required. The reason, date and your name are kept on the work order and in its history.",
     "requiredShort": "Required (rule {{rule}})",
     "clearHint": "Only a person allowed to issue permits can clear this requirement, with a reason, before the work starts.",
     "checkboxLocked": "Required by rule {{rule}}: cleared with “Clear the requirement” below.",
@@ -837,6 +846,11 @@
     "fmecaOverrideSignerPasswordPlaceholder": "Signer password confirmation",
     "fmecaOverrideHint": "Required only when critical FMECA suggested parts were not consumed. Signer must be Supervisor/Admin, different from closer, and re-authenticated.",
     "closeWo": "Close WO",
+    "blocked": {
+      "closed": "The work order is closed: its details can no longer be changed.",
+      "cancelled": "The work order is cancelled: its details can no longer be changed.",
+      "rightRequired": "Right required: {{right}}."
+    },
     "confirmVerifyTitle": "Record the technical verification?",
     "confirmVerifyDescription": "{{code}}: result \"{{result}}\"{{rts}}. The verification is recorded in your name in the audit trail.",
     "confirmVerifyReturnToService": ", equipment returned to service",

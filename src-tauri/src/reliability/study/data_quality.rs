@@ -1,21 +1,26 @@
 //! Data quality of the reliability module (replaces the former "foundation" screen): what keeps
 //! failure records out of the analyses, with the record to open for each point.
 //!
-//! - closed corrective / emergency work orders without a failure mode;
-//! - failure records with a mode but without cause or mechanism (ISO 14224);
+//! - failure records of the period / class / site not completely coded (mode, cause or "not
+//!   determined", mechanism — ISO 14224), with the predicate of the RAMS home card
+//!   (`fleet_kpis::complete_sql`); those raised from a work order are listed;
 //! - equipment with failures and no operating-hours data (meter, runtime log, schedule);
 //! - the remaining issues of `v_ram_data_quality_issues` (small samples, inspection coverage),
 //!   which a reliability manager can dismiss.
 
-use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
 use crate::reliability::domain::RamDataQualityIssuesFilter;
 use crate::reliability::queries;
 use crate::reliability::study::clock::load_clock;
-use crate::reliability::study::store::get;
+use crate::reliability::study::domain::FilterOption;
+use crate::reliability::study::fleet_kpis::{
+    complete_sql, filter_options, load_asset_aggs, scope_from_sql, AssetAgg, CodingCounts, FleetScope, CAUSE_CODED_SQL,
+    MODE_SQL,
+};
+use crate::reliability::study::store::{get, opt_i64};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WoCodingGap {
@@ -54,9 +59,16 @@ pub struct DataQualityView {
     pub coding_gaps: Vec<WoCodingGap>,
     pub no_operating_hours: Vec<EquipmentGap>,
     pub review_issues: Vec<ReviewIssue>,
-    /// Failure records of the period and those fully coded (mode, cause, mechanism).
+    /// Failure records of the scope and those fully coded (mode, cause or not determined,
+    /// mechanism) — the same predicate and numbers as the RAMS home card.
     pub records: i64,
     pub records_complete: i64,
+    pub records_missing_mode: i64,
+    pub records_missing_cause: i64,
+    pub records_missing_mechanism: i64,
+    /// Filter choices (org nodes holding equipment, equipment classes in use).
+    pub org_nodes: Vec<FilterOption>,
+    pub equipment_classes: Vec<FilterOption>,
     /// A list stopped at [`MAX_ROWS`]: more exist than are listed (the screen says so; its counts
     /// are then "at least").
     pub coding_gaps_truncated: bool,
@@ -66,124 +78,91 @@ pub struct DataQualityView {
 
 pub const MAX_ROWS: i64 = 300;
 
-pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) -> AppResult<DataQualityView> {
-    let end = crate::clock::now();
-    let start = end - Duration::days(months.clamp(1, 120) * 30);
-    let (s, e) = (start.to_rfc3339(), end.to_rfc3339());
+/// Period and filters of the quality page — the same as the RAMS home page's.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataQualityFilter {
+    /// RFC 3339 start of the period (inclusive).
+    pub period_start: String,
+    /// RFC 3339 end of the period (inclusive, clipped to now).
+    pub period_end: String,
+    /// Org node: equipment installed at this node or below it.
+    #[serde(default)]
+    pub org_node_id: Option<i64>,
+    #[serde(default)]
+    pub equipment_class_id: Option<i64>,
+}
 
-    let mut coding_gaps = Vec::new();
-    let missing_mode = queries::list_wos_missing_failure_mode(db, None, Some(MAX_ROWS)).await?;
-    let mut coding_gaps_truncated = missing_mode.len() as i64 >= MAX_ROWS;
-    for w in missing_mode {
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT wo.code, e.asset_id_code FROM work_orders wo LEFT JOIN equipment e ON e.id = wo.equipment_id
-                 WHERE wo.id = ?",
-                [w.work_order_id.into()],
-            ))
-            .await?;
-        let (code, asset): (String, Option<String>) = match row {
-            Some(r) => (get(&r, "code")?, get(&r, "asset_id_code")?),
-            None => continue,
-        };
-        coding_gaps.push(WoCodingGap {
-            work_order_id: w.work_order_id,
-            work_order_code: code,
-            equipment_id: Some(w.equipment_id),
-            asset_code: asset,
-            closed_at: w.closed_at,
-            gap: "mode_missing".into(),
-        });
-    }
-    let partial = db
+/// The worklist of a scope. Its counts and its coding-gap list use the completeness predicate of
+/// `fleet_kpis` (mode + cause or "not determined" + mechanism), so the RAMS home card and this page
+/// agree under the same filters.
+pub async fn data_quality(
+    db: &DatabaseConnection,
+    filter: &DataQualityFilter,
+    user_id: i32,
+) -> AppResult<DataQualityView> {
+    let scope = FleetScope::new(
+        &filter.period_start,
+        &filter.period_end,
+        filter.equipment_class_id,
+        filter.org_node_id,
+    )?;
+    let (s, e) = (scope.start.to_rfc3339(), scope.end.to_rfc3339());
+
+    let aggs = load_asset_aggs(db, &scope).await?;
+    let coding = CodingCounts::of(&aggs);
+
+    // Incomplete records that came from a work order (the record to open), latest closed first;
+    // the gap named is the first missing of mode, cause, mechanism.
+    let mut binds = scope.binds();
+    binds.push(MAX_ROWS.into());
+    let gaps = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.id, wo.code, wo.closed_at, fe.equipment_id, e.asset_id_code,
-                    COALESCE(fe.failure_cause_id, wfd.failure_cause_id) AS cause,
-                    COALESCE(fe.cause_not_determined, 0) AS cause_nd,
-                    COALESCE(fe.failure_mechanism_id, wfd.failure_mechanism_id) AS mechanism
-             FROM failure_events fe
-             JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id
-             LEFT JOIN equipment e ON e.id = fe.equipment_id
-             LEFT JOIN work_order_failure_details wfd ON wfd.id = (
-                  SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = wo.id
-                  ORDER BY x.entity_sync_id, x.id LIMIT 1)
-             WHERE fe.failure_mode_id IS NOT NULL AND COALESCE(fe.is_planned, 0) = 0
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) >= datetime(?)
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) <= datetime(?)
-               AND ((COALESCE(fe.failure_cause_id, wfd.failure_cause_id) IS NULL AND COALESCE(fe.cause_not_determined, 0) = 0)
-                    OR COALESCE(fe.failure_mechanism_id, wfd.failure_mechanism_id) IS NULL)
-             ORDER BY datetime(wo.closed_at) DESC LIMIT ?",
-            [s.clone().into(), e.clone().into(), MAX_ROWS.into()],
+            format!(
+                "SELECT wo.id, wo.code, wo.closed_at, fe.equipment_id, e.asset_id_code,
+                        CASE WHEN {MODE_SQL} IS NULL THEN 'mode_missing'
+                             WHEN NOT {CAUSE_CODED_SQL} THEN 'cause_missing'
+                             ELSE 'mechanism_missing' END AS gap
+                 {from} AND wo.id IS NOT NULL AND NOT {complete}
+                 ORDER BY datetime(wo.closed_at) DESC, wo.id DESC LIMIT ?",
+                from = scope_from_sql(),
+                complete = complete_sql()
+            ),
+            binds,
         ))
         .await?;
-    coding_gaps_truncated |= partial.len() as i64 >= MAX_ROWS;
-    for r in &partial {
-        let cause: Option<i64> = get(r, "cause")?;
-        let cause_nd: i64 = get(r, "cause_nd")?;
-        coding_gaps.push(WoCodingGap {
-            work_order_id: get(r, "id")?,
-            work_order_code: get(r, "code")?,
-            equipment_id: get(r, "equipment_id")?,
-            asset_code: get(r, "asset_id_code")?,
-            closed_at: get(r, "closed_at")?,
-            gap: if cause.is_none() && cause_nd == 0 {
-                "cause_missing"
-            } else {
-                "mechanism_missing"
-            }
-            .into(),
-        });
-    }
-
-    let totals = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n,
-                    SUM(CASE WHEN fe.failure_mode_id IS NOT NULL
-                              AND (COALESCE(fe.failure_cause_id, wfd.failure_cause_id) IS NOT NULL OR COALESCE(fe.cause_not_determined, 0) = 1)
-                              AND COALESCE(fe.failure_mechanism_id, wfd.failure_mechanism_id) IS NOT NULL
-                         THEN 1 ELSE 0 END) AS complete
-             FROM failure_events fe
-             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND wo.id = fe.source_id
-             LEFT JOIN work_order_failure_details wfd ON wfd.id = (
-                  SELECT x.id FROM work_order_failure_details x WHERE x.work_order_id = wo.id
-                  ORDER BY x.entity_sync_id, x.id LIMIT 1)
-             WHERE COALESCE(fe.is_planned, 0) = 0
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) >= datetime(?)
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) <= datetime(?)",
-            [s.clone().into(), e.clone().into()],
-        ))
-        .await?;
-    let (records, records_complete): (i64, i64) = match totals {
-        Some(r) => (get(&r, "n")?, get::<Option<i64>>(&r, "complete")?.unwrap_or(0)),
-        None => (0, 0),
-    };
-
-    let with_failures = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT e.id, e.asset_id_code, e.name, COUNT(fe.id) AS n FROM failure_events fe
-             JOIN equipment e ON e.id = fe.equipment_id AND e.deleted_at IS NULL
-             WHERE COALESCE(fe.is_planned, 0) = 0
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) >= datetime(?)
-               AND datetime(COALESCE(fe.failed_at, fe.detected_at, fe.created_at)) <= datetime(?)
-             GROUP BY e.id ORDER BY n DESC, e.asset_id_code ASC LIMIT ?",
-            [s.clone().into(), e.clone().into(), MAX_ROWS.into()],
-        ))
-        .await?;
-    // Equipment beyond the first MAX_ROWS (by failures) were not examined.
-    let no_operating_hours_truncated = with_failures.len() as i64 >= MAX_ROWS;
-    let mut no_operating_hours = Vec::new();
-    for r in &with_failures {
-        let id: i64 = get(r, "id")?;
-        if !load_clock(db, id).await?.is_operating() {
-            no_operating_hours.push(EquipmentGap {
-                equipment_id: id,
+    let coding_gaps_truncated = gaps.len() as i64 >= MAX_ROWS;
+    let coding_gaps = gaps
+        .iter()
+        .map(|r| {
+            Ok(WoCodingGap {
+                work_order_id: get(r, "id")?,
+                work_order_code: get(r, "code")?,
+                equipment_id: get(r, "equipment_id")?,
                 asset_code: get(r, "asset_id_code")?,
-                asset_name: get(r, "name")?,
-                failures: get(r, "n")?,
+                closed_at: get(r, "closed_at")?,
+                gap: get(r, "gap")?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    // Equipment of the scope with failures, most failures first; those beyond the first MAX_ROWS
+    // are not examined.
+    let mut with_failures: Vec<&AssetAgg> = aggs.iter().collect();
+    with_failures.sort_by(|a, b| {
+        b.failures
+            .cmp(&a.failures)
+            .then_with(|| a.asset_code.cmp(&b.asset_code))
+    });
+    let no_operating_hours_truncated = with_failures.len() as i64 > MAX_ROWS;
+    let mut no_operating_hours = Vec::new();
+    for a in with_failures.into_iter().take(MAX_ROWS as usize) {
+        if !load_clock(db, a.equipment_id).await?.is_operating() {
+            no_operating_hours.push(EquipmentGap {
+                equipment_id: a.equipment_id,
+                asset_code: a.asset_code.clone(),
+                asset_name: a.asset_name.clone(),
+                failures: a.failures,
             });
         }
     }
@@ -199,8 +178,17 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
         if let Some(r) = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT asset_id_code, name FROM equipment WHERE id = ? AND deleted_at IS NULL",
-                [i.equipment_id.into()],
+                "SELECT e.asset_id_code, e.name FROM equipment e LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
+                 WHERE e.id = ? AND e.deleted_at IS NULL
+                   AND (? IS NULL OR e.class_id = ?)
+                   AND (? IS NULL OR n.ancestor_path LIKE '%/' || ? || '/%')",
+                [
+                    i.equipment_id.into(),
+                    opt_i64(scope.equipment_class_id),
+                    opt_i64(scope.equipment_class_id),
+                    opt_i64(scope.org_node_id),
+                    opt_i64(scope.org_node_id),
+                ],
             ))
             .await?
         {
@@ -217,14 +205,20 @@ pub async fn data_quality(db: &DatabaseConnection, months: i64, user_id: i32) ->
             break;
         }
     }
+    let (org_nodes, equipment_classes) = filter_options(db).await?;
     Ok(DataQualityView {
         period_start: s,
         period_end: e,
         coding_gaps,
         no_operating_hours,
         review_issues,
-        records,
-        records_complete,
+        records: coding.records,
+        records_complete: coding.complete,
+        records_missing_mode: coding.missing_mode,
+        records_missing_cause: coding.missing_cause,
+        records_missing_mechanism: coding.missing_mechanism,
+        org_nodes,
+        equipment_classes,
         coding_gaps_truncated,
         no_operating_hours_truncated,
         review_issues_truncated,

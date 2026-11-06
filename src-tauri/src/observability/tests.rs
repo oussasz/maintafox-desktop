@@ -1127,6 +1127,7 @@ async fn test_obs_10_rbac_mutation_emits_both_activity_and_audit() {
             scope_reference: None,
             valid_from: None,
             valid_to: None,
+            end_plant_wide_assignment_ids: Vec::new(),
         },
         false,
         None,

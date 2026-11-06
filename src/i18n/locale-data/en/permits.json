@@ -20,7 +20,7 @@
       "outsideScope_other": "{{count}} permits are not shown: outside your sites.",
       "withoutSite_one": "{{count}} permit is not shown: it has no site.",
       "withoutSite_other": "{{count}} permits are not shown: they have no site.",
-      "allPermits": "These counts cover all permits, whatever the filters or search.",
+      "allPermits": "Total over all permits, ignoring the filters.",
       "askPlantWide": "Ask a plant-wide user to see them."
     },
     "noSite": {

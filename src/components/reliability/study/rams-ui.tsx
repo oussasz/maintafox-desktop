@@ -73,6 +73,52 @@ export const RAMS_FILTER_LABEL = "text-[11px] font-medium uppercase tracking-wid
 /** Period presets of the fleet view, in months back from today. */
 export const RAMS_PERIOD_MONTHS = [6, 12, 24, 36] as const;
 export type RamsPeriodMonths = (typeof RAMS_PERIOD_MONTHS)[number];
+/** Default window of the RAMS screens: 12 rolling months (Advisor decision L2-10 / L2-11). */
+export const RAMS_DEFAULT_MONTHS: RamsPeriodMonths = 12;
+
+/** Data-quality worklist of the reliability module. */
+export const RAMS_DATA_QUALITY_PATH = "/reliability/data-quality";
+
+/** Query of the quality page carrying a period, site and class (read by `dataQualityParams`). */
+export function dataQualitySearch(
+  months: number,
+  orgNodeId: number | null,
+  classId: number | null,
+): URLSearchParams {
+  const q = new URLSearchParams({ months: String(months) });
+  if (orgNodeId != null) q.set("site", String(orgNodeId));
+  if (classId != null) q.set("class", String(classId));
+  return q;
+}
+
+/** Address of the quality page with the same period, site and class as the RAMS home page. */
+export function dataQualityHref(
+  months: number,
+  orgNodeId: number | null,
+  classId: number | null,
+): string {
+  return `${RAMS_DATA_QUALITY_PATH}?${dataQualitySearch(months, orgNodeId, classId).toString()}`;
+}
+
+/** Period, site and class handed to the quality page (see `dataQualityHref`). */
+export function dataQualityParams(params: URLSearchParams): {
+  months: RamsPeriodMonths;
+  orgNodeId: number | null;
+  classId: number | null;
+} {
+  const id = (raw: string | null) => {
+    const n = Number(raw ?? "");
+    return Number.isInteger(n) && n > 0 ? n : null;
+  };
+  const m = Number(params.get("months") ?? "");
+  return {
+    months: (RAMS_PERIOD_MONTHS as readonly number[]).includes(m)
+      ? (m as RamsPeriodMonths)
+      : RAMS_DEFAULT_MONTHS,
+    orgNodeId: id(params.get("site")),
+    classId: id(params.get("class")),
+  };
+}
 
 export function periodFromMonths(
   months: number,

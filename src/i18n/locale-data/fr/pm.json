@@ -16,6 +16,8 @@
     "refresh": "Actualiser",
     "refreshForecast": "Rafraîchir la prévision",
     "newPlan": "Nouveau plan",
+    "duplicatePlan": "Dupliquer ce plan",
+    "duplicate": "Dupliquer",
     "editPlan": "Modifier le plan",
     "newVersion": "Nouvelle version",
     "editVersion": "Modifier",
@@ -320,6 +322,26 @@
       "title": "Créer un plan PM",
       "description": "Définir une stratégie préventive gouvernée. Publiez une version après approbation pour générer les échéances."
     },
+    "duplicatePlan": {
+      "title": "Dupliquer le plan {{code}}",
+      "description": "Le nouveau plan reprend la version {{version}} : déclenchement, tâches, pièces, durée, équipe et consignes de sécurité. Il est créé en brouillon (version 1) ; publiez-le ensuite comme tout plan.",
+      "prefilledTitle": "Copie de {{title}}",
+      "target": "Équipement visé",
+      "targetScope": "Périmètre visé",
+      "targetCurrent": "Même équipement que le plan d'origine : {{asset}}",
+      "targetHint": "Choisissez une autre machine pour copier le plan sur un équipement semblable.",
+      "meter": "Compteur de l'équipement visé",
+      "meterLater": "Choisir plus tard",
+      "meterHint": "Seuls les compteurs de même unité que le compteur d'origine sont proposés.",
+      "meterNone": "L'équipement visé n'a pas de compteur de même unité : le compteur restera à choisir.",
+      "meterLaterWarning": "Sans compteur, le plan ne pourra pas être publié tant qu'un compteur n'est pas choisi dans sa version.",
+      "notCopied": "Ne sont pas repris : échéances, OT, relevés, coûts, dates de dernière réalisation, historique des versions et approbations.",
+      "noVersion": "Ce plan n'a ni version publiée ni brouillon à copier.",
+      "whyCode": "Indiquez le code du nouveau plan pour pouvoir dupliquer.",
+      "whyTitle": "Indiquez le titre du nouveau plan pour pouvoir dupliquer.",
+      "whyScope": "Choisissez le périmètre visé pour pouvoir dupliquer.",
+      "saving": "Duplication en cours…"
+    },
     "editPlan": {
       "title": "Modifier le plan PM",
       "description": "Mettre à jour les informations du plan. Un changement de déclenchement nécessite une nouvelle version."
@@ -417,6 +439,9 @@
     "executionLogged": "Exécution enregistrée.",
     "versionPublished": "Version v{{version}} publiée.",
     "revisionCreated": "Version brouillon v{{version}} créée à partir du constat.",
+    "planDuplicated": "Plan {{code}} créé en brouillon à partir du plan d'origine.",
+    "planDuplicatedMeterToChoose": "Plan {{code}} créé en brouillon. Choisissez son compteur dans la version avant de la publier.",
+    "planDuplicatedRefreshFailed": "Le plan {{code}} est bien créé, mais l'écran n'a pas pu être actualisé. Actualisez la liste pour l'ouvrir.",
     "readingRecorded": "Relevé enregistré ; la prévision de l'équipement a été mise à jour."
   },
   "archive": {
