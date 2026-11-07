@@ -76,6 +76,8 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_INV_LOOKUP": "Value refused: a reference value of the article (unit, criticality, stocking type or tax category) is not accepted. Check it in Reference data.",
+    "GATE_UNIT": "Unit refused: check it in Reference data.",
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Change refused: this list is maintained by Maintafox and cannot be changed in Reference data. Its values stay available in the forms that use them.",
     "GATE_UNIT_NOT_ACTIVE": "Unit refused: it does not exist or is no longer active in Reference data. Choose an active unit.",
     "GATE_UNIT_DIMENSION_MISMATCH": "Conversion refused: the two units do not measure the same quantity (for example a mass and a length).",
