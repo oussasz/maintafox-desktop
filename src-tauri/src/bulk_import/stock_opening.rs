@@ -25,7 +25,7 @@ use super::stock_store::{ambiguous_location, ambiguous_store, locations, stores,
 use super::{parse_date, Column, EntitySpec, RowApplied, RowMessage, RowOutcome, StagedRow};
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::InventoryStockAdjustInput;
-use crate::inventory::queries::{adjust_stock_full, AdjustStockOptions};
+use crate::inventory::queries::{adjust_stock_full, stock_history_exists, AdjustStockOptions};
 
 /// Movement reason of the entry (`inventory.movement_type` lookup, "Saisie inventaire").
 const REASON_CODE: &str = "INVENTAIRE";
@@ -140,26 +140,6 @@ async fn articles(db: &impl ConnectionTrait) -> AppResult<ArticleMap> {
         );
     }
     Ok((map, ambiguous))
-}
-
-/// Whether the article already has stock history at the location: any movement (entries, exits,
-/// reservations) or a balance that is not zero.
-async fn has_history(db: &impl ConnectionTrait, article_id: i64, location_id: i64) -> AppResult<bool> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT (EXISTS(SELECT 1 FROM inventory_transactions WHERE article_id = ? AND location_id = ?) \
-                 OR EXISTS(SELECT 1 FROM stock_balances WHERE article_id = ? AND location_id = ? \
-                           AND (on_hand_qty <> 0 OR reserved_qty <> 0))) AS used",
-            [
-                article_id.into(),
-                location_id.into(),
-                article_id.into(),
-                location_id.into(),
-            ],
-        ))
-        .await?;
-    Ok(row.map(|r| r.try_get::<i64>("", "used")).transpose()?.unwrap_or(0) != 0)
 }
 
 fn history_message(article: &str, store: &str, location: &str) -> String {
@@ -388,7 +368,7 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
             &location_map,
         );
         if let (Some(article), Some(location_id)) = (article, location_id) {
-            if has_history(db, article.id, location_id).await? {
+            if stock_history_exists(db, article.id, location_id).await? {
                 messages.push(RowMessage::error(
                     "OPENING_IMPORT_HAS_MOVEMENTS",
                     history_message(&article.code, &store_code, &location_code),
@@ -451,9 +431,10 @@ fn fail(row: &StagedRow, message: impl Into<String>) -> RowApplied {
 }
 
 pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) -> AppResult<Vec<RowApplied>> {
-    // Read once, at the start of the apply step. The stock entry itself checks again that the
-    // article and the location are still active, the date still open and the article untracked;
-    // the history check below runs for each line, just before its entry.
+    // Read once, at the start of the apply step. The stock entry itself checks again, inside its
+    // own transaction, that the article and the location are still active, the date still open,
+    // the article untracked and without history at the location (`first_entry_only`); it writes
+    // the line's audit event in that same transaction.
     let article_map = articles(db).await?;
     let store_map = stores(db).await?;
     let location_map = locations(db).await?;
@@ -492,11 +473,27 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
             out.push(fail(row, why));
             continue;
         };
-        if has_history(db, article.id, location_id).await? {
-            out.push(fail(row, history_message(&article.code, &store_code, &location_code)));
-            continue;
-        }
 
+        let audit = crate::audit::writer::AuditEventInput {
+            action_code: AUDIT_ACTION.to_string(),
+            target_type: Some("stock_location_article".to_string()),
+            target_id: Some(format!("{}:{location_id}", article.id)),
+            actor_id: Some(i64::from(user_id)),
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(json!({
+                "summary": OPENING_NOTE,
+                "article_code": article.code,
+                "store_code": store_code,
+                "location_code": location_code,
+                "quantity": quantity,
+                "unit_cost": unit_cost,
+                "posting_date": opening_date.clone().unwrap_or_else(crate::inventory::fx::today),
+            })),
+        };
         let posted = adjust_stock_full(
             db,
             InventoryStockAdjustInput {
@@ -509,41 +506,27 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
             },
             AdjustStockOptions {
                 unit_cost: Some(unit_cost),
-                posting_date: opening_date.clone(),
+                posting_date: opening_date,
                 actor_id: Some(i64::from(user_id)),
+                first_entry_only: true,
+                audit: Some(audit),
                 ..Default::default()
             },
         )
         .await;
         if let Err(e) = posted {
-            out.push(fail(row, app_error_text(&e)));
+            let refused_for_history = matches!(&e, AppError::ValidationFailed(v)
+                if v.iter().any(|m| m.starts_with("GATE_INV_FIRST_ENTRY_HAS_HISTORY")));
+            out.push(fail(
+                row,
+                if refused_for_history {
+                    history_message(&article.code, &store_code, &location_code)
+                } else {
+                    app_error_text(&e)
+                },
+            ));
             continue;
         }
-
-        crate::audit::writer::write_audit_event(
-            db,
-            crate::audit::writer::AuditEventInput {
-                action_code: AUDIT_ACTION.to_string(),
-                target_type: Some("stock_location_article".to_string()),
-                target_id: Some(format!("{}:{location_id}", article.id)),
-                actor_id: Some(i64::from(user_id)),
-                auth_context: "step_up".to_string(),
-                result: "success".to_string(),
-                before_hash: None,
-                after_hash: None,
-                retention_class: "standard".to_string(),
-                details_json: Some(json!({
-                    "summary": OPENING_NOTE,
-                    "article_code": article.code,
-                    "store_code": store_code,
-                    "location_code": location_code,
-                    "quantity": quantity,
-                    "unit_cost": unit_cost,
-                    "posting_date": opening_date.unwrap_or_else(crate::inventory::fx::today),
-                })),
-            },
-        )
-        .await?;
         out.push(RowApplied {
             row_id: row.id,
             status: "created",

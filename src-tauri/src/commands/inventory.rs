@@ -413,6 +413,7 @@ pub async fn adjust_inventory_stock(
             new_lot,
             posting_date,
             actor_id: Some(i64::from(user.user_id)),
+            ..Default::default()
         },
     )
     .await

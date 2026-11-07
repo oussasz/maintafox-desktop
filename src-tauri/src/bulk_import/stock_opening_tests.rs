@@ -40,7 +40,7 @@ mod tests {
     }
 
     /// Articles P1, P2 (stocked), HS (non-stock), LOT (lot-tracked), OFF (inactive); the seeded
-    /// store MAIN has the location MAIN-BIN, and BIN2 is added to it.
+    /// store MAIN has the location MAIN-BIN, and BIN2 to BIN5 are added to it.
     async fn db_with_articles() -> DatabaseConnection {
         let db = setup().await;
         let mut csv = ARTICLES.to_string();
@@ -68,7 +68,7 @@ mod tests {
             &db,
             input(
                 "stock_location",
-                "code magasin;code emplacement;libellé\nMAIN;BIN2;Casier 2",
+                "code magasin;code emplacement;libellé\nMAIN;BIN2;Casier 2\nMAIN;BIN3;Casier 3\nMAIN;BIN4;Casier 4\nMAIN;BIN5;Casier 5",
             ),
             Some(1),
         )
@@ -209,9 +209,9 @@ mod tests {
              OFF;MAIN;MAIN-BIN;1;1;\n\
              P1;MAIN;MAIN-BIN;0;1;\n\
              P1;MAIN;BIN2;2;-1;\n\
-             P2;MAIN;MAIN-BIN;1;1;31/12/2099\n\
-             P2;MAIN;BIN2;1;1;15/01/2026\n\
-             P1;MAIN;MAIN-BIN;1;1;demain\n\
+             P1;MAIN;BIN3;1;1;31/12/2099\n\
+             P1;MAIN;BIN4;1;1;15/01/2026\n\
+             P1;MAIN;BIN5;1;1;demain\n\
              P2;MAIN;MAIN-BIN;1;1;\n\
              p2;main;main-bin;1;1;\n\
              ;MAIN;MAIN-BIN;1;1;\n"
