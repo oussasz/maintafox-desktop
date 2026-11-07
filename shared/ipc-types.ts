@@ -5585,6 +5585,8 @@ export interface WoListFilter {
   equipment_id?: number | null;
   entity_id?: number | null;
   planner_id?: number | null;
+  /** Only the work orders without a planner ("planificateur à désigner"). */
+  planner_unassigned?: boolean | null;
   primary_responsible_id?: number | null;
   urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
@@ -5671,7 +5673,8 @@ export interface WoPlanInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  planner_id: number;
+  /** null: the recorded planner is kept (empty stays empty: "planificateur à désigner"). */
+  planner_id: number | null;
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;

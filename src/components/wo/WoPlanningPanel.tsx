@@ -619,7 +619,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const tasksPartsDisabled = !canEdit || !isPlanningEditable || busy;
     const allFieldsDisabled = scheduleFieldsDisabled;
 
-    const planReady = plannerId.trim().length > 0;
+    // Naming a planner is optional (CMMS Advisor 2026-11-06, option b): without the right to name
+    // one, the dates, duration and priority are saved with the planner left to be named. Someone
+    // who may name one still chooses it before saving, as before.
+    const planReady = !mayChoosePlanner || plannerId.trim().length > 0;
 
     const assignReady = assignedTeamId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
     const hasCommitment = wo.schedule_commitment_id != null;
@@ -683,7 +686,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           wo_id: wo.id,
           actor_id: requireActor,
           expected_row_version: rowVersion,
-          planner_id: Number(plannerId),
+          planner_id: plannerId.trim() ? Number(plannerId) : null,
           planned_start: hasCommitment
             ? null
             : plannedStart.trim()
@@ -1180,7 +1183,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   <SelectValue placeholder={t("planning.plannerId")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">—</SelectItem>
+                  <SelectItem value="__none">{t("planning.plannerToName")}</SelectItem>
                   {plannerOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}

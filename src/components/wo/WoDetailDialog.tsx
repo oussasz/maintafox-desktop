@@ -377,7 +377,11 @@ export function WoDetailDialog({
                 />
                 <InfoRow
                   label={t("detail.fields.planner")}
-                  value={wo.planner_display_name ?? wo.planner_username ?? "—"}
+                  value={
+                    wo.planner_display_name ??
+                    wo.planner_username ??
+                    (wo.planner_id == null ? t("planning.plannerToName") : "—")
+                  }
                 />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
