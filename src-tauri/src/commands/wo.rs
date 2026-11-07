@@ -259,8 +259,16 @@ pub async fn get_wo_execution_standing(
 
 #[tauri::command]
 pub async fn create_wo(
-    mut input: crate::wo::domain::WoCreateInput,
+    input: crate::wo::domain::WoCreateInput,
     state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    create_wo_impl(state.inner(), input).await
+}
+
+/// The command body, callable with an `AppState` (command-level tests, L5-08).
+pub(crate) async fn create_wo_impl(
+    state: &AppState,
+    mut input: crate::wo::domain::WoCreateInput,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
     // The creator (requester of record) is the signed-in user, never an id sent by the screen.
@@ -706,7 +714,7 @@ pub(crate) async fn plan_wo_impl(
         &state.permission_cache,
         user.user_id,
         input.wo_id,
-        Some(input.planner_id),
+        input.planner_id,
     )
     .await?;
     // The actor is the signed-in user, never an id sent by the screen.

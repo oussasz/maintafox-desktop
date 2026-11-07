@@ -416,8 +416,9 @@ pub async fn check_people_on_create(
     }
 }
 
-/// A planner set on a work order (`plan_wo`): an unchanged value passes; a change needs the right
-/// at the work order's site. Exceptions to come with L1-05 (not on this branch): the dépannage
+/// A planner set on a work order (`plan_wo`): none sent, or an unchanged value, passes (the dates,
+/// duration and priority are saved without naming one, CMMS Advisor 2026-11-06 option b); a change
+/// needs the right at the work order's site. Exceptions to come with L1-05 (not on this branch): the dépannage
 /// self-assignment, assigning others through `ot.emergency_assign`, and the dépannage "join".
 pub async fn check_planner_change(
     db: &impl ConnectionTrait,
@@ -425,8 +426,12 @@ pub async fn check_planner_change(
     wo_id: i64,
     planner_id: Option<i64>,
 ) -> AppResult<()> {
+    // None (or `0`): the recorded planner is kept, an empty one stays empty (option b).
+    let Some(planner_id) = planner_id.filter(|&id| id > 0) else {
+        return Ok(());
+    };
     let wo = wo_people(db, wo_id).await?;
-    if planner_id.filter(|&id| id > 0) == wo.planner {
+    if Some(planner_id) == wo.planner {
         return Ok(());
     }
     if may_choose_people(db, map, wo.anchor).await? {

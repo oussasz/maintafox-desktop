@@ -603,14 +603,6 @@ fn is_actor_refusal(err: &AppError) -> bool {
     .contains(&code_of(err).as_str())
 }
 
-/// Past every right check: any refusal left is the work order's own rules, not who acts.
-fn passed_the_gate<T: std::fmt::Debug>(result: &Result<T, AppError>) -> bool {
-    match result {
-        Ok(_) => true,
-        Err(err) => !is_actor_refusal(err) && !matches!(err, AppError::PermissionDenied(_)),
-    }
-}
-
 async fn set_status(db: &DatabaseConnection, wo: i64, code: &str) {
     exec(
         db,
@@ -630,6 +622,15 @@ async fn row_version(db: &DatabaseConnection, wo: i64) -> i64 {
 async fn start_wo_refuses_a_colleague_and_lets_the_assignee_through() {
     let f = fixture().await;
     set_status(&f.db, f.wo, "ready").await;
+    // No permit on this test work order: the start depends on who acts only.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE work_orders SET requires_permit = 0, permit_required_types_json = NULL WHERE id = {}",
+            f.wo
+        ),
+    )
+    .await;
     let input = |who: i32, rv: i64| crate::wo::execution::WoStartInput {
         wo_id: f.wo,
         actor_id: i64::from(who),
@@ -641,8 +642,10 @@ async fn start_wo_refuses_a_colleague_and_lets_the_assignee_through() {
         .expect_err("colleague refused");
     assert!(is_actor_refusal(&err), "{err:?}");
     assert_eq!(row_version(&f.db, f.wo).await, rv, "nothing written");
-    let started = crate::commands::wo::start_wo_impl(&state_for(&f.db, f.assignee).await, input(f.assignee, rv)).await;
-    assert!(passed_the_gate(&started), "{started:?}");
+    let started = crate::commands::wo::start_wo_impl(&state_for(&f.db, f.assignee).await, input(f.assignee, rv))
+        .await
+        .expect("the assignee starts it");
+    assert_eq!(started.status_code.as_deref(), Some("in_progress"));
 }
 
 #[tokio::test]
@@ -666,8 +669,14 @@ async fn close_wo_refuses_a_colleague_with_the_close_right_and_lets_the_approver
         .await
         .expect_err("no close right");
     assert!(matches!(err, AppError::PermissionDenied(_)), "{err:?}");
+    // The approver reaches the close itself. This work order was set "completed" without its
+    // close-out records (verification, coding), so the close-out gates refuse it: a validation of
+    // the work order, never a right or the actor rule. A full close is covered by `closeout_tests`.
     let closed = crate::commands::wo::close_wo_impl(&state_for(&f.db, f.approver).await, close(f.approver)).await;
-    assert!(passed_the_gate(&closed), "{closed:?}");
+    match closed {
+        Err(AppError::ValidationFailed(reasons)) => assert!(!reasons.is_empty()),
+        other => panic!("the approver reaches the close-out gates: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -702,8 +711,10 @@ async fn labour_commands_book_and_close_only_a_colleague_own_hours() {
         .await
         .expect("own entry closed");
     // The assignee books a colleague's hours (the command's own rules for others apply).
-    let booked = crate::commands::wo::add_labor_impl(&state_for(&f.db, f.assignee).await, book(f.colleague)).await;
-    assert!(passed_the_gate(&booked), "{booked:?}");
+    let booked = crate::commands::wo::add_labor_impl(&state_for(&f.db, f.assignee).await, book(f.colleague))
+        .await
+        .expect("the assignee books a colleague's hours");
+    assert_eq!(booked.intervener_id, Some(i64::from(f.colleague)));
 }
 
 #[tokio::test]
@@ -718,8 +729,10 @@ async fn complete_task_refuses_a_colleague_and_lets_a_team_member_record_the_res
         .await
         .expect_err("colleague refused");
     assert!(is_actor_refusal(&err), "{err:?}");
-    let done = result(state_for(&f.db, f.member).await).await;
-    assert!(passed_the_gate(&done), "{done:?}");
+    let done = result(state_for(&f.db, f.member).await)
+        .await
+        .expect("a team member records the result");
+    assert!(done.completed_at.is_some());
 }
 
 #[tokio::test]
@@ -799,7 +812,7 @@ fn plan_input(wo: i64, rv: i64, planner: i32) -> crate::wo::execution::WoPlanInp
         wo_id: wo,
         actor_id: 0,
         expected_row_version: rv,
-        planner_id: i64::from(planner),
+        planner_id: Some(i64::from(planner)),
         planned_start: None,
         planned_end: None,
         shift: None,
@@ -829,12 +842,38 @@ async fn a_colleague_cannot_name_themselves_planner_and_an_unchanged_planner_pas
     assert!(is_people_refusal(&err), "{err:?}");
     assert_eq!(row_version(&f.db, f.wo).await, rv, "nothing written");
     // The planner already recorded: the colleague plans the dates as before.
-    let kept =
-        crate::commands::wo::plan_wo_impl(&state_for(&f.db, f.colleague).await, plan_input(f.wo, rv, f.planner)).await;
-    assert!(
-        !matches!(&kept, Err(e) if is_people_refusal(e)),
-        "unchanged planner passes: {kept:?}"
-    );
+    let kept = crate::commands::wo::plan_wo_impl(&state_for(&f.db, f.colleague).await, plan_input(f.wo, rv, f.planner))
+        .await
+        .expect("unchanged planner passes");
+    assert_eq!(kept.planner_id, Some(i64::from(f.planner)));
+}
+
+/// CMMS Advisor 2026-11-06, option (b): without the right, the dates, duration and priority are
+/// saved and the planner stays empty ("planificateur à désigner"); a `0` is no planner.
+#[tokio::test]
+async fn without_the_right_planning_is_saved_with_the_planner_left_to_be_named() {
+    let f = fixture().await;
+    set_status(&f.db, f.wo, "planning").await;
+    exec(
+        &f.db,
+        &format!("UPDATE work_orders SET planner_id = NULL WHERE id = {}", f.wo),
+    )
+    .await;
+    let colleague = state_for(&f.db, f.colleague).await;
+    let mut none = plan_input(f.wo, row_version(&f.db, f.wo).await, f.colleague);
+    none.planner_id = None;
+    none.expected_duration_hours = Some(3.0);
+    let saved = crate::commands::wo::plan_wo_impl(&colleague, none)
+        .await
+        .expect("planned without a planner");
+    assert_eq!(saved.planner_id, None, "planner to be named");
+    assert_eq!(saved.expected_duration_hours, Some(3.0));
+    let mut zero = plan_input(f.wo, saved.row_version, f.colleague);
+    zero.planner_id = Some(0);
+    let saved = crate::commands::wo::plan_wo_impl(&colleague, zero)
+        .await
+        .expect("a 0 is no planner");
+    assert_eq!(saved.planner_id, None, "0 is never written");
 }
 
 #[tokio::test]
@@ -854,15 +893,13 @@ async fn an_approver_or_a_plan_confirm_holder_names_the_planner() {
     )
     .await;
     assign(&f.db, confirmer, confirm_role, "org_node", Some(f.t.site_a)).await;
-    for who in [f.approver, confirmer] {
+    // Each names a different planner, so each is a real change (not an unchanged value).
+    for (who, target) in [(f.approver, f.colleague), (confirmer, f.member)] {
         let rv = row_version(&f.db, f.wo).await;
-        let planned =
-            crate::commands::wo::plan_wo_impl(&state_for(&f.db, who).await, plan_input(f.wo, rv, f.colleague)).await;
-        assert!(
-            !matches!(&planned, Err(e) if is_people_refusal(e)),
-            "user {who} may name the planner: {planned:?}"
-        );
-        assert!(passed_the_gate(&planned), "{planned:?}");
+        let planned = crate::commands::wo::plan_wo_impl(&state_for(&f.db, who).await, plan_input(f.wo, rv, target))
+            .await
+            .unwrap_or_else(|e| panic!("user {who} names the planner: {e:?}"));
+        assert_eq!(planned.planner_id, Some(i64::from(target)));
     }
     // plan.confirm on another site does not count.
     let other = user(&f.db, "exa_confirmer_b").await;
@@ -895,4 +932,86 @@ async fn a_planner_given_at_creation_needs_the_right_at_the_new_site() {
         .await
         .expect_err("approver of site A on site B");
     assert!(is_people_refusal(&err), "{err:?}");
+}
+
+/// Through `create_wo`: a planner given at creation by a colleague is refused (nothing created);
+/// the approver creates it with the planner; without a planner the colleague creates it.
+#[tokio::test]
+async fn create_wo_refuses_a_colleague_naming_a_planner() {
+    let f = fixture().await;
+    let equipment = scalar(&f.db, "SELECT id FROM equipment WHERE entity_sync_id = 'exa-eq-Leak'").await;
+    let input = |planner: Option<i32>| crate::wo::domain::WoCreateInput {
+        type_code: "corrective".into(),
+        equipment_id: Some(equipment),
+        location_id: None,
+        source_di_id: None,
+        source_inspection_anomaly_id: None,
+        source_ram_ishikawa_diagram_id: None,
+        source_ishikawa_flow_node_id: None,
+        source_rca_cause_text: None,
+        entity_id: None,
+        planner_id: planner.map(i64::from),
+        urgency_code: Some("normal".into()),
+        subtype_code: None,
+        title: "Fuite vanne".into(),
+        description: None,
+        notes: None,
+        planned_start: None,
+        planned_end: None,
+        shift: None,
+        expected_duration_hours: Some(1.0),
+        creator_id: 0,
+        requires_permit: None,
+    };
+    // The colleague also needs the create right (their role has none).
+    let create = role(&f.db, "EXA creator A", &[OT_VIEW, crate::rbac::permissions::OT_CREATE]).await;
+    assign(&f.db, f.colleague, create, "org_node", Some(f.t.site_a)).await;
+    assign(&f.db, f.approver, create, "org_node", Some(f.t.site_a)).await;
+    let before = scalar(&f.db, "SELECT COUNT(*) FROM work_orders").await;
+    let err = crate::commands::wo::create_wo_impl(&state_for(&f.db, f.colleague).await, input(Some(f.colleague)))
+        .await
+        .expect_err("a colleague names a planner");
+    assert!(is_people_refusal(&err), "{err:?}");
+    assert_eq!(
+        scalar(&f.db, "SELECT COUNT(*) FROM work_orders").await,
+        before,
+        "nothing created"
+    );
+    let created = crate::commands::wo::create_wo_impl(&state_for(&f.db, f.approver).await, input(Some(f.colleague)))
+        .await
+        .expect("the approver names the planner");
+    assert_eq!(created.planner_id, Some(i64::from(f.colleague)));
+    let plain = crate::commands::wo::create_wo_impl(&state_for(&f.db, f.colleague).await, input(None))
+        .await
+        .expect("created without a planner");
+    assert_eq!(plain.planner_id, None);
+}
+
+/// The list filter "Planificateur à désigner" (CMMS Advisor 2026-11-06, option b): the work orders
+/// without a planner only (none, or an old `0`).
+#[tokio::test]
+async fn the_list_filter_shows_the_work_orders_without_a_planner() {
+    let f = fixture().await;
+    let unplanned = new_wo(&f.db, &f.t, f.colleague, "Sans planificateur").await;
+    let zero = new_wo(&f.db, &f.t, f.colleague, "Planificateur zero").await;
+    exec(
+        &f.db,
+        &format!("UPDATE work_orders SET planner_id = 0 WHERE id = {zero}"),
+    )
+    .await;
+    let page = queries::list_work_orders(
+        &f.db,
+        queries::WoListFilter {
+            planner_unassigned: Some(true),
+            limit: 500,
+            offset: 0,
+            ..queries::WoListFilter::default()
+        },
+    )
+    .await
+    .expect("list");
+    let ids: Vec<i64> = page.items.iter().map(|w| w.id).collect();
+    assert!(ids.contains(&unplanned) && ids.contains(&zero), "{ids:?}");
+    assert!(!ids.contains(&f.wo), "the fixture's work order has a planner");
+    assert!(page.items.iter().all(|w| w.planner_id.unwrap_or(0) <= 0));
 }
