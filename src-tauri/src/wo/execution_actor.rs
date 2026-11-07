@@ -388,10 +388,12 @@ pub async fn may_choose_people(db: &impl ConnectionTrait, map: &AccessMap, ancho
 }
 
 fn people_refusal() -> AppError {
-    AppError::ValidationFailed(vec![format!(
-        "{}: Seul un approbateur ou un planificateur peut choisir le responsable, l'équipe ou le planificateur de l'OT.",
-        codes::PEOPLE_RIGHT_REQUIRED
-    )])
+    // The code is written out in the literal (it equals `codes::PEOPLE_RIGHT_REQUIRED`) so the
+    // gate-code checks can read it.
+    AppError::ValidationFailed(vec![
+        "GATE_WO_PEOPLE_RIGHT_REQUIRED: Seul un approbateur ou un planificateur peut choisir le responsable, l'équipe ou le planificateur de l'OT."
+            .to_string(),
+    ])
 }
 
 /// A planner given at creation: refused without the right at the new work order's site (none
