@@ -113,6 +113,7 @@ Each figure says which one it shows, and its list link applies the same rule.
 | Converting a request to a work order now also needs the work-order creation right at the request's site (the work order is created there). The default Administrator and Supervisor roles have it; a custom role that can convert but not create work orders is refused, and the convert button is not shown. | Safety | Accepted |
 | The audit log of all requests shows the requests where the user holds request administration; events not tied to a request are shown to plant-wide users only. | Data | Accepted |
 | Request SLA rules stay plant-wide settings: only a user with a plant-wide role reads or changes them. | UX | Accepted |
+| Requests flagged « sécurité » (CMMS Advisor 2026-11-06): urgent at least, the flag cannot be removed once saved (only the reviewer lowers the urgency, with a reason), and an alert to the site's reviewers and permit issuers while the request is open. A flagged request received from a PC still on an older version keeps the urgency it was sent with (the alert is still raised here), and such a PC can still remove the flag, which then arrives here without a reason or an audit record. Requests flagged before this version are not raised to urgent (no backfill), and no alert is raised for closed or converted requests, nor for the history a PC receives when it first joins. Every PC must be upgraded together. | Safety | Release |
 
 ## Permits and LOTO
 

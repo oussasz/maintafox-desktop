@@ -225,6 +225,40 @@ describe("report a fault (DI form)", () => {
     });
   });
 
+  it("a safety report takes Urgent at least and offers no less urgent level (L4-11)", async () => {
+    let created: Record<string, unknown> | null = null;
+    const normal = { ...URGENCY, id: 10, code: "normal", rank: 4, label_fr: "Normale" };
+    const emergency = { ...URGENCY, id: 8, code: "emergency", rank: 1, label_fr: "Urgence" };
+    const answer = handlers((input) => {
+      created = input;
+    });
+    mockInvoke.mockImplementation(async (cmd: string, args?: unknown) =>
+      cmd === "list_urgency_levels" ? [emergency, URGENCY, normal] : answer(cmd, args),
+    );
+    renderMobile(<ReportFaultScreen userId={12} />);
+
+    await pickEquipment(/PMP-001/);
+    fireEvent.change(screen.getByLabelText("Objet"), { target: { value: "Fuite vapeur" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Bride" } });
+    await pick("Origine", "Opérateur");
+    await pick("Type de demande", "Dépannage");
+    await pick("Symptôme", "Fuite");
+    await pick("Urgence", "Normale");
+    await pick("Niveau d'impact", "Majeur");
+    fireEvent.click(screen.getByLabelText("Sécurité des personnes"));
+
+    expect(
+      await screen.findByText("Signalement sécurité : urgence au moins Urgente."),
+    ).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /^Urgence:/ }));
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["Urgence", "Urgent"]);
+    fireEvent.click(screen.getByRole("radio", { name: "Urgent" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Envoyer la demande" }));
+    expect(await screen.findByText("Demande DI-0042 enregistrée.")).toBeTruthy();
+    expect(created).toMatchObject({ safety_flag: true, reported_urgency: "urgent" });
+  });
+
   it("does not call create_di while required fields are missing", async () => {
     let calls = 0;
     mockInvoke.mockImplementation(

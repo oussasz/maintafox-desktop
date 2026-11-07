@@ -129,7 +129,8 @@ async fn convert_request(
             di_id: di.id,
             actor_id: actor,
             expected_row_version: 2,
-            validated_urgency: "high".into(),
+            // A request flagged "sécurité" is validated at least urgent (L4-11): lower needs a reason.
+            validated_urgency: if safety { "urgent" } else { "high" }.into(),
             classification_code_id: Some(900101),
             reviewer_note: None,
         },
