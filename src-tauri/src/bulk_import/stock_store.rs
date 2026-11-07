@@ -137,15 +137,15 @@ fn action_for(messages: &[RowMessage], first: bool, existing: Option<bool>) -> &
 
 // ─── Stores ───────────────────────────────────────────────────────────────────
 
-struct Store {
-    id: i64,
-    code: String,
+pub(super) struct Store {
+    pub(super) id: i64,
+    pub(super) code: String,
     name: String,
-    active: bool,
+    pub(super) active: bool,
 }
 
 /// Every store by code key. Codes that differ only by letter case land in `ambiguous`.
-async fn stores(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, Store>, HashSet<String>)> {
+pub(super) async fn stores(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, Store>, HashSet<String>)> {
     let mut map: HashMap<String, Store> = HashMap::new();
     let mut ambiguous = HashSet::new();
     for r in db
@@ -173,7 +173,7 @@ async fn stores(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, Store>,
     Ok((map, ambiguous))
 }
 
-fn ambiguous_store(code: &str) -> String {
+pub(super) fn ambiguous_store(code: &str) -> String {
     format!("Plusieurs magasins ont le code « {code} » à la casse près : renommez-les dans Stock avant d'importer.")
 }
 
@@ -315,16 +315,18 @@ pub async fn export_stores(db: &DatabaseConnection) -> AppResult<Vec<Vec<String>
 
 // ─── Locations ────────────────────────────────────────────────────────────────
 
-struct Location {
-    id: i64,
+pub(super) struct Location {
+    pub(super) id: i64,
     name: String,
-    active: bool,
+    pub(super) active: bool,
     row_version: i64,
 }
 
 /// Every location by (store id, location code key). Codes that differ only by letter case inside
 /// one store land in `ambiguous`.
-async fn locations(db: &impl ConnectionTrait) -> AppResult<(HashMap<(i64, String), Location>, HashSet<(i64, String)>)> {
+pub(super) async fn locations(
+    db: &impl ConnectionTrait,
+) -> AppResult<(HashMap<(i64, String), Location>, HashSet<(i64, String)>)> {
     let mut map: HashMap<(i64, String), Location> = HashMap::new();
     let mut ambiguous = HashSet::new();
     for r in db
@@ -354,7 +356,7 @@ async fn locations(db: &impl ConnectionTrait) -> AppResult<(HashMap<(i64, String
     Ok((map, ambiguous))
 }
 
-fn ambiguous_location(store: &str, code: &str) -> String {
+pub(super) fn ambiguous_location(store: &str, code: &str) -> String {
     format!(
         "Plusieurs emplacements du magasin « {store} » ont le code « {code} » à la casse près : renommez-les dans Stock avant d'importer."
     )

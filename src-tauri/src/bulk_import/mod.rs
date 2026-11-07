@@ -22,6 +22,9 @@ mod personnel_skill_tests;
 pub mod stock_article;
 #[cfg(test)]
 mod stock_article_tests;
+pub mod stock_opening;
+#[cfg(test)]
+mod stock_opening_tests;
 pub mod stock_store;
 #[cfg(test)]
 mod stock_store_tests;
@@ -78,6 +81,7 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &stock_store::LOCATION_SPEC,
     &stock_supplier::SPEC,
     &stock_article::SPEC,
+    &stock_opening::SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -510,6 +514,7 @@ async fn validate(
         "stock_location" => stock_store::validate_locations(db, rows).await,
         "stock_supplier" => stock_supplier::validate(db, rows).await,
         "stock_article" => stock_article::validate(db, rows).await,
+        "stock_opening" => stock_opening::validate(db, rows).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -712,6 +717,7 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "stock_location" => stock_store::apply_locations(db, &todo).await,
         "stock_supplier" => stock_supplier::apply(db, &todo).await,
         "stock_article" => stock_article::apply(db, &todo).await,
+        "stock_opening" => stock_opening::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -835,6 +841,7 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "stock_location" => stock_store::export_locations(db).await?,
         "stock_supplier" => stock_supplier::export(db).await?,
         "stock_article" => stock_article::export(db).await?,
+        "stock_opening" => stock_opening::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {

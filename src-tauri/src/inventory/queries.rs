@@ -1892,6 +1892,29 @@ pub struct AdjustStockOptions {
     pub new_lot: Option<crate::inventory::domain::NewLotInput>,
     pub posting_date: Option<String>,
     pub actor_id: Option<i64>,
+    /// Refuse the entry when the article already has any movement, or stock, at the location
+    /// (an opening stock is posted once). Checked inside the posting's transaction.
+    pub first_entry_only: bool,
+    /// Audit event written in the posting's transaction: recorded with the movement, or neither.
+    pub audit: Option<crate::audit::writer::AuditEventInput>,
+}
+
+/// Whether the article has stock history at the location: any movement (entries, exits,
+/// reservations) or a balance that is not zero.
+pub async fn stock_history_exists<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT (EXISTS(SELECT 1 FROM inventory_transactions WHERE article_id = ? AND location_id = ?)                  OR EXISTS(SELECT 1 FROM stock_balances WHERE article_id = ? AND location_id = ?                            AND (on_hand_qty <> 0 OR reserved_qty <> 0))) AS used",
+            [
+                article_id.into(),
+                location_id.into(),
+                article_id.into(),
+                location_id.into(),
+            ],
+        ))
+        .await?;
+    Ok(row.map(|r| r.try_get::<i64>("", "used")).transpose()?.unwrap_or(0) != 0)
 }
 
 pub async fn adjust_stock_full(
@@ -1920,6 +1943,11 @@ pub async fn adjust_stock_full(
 
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
+    if options.first_entry_only && stock_history_exists(&tx, input.article_id, input.location_id).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_FIRST_ENTRY_HAS_HISTORY: This article already has stock movements at this location.".to_string(),
+        ]));
+    }
     let (on_hand, reserved) = get_balance_snapshot(&tx, input.article_id, input.location_id).await?;
     let next_on_hand = on_hand + input.delta_qty;
     // An exit never takes stock below zero; an entry at a location already below zero is accepted
@@ -2083,6 +2111,10 @@ pub async fn adjust_stock_full(
             },
         )
         .await?;
+    }
+
+    if let Some(audit) = options.audit {
+        crate::audit::writer::write_audit_event_in(&tx, audit).await?;
     }
 
     tx.commit().await?;
