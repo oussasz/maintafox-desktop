@@ -81,6 +81,10 @@ pub struct WoListFilter {
     pub equipment_id: Option<i64>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
+    /// Only the work orders without a planner ("planificateur à désigner", CMMS Advisor
+    /// 2026-11-06 option b).
+    #[serde(default)]
+    pub planner_unassigned: Option<bool>,
     pub primary_responsible_id: Option<i64>,
     /// Level of the shared urgency scale (`emergency` … `low`).
     #[serde(default)]
@@ -310,6 +314,9 @@ pub async fn list_work_orders_in_scope(
     if let Some(planner_id) = filter.planner_id {
         where_clauses.push("wo.planner_id = ?".to_string());
         binds.push(planner_id.into());
+    }
+    if filter.planner_unassigned == Some(true) {
+        where_clauses.push("(wo.planner_id IS NULL OR wo.planner_id <= 0)".to_string());
     }
     if let Some(primary_responsible_id) = filter.primary_responsible_id {
         where_clauses.push("wo.primary_responsible_id = ?".to_string());

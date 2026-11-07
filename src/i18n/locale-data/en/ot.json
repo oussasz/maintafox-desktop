@@ -157,6 +157,8 @@
     },
     "filters": {
       "scopeNotClosed": "Not yet closed",
+      "planner": "Planner",
+      "plannerToName": "Planner to be named",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
       "completed": "Completed in the period",
@@ -299,6 +301,8 @@
     "save": "Save planning",
     "endBeforeStart": "End date must be after start date",
     "plannerId": "Planner",
+    "plannerToName": "planner to be named",
+    "plannerRightRequired": "Only an approver or a planner can choose the work order's planner.",
     "plannedStart": "Planned start",
     "plannedEnd": "Planned end",
     "selectShift": "Select shift",

@@ -5585,6 +5585,8 @@ export interface WoListFilter {
   equipment_id?: number | null;
   entity_id?: number | null;
   planner_id?: number | null;
+  /** Only the work orders without a planner ("planificateur à désigner"). */
+  planner_unassigned?: boolean | null;
   primary_responsible_id?: number | null;
   urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
@@ -5616,6 +5618,21 @@ export interface WoListPage {
 export interface WoGetResponse {
   wo: WorkOrder;
   transitions: WoTransitionRow[];
+}
+
+/** Why the signed-in user carries out a work order (`get_wo_execution_standing`, L5-08). */
+export type WoExecutionActorRole = "assignee" | "team_member" | "planner" | "approver";
+
+/**
+ * Whether the signed-in user carries out the work order (its assignee, a member of its team, its
+ * planner, or an `ot.approve` holder at its site), and else why not: a `GATE_WO_EXECUTION_*` code
+ * with the names it shows (`assignee`, `team`).
+ */
+export interface WoExecutionStanding {
+  actor: WoExecutionActorRole | null;
+  refusal: { code: string; params: Record<string, string> } | null;
+  /** The user created this work order and it is not released yet (a draft): they may cancel it. */
+  own_draft: boolean;
 }
 
 export interface WoCancelInput {
@@ -5656,7 +5673,8 @@ export interface WoPlanInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  planner_id: number;
+  /** null: the recorded planner is kept (empty stays empty: "planificateur à désigner"). */
+  planner_id: number | null;
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;

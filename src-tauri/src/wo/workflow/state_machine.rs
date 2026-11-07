@@ -64,6 +64,12 @@ impl WoStatus {
         matches!(self, Self::Closed | Self::Cancelled)
     }
 
+    /// Released for work: submitted out of the draft (planning onwards). A draft is the creator's
+    /// own work order until it is submitted.
+    pub fn is_released(&self) -> bool {
+        !matches!(self, Self::Draft)
+    }
+
     pub fn is_executing(&self) -> bool {
         matches!(self, Self::InProgress | Self::OnHold)
     }
