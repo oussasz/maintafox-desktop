@@ -76,6 +76,8 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_INV_LOOKUP": "Valeur refusée : une valeur de référence de l'article (unité, criticité, type de stockage ou catégorie fiscale) n'existe pas ou n'est plus active dans les Données de référence.",
+    "GATE_UNIT": "Unité refusée : elle n'existe pas ou n'est plus valable dans les Données de référence.",
     "GATE_NOTIFICATION_ACK_REQUIRED": "Prenez connaissance de cet avis de sécurité avant de le masquer.",
     "GATE_NOTIFICATION_ACK_NOT_YOURS": "Cet avis de sécurité ne vous est pas adressé ou a déjà été confirmé.",
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Modification refusée : cette liste est gérée par Maintafox et ne peut pas être modifiée dans les Données de référence. Ses valeurs restent disponibles dans les formulaires qui les utilisent.",
