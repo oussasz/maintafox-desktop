@@ -50,7 +50,7 @@ pub fn evaluate_asset(input: &EvaluateAssetInput) -> AssetReadinessReport {
         .map(|e| KpiFailureEvent {
             id: e.id,
             event_ts: e.event_ts,
-            eligible_flags_json: e.eligible_flags_json.clone(),
+            counts_in_mtbf: e.eligible,
             downtime_duration_hours: e.downtime_duration_hours,
             active_repair_hours: e.active_repair_hours,
             failure_mode_id: e.failure_mode_id,
