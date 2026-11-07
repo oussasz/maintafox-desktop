@@ -422,6 +422,11 @@ pub async fn add_planned_part<C: ConnectionTrait + TransactionTrait>(
             "GATE_WO_PART_PLANNED_NEGATIVE: quantity_planned doit être >= 0.".to_string(),
         ]));
     }
+    // A hors-stock part is bought for the work order (`create_wo_non_stock_purchase`), never
+    // planned from the store.
+    if let Some(article_id) = input.article_id {
+        crate::inventory::non_stock::ensure_stock_article_line(db, article_id).await?;
+    }
 
     let origin = if let Some(ref o) = input.origin {
         o.clone()
