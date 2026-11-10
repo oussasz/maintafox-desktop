@@ -13,6 +13,8 @@ interface AppToastState {
   items: AppToastItem[];
   push: (item: Omit<AppToastItem, "id">) => void;
   dismiss: (id: string) => void;
+  /** Removes the toasts that say exactly this (the failure is now shown on the screen). */
+  dismissMatching: (title: string, description?: string | null) => void;
 }
 
 export const useAppToastStore = create<AppToastState>((set) => ({
@@ -41,6 +43,14 @@ export const useAppToastStore = create<AppToastState>((set) => ({
   },
   dismiss: (id): void => {
     set((s) => ({ items: s.items.filter((x) => x.id !== id) }));
+  },
+  dismissMatching: (title, description): void => {
+    set((s) => {
+      const items = s.items.filter(
+        (x) => !(x.title === title && (x.description ?? null) === (description ?? null)),
+      );
+      return items.length === s.items.length ? s : { items };
+    });
   },
 }));
 
