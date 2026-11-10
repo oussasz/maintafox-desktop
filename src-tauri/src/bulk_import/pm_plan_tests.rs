@@ -56,7 +56,17 @@ mod tests {
              FROM equipment WHERE asset_id_code = 'EQ-A'",
         )
         .await;
+        trust_this_device(&db, 1).await;
         (db, t)
+    }
+
+    /// Applying checks the licence matrix, which refuses writes from a device with no trusted
+    /// binding for the user: bind this device so the tests never depend on the network.
+    async fn trust_this_device(db: &DatabaseConnection, user_id: i32) {
+        let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
+        crate::auth::device::register_device_trust(db, user_id, &fingerprint, None)
+            .await
+            .expect("trust register");
     }
 
     /// Message codes of each line, its action, and the apply result.
@@ -187,6 +197,7 @@ mod tests {
              P2;Mauvais déclenchement;EQ-A;hebdo;1;;;;;;;;;;\n\
              P3;Mauvaise unité;EQ-A;calendrier;1;quinzaine;;;;;;;;;\n\
              P4;Intervalle nul;EQ-A;calendrier;0;mois;;;;;;;;;\n\
+             P4B;Intervalle énorme;EQ-A;calendrier;100000000000000;semaines;;400;;;;;;;\n\
              P5;Compteur absent;EQ-A;compteur;100;;XX;;;;;;;;\n\
              P6;Date future;EQ-A;calendrier;1;mois;;;31/12/2099;;;;;;\n\
              P7;Équipe inconnue;EQ-A;calendrier;1;mois;;;;NOPE;;;;;\n\
@@ -205,6 +216,7 @@ mod tests {
             vec!["PM_IMPORT_TRIGGER"],
             vec!["PM_IMPORT_UNIT"],
             vec!["PM_IMPORT_INTERVAL"],
+            vec!["PM_IMPORT_INTERVAL", "PM_IMPORT_TOLERANCE"],
             vec!["PM_IMPORT_METER_UNKNOWN"],
             vec!["PM_IMPORT_LAST_DONE_FUTURE"],
             vec!["PM_IMPORT_TEAM_UNKNOWN"],
@@ -223,6 +235,7 @@ mod tests {
         let planner = user(&db, "pm_import_site_a").await;
         let site_role = role(&db, "PM import site A", &[PM_VIEW, PM_CREATE]).await;
         assign(&db, planner, site_role, "org_node", Some(t.site_a)).await;
+        trust_this_device(&db, planner).await;
         let file = format!(
             "{HEADER}\n\
              PA;Plan site A;EQ-A;calendrier;1;mois;;;;;;;;;\n\

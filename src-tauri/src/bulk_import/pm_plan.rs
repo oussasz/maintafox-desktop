@@ -141,6 +141,10 @@ pub const SPEC: EntitySpec = EntitySpec {
 
 /// Largest crew on one job (`planning::load::MAX_CREW_SIZE`).
 const MAX_CREW: i64 = 50;
+/// Largest interval of a file line (a typing slip such as 1e14 weeks would overflow the calendar).
+const MAX_INTERVAL: f64 = 10_000.0;
+/// Largest tolerance of a file line, in days.
+const MAX_TOLERANCE_DAYS: f64 = 365.0;
 
 fn cell(raw: &HashMap<String, String>, field: &str) -> String {
     raw.get(field).map(|s| s.trim().to_string()).unwrap_or_default()
@@ -328,24 +332,24 @@ fn read_line(raw: &HashMap<String, String>, l: &Lists, messages: &mut Vec<RowMes
     };
 
     // Trigger.
-    let interval = parse_number(&cell(raw, "interval")).filter(|v| *v > 0.0 && v.fract() == 0.0);
+    let interval = parse_number(&cell(raw, "interval")).filter(|v| *v > 0.0 && *v <= MAX_INTERVAL && v.fract() == 0.0);
     if interval.is_none() {
         err(
             messages,
             "PM_IMPORT_INTERVAL",
-            "L'intervalle doit être un nombre entier plus grand que 0.",
+            format!("L'intervalle doit être un nombre entier de 1 à {MAX_INTERVAL}."),
         );
     }
     let tolerance_cell = cell(raw, "tolerance");
     let tolerance = if tolerance_cell.is_empty() {
         None
     } else {
-        let t = parse_number(&tolerance_cell).filter(|v| *v >= 0.0);
+        let t = parse_number(&tolerance_cell).filter(|v| (0.0..=MAX_TOLERANCE_DAYS).contains(v));
         if t.is_none() {
             err(
                 messages,
                 "PM_IMPORT_TOLERANCE",
-                "La tolérance doit être un nombre de jours, 0 ou plus.",
+                format!("La tolérance doit être un nombre de jours de 0 à {MAX_TOLERANCE_DAYS}."),
             );
         }
         t
@@ -622,7 +626,9 @@ pub async fn validate(
 /// A refusal of the plan screen, in plain French for the import report.
 fn app_error_text(e: &AppError) -> String {
     let AppError::ValidationFailed(v) = e else {
-        return format!("Enregistrement impossible : {e}");
+        tracing::warn!("pm plan import: line refused: {e}");
+        return "Enregistrement impossible : le plan n'a pas pu être créé (détail dans le journal de l'application)."
+            .to_string();
     };
     v.iter()
         .map(|msg| {
@@ -766,7 +772,7 @@ pub async fn export(db: &DatabaseConnection) -> AppResult<Vec<Vec<String>>> {
                     unit.to_string()
                 },
                 r.try_get::<Option<String>>("", "meter_code")?.unwrap_or_default(),
-                num(trigger["tolerance"]["late"].as_f64()),
+                day_tolerance(&trigger["tolerance"]),
                 effective
                     .and_then(|d| chrono::NaiveDate::parse_from_str(d.get(..10).unwrap_or_default(), "%Y-%m-%d").ok())
                     .map(|d| d.format("%d/%m/%Y").to_string())
@@ -788,4 +794,13 @@ fn code_list(raw: Option<&str>) -> String {
     raw.and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .map(|v| v.join(", "))
         .unwrap_or_default()
+}
+
+/// The tolerance as the file writes it: days, the same before and after. A tolerance in percent
+/// or uneven (set on the plan screen) has no cell here and is left blank.
+fn day_tolerance(t: &Value) -> String {
+    match (t["unit"].as_str(), t["early"].as_f64(), t["late"].as_f64()) {
+        (Some("days"), Some(early), Some(late)) if early == late => late.to_string(),
+        _ => String::new(),
+    }
 }
