@@ -1,10 +1,26 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} unread)",
+    "aria": "Notifications ({{count}} to see)",
     "unread": "{{count}} unread",
     "toAcknowledge": "{{count}} to acknowledge",
-    "openInbox": "Open the inbox"
+    "openInbox": "Open the inbox",
+    "alerts": {
+      "aria": "Things to watch",
+      "heading": "To watch",
+      "lateWorkOrders": {
+        "title_one": "{{count}} late work order",
+        "title_other": "{{count}} late work orders",
+        "body": "Their planned end has passed and they are not finished.",
+        "action": "Open the late work orders"
+      },
+      "overdueRequests": {
+        "title_one": "{{count}} request past its deadline",
+        "title_other": "{{count}} requests past their deadline",
+        "body": "The time to take it on or to deal with it has passed.",
+        "action": "Open the late or at-risk requests"
+      }
+    }
   },
   "page": {
     "title": "Notifications",
@@ -84,6 +100,12 @@
     "ackRequired": "To acknowledge",
     "snoozedUntil": "Snoozed until {{when}}",
     "groupByObject": "Group by record",
+    "syncGroup": {
+      "title_one": "{{count}} synchronisation conflict to review",
+      "title_other": "{{count}} synchronisation conflicts to review",
+      "body": "Two PCs changed the same information: choose the right version.",
+      "action": "Open synchronisation"
+    },
     "groupCount_one": "({{count}} notification)",
     "groupCount_other": "({{count}} notifications)",
     "actions": {
@@ -229,7 +251,7 @@
     },
     "sync_conflict": {
       "title": "Synchronisation conflict to review",
-      "body": "{{entity_type}} · {{conflict_type}} · since {{created_at}}"
+      "body": "Two PCs changed the same information: open synchronisation to choose the right version. Since {{created_at}}."
     },
     "di_pending_review": {
       "title": "Request {{code}} to review",
