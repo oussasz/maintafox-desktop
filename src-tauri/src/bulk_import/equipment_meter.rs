@@ -100,7 +100,7 @@ struct Stored {
 }
 
 /// Live equipment by code key; codes held twice (letter case aside) are returned apart.
-async fn equipment_by_code(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, i64>, HashSet<String>)> {
+pub(super) async fn equipment_by_code(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, i64>, HashSet<String>)> {
     let mut out = HashMap::new();
     let mut ambiguous = HashSet::new();
     for r in db
