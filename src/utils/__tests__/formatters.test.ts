@@ -277,3 +277,27 @@ describe("formatDayMonth() and formatYearMonth()", () => {
     expect(formatYearMonth("bad", "fr")).toBe("—");
   });
 });
+
+describe("database instants without a time zone mark", () => {
+  const utc = new Date(Date.UTC(2026, 9, 31, 21, 0, 0));
+  const shown = formatDateTime(utc, "fr");
+
+  it("reads a SQLite UTC text and a 'Z' text as the same instant, in local time", () => {
+    expect(formatDateTime("2026-10-31T21:00:00.000Z", "fr")).toBe(shown);
+    expect(formatDateTime("2026-10-31 21:00:00", "fr")).toBe(shown);
+    expect(formatDateTime("2026-10-31T21:00:00", "fr")).toBe(shown);
+  });
+
+  it("keeps a local entry field value (no seconds) at the hour typed", () => {
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toBe(
+      formatDateTime(new Date(2026, 9, 31, 22, 0), "fr"),
+    );
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toContain("22:00");
+  });
+
+  it("writes dd/mm/yyyy hh:mm for a French user, from a regional language tag too", () => {
+    expect(formatDateTime("2026-10-31T22:00", "fr")).toMatch(/^31\/10\/2026.*22:00$/);
+    expect(formatDateTime("2026-10-31T22:00", "fr-FR")).toMatch(/^31\/10\/2026.*22:00$/);
+    expect(formatDate("2026-10-31", "en-US")).toBe("10/31/2026");
+  });
+});

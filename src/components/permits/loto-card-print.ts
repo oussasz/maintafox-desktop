@@ -13,6 +13,7 @@ import {
   wrapDocumentHeaderBlock,
 } from "@/export/templates/document-header";
 import type { LotoCardViewRecord } from "@/services/permit-service";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 
 type TFn = (key: string) => string;
 
@@ -27,15 +28,8 @@ function esc(v: string | null | undefined): string {
 
 function fmtDateTime(iso: string | null | undefined, locale: string, none: string): string {
   if (!iso) return none;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return none;
-  return d.toLocaleString(locale, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const text = formatLocalDateTime(iso, locale);
+  return text === "—" ? none : text;
 }
 
 export function buildLotoCardHtml(

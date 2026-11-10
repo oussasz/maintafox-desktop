@@ -61,7 +61,7 @@ export function AnalyticsWorkloadChart(props: {
           d3
             .axisBottom(xScale)
             .tickValues(days.filter((_, i) => i % tickEvery === 0).map((d) => d.date))
-            .tickFormat((v) => formatDate(`${String(v)}T12:00:00`)) as never,
+            .tickFormat((v) => formatDate(String(v))) as never,
         )
         .selectAll("text")
         .attr("class", "fill-current text-[10px]");
@@ -115,7 +115,7 @@ export function AnalyticsWorkloadChart(props: {
                             height={Math.max(0, h)}
                             fill={s.color}
                           >
-                            <title>{`${formatDate(`${day.date}T12:00:00`)} · ${t(s.labelKey)} : ${formatNumber(v)}`}</title>
+                            <title>{`${formatDate(day.date)} · ${t(s.labelKey)} : ${formatNumber(v)}`}</title>
                           </rect>
                         );
                       });
