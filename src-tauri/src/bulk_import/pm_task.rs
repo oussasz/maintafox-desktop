@@ -58,7 +58,6 @@ const MAX_ORDER: f64 = 999.0;
 const MAX_DESCRIPTION: usize = 1000;
 
 /// A plan as the import sees it: its latest version, if any.
-#[derive(Clone)]
 struct Plan {
     version_id: Option<i64>,
     version_status: Option<String>,
@@ -133,6 +132,12 @@ fn no_right(plan: &str) -> String {
 fn not_draft(plan: &str) -> String {
     format!(
         "La dernière version du plan « {plan} » n'est pas un brouillon : créez une nouvelle version dans Préventif, puis importez ses tâches."
+    )
+}
+
+fn changed(plan: &str) -> String {
+    format!(
+        "La version brouillon du plan « {plan} » a été modifiée depuis l'aperçu : relancez l'import pour voir ses tâches actuelles."
     )
 }
 
@@ -217,7 +222,12 @@ pub async fn validate(
                             err(&mut messages, "PM_TASK_IMPORT_RIGHT", no_right(&code));
                         }
                     }
-                    _ => err(&mut messages, "PM_TASK_IMPORT_NOT_DRAFT", not_draft(&code)),
+                    Some(_) => err(&mut messages, "PM_TASK_IMPORT_NOT_DRAFT", not_draft(&code)),
+                    None => err(
+                        &mut messages,
+                        "PM_TASK_IMPORT_NO_VERSION",
+                        format!("Le plan « {code} » n'a pas de version : créez-la dans Préventif."),
+                    ),
                 },
             }
         }
@@ -244,9 +254,17 @@ pub async fn validate(
             }
             groups[pos].1.push((i, order, description.clone()));
         }
+        // The version the preview checked: apply writes to this version at this row version only.
+        let seen = plans.get(&code);
         out.push(RowOutcome {
             action: "update",
-            normalized: json!({ "plan": code, "order": order, "description": description }),
+            normalized: json!({
+                "plan": code,
+                "order": order,
+                "description": description,
+                "version_id": seen.and_then(|p| p.version_id),
+                "row_version": seen.map(|p| p.row_version),
+            }),
             messages,
         });
     }
@@ -344,16 +362,22 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
     crate::license::queries::enforce_permission_matrix(db, user_id, PM_EDIT).await?;
     let access = access_of(db, i64::from(user_id)).await?;
     let mut out = Vec::new();
-    // Plan code → its lines (row id, order, description), plans in order of first appearance.
-    let mut groups: Vec<(String, Vec<(i64, i64, String)>)> = Vec::new();
+    // Plan code → (version and row version the preview checked, its lines (row id, order,
+    // description)), plans in order of first appearance.
+    type Group = (String, (Option<i64>, Option<i64>), Vec<(i64, i64, String)>);
+    let mut groups: Vec<Group> = Vec::new();
     for row in rows {
         let plan = row.normalized["plan"].as_str().unwrap_or_default().to_string();
         let description = row.normalized["description"].as_str().unwrap_or_default().to_string();
+        let seen = (
+            row.normalized["version_id"].as_i64(),
+            row.normalized["row_version"].as_i64(),
+        );
         match row.normalized["order"].as_i64() {
             Some(order) if row.action == "update" && !plan.is_empty() && !description.is_empty() => {
-                match groups.iter_mut().find(|(c, _)| *c == plan) {
-                    Some((_, g)) => g.push((row.id, order, description)),
-                    None => groups.push((plan, vec![(row.id, order, description)])),
+                match groups.iter_mut().find(|(c, _, _)| *c == plan) {
+                    Some((_, _, g)) => g.push((row.id, order, description)),
+                    None => groups.push((plan, seen, vec![(row.id, order, description)])),
                 }
             }
             _ => out.push(RowApplied {
@@ -363,9 +387,12 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
             }),
         }
     }
-    for (code, mut lines) in groups {
-        // Read the plan again: anything changed since the preview fails this plan only.
-        let Some(plan) = plans(db).await?.remove(&code) else {
+    // Read once: each plan is saved once, and the save itself re-checks the draft status and the
+    // row version.
+    let mut current = plans(db).await?;
+    for (code, seen, mut lines) in groups {
+        // Anything changed since the preview fails this plan only.
+        let Some(plan) = current.remove(&code) else {
             out.extend(each(&lines, "failed", &format!("Le plan « {code} » n'existe plus.")));
             continue;
         };
@@ -376,9 +403,24 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
                 continue;
             }
         };
-        if !may_edit(db, &access, version_id).await? {
-            out.extend(each(&lines, "failed", &no_right(&code)));
+        let (Some(seen_version), Some(seen_row_version)) = seen else {
+            out.extend(each(&lines, "failed", &changed(&code)));
             continue;
+        };
+        if seen_version != version_id || seen_row_version != plan.row_version {
+            out.extend(each(&lines, "failed", &changed(&code)));
+            continue;
+        }
+        match may_edit(db, &access, version_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                out.extend(each(&lines, "failed", &no_right(&code)));
+                continue;
+            }
+            Err(e) => {
+                out.extend(each(&lines, "failed", &format!("{code} : {}", app_error_text(&e))));
+                continue;
+            }
         }
         lines.sort_by_key(|(_, o, _)| *o);
         let steps: Vec<String> = lines.iter().map(|(_, _, d)| d.clone()).collect();

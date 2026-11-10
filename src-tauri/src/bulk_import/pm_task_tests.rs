@@ -185,6 +185,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_draft_edited_after_the_preview_is_not_overwritten() {
+        let (db, _) = setup().await;
+        let file = format!("{HEADER}\nPA;1;Tâche du fichier\nPB;1;Autre plan\n");
+        let b = bulk_import::create_batch(&db, input("pm_task", &file), Some(1))
+            .await
+            .expect("batch");
+        // Someone edits PA's draft in Préventif between the preview and the apply.
+        exec(
+            &db,
+            "UPDATE pm_plan_versions SET task_package_json = '{\"steps\":[\"Saisie à l''écran\"]}', \
+             row_version = row_version + 1 \
+             WHERE pm_plan_id = (SELECT id FROM pm_plans WHERE code = 'PA')",
+        )
+        .await;
+        let res = bulk_import::apply_batch(&db, b.id, 1).await.expect("apply");
+        assert_eq!((res.updated, res.failed), (1, 1));
+        assert_eq!(steps(&db, "PA").await, vec!["Saisie à l'écran"]);
+        assert_eq!(steps(&db, "PB").await, vec!["Autre plan"]);
+    }
+
+    #[tokio::test]
     async fn a_site_planner_imports_tasks_for_their_site_only() {
         let (db, t) = setup().await;
         let planner = user(&db, "pm_task_site_a").await;
