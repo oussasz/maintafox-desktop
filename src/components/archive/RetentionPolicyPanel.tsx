@@ -88,13 +88,14 @@ export function RetentionPolicyPanel() {
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const load = useCallback(async () => {
+  /** Reloads the rules; `keep` holds edits not saved yet, shown again over the stored values. */
+  const load = useCallback(async (keep: Record<number, Draft> = {}) => {
     setLoading(true);
     setLoadError(null);
     try {
       const data = await listRetentionPolicies();
       setRows(data);
-      setDrafts(Object.fromEntries(data.map((r) => [r.id, draftOf(r)])));
+      setDrafts(Object.fromEntries(data.map((r) => [r.id, keep[r.id] ?? draftOf(r)])));
     } catch (err) {
       setLoadError(err);
     } finally {
@@ -161,19 +162,26 @@ export function RetentionPolicyPanel() {
   const save = async () => {
     if (!canEdit || pending.length === 0 || invalid.length > 0) return;
     setSaving(true);
+    const saved = new Set<number>();
     try {
       await withStepUp(async () => {
         for (const { row, changes } of pending) {
           await updateRetentionPolicy({ policy_id: row.id, ...changes });
+          saved.add(row.id);
         }
       });
     } catch {
-      // The global toast reports a refusal (e.g. shorter retention for operational history);
-      // the reload shows the stored values again.
+      // The global toast reports a refusal (e.g. shorter retention for operational history).
     } finally {
       setSaving(false);
       setConfirmOpen(false);
-      await load();
+      // The rules saved show their stored values; a rule refused or not reached keeps its edit.
+      const keep: Record<number, Draft> = {};
+      for (const { row } of pending) {
+        const draft = drafts[row.id];
+        if (!saved.has(row.id) && draft) keep[row.id] = draft;
+      }
+      await load(keep);
     }
   };
 

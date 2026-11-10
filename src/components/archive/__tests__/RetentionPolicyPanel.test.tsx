@@ -135,6 +135,18 @@ describe("RetentionPolicyPanel staged retention edits", () => {
     });
   });
 
+  it("keeps the edit of a rule the save refused", async () => {
+    archiveMocks.updateRetentionPolicy.mockRejectedValueOnce(new Error("refused"));
+    renderPanel();
+    const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    fireEvent.change(retentionInput, { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "retention.save" }));
+    await waitFor(() => {
+      expect(archiveMocks.listRetentionPolicies).toHaveBeenCalledTimes(2);
+    });
+    expect(((await screen.findByRole("spinbutton")) as HTMLInputElement).value).toBe("15");
+  });
+
   it("refuses to save years that are not a whole number", async () => {
     renderPanel();
     const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
