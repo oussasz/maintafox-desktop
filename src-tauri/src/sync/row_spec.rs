@@ -832,10 +832,29 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec(
         "failure_events",
         &[
-            poly("source_id", "source_type", &[("work_order", "work_orders")]),
+            poly(
+                "source_id",
+                "source_type",
+                &[("work_order", "work_orders"), ("history_record", "wo_history_records")],
+            ),
             r("recorded_by_id", USER),
             // No command writes the failed component yet: synchronised only while empty.
             unmapped("component_id"),
+        ],
+    ),
+    // Imported maintenance history (L7-30): read-only records of the former system.
+    spec(
+        "wo_history_records",
+        &[
+            r("equipment_id", "equipment"),
+            r("type_id", "reference_values"),
+            r("failure_mode_id", "reference_values"),
+            r("failure_cause_id", "reference_values"),
+            r("failure_mechanism_id", "reference_values"),
+            r("detection_method_id", "reference_values"),
+            r("failure_effect_id", "reference_values"),
+            r("imported_by_id", USER),
+            r("coded_by_id", USER),
         ],
     ),
     spec("runtime_exposure_logs", &[]),

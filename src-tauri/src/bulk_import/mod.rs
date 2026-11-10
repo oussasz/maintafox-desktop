@@ -44,6 +44,9 @@ pub mod team;
 pub mod team_member;
 #[cfg(test)]
 mod team_tests;
+pub mod wo_history;
+#[cfg(test)]
+mod wo_history_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -94,6 +97,7 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &equipment_spare_part::SPEC,
     &pm_plan::SPEC,
     &pm_task::SPEC,
+    &wo_history::SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -531,6 +535,7 @@ async fn validate(
         "equipment_spare_part" => equipment_spare_part::validate(db, rows).await,
         "pm_plan" => pm_plan::validate(db, rows, user_id).await,
         "pm_task" => pm_task::validate(db, rows, user_id).await,
+        "wo_history" => wo_history::validate(db, rows, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -737,6 +742,7 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "equipment_spare_part" => equipment_spare_part::apply(db, &todo, user_id).await,
         "pm_plan" => pm_plan::apply(db, &todo, user_id).await,
         "pm_task" => pm_task::apply(db, &todo, user_id).await,
+        "wo_history" => wo_history::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -864,6 +870,7 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "equipment_spare_part" => equipment_spare_part::export(db).await?,
         "pm_plan" => pm_plan::export(db).await?,
         "pm_task" => pm_task::export(db).await?,
+        "wo_history" => wo_history::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {
