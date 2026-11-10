@@ -1,12 +1,15 @@
 import { Lock } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  archiveClassHint,
   archiveClassLabel,
   archiveModuleLabel,
   purgeModeLabel,
 } from "@/components/archive/archive-labels";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -17,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StickyActionBar } from "@/components/ui/sticky-action-bar";
 import { Switch } from "@/components/ui/switch";
 import {
   Table,
@@ -26,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { UnsavedChangesGuard } from "@/components/ui/unsaved-changes-guard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import {
@@ -39,6 +44,37 @@ import { P } from "@shared/rbac/permissions.generated";
 /** Purge modes accepted by `update_retention_policy`. */
 const PURGE_MODES = ["manual_approval", "scheduled", "never"] as const;
 
+/** What the user changed on one rule, not saved yet. */
+interface Draft {
+  years: string;
+  purge_mode: string;
+  allow_restore: boolean;
+  allow_purge: boolean;
+}
+
+type Changes = Omit<UpdateRetentionInput, "policy_id">;
+
+function draftOf(r: RetentionPolicy): Draft {
+  return {
+    years: String(r.retention_years),
+    purge_mode: r.purge_mode,
+    allow_restore: r.allow_restore,
+    allow_purge: r.allow_purge,
+  };
+}
+
+/** The changes of one rule, as the update command takes them; `null` when the years are invalid. */
+function changesOf(r: RetentionPolicy, d: Draft): Changes | null {
+  if (!/^\d+$/.test(d.years.trim())) return null;
+  const years = Number.parseInt(d.years, 10);
+  const changes: Changes = {};
+  if (years !== r.retention_years) changes.retention_years = years;
+  if (d.purge_mode !== r.purge_mode) changes.purge_mode = d.purge_mode;
+  if (d.allow_restore !== r.allow_restore) changes.allow_restore = d.allow_restore;
+  if (d.allow_purge !== r.allow_purge) changes.allow_purge = d.allow_purge;
+  return changes;
+}
+
 export function RetentionPolicyPanel() {
   const { t } = useTranslation("archive");
   const { can, isLoading: permissionsLoading } = usePermissions();
@@ -48,8 +84,9 @@ export function RetentionPolicyPanel() {
   const [rows, setRows] = useState<RetentionPolicy[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [savingId, setSavingId] = useState<number | null>(null);
-  const [yearDrafts, setYearDrafts] = useState<Record<number, string>>({});
+  const [drafts, setDrafts] = useState<Record<number, Draft>>({});
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,7 +94,7 @@ export function RetentionPolicyPanel() {
     try {
       const data = await listRetentionPolicies();
       setRows(data);
-      setYearDrafts(Object.fromEntries(data.map((r) => [r.id, String(r.retention_years)])));
+      setDrafts(Object.fromEntries(data.map((r) => [r.id, draftOf(r)])));
     } catch (err) {
       setLoadError(err);
     } finally {
@@ -69,32 +106,80 @@ export function RetentionPolicyPanel() {
     void load();
   }, [load]);
 
-  const patchPolicy = useCallback(
-    async (policy: RetentionPolicy, changes: Omit<UpdateRetentionInput, "policy_id">) => {
-      if (!canEdit) return;
-      setSavingId(policy.id);
-      setRows((prev) => prev.map((r) => (r.id === policy.id ? { ...r, ...changes } : r)));
-      try {
-        await withStepUp(() => updateRetentionPolicy({ policy_id: policy.id, ...changes }));
-      } catch {
-        // The global toast reports a refusal (e.g. shorter retention for operational history);
-        // reload to show the stored values again.
-      } finally {
-        setSavingId(null);
-        await load();
-      }
-    },
-    [canEdit, load, withStepUp],
+  const nameOf = useCallback(
+    (r: RetentionPolicy) =>
+      `${archiveModuleLabel(t, r.module_code)} — ${archiveClassLabel(t, r.archive_class)}`,
+    [t],
   );
 
-  const commitYears = (policy: RetentionPolicy) => {
-    const draft = yearDrafts[policy.id] ?? String(policy.retention_years);
-    const next = Number.parseInt(draft, 10);
-    if (!Number.isInteger(next) || next < 0) {
-      setYearDrafts((prev) => ({ ...prev, [policy.id]: String(policy.retention_years) }));
-      return;
+  /** Rules with a change, and the rules whose years cannot be read. */
+  const { pending, invalid } = useMemo(() => {
+    const pending: { row: RetentionPolicy; changes: Changes }[] = [];
+    const invalid: number[] = [];
+    for (const row of rows) {
+      const draft = drafts[row.id];
+      if (!draft) continue;
+      const changes = changesOf(row, draft);
+      if (changes === null) invalid.push(row.id);
+      else if (Object.keys(changes).length > 0) pending.push({ row, changes });
     }
-    if (next !== policy.retention_years) void patchPolicy(policy, { retention_years: next });
+    return { pending, invalid };
+  }, [rows, drafts]);
+  const dirty = pending.length > 0 || invalid.length > 0;
+
+  /** Changes that lose data or the way back, listed in the confirmation (L7-20). */
+  const warnings = useMemo(() => {
+    const out: string[] = [];
+    for (const { row, changes } of pending) {
+      const name = nameOf(row);
+      if (changes.retention_years !== undefined && changes.retention_years < row.retention_years) {
+        out.push(
+          t("retention.warn.shorter", {
+            name,
+            from: row.retention_years,
+            to: changes.retention_years,
+          }),
+        );
+      }
+      if (changes.allow_restore === false) out.push(t("retention.warn.noRestore", { name }));
+      if (changes.allow_purge === true) out.push(t("retention.warn.purge", { name }));
+      if (changes.purge_mode === "scheduled") out.push(t("retention.warn.scheduled", { name }));
+    }
+    return out;
+  }, [pending, nameOf, t]);
+
+  const patch = (id: number, change: Partial<Draft>) =>
+    setDrafts((prev) => {
+      const current = prev[id];
+      if (!current) return prev;
+      const next = { ...current, ...change };
+      // "Jamais supprimé" cannot allow a deletion.
+      if (next.purge_mode === "never") next.allow_purge = false;
+      return { ...prev, [id]: next };
+    });
+
+  const save = async () => {
+    if (!canEdit || pending.length === 0 || invalid.length > 0) return;
+    setSaving(true);
+    try {
+      await withStepUp(async () => {
+        for (const { row, changes } of pending) {
+          await updateRetentionPolicy({ policy_id: row.id, ...changes });
+        }
+      });
+    } catch {
+      // The global toast reports a refusal (e.g. shorter retention for operational history);
+      // the reload shows the stored values again.
+    } finally {
+      setSaving(false);
+      setConfirmOpen(false);
+      await load();
+    }
+  };
+
+  const askSave = () => {
+    if (warnings.length > 0) setConfirmOpen(true);
+    else void save();
   };
 
   if (loading && rows.length === 0) return <LoadingState label={t("retention.loading")} />;
@@ -104,14 +189,20 @@ export function RetentionPolicyPanel() {
     );
   }
 
+  const busy = !canEdit || saving;
+
   return (
     <div className="space-y-3 rounded-lg border border-surface-border p-4">
       {StepUpDialogElement}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-text-primary">{t("retention.title")}</h3>
-          <p className="text-xs text-text-muted">{t("retention.subtitle")}</p>
-        </div>
+      <UnsavedChangesGuard
+        when={dirty}
+        title={t("retention.unsaved.title")}
+        description={t("retention.unsaved.description")}
+        confirmLabel={t("retention.unsaved.confirm")}
+      />
+      <div>
+        <h3 className="text-sm font-semibold text-text-primary">{t("retention.title")}</h3>
+        <p className="text-xs text-text-muted">{t("retention.subtitle")}</p>
       </div>
       {!permissionsLoading && !canEdit ? (
         <div className="flex items-center gap-2 text-xs text-text-muted">
@@ -126,43 +217,44 @@ export function RetentionPolicyPanel() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t("retention.col.module")}</TableHead>
-              <TableHead>{t("retention.col.class")}</TableHead>
-              <TableHead>{t("retention.col.years")}</TableHead>
-              <TableHead>{t("retention.col.purgeMode")}</TableHead>
-              <TableHead>{t("retention.col.allowRestore")}</TableHead>
-              <TableHead>{t("retention.col.allowPurge")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.module")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.class")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.years")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.purgeMode")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.allowRestore")}</TableHead>
+              <TableHead className="whitespace-normal">{t("retention.col.allowPurge")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => {
-              const busy = !canEdit || savingId === row.id;
-              const purgeLocked = row.purge_mode === "never";
-              const name = `${archiveModuleLabel(t, row.module_code)} — ${archiveClassLabel(t, row.archive_class)}`;
+              const draft = drafts[row.id] ?? draftOf(row);
+              const purgeLocked = draft.purge_mode === "never";
+              const name = nameOf(row);
+              const hint = archiveClassHint(t, row.archive_class);
+              const yearsInvalid = invalid.includes(row.id);
               return (
                 <TableRow key={row.id}>
                   <TableCell>{archiveModuleLabel(t, row.module_code)}</TableCell>
-                  <TableCell>{archiveClassLabel(t, row.archive_class)}</TableCell>
+                  <TableCell className="whitespace-normal">
+                    <span className="font-medium">{archiveClassLabel(t, row.archive_class)}</span>
+                    {hint ? <p className="mt-1 text-[11px] text-text-muted">{hint}</p> : null}
+                  </TableCell>
                   <TableCell>
                     <Input
                       type="number"
                       min={0}
                       className="h-9 w-24"
                       aria-label={t("retention.yearsAria", { name })}
+                      aria-invalid={yearsInvalid || undefined}
                       disabled={busy}
-                      value={yearDrafts[row.id] ?? String(row.retention_years)}
-                      onChange={(e) =>
-                        setYearDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
-                      }
-                      onBlur={() => commitYears(row)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitYears(row);
-                        }
-                      }}
+                      value={draft.years}
+                      onChange={(e) => patch(row.id, { years: e.target.value })}
                     />
-                    {row.archive_class === "operational_history" ? (
+                    {yearsInvalid ? (
+                      <p className="mt-1 text-[11px] text-status-danger">
+                        {t("retention.yearsInvalid")}
+                      </p>
+                    ) : row.archive_class === "operational_history" ? (
                       <p className="mt-1 text-[11px] text-text-muted">
                         {t("retention.noShortening")}
                       </p>
@@ -170,17 +262,12 @@ export function RetentionPolicyPanel() {
                   </TableCell>
                   <TableCell>
                     <Select
-                      value={row.purge_mode}
+                      value={draft.purge_mode}
                       disabled={busy}
-                      onValueChange={(value) =>
-                        void patchPolicy(row, {
-                          purge_mode: value,
-                          ...(value === "never" && row.allow_purge ? { allow_purge: false } : {}),
-                        })
-                      }
+                      onValueChange={(value) => patch(row.id, { purge_mode: value })}
                     >
                       <SelectTrigger className="h-9 w-48" aria-label={t("retention.col.purgeMode")}>
-                        <SelectValue>{purgeModeLabel(t, row.purge_mode)}</SelectValue>
+                        <SelectValue>{purgeModeLabel(t, draft.purge_mode)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {PURGE_MODES.map((m) => (
@@ -193,20 +280,18 @@ export function RetentionPolicyPanel() {
                   </TableCell>
                   <TableCell>
                     <Switch
-                      checked={row.allow_restore}
+                      checked={draft.allow_restore}
                       disabled={busy}
                       aria-label={t("retention.allowRestoreAria", { name })}
-                      onCheckedChange={(checked) =>
-                        void patchPolicy(row, { allow_restore: checked })
-                      }
+                      onCheckedChange={(checked) => patch(row.id, { allow_restore: checked })}
                     />
                   </TableCell>
                   <TableCell>
                     <Switch
-                      checked={row.allow_purge}
+                      checked={draft.allow_purge}
                       disabled={busy || purgeLocked}
                       aria-label={t("retention.allowPurgeAria", { name })}
-                      onCheckedChange={(checked) => void patchPolicy(row, { allow_purge: checked })}
+                      onCheckedChange={(checked) => patch(row.id, { allow_purge: checked })}
                     />
                     {purgeLocked ? (
                       <p className="mt-1 text-[11px] text-text-muted">
@@ -220,6 +305,47 @@ export function RetentionPolicyPanel() {
           </TableBody>
         </Table>
       )}
+
+      {canEdit && rows.length > 0 ? (
+        <StickyActionBar
+          hint={
+            dirty ? t("retention.pending", { count: pending.length + invalid.length }) : undefined
+          }
+        >
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              disabled={!dirty || saving}
+              onClick={() => setDrafts(Object.fromEntries(rows.map((r) => [r.id, draftOf(r)])))}
+            >
+              {t("retention.cancel")}
+            </Button>
+            <Button
+              disabled={pending.length === 0 || invalid.length > 0 || saving}
+              onClick={askSave}
+            >
+              {t("retention.save")}
+            </Button>
+          </div>
+        </StickyActionBar>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={t("retention.warn.title")}
+        description={t("retention.warn.description")}
+        confirmLabel={t("retention.warn.confirm")}
+        destructive
+        confirmDisabled={saving}
+        onConfirm={save}
+      >
+        <ul className="list-disc space-y-1 pl-5 text-sm">
+          {warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      </ConfirmDialog>
     </div>
   );
 }
