@@ -227,8 +227,14 @@ describe("RamsFleetPage", () => {
     expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("12");
     const start = screen.getByRole("button", { name: /Study the selection/ });
     expect(start).toBeDisabled();
+    // The grey button says what is missing, in a sentence (not only a tooltip).
+    expect(screen.getByTestId("rams-study-reason")).toHaveTextContent(
+      "Tick at least one equipment in the table",
+    );
+    expect(start).toHaveAttribute("aria-describedby", "rams-study-reason");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select P-101" }));
+    expect(screen.queryByTestId("rams-study-reason")).not.toBeInTheDocument();
     const row = screen.getByText("P-102").closest("tr");
     if (!row) throw new Error("P-102 row missing");
     fireEvent.keyDown(row, { key: " " });

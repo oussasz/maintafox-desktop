@@ -454,9 +454,15 @@ describe("ProcurementRepairablePanel", () => {
     fireEvent.click(within(detail).getByRole("button", { name: "Reject" }));
 
     const rejectDialog = await screen.findByRole("dialog", { name: "Reject requisition" });
+    // No reason typed yet: the grey button says what is missing.
+    expect(within(rejectDialog).getByRole("button", { name: "Reject requisition" })).toBeDisabled();
+    expect(within(rejectDialog).getByTestId("inv-reject-reason-blocker")).toHaveTextContent(
+      "Enter the rejection reason.",
+    );
     fireEvent.change(within(rejectDialog).getByLabelText("Rejection reason"), {
       target: { value: "Duplicate of REQ-2" },
     });
+    expect(within(rejectDialog).queryByTestId("inv-reject-reason-blocker")).not.toBeInTheDocument();
     fireEvent.click(within(rejectDialog).getByRole("button", { name: "Reject requisition" }));
 
     await waitFor(() =>

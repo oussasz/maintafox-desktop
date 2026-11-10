@@ -135,3 +135,26 @@ export function signatureMissing(
   if (approverUserId == null) return required;
   return password === "";
 }
+
+/**
+ * Why the break-in button is grey: the i18n key (namespace `planning`) of the sentence to show
+ * beside it, or null when it is available. Same conditions as `disabled`, in the order the form
+ * is filled.
+ */
+export function breakInDisabledReasonKey(input: {
+  /** A commitment (or frozen-week reason) is chosen. */
+  hasTarget: boolean;
+  /** Which sentence the missing target gets. */
+  targetKey: "breakIns.disabled.noCommitment" | "breakIns.disabled.noReason";
+  saving?: boolean;
+  required: boolean;
+  approverUserId: number | null;
+  password: string;
+}): string | null {
+  if (!input.hasTarget) return input.targetKey;
+  if (input.saving) return "breakIns.disabled.saving";
+  if (!signatureMissing(input.required, input.approverUserId, input.password)) return null;
+  return input.approverUserId == null
+    ? "breakIns.disabled.noApprover"
+    : "breakIns.disabled.noPassword";
+}

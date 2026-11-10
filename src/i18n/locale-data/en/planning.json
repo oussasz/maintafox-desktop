@@ -238,7 +238,14 @@
     "signatureHint": "The approver signs by typing their password on this PC. An urgent break-in, or one that forces a blocking check (crew capacity, locked window, shutdown window, readiness), must be signed.",
     "noApprovers": "Nobody else holds plan.confirm at this crew's site: an urgent break-in cannot be signed. Emergency work runs as an unscheduled work order.",
     "inserted": "Added to a frozen week:",
-    "syncRefused": "refused (sync)"
+    "syncRefused": "refused (sync)",
+    "disabled": {
+      "noCommitment": "Choose the commitment to move.",
+      "noReason": "Choose the break-in reason.",
+      "noApprover": "Choose the approver who signs this urgent break-in.",
+      "noPassword": "The approver must type their password to sign.",
+      "saving": "Saving in progress…"
+    }
   },
   "override": {
     "title": "Override double-booking",

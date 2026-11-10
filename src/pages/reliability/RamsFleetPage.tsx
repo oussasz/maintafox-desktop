@@ -24,6 +24,7 @@ import {
   periodFromMonths,
 } from "@/components/reliability/study/rams-ui";
 import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
@@ -203,7 +204,7 @@ export function RamsFleetPage() {
               className={mfLayout.primaryAction}
               disabled={selected.length === 0 || creating}
               onClick={() => void startStudy()}
-              title={selected.length === 0 ? t("rams.fleet.selectFirst") : undefined}
+              aria-describedby={selected.length === 0 ? "rams-study-reason" : undefined}
             >
               <ArrowRight className="h-4 w-4" aria-hidden />
               {selected.length === 0
@@ -434,6 +435,17 @@ export function RamsFleetPage() {
                   {t("rams.fleet.mixedClassesBody")}
                 </RamsCallout>
               </div>
+            ) : null}
+            {rows.length > 0 && selected.length === 0 ? (
+              <PermissionGate permission={P.RAM_ANALYZE}>
+                <ActionReason
+                  className="mb-2"
+                  data-testid="rams-study-reason"
+                  id="rams-study-reason"
+                >
+                  {t("rams.fleet.selectFirst")}
+                </ActionReason>
+              </PermissionGate>
             ) : null}
             {rows.length === 0 ? (
               <EmptyState
