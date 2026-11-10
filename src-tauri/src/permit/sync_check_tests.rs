@@ -10016,3 +10016,39 @@ async fn a_received_site_move_withdraws_the_liftings_held_here() {
         "audited"
     );
 }
+
+/// L4-13 review: on a PC's first join (nothing held, the plant's history), a verification recorded
+/// before the update (no zero-energy test) is history, not refused again; a normal received row is
+/// refused, and an over-long note is refused in both cases.
+#[test]
+fn first_join_history_keeps_its_pre_update_verifications() {
+    use super::sync_check::zero_energy_breach;
+    let verified: Payload = json!({
+        "isolation_point": "Breaker Q-9",
+        "verified_at": "2026-01-01T08:00:00Z",
+        "zero_energy_note": null,
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    assert_eq!(zero_energy_breach(None, &verified, true), None, "first-join history");
+    assert_eq!(
+        zero_energy_breach(None, &verified, false).map(|(c, _)| c),
+        Some("PERMIT_ZERO_ENERGY_PRE_UPGRADE"),
+        "a normal received row"
+    );
+    let too_long = with(
+        verified,
+        &[(
+            "zero_energy_note",
+            json!("x".repeat(crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS + 1)),
+        )],
+    );
+    for first_join in [true, false] {
+        assert_eq!(
+            zero_energy_breach(None, &too_long, first_join).map(|(c, _)| c),
+            Some("PERMIT_ZERO_ENERGY_NOTE_REQUIRED"),
+            "first join {first_join}"
+        );
+    }
+}
