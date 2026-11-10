@@ -1061,6 +1061,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         // is already the block's sync id, the same on every PC, sent as it is, so
                         // the audit is unchanged when the block is deleted later.
                         ("personnel_availability_block", NOT_A_ROW),
+                        // A skill validated or a certificate verified from the validation list
+                        // (`qualification::bulk_validation`): the target is already the row's sync id,
+                        // sent as it is, so the audit is unchanged when the skill is removed later.
+                        ("personnel_skill", NOT_A_ROW),
+                        ("personnel_certification", NOT_A_ROW),
+                        // A preventive plan duplicated (`pm::duplicate`): the target is already
+                        // the new plan's sync id, the same on every PC, sent as it is, so the
+                        // audit is unchanged when the draft plan is deleted later.
+                        ("pm_plan", NOT_A_ROW),
                         // Device, licence, activation, export, repair and import records stay on
                         // the device they belong to.
                         ("trusted_device", LOCAL_ROW),

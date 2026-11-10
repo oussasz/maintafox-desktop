@@ -3926,6 +3926,25 @@ export interface CreatePmPlanInput {
   is_active?: boolean;
 }
 
+/** "Dupliquer ce plan" (L6-11): a draft v1 copy of a plan onto a target asset or scope. */
+export interface DuplicatePmPlanInput {
+  source_plan_id: number;
+  code: string;
+  title: string;
+  /** Target scope; the source plan's scope when omitted. */
+  target_scope_type?: string | null;
+  target_scope_id?: number | null;
+  /** Meter of the target asset with the source meter's unit; omitted: to choose before publishing. */
+  target_meter_id?: number | null;
+}
+
+export interface DuplicatePmPlanResult {
+  plan: PmPlan;
+  version: PmPlanVersion;
+  /** The trigger counts on a meter still to choose before publishing. */
+  meter_to_choose: boolean;
+}
+
 export interface UpdatePmPlanInput {
   title?: string | null;
   description?: string | null;
@@ -4831,6 +4850,28 @@ export interface OverviewKpiCell {
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
+  /** Fleet reliability cells only: their window and hours basis (live `study::fleet_kpis`). */
+  fleet?: OverviewFleetBasis | null | undefined;
+}
+
+/**
+ * Window and live figures of a fleet reliability cell of the Vue d'ensemble (`study::fleet_kpis`;
+ * the full shape is `FleetKpis` in `src/services/reliability-study-service.ts`).
+ */
+export interface OverviewFleetBasis {
+  /** The last `window_months` calendar months. */
+  window_months: number;
+  /** The fields the card wording reads (window, hours basis, exclusions). */
+  kpis: {
+    window_too_short: boolean;
+    operating_basis_count: number;
+    calendar_basis_count: number;
+    mtbf_excluded_missing_date: number;
+    mtbf_excluded_outside_service: number;
+    restore_excluded_missing_failed_at: number;
+    restore_excluded_missing_restored_at: number;
+    restore_excluded_inconsistent: number;
+  };
 }
 
 export interface OverviewKpisPayload {
@@ -5256,6 +5297,25 @@ export type WoStatus =
 
 export type WoMacroState = "open" | "executing" | "completed" | "closed" | "cancelled";
 
+/**
+ * One permit type the plant's rules require of a work order (Rust `wo::domain::RequiredPermitView`):
+ * `live` (a permit of that type is linked and not ended), `missing` (none: the start and the
+ * resume are refused) or `cleared` (lifted with the permit-issue right at the site and a reason).
+ */
+export interface RequiredPermitView {
+  permit_type_code: string;
+  permit_type_name: string;
+  rule_code: string;
+  /** The primary rule (`permit_rule_code`): shown first. */
+  primary: boolean;
+  cleared_at: string | null;
+  cleared_by_name: string | null;
+  clear_reason: string | null;
+  live_permit_code: string | null;
+  live_permit_status: string | null;
+  state: "live" | "missing" | "cleared";
+}
+
 export interface WorkOrder {
   id: number;
   code: string;
@@ -5394,11 +5454,11 @@ export interface WorkOrder {
    */
   deisolation_pending?: boolean;
   /**
-   * The permit types of every plant rule that matches this work order now, when they differ
-   * ("plusieurs règles de permis"): display only, filled by `get_wo` (Rust
-   * `permit::requirement_rules::matching_permit_types`).
+   * Every permit type the plant's rules require of this work order (Rust `permit::required_set`,
+   * CMMS Advisor 2026-11-04), each live, missing or cleared: filled by `get_wo` and by the clearing
+   * of a type (Rust `permit::wo_gate::required_permit_views`).
    */
-  permit_rule_matching_types?: string[];
+  required_permits?: RequiredPermitView[];
   /** Inspection round of the finding the OT comes from (directly or through its request). */
   source_inspection_round_id?: number | null;
   source_inspection_round_code?: string | null;
@@ -5547,6 +5607,8 @@ export interface WoListFilter {
   equipment_id?: number | null;
   entity_id?: number | null;
   planner_id?: number | null;
+  /** Only the work orders without a planner ("planificateur à désigner"). */
+  planner_unassigned?: boolean | null;
   primary_responsible_id?: number | null;
   urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
@@ -5578,6 +5640,21 @@ export interface WoListPage {
 export interface WoGetResponse {
   wo: WorkOrder;
   transitions: WoTransitionRow[];
+}
+
+/** Why the signed-in user carries out a work order (`get_wo_execution_standing`, L5-08). */
+export type WoExecutionActorRole = "assignee" | "team_member" | "planner" | "approver";
+
+/**
+ * Whether the signed-in user carries out the work order (its assignee, a member of its team, its
+ * planner, or an `ot.approve` holder at its site), and else why not: a `GATE_WO_EXECUTION_*` code
+ * with the names it shows (`assignee`, `team`).
+ */
+export interface WoExecutionStanding {
+  actor: WoExecutionActorRole | null;
+  refusal: { code: string; params: Record<string, string> } | null;
+  /** The user created this work order and it is not released yet (a draft): they may cancel it. */
+  own_draft: boolean;
 }
 
 export interface WoCancelInput {
@@ -5618,7 +5695,8 @@ export interface WoPlanInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  planner_id: number;
+  /** null: the recorded planner is kept (empty stays empty: "planificateur à désigner"). */
+  planner_id: number | null;
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;
@@ -7723,7 +7801,7 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
-  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  /** `reliability_kpi_v2`+ (v3: every unplanned failure counts); legacy rows `reliability_kpi_v1`. */
   algorithm_version: string | null;
   /** Governed exposure (uptime) hours used as the KPI denominator. */
   exposure_hours: number | null;
@@ -8018,6 +8096,8 @@ export interface ReliabilityReadinessInput {
   period_start?: string | null;
   period_end?: string | null;
   min_sample_n?: number | null;
+  /** Analysis scoped to one failure mode: only that mode's failures are checked and counted. */
+  failure_mode_id?: number | null;
 }
 
 /** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
@@ -9714,16 +9794,25 @@ export interface AnalyticsExecutiveDashboard {
   avg_mtbf_hours: AnalyticsKpiValue;
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
+  /** Coding completeness (complete records / records) of the live calculation (`study::fleet_kpis`). */
   avg_data_quality: AnalyticsKpiValue;
+  /**
+   * "Taille d'échantillon": mean sample-size score of the latest stored KPI snapshot per equipment
+   * refreshed in the horizon. A sample-size measure, never data quality.
+   */
+  sample_size_score: AnalyticsKpiValue;
   /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
   /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
   maintenance_cost_pending: number | null;
+  /** Equipment with a stored KPI snapshot refreshed in the horizon. */
   reliability_snapshot_count: number;
+  /** Unplanned failures of the horizon (live calculation). */
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];
   workload_quality_badge: string | null;
   di_status_segments: AnalyticsDiStatusSegment[];
+  /** Trend series from the stored KPI snapshots (not the live calculation). */
   reliability_series: AnalyticsReliabilitySeriesPoint[];
   bad_actor_assets: AnalyticsBadActorAsset[];
 }

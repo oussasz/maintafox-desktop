@@ -81,6 +81,10 @@ pub struct WoListFilter {
     pub equipment_id: Option<i64>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
+    /// Only the work orders without a planner ("planificateur à désigner", CMMS Advisor
+    /// 2026-11-06 option b).
+    #[serde(default)]
+    pub planner_unassigned: Option<bool>,
     pub primary_responsible_id: Option<i64>,
     /// Level of the shared urgency scale (`emergency` … `low`).
     #[serde(default)]
@@ -310,6 +314,9 @@ pub async fn list_work_orders_in_scope(
     if let Some(planner_id) = filter.planner_id {
         where_clauses.push("wo.planner_id = ?".to_string());
         binds.push(planner_id.into());
+    }
+    if filter.planner_unassigned == Some(true) {
+        where_clauses.push("(wo.planner_id IS NULL OR wo.planner_id <= 0)".to_string());
     }
     if let Some(primary_responsible_id) = filter.primary_responsible_id {
         where_clauses.push("wo.primary_responsible_id = ?".to_string());
@@ -787,8 +794,8 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
             requires_permit, permit_rule_code, permit_rule_permit_type, permit_from_safety_di, \
-            entity_sync_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            permit_required_types_json, entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             type_id.into(),
@@ -865,6 +872,8 @@ pub async fn create_work_order_in(txn: &impl ConnectionTrait, mut input: WoCreat
             permit_flag.rule_code.clone().into(),
             permit_flag.permit_type_code.clone().into(),
             i64::from(from_safety_di).into(),
+            // Every permit type a matching rule gives (CMMS Advisor 2026-11-04): each is required.
+            permit_flag.required_set_json().into(),
             entity_sync_id.into(),
             now.clone().into(),
             now.clone().into(),

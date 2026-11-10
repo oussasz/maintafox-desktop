@@ -730,14 +730,26 @@
     },
     "kpi": {
       "availability": "Disponibilité opérationnelle",
-      "availabilityHint": "Aₒ du parc, {{period}}",
+      "availabilityHint": "Aₒ = MTBF / (MTBF + MTTR), {{period}}, {{basis}}",
       "mtbf": "MTBF",
+      "mtbfHint": "toutes les défaillances non planifiées, {{period}}, {{basis}}",
       "mttr": "MTTR",
-      "mttrHint": "temps de réparation actif moyen",
+      "mttrHint": "du début des travaux à la clôture de l'OT, ou de la panne à la remise en service pour les relevés importés ; {{period}}, en heures d'horloge",
+      "repair": "Heures-homme de réparation moyennes",
+      "repairHint": "heures pointées par les intervenants, par défaillance, {{period}}",
       "failures": "Défaillances",
-      "failuresHint": "{{hours}} h d'arrêt sur la période",
+      "failuresHint": "non planifiées, {{period}} ; {{hours}} h d'arrêt (heures d'horloge)",
       "dataQuality": "Qualité des données",
-      "dataQualityHint": "{{mode}} sans mode, {{cause}} sans cause"
+      "dataQualityHint": "{{period}} ; complètes = mode + cause + mécanisme ; {{mode}} sans mode, {{cause}} sans cause, {{mechanism}} sans mécanisme",
+      "tooShort": "période trop courte pour le MTBF (moins de {{days}} jours)",
+      "excluded": {
+        "outsideService": "{{count}} exclus : hors période de service",
+        "missingDate": "{{count}} exclus (toutes périodes) : date de panne manquante",
+        "failedAt": "{{count}} exclus : heure de panne manquante",
+        "restoredAt": "{{count}} exclus : heure de remise en service manquante",
+        "inconsistent": "{{count}} exclus : remise en service avant la panne",
+        "repairHours": "{{count}} exclus : temps de réparation manquant"
+      }
     },
     "fleet": {
       "period": "Période",
@@ -749,7 +761,7 @@
       "allClasses": "Toutes les classes",
       "basisOperating": "sur heures de marche",
       "basisCalendar": "sur heures calendaires (pas d'heures de marche)",
-      "basisMixed": "heures de marche ({{operating}} équip.) et calendaires ({{calendar}} équip.)",
+      "basisMixed": "heures de marche : {{operating}} équipements / calendrier : {{calendar}}",
       "studySelection": "Étudier la sélection",
       "studyN_one": "Étudier 1 équipement",
       "studyN_other": "Étudier {{count}} équipements",
@@ -895,7 +907,7 @@
       "reason": {
         "analyst": "Exclue par l'analyste",
         "analyst_included": "Incluse par l'analyste",
-        "not_eligible": "Exclue d'office : mode absent ou cause indéterminée",
+        "not_eligible": "Exclue d'office : mode de défaillance absent",
         "no_known_start": "Âge inconnu : aucune remise à neuf connue avant (sa réparation sert de départ à la suivante)",
         "zero_age": "Âge nul : aucune heure de marche depuis la remise à neuf précédente",
         "pm_not_confirmed": "À confirmer : ce préventif a-t-il remplacé la pièce ?"
@@ -1633,10 +1645,13 @@
       "complete": "Défaillances complètes",
       "completeHint": "{{complete}} sur {{total}} avec mode, cause et mécanisme",
       "codingGaps": "Codages incomplets",
+      "codingGapsHint": "{{mode}} sans mode, {{cause}} sans cause, {{mechanism}} sans mécanisme",
+      "notListed_one": "1 relevé hors OT incomplet, non listé ici",
+      "notListed_other": "{{count}} relevés hors OT incomplets, non listés ici",
       "noHours": "Sans heures de marche",
       "review": "Points de revue",
       "codingTitle": "Codage des défaillances incomplet",
-      "codingHint": "OT correctifs clôturés sans mode, cause ou mécanisme ISO 14224 : ils sortent des analyses ou les affaiblissent.",
+      "codingHint": "Défaillances de la période (mêmes filtres que l'accueil RAMS) issues d'un OT, sans mode, cause (ou « non déterminée ») ou mécanisme ISO 14224 : elles sortent des analyses ou les affaiblissent.",
       "noCodingGap": "Toutes les défaillances de la période sont codées.",
       "closedAt": "Clôture",
       "gap": "Manque",

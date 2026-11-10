@@ -10,6 +10,11 @@ import { getMyAccessAt } from "@/services/rbac-service";
 
 export interface AccessAt {
   loading: boolean;
+  /**
+   * The rights could not be read (`can` then answers false for everything): a screen must not
+   * tell the user a right is missing on that basis; the backend stays the gate.
+   */
+  failed: boolean;
   /** Whether the user holds `permission` at the node. */
   can: (permission: string) => boolean;
 }
@@ -20,6 +25,8 @@ interface Loaded {
   version: number;
   /** null: every permission (administrator). */
   granted: Set<string> | null;
+  /** The read failed (`granted` is then empty). */
+  failed: boolean;
 }
 
 export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
@@ -43,12 +50,12 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
   useEffect(() => {
     if (orgNodeId == null) return;
     let cancelled = false;
-    const done = (granted: Set<string> | null) => {
-      if (!cancelled) setLoaded({ node: orgNodeId, version, granted });
+    const done = (granted: Set<string> | null, failed = false) => {
+      if (!cancelled) setLoaded({ node: orgNodeId, version, granted, failed });
     };
     void getMyAccessAt(orgNodeId)
       .then((perms) => done(perms === null ? null : new Set(perms)))
-      .catch(() => done(new Set()));
+      .catch(() => done(new Set(), true));
     return () => {
       cancelled = true;
     };
@@ -67,7 +74,11 @@ export function useAccessAt(orgNodeId: number | null | undefined): AccessAt {
       current === undefined ? false : current.granted === null || current.granted.has(permission),
     [current],
   );
-  return { loading: orgNodeId != null && current === undefined, can };
+  return {
+    loading: orgNodeId != null && current === undefined,
+    failed: current?.failed ?? false,
+    can,
+  };
 }
 
 export interface AccessAtNodes {

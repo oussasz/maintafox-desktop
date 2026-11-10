@@ -591,8 +591,14 @@ const DataQualitySchema = z.object({
       severity: z.string(),
     }),
   ),
+  /** Same completeness predicate and filters as the RAMS home card. */
   records: num,
   records_complete: num,
+  records_missing_mode: num,
+  records_missing_cause: num,
+  records_missing_mechanism: num,
+  org_nodes: z.array(z.object({ id: num, label: z.string(), depth: num })),
+  equipment_classes: z.array(z.object({ id: num, label: z.string(), depth: num })),
   /** A list stopped at its maximum: more exist than are listed. */
   coding_gaps_truncated: z.boolean(),
   no_operating_hours_truncated: z.boolean(),
@@ -601,6 +607,16 @@ const DataQualitySchema = z.object({
 
 export type DataQualityView = z.infer<typeof DataQualitySchema>;
 
-export async function getReliabilityDataQuality(months: number): Promise<DataQualityView> {
-  return DataQualitySchema.parse(await invoke<unknown>("get_reliability_data_quality", { months }));
+/** Period and filters of the quality page — the same as the RAMS home page's. */
+export interface DataQualityFilter {
+  period_start: string;
+  period_end: string;
+  org_node_id?: number | null;
+  equipment_class_id?: number | null;
+}
+
+export async function getReliabilityDataQuality(
+  filter: DataQualityFilter,
+): Promise<DataQualityView> {
+  return DataQualitySchema.parse(await invoke<unknown>("get_reliability_data_quality", { filter }));
 }

@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PmPage } from "@/pages/PmPage";
+import { useAppToastStore } from "@/store/app-toast-store";
 import { usePmStore } from "@/stores/pm-store";
 import { mockInvoke } from "@/test/mocks/tauri";
 
@@ -245,5 +246,81 @@ describe("PmPage", () => {
     routeInvoke();
     fireEvent.click(within(alert).getByRole("button"));
     await waitFor(() => expect(screen.getByText("PM-FUTURE")).toBeInTheDocument());
+  });
+
+  describe("Dupliquer ce plan", () => {
+    const version = {
+      id: 4,
+      pm_plan_id: 1,
+      version_no: 1,
+      status: "draft",
+      effective_from: TS,
+      effective_to: null,
+      trigger_definition_json: '{"interval_value":3,"interval_unit":"month"}',
+      task_package_json: null,
+      required_parts_json: null,
+      required_skills_json: null,
+      required_tools_json: null,
+      estimated_duration_hours: null,
+      planned_crew_size: null,
+      estimated_labor_cost: null,
+      estimated_parts_cost: null,
+      estimated_service_cost: null,
+      change_reason: null,
+      row_version: 1,
+      created_at: TS,
+      updated_at: TS,
+    };
+    const copy = {
+      plan: { ...plan, id: 7, code: "PM-COPY", title: "Copy of Graissage pompe" },
+      version: { ...version, id: 70, pm_plan_id: 7 },
+      meter_to_choose: false,
+    };
+
+    /** The page with plan 1 open; `failRefresh`: the plan list cannot be read after the copy. */
+    async function duplicateFromPage(failRefresh: boolean) {
+      const base = mockInvoke.getMockImplementation();
+      let created = false;
+      mockInvoke.mockImplementation(
+        async (cmd: string, args?: Parameters<typeof mockInvoke>[1]) => {
+          if (cmd === "list_pm_plan_versions") return [version];
+          if (cmd === "duplicate_pm_plan") {
+            created = true;
+            return copy;
+          }
+          if (cmd === "list_pm_plans" && created && failRefresh) {
+            throw { code: "DB_ERROR", message: "base indisponible" };
+          }
+          return base?.(cmd, args);
+        },
+      );
+      useAppToastStore.setState({ items: [] });
+      renderPage("/pm?planId=1");
+      fireEvent.click(await screen.findByRole("button", { name: "Duplicate this plan" }));
+      const dialog = await screen.findByRole("dialog", { name: "Duplicate plan PM-PUMP" });
+      fireEvent.change(within(dialog).getByLabelText("Code"), { target: { value: "PM-COPY" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Duplicate plan PM-PUMP" }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "duplicate_pm_plan")).toHaveLength(1);
+      return useAppToastStore.getState().items.map((item) => item.title);
+    }
+
+    it("closes the dialog and says the new plan was created", async () => {
+      const titles = await duplicateFromPage(false);
+      expect(titles).toContain("Plan PM-COPY created as a draft from the original plan.");
+      expect(titles.some((title) => title.includes("could not be refreshed"))).toBe(false);
+    });
+
+    it("says the copy was created and, apart, that the screen could not be refreshed", async () => {
+      const titles = await duplicateFromPage(true);
+      expect(titles).toContain("Plan PM-COPY created as a draft from the original plan.");
+      expect(titles).toContain(
+        "Plan PM-COPY was created, but the screen could not be refreshed. Refresh the list to open it.",
+      );
+    });
   });
 });

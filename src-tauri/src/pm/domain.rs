@@ -159,6 +159,34 @@ pub struct UpdatePmPlanVersionInput {
     pub change_reason: Option<String>,
 }
 
+/// "Dupliquer ce plan" (L6-11): a new plan copied from the source plan's current published version
+/// (else its latest draft), onto a target asset or scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicatePmPlanInput {
+    pub source_plan_id: i64,
+    /// Code of the new plan (same rule as a new plan: trimmed, upper case, unique).
+    pub code: String,
+    pub title: String,
+    /// Target scope: the source plan's scope when omitted.
+    #[serde(default)]
+    pub target_scope_type: Option<String>,
+    #[serde(default)]
+    pub target_scope_id: Option<i64>,
+    /// Meter of the target asset for a trigger on a chosen meter (same unit as the source meter);
+    /// omitted: the meter is left to choose and publishing is refused until it is.
+    #[serde(default)]
+    pub target_meter_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicatePmPlanResult {
+    pub plan: PmPlan,
+    /// Version 1 of the new plan, a draft.
+    pub version: PmPlanVersion,
+    /// The trigger counts on a meter still to choose before publishing.
+    pub meter_to_choose: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishPmPlanVersionInput {
     pub version_id: i64,

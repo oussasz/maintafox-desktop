@@ -14,16 +14,44 @@ const optStr = z.string().nullable();
 
 const FilterOptionSchema = z.object({ id: num, label: z.string(), depth: num });
 
-const FleetKpisSchema = z.object({
+/**
+ * Fleet figures of one scope (period, class, site) — the one live calculation shared by RAMS and
+ * Analytique (`src-tauri/src/reliability/study/fleet_kpis.rs`, definitions there).
+ */
+export const FleetKpisSchema = z.object({
+  period_start: z.string(),
+  period_end: z.string(),
+  /** Window under 90 days: MTBF, MTTR, active repair and Aₒ are not given. */
+  window_too_short: z.boolean(),
   equipment_count: num,
   failure_count: num,
   downtime_hours: num,
+  exposure_hours: num,
+  /** Aₒ = MTBF / (MTBF + MTTR restore). */
   availability_operational: optNum,
+  /** Σ hours / every unplanned failure of the scope, whatever its coding. */
   mtbf_hours: optNum,
+  eligible_failure_count: num,
+  /** Unplanned records of the class / site left out of the MTBF: failure date unreadable. */
+  mtbf_excluded_missing_date: num,
+  /** Records of the window dated outside their equipment's service period: out of every figure. */
+  mtbf_excluded_outside_service: num,
+  /** Mean time to restore: work start → WO close (work orders), failure → back in service (imported). */
   mttr_hours: optNum,
+  restore_count: num,
+  restore_excluded_missing_failed_at: num,
+  restore_excluded_missing_restored_at: num,
+  restore_excluded_inconsistent: num,
+  /** Mean repair person-hours (Σ of the interveners' hours worked). */
+  mean_active_repair_hours: optNum,
+  active_repair_count: num,
+  repair_excluded_missing_hours: num,
+  /** Complete records (mode + cause or not determined + mechanism) / records. */
   data_quality: optNum,
+  records_complete: num,
   records_missing_mode: num,
   records_missing_cause: num,
+  records_missing_mechanism: num,
   operating_basis_count: num,
   calendar_basis_count: num,
 });
@@ -58,6 +86,7 @@ const FleetViewSchema = z.object({
 });
 
 export type FleetView = z.infer<typeof FleetViewSchema>;
+export type FleetKpis = z.infer<typeof FleetKpisSchema>;
 export type FleetAssetRow = z.infer<typeof FleetAssetRowSchema>;
 export type FilterOption = z.infer<typeof FilterOptionSchema>;
 

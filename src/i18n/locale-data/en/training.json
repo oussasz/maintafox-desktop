@@ -6,6 +6,7 @@
   "tabs": {
     "matrix": "Matrix",
     "expiry": "Expiries & renewals",
+    "validation": "To validate",
     "sessions": "Training sessions",
     "requirements": "Job requirements",
     "catalog": "Catalogue",
@@ -253,6 +254,37 @@
     "empty": "Nothing to renew",
     "emptyHint": "No certification expires within {{count}} days and none waits for verification."
   },
+  "validation": {
+    "intro": "Skills recorded without validation (an import brings them in that way) and certificates waiting for verification. Check each line against its evidence, tick it and validate the selection: each line is recorded in the audit log.",
+    "search": "Search a person…",
+    "kind": "Kind",
+    "allKinds": "Skills and certificates",
+    "skills": "Skills",
+    "certifications": "Certificates",
+    "item": "Skill or certificate",
+    "allItems": "All skills and certificates",
+    "importedOnly": "Imported only",
+    "skill": "skill",
+    "certification": "certificate",
+    "imported": "imported",
+    "until": "until {{date}}",
+    "noEnd": "no end date",
+    "selectAll": "Select the {{count}} lines shown",
+    "selectLine": "Select {{item}} for {{name}}",
+    "readOnly": "Validating needs the right to certify qualifications.",
+    "validate_one": "Validate {{count}} line",
+    "validate_other": "Validate {{count}} lines",
+    "confirmTitle": "Validate the selection?",
+    "confirmBody": "{{skills}} skill(s) and {{certifications}} certificate(s) become valid and count for job requirements. Each line is validated exactly as shown and recorded in the audit log under your name.",
+    "done_one": "{{count}} line validated.",
+    "done_other": "{{count}} lines validated.",
+    "someRefused_one": "{{count}} line was not validated: see the reason under it.",
+    "someRefused_other": "{{count}} lines were not validated: see the reason under each.",
+    "refusedUnknown": "This line could not be validated.",
+    "empty": "Nothing to validate",
+    "emptyHint": "Every skill is validated and every certificate verified, or no line matches the filters.",
+    "skillsNeedLink": "Skills can be validated only by an account linked to a personnel record."
+  },
   "sessions": {
     "peopleRestricted": "Reading people requires the personnel view right: this choice is not available to you.",
     "belowPassMark": "Below pass mark {{score}}: will be recorded as failed",
@@ -397,7 +429,9 @@
     "QUALIFICATION_OVERRIDE_SELF": "You cannot override your own qualification gap: another authorised supervisor must do it.",
     "LABOR_PERSON_INACTIVE": "This person is no longer active: labour cannot be booked to them.",
     "PERMIT_REQUIRED_TO_START": "This work order requires a work permit: link an active permit before starting or resuming it.",
-    "PERMIT_TYPE_REQUIRED_TO_START": "A permit rule requires a {{permit_type_name}} permit for this work order: link an active permit of that type before starting or resuming it.",
+    "PERMIT_TYPE_REQUIRED_TO_START": "The permit rules require an active permit of each type for this work order: {{missing_type_names}} missing. Link an active permit of each of these types before starting or resuming it.",
+    "WO_PERMIT_RULE_CLEAR_TYPE_REQUIRED": "This work order requires several permit types ({{permit_types}}): lift them one by one from the list of required permits.",
+    "WO_PERMIT_REQUIRED_TYPES_UNREADABLE": "The permit types required for this work order cannot be read: have it checked before starting it.",
     "PERMIT_SUSPENDED": "Permit {{permit}} is suspended: revalidate it before starting or resuming the work.",
     "PERMIT_NOT_ACTIVE": "Permit {{permit}} is not active yet ({{status}}): activate it before the work starts or resumes.",
     "PERMIT_EXPIRED": "Permit {{permit}} has expired: it can no longer be activated or used to start work.",
@@ -534,6 +568,9 @@
     "WO_PART_TO_ISSUE_QUANTITY_INVALID": "The issued quantity must be greater than zero; to issue nothing, cancel the line with a reason.",
     "WO_PART_TO_ISSUE_REASON_REQUIRED": "Give the reason (at least {{min}} characters).",
     "WO_PART_TO_ISSUE_LOCATION_REQUIRED": "Choose the stock location the part leaves from.",
-    "WO_PART_TO_ISSUE_WO_LOCKED": "The work order is {{status}}: nothing can be issued to it any more."
+    "WO_PART_TO_ISSUE_WO_LOCKED": "The work order is {{status}}: nothing can be issued to it any more.",
+    "QUAL_VALIDATION_CHANGED": "This line changed or was validated elsewhere since the list was shown: check it again.",
+    "QUAL_VALIDATION_KIND_UNKNOWN": "This kind of line cannot be validated here.",
+    "QUAL_VALIDATION_FAILED": "This line could not be recorded (storage error): try again; if it fails again, contact your administrator."
   }
 }

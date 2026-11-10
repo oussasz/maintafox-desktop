@@ -312,6 +312,18 @@ pub struct PermitFlagOutcome {
     /// here). Recorded in the work order's history and audit trail so they are fixed.
     #[serde(default)]
     pub unresolved_rule_codes: Vec<String>,
+    /// Every permit type a matching rule calls for, with the first rule (list order) that gives it:
+    /// the set the new work order requires (`permit::required_set`, CMMS Advisor 2026-11-04). Written
+    /// with the work order, not sent in the conversion response.
+    #[serde(skip)]
+    pub required_types: Vec<(String, String)>,
+}
+
+impl PermitFlagOutcome {
+    /// The canonical set of [`Self::required_types`] (`None`: no rule matched, the column stays NULL).
+    pub fn required_set_json(&self) -> Option<String> {
+        crate::permit::required_set::RequiredSet::from_matches(&self.required_types).to_json()
+    }
 }
 
 /// The equipment's class code: its `EQUIPMENT.CLASS` value, else its legacy class.
@@ -461,6 +473,7 @@ pub async fn evaluate_with(
         safety_flag,
         unreadable_rule_codes: Vec::new(),
         unresolved_rule_codes: Vec::new(),
+        required_types: Vec::new(),
     };
     if rules.is_empty() {
         return Ok(outcome);
@@ -492,6 +505,9 @@ pub async fn evaluate_with(
             chosen_isolation = published.isolation;
         }
     }
+    // Every type a matching rule gives is required, not only the recorded rule's (CMMS Advisor
+    // 2026-11-04): the start needs a live permit of each.
+    outcome.required_types = matching_types_with(rules, &facts);
     Ok(outcome)
 }
 
@@ -507,33 +523,34 @@ pub async fn type_requires_isolation(db: &impl ConnectionTrait, code: &str) -> A
         .is_some())
 }
 
-/// The permit types of every published rule that matches this equipment and work type, distinct, in
-/// the list's order: shown on the work order when they differ ("plusieurs règles de permis"), display
-/// only (CMMS Advisor decision on AU-04 R5-S3). `carried`: the permit type of the rule the work order
-/// carries; when the list here does not give it (a rule received from another PC that outranks this
-/// PC's, for example LOTO over hot work), it is shown first, with the types the list here gives (CMMS
-/// Advisor decision C7-N1: the other permit is added). Empty when fewer than two types.
-pub async fn matching_permit_types(
+/// Every permit type a published rule matching these facts calls for, distinct, in the list's order,
+/// each with the first rule (list order) that gives it: every one is required (CMMS Advisor
+/// 2026-11-04, `permit::required_set`). A rule that does not read gives none.
+pub fn matching_types_with(rules: &PublishedRules, facts: &WorkFacts) -> Vec<(String, String)> {
+    let mut types: Vec<(String, String)> = Vec::new();
+    for published in &rules.0 {
+        let Some(rule) = published.spec.as_ref() else {
+            continue;
+        };
+        if rule_matches(rule, facts) && !types.iter().any(|(t, _)| *t == rule.permit_type_code) {
+            types.push((rule.permit_type_code.clone(), published.code.clone()));
+        }
+    }
+    types
+}
+
+/// [`matching_types_with`] for a work order's equipment and work type.
+pub async fn matching_types(
     db: &impl ConnectionTrait,
+    rules: &PublishedRules,
     equipment_id: Option<i64>,
     work_type_id: i64,
-    carried: Option<&str>,
-) -> AppResult<Vec<String>> {
-    let rules = PublishedRules::load(db).await?;
+) -> AppResult<Vec<(String, String)>> {
     if rules.is_empty() {
         return Ok(Vec::new());
     }
     let facts = work_facts(db, equipment_id, work_type_id).await?;
-    let mut types: Vec<String> = Vec::new();
-    for rule in rules.0.iter().filter_map(|r| r.spec.as_ref()) {
-        if rule_matches(rule, &facts) && !types.contains(&rule.permit_type_code) {
-            types.push(rule.permit_type_code.clone());
-        }
-    }
-    if let Some(carried) = carried.filter(|c| !types.iter().any(|t| t == c)) {
-        types.insert(0, carried.to_string());
-    }
-    Ok(if types.len() > 1 { types } else { Vec::new() })
+    Ok(matching_types_with(rules, &facts))
 }
 
 /// What a rule is matched against: the equipment's class and criticality, and the work type.
@@ -545,7 +562,7 @@ pub struct WorkFacts {
 }
 
 /// The facts of a work order a rule is matched against (check 6, C6-N4: one reading for
-/// [`evaluate_with`] and [`matching_permit_types`]).
+/// [`evaluate_with`] and [`matching_types`]).
 async fn work_facts(db: &impl ConnectionTrait, equipment_id: Option<i64>, work_type_id: i64) -> AppResult<WorkFacts> {
     let (class, criticality) = match equipment_id {
         Some(id) => (
@@ -571,7 +588,7 @@ async fn work_facts(db: &impl ConnectionTrait, equipment_id: Option<i64>, work_t
 
 /// Whether a rule matches these facts: each one it names matches (a rule naming several matches
 /// only when all of them match). The single matching of [`evaluate_with`] and
-/// [`matching_permit_types`] (check 6, C6-N4).
+/// [`matching_types_with`] (check 6, C6-N4).
 fn rule_matches(rule: &RuleSpec, facts: &WorkFacts) -> bool {
     let class_ok = rule
         .equipment_class_code
@@ -686,6 +703,10 @@ pub mod stamp_causes {
     /// rule it carries does not have ([`super::restamp_received_rule_on_resume`], CMMS Advisor
     /// decision C7-N4).
     pub const RESUMED: &str = "resumed_received";
+    /// A work order on hold about to resume: a permit type the list here gives it that its set does
+    /// not hold is added before the permit gate judges the resume ([`super::prepare_resume`], lead
+    /// decision D-b, CMMS Advisor 2026-11-04).
+    pub const RESUME_TYPES_ADDED: &str = "resumed";
 }
 
 /// The version of the published rule list (recorded with a rule written on an existing work order).
@@ -752,9 +773,29 @@ async fn stamp_matching_rule_with(
     };
     let held: Option<String> = row.try_get("", "permit_rule_code")?;
     let status: String = row.try_get("", "status")?;
-    if held.is_some() || !not_started.contains(&status.as_str()) {
+    if !not_started.contains(&status.as_str()) {
         return Ok(None);
     }
+    let stamped = match held {
+        Some(_) => None,
+        None => stamp_primary_rule(conn, rules, wo_id, actor_id, cause, &row, &status).await?,
+    };
+    // Every other type a matching rule gives is added to the set the work order requires (it only
+    // adds; CMMS Advisor 2026-11-04), whether or not the primary rule was recorded just now.
+    let added = add_matching_types(conn, rules, wo_id, actor_id, cause, None).await?;
+    Ok(stamped.or_else(|| added.first().map(|(_, rule)| rule.clone())))
+}
+
+/// The primary rule recorded on a work order not started that has none ([`stamp_matching_rule`]).
+async fn stamp_primary_rule(
+    conn: &impl ConnectionTrait,
+    rules: &PublishedRules,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    cause: &str,
+    row: &sea_orm::QueryResult,
+    status: &str,
+) -> AppResult<Option<String>> {
     let equipment: Option<i64> = row.try_get("", "equipment_id")?;
     let type_id: i64 = row.try_get("", "type_id")?;
     let outcome = evaluate_with(conn, rules, equipment, type_id, false).await?;
@@ -799,8 +840,8 @@ async fn stamp_matching_rule_with(
         wo_id,
         "permit_rule_applied",
         actor_id,
-        Some(&status),
-        Some(&status),
+        Some(status),
+        Some(status),
         Some(&payload),
     )
     .await?;
@@ -821,8 +862,165 @@ async fn stamp_matching_rule_with(
     Ok(Some(rule))
 }
 
-/// [`stamp_matching_rule`] on every work order of this PC that has no plant rule and has not
-/// started: when the plant's rule list changes here or is received. Returns the work orders flagged.
+/// Every permit type a rule of the list here gives a work order (its equipment and work type now)
+/// that its set does not hold yet is added to the set it requires (`permit::required_set`, CMMS
+/// Advisor 2026-11-04): with the first rule (list order) that gives it, not cleared, and the permit
+/// required (`requires_permit = 1`). It never removes a type, nor changes the rule or the clearing of
+/// a type the set holds. Whatever its status: the caller decides (a work order not started on a
+/// stamp, a re-check or the catch-up; any open work order received; a work order on hold about to
+/// resume). `expected_row_version`: the version the caller read (a stale screen adds nothing).
+///
+/// Recorded in the work order's history (`permit_rule_applied`, with `cause`, the types added, the
+/// set before and after) and audit trail. When the set already held a type, the permit-issue right
+/// holders of its site are told, once for the types added together: the permit planned for the
+/// work may not cover them. Returns the types added, each with its rule.
+pub async fn add_matching_types(
+    conn: &impl ConnectionTrait,
+    rules: &PublishedRules,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    cause: &str,
+    expected_row_version: Option<i64>,
+) -> AppResult<Vec<(String, String)>> {
+    use crate::permit::required_set::{from_query_row, SELECT_COLUMNS, SELECT_JOIN};
+    if rules.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT wo.equipment_id, wo.type_id, wo.requires_permit, wo.row_version, wo.code, \
+                        wo.entity_sync_id, st.code AS status, {SELECT_COLUMNS} \
+                   FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id {SELECT_JOIN} \
+                  WHERE wo.id = ?"
+            ),
+            [wo_id.into()],
+        ))
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let version: i64 = row.try_get("", "row_version")?;
+    if expected_row_version.is_some_and(|v| v != version) {
+        return Ok(Vec::new());
+    }
+    let mut set = from_query_row(&row, wo_id)?;
+    let equipment: Option<i64> = row.try_get("", "equipment_id")?;
+    let type_id: i64 = row.try_get("", "type_id")?;
+    let before: Vec<String> = set.items().iter().map(|i| i.permit_type_code.clone()).collect();
+    let added: Vec<(String, String)> = matching_types(conn, rules, equipment, type_id)
+        .await?
+        .into_iter()
+        .filter(|(permit_type, rule)| set.add(permit_type, rule))
+        .collect();
+    if added.is_empty() {
+        return Ok(added);
+    }
+    let written = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET permit_required_types_json = ?, requires_permit = 1, \
+                    row_version = row_version + 1 \
+              WHERE id = ? AND row_version = ?",
+            [set.to_json().into(), wo_id.into(), version.into()],
+        ))
+        .await?;
+    if written.rows_affected() == 0 {
+        return Ok(Vec::new());
+    }
+    let status: String = row.try_get("", "status")?;
+    let previous_requires: i64 = row.try_get("", "requires_permit")?;
+    let added_types: Vec<&str> = added.iter().map(|(t, _)| t.as_str()).collect();
+    let added_rules: Vec<&str> = added.iter().map(|(_, r)| r.as_str()).collect();
+    let payload = serde_json::json!({
+        "requires_permit": true,
+        "origin": "rule",
+        "cause": cause,
+        "added_permit_types": added_types,
+        "added_rule_codes": added_rules,
+        "previous_permit_types": before,
+        "required_permit_types": set.items().iter().map(|i| i.permit_type_code.as_str()).collect::<Vec<_>>(),
+        "previous_requires_permit": previous_requires != 0,
+        "rule_set_version": published_rule_set_version(conn).await?,
+        "actor_sync_id": crate::wo::workflow::actions::permit_requirement::user_sync_id(conn, actor_id).await?,
+    })
+    .to_string();
+    crate::wo::workflow::events::emit_action_event(
+        conn,
+        wo_id,
+        "permit_rule_applied",
+        actor_id,
+        Some(&status),
+        Some(&status),
+        Some(&payload),
+    )
+    .await?;
+    let listed: Vec<String> = added.iter().map(|(t, r)| format!("{t} (règle {r})")).collect();
+    crate::wo::audit::insert_wo_change_event(
+        conn,
+        &crate::wo::audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "permit_rule_applied".into(),
+            actor_id,
+            summary: Some(format!(
+                "Permis exigé en plus pour cet OT : {} — un permis vivant de chaque type exigé est nécessaire pour le \
+                 démarrer ou le reprendre",
+                listed.join(", ")
+            )),
+            details_json: Some(payload),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await?;
+    // A work order received already started is told through its arrival finding, which names the
+    // types it lacked (`finding_for_started_without_rule`): one notice, not two.
+    let told_by_finding = cause == stamp_causes::WORK_ORDER_RECEIVED
+        && !crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&status.as_str());
+    let wo_sync: Option<String> = row.try_get("", "entity_sync_id")?;
+    if let Some(wo_sync) = wo_sync.filter(|_| !before.is_empty() && !told_by_finding) {
+        let code: String = row.try_get("", "code")?;
+        crate::settings::received_notice::notify_work_order_permit_types_added(
+            conn, wo_id, &wo_sync, &code, &added, &before,
+        )
+        .await;
+    }
+    Ok(added)
+}
+
+/// The permit types of a work order's stored set (`permit::required_set`) not cleared and without a
+/// live permit of that type linked to it (the gate's reading, `permit::wo_gate`), each with its
+/// rule: a work order received in progress that runs here without them (its start was judged with
+/// the sender's set) is recorded in its arrival finding. Nothing for a set read from the legacy
+/// columns alone (judged as before).
+pub async fn required_types_without_live_permit(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+) -> AppResult<Vec<(String, String)>> {
+    let Some(set) = crate::permit::required_set::read(conn, wo_id).await? else {
+        return Ok(Vec::new());
+    };
+    if !set.stored() {
+        return Ok(Vec::new());
+    }
+    let live = crate::permit::queries::list_live_permits_linked_to_work_order(conn, wo_id).await?;
+    Ok(set
+        .items()
+        .iter()
+        .filter(|i| i.clearing.is_none())
+        .filter(|i| {
+            !live
+                .iter()
+                .any(|p| p.permit_type_code.as_deref() == Some(i.permit_type_code.as_str()))
+        })
+        .map(|i| (i.permit_type_code.clone(), i.rule_code.clone()))
+        .collect())
+}
+
+/// [`stamp_matching_rule`] on every work order of this PC that has not started: when the plant's
+/// rule list changes here or is received (a work order without a rule gets one; one with a rule gets
+/// the other types the list now gives). Returns the work orders flagged.
 pub async fn stamp_open_work_orders(
     conn: &impl ConnectionTrait,
     actor_id: Option<i64>,
@@ -833,7 +1031,7 @@ pub async fn stamp_open_work_orders(
     if rules.is_empty() {
         return Ok(Vec::new());
     }
-    let ids = open_unruled_work_orders(conn).await?;
+    let ids = open_not_started_work_orders(conn).await?;
     let mut flagged = Vec::new();
     for id in ids {
         if stamp_matching_rule_with(conn, &rules, id, actor_id, cause)
@@ -846,8 +1044,7 @@ pub async fn stamp_open_work_orders(
     Ok(flagged)
 }
 
-/// [`stamp_matching_rule`] on the work orders of one equipment that have no plant rule and have not
-/// started: when the equipment's class or criticality changes here (identity edit, criticality
+/// [`stamp_matching_rule`] on the work orders of one equipment that have not started: when the equipment's class or criticality changes here (identity edit, criticality
 /// assessment, import), in the same transaction, so a machine that becomes critical gets its permit
 /// requirement on its open work orders at once (CMMS Advisor decision L4 Q7) rather than at the
 /// next catch-up. Returns the work orders flagged.
@@ -869,7 +1066,7 @@ pub async fn stamp_open_work_orders_of_equipment(
             DbBackend::Sqlite,
             format!(
                 "SELECT wo.id FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
-                  WHERE wo.equipment_id = ? AND wo.permit_rule_code IS NULL AND st.code IN ({marks}) \
+                  WHERE wo.equipment_id = ? AND st.code IN ({marks}) \
                   ORDER BY wo.id"
             ),
             binds,
@@ -888,8 +1085,8 @@ pub async fn stamp_open_work_orders_of_equipment(
     Ok(flagged)
 }
 
-/// The work orders not started yet (draft, planning, ready) that have no plant rule, by id.
-async fn open_unruled_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
+/// The work orders not started yet (draft, planning, ready), by id.
+async fn open_not_started_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<i64>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let marks = vec!["?"; not_started.len()].join(",");
     let rows = conn
@@ -897,7 +1094,7 @@ async fn open_unruled_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<
             DbBackend::Sqlite,
             format!(
                 "SELECT wo.id FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
-                  WHERE wo.permit_rule_code IS NULL AND st.code IN ({marks}) ORDER BY wo.id"
+                  WHERE st.code IN ({marks}) ORDER BY wo.id"
             ),
             not_started.iter().map(|c| sea_orm::Value::from(*c)).collect::<Vec<_>>(),
         ))
@@ -909,8 +1106,9 @@ async fn open_unruled_work_orders(conn: &impl ConnectionTrait) -> AppResult<Vec<
 
 /// The durable catch-up of [`stamp_open_work_orders`] (audit finding AU-04 R2-S2), like
 /// `permit::ended_hold::sweep`: at start-up and after each synchronisation pass, every work order
-/// not started yet, without a rule, that a rule of the list here matches now gets it (a stamp a
-/// failed or older run missed, an equipment whose class changed since). Each PC derives the same
+/// not started yet, without a rule, that a rule of the list here matches now gets it, and one that
+/// lacks a permit type a matching rule gives gets that type (a stamp a failed or older run missed,
+/// an equipment whose class changed since, a work order stamped before migration 279). Each PC derives the same
 /// from the same work order and list, so it is written with capture suppressed and never sent, like
 /// a stamp made while applying received rows. The work orders due are found by reads only; each one
 /// a rule matches is then stamped in its own short transaction, so the write lock is held only for
@@ -923,7 +1121,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
         if rules.is_empty() {
             return AppResult::Ok((rules, Vec::new()));
         }
-        let ids = open_unruled_work_orders(db).await?;
+        let ids = open_not_started_work_orders(db).await?;
         Ok((rules, ids))
     };
     let (rules, ids, received) = match async {
@@ -947,14 +1145,16 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             return 0;
         }
     };
-    let mut flagged = 0;
+    // Work orders flagged, each counted once (a missing type added, then its received rule re-checked).
+    let mut flagged: Vec<i64> = Vec::new();
     for wo_id in ids {
         let one = async {
-            // Read first: a work order no rule matches takes no write lock.
+            // Read first: a work order that holds every type the rules give it (and a rule, when one
+            // matches) takes no write lock.
             let row = db
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "SELECT equipment_id, type_id FROM work_orders WHERE id = ? AND permit_rule_code IS NULL",
+                    "SELECT equipment_id, type_id, permit_rule_code FROM work_orders WHERE id = ?",
                     [wo_id.into()],
                 ))
                 .await?;
@@ -963,11 +1163,11 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             };
             let equipment: Option<i64> = row.try_get("", "equipment_id")?;
             let type_id: i64 = row.try_get("", "type_id")?;
-            if evaluate_with(db, &rules, equipment, type_id, false)
-                .await?
-                .rule_code
-                .is_none()
-            {
+            let unruled = row.try_get::<Option<String>>("", "permit_rule_code")?.is_none();
+            let matches = matching_types(db, &rules, equipment, type_id).await?;
+            let held = crate::permit::required_set::read(db, wo_id).await?.unwrap_or_default();
+            let missing_type = matches.iter().any(|(t, _)| !held.contains(t));
+            if !missing_type && (!unruled || matches.is_empty()) {
                 return Ok(false);
             }
             let txn = db.begin().await?;
@@ -978,7 +1178,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             Ok(stamped.is_some())
         };
         match one.await {
-            Ok(true) => flagged += 1,
+            Ok(true) => flagged.push(wo_id),
             Ok(false) => {}
             Err(err) => tracing::error!(
                 target: "maintafox::sync",
@@ -1026,8 +1226,8 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             Ok(changed.is_some())
         };
         match one.await {
-            Ok(true) => flagged += 1,
-            Ok(false) => {}
+            Ok(true) if !flagged.contains(&wo_id) => flagged.push(wo_id),
+            Ok(_) => {}
             Err(err) => tracing::error!(
                 target: "maintafox::sync",
                 work_order_id = wo_id,
@@ -1036,7 +1236,7 @@ pub async fn catch_up(db: &sea_orm::DatabaseConnection) -> usize {
             ),
         }
     }
-    flagged
+    flagged.len()
 }
 
 /// Whether the reference set `set_id` belongs to the plant's rule list.
@@ -1078,12 +1278,19 @@ pub async fn after_rule_list_change(conn: &impl ConnectionTrait, set_id: i64, ac
 ///   and a clearing held here are kept (`permit::sync_check::keep_held_rule_trace`, audit finding
 ///   AU-04 R2-B1), and the finding names the rule held here.
 ///
+/// A third case (CMMS Advisor 2026-11-04): `missing_types`, the permit types the list here gives it
+/// that its set lacked and that were just added to it (`add_matching_types`, cause
+/// `work_order_received`): its work started without them being required. They are named in the
+/// finding (`missing_permit_types`, part of what makes it new) whichever case applies; alone, the
+/// finding names the first of them and its rule.
+///
 /// Returns the rule.
 pub async fn finding_for_started_without_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     received_without_held_rule: Option<bool>,
     received_named_rule: bool,
+    missing_types: &[(String, String)],
 ) -> AppResult<Option<String>> {
     let not_started = crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES;
     let Some(row) = conn
@@ -1106,10 +1313,12 @@ pub async fn finding_for_started_without_rule(
         return Ok(None);
     }
     let mut received_rule: Option<(String, Option<String>)> = None;
-    let (rule, permit_type, requires, held_here) = match (held, received_without_held_rule) {
+    let requires_now = row.try_get::<i64>("", "requires_permit")? != 0;
+    let held_present = held.is_some();
+    let found: Option<(String, String, bool, bool)> = match (held, received_without_held_rule) {
         (Some(rule), Some(received_requires)) => {
             let permit_type: Option<String> = row.try_get("", "permit_rule_permit_type")?;
-            (rule, permit_type.unwrap_or_default(), received_requires, true)
+            Some((rule, permit_type.unwrap_or_default(), received_requires, true))
         }
         // Received started naming a rule (none held here): a finding when the list here asks for
         // another rule or permit type (audit finding AU-04 R4-B1); the row is applied as received.
@@ -1118,28 +1327,34 @@ pub async fn finding_for_started_without_rule(
             let equipment: Option<i64> = row.try_get("", "equipment_id")?;
             let type_id: i64 = row.try_get("", "type_id")?;
             let outcome = evaluate(conn, equipment, type_id, false).await?;
-            let (Some(rule), Some(permit_type)) = (outcome.rule_code, outcome.permit_type_code) else {
-                return Ok(None);
-            };
-            if rule == named && Some(&permit_type) == named_type.as_ref() {
-                return Ok(None);
+            match (outcome.rule_code, outcome.permit_type_code) {
+                (Some(rule), Some(permit_type)) if rule != named || Some(&permit_type) != named_type.as_ref() => {
+                    received_rule = Some((named, named_type));
+                    Some((rule, permit_type, requires_now, false))
+                }
+                _ => None,
             }
-            received_rule = Some((named, named_type));
-            let requires: i64 = row.try_get("", "requires_permit")?;
-            (rule, permit_type, requires != 0, false)
         }
-        (Some(_), None) => return Ok(None),
+        (Some(_), None) => None,
         (None, _) => {
             let equipment: Option<i64> = row.try_get("", "equipment_id")?;
             let type_id: i64 = row.try_get("", "type_id")?;
             let outcome = evaluate(conn, equipment, type_id, false).await?;
-            let (Some(rule), Some(permit_type)) = (outcome.rule_code, outcome.permit_type_code) else {
-                return Ok(None);
-            };
-            let requires: i64 = row.try_get("", "requires_permit")?;
-            (rule, permit_type, requires != 0, false)
+            match (outcome.rule_code, outcome.permit_type_code) {
+                (Some(rule), Some(permit_type)) => Some((rule, permit_type, requires_now, false)),
+                _ => None,
+            }
         }
     };
+    let (rule, permit_type, requires, held_here) = match (found, missing_types.first()) {
+        (Some(found), _) => found,
+        // Only types missing from its set: the finding names the first of them.
+        (None, Some((missing_type, missing_rule))) => {
+            (missing_rule.clone(), missing_type.clone(), requires_now, held_present)
+        }
+        (None, None) => return Ok(None),
+    };
+    let missing: Vec<&str> = missing_types.iter().map(|(t, _)| t.as_str()).collect();
     // Recorded once per difference (round 5, R5-N4): the same rule and type here and the same
     // received rule and type found before is not recorded again; another one (received later naming
     // a weaker rule, after a first finding without a rule) is, so it marks the work order for the
@@ -1151,6 +1366,7 @@ pub async fn finding_for_started_without_rule(
         &permit_type,
         received_rule.as_ref().map(|r| r.0.as_str()),
         received_rule.as_ref().and_then(|r| r.1.as_deref()),
+        &missing,
     )
     .await?
     {
@@ -1167,6 +1383,7 @@ pub async fn finding_for_started_without_rule(
         "rule_held_here": held_here,
         "received_rule_code": received_rule.as_ref().map(|r| r.0.clone()),
         "received_permit_type_code": received_rule.as_ref().and_then(|r| r.1.clone()),
+        "missing_permit_types": missing,
     })
     .to_string();
     crate::wo::workflow::events::emit_action_event(
@@ -1185,18 +1402,27 @@ pub async fn finding_for_started_without_rule(
             wo_id: Some(wo_id),
             action: "permit_rule_missing_on_arrival".into(),
             actor_id: None,
-            summary: Some(match &received_rule {
-                // Received with a rule, but not the one (or not the permit type) the plant applies
-                // here (R5-S2): both named.
-                Some((named, named_type)) => format!(
-                    "Constat sécurité : OT reçu déjà démarré avec la règle {named} (permis {}) alors que l'usine \
-                     applique ici la règle {rule} (permis {permit_type})",
-                    named_type.as_deref().unwrap_or("?")
-                ),
-                None => format!(
-                    "Constat sécurité : OT reçu déjà démarré sans la règle {rule} que l'usine applique ici \
-                     (permis {permit_type})"
-                ),
+            summary: Some({
+                let mut summary = match &received_rule {
+                    // Received with a rule, but not the one (or not the permit type) the plant applies
+                    // here (R5-S2): both named.
+                    Some((named, named_type)) => format!(
+                        "Constat sécurité : OT reçu déjà démarré avec la règle {named} (permis {}) alors que l'usine \
+                         applique ici la règle {rule} (permis {permit_type})",
+                        named_type.as_deref().unwrap_or("?")
+                    ),
+                    None => format!(
+                        "Constat sécurité : OT reçu déjà démarré sans la règle {rule} que l'usine applique ici \
+                         (permis {permit_type})"
+                    ),
+                };
+                if !missing.is_empty() {
+                    summary.push_str(&format!(
+                        " ; permis exigés ici et non exigés à son démarrage : {}",
+                        missing.join(", ")
+                    ));
+                }
+                summary
             }),
             details_json: Some(payload),
             requires_step_up: false,
@@ -1220,8 +1446,10 @@ pub async fn finding_for_started_without_rule(
     Ok(Some(rule))
 }
 
-/// Whether a started-without-rule finding naming this rule and type here, and this received rule
-/// and type (none: received without a rule), was already recorded on the work order.
+/// Whether a started-without-rule finding naming this rule and type here, and this received rule and
+/// type (none: received without a rule), was already recorded on the work order; when permit types
+/// were just found missing from its set, one naming those same types (types added once are not
+/// missing again: a later row with none matches the finding already recorded).
 async fn finding_recorded(
     conn: &impl ConnectionTrait,
     wo_id: i64,
@@ -1229,6 +1457,7 @@ async fn finding_recorded(
     permit_type: &str,
     received_rule: Option<&str>,
     received_type: Option<&str>,
+    missing_types: &[&str],
 ) -> AppResult<bool> {
     Ok(conn
         .query_one(Statement::from_sql_and_values(
@@ -1238,13 +1467,17 @@ async fn finding_recorded(
                 AND IFNULL(json_extract(e.payload_json, '$.rule_code'), '') = ? \
                 AND IFNULL(json_extract(e.payload_json, '$.permit_type_code'), '') = ? \
                 AND IFNULL(json_extract(e.payload_json, '$.received_rule_code'), '') = ? \
-                AND IFNULL(json_extract(e.payload_json, '$.received_permit_type_code'), '') = ?",
+                AND IFNULL(json_extract(e.payload_json, '$.received_permit_type_code'), '') = ? \
+                AND (?6 = '[]' OR IFNULL(json_extract(e.payload_json, '$.missing_permit_types'), '[]') = ?6)",
             [
                 wo_id.into(),
                 rule.into(),
                 permit_type.into(),
                 received_rule.unwrap_or("").into(),
                 received_type.unwrap_or("").into(),
+                serde_json::to_string(missing_types)
+                    .unwrap_or_else(|_| "[]".into())
+                    .into(),
             ],
         ))
         .await?
@@ -1279,8 +1512,43 @@ pub struct HeldTrace {
 /// before (the held ones, else the received ones), after and received, and the clearings withdrawn)
 /// in the work order's history and audit trail whenever the rule or type changes from that "before",
 /// or a clearing (held here, or carried by the row) is withdrawn (audit finding AU-04 R4-S1).
-/// Returns the rule kept when something was recorded.
+/// Then every other permit type the list here gives the work order is added to the set it requires
+/// ([`add_matching_types`]): the primary rule decides what is shown first, never which permits are
+/// asked (CMMS Advisor 2026-11-04). Returns the rule kept (or the first rule of a type added) when
+/// something was recorded.
 pub async fn converge_received_rule(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    held: Option<&HeldTrace>,
+    cause: &str,
+) -> AppResult<Option<String>> {
+    let kept = converge_primary_rule(conn, wo_id, held, cause).await?;
+    if !is_not_started(conn, wo_id).await? {
+        return Ok(kept);
+    }
+    let rules = PublishedRules::load(conn).await?;
+    let added = add_matching_types(conn, &rules, wo_id, None, cause, None).await?;
+    Ok(kept.or_else(|| added.first().map(|(_, rule)| rule.clone())))
+}
+
+/// Whether the work order exists and has not started (draft, planning, ready).
+async fn is_not_started(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<bool> {
+    let status: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT st.code FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<String>("", "code"))
+        .transpose()?;
+    Ok(status.is_some_and(|s| {
+        crate::wo::workflow::actions::permit_requirement::NOT_STARTED_STATUS_CODES.contains(&s.as_str())
+    }))
+}
+
+/// The primary rule of [`converge_received_rule`].
+async fn converge_primary_rule(
     conn: &impl ConnectionTrait,
     wo_id: i64,
     held: Option<&HeldTrace>,
@@ -1390,10 +1658,9 @@ pub async fn converge_received_rule(
         )
         .await?;
         // The received rule outranks the one this PC's list gives (an energy isolation over a
-        // permit without one, for example LOTO over hot work): the work order carries one rule, so
-        // the permit issuers of its site are told, as when a rule held here changes type, and the
-        // work order shows both types ("plusieurs règles de permis", [`matching_permit_types`]) so
-        // the other permit is added (CMMS Advisor decision C7-N1, option a).
+        // permit without one, for example LOTO over hot work): it is the primary rule, so the permit
+        // issuers of its site are told, as when a rule held here changes type; the type this PC's
+        // list gives stays required too (it is added to the set, [`converge_received_rule`]).
         if let Some(own) = first.as_ref().filter(|f| f.1 != kept.1) {
             notify_rule_type_changed(conn, wo_id, (&own.0, own.1.as_deref()), (&kept.0, kept.1.as_deref())).await?;
         }
@@ -1735,6 +2002,48 @@ pub async fn restamp_received_rule_on_resume(
     )
     .await?;
     Ok(true)
+}
+
+/// What a resume does to a work order's permit requirement before its permit gate, in the caller's
+/// transaction, committed before the gate (`wo::execution::resume_wo`): a received rule weaker than
+/// this PC's list gives is re-stamped ([`restamp_received_rule_on_resume`], C7-N4), then every permit
+/// type the list here gives the work order that its set does not hold is added
+/// ([`add_matching_types`], cause [`stamp_causes::RESUME_TYPES_ADDED`], lead decision D-b), for any
+/// work order on hold, received or not. Both are checked against `expected_row_version` (the second
+/// against the version the first left), so a stale screen changes nothing. The gate then refuses the
+/// resume until a live permit of every required type exists; the work order stays on hold with its
+/// requirement. Returns how many times the row's version moved (0, 1 or 2): the resume is checked
+/// against the version the screen read plus that.
+pub async fn prepare_resume(
+    conn: &impl ConnectionTrait,
+    wo_id: i64,
+    actor_id: Option<i64>,
+    expected_row_version: i64,
+) -> AppResult<i64> {
+    let restamped = i64::from(restamp_received_rule_on_resume(conn, wo_id, actor_id, expected_row_version).await?);
+    let on_hold = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS x FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id \
+              WHERE wo.id = ? AND st.code = 'on_hold'",
+            [wo_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !on_hold {
+        return Ok(restamped);
+    }
+    let rules = PublishedRules::load(conn).await?;
+    let added = add_matching_types(
+        conn,
+        &rules,
+        wo_id,
+        actor_id,
+        stamp_causes::RESUME_TYPES_ADDED,
+        Some(expected_row_version + restamped),
+    )
+    .await?;
+    Ok(restamped + i64::from(!added.is_empty()))
 }
 
 /// SQL (on `wo`, a work order) of a rule that came from another PC and was not derived here: kept

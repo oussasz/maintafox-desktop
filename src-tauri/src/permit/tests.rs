@@ -1061,7 +1061,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some("2026-04-10T08:00:00Z".into()),
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,
@@ -1772,15 +1772,16 @@ async fn a_permit_always_has_a_bounded_future_expiry() {
     assert_validation(set_status(&db, &wp, "active").await, "PERMIT_EXPIRY_MISSING");
 }
 
-/// Editing a permit cannot link it to a work order that already has an open permit (same rule
-/// as creation); refusals of the permit rules are coded.
+/// Editing a permit cannot link it to a work order that already has an open permit of its type
+/// (same rule as creation: one open permit per type, L4-10b); refusals of the permit rules are
+/// coded.
 #[tokio::test]
 async fn editing_a_permit_cannot_link_a_second_open_permit_to_a_work_order() {
     let db = setup().await;
     let asset = insert_equipment(&db, "EQ-PTW-80").await;
     let (wo_id, _) = assigned_wo_requiring_permit(&db, asset).await;
     let first = create_from_wo(&db, "loto", wo_id).await.expect("first permit");
-    let other = create_permit(&db, "hot_work", asset).await;
+    let other = create_permit(&db, "loto", asset).await;
     let res = queries::update_work_permit(
         &db,
         WorkPermitUpdateInput {

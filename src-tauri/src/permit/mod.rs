@@ -6,6 +6,7 @@ pub(crate) mod ended_under_work;
 pub mod energy_reference;
 pub mod handover_roles;
 pub mod queries;
+pub mod required_set;
 pub mod requirement_rules;
 pub(crate) mod sync_check;
 pub mod wo_gate;

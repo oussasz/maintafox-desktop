@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { type FleetKpis, FleetKpisSchema } from "@/services/reliability-study-service";
 import type {
   AnalyticsDashboardLayoutPayload,
   AnalyticsExecutiveDashboard,
@@ -73,9 +74,13 @@ export const SmrpKpisSchema = z.object({
 export type SmrpKpis = z.infer<typeof SmrpKpisSchema>;
 export type SmrpMetric = z.infer<typeof SmrpMetricSchema>;
 
-/** Executive dashboard payload plus the SMRP set (not yet in `shared/ipc-types.ts`). */
+/**
+ * Executive dashboard payload plus the SMRP set and the live fleet figures of the horizon
+ * (`study::fleet_kpis`, the RAMS home calculation; not in `shared/ipc-types.ts`).
+ */
 export type AnalyticsExecutiveDashboardWithSmrp = AnalyticsExecutiveDashboard & {
   smrp: SmrpKpis | null;
+  reliability: FleetKpis | null;
 };
 
 const AnalyticsExecutiveDashboardSchema = z.object({
@@ -93,6 +98,8 @@ const AnalyticsExecutiveDashboardSchema = z.object({
   avg_mttr_hours: AnalyticsKpiValueSchema,
   avg_availability: AnalyticsKpiValueSchema,
   avg_data_quality: AnalyticsKpiValueSchema,
+  sample_size_score: AnalyticsKpiValueSchema,
+  reliability: FleetKpisSchema.nullable(),
   maintenance_cost: AnalyticsKpiValueSchema,
   maintenance_cost_pending: z.number().nullable(),
   reliability_snapshot_count: z.number(),

@@ -79,7 +79,9 @@
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
-//!   (`after_received_work_order`, recorded in its history and audit trail);
+//!   (`after_received_work_order`, recorded in its history and audit trail); a request received
+//!   flagged raises its safety alert here once (`settings::received_notice::announce_di_safety_alert`,
+//!   not for the plant history of a first join);
 //! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
 //!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
 //!   `completed` or `closed`, then judged by the local completion and close gates on the written
@@ -838,6 +840,19 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "request not found after apply"))?;
             crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
                 .await?;
+            // Received flagged: its safety alert is raised here, once per request on this PC (the
+            // key is looked for first; CMMS Advisor decision on L4-11). Only while it is open (a
+            // closed or converted request raises nothing: `announce_di_safety_alert`), and not for
+            // plant history: a request new here received by the snapshot of this PC's first join.
+            let first_join_history = match row {
+                RowLocator::Identity(sync_id) if inserted => {
+                    crate::sync::plant_join::first_join_snapshot_row(conn, "intervention_requests", sync_id).await?
+                }
+                _ => false,
+            };
+            if !first_join_history {
+                crate::settings::received_notice::announce_di_safety_alert(conn, id).await;
+            }
             // Open on retired equipment here, or no longer: its review item (AU-73b).
             crate::wo::retired_equipment_review::reconcile_request_in(conn, id).await
         }
@@ -979,6 +994,44 @@ async fn after_received_work_order(
         crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
     )
     .await?;
+    // Every permit type the list here gives it is required, whatever its status while it is open
+    // (in progress or on hold too: its resume will ask for them; CMMS Advisor 2026-11-04). The types
+    // a started work order lacked are named in its arrival finding.
+    let status: Option<String> = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT st.code FROM work_orders wo JOIN work_order_statuses st ON st.id = wo.status_id WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<String>("", "code").ok());
+    let open = status
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "completed" | "closed" | "cancelled"));
+    let mut missing = if open {
+        let rules = crate::permit::requirement_rules::PublishedRules::load(conn).await?;
+        crate::permit::requirement_rules::add_matching_types(
+            conn,
+            &rules,
+            wo_id,
+            None,
+            crate::permit::requirement_rules::stamp_causes::WORK_ORDER_RECEIVED,
+            None,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    // Running here without a live permit of a type it requires (one added just now, or held here
+    // while the sender's set lacked it: its start was judged with the sender's set).
+    if status.as_deref() == Some("in_progress") {
+        for uncovered in crate::permit::requirement_rules::required_types_without_live_permit(conn, wo_id).await? {
+            if !missing.iter().any(|(t, _)| *t == uncovered.0) {
+                missing.push(uncovered);
+            }
+        }
+    }
+    missing.sort();
     if !first_join_history {
         let received_without_held_rule = match held_rule {
             Some(HeldRule::Kept { received_requires }) => Some(*received_requires),
@@ -989,6 +1042,7 @@ async fn after_received_work_order(
             wo_id,
             received_without_held_rule,
             matches!(held_rule, Some(HeldRule::Received)),
+            &missing,
         )
         .await?;
     }

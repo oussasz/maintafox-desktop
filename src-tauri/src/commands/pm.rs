@@ -381,6 +381,30 @@ pub async fn create_pm_revision_from_finding(finding_id: i64, state: State<'_, A
     crate::pm::plan_tools::create_pm_revision_from_finding(&state.db, finding_id).await
 }
 
+/// "Dupliquer ce plan" (L6-11): a draft copy of a plan onto a target asset or scope, with
+/// `pm.create` checked at the target's site (the target asset's installation node).
+#[tauri::command]
+pub async fn duplicate_pm_plan(
+    input: crate::pm::domain::DuplicatePmPlanInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::pm::domain::DuplicatePmPlanResult> {
+    let user = require_session!(state);
+    // Reading the source plan: `pm.view` at its site (a family / group plan: any PM reader).
+    require_view_plan(&state, &user, input.source_plan_id).await?;
+    let source = queries::get_pm_plan(&state.db, input.source_plan_id).await?;
+    let (scope_type, scope_id) = crate::pm::duplicate::resolve_target(&source, &input)?;
+    let anchor = crate::pm::duplicate::target_anchor(&state.db, &scope_type, scope_id).await?;
+    crate::auth::scope::require_at(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PM_CREATE,
+        anchor,
+    )
+    .await?;
+    crate::pm::duplicate::duplicate_pm_plan(&state.db, input, Some(i64::from(user.user_id))).await
+}
+
 /// Where the reader holds `pm.view` (held nowhere: refused as before); filters the lists.
 async fn view_scope(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<AccessScope> {
     pm_access::require_view_anywhere(&state.db, &state.permission_cache, user.user_id).await

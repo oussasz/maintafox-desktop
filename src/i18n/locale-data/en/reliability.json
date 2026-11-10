@@ -730,14 +730,26 @@
     },
     "kpi": {
       "availability": "Operational availability",
-      "availabilityHint": "Fleet Aₒ, {{period}}",
+      "availabilityHint": "Aₒ = MTBF / (MTBF + MTTR), {{period}}, {{basis}}",
       "mtbf": "MTBF",
+      "mtbfHint": "all unplanned failures, {{period}}, {{basis}}",
       "mttr": "MTTR",
-      "mttrHint": "mean active repair time",
+      "mttrHint": "from work start to work-order close, or from failure to back in service for imported records; {{period}}, in clock hours",
+      "repair": "Mean repair person-hours",
+      "repairHint": "hours booked by the technicians, per failure, {{period}}",
       "failures": "Failures",
-      "failuresHint": "{{hours}} h of downtime in the period",
+      "failuresHint": "unplanned, {{period}}; {{hours}} h of downtime (clock hours)",
       "dataQuality": "Data quality",
-      "dataQualityHint": "{{mode}} without mode, {{cause}} without cause"
+      "dataQualityHint": "{{period}}; complete = mode + cause + mechanism; {{mode}} without mode, {{cause}} without cause, {{mechanism}} without mechanism",
+      "tooShort": "period too short for the MTBF (under {{days}} days)",
+      "excluded": {
+        "outsideService": "{{count}} excluded: outside service period",
+        "missingDate": "{{count}} excluded (all periods): failure date missing",
+        "failedAt": "{{count}} excluded: failure time missing",
+        "restoredAt": "{{count}} excluded: back-in-service time missing",
+        "inconsistent": "{{count}} excluded: back in service before the failure",
+        "repairHours": "{{count}} excluded: repair time missing"
+      }
     },
     "fleet": {
       "period": "Period",
@@ -749,7 +761,7 @@
       "allClasses": "All classes",
       "basisOperating": "on operating hours",
       "basisCalendar": "on calendar hours (no operating hours)",
-      "basisMixed": "operating hours ({{operating}} eq.) and calendar hours ({{calendar}} eq.)",
+      "basisMixed": "operating hours: {{operating}} equipment / calendar: {{calendar}}",
       "studySelection": "Study the selection",
       "studyN_one": "Study 1 equipment",
       "studyN_other": "Study {{count}} equipment",
@@ -895,7 +907,7 @@
       "reason": {
         "analyst": "Excluded by the analyst",
         "analyst_included": "Included by the analyst",
-        "not_eligible": "Excluded by default: no mode or cause not determined",
+        "not_eligible": "Excluded by default: no failure mode",
         "no_known_start": "Age unknown: no earlier renewal known (its repair starts the next age)",
         "zero_age": "Zero age: no operating hours since the previous renewal",
         "pm_not_confirmed": "To confirm: did this preventive work replace the part?"
@@ -1633,10 +1645,13 @@
       "complete": "Complete failures",
       "completeHint": "{{complete}} of {{total}} with mode, cause and mechanism",
       "codingGaps": "Incomplete coding",
+      "codingGapsHint": "{{mode}} without mode, {{cause}} without cause, {{mechanism}} without mechanism",
+      "notListed_one": "1 incomplete record not from a work order, not listed here",
+      "notListed_other": "{{count}} incomplete records not from a work order, not listed here",
       "noHours": "Without operating hours",
       "review": "Review points",
       "codingTitle": "Incomplete failure coding",
-      "codingHint": "Closed corrective work orders without an ISO 14224 mode, cause or mechanism: they leave the analyses or weaken them.",
+      "codingHint": "Failures of the period (same filters as the RAMS home page) raised from a work order, without an ISO 14224 mode, cause (or \"not determined\") or mechanism: they leave the analyses or weaken them.",
       "noCodingGap": "Every failure of the period is coded.",
       "closedAt": "Closed",
       "gap": "Missing",

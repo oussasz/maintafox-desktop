@@ -408,7 +408,7 @@ async fn mobile_proof() {
             wo_id: wo.id,
             actor_id: admin_id,
             expected_row_version: wo.row_version,
-            planner_id: admin_id,
+            planner_id: Some(admin_id),
             planned_start: Some(format!("{tomorrow}T08:00:00Z")),
             planned_end: Some(format!("{tomorrow}T10:00:00Z")),
             shift: None,

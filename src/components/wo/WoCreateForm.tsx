@@ -28,6 +28,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { StickyActionBar } from "@/components/ui/sticky-action-bar";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -155,6 +156,7 @@ export function WoCreateForm({
   const [typeCode, setTypeCode] = useState<string>(initial?.type_code ?? "");
   // The plant's sub-types (COMPANY list), each under one maintenance nature.
   const [subtypes, setSubtypes] = useState<WorkOrderSubtypeOption[]>([]);
+  const [subtypesLoaded, setSubtypesLoaded] = useState(false);
   const [subtypeCode, setSubtypeCode] = useState<string>(initial?.subtype_code ?? "");
   const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_code ?? "");
   // The inputs hold local date and time (`datetime-local`); the work order stores UTC instants.
@@ -197,7 +199,10 @@ export function WoCreateForm({
     let cancelled = false;
     listWorkOrderSubtypes()
       .then((rows) => {
-        if (!cancelled) setSubtypes(rows.filter((r) => r.is_active));
+        if (!cancelled) {
+          setSubtypes(rows.filter((r) => r.is_active));
+          setSubtypesLoaded(true);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setSubmitError(describeAppError(err).title);
@@ -214,8 +219,11 @@ export function WoCreateForm({
     [subtypes, selectedNature],
   );
   useEffect(() => {
+    // The stored sub-type is judged only once the types and the sub-type list are both loaded:
+    // before that the list is empty and would wipe a valid choice on opening.
+    if (!subtypesLoaded || typesLoading || woTypesCatalog.length === 0) return;
     if (subtypeCode && !subtypeOptions.some((st) => st.code === subtypeCode)) setSubtypeCode("");
-  }, [subtypeCode, subtypeOptions]);
+  }, [subtypeCode, subtypeOptions, subtypesLoaded, typesLoading, woTypesCatalog.length]);
 
   useEffect(() => {
     if (isEdit) return;
@@ -343,6 +351,26 @@ export function WoCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field differs from what the form opened with. The type picked by default on a new
+  // work order and an equipment passed in by the caller are not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    notes !== (initial?.notes ?? "") ||
+    plannedStart !== (initial?.planned_start ? toDateTimeLocal(initial.planned_start) : "") ||
+    plannedEnd !== (initial?.planned_end ? toDateTimeLocal(initial.planned_end) : "") ||
+    expectedDuration !== (initial?.expected_duration_hours ?? null) ||
+    requiresPermit !== (initial?.requires_permit ?? false) ||
+    urgencyId !== (initial?.urgency_code ?? "") ||
+    subtypeCode !== (initial?.subtype_code ?? "") ||
+    (isEdit && typeCode !== (initial?.type_code ?? "")) ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
@@ -370,6 +398,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         await updateDraft(draftPayload);
+        markSaved();
         onSubmitted({ ...initial, title, description, requires_permit: requiresPermit });
       } else {
         const input: WoCreateInput = {
@@ -387,6 +416,7 @@ export function WoCreateForm({
           requires_permit: requiresPermit,
         };
         const wo = await submitNewWo(input);
+        markSaved();
         onSubmitted(wo);
       }
     } catch (err) {
@@ -414,6 +444,7 @@ export function WoCreateForm({
     requiresPermit,
     submitNewWo,
     updateDraft,
+    markSaved,
     onSubmitted,
   ]);
 
@@ -648,7 +679,7 @@ export function WoCreateForm({
             : undefined
         }
       >
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+        <Button variant="outline" size="sm" onClick={requestCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -660,6 +691,7 @@ export function WoCreateForm({
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </StickyActionBar>
+      {guard}
     </div>
   );
 }

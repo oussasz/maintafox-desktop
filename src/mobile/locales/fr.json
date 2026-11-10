@@ -277,6 +277,7 @@
     "impact": "Niveau d'impact",
     "flags": "Cette panne présente un risque",
     "safety": "Sécurité des personnes",
+    "safetyMinUrgency": "Signalement sécurité : urgence au moins Urgente.",
     "production": "Impact sur la production",
     "environment": "Environnement",
     "quality": "Qualité",

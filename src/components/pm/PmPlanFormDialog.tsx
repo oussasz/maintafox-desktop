@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { useCanReadList } from "@/lib/list-access";
 import { listActiveTeams } from "@/services/personnel-service";
 import {
@@ -176,6 +177,28 @@ export function PmPlanFormDialog({
     setError(null);
   }, [open, mode, plan]);
 
+  // Unsaved input: a field differs from what the dialog opened with (the plan, or the blanks).
+  const editing = mode === "edit" && plan != null;
+  const dirty =
+    open &&
+    (code !== (editing ? plan.code : "") ||
+      title !== (editing ? plan.title : "") ||
+      description !== (editing ? (plan.description ?? "") : "") ||
+      strategy !== (editing ? plan.strategy_type : "fixed") ||
+      scopeType !== (editing ? plan.asset_scope_type : "equipment") ||
+      scopeId !==
+        (editing && plan.asset_scope_type !== "equipment" && plan.asset_scope_id != null
+          ? String(plan.asset_scope_id)
+          : "") ||
+      asset != null ||
+      crewId !== (editing && plan.assigned_team_id != null ? String(plan.assigned_team_id) : "") ||
+      criticalityId !==
+        (editing && plan.criticality_value_id != null ? String(plan.criticality_value_id) : "") ||
+      requiresShutdown !== (editing ? plan.requires_shutdown === 1 : false) ||
+      requiresPermit !== (editing ? plan.requires_permit === 1 : false) ||
+      isActive !== (editing ? plan.is_active === 1 : true));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel: onClose });
+
   async function handleSubmit() {
     setError(null);
     if (scopeType === "equipment" && mode === "create" && !asset) {
@@ -225,6 +248,7 @@ export function PmPlanFormDialog({
           is_active: isActive,
         });
       }
+      markSaved();
       onClose();
     } catch (err) {
       setError(pmUnreportedErrorText(err));
@@ -402,7 +426,7 @@ export function PmPlanFormDialog({
           ) : null}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={requestCancel}>
             {t("actions.cancel")}
           </Button>
           <Button
@@ -412,6 +436,7 @@ export function PmPlanFormDialog({
             {mode === "create" ? t("actions.create") : t("actions.save")}
           </Button>
         </DialogFooter>
+        {guard}
       </DialogContent>
     </Dialog>
   );

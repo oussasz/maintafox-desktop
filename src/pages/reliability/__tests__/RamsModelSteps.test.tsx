@@ -775,6 +775,11 @@ describe("RamsDataQualityPage", () => {
       review_issues: [],
       records: 10,
       records_complete: 9,
+      records_missing_mode: 0,
+      records_missing_cause: 0,
+      records_missing_mechanism: 1,
+      org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+      equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
       coding_gaps_truncated: false,
       no_operating_hours_truncated: false,
       review_issues_truncated: false,
@@ -794,14 +799,27 @@ describe("RamsDataQualityPage", () => {
         };
       throw new Error(`unexpected ${cmd}`);
     });
+    // Opened from the RAMS home page with its period, site and class.
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/reliability/data-quality?months=6&site=4&class=7"]}>
         <RamsDataQualityPage />
       </MemoryRouter>,
     );
     expect(await screen.findByText("OT-2025-0412")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("get_reliability_data_quality", {
+      filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+    });
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("6");
+    expect(screen.getByRole("combobox", { name: "Site" })).toHaveValue("4");
+    expect(screen.getByRole("combobox", { name: "Class" })).toHaveValue("7");
     expect(screen.getByText("Mechanism missing")).toBeInTheDocument();
     expect(screen.getByText("9 of 10 with mode, cause and mechanism")).toBeInTheDocument();
+    // Incomplete count from all records, by missing field; the one listed is the only one.
+    expect(
+      screen.getByText("0 without mode, 0 without cause, 1 without mechanism"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/not listed here/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Every failure of the period is coded.")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Enter operating hours" }));
     const dialog = await screen.findByRole("dialog");
@@ -824,6 +842,43 @@ describe("RamsDataQualityPage", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("counts incomplete imported records that are not in the work-order list", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_data_quality")
+        return {
+          period_start: "2024-10-01T00:00:00Z",
+          period_end: TS,
+          coding_gaps: [],
+          no_operating_hours: [],
+          review_issues: [],
+          records: 6,
+          records_complete: 3,
+          records_missing_mode: 2,
+          records_missing_cause: 3,
+          records_missing_mechanism: 1,
+          org_nodes: [],
+          equipment_classes: [],
+          coding_gaps_truncated: false,
+          no_operating_hours_truncated: false,
+          review_issues_truncated: false,
+        };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability/data-quality"]}>
+        <RamsDataQualityPage />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText("3 incomplete records not from a work order, not listed here"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("2 without mode, 3 without cause, 1 without mechanism"),
+    ).toBeInTheDocument();
+    // Never "all coded" while imported records are incomplete.
+    expect(screen.queryByText("Every failure of the period is coded.")).not.toBeInTheDocument();
   });
 });
 

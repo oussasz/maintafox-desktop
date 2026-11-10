@@ -17,6 +17,7 @@ import { AssetPicker } from "@/components/assets/AssetPicker";
 import { UrgencySelect } from "@/components/common/urgency/UrgencySelect";
 import { urgencyLevelLabel, useUrgencyScale } from "@/components/common/urgency/use-urgency-scale";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
+import { SAFETY_MIN_URGENCY } from "@/components/di/di-safety";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import {
   EntityFormAttachments,
@@ -37,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { StatusChip } from "@/components/ui/status-chip";
 import { Textarea } from "@/components/ui/textarea";
+import { useUnsavedFormGuard } from "@/components/ui/unsaved-changes-guard";
 import { DI_STATUS_TONE, mfTone, toneOf } from "@/design-system/tone";
 import { useSession } from "@/hooks/use-session";
 import { describeAppError } from "@/lib/app-error";
@@ -139,6 +141,9 @@ export function DiCreateForm({
   );
   const [observedAt, setObservedAt] = useState(initial?.observed_at ?? "");
   const [safetyFlag, setSafetyFlag] = useState(initial?.safety_flag ?? false);
+  // A request saved flagged "sécurité" stays flagged (the server refuses the untick): only the
+  // reviewer may lower its urgency, with a reason.
+  const safetyFlagLocked = initial?.safety_flag === true;
   const [environmentalFlag, setEnvironmentalFlag] = useState(initial?.environmental_flag ?? false);
   const [qualityFlag, setQualityFlag] = useState(initial?.quality_flag ?? false);
   const [productionImpact, setProductionImpact] = useState(initial?.production_impact ?? false);
@@ -150,8 +155,16 @@ export function DiCreateForm({
 
   // Open requests already raised on the same asset (duplicate warning)
   const [duplicates, setDuplicates] = useState<PossibleDuplicate[]>([]);
-  const { levelOf, language } = useUrgencyScale();
+  const { levelOf, rankOf, language } = useUrgencyScale();
   const urgencyLevel = levelOf(urgency);
+  const safetyMinRank = levelOf(SAFETY_MIN_URGENCY)?.rank;
+
+  // A request flagged "sécurité" is urgent at least: ticking the flag (or a flagged request whose
+  // urgency is lower or not chosen) takes "Urgent"; a more urgent level stays.
+  useEffect(() => {
+    if (!safetyFlag || safetyMinRank == null) return;
+    if (!urgency || rankOf(urgency) > safetyMinRank) setUrgency(SAFETY_MIN_URGENCY);
+  }, [safetyFlag, safetyMinRank, urgency, rankOf]);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -264,6 +277,30 @@ export function DiCreateForm({
     [touched, currentErrors],
   );
 
+  // ── Unsaved input ─────────────────────────────────────────────────────
+  // Dirty = a field, a chosen photo or file differs from what the form opened with. An equipment
+  // passed in by the caller is not the user's input.
+  const dirty =
+    title !== (initial?.title ?? "") ||
+    description !== (initial?.description ?? "") ||
+    originType !== (initial?.origin_type ?? "") ||
+    requestType !== (initial?.request_type ?? "") ||
+    urgency !== (initial?.reported_urgency ?? "") ||
+    impactLevel !== (initial?.impact_level ?? "") ||
+    symptomCodeId !== (initial?.symptom_code_id ?? null) ||
+    observedAt !== (initial?.observed_at ?? "") ||
+    safetyFlag !== (initial?.safety_flag ?? false) ||
+    environmentalFlag !== (initial?.environmental_flag ?? false) ||
+    qualityFlag !== (initial?.quality_flag ?? false) ||
+    productionImpact !== (initial?.production_impact ?? false) ||
+    pendingPhotos.length > 0 ||
+    pendingFiles.length > 0 ||
+    (selectedAsset != null &&
+      (isEdit
+        ? selectedAsset.id !== initial?.equipment_id
+        : prefillAsset == null && (prefillEquipmentId == null || prefillEquipmentId <= 0)));
+  const { requestCancel, markSaved, guard } = useUnsavedFormGuard({ dirty, onCancel });
+
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
@@ -307,6 +344,7 @@ export function DiCreateForm({
           reported_urgency: urgency,
           observed_at: observedAt || null,
         });
+        markSaved();
         const updated = useDiStore.getState().activeDi?.di;
         onSubmitted(updated && updated.id === initial.id ? updated : initial);
       } else {
@@ -329,6 +367,7 @@ export function DiCreateForm({
           submitter_id: info.user_id,
         };
         const di = await submitNewDi(input);
+        markSaved();
 
         const photos = orderImagesForUpload(pendingPhotos).filter((p) => Boolean(p.path));
         const files = pendingFiles.filter((f) => Boolean(f.path));
@@ -406,6 +445,7 @@ export function DiCreateForm({
     pendingFiles,
     submitNewDi,
     updateDraft,
+    markSaved,
     onSubmitted,
     t,
   ]);
@@ -615,7 +655,17 @@ export function DiCreateForm({
             placeholder={t("form.priority.placeholder")}
             aria-invalid={Boolean(fieldError("reported_urgency"))}
             aria-describedby="reported_urgency-hint"
+            {...(safetyFlag && safetyMinRank != null ? { leastUrgentRank: safetyMinRank } : {})}
           />
+          {safetyFlag ? (
+            <p
+              id="reported_urgency-safety"
+              className="mt-1 text-xs font-medium text-status-danger"
+              data-testid="di-safety-urgency-hint"
+            >
+              {t("form.safetyFlag.minUrgencyHint")}
+            </p>
+          ) : null}
           <p id="reported_urgency-hint" className="mt-1 text-xs text-text-secondary">
             {urgencyLevel
               ? [
@@ -687,14 +737,29 @@ export function DiCreateForm({
 
         {/* Flag checkboxes */}
         <div className="grid grid-cols-2 gap-3">
-          <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="safety_flag"
-              checked={safetyFlag}
-              onCheckedChange={(v) => setSafetyFlag(v === true)}
-            />
-            {t("form.safetyFlag.label")}
-          </label>
+          <div>
+            <label htmlFor="safety_flag" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="safety_flag"
+                checked={safetyFlag}
+                disabled={safetyFlagLocked}
+                {...(safetyFlagLocked ? { "aria-describedby": "safety_flag-locked" } : {})}
+                onCheckedChange={(v) => {
+                  if (!safetyFlagLocked) setSafetyFlag(v === true);
+                }}
+              />
+              {t("form.safetyFlag.label")}
+            </label>
+            {safetyFlagLocked ? (
+              <p
+                id="safety_flag-locked"
+                className="mt-1 text-xs text-text-secondary"
+                data-testid="di-safety-flag-locked-hint"
+              >
+                {t("form.safetyFlag.lockedHint")}
+              </p>
+            ) : null}
+          </div>
           <label htmlFor="environmental_flag" className="flex items-center gap-2 text-sm">
             <Checkbox
               id="environmental_flag"
@@ -778,7 +843,7 @@ export function DiCreateForm({
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-2 pt-2 border-t border-surface-border">
-        <Button variant="outline" onClick={onCancel} disabled={busy}>
+        <Button variant="outline" onClick={requestCancel} disabled={busy}>
           {t("form.cancel")}
         </Button>
         <Button
@@ -789,6 +854,7 @@ export function DiCreateForm({
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </div>
+      {guard}
     </div>
   );
 }

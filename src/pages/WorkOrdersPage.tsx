@@ -97,6 +97,9 @@ const WO_FILTER_STATUSES = [
 
 // ── Component ───────────────────────────────────────────────────────────────
 
+/** The planner filter's one value: the work orders without a planner. */
+const PLANNER_TO_NAME = "to_name";
+
 export function WorkOrdersPage() {
   const { t, i18n } = useTranslation("ot");
   const items = useWoStore((s) => s.items);
@@ -195,6 +198,10 @@ export function WorkOrdersPage() {
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
   /** From a dashboard link: open work orders only (shown as a chip, clearable). */
   const [scopeFilter, setScopeFilter] = useState<ListScope | null>(null);
+  // "Planificateur à désigner": the OTs without a planner, for those who may name one (CMMS
+  // Advisor 2026-11-06, option b). The backend still limits the list to the user's sites.
+  const [plannerFilter, setPlannerFilter] = useState<string | null>(null);
+  const mayNamePlanners = can(P.OT_APPROVE) || can(P.PLAN_CONFIRM);
   /** From a work-mix link (SMRP / home): every type of that nature group (chip, clearable). */
   const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
   /** With a work-mix link: the period the indicator counted (completed in it); chip, clearable. */
@@ -260,6 +267,7 @@ export function WorkOrdersPage() {
     setTypeFilter(null);
     setPriorityFilter(null);
     setScopeFilter(null);
+    setPlannerFilter(null);
     setEquipmentFilter(null);
     setMixFilter(null);
     setCompletedWindow(null);
@@ -273,9 +281,19 @@ export function WorkOrdersPage() {
       open_only: null,
       not_closed_only: null,
       overdue_only: null,
+      planner_unassigned: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
+
+  const handlePlannerFilter = useCallback(
+    (val: string | null) => {
+      setPlannerFilter(val);
+      setFilter({ planner_unassigned: val === PLANNER_TO_NAME || null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
 
   const handleScopeFilter = useCallback(
     (val: string | null) => {
@@ -427,6 +445,18 @@ export function WorkOrdersPage() {
         value: priorityFilter,
         onChange: handlePriorityFilter,
       },
+      ...(mayNamePlanners || plannerFilter
+        ? [
+            {
+              id: "planner",
+              kind: "select" as const,
+              label: t("list.filters.planner"),
+              options: [{ value: PLANNER_TO_NAME, label: t("list.filters.plannerToName") }],
+              value: plannerFilter,
+              onChange: handlePlannerFilter,
+            },
+          ]
+        : []),
       ...(scopeFilter
         ? [
             {
@@ -517,6 +547,9 @@ export function WorkOrdersPage() {
       handleScopeFilter,
       handleEquipmentFilter,
       handleMixFilter,
+      mayNamePlanners,
+      plannerFilter,
+      handlePlannerFilter,
     ],
   );
 
