@@ -144,7 +144,11 @@ describe("RetentionPolicyPanel staged retention edits", () => {
     await waitFor(() => {
       expect(archiveMocks.listRetentionPolicies).toHaveBeenCalledTimes(2);
     });
-    expect(((await screen.findByRole("spinbutton")) as HTMLInputElement).value).toBe("15");
+    // Once the reload has settled, the refused edit is still pending (stored value is 1).
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "retention.save" })).toBeEnabled();
+    });
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("15");
   });
 
   it("refuses to save years that are not a whole number", async () => {
