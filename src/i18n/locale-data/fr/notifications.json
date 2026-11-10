@@ -4,7 +4,23 @@
     "aria": "Notifications ({{count}} non lues)",
     "unread": "{{count}} non lue(s)",
     "toAcknowledge": "{{count}} à acquitter",
-    "openInbox": "Ouvrir la boîte de réception"
+    "openInbox": "Ouvrir la boîte de réception",
+    "alerts": {
+      "aria": "Points à surveiller",
+      "heading": "À surveiller",
+      "lateWorkOrders": {
+        "title_one": "{{count}} OT en retard",
+        "title_other": "{{count}} OT en retard",
+        "body": "Leur fin prévue est dépassée et ils ne sont pas terminés.",
+        "action": "Ouvrir les OT en retard"
+      },
+      "overdueRequests": {
+        "title_one": "{{count}} demande en retard",
+        "title_other": "{{count}} demandes en retard",
+        "body": "Le délai de prise en charge ou de traitement est dépassé.",
+        "action": "Ouvrir les demandes"
+      }
+    }
   },
   "page": {
     "title": "Notifications",
@@ -84,6 +100,12 @@
     "ackRequired": "À acquitter",
     "snoozedUntil": "Reportée jusqu'au {{when}}",
     "groupByObject": "Regrouper par fiche",
+    "syncGroup": {
+      "title_one": "{{count}} conflit de synchronisation à examiner",
+      "title_other": "{{count}} conflits de synchronisation à examiner",
+      "body": "Deux postes ont modifié la même information : choisissez la bonne version.",
+      "action": "Ouvrir la synchronisation"
+    },
     "groupCount_one": "({{count}} notification)",
     "groupCount_other": "({{count}} notifications)",
     "actions": {
@@ -229,7 +251,7 @@
     },
     "sync_conflict": {
       "title": "Conflit de synchronisation à examiner",
-      "body": "{{entity_type}} · {{conflict_type}} · depuis le {{created_at}}"
+      "body": "Deux postes ont modifié la même information : ouvrez la synchronisation pour choisir la bonne version. Depuis le {{created_at}}."
     },
     "di_pending_review": {
       "title": "Demande {{code}} à examiner",

@@ -102,7 +102,8 @@ export const NOTIFICATION_SEVERITIES = ["info", "warning", "critical"] as const;
 
 const ALL = "__all__";
 const PAGE_SIZE = 25;
-const COMPACT_SIZE = 8;
+// The bell reads enough rows for its one "synchronisation conflicts" row to count them all.
+const COMPACT_SIZE = 50;
 
 interface NotificationInboxProps {
   variant?: "page" | "compact";
@@ -154,6 +155,11 @@ function needsAck(row: NotificationSummary): boolean {
     row.resolved_at == null &&
     row.archived_at == null
   );
+}
+
+/** A synchronisation conflict notification (the bell shows all of them as one row). */
+function isSyncConflict(row: NotificationSummary): boolean {
+  return row.message_key === "sync_conflict";
 }
 
 /** Rows about the same record, in list order. */
@@ -303,9 +309,49 @@ export function NotificationInbox({
   );
 
   const setFilter = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
-  const groups = grouped && !compact ? groupByObject(rows) : rows.map((r) => [r]);
+  // In the bell, every unread synchronisation conflict is one row with a count, after the rest.
+  const syncRows = compact ? rows.filter(isSyncConflict) : [];
+  const listRows = compact ? rows.filter((r) => !isSyncConflict(r)) : rows;
+  const syncCount = Math.max(
+    syncRows.length,
+    counts.by_module.find((m) => m.module_code === "sync")?.unread ?? 0,
+  );
+  const groups = grouped && !compact ? groupByObject(listRows) : listRows.map((r) => [r]);
+
+  const openSyncGroup = async () => {
+    try {
+      await Promise.all(syncRows.filter(isUnread).map((r) => markNotificationRead(r.id)));
+      void refreshCounts();
+    } catch {
+      // Reported by the global toast; still open the conflicts.
+    }
+    window.dispatchEvent(new CustomEvent(OPEN_SYNC_CENTER_EVENT));
+    onNavigate?.();
+  };
   const filtered =
     filters.module !== ALL || filters.severity !== ALL || filters.from !== "" || filters.to !== "";
+
+  const renderSyncGroup = () => (
+    <li key="sync-group" className="p-3" data-testid="sync-conflicts-group">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 rounded-md text-start hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => void openSyncGroup()}
+      >
+        <SeverityIcon severity={syncRows[0]?.severity ?? "warning"} />
+        <div className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-text-primary">
+            {t("inbox.syncGroup.title", { count: syncCount })}
+          </span>
+          <p className="mt-0.5 text-sm text-text-muted">{t("inbox.syncGroup.body")}</p>
+          <span className="mt-1 block text-xs font-medium text-primary">
+            {t("inbox.syncGroup.action")}
+          </span>
+        </div>
+        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+      </button>
+    </li>
+  );
 
   const renderRow = (row: NotificationSummary, nested: boolean) => {
     const link = resolveNotificationLink(row.action_url);
@@ -677,6 +723,7 @@ export function NotificationInbox({
               </li>
             );
           })}
+          {syncRows.length > 0 ? renderSyncGroup() : null}
         </ul>
 
         {loading ? <LoadingState className="py-3" label={t("inbox.loading")} /> : null}

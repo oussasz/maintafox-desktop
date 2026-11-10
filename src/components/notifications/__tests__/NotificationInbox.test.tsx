@@ -227,9 +227,52 @@ describe("NotificationInbox", () => {
     renderInbox("compact");
     await screen.findByRole("button", { name: /^inbox\.openAria/ });
     expect(svc.listNotifications).toHaveBeenCalledWith(
-      expect.objectContaining({ view: "unread", limit: 8, offset: 0 }),
+      expect.objectContaining({ view: "unread", limit: 50, offset: 0 }),
     );
     expect(screen.queryByRole("tablist")).toBeNull();
+  });
+
+  it("the bell shows every unread synchronisation conflict as one row with a count", async () => {
+    const conflict = (id: number) =>
+      row({
+        id,
+        action_url: "/sync-center",
+        message_key: "sync_conflict",
+        message_params: { entity_type: "inventory_transactions", conflict_type: "STAGE_ERROR" },
+        module_code: "sync",
+        category_code: "sync_conflict",
+        source_module: "sync",
+        source_record_id: null,
+      });
+    svc.listNotifications.mockResolvedValue([
+      conflict(1),
+      row({ id: 2 }),
+      conflict(3),
+      conflict(4),
+    ]);
+    const opened = vi.fn();
+    window.addEventListener(OPEN_SYNC_CENTER_EVENT, opened);
+    const { onNavigate } = renderInbox("compact");
+    const group = await screen.findByTestId("sync-conflicts-group");
+    expect(within(group).getByText("inbox.syncGroup.title[count=3]")).toBeTruthy();
+    // No table name or error code leaks into the row, and the OT row stays on its own.
+    expect(screen.queryByText(/inventory_transactions|STAGE_ERROR/)).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^inbox.openAria/ })).toHaveLength(1);
+    fireEvent.click(within(group).getByRole("button"));
+    await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+    expect(svc.markNotificationRead).toHaveBeenCalledTimes(3);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    window.removeEventListener(OPEN_SYNC_CENTER_EVENT, opened);
+  });
+
+  it("the full inbox keeps each synchronisation conflict as its own row", async () => {
+    svc.listNotifications.mockResolvedValue([
+      row({ id: 1, message_key: "sync_conflict", module_code: "sync", action_url: "/sync-center" }),
+      row({ id: 2, message_key: "sync_conflict", module_code: "sync", action_url: "/sync-center" }),
+    ]);
+    renderInbox("page");
+    expect(await screen.findAllByRole("button", { name: /^inbox.openAria/ })).toHaveLength(2);
+    expect(screen.queryByTestId("sync-conflicts-group")).toBeNull();
   });
 
   it("keeps the inbox usable when an action fails (the global toast reports it)", async () => {
