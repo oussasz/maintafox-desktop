@@ -711,6 +711,10 @@
     "emptyCanvasRbd": "RBD empty canvas — create a model to begin."
   },
   "rams": {
+    "rights": {
+      "required": "Right required: {{right}}",
+      "readOnly": "Read-only: editing actions need the {{right}} right."
+    },
     "title": "Reliability (RAMS)",
     "common": {
       "cancel": "Cancel",

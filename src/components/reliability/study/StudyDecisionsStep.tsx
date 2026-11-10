@@ -24,7 +24,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_DECISION_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import {
   type ReliabilityStudy,
@@ -36,7 +35,7 @@ import {
 } from "@/services/reliability-study-service";
 import { P } from "@shared/rbac/permissions.generated";
 
-import { RAMS_TABLE_FRAME, RamsCard } from "./rams-ui";
+import { RAMS_TABLE_FRAME, RamsCard, RamsReadOnlyNote, useRamsRight } from "./rams-ui";
 
 export function StudyDecisionsStep({
   study,
@@ -49,7 +48,7 @@ export function StudyDecisionsStep({
 }) {
   const { t } = useTranslation("reliability");
   const { formatNumber, formatDecimal, formatDate } = useFormatters();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const { info } = useSession();
   const me = info?.user_id ?? null;
   const [rows, setRows] = useState<StudyDecision[] | null>(null);
@@ -173,14 +172,24 @@ export function StudyDecisionsStep({
       subtitle={t("rams.decisions.hint")}
       headingId="rams-decisions"
       actions={
-        can(P.RAM_ANALYZE) && study.status === "active" ? (
-          <Button className={mfLayout.primaryAction} onClick={onRecord}>
+        study.status === "active" ? (
+          <Button
+            className={mfLayout.primaryAction}
+            disabled={!can(P.RAM_ANALYZE)}
+            title={reasonFor(P.RAM_ANALYZE)}
+            onClick={onRecord}
+          >
             <ClipboardCheck className="h-4 w-4" aria-hidden />
             {t("rams.study.recordDecision")}
           </Button>
         ) : null
       }
     >
+      {!can(P.RAM_MANAGE) && study.status === "active" ? (
+        <div className="mb-2">
+          <RamsReadOnlyNote right={P.RAM_MANAGE} />
+        </div>
+      ) : null}
       {rows.length === 0 ? (
         <EmptyState
           title={t("rams.decisions.emptyTitle")}

@@ -23,7 +23,6 @@ import {
   toneOf,
 } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
   type FmecaRow,
@@ -42,22 +41,22 @@ import {
   RAMS_TABLE_FRAME,
   RamsCallout,
   RamsCard,
+  RamsReadOnlyNote,
+  useRamsRight,
   useScaleLabel,
 } from "./rams-ui";
 
 export function StudyFmecaStep({
   study,
-  editable,
   onGoRcm,
 }: {
   study: ReliabilityStudy;
-  editable: boolean;
   onGoRcm: () => void;
 }) {
   const { t } = useTranslation("reliability");
   const { formatDecimal } = useFormatters();
   const scaleLabel = useScaleLabel();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const [ws, setWs] = useState<FmecaWorksheet | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +84,8 @@ export function StudyFmecaStep({
     return <ErrorState error={error} onRetry={() => void load()} retrying={loading} />;
   if (ws == null) return <LoadingState />;
 
-  const canEdit = editable && ws.editable;
+  /** The study is open and the worksheet is not frozen; the user's right is checked apart. */
+  const canEdit = study.status !== "archived" && ws.editable;
   const level = (kind: "severity" | "occurrence" | "detection", score: number) =>
     ws.scales[kind].find((l) => l.score === score);
 
@@ -194,6 +194,11 @@ export function StudyFmecaStep({
             </Button>
           }
         >
+          {canEdit && !can(P.RAM_ANALYZE) ? (
+            <div className="mb-2">
+              <RamsReadOnlyNote right={P.RAM_ANALYZE} />
+            </div>
+          ) : null}
           {ws.rows.length === 0 ? (
             <EmptyState
               title={t("rams.fmeca.emptyTitle")}
@@ -350,8 +355,14 @@ export function StudyFmecaStep({
             </div>
           ) : null}
           <div className="mt-3 flex flex-wrap justify-between gap-2">
-            {canEdit && can(P.RAM_ANALYZE) ? (
-              <Button variant="outline" className="h-11" onClick={() => setDraft(blankDraft(null))}>
+            {canEdit ? (
+              <Button
+                variant="outline"
+                className="h-11"
+                disabled={!can(P.RAM_ANALYZE)}
+                title={reasonFor(P.RAM_ANALYZE)}
+                onClick={() => setDraft(blankDraft(null))}
+              >
                 <Plus className="h-4 w-4" aria-hidden />
                 {t("rams.fmeca.addOther")}
               </Button>
@@ -462,10 +473,12 @@ export function StudyFmecaStep({
                         {basisText(p.occurrence)}
                       </p>
                     </div>
-                    {canEdit && can(P.RAM_ANALYZE) ? (
+                    {canEdit ? (
                       <Button
                         variant="outline"
                         className="h-10"
+                        disabled={!can(P.RAM_ANALYZE)}
+                        title={reasonFor(P.RAM_ANALYZE)}
                         onClick={() => setDraft(fromProposal(p))}
                       >
                         <Plus className="h-4 w-4" aria-hidden />

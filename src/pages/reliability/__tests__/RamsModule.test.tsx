@@ -10,6 +10,7 @@ import { RamsFleetPage } from "@/pages/reliability/RamsFleetPage";
 import type { ReliabilityStudy, StudyDataset } from "@/services/reliability-study-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { mockInvoke } from "@/test/mocks/tauri";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Keys resolve against the real English catalogue: a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -46,8 +47,13 @@ vi.mock("react-i18next", () => ({
 }));
 const assetSvc = vi.hoisted(() => ({ getAssetById: vi.fn() }));
 vi.mock("@/services/asset-service", () => assetSvc);
+let deniedRights: string[] = [];
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 
 const TS = "2026-10-01T10:00:00Z";
@@ -594,6 +600,32 @@ describe("StudyLifeStep", () => {
     expect(decide).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "pm_interval", pmPlanId: 14, intervalHours: 1900 }),
     );
+  });
+
+  it("keeps the cost and decision buttons visible but disabled, with the right they need (L2-24)", async () => {
+    mockInvoke.mockResolvedValue(fitAnalysis);
+    deniedRights = [P.RAM_ANALYZE];
+    try {
+      render(
+        <StudyLifeStep
+          study={study}
+          editable={false}
+          datasetVersion="v1"
+          onStudyChanged={vi.fn()}
+          onDecide={vi.fn()}
+        />,
+      );
+      expect(await screen.findByText("3.04")).toBeInTheDocument();
+      const save = screen.getByRole("button", { name: "Save the costs" });
+      expect(save).toBeDisabled();
+      expect(save).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      const record = screen.getByRole("button", { name: "Record this decision" });
+      expect(record).toBeDisabled();
+      expect(record).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      expect(screen.getByRole("note")).toHaveTextContent(/^Read-only: /);
+    } finally {
+      deniedRights = [];
+    }
   });
 
   it("explains why no fit is shown when failures are too few", async () => {
