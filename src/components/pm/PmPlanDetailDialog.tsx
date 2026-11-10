@@ -52,6 +52,7 @@ import {
   allowedPlanLifecycleTargets,
 } from "./pm-labels";
 import { canLogExecution } from "./pm-model";
+import { usePmPlanActions } from "./pm-site-scope";
 import { usePmFindingTypeLabel } from "./use-pm-finding-type-label";
 
 interface PmPlanDetailDialogProps {
@@ -121,6 +122,15 @@ export function PmPlanDetailDialog({
   const [tab, setTab] = useState("overview");
   const [findingsFor, setFindingsFor] = useState<number | null>(null);
   const [revising, setRevising] = useState<number | null>(null);
+  // The plan's rights at its site (plant-wide only for a family / criticality-group plan): hidden
+  // when held nowhere, disabled with the reason when held only elsewhere (L6-08).
+  const planAction = usePmPlanActions(plan);
+  const editAction = planAction(P.PM_EDIT);
+  const approveAction = planAction(P.PM_APPROVE);
+  const deleteAction = planAction(P.PM_DELETE);
+  const createAction = planAction(P.PM_CREATE);
+  const siteReason =
+    editAction.reason ?? approveAction.reason ?? deleteAction.reason ?? createAction.reason;
 
   useEffect(() => {
     if (focusOccurrenceId != null) setTab("occurrences");
@@ -169,50 +179,66 @@ export function PmPlanDetailDialog({
           const publishBlocked = !plan || !PUBLISHABLE_PLAN_LIFECYCLES.has(plan.lifecycle_status);
           return (
             <div className="flex flex-wrap gap-1">
-              <PermissionGate permission={P.PM_EDIT}>
+              {editAction.show ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!isDraft || saving}
-                  title={!isDraft ? t("hints.editVersionDraftOnly") : undefined}
+                  disabled={!isDraft || saving || editAction.disabled}
+                  title={
+                    editAction.reason ?? (!isDraft ? t("hints.editVersionDraftOnly") : undefined)
+                  }
                   onClick={() => onEditVersion(v)}
                 >
                   {t("actions.editVersion")}
                 </Button>
-              </PermissionGate>
-              <PermissionGate permission={P.PM_EDIT}>
+              ) : null}
+              {editAction.show ? (
                 <Button
                   size="sm"
-                  disabled={!isDraft || saving || publishBlocked}
+                  disabled={!isDraft || saving || publishBlocked || editAction.disabled}
                   title={
-                    !isDraft
+                    editAction.reason ??
+                    (!isDraft
                       ? t("hints.publishDraftOnly")
                       : publishBlocked
                         ? t("hints.publishBlockedByLifecycle")
-                        : undefined
+                        : undefined)
                   }
                   onClick={() => onPublishVersion(v)}
                 >
                   {t("actions.publish")}
                 </Button>
-              </PermissionGate>
-              <PermissionGate permission={P.PM_DELETE}>
+              ) : null}
+              {deleteAction.show ? (
                 <Button
                   size="sm"
                   variant="destructive"
-                  disabled={!isDraft || saving}
-                  title={!isDraft ? t("hints.deleteVersionDraftOnly") : undefined}
+                  disabled={!isDraft || saving || deleteAction.disabled}
+                  title={
+                    deleteAction.reason ??
+                    (!isDraft ? t("hints.deleteVersionDraftOnly") : undefined)
+                  }
                   onClick={() => onDeleteVersion(v)}
                 >
                   {t("actions.deleteVersion")}
                 </Button>
-              </PermissionGate>
+              ) : null}
             </div>
           );
         },
       },
     ],
-    [t, formatDate, saving, plan, onEditVersion, onPublishVersion, onDeleteVersion],
+    [
+      t,
+      formatDate,
+      saving,
+      plan,
+      editAction,
+      deleteAction,
+      onEditVersion,
+      onPublishVersion,
+      onDeleteVersion,
+    ],
   );
 
   const occurrenceColumns: ColumnDef<PmOccurrenceRow>[] = useMemo(
@@ -475,57 +501,88 @@ export function PmPlanDetailDialog({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <PermissionGate permission={P.PM_EDIT}>
-                  <Button variant="outline" onClick={onEditPlan}>
+                {editAction.show ? (
+                  <Button
+                    variant="outline"
+                    disabled={editAction.disabled}
+                    title={editAction.reason ?? undefined}
+                    onClick={onEditPlan}
+                  >
                     {t("actions.editPlan")}
                   </Button>
-                </PermissionGate>
-                {lifecycleTargets.includes("proposed") ? (
-                  <PermissionGate permission={P.PM_EDIT}>
-                    <Button disabled={saving} onClick={() => onLifecycle("proposed")}>
-                      {t("actions.propose")}
-                    </Button>
-                  </PermissionGate>
                 ) : null}
-                {lifecycleTargets.includes("approved") ? (
-                  <PermissionGate permission={P.PM_APPROVE}>
-                    <Button disabled={saving} onClick={() => onLifecycle("approved")}>
-                      {t("actions.approve")}
-                    </Button>
-                  </PermissionGate>
+                {lifecycleTargets.includes("proposed") && editAction.show ? (
+                  <Button
+                    disabled={saving || editAction.disabled}
+                    title={editAction.reason ?? undefined}
+                    onClick={() => onLifecycle("proposed")}
+                  >
+                    {t("actions.propose")}
+                  </Button>
                 ) : null}
-                {lifecycleTargets.includes("active") ? (
-                  <PermissionGate permission={P.PM_EDIT}>
-                    <Button disabled={saving} onClick={() => onLifecycle("active")}>
-                      {t("actions.activate")}
-                    </Button>
-                  </PermissionGate>
+                {lifecycleTargets.includes("approved") && approveAction.show ? (
+                  <Button
+                    disabled={saving || approveAction.disabled}
+                    title={approveAction.reason ?? undefined}
+                    onClick={() => onLifecycle("approved")}
+                  >
+                    {t("actions.approve")}
+                  </Button>
                 ) : null}
-                {lifecycleTargets
-                  .filter((s) => !["proposed", "approved", "active"].includes(s))
-                  .map((s) => (
-                    <PermissionGate key={s} permission={P.PM_EDIT}>
-                      <Button variant="outline" disabled={saving} onClick={() => onLifecycle(s)}>
-                        {t(`lifecycle.${s}`)}
-                      </Button>
-                    </PermissionGate>
-                  ))}
-                {plan.lifecycle_status === "draft" ? (
-                  <PermissionGate permission={P.PM_DELETE}>
-                    <Button variant="destructive" disabled={saving} onClick={onDeletePlan}>
-                      {t("actions.deletePlan")}
-                    </Button>
-                  </PermissionGate>
+                {lifecycleTargets.includes("active") && editAction.show ? (
+                  <Button
+                    disabled={saving || editAction.disabled}
+                    title={editAction.reason ?? undefined}
+                    onClick={() => onLifecycle("active")}
+                  >
+                    {t("actions.activate")}
+                  </Button>
+                ) : null}
+                {editAction.show
+                  ? lifecycleTargets
+                      .filter((s) => !["proposed", "approved", "active"].includes(s))
+                      .map((s) => (
+                        <Button
+                          key={s}
+                          variant="outline"
+                          disabled={saving || editAction.disabled}
+                          title={editAction.reason ?? undefined}
+                          onClick={() => onLifecycle(s)}
+                        >
+                          {t(`lifecycle.${s}`)}
+                        </Button>
+                      ))
+                  : null}
+                {plan.lifecycle_status === "draft" && deleteAction.show ? (
+                  <Button
+                    variant="destructive"
+                    disabled={saving || deleteAction.disabled}
+                    title={deleteAction.reason ?? undefined}
+                    onClick={onDeletePlan}
+                  >
+                    {t("actions.deletePlan")}
+                  </Button>
                 ) : null}
               </div>
+              {siteReason ? (
+                <p className="text-xs text-text-muted" data-testid="pm-plan-site-reason">
+                  {siteReason}
+                </p>
+              ) : null}
             </TabsContent>
 
             <TabsContent value="versions" className="space-y-3">
-              <PermissionGate permission={P.PM_CREATE}>
-                <Button size="sm" onClick={onNewVersion}>
+              {createAction.show ? (
+                <Button
+                  size="sm"
+                  disabled={createAction.disabled}
+                  title={createAction.reason ?? undefined}
+                  onClick={onNewVersion}
+                >
                   {t("actions.newVersion")}
                 </Button>
-              </PermissionGate>
+              ) : null}
+              {siteReason ? <p className="text-xs text-text-muted">{siteReason}</p> : null}
               <DataTable columns={versionColumns} data={versions} />
               {versions.length === 0 && !detailLoading ? (
                 <p className="text-sm text-text-muted">{t("empty.noVersions")}</p>
@@ -601,17 +658,21 @@ export function PmPlanDetailDialog({
                             ) : null}
                           </div>
                           <p className="whitespace-pre-line text-text-muted">{f.description}</p>
-                          <PermissionGate permission={P.PM_CREATE}>
+                          {createAction.show ? (
                             <Button
                               size="sm"
                               variant="outline"
                               disabled={
-                                saving || revising === f.id || plan.lifecycle_status === "retired"
+                                saving ||
+                                revising === f.id ||
+                                plan.lifecycle_status === "retired" ||
+                                createAction.disabled
                               }
                               title={
-                                plan.lifecycle_status === "retired"
+                                createAction.reason ??
+                                (plan.lifecycle_status === "retired"
                                   ? t("hints.reviseRetired")
-                                  : t("hints.reviseFromFinding")
+                                  : t("hints.reviseFromFinding"))
                               }
                               onClick={() => {
                                 setRevising(f.id);
@@ -625,7 +686,7 @@ export function PmPlanDetailDialog({
                             >
                               {t("actions.revisePlan")}
                             </Button>
-                          </PermissionGate>
+                          ) : null}
                           {f.follow_up_di_code || f.follow_up_work_order_code ? (
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs text-text-muted">

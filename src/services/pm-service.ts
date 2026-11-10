@@ -47,6 +47,11 @@ export type PmPlanRow = PmPlan &
     asset_scope_label?: string | null | undefined;
     /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
     source_decision_to_review?: boolean | undefined;
+    /**
+     * Org node the plan's rights are checked at (its equipment's site, or its location); null: a
+     * family / criticality-group plan, or equipment installed nowhere — plant-wide rights only.
+     */
+    access_node_id?: number | null | undefined;
   };
 
 /** `on_time` | `early` | `late` against the occurrence's tolerance window. */
@@ -156,6 +161,7 @@ const PmPlanSchema = z.object({
   asset_scope_label: z.string().nullable().optional(),
   /** Current version from a reliability decision refused or not accepted here (AU-76b): to review. */
   source_decision_to_review: z.boolean().optional(),
+  access_node_id: z.number().nullable().optional(),
 });
 
 const PmPlanVersionSchema = z.object({

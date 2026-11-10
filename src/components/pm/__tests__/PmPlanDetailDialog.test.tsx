@@ -15,6 +15,10 @@ vi.mock("react-i18next", async () => (await import("./pm-test-i18n")).pmI18nMock
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
+// Every right at the plan's site (the site gating is tested in `pm-site-scope.test.tsx`).
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
 vi.mock("@/services/reference-service", () => ({
   listPublishedReferenceValuesByDomainCode: vi
     .fn()

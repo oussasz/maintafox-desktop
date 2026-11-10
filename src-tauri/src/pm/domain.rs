@@ -39,6 +39,11 @@ pub struct PmPlan {
     /// accepted here or a planner publishes another version (AU-76b, CMMS Advisor S4 option A).
     #[serde(default)]
     pub source_decision_to_review: bool,
+    /// The org node the plan's rights are checked at (`pm::access`): the equipment's installed
+    /// node, or the location's node. `None`: a family / criticality-group plan, or equipment
+    /// installed nowhere — plant-wide roles only. Derived on read.
+    #[serde(default)]
+    pub access_node_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

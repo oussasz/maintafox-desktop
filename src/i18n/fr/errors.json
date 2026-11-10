@@ -553,6 +553,7 @@
     "GATE_PM_REFERENCE_INVALID": "Plan PM refusé : une valeur choisie n'existe plus dans les données de référence.",
     "GATE_PM_RESULT_INVALID": "Exécution refusée : le résultat choisi n'est pas reconnu.",
     "GATE_PM_SCOPE_TYPE_INVALID": "Plan PM refusé : le type de périmètre n'est pas reconnu.",
+    "GATE_PM_SITE_CHANGE_DRAFT_ONLY": "On ne peut changer le lieu d'un plan qu'à l'état brouillon. Pour un plan déjà en service : dupliquez-le vers le nouveau lieu, puis retirez l'ancien plan (son historique reste avec lui).",
     "GATE_PM_SKILL_UNKNOWN": "Plan PM refusé : une compétence choisie n'est pas publiée dans les données de référence.",
     "GATE_PM_START_READING_INVALID": "Plan PM refusé : le relevé de départ doit être un nombre supérieur ou égal à zéro.",
     "GATE_PM_STATUS_INVALID": "Changement refusé : le statut choisi n'est pas reconnu.",

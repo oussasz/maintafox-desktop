@@ -13,8 +13,15 @@ use crate::pm::generation::resolve_targets;
 use crate::pm::queries;
 
 /// Values a plan can be scoped to: equipment families (published reference values), locations
-/// (active organisation nodes), criticality groups (`equipment.criticality` lookup).
-pub async fn list_pm_scope_options(db: &impl ConnectionTrait, scope_type: &str) -> AppResult<Vec<PmScopeOption>> {
+/// (active organisation nodes — those inside `readable`, where the reader holds `pm.view`),
+/// criticality groups (`equipment.criticality` lookup).
+pub async fn list_pm_scope_options(
+    db: &impl ConnectionTrait,
+    scope_type: &str,
+    readable: &crate::auth::scope::AccessScope,
+) -> AppResult<Vec<PmScopeOption>> {
+    let mut binds: Vec<sea_orm::Value> = Vec::new();
+    let location_sql;
     let sql = match scope_type {
         "family" => {
             "SELECT rv.id, rv.code, rv.label FROM reference_values rv
@@ -24,9 +31,15 @@ pub async fn list_pm_scope_options(db: &impl ConnectionTrait, scope_type: &str) 
              ORDER BY COALESCE(rv.sort_order, 0), rv.label"
         }
         "location" => {
-            "SELECT id, code, name AS label FROM org_nodes
-             WHERE deleted_at IS NULL AND status = 'active'
-             ORDER BY ancestor_path, code"
+            let inside = crate::wo::access::ScopeSql::on(readable, "id");
+            binds = inside.binds;
+            location_sql = format!(
+                "SELECT id, code, name AS label FROM org_nodes
+                 WHERE deleted_at IS NULL AND status = 'active' AND {}
+                 ORDER BY ancestor_path, code",
+                inside.predicate
+            );
+            location_sql.as_str()
         }
         "criticality_group" => {
             "SELECT lv.id, lv.code, lv.label FROM lookup_values lv
@@ -41,7 +54,7 @@ pub async fn list_pm_scope_options(db: &impl ConnectionTrait, scope_type: &str) 
         }
     };
     let rows = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
         .await?;
     rows.iter()
         .map(|r| {
