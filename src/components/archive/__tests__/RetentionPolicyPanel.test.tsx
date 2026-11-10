@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RetentionPolicyPanel } from "@/components/archive/RetentionPolicyPanel";
@@ -139,16 +139,28 @@ describe("RetentionPolicyPanel staged retention edits", () => {
     archiveMocks.updateRetentionPolicy.mockRejectedValueOnce(new Error("refused"));
     renderPanel();
     const retentionInput = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    // The reload after the save answers only when the test says so (stored value: 1).
+    let answerReload: () => void = () => undefined;
+    const stored = await archiveMocks.listRetentionPolicies();
+    archiveMocks.listRetentionPolicies.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answerReload = () => resolve(stored);
+        }),
+    );
+    archiveMocks.listRetentionPolicies.mockClear();
     fireEvent.change(retentionInput, { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "retention.save" }));
     await waitFor(() => {
-      expect(archiveMocks.listRetentionPolicies).toHaveBeenCalledTimes(2);
+      expect(archiveMocks.listRetentionPolicies).toHaveBeenCalledTimes(1);
     });
-    // Once the reload has settled, the refused edit is still pending (stored value is 1).
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "retention.save" })).toBeEnabled();
+    await act(async () => {
+      answerReload();
+      await Promise.resolve();
     });
+    // The reload has applied the stored rule; the refused edit is still shown and pending.
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("15");
+    expect(screen.getByRole("button", { name: "retention.save" })).toBeEnabled();
   });
 
   it("refuses to save years that are not a whole number", async () => {
