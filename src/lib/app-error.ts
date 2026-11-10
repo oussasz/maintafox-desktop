@@ -43,14 +43,19 @@ export function appErrorText(err: unknown): string {
   return description ?? title;
 }
 
-/** The readable name of the right a "permission denied" sentence names; null when it names none. */
-function missingRight(message: string): string | null {
+/**
+ * The readable names of the rights a "permission denied" sentence names (the refused right and,
+ * when the action needs a second one, the linked right); empty when it names none. Labels only,
+ * never the permission code.
+ */
+function missingRights(message: string): string[] {
   const names = message.match(/[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g) ?? [];
-  const known = names.find((n) => PERMISSION_CATALOG.some((p) => p.name === n));
+  const known = [...new Set(names)].filter((n) => PERMISSION_CATALOG.some((p) => p.name === n));
   // Before the rights' names are loaded the label would be the English catalogue text: the
   // generic reason stands in instead.
-  if (!i18n.hasLoadedNamespace("admin")) return null;
-  return known ? permissionLabel(i18n.getFixedT(null, "admin") as TFunction<"admin">, known) : null;
+  if (!i18n.hasLoadedNamespace("admin")) return [];
+  const t = i18n.getFixedT(null, "admin") as TFunction<"admin">;
+  return known.map((n) => permissionLabel(t, n));
 }
 
 /**
@@ -123,17 +128,25 @@ export function describeAppError(err: unknown): AppErrorDescription {
   if (code === "PERMISSION_DENIED") {
     const licence = licenceModuleOff(rawMsg);
     if (licence) {
-      return { ...licence, code, technical: rawMsg.trim() || null };
+      return { ...licence, code, technical: null };
     }
-    const right = missingRight(rawMsg);
+    const rights = missingRights(rawMsg);
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
-      description: right
-        ? String(i18n.t("errors:generic.rightRequired", { right }))
-        : String(i18n.t("errors:generic.forbidden")),
+      description:
+        rights.length === 1
+          ? String(i18n.t("errors:generic.rightRequired", { right: rights[0] }))
+          : rights.length > 1
+            ? String(
+                i18n.t("errors:generic.rightsRequired", {
+                  right: rights.map((r) => `« ${r} »`).join(", "),
+                }),
+              )
+            : String(i18n.t("errors:generic.forbidden")),
       code,
-      // The server's text names the missing right: kept for "Détails techniques" and support.
-      technical: rawMsg.trim() || null,
+      // A refusal is not a technical error: no "Détails techniques" (the server's English text
+      // names a permission code and would only repeat the sentence above).
+      technical: null,
     };
   }
 

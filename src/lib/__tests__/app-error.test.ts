@@ -243,7 +243,7 @@ describe("describeAppError (module outside the licence)", () => {
     expect(d.title).toBe("Module non inclus dans votre licence");
     expect(d.description).toContain("« Formations & habilitations »");
     expect(d.title).not.toBe(String(i18n.t("errors:appError.PERMISSION_DENIED")));
-    expect(d.technical).toContain("LICENCE_MODULE_OFF");
+    expect(d.technical).toBeNull();
   });
 
   it("says the licence is not in force when it is suspended or expired", async () => {
@@ -264,13 +264,32 @@ describe("describeAppError (refused right)", () => {
     await i18n.changeLanguage("fr");
     await i18n.loadNamespaces("admin");
     expect(describeAppError(refused).description).toBe(
-      "Droit requis : Clôturer les ordres de travail. Demandez-le à votre administrateur.",
+      "Droit manquant : « Clôturer les ordres de travail ». Demandez à votre administrateur de l'ajouter à votre rôle.",
     );
     await i18n.changeLanguage("en");
     expect(describeAppError(refused).description).toBe(
-      "Required right: Close work orders. Ask your administrator for it.",
+      'Missing right: "Close work orders". Ask your administrator to add it to your role.',
     );
-    expect(describeAppError(refused).technical).toContain(P.OT_CLOSE);
+  });
+
+  it("shows no technical details and no permission code for a refusal", async () => {
+    await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
+    const d = describeAppError(refused);
+    expect(d.technical).toBeNull();
+    expect(`${d.title} ${d.description}`).not.toContain(P.OT_CLOSE);
+  });
+
+  it("names the linked right too when the sentence names two rights", async () => {
+    await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
+    const d = describeAppError({
+      code: "PERMISSION_DENIED",
+      message: `Permission denied: Permission requise : ${P.OT_CLOSE} ${P.OT_VIEW}`,
+    });
+    expect(d.description).toContain("Droits manquants");
+    expect(d.description).toContain("« Clôturer les ordres de travail »");
+    expect(d.description).not.toContain(P.OT_VIEW);
   });
 
   it("gives the generic reason when the sentence names no known right", async () => {

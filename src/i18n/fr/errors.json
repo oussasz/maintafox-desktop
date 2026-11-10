@@ -13,7 +13,8 @@
     "conflict": "Conflit de donn\u00e9es. Rechargez et r\u00e9essayez.",
     "rateLimit": "Trop de requ\u00eates. Veuillez patienter.",
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
-    "rightRequired": "Droit requis : {{right}}. Demandez-le à votre administrateur."
+    "rightRequired": "Droit manquant : « {{right}} ». Demandez à votre administrateur de l'ajouter à votre rôle.",
+    "rightsRequired": "Droits manquants : {{right}}. Demandez à votre administrateur de les ajouter à votre rôle."
   },
   "licence": {
     "notInForceTitle": "Licence pas en vigueur",
