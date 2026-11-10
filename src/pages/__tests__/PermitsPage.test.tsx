@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enCommon from "@/i18n/en/common.json";
 import enPermits from "@/i18n/locale-data/en/permits.json";
@@ -459,6 +459,52 @@ describe("PermitsPage", () => {
     renderPage("/permits?permit=977");
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(enPermits.detail.linkError)).toBeInTheDocument();
+  });
+
+  describe("Retour to the previous screen (L6-03)", () => {
+    function Where() {
+      const loc = useLocation();
+      return <p data-testid="where">{`${loc.pathname}${loc.search}`}</p>;
+    }
+    function renderFromOtherScreen() {
+      return render(
+        <MemoryRouter
+          initialEntries={[
+            "/work-orders?status=in_progress&type=corrective",
+            "/permits?permit=977",
+          ]}
+          initialIndex={1}
+        >
+          <Routes>
+            <Route path="/permits" element={<PermitsPage />} />
+            <Route path="*" element={null} />
+          </Routes>
+          <Where />
+        </MemoryRouter>,
+      );
+    }
+    afterEach(() => window.history.replaceState(null, ""));
+
+    it("shows Retour on a permit opened from another screen and goes back to it, filters intact", async () => {
+      window.history.replaceState({ idx: 1 }, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderFromOtherScreen();
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      fireEvent.click(screen.getByRole("button", { name: enCommon.action.back }));
+      await waitFor(() =>
+        expect(screen.getByTestId("where").textContent).toBe(
+          "/work-orders?status=in_progress&type=corrective",
+        ),
+      );
+    });
+
+    it("shows no Retour when the permit page is the first screen", async () => {
+      window.history.replaceState(null, "");
+      svc.getWorkPermit.mockResolvedValue(permit({ id: 977, code: "PTW-2025-000977" }));
+      renderPage("/permits?permit=977");
+      await screen.findByRole("region", { name: "Permit PTW-2025-000977" });
+      expect(screen.queryByRole("button", { name: enCommon.action.back })).toBeNull();
+    });
   });
 
   it("keeps the list when the KPIs fail, and shows the KPI failure instead of zeros", async () => {

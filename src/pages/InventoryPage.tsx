@@ -2,7 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, Columns3, List, PackageSearch, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -37,6 +37,7 @@ import {
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { useMeasureUnits } from "@/components/lookups/MeasureUnitPicker";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -188,6 +189,9 @@ export function InventoryPage() {
 
   // Deep link from other modules (asset spare parts, work orders): /inventory?articleId=<id>.
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open article came from a link on another screen: it then offers "Retour".
+  const [articleOpenedFromLink, setArticleOpenedFromLink] = useState(false);
   const linkedArticleId = Number(searchParams.get("articleId"));
 
   // A link may ask for the articles below their reorder point (?stock=below_reorder): it opens
@@ -225,6 +229,7 @@ export function InventoryPage() {
     if (linked) {
       setInvTab("master");
       setSelectedArticle(linked);
+      setArticleOpenedFromLink(hasScreenToReturnTo());
     }
     setSearchParams(
       (prev) => {
@@ -460,6 +465,7 @@ export function InventoryPage() {
   };
 
   const openArticleDetails = (article: InventoryArticleRow) => {
+    setArticleOpenedFromLink(false);
     setSelectedArticle((prev) => (prev?.id === article.id ? null : article));
     setEditingInDialog(false);
   };
@@ -954,6 +960,15 @@ export function InventoryPage() {
                     onCreateRequisition={handleCreateRequisitionFromDetail}
                     onStockAdjusted={() => void loadAll()}
                     onOpenPurchaseOrder={handleOpenPurchaseOrderFromDetail}
+                    {...(articleOpenedFromLink
+                      ? {
+                          onBackToOrigin: () => {
+                            setArticleOpenedFromLink(false);
+                            setSelectedArticle(null);
+                            void navigate(-1);
+                          },
+                        }
+                      : {})}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6">

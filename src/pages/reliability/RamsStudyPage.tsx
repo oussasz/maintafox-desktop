@@ -26,6 +26,7 @@ import {
   isoDay,
   useRamsRight,
 } from "@/components/reliability/study/rams-ui";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
@@ -122,7 +123,10 @@ function StudyDateField({
 
 export function RamsStudyPage() {
   const { t } = useTranslation("reliability");
+  const { t: tc } = useTranslation("common");
   const navigate = useNavigate();
+  // Opened from another screen (the fleet, a link): "Retour" goes back there, filters intact.
+  const [cameFromScreen] = useState(hasScreenToReturnTo);
   const { studyId: raw } = useParams();
   const studyId = Number(raw);
   const [params, setParams] = useSearchParams();
@@ -228,9 +232,13 @@ export function RamsStudyPage() {
     <ModulePageShell
       headerLeft={
         <div className="flex min-w-0 items-center gap-3">
-          <Button variant="outline" className="h-11" onClick={() => navigate("/reliability")}>
+          <Button
+            variant="outline"
+            className="h-11"
+            onClick={() => (cameFromScreen ? navigate(-1) : navigate("/reliability"))}
+          >
             <ArrowLeft className="h-4 w-4" aria-hidden />
-            {t("rams.study.back")}
+            {cameFromScreen ? tc("action.back") : t("rams.study.back")}
           </Button>
           <h1 className={cn(mfLayout.moduleTitle, "truncate")}>
             {study ? t("rams.study.title", { title: study.title }) : t("rams.title")}
