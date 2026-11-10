@@ -1,7 +1,7 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} unread)",
+    "aria": "Notifications ({{count}} to see)",
     "unread": "{{count}} unread",
     "toAcknowledge": "{{count}} to acknowledge",
     "openInbox": "Open the inbox",
@@ -15,10 +15,10 @@
         "action": "Open the late work orders"
       },
       "overdueRequests": {
-        "title_one": "{{count}} overdue request",
-        "title_other": "{{count}} overdue requests",
+        "title_one": "{{count}} request past its deadline",
+        "title_other": "{{count}} requests past their deadline",
         "body": "The time to take it on or to deal with it has passed.",
-        "action": "Open the requests"
+        "action": "Open the late or at-risk requests"
       }
     }
   },

@@ -109,7 +109,7 @@ describe("NotificationBell business alerts", () => {
     renderBell();
     openMenu(await screen.findByLabelText(/^bell\.aria/));
     fireEvent.click(await screen.findByTestId("bell-alert-di"));
-    expect((await screen.findByTestId("where")).textContent).toBe("/requests");
+    expect((await screen.findByTestId("where")).textContent).toBe("/requests?queue=sla_at_risk");
   });
 
   it("asks for, and shows, nothing the user has no right to", async () => {

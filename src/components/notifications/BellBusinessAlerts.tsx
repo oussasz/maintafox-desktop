@@ -43,7 +43,7 @@ export function BellBusinessAlerts({
           title: t("bell.alerts.overdueRequests.title", { count: overdueRequests }),
           body: t("bell.alerts.overdueRequests.body"),
           action: t("bell.alerts.overdueRequests.action"),
-          to: listLinks.requests(),
+          to: listLinks.requests({ queue: "sla_at_risk" }),
         }
       : null,
   ].filter((r) => r !== null);

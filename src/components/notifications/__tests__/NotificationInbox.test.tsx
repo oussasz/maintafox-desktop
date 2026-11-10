@@ -260,7 +260,10 @@ describe("NotificationInbox", () => {
     expect(screen.getAllByRole("button", { name: /^inbox.openAria/ })).toHaveLength(1);
     fireEvent.click(within(group).getByRole("button"));
     await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
-    expect(svc.markNotificationRead).toHaveBeenCalledTimes(3);
+    expect(svc.markAllNotificationsRead).toHaveBeenCalledWith({
+      view: "unread",
+      category_code: "sync_conflict",
+    });
     expect(onNavigate).toHaveBeenCalledTimes(1);
     window.removeEventListener(OPEN_SYNC_CENTER_EVENT, opened);
   });

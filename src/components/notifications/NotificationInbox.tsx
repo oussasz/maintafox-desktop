@@ -309,7 +309,7 @@ export function NotificationInbox({
   );
 
   const setFilter = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
-  // In the bell, every unread synchronisation conflict is one row with a count, after the rest.
+  // In the bell, every unread synchronisation conflict is one row with a count, first in the list.
   const syncRows = compact ? rows.filter(isSyncConflict) : [];
   const listRows = compact ? rows.filter((r) => !isSyncConflict(r)) : rows;
   const syncCount = Math.max(
@@ -320,7 +320,8 @@ export function NotificationInbox({
 
   const openSyncGroup = async () => {
     try {
-      await Promise.all(syncRows.filter(isUnread).map((r) => markNotificationRead(r.id)));
+      // Every unread conflict notification, not only the rows loaded here.
+      await markAllNotificationsRead({ view: "unread", category_code: "sync_conflict" });
       void refreshCounts();
     } catch {
       // Reported by the global toast; still open the conflicts.
@@ -703,6 +704,7 @@ export function NotificationInbox({
         ) : null}
 
         <ul className="divide-y divide-surface-border" aria-label={t("inbox.listAria")}>
+          {syncRows.length > 0 ? renderSyncGroup() : null}
           {groups.map((group) => {
             const [first] = group;
             if (!first) return null;
@@ -723,7 +725,6 @@ export function NotificationInbox({
               </li>
             );
           })}
-          {syncRows.length > 0 ? renderSyncGroup() : null}
         </ul>
 
         {loading ? <LoadingState className="py-3" label={t("inbox.loading")} /> : null}

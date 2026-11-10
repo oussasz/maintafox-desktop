@@ -1,7 +1,7 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} non lues)",
+    "aria": "Notifications ({{count}} à voir)",
     "unread": "{{count}} non lue(s)",
     "toAcknowledge": "{{count}} à acquitter",
     "openInbox": "Ouvrir la boîte de réception",
@@ -15,10 +15,10 @@
         "action": "Ouvrir les OT en retard"
       },
       "overdueRequests": {
-        "title_one": "{{count}} demande en retard",
-        "title_other": "{{count}} demandes en retard",
+        "title_one": "{{count}} demande hors délai",
+        "title_other": "{{count}} demandes hors délai",
         "body": "Le délai de prise en charge ou de traitement est dépassé.",
-        "action": "Ouvrir les demandes"
+        "action": "Ouvrir les demandes hors délai ou en risque"
       }
     }
   },
