@@ -139,6 +139,7 @@
       "pm__occurrence__generated": "Échéance préventive générée",
       "pm__occurrence__deferred": "Échéance préventive reportée",
       "pm__plan__duplicated": "Plan préventif dupliqué",
+      "pm__plan_site_changed": "Plan préventif changé de site",
       "pm__missed": "Préventif manqué",
       "pm__follow_up_created": "Suite créée depuis le préventif",
       "pm__finding__follow_up_created": "Suite créée depuis un constat préventif",

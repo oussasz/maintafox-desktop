@@ -14,6 +14,10 @@ vi.mock(
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
+// A plan's rights at its site (`pm-site-scope`): granted here; the scope rules have their own tests.
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
 
 const TS = "2026-10-01T10:00:00Z";
 
