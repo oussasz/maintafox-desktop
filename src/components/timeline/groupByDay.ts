@@ -4,6 +4,8 @@
  * 23:30 local time is listed under that evening, not under the next UTC day.
  */
 
+import { formatDate as formatLocalDate } from "@/utils/formatters";
+
 function localYmd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -28,11 +30,7 @@ export function dayLabel(
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   if (localYmd(d) === localYmd(now)) return todayLabel;
-  return d.toLocaleDateString(locale, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return formatLocalDate(d, locale);
 }
 
 export interface DayGroup<T> {

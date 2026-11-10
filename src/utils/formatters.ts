@@ -17,7 +17,8 @@ const INTL_LOCALE_MAP: Record<string, string> = {
 };
 
 function toIntlLocale(locale: string): string {
-  return INTL_LOCALE_MAP[locale] ?? "fr-FR";
+  // "fr", "fr-FR", "en-US"... : the language decides, never a hardcoded fallback region.
+  return INTL_LOCALE_MAP[locale] ?? INTL_LOCALE_MAP[locale.slice(0, 2).toLowerCase()] ?? "fr-FR";
 }
 
 // ─── Number Formatting ─────────────────────────────────────────────────────
@@ -126,11 +127,19 @@ export function formatPercent(value: number, locale: string): string {
  * A date-only text ("2026-10-22", a calendar day with no time) is that day in the user's own
  * time zone; `new Date("2026-10-22")` would be midnight UTC, i.e. the day before west of Greenwich.
  */
-function toDate(value: Date | string | number): Date {
+export function toDate(value: Date | string | number): Date {
   if (value instanceof Date) return value;
   if (typeof value === "string") {
-    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    const text = value.trim();
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
     if (day) return new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+    // The database writes its instants in UTC, often with no "Z" ("2026-10-31 21:00:00" from
+    // SQLite, "2026-10-31T21:00:00" from a naive timestamp). JavaScript would read those as local
+    // time and show them shifted by the zone offset: they are UTC. A "T" value with no seconds is
+    // a local entry field value ("2026-10-31T22:00") and stays local.
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(text)) {
+      return new Date(`${text.replace(" ", "T")}Z`);
+    }
   }
   return new Date(value);
 }

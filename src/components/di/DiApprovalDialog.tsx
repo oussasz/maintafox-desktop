@@ -48,6 +48,7 @@ import { pushAppToast } from "@/store/app-toast-store";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { InterventionRequest, WoConversionResult } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -75,20 +76,8 @@ function printApprovalSheet(
   symptomLabel: string,
   urgencyLabel: string,
 ) {
-  const now = new Date().toLocaleString(locale);
-  const fmt = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleString(locale, {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return iso;
-    }
-  };
+  const now = formatLocalDateTime(new Date(), locale);
+  const fmt = (iso: string) => formatLocalDateTime(iso, locale);
 
   const html = `<!DOCTYPE html>
 <html lang="${i18n.language.split("-")[0] ?? "fr"}">
@@ -465,13 +454,7 @@ export function DiApprovalDialog() {
                     {t("detail.fields.reportedAt")}:
                   </span>{" "}
                   <span className="font-medium">
-                    {new Date(di.submitted_at).toLocaleString(dateLocale, {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatLocalDateTime(di.submitted_at, dateLocale)}
                   </span>
                 </div>
 
@@ -510,7 +493,7 @@ export function DiApprovalDialog() {
                 <span className="text-muted-foreground">{t("review.approver")}:</span>
                 <span className="font-medium">{approverName}</span>
                 <span className="ml-auto text-muted-foreground">
-                  {new Date().toLocaleString(dateLocale)}
+                  {formatLocalDateTime(new Date(), dateLocale)}
                 </span>
               </CardContent>
             </Card>

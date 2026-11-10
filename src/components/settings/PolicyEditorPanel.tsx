@@ -49,7 +49,7 @@ import {
   testPolicyDraft,
 } from "@/services/settings-service";
 import { useSettingsStore } from "@/stores/settings-store";
-import { intlLocaleForLanguage } from "@/utils/format-date";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { AppSetting, PolicySnapshot } from "@shared/ipc-types";
 
 import { policyTestText } from "./policy-test-text";
@@ -492,9 +492,7 @@ export function PolicyEditorPanel({
                   })}
                   {activeSnapshot.activated_at &&
                     ` — ${t("policy.activatedAt", {
-                      date: new Date(activeSnapshot.activated_at).toLocaleString(
-                        intlLocaleForLanguage(i18n.language),
-                      ),
+                      date: formatLocalDateTime(activeSnapshot.activated_at, i18n.language),
                     })}`}
                 </p>
               )}
