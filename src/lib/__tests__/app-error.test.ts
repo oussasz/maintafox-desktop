@@ -292,6 +292,17 @@ describe("describeAppError (refused right)", () => {
     expect(d.description).not.toContain(P.OT_VIEW);
   });
 
+  it("says one of the rights is enough when the server lists alternatives", async () => {
+    await i18n.changeLanguage("fr");
+    await i18n.loadNamespaces("admin");
+    const d = describeAppError({
+      code: "PERMISSION_DENIED",
+      message: `Permission denied: Permission requise : ${P.OT_CLOSE}, ou ${P.OT_VIEW}`,
+    });
+    expect(d.description).toContain("Il faut l'un de ces droits");
+    expect(d.description).not.toContain("Droits manquants");
+  });
+
   it("gives the generic reason when the sentence names no known right", async () => {
     await i18n.changeLanguage("en");
     const described = describeAppError({

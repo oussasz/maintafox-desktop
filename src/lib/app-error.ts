@@ -131,6 +131,9 @@ export function describeAppError(err: unknown): AppErrorDescription {
       return { ...licence, code, technical: null };
     }
     const rights = missingRights(rawMsg);
+    // "Permission requise : a, b, ou c" lists alternatives: any one of them is enough.
+    const anyOf = /\s(?:ou|or)\s/i.test(rawMsg);
+    const quoted = rights.map((r) => String(i18n.t("errors:generic.rightQuoted", { right: r })));
     return {
       title: String(i18n.t("errors:appError.PERMISSION_DENIED")),
       description:
@@ -138,9 +141,12 @@ export function describeAppError(err: unknown): AppErrorDescription {
           ? String(i18n.t("errors:generic.rightRequired", { right: rights[0] }))
           : rights.length > 1
             ? String(
-                i18n.t("errors:generic.rightsRequired", {
-                  right: rights.map((r) => `« ${r} »`).join(", "),
-                }),
+                i18n.t(
+                  anyOf ? "errors:generic.anyRightRequired" : "errors:generic.rightsRequired",
+                  {
+                    right: quoted.join(", "),
+                  },
+                ),
               )
             : String(i18n.t("errors:generic.forbidden")),
       code,

@@ -14,7 +14,9 @@
     "rateLimit": "Trop de requ\u00eates. Veuillez patienter.",
     "maintenance": "Service en maintenance. R\u00e9essayez plus tard.",
     "rightRequired": "Droit manquant : « {{right}} ». Demandez à votre administrateur de l'ajouter à votre rôle.",
-    "rightsRequired": "Droits manquants : {{right}}. Demandez à votre administrateur de les ajouter à votre rôle."
+    "rightsRequired": "Droits manquants : {{right}}. Demandez à votre administrateur de les ajouter à votre rôle.",
+    "anyRightRequired": "Il faut l'un de ces droits : {{right}}. Demandez à votre administrateur d'en ajouter un à votre rôle.",
+    "rightQuoted": "« {{right}} »"
   },
   "licence": {
     "notInForceTitle": "Licence pas en vigueur",
