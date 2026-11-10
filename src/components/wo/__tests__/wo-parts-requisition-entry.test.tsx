@@ -7,8 +7,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WoPartsRequisitionEntry } from "@/components/wo/WoPartsRequisitionEntry";
+import { WoShortageSection } from "@/components/wo/WoShortageSection";
 
-const i18nMock = vi.hoisted(() => ({ t: (key: string) => key, i18n: { language: "en" } }));
+const i18nMock = vi.hoisted(() => ({
+  t: (key: string, o?: { number?: string }) => (o?.number ? `${key}:${o.number}` : key),
+  i18n: { language: "en" },
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
 
 const access = vi.hoisted(() => ({ granted: true }));
@@ -43,7 +47,9 @@ describe("WoPartsRequisitionEntry", () => {
   beforeEach(() => {
     access.granted = true;
     inv.checkWoPartStockAvailability.mockReset().mockResolvedValue(readiness);
-    inv.createProcurementRequisitionFromWoPart.mockReset().mockResolvedValue({ id: 1 });
+    inv.createProcurementRequisitionFromWoPart
+      .mockReset()
+      .mockResolvedValue({ id: 1, req_number: "DA-0007" });
   });
 
   it("is visible with the right and creates the request from the order's shortage", async () => {
@@ -55,7 +61,9 @@ describe("WoPartsRequisitionEntry", () => {
     await waitFor(() =>
       expect(inv.createProcurementRequisitionFromWoPart).toHaveBeenCalledWith(42, 9, 3, 5),
     );
-    expect(await screen.findByText(/planning\.shortage\.requisitionCreated/)).toBeTruthy();
+    expect(
+      await screen.findByText(/planning\.shortage\.requisitionCreatedNumber:DA-0007/),
+    ).toBeTruthy();
   });
 
   it("is hidden without the right and does not read the stock", () => {
@@ -80,5 +88,14 @@ describe("WoPartsRequisitionEntry", () => {
     render(<WoPartsRequisitionEntry woId={42} statusCode="ready" />);
     await waitFor(() => expect(inv.checkWoPartStockAvailability).toHaveBeenCalled());
     expect(screen.queryByText("planning.shortage.title")).toBeNull();
+  });
+
+  it("planning block: short parts stay visible without the right, but no request button", () => {
+    access.granted = false;
+    render(<WoShortageSection woId={42} readiness={readiness} />);
+    expect(screen.getByText("ROU-6204")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "planning.shortage.createRequisition" }),
+    ).toBeNull();
   });
 });

@@ -404,6 +404,7 @@
       "description": "Some planned parts are not fully available in stock.",
       "createRequisition": "Create purchase requisition",
       "requisitionCreated": "Purchase requisition created",
+      "requisitionCreatedNumber": "Purchase requisition {{number}} created",
       "columns": {
         "article": "Article",
         "requested": "Requested",

@@ -4,7 +4,7 @@
  * One block, two places: the planning panel (preparation) and the work order sheet itself
  * (`WoPartsRequisitionEntry`). Same command (`create_procurement_requisition_from_wo_part`), same
  * pre-fill from the work order's part lines. The backend requires `inv.procure` plant-wide, so the
- * block is offered only with that right and is hidden without it.
+ * button is offered only with that right; the shortage rows stay visible to planners.
  */
 
 import { useCallback, useState } from "react";
@@ -26,9 +26,10 @@ interface WoShortageSectionProps {
 
 export function WoShortageSection({ woId, readiness, onError }: WoShortageSectionProps) {
   const { t } = useTranslation("ot");
-  const access = usePlantWideAccess();
+  // The short parts are information for every planner; only the request button needs inv.procure.
+  const canProcure = usePlantWideAccess().can(P.INV_PROCURE);
   const [creating, setCreating] = useState<number | null>(null);
-  const [createdIds, setCreatedIds] = useState<number[]>([]);
+  const [created, setCreated] = useState<Record<number, string>>({});
   const [localError, setLocalError] = useState<string | null>(null);
 
   const create = useCallback(
@@ -36,7 +37,7 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
       setCreating(articleId);
       setLocalError(null);
       void createProcurementRequisitionFromWoPart(woId, articleId, qty, locationId)
-        .then(() => setCreatedIds((prev) => [...prev, articleId]))
+        .then((req) => setCreated((prev) => ({ ...prev, [articleId]: req.req_number })))
         .catch((err) => {
           const message = describeAppError(err).title;
           setLocalError(message);
@@ -47,7 +48,6 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
     [woId, onError],
   );
 
-  if (!access.can(P.INV_PROCURE)) return null;
   if (!readiness || readiness.is_fully_available || readiness.shortages.length === 0) return null;
 
   return (
@@ -56,7 +56,8 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
       <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
       <div className="space-y-1.5">
         {readiness.shortages.map((shortage) => {
-          const wasCreated = createdIds.includes(shortage.article_id);
+          const requestNumber = created[shortage.article_id];
+          const wasCreated = requestNumber !== undefined;
           return (
             <div
               key={shortage.article_id}
@@ -73,9 +74,12 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
               </span>
               {wasCreated ? (
                 <span className="text-xs font-medium text-tone-success-fg">
-                  ✓ {t("planning.shortage.requisitionCreated")}
+                  ✓{" "}
+                  {requestNumber
+                    ? t("planning.shortage.requisitionCreatedNumber", { number: requestNumber })
+                    : t("planning.shortage.requisitionCreated")}
                 </span>
-              ) : (
+              ) : canProcure ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -93,7 +97,7 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
                     ? "…"
                     : t("planning.shortage.createRequisition")}
                 </Button>
-              )}
+              ) : null}
             </div>
           );
         })}
