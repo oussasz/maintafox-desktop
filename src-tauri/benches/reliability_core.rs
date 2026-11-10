@@ -5,14 +5,13 @@ use maintafox_lib::reliability::compute::{compute_reliability_kpis, KpiFailureEv
 fn make_input(n: usize) -> ReliabilityKpiComputeInput {
     let p0: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
     let p1: DateTime<Utc> = "2026-02-01T00:00:00Z".parse().unwrap();
-    let flags = r#"{"eligible_unplanned_mtbf":true}"#;
     let mut events = Vec::with_capacity(n);
     for i in 0..n {
         let ts = p0 + Duration::hours(i as i64);
         events.push(KpiFailureEvent {
             id: i as i64,
             event_ts: ts,
-            eligible_flags_json: flags.to_string(),
+            counts_in_mtbf: true,
             downtime_duration_hours: 0.0,
             active_repair_hours: 1.0,
             failure_mode_id: Some(10),

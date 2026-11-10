@@ -84,6 +84,28 @@ use crate::reliability::study::store::{get, opt_i64};
 /// counts only, "période trop courte pour le MTBF").
 pub const MIN_RATE_WINDOW_DAYS: i64 = 90;
 
+/// Start of a window of `months` calendar months ending at `end`: the RAMS home's period
+/// (`periodFromMonths`), so "12 mois" is the same window on every screen (365 or 366 days).
+#[must_use]
+pub fn months_before(end: DateTime<Utc>, months: u32) -> DateTime<Utc> {
+    // chrono covers ±262 000 years: never out of range for a real date.
+    end.checked_sub_months(chrono::Months::new(months)).unwrap_or(end)
+}
+
+/// The Analytique "12 mois" horizon choice, sent as 365 days.
+pub const TWELVE_MONTHS_HORIZON_DAYS: i64 = 365;
+
+/// Start of a horizon ending at `end`: "12 mois" (365) is 12 calendar months, as on the RAMS
+/// home; 7 / 30 / 90 stay days.
+#[must_use]
+pub fn horizon_start(end: DateTime<Utc>, horizon_days: i64) -> DateTime<Utc> {
+    if horizon_days == TWELVE_MONTHS_HORIZON_DAYS {
+        months_before(end, 12)
+    } else {
+        end - chrono::Duration::days(horizon_days)
+    }
+}
+
 /// Period, equipment class and org node of a fleet calculation.
 #[derive(Debug, Clone, Copy)]
 pub struct FleetScope {

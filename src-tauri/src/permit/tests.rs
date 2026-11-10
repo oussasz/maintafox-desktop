@@ -1112,7 +1112,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some("2026-04-10T08:00:00Z".into()),
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,

@@ -248,6 +248,43 @@ fn rec<'a>(
         .unwrap_or_else(|| panic!("record {key_prefix} at {tag_at}"))
 }
 
+/// L2-10: a study's default selection is decided live from the record: a failure with a mode is in
+/// by default even when its cause is "not determined" or its stored flag says not eligible.
+#[tokio::test]
+async fn study_default_selection_is_live_from_the_record() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let m = Some(f.mode_id);
+    failure(&f.db, "nd", f.p101, "2025-10-01T00:00:00Z", None, m, None, 2.0).await;
+    failure(&f.db, "frozen", f.p101, "2025-11-01T00:00:00Z", None, m, None, 2.0).await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET cause_not_determined = 1, eligible_flags_json = '{NOT_ELIGIBLE}' \
+             WHERE entity_sync_id = 'st-fe-nd'"
+        ),
+    )
+    .await;
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE failure_events SET eligible_flags_json = '{NOT_ELIGIBLE}' WHERE entity_sync_id = 'st-fe-frozen'"
+        ),
+    )
+    .await;
+    let d = build_dataset(&f.db, study_id).await.expect("dataset").dataset;
+    for at in ["2025-10-01", "2025-11-01"] {
+        let r = rec(&d, "failure:", at);
+        assert!(r.included, "{at}: in by default");
+        assert_eq!(r.state_reason, None, "{at}");
+    }
+    // Still out by default: no failure mode.
+    assert_eq!(
+        rec(&d, "failure:", "2025-09-01").state_reason.as_deref(),
+        Some("not_eligible")
+    );
+}
+
 #[tokio::test]
 async fn dataset_builds_ages_suspensions_and_checks() {
     let f = setup().await;

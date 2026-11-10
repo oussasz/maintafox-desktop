@@ -23,6 +23,7 @@ import {
   dataQualityHref,
   periodFromMonths,
 } from "@/components/reliability/study/rams-ui";
+import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
@@ -55,11 +56,10 @@ const ANALYSIS_METHODS: readonly { key: string; step: AnalysisStep }[] = [
   { key: "rcm", step: "rcm" },
   { key: "ishikawa", step: "fmeca" },
 ];
-/** Shortest window giving MTBF / MTTR / Aₒ (`fleet_kpis::MIN_RATE_WINDOW_DAYS`). */
-const MIN_RATE_WINDOW_DAYS = 90;
 
 export function RamsFleetPage() {
   const { t } = useTranslation("reliability");
+  const fleetText = useFleetKpiText();
   const { formatNumber, formatDecimal, formatPercent, formatDate } = useFormatters();
   const navigate = useNavigate();
   const { can } = usePermissions();
@@ -183,27 +183,13 @@ export function RamsFleetPage() {
   };
 
   const k = view?.kpis;
-  const basisHint =
-    k == null
-      ? ""
-      : k.calendar_basis_count === 0
-        ? t("rams.fleet.basisOperating")
-        : k.operating_basis_count === 0
-          ? t("rams.fleet.basisCalendar")
-          : t("rams.fleet.basisMixed", {
-              operating: k.operating_basis_count,
-              calendar: k.calendar_basis_count,
-            });
+  const basisHint = fleetText.basis(k);
   const hours = (v: number | null | undefined) => (v == null ? "—" : formatNumber(Math.round(v)));
   const qualityHref = dataQualityHref(months, orgNodeId, classId);
-  /** "N exclus : <champ> manquant" parts of a figure, only the non-zero ones. */
-  const exclusions = (parts: readonly (readonly [string, number])[]) =>
-    parts.filter(([, n]) => n > 0).map(([key, n]) => t(`rams.kpi.excluded.${key}`, { count: n }));
+  const exclusions = fleetText.exclusions;
   /** Hint of a rate figure: its definition, then what was left out, or why it is not given. */
   const rateHint = (definition: string, excluded: string[]) =>
-    k?.window_too_short
-      ? t("rams.kpi.tooShort", { days: MIN_RATE_WINDOW_DAYS })
-      : [definition, ...excluded].join(" · ");
+    k?.window_too_short ? fleetText.tooShort() : [definition, ...excluded].join(" · ");
 
   return (
     <ModulePageShell

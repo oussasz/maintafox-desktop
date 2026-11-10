@@ -28,7 +28,8 @@ export const SAFETY_NOTICE_CATEGORY = "safety_rule_received";
  * permit close-right holders of the site), two concurrent versions of a PM plan (shown to the
  * PM planners), a work order held or a permit ended under work, and a work order received started
  * without its plant permit rule (shown to the permit issuers of its site), and an inspection anomaly
- * cancelled after it was routed (shown to its follow-up's responsible). Each recipient acknowledges
+ * cancelled after it was routed (shown to its follow-up's responsible), and a request flagged
+ * "sécurité" (shown to its reviewers and the permit issuers of its site). Each recipient acknowledges
  * their own.
  */
 export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
@@ -39,6 +40,7 @@ export const SAFETY_NOTICE_CATEGORIES: ReadonlySet<string> = new Set([
   "permit_ended_under_work",
   "wo_permit_rule_missing",
   "insp_anomaly_origin_cancelled",
+  "di_safety_alert",
 ]);
 /** Message keys of the PM planning notices (not safety): shown with a planning icon. */
 const PM_NOTICE_KEYS: ReadonlySet<string> = new Set([

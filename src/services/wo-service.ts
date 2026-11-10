@@ -22,6 +22,7 @@ import type {
   WoDraftUpdateInput,
   WoEmergencyReassignInput,
   WoEvaluateReadinessInput,
+  WoExecutionStanding,
   WoGetResponse,
   WoHoldInput,
   WoListFilter,
@@ -354,6 +355,26 @@ export async function listWos(filter: WoListFilter): Promise<WoListPage> {
 export async function getWo(id: number): Promise<WoGetResponse> {
   const raw = await invoke<unknown>("get_wo", { id });
   return WoGetResponseSchema.parse(raw) as WoGetResponse;
+}
+
+const WoExecutionStandingSchema = z.object({
+  actor: z.enum(["assignee", "team_member", "planner", "approver"]).nullable(),
+  refusal: z
+    .object({
+      code: z.string(),
+      params: z.record(z.string(), z.string()),
+    })
+    .nullable(),
+  own_draft: z.boolean(),
+});
+
+/**
+ * Whether the signed-in user carries out this work order, and else why not (L5-08): the execution
+ * actions are greyed with that reason. Computed by the backend, which applies the same rule.
+ */
+export async function getWoExecutionStanding(woId: number): Promise<WoExecutionStanding> {
+  const raw = await invoke<unknown>("get_wo_execution_standing", { woId });
+  return WoExecutionStandingSchema.parse(raw) as WoExecutionStanding;
 }
 
 const WorkOrderTypeToReviewSchema = z.object({

@@ -44,6 +44,7 @@ import {
 } from "@/components/wo/WoCompletionGatesChecklist";
 import { WoRemainingHoursField, parseRemainingHours } from "@/components/wo/WoRemainingHoursField";
 import { useWoAccess } from "@/components/wo/WoSiteScope";
+import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standing";
 import { PERMIT_STATUS_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
@@ -143,6 +144,9 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   /** "Droit requis : …" naming the right as the administration screens do. */
   const rightRequired = (permission: string) =>
     t("closeout.blocked.rightRequired", { right: permissionText.label(permission) });
+  // The close-out details and the close are execution actions (L5-08): someone who does not carry
+  // out this work order sees them greyed, with who it is assigned to (null until it is known).
+  const execution = useWoExecutionStanding(wo);
   // Reopen still asks for the password; verification and close are confirmed in a dialog.
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const [confirmAction, setConfirmAction] = useState<"verify" | "close" | null>(null);
@@ -564,12 +568,18 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const hasEditRight = can(P.OT_EDIT);
   /** "Droit requis" for the edit right, once the rights are known to lack it. */
   const editRightReason = rightsKnown && !hasEditRight ? rightRequired(P.OT_EDIT) : null;
-  const isDetailEditable = stateBlocker === null && canEdit;
+  const isDetailEditable = stateBlocker === null && canEdit && execution.blocker === null;
   /** Why saving the details is greyed (null while the rights load or cannot be read). */
-  const detailBlocker = stateBlocker ?? editRightReason;
+  const detailBlocker = stateBlocker ?? editRightReason ?? execution.blocker;
   // Closing needs `ot.close` (`close_wo`): someone who works on the order without it sees the
-  // step greyed with the right it needs.
-  const closeBlocker = rightsKnown && hasEditRight && !canClose ? rightRequired(P.OT_CLOSE) : null;
+  // step greyed with the right it needs; with the right, someone who does not carry it out sees
+  // it greyed with who it is assigned to (the rule never stands in for the right).
+  const closeBlocker =
+    rightsKnown && hasEditRight && !canClose
+      ? rightRequired(P.OT_CLOSE)
+      : canClose
+        ? execution.blocker
+        : null;
 
   useEffect(() => {
     if (statusCode !== "closed") return;
@@ -989,7 +999,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         )}
 
         {/* 4c — Closure */}
-        {CLOSEABLE_STATUSES.has(statusCode) && canClose && (
+        {CLOSEABLE_STATUSES.has(statusCode) && canClose && execution.blocker === null && (
           <div className="space-y-4 rounded-md border border-surface-border p-4">
             <h4 className="text-sm font-medium text-text-primary">{t("closeout.closureTitle")}</h4>
             <p className="text-sm text-muted-foreground">{t("closeout.closureWarning")}</p>

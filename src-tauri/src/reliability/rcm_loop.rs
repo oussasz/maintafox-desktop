@@ -750,10 +750,14 @@ pub async fn fmeca_criticality_evidence(db: &impl ConnectionTrait, item_id: i64)
     let counts = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS total, \
-             SUM(CASE WHEN ? IS NOT NULL AND failure_mode_id = ? THEN 1 ELSE 0 END) AS mode_n \
-             FROM failure_events WHERE equipment_id = ? \
-             AND COALESCE(json_extract(eligible_flags_json, '$.eligible_unplanned_mtbf'), 0) = 1",
+            // Every unplanned failure of the equipment (`compute::counts_in_mtbf`, decided live,
+            // never from the stored `eligible_flags_json` flag), as in the MTBF.
+            format!(
+                "SELECT COUNT(*) AS total, \
+                 SUM(CASE WHEN ? IS NOT NULL AND failure_mode_id = ? THEN 1 ELSE 0 END) AS mode_n \
+                 FROM failure_events WHERE equipment_id = ? AND {}",
+                crate::reliability::compute::COUNTS_IN_MTBF_SQL
+            ),
             [mode.into(), mode.into(), equipment_id.into()],
         ))
         .await?

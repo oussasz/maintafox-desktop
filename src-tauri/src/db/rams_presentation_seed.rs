@@ -433,7 +433,7 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             wo_id: wo.id,
             actor_id: ctx.actor_id,
             expected_row_version: wo.row_version,
-            planner_id: ctx.actor_id,
+            planner_id: Some(ctx.actor_id),
             planned_start: Some(ctx.fail_start.clone()),
             planned_end: Some(ctx.fail_end.clone()),
             shift: None,

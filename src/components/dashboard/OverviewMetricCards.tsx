@@ -6,12 +6,14 @@ import {
   VisualMetricCard,
   type VisualMetricTrendSense,
 } from "@/components/metrics/VisualMetricCard";
+import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { useFormatters, type Formatters } from "@/hooks/use-formatters";
 import type { OverviewKpiCell, OverviewKpisPayload } from "@shared/ipc-types";
 import {
   DEFAULT_KPI_STABLE_BELOW,
   OVERVIEW_KPI_REGISTRY_BY_KEY,
+  OVERVIEW_KPI_SEMANTIC_KEYS,
   isOverviewKpiAccent,
   isOverviewKpiSemanticKey,
   type OverviewKpiLayoutEntry,
@@ -59,6 +61,7 @@ export function OverviewMetricCards(props: {
 }) {
   const { t } = useTranslation("dashboard");
   const { t: tr } = useTranslation("reports");
+  const fleetText = useFleetKpiText();
   const navigate = useNavigate();
   const formatters = useFormatters();
   const { formatNumber } = formatters;
@@ -116,6 +119,27 @@ export function OverviewMetricCards(props: {
     };
   };
 
+  /**
+   * Context of a card. A fleet reliability cell is worded as on the RAMS home from its live figures
+   * (`study::fleet_kpis`): MTBF and Aₒ with window and hours basis, MTTR with its definition, each
+   * with its exclusions; data quality with its window only. The others: their registry text.
+   */
+  const contextOf = (cell: OverviewKpiCell, contextKey: string): string => {
+    const fleet = cell.fleet;
+    if (fleet == null) return t(contextKey as never);
+    const period = fleetText.months(fleet.window_months);
+    switch (cell.semantic_key) {
+      case OVERVIEW_KPI_SEMANTIC_KEYS.MTBF:
+        return fleetText.rateContext("mtbf", fleet.kpis, period);
+      case OVERVIEW_KPI_SEMANTIC_KEYS.MTTR:
+        return fleetText.rateContext("mttr", fleet.kpis, period);
+      case OVERVIEW_KPI_SEMANTIC_KEYS.AVAILABILITY:
+        return fleetText.rateContext("availability", fleet.kpis, period);
+      default:
+        return period;
+    }
+  };
+
   /** The KPI's "stable" band, worded from the registry value. */
   const bandTitle = (cell: OverviewKpiCell, reg: { stableBelow?: number }) => {
     const band = reg.stableBelow ?? DEFAULT_KPI_STABLE_BELOW;
@@ -151,7 +175,7 @@ export function OverviewMetricCards(props: {
             <VisualMetricCard
               key={entry.id}
               title={t(reg.labelKey as never)}
-              context={t(reg.contextKey as never)}
+              context={contextOf(cell, reg.contextKey)}
               value={available ? formatCellValue(cell, formatters) : "—"}
               available={available}
               unavailableLabel="—"

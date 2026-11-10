@@ -10,6 +10,7 @@ pub mod costs;
 pub mod delay;
 pub mod domain;
 pub mod execution;
+pub mod execution_actor;
 pub mod execution_log;
 pub mod labor;
 pub mod lifecycle;
@@ -41,6 +42,8 @@ mod closeout_gates_tests;
 mod closeout_sync_tests;
 #[cfg(test)]
 mod closeout_tests;
+#[cfg(test)]
+mod execution_actor_tests;
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]

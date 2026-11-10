@@ -12,7 +12,6 @@ struct Period {
 struct GoldenEvent {
     id: i64,
     failed_at: String,
-    eligible_flags_json: String,
     downtime_duration_hours: f64,
     active_repair_hours: f64,
     failure_mode_id: Option<i64>,
@@ -67,7 +66,8 @@ fn assert_fixture(json: &str) {
         .map(|e| KpiFailureEvent {
             id: e.id,
             event_ts: parse_utc(&e.failed_at),
-            eligible_flags_json: e.eligible_flags_json,
+            // Fixture events are unplanned failures; every unplanned failure counts (L2-10).
+            counts_in_mtbf: true,
             downtime_duration_hours: e.downtime_duration_hours,
             active_repair_hours: e.active_repair_hours,
             failure_mode_id: e.failure_mode_id,
