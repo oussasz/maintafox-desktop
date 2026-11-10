@@ -17,13 +17,16 @@ export interface BellAlerts {
 }
 
 /**
- * Business alerts of the bell. A user without `ot.view` / `di.view` never asks for (and never gets)
+ * Business alerts of the bell. A user without `ot.view` (or `di.view` with a screening, review or
+ * approval right) never asks for (and never gets)
  * the matching figure; the commands themselves count only the user's sites.
  */
 export function useBellAlerts(active: boolean): BellAlerts {
   const { can } = usePermissions();
   const canWo = can(P.OT_VIEW);
-  const canDi = can(P.DI_VIEW);
+  // The late-requests queue the row opens is shown to screeners, reviewers and approvers only
+  // (`DiQueueBar`): others would land on a list that does not match the figure.
+  const canDi = can(P.DI_VIEW) && (can(P.DI_SCREEN) || can(P.DI_REVIEW) || can(P.DI_APPROVE));
   const [lateWorkOrders, setLate] = useState<number | null>(null);
   const [overdueRequests, setOverdue] = useState<number | null>(null);
 

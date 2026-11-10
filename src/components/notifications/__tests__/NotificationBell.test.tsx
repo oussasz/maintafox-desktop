@@ -87,7 +87,7 @@ beforeEach(() => {
 
 describe("NotificationBell business alerts", () => {
   it("shows late work orders and overdue requests, and counts ten conflicts as one", async () => {
-    granted.set = new Set([P.OT_VIEW, P.DI_VIEW]);
+    granted.set = new Set([P.OT_VIEW, P.DI_VIEW, P.DI_SCREEN]);
     renderBell();
     // 10 conflicts -> 1 row, + 1 late-OT row + 1 overdue-request row.
     await waitFor(() => expect(screen.getByLabelText("bell.aria[count=3]")).toBeTruthy());
@@ -97,7 +97,7 @@ describe("NotificationBell business alerts", () => {
   });
 
   it("opens the late work orders list from its row", async () => {
-    granted.set = new Set([P.OT_VIEW, P.DI_VIEW]);
+    granted.set = new Set([P.OT_VIEW, P.DI_VIEW, P.DI_SCREEN]);
     renderBell();
     openMenu(await screen.findByLabelText(/^bell\.aria/));
     fireEvent.click(await screen.findByTestId("bell-alert-wo"));
@@ -105,7 +105,7 @@ describe("NotificationBell business alerts", () => {
   });
 
   it("opens the requests list from its row", async () => {
-    granted.set = new Set([P.OT_VIEW, P.DI_VIEW]);
+    granted.set = new Set([P.OT_VIEW, P.DI_VIEW, P.DI_SCREEN]);
     renderBell();
     openMenu(await screen.findByLabelText(/^bell\.aria/));
     fireEvent.click(await screen.findByTestId("bell-alert-di"));
@@ -113,12 +113,21 @@ describe("NotificationBell business alerts", () => {
   });
 
   it("asks for, and shows, nothing the user has no right to", async () => {
-    granted.set = new Set([P.DI_VIEW]);
+    granted.set = new Set([P.DI_VIEW, P.DI_APPROVE]);
     renderBell();
     openMenu(await screen.findByLabelText(/^bell\.aria/));
     expect(await screen.findByTestId("bell-alert-di")).toBeTruthy();
     expect(screen.queryByTestId("bell-alert-wo")).toBeNull();
     expect(svc.getLateWorkOrderCount).not.toHaveBeenCalled();
+  });
+
+  it("gives no late-request alert to a reader who cannot open the late queue", async () => {
+    granted.set = new Set([P.OT_VIEW, P.DI_VIEW]);
+    renderBell();
+    openMenu(await screen.findByLabelText(/^bell\.aria/));
+    expect(await screen.findByTestId("bell-alert-wo")).toBeTruthy();
+    expect(screen.queryByTestId("bell-alert-di")).toBeNull();
+    expect(svc.getOverdueRequestCount).not.toHaveBeenCalled();
   });
 
   it("shows no alert block without any right or when the figures are zero", async () => {
@@ -132,7 +141,7 @@ describe("NotificationBell business alerts", () => {
   });
 
   it("hides a figure that is zero", async () => {
-    granted.set = new Set([P.OT_VIEW, P.DI_VIEW]);
+    granted.set = new Set([P.OT_VIEW, P.DI_VIEW, P.DI_SCREEN]);
     svc.getLateWorkOrderCount.mockResolvedValue(0);
     renderBell();
     openMenu(await screen.findByLabelText(/^bell\.aria/));
