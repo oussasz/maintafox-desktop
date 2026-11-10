@@ -1736,14 +1736,18 @@ pub(crate) async fn inbound_isolation_check(
     }
     let first_join = local.is_none()
         && crate::sync::plant_join::first_join_snapshot_row(conn, "permit_isolations", entity_sync_id).await?;
-    if let Some((c, m)) = zero_energy_breach(local.as_ref(), &iso, first_join) {
-        return conflict(c, m);
-    }
+    // Judged after the isolation rules below (who fitted, verified and removed it): a verification by
+    // the wrong person is the conflict shown first, its zero-energy test second. A change of the note
+    // alone (actions unchanged) is judged here.
+    let zero_energy = zero_energy_breach(local.as_ref(), &iso, first_join);
     if local
         .as_ref()
         .is_some_and(|l| isolation_actions(l) == isolation_actions(&iso) && lock_record(l) == lock_record(&iso))
     {
-        return Ok(None);
+        return match zero_energy {
+            Some((c, m)) => conflict(c, m),
+            None => Ok(None),
+        };
     }
     let point = field(&iso, "isolation_point").unwrap_or(entity_sync_id).to_string();
     if let Some(l) = &local {
@@ -1759,6 +1763,9 @@ pub(crate) async fn inbound_isolation_check(
         None => false,
     };
     if let Some((c, m)) = isolation_rule_breach(&iso, three_person) {
+        return conflict(c, m);
+    }
+    if let Some((c, m)) = zero_energy {
         return conflict(c, m);
     }
     // The permit is applied before its isolations; not here yet, the apply waits for it.
