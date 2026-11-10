@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WoPartsRequisitionEntry } from "@/components/wo/WoPartsRequisitionEntry";
 import { WoShortageSection } from "@/components/wo/WoShortageSection";
+import { P } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string, o?: { number?: string }) => (o?.number ? `${key}:${o.number}` : key),
@@ -106,7 +107,7 @@ describe("WoPartsRequisitionEntry", () => {
   });
 
   it("is hidden for a user with inv.procure but no inv.view, and reads nothing", () => {
-    access.denied = ["inv.view"];
+    access.denied = [P.INV_VIEW];
     render(<WoPartsRequisitionEntry woId={42} statusCode="in_progress" />);
     expect(screen.queryByText("planning.shortage.title")).toBeNull();
     expect(inv.checkWoPartStockAvailability).not.toHaveBeenCalled();
