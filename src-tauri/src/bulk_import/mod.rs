@@ -22,6 +22,9 @@ pub mod personnel_certification;
 pub mod personnel_skill;
 #[cfg(test)]
 mod personnel_skill_tests;
+pub mod pm_plan;
+#[cfg(test)]
+mod pm_plan_tests;
 pub mod stock_article;
 #[cfg(test)]
 mod stock_article_tests;
@@ -86,6 +89,7 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &stock_article::SPEC,
     &stock_opening::SPEC,
     &equipment_spare_part::SPEC,
+    &pm_plan::SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -505,6 +509,7 @@ async fn validate(
     db: &DatabaseConnection,
     entity: &str,
     rows: &[HashMap<String, String>],
+    user_id: Option<i64>,
 ) -> AppResult<Vec<RowOutcome>> {
     match entity {
         "org_tree" => org_tree::validate(db, rows).await,
@@ -520,6 +525,7 @@ async fn validate(
         "stock_article" => stock_article::validate(db, rows).await,
         "stock_opening" => stock_opening::validate(db, rows).await,
         "equipment_spare_part" => equipment_spare_part::validate(db, rows).await,
+        "pm_plan" => pm_plan::validate(db, rows, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -539,7 +545,7 @@ pub async fn create_batch(
             "Le fichier ne contient aucune ligne à importer.",
         ));
     }
-    let outcomes = validate(db, spec.code, &rows).await?;
+    let outcomes = validate(db, spec.code, &rows, user_id).await?;
 
     let now = crate::clock::now().to_rfc3339();
     let (mut valid, mut warn, mut err) = (0i64, 0i64, 0i64);
@@ -724,6 +730,7 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "stock_article" => stock_article::apply(db, &todo).await,
         "stock_opening" => stock_opening::apply(db, &todo, user_id).await,
         "equipment_spare_part" => equipment_spare_part::apply(db, &todo, user_id).await,
+        "pm_plan" => pm_plan::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -849,6 +856,7 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "stock_article" => stock_article::export(db).await?,
         "stock_opening" => stock_opening::export(db).await?,
         "equipment_spare_part" => equipment_spare_part::export(db).await?,
+        "pm_plan" => pm_plan::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {
