@@ -570,18 +570,28 @@ pub async fn update_pm_plan(
     expected_row_version: i64,
     input: UpdatePmPlanInput,
 ) -> AppResult<PmPlan> {
-    update_pm_plan_recorded(db, plan_id, expected_row_version, input, None).await
+    update_pm_plan_recorded(db, plan_id, expected_row_version, input, None, None).await
 }
 
-/// [`update_pm_plan`], writing `site_change` (the audit entry of a plan moved to another site or
-/// made plant-wide, `pm::access::check_plan_update`) in the same transaction: the change and its
-/// record are kept or rolled back together.
+fn anchor_changed_elsewhere() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_RECORD_CHANGED_ELSEWHERE: the plan's site changed since its rights were checked (its equipment moved); reload and try again."
+            .to_string(),
+    ])
+}
+
+/// [`update_pm_plan`] after `pm::access::check_plan_update`: inside the transaction the plan's
+/// anchor before and after the update is derived again and must be the one checked (else
+/// refused: its equipment moved in between), and a site change is recorded in the audit trail by
+/// `actor_id`, naming the plan by its sync id (a draft plan can be deleted later; the audit must
+/// not depend on the row). The change and its record are kept or rolled back together.
 pub async fn update_pm_plan_recorded(
     db: &DatabaseConnection,
     plan_id: i64,
     expected_row_version: i64,
     input: UpdatePmPlanInput,
-    site_change: Option<crate::audit::AuditEvent<'_>>,
+    checked: Option<&crate::pm::access::PlanUpdateCheck>,
+    actor_id: Option<i32>,
 ) -> AppResult<PmPlan> {
     let current = get_pm_plan(db, plan_id).await?;
     if current.row_version != expected_row_version {
@@ -602,6 +612,11 @@ pub async fn update_pm_plan_recorded(
         crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
     }
     let tx = db.begin().await?;
+    if let Some(checked) = checked {
+        if crate::pm::access::plan_anchor(&tx, plan_id).await? != checked.old_anchor {
+            return Err(anchor_changed_elsewhere());
+        }
+    }
     let result = tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_team_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id=? AND row_version=?",
@@ -611,8 +626,28 @@ pub async fn update_pm_plan_recorded(
             "GATE_RECORD_CHANGED_ELSEWHERE: PM plan update failed.".to_string(),
         ]));
     }
-    if let Some(event) = site_change {
-        crate::audit::emit_in(&tx, event).await?;
+    if let Some(checked) = checked {
+        if crate::pm::access::plan_anchor(&tx, plan_id).await? != checked.new_anchor {
+            return Err(anchor_changed_elsewhere());
+        }
+        if let Some(site_move) = checked.site_move.as_ref() {
+            let plan_sync_id = crate::sync::identity::optional_entity_sync_id(&tx, "pm_plans", plan_id)
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm plan {plan_id} has no sync id")))?;
+            crate::audit::emit_in(
+                &tx,
+                crate::audit::AuditEvent {
+                    event_type: crate::pm::access::AUDIT_ACTION_SITE_CHANGED,
+                    actor_id,
+                    entity_type: Some("pm_plan"),
+                    entity_id: Some(plan_sync_id.as_str()),
+                    summary: "PM plan moved to another site",
+                    detail_json: Some(site_move.details_json()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
     }
     tx.commit().await?;
     get_pm_plan(db, plan_id).await
@@ -641,9 +676,14 @@ pub async fn transition_pm_plan_lifecycle(
         ]));
     }
     let tx = db.begin().await?;
-    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let result = tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [next.into(), input.plan_id.into(), input.expected_row_version.into()])).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM lifecycle transition failed (the plan changed meanwhile).".to_string(),
+        ]));
+    }
     tx.commit().await?;
     get_pm_plan(db, input.plan_id).await
 }

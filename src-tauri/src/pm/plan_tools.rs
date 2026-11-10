@@ -67,22 +67,28 @@ pub async fn list_pm_scope_options(
         .collect()
 }
 
-/// The assets a scope covers today (what the forecast fans out to).
+/// The assets a scope covers today (what the forecast fans out to), limited to those installed
+/// where the reader holds `pm.view` (`readable`): a family or criticality group spans sites, and
+/// a site reader only sees their sites' assets of it.
 pub async fn preview_pm_scope_assets(
     db: &impl ConnectionTrait,
     scope_type: &str,
     scope_id: i64,
+    readable: &crate::auth::scope::AccessScope,
 ) -> AppResult<Vec<PmScopeAsset>> {
     let targets = resolve_targets(db, scope_type, Some(scope_id), None).await?;
+    let visible = crate::wo::access::ScopeSql::on(readable, "installed_at_node_id");
+    let sql = format!(
+        "SELECT asset_id_code, name FROM equipment WHERE id = ? AND {}",
+        visible.predicate
+    );
     let mut out = Vec::with_capacity(targets.len());
     for target in targets {
         let Some(id) = target.equipment_id else { continue };
+        let mut binds: Vec<sea_orm::Value> = vec![id.into()];
+        binds.extend(visible.binds.iter().cloned());
         if let Some(row) = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT asset_id_code, name FROM equipment WHERE id = ?",
-                [id.into()],
-            ))
+            .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
             .await?
         {
             out.push(PmScopeAsset {

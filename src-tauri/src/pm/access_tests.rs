@@ -416,11 +416,11 @@ async fn an_edit_that_keeps_the_site_needs_the_right_there_only() {
     let moved = access::check_plan_update(db, &site, f.plan_a, rv, None, Some(f.eq_a))
         .await
         .expect("no target change");
-    assert_eq!(moved, None);
+    assert_eq!(moved.site_move, None);
     let moved = access::check_plan_update(db, &site, f.plan_a, rv, Some("equipment"), Some(eq_a_bis))
         .await
         .expect("other equipment at the same node");
-    assert_eq!(moved, None);
+    assert_eq!(moved.site_move, None);
     // Another node, even below the same site, is a move (the work-order rule compares nodes too):
     // only on a draft.
     let err = access::check_plan_update(db, &site, f.plan_a, rv, Some("equipment"), Some(f.eq_a1))
@@ -463,6 +463,7 @@ async fn moving_a_plan_to_another_site_needs_the_right_at_both_sites() {
     let moved = access::check_plan_update(db, &both, f.plan_a, rv, Some("equipment"), Some(f.eq_b))
         .await
         .expect("both sites")
+        .site_move
         .expect("a site move");
     assert_eq!(
         moved,
@@ -479,6 +480,7 @@ async fn moving_a_plan_to_another_site_needs_the_right_at_both_sites() {
     access::check_plan_update(db, &both, f.plan_a, rv, Some("location"), Some(f.t.site_b))
         .await
         .expect("both sites")
+        .site_move
         .expect("a site move");
 }
 
@@ -497,6 +499,7 @@ async fn making_a_plan_plant_wide_needs_a_plant_wide_right() {
         let moved = access::check_plan_update(db, &plant, f.plan_a, rv, Some(kind), None)
             .await
             .expect(kind)
+            .site_move
             .expect("a site move");
         assert_eq!(moved.new_anchor, Anchor::Plant);
     }
@@ -554,20 +557,10 @@ async fn a_site_move_is_recorded_with_the_update() {
     let db = &f.db;
     let both = map_of(db, f.sites_ab).await;
     let rv = row_version(db, f.plan_a).await;
-    let moved = access::check_plan_update(db, &both, f.plan_a, rv, Some("equipment"), Some(f.eq_b))
+    let checked = access::check_plan_update(db, &both, f.plan_a, rv, Some("equipment"), Some(f.eq_b))
         .await
-        .expect("both sites")
-        .expect("a site move");
-    let plan_ref = f.plan_a.to_string();
-    let event = crate::audit::AuditEvent {
-        event_type: access::AUDIT_ACTION_SITE_CHANGED,
-        actor_id: Some(f.sites_ab),
-        entity_type: Some("pm_plan"),
-        entity_id: Some(plan_ref.as_str()),
-        summary: "PM plan moved to another site",
-        detail_json: Some(moved.details_json()),
-        ..Default::default()
-    };
+        .expect("both sites");
+    assert!(checked.site_move.is_some());
     let updated = queries::update_pm_plan_recorded(
         db,
         f.plan_a,
@@ -577,36 +570,30 @@ async fn a_site_move_is_recorded_with_the_update() {
             asset_scope_id: Some(f.eq_b),
             ..no_change()
         },
-        Some(event),
+        Some(&checked),
+        Some(f.sites_ab),
     )
     .await
     .expect("update");
     assert_eq!(updated.asset_scope_id, Some(f.eq_b));
     assert_eq!(updated.access_node_id, Some(f.t.site_b));
+    // Named by the plan's sync id (the same on every PC; a draft plan can be deleted later).
+    let sync_id = crate::sync::identity::optional_entity_sync_id(db, "pm_plans", f.plan_a)
+        .await
+        .expect("sync id")
+        .expect("plan has a sync id");
     let recorded = scalar(
         db,
         &format!(
             "SELECT COUNT(*) FROM audit_events WHERE action_code = 'pm.plan_site_changed' \
-               AND target_type = 'pm_plan' AND target_id = '{}' AND actor_id = {} \
+               AND target_type = 'pm_plan' AND target_id = '{sync_id}' AND actor_id = {} \
                AND details_json LIKE '%\"new_org_node_id\":{}%' AND details_json LIKE '%\"old_org_node_id\":{}%'",
-            f.plan_a, f.sites_ab, f.t.site_b, f.t.site_a
+            f.sites_ab, f.t.site_b, f.t.site_a
         ),
     )
     .await;
     assert_eq!(recorded, 1);
-
-    // A refused update records nothing (stale version: rolled back with it).
-    let stale = crate::audit::AuditEvent {
-        event_type: access::AUDIT_ACTION_SITE_CHANGED,
-        entity_type: Some("pm_plan"),
-        entity_id: Some(plan_ref.as_str()),
-        summary: "PM plan moved to another site",
-        ..Default::default()
-    };
-    queries::update_pm_plan_recorded(db, f.plan_a, rv, no_change(), Some(stale))
-        .await
-        .expect_err("stale");
-    let recorded = scalar(
+    let by_local_id = scalar(
         db,
         &format!(
             "SELECT COUNT(*) FROM audit_events WHERE action_code = 'pm.plan_site_changed' AND target_id = '{}'",
@@ -614,7 +601,55 @@ async fn a_site_move_is_recorded_with_the_update() {
         ),
     )
     .await;
+    assert_eq!(by_local_id, 0, "never the local id");
+
+    // A refused update records nothing (stale version: rolled back with it).
+    queries::update_pm_plan_recorded(db, f.plan_a, rv, no_change(), Some(&checked), Some(f.sites_ab))
+        .await
+        .expect_err("stale");
+    let recorded = scalar(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = 'pm.plan_site_changed' AND target_id = '{sync_id}'"
+        ),
+    )
+    .await;
     assert_eq!(recorded, 1);
+}
+
+#[tokio::test]
+async fn an_update_is_refused_when_the_plans_site_moved_after_the_check() {
+    let f = fixture().await;
+    let db = &f.db;
+    let site = map_of(db, f.site_a).await;
+    let rv = row_version(db, f.plan_a).await;
+    let checked = access::check_plan_update(db, &site, f.plan_a, rv, None, None)
+        .await
+        .expect("site A plan");
+    // The plan's equipment is moved to site B between the check and the update.
+    exec(
+        db,
+        &format!(
+            "UPDATE equipment SET installed_at_node_id = {} WHERE id = {}",
+            f.t.site_b, f.eq_a
+        ),
+    )
+    .await;
+    let err = queries::update_pm_plan_recorded(
+        db,
+        f.plan_a,
+        rv,
+        UpdatePmPlanInput {
+            title: Some("renamed".into()),
+            ..no_change()
+        },
+        Some(&checked),
+        Some(f.site_a),
+    )
+    .await
+    .expect_err("anchor moved");
+    assert_eq!(gate_of(&err), "GATE_RECORD_CHANGED_ELSEWHERE");
+    assert_eq!(row_version(db, f.plan_a).await, rv, "nothing written");
 }
 
 #[tokio::test]
@@ -664,13 +699,20 @@ async fn listed_plans(db: &DatabaseConnection, user_id: i32) -> Vec<i64> {
         .collect()
 }
 
-/// A forecast occurrence of `plan_id`, overdue (due in 2020).
-async fn occurrence(db: &DatabaseConnection, key: &str, plan_id: i64, version_id: i64) -> i64 {
+/// A forecast occurrence of `plan_id` (on `equipment_id` when given), overdue (due in 2020).
+async fn occurrence(
+    db: &DatabaseConnection,
+    key: &str,
+    plan_id: i64,
+    version_id: i64,
+    equipment_id: Option<i64>,
+) -> i64 {
+    let equipment = equipment_id.map_or_else(|| "NULL".to_string(), |e| e.to_string());
     exec(
         db,
         &format!(
-            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, status)
-             VALUES ('pm-scope-occ-{key}', {plan_id}, {version_id}, 'scope-{key}', '2020-01-01T00:00:00Z', 'forecasted')"
+            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, status, equipment_id)
+             VALUES ('pm-scope-occ-{key}', {plan_id}, {version_id}, 'scope-{key}', '2020-01-01T00:00:00Z', 'forecasted', {equipment})"
         ),
     )
     .await;
@@ -768,13 +810,17 @@ async fn a_family_plan_is_read_only_to_a_site_reader() {
 }
 
 #[tokio::test]
-async fn occurrence_lists_and_due_figures_follow_the_readers_sites() {
+async fn occurrence_lists_due_figures_and_compliance_follow_each_occurrences_site() {
     let f = fixture().await;
     let db = &f.db;
     let version_family = version(db, f.plan_family).await;
-    let occ_a = occurrence(db, "A", f.plan_a, f.version_a).await;
-    let occ_b = occurrence(db, "B", f.plan_b, f.version_b).await;
-    let occ_family = occurrence(db, "FAMILY", f.plan_family, version_family).await;
+    let occ_a = occurrence(db, "A", f.plan_a, f.version_a, Some(f.eq_a)).await;
+    let occ_b = occurrence(db, "B", f.plan_b, f.version_b, Some(f.eq_b)).await;
+    // A family plan spans sites: its occurrence on site A equipment is site A's, on site B
+    // equipment site B's, and one without equipment is for plant-wide readers only.
+    let fam_a = occurrence(db, "FAM-A", f.plan_family, version_family, Some(f.eq_a1)).await;
+    let fam_b = occurrence(db, "FAM-B", f.plan_family, version_family, Some(f.eq_b)).await;
+    let fam_none = occurrence(db, "FAM-NONE", f.plan_family, version_family, None).await;
 
     let site_scope = map_of(db, f.site_a).await.scope_of(PM_VIEW);
     let plant_scope = map_of(db, f.plant).await.scope_of(PM_VIEW);
@@ -785,31 +831,244 @@ async fn occurrence_lists_and_due_figures_follow_the_readers_sites() {
         due_to: None,
         include_completed: Some(true),
     };
-    let site: Vec<i64> = queries::list_pm_occurrences_scoped(db, filter(), &site_scope)
+    let ids = |list: Vec<crate::pm::domain::PmOccurrence>| list.into_iter().map(|o| o.id).collect::<Vec<i64>>();
+    let site = ids(queries::list_pm_occurrences_scoped(db, filter(), &site_scope)
         .await
-        .expect("site list")
-        .into_iter()
-        .map(|o| o.id)
-        .collect();
-    assert!(site.contains(&occ_a) && site.contains(&occ_family), "{site:?}");
-    assert!(!site.contains(&occ_b), "site B occurrence left out");
-    let plant: Vec<i64> = queries::list_pm_occurrences_scoped(db, filter(), &plant_scope)
+        .expect("site list"));
+    assert!(site.contains(&occ_a) && site.contains(&fam_a), "{site:?}");
+    for hidden in [occ_b, fam_b, fam_none] {
+        assert!(!site.contains(&hidden), "{hidden} left out for the site reader");
+    }
+    let plant = ids(queries::list_pm_occurrences_scoped(db, filter(), &plant_scope)
         .await
-        .expect("plant list")
-        .into_iter()
-        .map(|o| o.id)
-        .collect();
-    assert!(plant.contains(&occ_a) && plant.contains(&occ_b) && plant.contains(&occ_family));
+        .expect("plant list"));
+    for id in [occ_a, occ_b, fam_a, fam_b, fam_none] {
+        assert!(plant.contains(&id), "{id} listed plant-wide");
+    }
 
+    // Due figures: the site reader counts A and the family occurrence on A1 only.
     let site_figures = queries::get_pm_due_metrics_scoped(db, &site_scope).await.expect("site");
     let plant_figures = queries::get_pm_due_metrics_scoped(db, &plant_scope)
         .await
         .expect("plant");
     let all_figures = queries::get_pm_due_metrics(db).await.expect("all");
     assert_eq!(plant_figures.overdue_count, all_figures.overdue_count);
-    assert!(site_figures.overdue_count >= 2, "A and the family plan are overdue");
+    let site_overdue_before = scalar(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM pm_occurrences WHERE id NOT IN ({occ_a}, {occ_b}, {fam_a}, {fam_b}, {fam_none})"
+        ),
+    )
+    .await;
+    assert!(site_figures.overdue_count >= 2);
     assert!(
-        plant_figures.overdue_count > site_figures.overdue_count,
-        "the site B occurrence is not counted for the site reader"
+        plant_figures.overdue_count >= site_figures.overdue_count + 3,
+        "B, the family's B and the family's no-equipment occurrences are not counted for site A \
+         ({} vs {}, {site_overdue_before} other occurrences)",
+        plant_figures.overdue_count,
+        site_figures.overdue_count
     );
+
+    // Opening one occurrence follows the same node.
+    let site = map_of(db, f.site_a).await;
+    for id in [occ_a, fam_a] {
+        access::check_view_occurrence(db, &site, id)
+            .await
+            .unwrap_or_else(|e| panic!("open {id}: {e:?}"));
+    }
+    let err = access::check_view_occurrence(db, &site, fam_b)
+        .await
+        .expect_err("family occurrence on site B");
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    let err = access::check_view_occurrence(db, &site, fam_none)
+        .await
+        .expect_err("family occurrence without equipment");
+    assert_eq!(code_of(&err), "SCOPE_RECORD_WITHOUT_SITE");
+    let plant = map_of(db, f.plant).await;
+    access::check_view_occurrence(db, &plant, fam_b)
+        .await
+        .expect("plant-wide reader");
+
+    // Compliance (period covering 2020): the site reader's due count leaves out B's three.
+    let window = |pm_plan_id| crate::pm::domain::PmComplianceInput {
+        from: "2019-12-01T00:00:00Z".to_string(),
+        to: "2020-02-01T00:00:00Z".to_string(),
+        pm_plan_id,
+    };
+    let site_compliance = crate::pm::compliance::get_pm_compliance_visible(
+        db,
+        window(None),
+        &access::occurrence_view_filter(&site_scope),
+    )
+    .await
+    .expect("site compliance");
+    let plant_compliance = crate::pm::compliance::get_pm_compliance_visible(
+        db,
+        window(None),
+        &access::occurrence_view_filter(&plant_scope),
+    )
+    .await
+    .expect("plant compliance");
+    assert_eq!(
+        plant_compliance.due_count - site_compliance.due_count,
+        3,
+        "site B's and the no-equipment occurrences are left out"
+    );
+    let family_site = crate::pm::compliance::get_pm_compliance_visible(
+        db,
+        window(Some(f.plan_family)),
+        &access::occurrence_view_filter(&site_scope),
+    )
+    .await
+    .expect("family compliance for site A");
+    assert_eq!(family_site.due_count, 1, "only the family's occurrence on site A");
+}
+
+#[tokio::test]
+async fn a_family_or_group_plans_records_need_a_plant_wide_reader() {
+    let f = fixture().await;
+    let db = &f.db;
+    let site = map_of(db, f.site_a).await;
+    access::check_view_plan_records(db, &site, f.plan_a)
+        .await
+        .expect("site A plan records");
+    for plan_id in [f.plan_family, f.plan_group] {
+        // The plan itself is readable, its records across sites are not.
+        access::check_view_plan(db, &site, plan_id).await.expect("plan visible");
+        let err = access::check_view_plan_records(db, &site, plan_id)
+            .await
+            .expect_err("records of a plant-wide plan");
+        assert_eq!(code_of(&err), "SCOPE_PLANT_WIDE_ONLY");
+    }
+    let err = access::check_view_plan_records(db, &site, f.plan_b)
+        .await
+        .expect_err("site B plan records");
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    let plant = map_of(db, f.plant).await;
+    for plan_id in [f.plan_family, f.plan_group, f.plan_b] {
+        access::check_view_plan_records(db, &plant, plan_id)
+            .await
+            .unwrap_or_else(|e| panic!("plant-wide {plan_id}: {e:?}"));
+    }
+}
+
+#[tokio::test]
+async fn a_user_without_any_pm_right_is_refused_before_any_id_is_resolved() {
+    let f = fixture().await;
+    let db = &f.db;
+    let nobody = user(db, "pm_ids_nobody").await;
+    let none = map_of(db, nobody).await;
+    for err in [
+        access::check_view_occurrence(db, &none, 9_999_999)
+            .await
+            .expect_err("occurrence"),
+        access::check_view_execution(db, &none, 9_999_999)
+            .await
+            .expect_err("execution"),
+        access::check_on_finding_plan(db, &none, PM_CREATE, 9_999_999)
+            .await
+            .expect_err("finding"),
+    ] {
+        assert_eq!(code_of(&err), "PERMISSION_DENIED", "{err:?}");
+    }
+    // A reader is told the id does not exist.
+    let site = map_of(db, f.site_a).await;
+    assert!(matches!(
+        access::check_view_occurrence(db, &site, 9_999_999).await,
+        Err(AppError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_location_choices_and_scope_preview_follow_the_readers_sites() {
+    let f = fixture().await;
+    let db = &f.db;
+    let site_scope = map_of(db, f.site_a).await.scope_of(PM_VIEW);
+    let plant_scope = map_of(db, f.plant).await.scope_of(PM_VIEW);
+    let locations = |list: Vec<crate::pm::domain::PmScopeOption>| list.into_iter().map(|o| o.id).collect::<Vec<i64>>();
+    let site = locations(
+        crate::pm::plan_tools::list_pm_scope_options(db, "location", &site_scope)
+            .await
+            .expect("site locations"),
+    );
+    assert!(site.contains(&f.t.site_a) && site.contains(&f.t.line_a1), "{site:?}");
+    assert!(!site.contains(&f.t.site_b) && !site.contains(&f.t.plant), "{site:?}");
+    let plant = locations(
+        crate::pm::plan_tools::list_pm_scope_options(db, "location", &plant_scope)
+            .await
+            .expect("plant locations"),
+    );
+    for node in [f.t.plant, f.t.site_a, f.t.line_a1, f.t.site_b] {
+        assert!(plant.contains(&node), "{node} offered plant-wide");
+    }
+
+    // The preview of a location covering both sites (the plant node) lists only site A's assets
+    // to the site reader.
+    let assets =
+        |list: Vec<crate::pm::domain::PmScopeAsset>| list.into_iter().map(|a| a.equipment_id).collect::<Vec<i64>>();
+    let site_preview = assets(
+        crate::pm::plan_tools::preview_pm_scope_assets(db, "location", f.t.plant, &site_scope)
+            .await
+            .expect("site preview"),
+    );
+    let plant_preview = assets(
+        crate::pm::plan_tools::preview_pm_scope_assets(db, "location", f.t.plant, &plant_scope)
+            .await
+            .expect("plant preview"),
+    );
+    assert!(!site_preview.contains(&f.eq_b), "{site_preview:?}");
+    if plant_preview.contains(&f.eq_a) {
+        assert!(site_preview.contains(&f.eq_a), "{site_preview:?}");
+        assert!(plant_preview.contains(&f.eq_b), "{plant_preview:?}");
+    }
+}
+
+#[tokio::test]
+async fn changing_only_the_scope_type_is_checked_at_the_new_anchor() {
+    let f = fixture().await;
+    let db = &f.db;
+    let rv = row_version(db, f.plan_loc_a1).await;
+    // The location plan on line A1 turned into a family plan (the id kept): plant-wide only.
+    let site = map_of(db, f.site_a).await;
+    let err = access::check_plan_update(db, &site, f.plan_loc_a1, rv, Some("family"), None)
+        .await
+        .expect_err("site planner making it plant-wide");
+    assert_eq!(code_of(&err), "SCOPE_PLANT_WIDE_ONLY");
+    let plant = map_of(db, f.plant).await;
+    let checked = access::check_plan_update(db, &plant, f.plan_loc_a1, rv, Some("family"), None)
+        .await
+        .expect("plant-wide planner");
+    assert_eq!(checked.old_anchor, Anchor::Node(f.t.line_a1));
+    assert_eq!(checked.new_anchor, Anchor::Plant);
+    assert_eq!(checked.new_scope_id, Some(f.t.line_a1));
+    assert!(checked.site_move.is_some());
+}
+
+#[tokio::test]
+async fn approval_needs_pm_approve_at_the_plans_anchor() {
+    let f = fixture().await;
+    let db = &f.db;
+    // An approver on site A, without the edit rights.
+    let approver = user(db, "pm_approver_a").await;
+    let approve_role = role(db, "PM approver site", &[PM_VIEW, PM_APPROVE]).await;
+    assign(db, approver, approve_role, "org_node", Some(f.t.site_a)).await;
+    let map = map_of(db, approver).await;
+    access::check_on_plan(db, &map, PM_APPROVE, f.plan_a)
+        .await
+        .expect("site A plan");
+    let err = access::check_on_plan(db, &map, PM_APPROVE, f.plan_b)
+        .await
+        .expect_err("site B plan");
+    assert_eq!(code_of(&err), "SCOPE_OUTSIDE_SITE");
+    for plan_id in [f.plan_family, f.plan_group] {
+        let err = access::check_on_plan(db, &map, PM_APPROVE, plan_id)
+            .await
+            .expect_err("plant-wide plan");
+        assert_eq!(code_of(&err), "SCOPE_PLANT_WIDE_ONLY");
+    }
+    // Holding the edit right instead is not enough.
+    let err = access::check_on_plan(db, &map, PM_EDIT, f.plan_a)
+        .await
+        .expect_err("no pm.edit");
+    assert_eq!(code_of(&err), "PERMISSION_DENIED");
 }

@@ -92,6 +92,7 @@ function renderDialog(p: PmPlanRow) {
         onClose={vi.fn()}
         onEditPlan={vi.fn()}
         onDeletePlan={vi.fn()}
+        onDuplicatePlan={vi.fn()}
         onLifecycle={vi.fn()}
         onNewVersion={vi.fn()}
         onEditVersion={vi.fn()}

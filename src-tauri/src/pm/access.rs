@@ -22,12 +22,22 @@
 //! Occurrences and work orders already generated keep their own site (`pm::generation` is not
 //! changed here); the occurrence, execution and generation commands keep their plant-wide checks.
 //!
-//! Reading (`pm.view`, CMMS Advisor decision 2026-11-06): the plan list, the occurrence lists and
-//! the due figures are limited in SQL to the plans the reader may see ([`plan_view_filter`]); a
-//! plan and what belongs to it (versions, occurrences, executions, findings, readiness, KPIs) is
-//! read with `pm.view` at the plan's anchor ([`check_view_plan`]). A family or criticality-group
-//! plan is visible, read-only, to every `pm.view` holder whatever the scope of their role; a plan
-//! on equipment installed nowhere is for plant-wide readers only (as a work order without a site).
+//! Reading (`pm.view`, CMMS Advisor decision 2026-11-06):
+//! - plans: the list is limited in SQL to the plans the reader may see ([`plan_view_filter`]); a
+//!   plan and its versions are read with `pm.view` at the plan's anchor ([`check_view_plan`]). A
+//!   family or criticality-group plan (its definition) is visible, read-only, to every `pm.view`
+//!   holder whatever the scope of their role; a plan on equipment installed nowhere is for
+//!   plant-wide readers only (as a work order without a site);
+//! - occurrences carry the site's records (due dates, work done, findings), so each is anchored
+//!   on its own: the node of the equipment it is for, else its plan's anchor
+//!   ([`occurrence_access_node_sql`]). Occurrence lists, due figures and compliance are limited to
+//!   it ([`occurrence_view_filter`]); one occurrence, its executions and findings are read at it
+//!   ([`check_view_occurrence`]). A family plan's occurrence on another site's equipment is never
+//!   shown to a site reader;
+//! - the reads of a whole plan's records (its executions, recurring findings, planning readiness,
+//!   governance KPIs) are checked at the plan's anchor without the family exception
+//!   ([`check_view_plan_records`]): a family / criticality-group plan's records need `pm.view`
+//!   plant-wide.
 //!
 //! Each rule has a `check_*` form (the decision on the user's [`AccessMap`], what the tests
 //! exercise) and a `require_*` form (the commands: the cached map, the check, then the entitlement
@@ -71,19 +81,23 @@ pub fn plan_view_filter(scope: &AccessScope, alias: &str) -> ScopeSql {
     }
 }
 
-/// The occurrences (alias `po`) whose plan the reader sees ([`plan_view_filter`]).
+/// The org node an occurrence (alias `po`) is read at: the node its equipment is installed at,
+/// else its plan's anchor (`NULL`: a plant-wide plan's occurrence without equipment, or equipment
+/// installed nowhere — plant-wide readers only).
+pub fn occurrence_access_node_sql() -> String {
+    format!(
+        "COALESCE((SELECT oe.installed_at_node_id FROM equipment oe WHERE oe.id = po.equipment_id),                   (SELECT {} FROM pm_plans vp WHERE vp.id = po.pm_plan_id))",
+        plan_access_node_sql("vp")
+    )
+}
+
+/// The occurrences (alias `po`) a reader with `pm.view` held in `scope` sees: everything
+/// plant-wide; otherwise those whose own node ([`occurrence_access_node_sql`]) is in their subtrees.
 pub fn occurrence_view_filter(scope: &AccessScope) -> ScopeSql {
     if scope.is_everywhere() {
         return ScopeSql::everywhere();
     }
-    let plans = plan_view_filter(scope, "vp");
-    ScopeSql {
-        predicate: format!(
-            "EXISTS (SELECT 1 FROM pm_plans vp WHERE vp.id = po.pm_plan_id AND {})",
-            plans.predicate
-        ),
-        binds: plans.binds,
-    }
+    ScopeSql::on(scope, &occurrence_access_node_sql())
 }
 
 /// What a plan targets (`pm_plans.asset_scope_type` / `asset_scope_id`) and its lifecycle.
@@ -93,6 +107,17 @@ pub struct PlanTarget {
     pub scope_id: Option<i64>,
     pub lifecycle_status: String,
     pub row_version: i64,
+}
+
+/// What [`check_plan_update`] checked: the anchors before and after the edit (the update re-derives
+/// both inside its transaction and refuses when either moved since), and the site change to record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanUpdateCheck {
+    pub old_anchor: Anchor,
+    pub new_scope_type: String,
+    pub new_scope_id: Option<i64>,
+    pub new_anchor: Anchor,
+    pub site_move: Option<PlanSiteMove>,
 }
 
 /// A change of a plan's anchor, for the audit trail.
@@ -221,40 +246,6 @@ pub async fn finding_plan(db: &impl ConnectionTrait, finding_id: i64) -> AppResu
     Ok(row.try_get("", "pm_plan_id")?)
 }
 
-/// The plan of an occurrence; not found when the occurrence does not exist.
-pub async fn occurrence_plan(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT pm_plan_id FROM pm_occurrences WHERE id = ?",
-            [occurrence_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "pm_occurrence".into(),
-            id: occurrence_id.to_string(),
-        })?;
-    Ok(row.try_get("", "pm_plan_id")?)
-}
-
-/// The plan of an execution (execution → occurrence); not found when the execution does not exist.
-pub async fn execution_plan(db: &impl ConnectionTrait, execution_id: i64) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT po.pm_plan_id FROM pm_executions pe \
-               JOIN pm_occurrences po ON po.id = pe.pm_occurrence_id \
-              WHERE pe.id = ?",
-            [execution_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "pm_execution".into(),
-            id: execution_id.to_string(),
-        })?;
-    Ok(row.try_get("", "pm_plan_id")?)
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Scope decisions (on the user's access map)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -279,6 +270,74 @@ pub async fn check_view_plan(db: &impl ConnectionTrait, map: &AccessMap, plan_id
     crate::wo::access::check_anywhere(map, PM_VIEW)?;
     let anchor = plan_anchor(db, plan_id).await?;
     check_view_at(db, map, anchor).await
+}
+
+/// Reading the records of a whole plan (its executions, recurring findings, planning readiness,
+/// governance KPIs): `pm.view` at the plan's anchor, without the family exception — those records
+/// span every site of a family / criticality-group plan, so they need `pm.view` plant-wide.
+pub async fn check_view_plan_records(db: &impl ConnectionTrait, map: &AccessMap, plan_id: i64) -> AppResult<()> {
+    let scope = crate::wo::access::check_anywhere(map, PM_VIEW)?;
+    let anchor = plan_anchor(db, plan_id).await?;
+    scope::check_anchor(db, &scope, PM_VIEW, anchor).await
+}
+
+/// The node an occurrence is read at ([`occurrence_access_node_sql`]); not found when it does not
+/// exist.
+pub async fn occurrence_anchor(db: &impl ConnectionTrait, occurrence_id: i64) -> AppResult<Anchor> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT {} AS node FROM pm_occurrences po WHERE po.id = ?",
+                occurrence_access_node_sql()
+            ),
+            [occurrence_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_occurrence".into(),
+            id: occurrence_id.to_string(),
+        })?;
+    Ok(Anchor::of(row.try_get::<Option<i64>>("", "node")?))
+}
+
+/// Reading one occurrence, its executions and findings: `pm.view` anywhere first (a user without
+/// any PM right is refused, never told whether the id exists), then at the occurrence's own node.
+pub async fn check_view_occurrence(db: &impl ConnectionTrait, map: &AccessMap, occurrence_id: i64) -> AppResult<()> {
+    let scope = crate::wo::access::check_anywhere(map, PM_VIEW)?;
+    let anchor = occurrence_anchor(db, occurrence_id).await?;
+    scope::check_anchor(db, &scope, PM_VIEW, anchor).await
+}
+
+/// Reading an execution's findings: at its occurrence ([`check_view_occurrence`]).
+pub async fn check_view_execution(db: &impl ConnectionTrait, map: &AccessMap, execution_id: i64) -> AppResult<()> {
+    crate::wo::access::check_anywhere(map, PM_VIEW)?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT pm_occurrence_id FROM pm_executions WHERE id = ?",
+            [execution_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_execution".into(),
+            id: execution_id.to_string(),
+        })?;
+    let occurrence_id: i64 = row.try_get("", "pm_occurrence_id")?;
+    check_view_occurrence(db, map, occurrence_id).await
+}
+
+/// `permission` on the plan a finding was recorded on: held anywhere first (no id is resolved for
+/// a user without the right), then at the plan's anchor.
+pub async fn check_on_finding_plan(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    permission: &str,
+    finding_id: i64,
+) -> AppResult<()> {
+    crate::wo::access::check_anywhere(map, permission)?;
+    let plan_id = finding_plan(db, finding_id).await?;
+    check_on_plan(db, map, permission, plan_id).await.map(|_| ())
 }
 
 /// Reading what a plan targeting `scope_type` / `scope_id` covers (the plan form's previews).
@@ -352,7 +411,7 @@ pub async fn check_plan_update(
     expected_row_version: i64,
     new_scope_type: Option<&str>,
     new_scope_id: Option<i64>,
-) -> AppResult<Option<PlanSiteMove>> {
+) -> AppResult<PlanUpdateCheck> {
     let scope = crate::wo::access::check_anywhere(map, PM_EDIT)?;
     let current = plan_target(db, plan_id).await?;
     let old_anchor = target_anchor(db, &current.scope_type, current.scope_id).await?;
@@ -366,20 +425,32 @@ pub async fn check_plan_update(
     let new_id = new_scope_id.or(current.scope_id);
     let new_anchor = target_anchor(db, &new_type, new_id).await?;
     if new_anchor == old_anchor {
-        return Ok(None);
+        return Ok(PlanUpdateCheck {
+            old_anchor,
+            new_scope_type: new_type,
+            new_scope_id: new_id,
+            new_anchor,
+            site_move: None,
+        });
     }
     if current.lifecycle_status != "draft" {
         return Err(site_change_not_draft(&current.lifecycle_status));
     }
     scope::check_anchor(db, &scope, PM_EDIT, new_anchor).await?;
-    Ok(Some(PlanSiteMove {
-        old_scope_type: current.scope_type,
-        old_scope_id: current.scope_id,
+    Ok(PlanUpdateCheck {
         old_anchor,
-        new_scope_type: new_type,
+        new_scope_type: new_type.clone(),
         new_scope_id: new_id,
         new_anchor,
-    }))
+        site_move: Some(PlanSiteMove {
+            old_scope_type: current.scope_type,
+            old_scope_id: current.scope_id,
+            old_anchor,
+            new_scope_type: new_type,
+            new_scope_id: new_id,
+            new_anchor,
+        }),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -440,8 +511,8 @@ pub async fn require_plan_update(
     expected_row_version: i64,
     new_scope_type: Option<&str>,
     new_scope_id: Option<i64>,
-) -> AppResult<Option<PlanSiteMove>> {
-    let site_move = check_plan_update(
+) -> AppResult<PlanUpdateCheck> {
+    let checked = check_plan_update(
         db,
         &access_map(db, cache, user_id).await?,
         plan_id,
@@ -451,7 +522,7 @@ pub async fn require_plan_update(
     )
     .await?;
     enforce(db, user_id, PM_EDIT).await?;
-    Ok(site_move)
+    Ok(checked)
 }
 
 /// [`check_view_anywhere`], then entitlement and licence: the reader's scope, to filter a list.
@@ -486,4 +557,49 @@ pub async fn require_view_target(
 ) -> AppResult<()> {
     check_view_target(db, &access_map(db, cache, user_id).await?, scope_type, scope_id).await?;
     enforce(db, user_id, PM_VIEW).await
+}
+
+/// [`check_view_plan_records`], then entitlement and licence.
+pub async fn require_view_plan_records(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    plan_id: i64,
+) -> AppResult<()> {
+    check_view_plan_records(db, &access_map(db, cache, user_id).await?, plan_id).await?;
+    enforce(db, user_id, PM_VIEW).await
+}
+
+/// [`check_view_occurrence`], then entitlement and licence.
+pub async fn require_view_occurrence(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    occurrence_id: i64,
+) -> AppResult<()> {
+    check_view_occurrence(db, &access_map(db, cache, user_id).await?, occurrence_id).await?;
+    enforce(db, user_id, PM_VIEW).await
+}
+
+/// [`check_view_execution`], then entitlement and licence.
+pub async fn require_view_execution(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    execution_id: i64,
+) -> AppResult<()> {
+    check_view_execution(db, &access_map(db, cache, user_id).await?, execution_id).await?;
+    enforce(db, user_id, PM_VIEW).await
+}
+
+/// [`check_on_finding_plan`], then entitlement and licence.
+pub async fn require_on_finding_plan(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    permission: &str,
+    finding_id: i64,
+) -> AppResult<()> {
+    check_on_finding_plan(db, &access_map(db, cache, user_id).await?, permission, finding_id).await?;
+    enforce(db, user_id, permission).await
 }
