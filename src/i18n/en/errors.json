@@ -562,6 +562,7 @@
     "GATE_PM_REFERENCE_INVALID": "PM plan refused: a chosen value no longer exists in the reference data.",
     "GATE_PM_RESULT_INVALID": "Execution refused: the chosen result is not recognised.",
     "GATE_PM_SCOPE_TYPE_INVALID": "PM plan refused: the scope type is not recognised.",
+    "GATE_PM_SITE_CHANGE_DRAFT_ONLY": "A plan's location can be changed only while it is a draft. For a plan already in use: duplicate it to the new location, then retire the old plan (its history stays with it).",
     "GATE_PM_SKILL_UNKNOWN": "PM plan refused: a chosen skill is not published in the reference data.",
     "GATE_PM_START_READING_INVALID": "PM plan refused: the starting reading must be a number greater than or equal to zero.",
     "GATE_PM_STATUS_INVALID": "Change refused: the chosen status is not recognised.",
