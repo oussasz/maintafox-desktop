@@ -63,6 +63,47 @@ impl MigrationTrait for Migration {
              ON wo_history_records(equipment_id, started_at)",
         )
         .await?;
+        // The cost of failure (migration 82) counts imported failures too: their historical
+        // amounts, and their downtime valued at their labour rate.
+        db.execute_unprepared("DROP VIEW IF EXISTS v_cost_of_failure").await?;
+        db.execute_unprepared(
+            "CREATE VIEW v_cost_of_failure AS
+             SELECT
+               fe.equipment_id AS equipment_id,
+               strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at)) AS period,
+               SUM(
+                 CASE WHEN fe.source_type = 'history_record' THEN
+                   COALESCE(h.downtime_hours, fe.downtime_duration_hours, 0) * (
+                     CASE WHEN COALESCE(h.labor_hours, 0) > 0
+                       THEN COALESCE(h.labor_cost, 0) / h.labor_hours
+                       ELSE 0 END
+                   )
+                 ELSE
+                   COALESCE(wo.downtime_hours, fe.downtime_duration_hours, 0) * (
+                     CASE WHEN COALESCE(wo.actual_duration_hours, 0) > 0
+                       THEN wo.labor_cost / wo.actual_duration_hours
+                       ELSE 0 END
+                   )
+                 END
+               ) AS total_downtime_cost,
+               SUM(
+                 CASE WHEN fe.source_type = 'history_record'
+                   THEN COALESCE(h.labor_cost, 0) + COALESCE(h.parts_cost, 0) + COALESCE(h.service_cost, 0)
+                   ELSE COALESCE(wo.total_cost, 0)
+                 END
+               ) AS total_corrective_cost,
+               COALESCE(
+                 (SELECT bv.currency_code FROM budget_versions bv ORDER BY bv.id DESC LIMIT 1),
+                 'USD'
+               ) AS currency_code
+             FROM failure_events fe
+             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND fe.source_id = wo.id
+             LEFT JOIN wo_history_records h ON fe.source_type = 'history_record' AND fe.source_id = h.id
+             WHERE fe.equipment_id IS NOT NULL
+               AND strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at)) IS NOT NULL
+             GROUP BY fe.equipment_id, strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at))",
+        )
+        .await?;
         Ok(())
     }
 
