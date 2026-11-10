@@ -1,5 +1,5 @@
 /**
- * Inspection rounds (PRD Â§6.25): module figures, rounds (field runner and supervisor review),
+ * Inspection rounds (PRD §6.25): module figures, rounds (field runner and supervisor review),
  * anomaly follow-up, recurring schedules, checklists / routes and reliability signals.
  * Layout: ModulePageShell (OT/DI pattern) with the SmartFilterBar of the active list.
  *
