@@ -206,7 +206,7 @@ export function formatDateTime(
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: locale === "en",
+    hour12: toIntlLocale(locale) === "en-US",
   }).format(date);
 }
 
@@ -251,7 +251,7 @@ export function formatTime(
   return new Intl.DateTimeFormat(toIntlLocale(locale), {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: locale === "en",
+    hour12: toIntlLocale(locale) === "en-US",
   }).format(date);
 }
 

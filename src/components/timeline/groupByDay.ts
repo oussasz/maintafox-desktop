@@ -4,7 +4,7 @@
  * 23:30 local time is listed under that evening, not under the next UTC day.
  */
 
-import { formatDate as formatLocalDate } from "@/utils/formatters";
+import { formatDate as formatLocalDate, toDate } from "@/utils/formatters";
 
 function localYmd(d: Date): string {
   const y = d.getFullYear();
@@ -15,7 +15,7 @@ function localYmd(d: Date): string {
 
 /** Local calendar day key (YYYY-MM-DD) or the raw value when it is not a valid timestamp. */
 export function dayKey(iso: string): string {
-  const d = new Date(iso);
+  const d = toDate(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return localYmd(d);
 }
@@ -27,7 +27,7 @@ export function dayLabel(
   todayLabel: string,
   now = new Date(),
 ): string {
-  const d = new Date(iso);
+  const d = toDate(iso);
   if (Number.isNaN(d.getTime())) return iso;
   if (localYmd(d) === localYmd(now)) return todayLabel;
   return formatLocalDate(d, locale);
