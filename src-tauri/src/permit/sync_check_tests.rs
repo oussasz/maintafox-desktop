@@ -179,7 +179,11 @@ async fn a_received_isolation_keeps_the_two_person_rule() {
 
     let second = with(
         applied.clone(),
-        &[("verified_by_sync_id", json!(verifier)), ("verified_at", json!(now()))],
+        &[
+            ("verified_by_sync_id", json!(verifier)),
+            ("verified_at", json!(now())),
+            ("zero_energy_note", json!("Essai de démarrage refusé, VAT 0 V")),
+        ],
     );
     let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &second).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
@@ -206,6 +210,97 @@ async fn a_received_isolation_keeps_the_two_person_rule() {
         .await,
         None
     );
+}
+
+/// L4-13: a received isolation newly verified carries the verifier's zero-energy test; without it
+/// (verified on a PC before the update) it is refused for a person to check on site. Once verified
+/// here, the test is never rewritten nor blanked; a verification held here from before the update
+/// (no test recorded) is not judged again.
+#[tokio::test]
+async fn a_received_verification_carries_its_zero_energy_test() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-SYNC-ZE").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = add_isolation(&db, wp.id, "Breaker Q-4").await;
+    queries::apply_permit_isolation(&db, super::tests::action(&iso), APPLIER)
+        .await
+        .expect("apply");
+    let verifier = user_sync(&db, VERIFIER).await;
+    let applied = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    let held_sql = format!(
+        "SELECT verified_at || ' | ' || COALESCE(zero_energy_note, '-') FROM permit_isolations WHERE id = {}",
+        iso.id
+    );
+    let held = || text(&db, &held_sql);
+    let verified = with(
+        applied.clone(),
+        &[("verified_by_sync_id", json!(verifier)), ("verified_at", json!(now()))],
+    );
+
+    for note in [Value::Null, json!("   ")] {
+        let outcome = apply(
+            &db,
+            "permit_isolations",
+            &iso.entity_sync_id,
+            &with(verified.clone(), &[("zero_energy_note", note)]),
+        )
+        .await;
+        assert_eq!(code(&outcome), Some("PERMIT_ZERO_ENERGY_PRE_UPGRADE"), "{outcome:?}");
+        assert_eq!(held().await, None, "nothing written");
+    }
+    let too_long = "x".repeat(crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS + 1);
+    let outcome = apply(
+        &db,
+        "permit_isolations",
+        &iso.entity_sync_id,
+        &with(verified.clone(), &[("zero_energy_note", json!(too_long))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_ZERO_ENERGY_NOTE_REQUIRED"), "{outcome:?}");
+
+    let tested = with(verified, &[("zero_energy_note", json!("VAT 0 V entre phases"))]);
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &tested).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+    let recorded = held().await.expect("verified");
+    assert!(recorded.ends_with("| VAT 0 V entre phases"), "{recorded}");
+
+    // Once verified here, the test recorded is never rewritten nor blanked.
+    for note in [json!("Autre mesure"), Value::Null, json!("")] {
+        let outcome = apply(
+            &db,
+            "permit_isolations",
+            &iso.entity_sync_id,
+            &with(tested.clone(), &[("zero_energy_note", note)]),
+        )
+        .await;
+        assert_eq!(code(&outcome), Some("PERMIT_ZERO_ENERGY_NOTE_CHANGED"), "{outcome:?}");
+        assert_eq!(held().await.as_deref(), Some(recorded.as_str()));
+    }
+
+    // A verification held here from before the update (no test recorded) is not judged again…
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_isolations SET zero_energy_note = NULL WHERE id = {}",
+            iso.id
+        ),
+    )
+    .await;
+    let pre_upgrade = wire(&db, "permit_isolations", &iso.entity_sync_id).await;
+    let outcome = apply(&db, "permit_isolations", &iso.entity_sync_id, &pre_upgrade).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged),
+        "{outcome:?}"
+    );
+    // …and no test is added to it afterwards by a received row.
+    let outcome = apply(
+        &db,
+        "permit_isolations",
+        &iso.entity_sync_id,
+        &with(pre_upgrade, &[("zero_energy_note", json!("Ajouté après coup"))]),
+    )
+    .await;
+    assert_eq!(code(&outcome), Some("PERMIT_ZERO_ENERGY_NOTE_CHANGED"), "{outcome:?}");
 }
 
 /// A permit created and activated on another device arrives with its isolation: both are applied in
@@ -9920,4 +10015,40 @@ async fn a_received_site_move_withdraws_the_liftings_held_here() {
         Some("1"),
         "audited"
     );
+}
+
+/// L4-13 review: on a PC's first join (nothing held, the plant's history), a verification recorded
+/// before the update (no zero-energy test) is history, not refused again; a normal received row is
+/// refused, and an over-long note is refused in both cases.
+#[test]
+fn first_join_history_keeps_its_pre_update_verifications() {
+    use super::sync_check::zero_energy_breach;
+    let verified: Payload = json!({
+        "isolation_point": "Breaker Q-9",
+        "verified_at": "2026-01-01T08:00:00Z",
+        "zero_energy_note": null,
+    })
+    .as_object()
+    .cloned()
+    .expect("object");
+    assert_eq!(zero_energy_breach(None, &verified, true), None, "first-join history");
+    assert_eq!(
+        zero_energy_breach(None, &verified, false).map(|(c, _)| c),
+        Some("PERMIT_ZERO_ENERGY_PRE_UPGRADE"),
+        "a normal received row"
+    );
+    let too_long = with(
+        verified,
+        &[(
+            "zero_energy_note",
+            json!("x".repeat(crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS + 1)),
+        )],
+    );
+    for first_join in [true, false] {
+        assert_eq!(
+            zero_energy_breach(None, &too_long, first_join).map(|(c, _)| c),
+            Some("PERMIT_ZERO_ENERGY_NOTE_REQUIRED"),
+            "first join {first_join}"
+        );
+    }
 }

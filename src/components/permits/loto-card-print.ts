@@ -46,6 +46,12 @@ export function buildLotoCardHtml(
     [t("card.point"), card.isolation_point],
     [t("card.lock"), card.lock_number ?? none],
     [t("card.verifier"), card.verifier_signature ?? none],
+    // The zero-energy test recorded at verification (L4-13); "not recorded" before that version.
+    [
+      t("card.zeroEnergy"),
+      card.zero_energy_note ??
+        (card.verifier_signature ? t("isolation.zeroEnergyNotRecorded") : none),
+    ],
     [t("card.expiry"), fmtDateTime(card.expires_at, locale, none)],
   ];
   // A lock taken off by a forced removal (applier absent): who authorised it, when and why.

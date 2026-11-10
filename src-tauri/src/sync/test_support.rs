@@ -497,6 +497,12 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("permit_isolations", "informed_at", "NULL"),
     ("permit_isolations", "informed_method", "NULL"),
     ("permit_isolations", "informed_in_app", "0"),
+    // Verified with its zero-energy test recorded (L4-13, `permit::sync_check::zero_energy_breach`).
+    (
+        "permit_isolations",
+        "zero_energy_note",
+        "'Essai de démarrage refusé, VAT 0 V'",
+    ),
     // A generic work order carries no plant-rule permit flag (that trace is written at conversion and
     // judged on arrival, `permit::sync_check::inbound_permit_rule_check`).
     ("work_orders", "permit_rule_code", "NULL"),

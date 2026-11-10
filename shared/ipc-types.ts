@@ -11283,6 +11283,11 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+  /** Only used by verify (required there): the zero-energy test was done (start attempt,
+   * absence-of-voltage measurement). */
+  zero_energy_confirmed?: boolean | null;
+  /** Only used by verify (required there): what was measured or seen, at most 500 characters. */
+  zero_energy_note?: string | null;
 }
 
 /** One attempt to reach an absent worker before a forced lock removal. */

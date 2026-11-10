@@ -481,6 +481,8 @@ async fn loto_roles_require_the_authorisation_until_overridden() {
         isolation_id: iso.id,
         expected_row_version: rv,
         lock_number: Some("C-12".into()),
+        zero_energy_confirmed: Some(true),
+        zero_energy_note: Some("Essai de démarrage refusé, VAT 0 V".into()),
     };
 
     let refused = crate::permit::queries::apply_permit_isolation(&db, action(iso.row_version), TECH_USER)

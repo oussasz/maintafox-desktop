@@ -23,6 +23,7 @@ describe("buildLotoCardHtml", () => {
         isolation_point: "MCC-1 breaker",
         lock_number: null,
         verifier_signature: "Sara Sup",
+        zero_energy_note: "Essai de démarrage refusé, VAT 0 V",
         expires_at: null,
         forced_removal: false,
         forced_authorized_by: null,
@@ -40,6 +41,8 @@ describe("buildLotoCardHtml", () => {
     expect(html).not.toContain("<pump>");
     expect(html).toContain("MCC-1 breaker");
     expect(html).toContain("Sara Sup");
+    expect(html).toContain("[card.zeroEnergy]");
+    expect(html).toContain("Essai de démarrage refusé, VAT 0 V");
     expect(html).toContain('<div class="doc-letterhead"><p>Usine Nord</p></div>');
     // Missing lock number / expiry fall back to the translated "none" value.
     expect(html.match(/\[detail\.none\]/g)?.length).toBe(2);
@@ -57,6 +60,8 @@ describe("buildLotoCardHtml", () => {
         isolation_point: "MCC-1 breaker",
         lock_number: "L-12",
         verifier_signature: "Sara Sup",
+        // Verified before the zero-energy test was recorded.
+        zero_energy_note: null,
         expires_at: "2099-01-01T00:00:00Z",
         forced_removal: true,
         forced_authorized_by: "Chef <Site>",
@@ -68,6 +73,7 @@ describe("buildLotoCardHtml", () => {
       "",
     );
     expect(html).toContain("[card.forcedRemoval]");
+    expect(html).toContain("[isolation.zeroEnergyNotRecorded]");
     expect(html).toContain("[card.forcedRemovalYes]");
     expect(html).toContain("Chef &lt;Site&gt;");
     expect(html).toContain("Fin de poste, travailleur parti");

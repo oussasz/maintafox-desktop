@@ -21,6 +21,7 @@ import {
   SelectValue,
   Textarea,
 } from "@/components/ui";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
 import { DateTimeField } from "@/components/ui/date-time-field";
@@ -87,6 +88,9 @@ interface PermitDetailPanelProps {
   onChanged: (permit: WorkPermitRecord) => void;
 }
 
+/** Longest zero-energy test comment kept (`permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS`). */
+const MAX_ZERO_ENERGY_NOTE_CHARS = 500;
+
 /** Energy type and method are ids of the governed lists (`permit::energy_reference`). */
 const EMPTY_ISOLATION = { point: "", energy: "", method: "", lock: "" };
 
@@ -139,6 +143,10 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
   const [forcedFor, setForcedFor] = useState<PermitIsolationRecord | null>(null);
   /** The forced removal whose worker is being recorded as told. */
   const [informFor, setInformFor] = useState<PermitIsolationRecord | null>(null);
+  /** L4-13: the isolation being verified, with its zero-energy test (confirmed + comment). */
+  const [verifyFor, setVerifyFor] = useState<PermitIsolationRecord | null>(null);
+  const [zeroEnergyDone, setZeroEnergyDone] = useState(false);
+  const [zeroEnergyNote, setZeroEnergyNote] = useState("");
   const [editingExpiry, setEditingExpiry] = useState<string | null>(null);
 
   /**
@@ -284,6 +292,35 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
     run(async () => {
       await fn({ isolation_id: iso.id, expected_row_version: iso.row_version, lock_number: null });
     });
+
+  const openVerify = (iso: PermitIsolationRecord) => {
+    setError(null);
+    setZeroEnergyDone(false);
+    setZeroEnergyNote("");
+    setVerifyFor(iso);
+  };
+
+  const zeroEnergyReady =
+    zeroEnergyDone &&
+    zeroEnergyNote.trim().length > 0 &&
+    zeroEnergyNote.trim().length <= MAX_ZERO_ENERGY_NOTE_CHARS;
+
+  const handleVerify = async (e: FormEvent) => {
+    e.preventDefault();
+    const iso = verifyFor;
+    if (!iso || !zeroEnergyReady) return;
+    // A refusal is shown in the dialog; it stays open so the comment is not lost.
+    const ok = await run(async () => {
+      await verifyPermitIsolation({
+        isolation_id: iso.id,
+        expected_row_version: iso.row_version,
+        lock_number: null,
+        zero_energy_confirmed: true,
+        zero_energy_note: zeroEnergyNote.trim(),
+      });
+    });
+    if (ok) setVerifyFor(null);
+  };
 
   const handleAddIsolation = async (e: FormEvent) => {
     e.preventDefault();
@@ -702,6 +739,13 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         })}
                       </span>
                     ) : null}
+                    {iso.verified_at ? (
+                      <span data-testid="isolation-zero-energy">
+                        {iso.zero_energy_note
+                          ? t("isolation.zeroEnergyShown", { note: iso.zero_energy_note })
+                          : t("isolation.zeroEnergyNotRecorded")}
+                      </span>
+                    ) : null}
                     {iso.removal_verified_by_name ? (
                       <span>
                         {t("isolation.removalVerifiedBy", {
@@ -788,7 +832,7 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
                         variant="outline"
                         disabled={busy || appliedByMe}
                         title={appliedByMe ? t("isolation.selfBlocked") : undefined}
-                        onClick={() => void isolationAction(iso, verifyPermitIsolation)}
+                        onClick={() => openVerify(iso)}
                       >
                         {t("isolation.verify")}
                       </Button>
@@ -904,6 +948,13 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
             ) : null}
             <div>
               {t("card.verifier")}: {cardView.verifier_signature ?? t("detail.none")}
+            </div>
+            <div>
+              {t("card.zeroEnergy")}:{" "}
+              {cardView.zero_energy_note ??
+                (cardView.verifier_signature
+                  ? t("isolation.zeroEnergyNotRecorded")
+                  : t("detail.none"))}
             </div>
             <div>
               {t("card.expiry")}: {fmt(cardView.expires_at)}
@@ -1211,6 +1262,51 @@ export function PermitDetailPanel({ permit, onChanged }: PermitDetailPanelProps)
         }}
         onRecorded={() => void loadChildren()}
       />
+
+      <Dialog
+        open={verifyFor != null}
+        onOpenChange={(open) => {
+          if (!open) setVerifyFor(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("isolation.verifyTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("isolation.verifyDescription", { point: verifyFor?.isolation_point ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={(e) => void handleVerify(e)}>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={zeroEnergyDone} onCheckedChange={setZeroEnergyDone} />
+              <span>{t("isolation.zeroEnergyConfirm")}</span>
+            </label>
+            <FormField name="zero-energy-note" label={t("isolation.zeroEnergyNote")} required>
+              <Textarea
+                id="zero-energy-note"
+                rows={3}
+                maxLength={MAX_ZERO_ENERGY_NOTE_CHARS}
+                placeholder={t("isolation.zeroEnergyNotePlaceholder")}
+                value={zeroEnergyNote}
+                onChange={(e) => setZeroEnergyNote(e.target.value)}
+              />
+            </FormField>
+            {error ? (
+              <p role="alert" className="text-xs text-tone-danger-fg">
+                {error}
+              </p>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setVerifyFor(null)}>
+                {t("isolation.verifyCancel")}
+              </Button>
+              <Button type="submit" disabled={busy || !zeroEnergyReady}>
+                {t("isolation.verify")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
         <DialogContent>
