@@ -15,14 +15,18 @@ const i18nMock = vi.hoisted(() => ({
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
 
-const access = vi.hoisted(() => ({ granted: true }));
+const access = vi.hoisted(() => ({ granted: true, denied: [] as string[] }));
 vi.mock("@/hooks/use-access-at", () => ({
-  useAccessAt: () => ({ loading: false, can: () => access.granted }),
+  useAccessAt: () => ({
+    loading: false,
+    can: (p: string) => access.granted && !access.denied.includes(p),
+  }),
 }));
 
 const inv = vi.hoisted(() => ({
   checkWoPartStockAvailability: vi.fn(),
   createProcurementRequisitionFromWoPart: vi.fn(),
+  listWorkOrderRequisitionNumbers: vi.fn(),
 }));
 vi.mock("@/services/inventory-service", () => inv);
 
@@ -46,6 +50,8 @@ const readiness = {
 describe("WoPartsRequisitionEntry", () => {
   beforeEach(() => {
     access.granted = true;
+    access.denied = [];
+    inv.listWorkOrderRequisitionNumbers.mockReset().mockResolvedValue({});
     inv.checkWoPartStockAvailability.mockReset().mockResolvedValue(readiness);
     inv.createProcurementRequisitionFromWoPart
       .mockReset()
@@ -94,6 +100,24 @@ describe("WoPartsRequisitionEntry", () => {
     access.granted = false;
     render(<WoShortageSection woId={42} readiness={readiness} />);
     expect(screen.getByText("ROU-6204")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "planning.shortage.createRequisition" }),
+    ).toBeNull();
+  });
+
+  it("is hidden for a user with inv.procure but no inv.view, and reads nothing", () => {
+    access.denied = ["inv.view"];
+    render(<WoPartsRequisitionEntry woId={42} statusCode="in_progress" />);
+    expect(screen.queryByText("planning.shortage.title")).toBeNull();
+    expect(inv.checkWoPartStockAvailability).not.toHaveBeenCalled();
+  });
+
+  it("after a remount, an article with a request in progress shows its number, no button", async () => {
+    inv.listWorkOrderRequisitionNumbers.mockResolvedValue({ 9: "DA-0007" });
+    render(<WoPartsRequisitionEntry woId={42} statusCode="in_progress" />);
+    expect(
+      await screen.findByText(/planning\.shortage\.requisitionInProgress:DA-0007/),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "planning.shortage.createRequisition" }),
     ).toBeNull();

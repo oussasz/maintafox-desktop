@@ -404,6 +404,7 @@
       "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
       "createRequisition": "Créer une demande d'achat",
       "requisitionCreated": "Demande d'achat créée",
+      "requisitionInProgress": "Demande d'achat {{number}} déjà en cours",
       "requisitionCreatedNumber": "Demande d'achat {{number}} créée",
       "columns": {
         "article": "Article",

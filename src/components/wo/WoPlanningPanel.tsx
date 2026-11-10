@@ -1897,7 +1897,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
         ) : null}
 
         {/* Parts shortage -> purchase requisition (shared with the work order sheet) */}
-        <WoShortageSection woId={wo.id} readiness={materialReadiness} onError={setError} />
+        <WoShortageSection woId={wo.id} readiness={materialReadiness} />
 
         {statusCode === "planning" && readinessReport && (
           <section className="space-y-2 rounded-md border p-3">

@@ -27,7 +27,9 @@ interface WoPartsRequisitionEntryProps {
 }
 
 export function WoPartsRequisitionEntry({ woId, statusCode }: WoPartsRequisitionEntryProps) {
-  const canProcure = usePlantWideAccess().can(P.INV_PROCURE);
+  // The stock check needs inv.view and the request inv.procure (both plant-wide, as the backend).
+  const access = usePlantWideAccess();
+  const canProcure = access.can(P.INV_PROCURE) && access.can(P.INV_VIEW);
   const open = REQUISITION_ENTRY_STATES.has(statusCode);
   const [readiness, setReadiness] = useState<WoMaterialReadiness | null>(null);
 

@@ -20,6 +20,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
 const inv = vi.hoisted(() => ({
   checkWoPartStockAvailability: vi.fn().mockResolvedValue([]),
   createProcurementRequisitionFromWoPart: vi.fn(),
+  listWorkOrderRequisitionNumbers: vi.fn().mockResolvedValue({}),
   evaluateInventoryUnitCost: vi.fn().mockResolvedValue(null),
   listInventoryArticles: vi.fn().mockResolvedValue([]),
   listInventoryLocations: vi.fn().mockResolvedValue([]),

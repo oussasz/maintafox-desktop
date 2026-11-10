@@ -7,30 +7,51 @@
  * button is offered only with that right; the shortage rows stay visible to planners.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { usePlantWideAccess } from "@/components/wo/WoSiteScope";
 import { describeAppError } from "@/lib/app-error";
-import { createProcurementRequisitionFromWoPart } from "@/services/inventory-service";
+import {
+  createProcurementRequisitionFromWoPart,
+  listWorkOrderRequisitionNumbers,
+} from "@/services/inventory-service";
 import type { WoMaterialReadiness } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 interface WoShortageSectionProps {
   woId: number;
   readiness: WoMaterialReadiness | null;
-  /** Called with the message when a creation fails. */
-  onError?: (message: string) => void;
 }
 
-export function WoShortageSection({ woId, readiness, onError }: WoShortageSectionProps) {
+export function WoShortageSection({ woId, readiness }: WoShortageSectionProps) {
   const { t } = useTranslation("ot");
   // The short parts are information for every planner; only the request button needs inv.procure.
-  const canProcure = usePlantWideAccess().can(P.INV_PROCURE);
+  const access = usePlantWideAccess();
+  const canProcure = access.can(P.INV_PROCURE);
+  const canView = access.can(P.INV_VIEW);
   const [creating, setCreating] = useState<number | null>(null);
   const [created, setCreated] = useState<Record<number, string>>({});
   const [localError, setLocalError] = useState<string | null>(null);
+  // Requests already raised for this work order (durable: survive a tab switch or a reopen).
+  const [existing, setExisting] = useState<Record<number, string>>({});
+  const hasShortage = readiness != null && readiness.shortages.length > 0;
+
+  useEffect(() => {
+    if (!canView || !hasShortage) return;
+    let cancelled = false;
+    void listWorkOrderRequisitionNumbers(woId)
+      .then((numbers) => {
+        if (!cancelled) setExisting(numbers);
+      })
+      .catch(() => {
+        if (!cancelled) setExisting({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [woId, canView, hasShortage]);
 
   const create = useCallback(
     (articleId: number, qty: number, locationId: number | null | undefined) => {
@@ -39,13 +60,11 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
       void createProcurementRequisitionFromWoPart(woId, articleId, qty, locationId)
         .then((req) => setCreated((prev) => ({ ...prev, [articleId]: req.req_number })))
         .catch((err) => {
-          const message = describeAppError(err).title;
-          setLocalError(message);
-          onError?.(message);
+          setLocalError(describeAppError(err).title);
         })
         .finally(() => setCreating(null));
     },
-    [woId, onError],
+    [woId],
   );
 
   if (!readiness || readiness.is_fully_available || readiness.shortages.length === 0) return null;
@@ -56,8 +75,9 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
       <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
       <div className="space-y-1.5">
         {readiness.shortages.map((shortage) => {
-          const requestNumber = created[shortage.article_id];
-          const wasCreated = requestNumber !== undefined;
+          const createdNumber = created[shortage.article_id];
+          const wasCreated = createdNumber !== undefined;
+          const inProgressNumber = existing[shortage.article_id];
           return (
             <div
               key={shortage.article_id}
@@ -75,9 +95,13 @@ export function WoShortageSection({ woId, readiness, onError }: WoShortageSectio
               {wasCreated ? (
                 <span className="text-xs font-medium text-tone-success-fg">
                   ✓{" "}
-                  {requestNumber
-                    ? t("planning.shortage.requisitionCreatedNumber", { number: requestNumber })
+                  {createdNumber
+                    ? t("planning.shortage.requisitionCreatedNumber", { number: createdNumber })
                     : t("planning.shortage.requisitionCreated")}
+                </span>
+              ) : inProgressNumber !== undefined ? (
+                <span className="text-xs font-medium text-tone-success-fg">
+                  {t("planning.shortage.requisitionInProgress", { number: inProgressNumber })}
                 </span>
               ) : canProcure ? (
                 <Button

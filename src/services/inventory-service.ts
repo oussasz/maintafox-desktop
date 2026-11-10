@@ -1894,6 +1894,31 @@ export function createProcurementRequisitionFromWoPart(
   );
 }
 
+/** Requests in these states no longer count as "in progress" for a part shortage. */
+const REQUISITION_ENDED_STATUSES = new Set(["REJECTED", "CANCELLED", "CLOSED"]);
+
+/**
+ * Requests still in progress for a work order's parts, by article: article id -> request number.
+ * Read from the stored requests (source = this work order), so it survives a reopen.
+ */
+export async function listWorkOrderRequisitionNumbers(
+  workOrderId: number,
+): Promise<Record<number, string>> {
+  const all = await listInventoryProcurementRequisitions();
+  const mine = all.filter(
+    (r) =>
+      r.demand_source_type === "WORK_ORDER_PART" &&
+      r.demand_source_id === workOrderId &&
+      !REQUISITION_ENDED_STATUSES.has(r.status),
+  );
+  const byArticle: Record<number, string> = {};
+  for (const req of mine) {
+    const lines = await listInventoryProcurementRequisitionLines(req.id);
+    for (const line of lines) byArticle[line.article_id] ??= req.req_number;
+  }
+  return byArticle;
+}
+
 export function suggestInventoryInternalTransfer(
   articleId: number,
   targetWarehouseId: number,
