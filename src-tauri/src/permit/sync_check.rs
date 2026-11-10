@@ -714,7 +714,7 @@ async fn children_with(
         let merged = overlay(rows.get(&sid), &received);
         if table == "permit_isolations" {
             // Judged in the isolation's own context (its batch), not the permit's being applied.
-            let first_join = rows.get(&sid).is_none()
+            let first_join = !rows.contains_key(&sid)
                 && crate::sync::materialize::judged_as_row_of_batch(
                     item.server_batch_id(),
                     crate::sync::plant_join::first_join_snapshot_row(conn, table, &sid),
