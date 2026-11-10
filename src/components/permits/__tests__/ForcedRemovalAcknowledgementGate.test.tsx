@@ -62,6 +62,7 @@ const isolation = (id: number): PermitIsolationRecord => ({
   verified_by_id: 8,
   applied_at: "2026-10-10T09:00:00Z",
   verified_at: "2026-10-10T09:10:00Z",
+  zero_energy_note: "VAT 0 V",
   removal_verified_at: null,
   removal_verified_by_id: null,
   row_version: 4,
