@@ -35,7 +35,6 @@ import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { useReadableLists } from "@/lib/list-access";
 import {
   checkWoPartStockAvailability,
-  createProcurementRequisitionFromWoPart,
   evaluateInventoryUnitCost,
   listInventoryArticles,
   listInventoryLocations,
@@ -82,6 +81,7 @@ import {
   permitRuleFlagActive,
 } from "./WoPermitRuleNote";
 import { WoShiftSelect } from "./WoShiftSelect";
+import { WoShortageSection } from "./WoShortageSection";
 import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
 import { useWoAccess } from "./WoSiteScope";
 import { useWoPeopleOptions } from "./use-wo-people";
@@ -330,8 +330,6 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     // Material readiness (shortage detection)
     const [materialReadiness, setMaterialReadiness] = useState<WoMaterialReadiness | null>(null);
-    const [shortageReqCreating, setShortageReqCreating] = useState<number | null>(null);
-    const [shortageSuccessIds, setShortageSuccessIds] = useState<number[]>([]);
 
     useEffect(() => {
       setStatusCode(wo.status_code ?? "draft");
@@ -1898,72 +1896,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           </section>
         ) : null}
 
-        {/* ── Parts shortage → purchase requisition ── */}
-        {materialReadiness &&
-        !materialReadiness.is_fully_available &&
-        materialReadiness.shortages.length > 0 ? (
-          <section className="space-y-2 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
-            <h3 className="text-sm font-semibold text-tone-warning-fg">
-              {t("planning.shortage.title")}
-            </h3>
-            <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
-            <div className="space-y-1.5">
-              {materialReadiness.shortages.map((shortage) => {
-                const wasCreated = shortageSuccessIds.includes(shortage.article_id);
-                return (
-                  <div
-                    key={shortage.article_id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-tone-warning-border bg-surface-0 p-2 text-xs"
-                  >
-                    <span className="font-medium">{shortage.article_code}</span>
-                    <span className="text-muted-foreground">— {shortage.article_name}</span>
-                    <span className="ml-auto tabular-nums text-tone-warning-fg">
-                      {t("planning.shortage.columns.requested")}: {shortage.requested_qty} ·{" "}
-                      {t("planning.shortage.columns.available")}: {shortage.available_qty} ·{" "}
-                      <span className="font-semibold text-tone-danger-fg">
-                        {t("planning.shortage.columns.shortage")}: {shortage.shortage_qty}
-                      </span>
-                    </span>
-                    {wasCreated ? (
-                      <span className="text-xs font-medium text-tone-success-fg">
-                        ✓ {t("planning.shortage.requisitionCreated")}
-                      </span>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs"
-                        disabled={shortageReqCreating === shortage.article_id}
-                        onClick={() => {
-                          setShortageReqCreating(shortage.article_id);
-                          void createProcurementRequisitionFromWoPart(
-                            wo.id,
-                            shortage.article_id,
-                            shortage.shortage_qty,
-                            shortage.preferred_location_id,
-                          )
-                            .then(() => {
-                              setShortageSuccessIds((prev) => [...prev, shortage.article_id]);
-                            })
-                            .catch((err) => {
-                              setError(describeAppError(err).title);
-                            })
-                            .finally(() => {
-                              setShortageReqCreating(null);
-                            });
-                        }}
-                      >
-                        {shortageReqCreating === shortage.article_id
-                          ? "…"
-                          : t("planning.shortage.createRequisition")}
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
+        {/* Parts shortage -> purchase requisition (shared with the work order sheet) */}
+        <WoShortageSection woId={wo.id} readiness={materialReadiness} onError={setError} />
 
         {statusCode === "planning" && readinessReport && (
           <section className="space-y-2 rounded-md border p-3">
