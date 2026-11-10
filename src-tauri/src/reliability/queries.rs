@@ -7,7 +7,8 @@ use crate::reliability::analysis_input::{
     build_input_spec_json, dataset_hash_sha256, ExposurePart, ExposureProvenance, FailurePart,
 };
 use crate::reliability::compute::{
-    compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput, RELIABILITY_KPI_ALGORITHM_VERSION,
+    compute_reliability_kpis, counts_in_mtbf, KpiFailureEvent, ReliabilityKpiComputeInput,
+    RELIABILITY_KPI_ALGORITHM_VERSION,
 };
 use crate::reliability::domain::{
     CostOfFailureFilter, CostOfFailureRow, DeactivateFailureCodeInput, DismissRamDataQualityIssueInput,
@@ -1486,6 +1487,7 @@ async fn kpi_refresh_core(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, eligible_flags_json, downtime_duration_hours, active_repair_hours, failure_mode_id,
+                    COALESCE(is_planned, 0) AS is_planned,
                     COALESCE(failed_at, detected_at, created_at) AS ev_ts
              FROM failure_events
              WHERE equipment_id = ?
@@ -1505,10 +1507,12 @@ async fn kpi_refresh_core(
             .try_get("", "eligible_flags_json")
             .map_err(|e| decode_err("eligible_flags_json", e))?;
         let id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let is_planned: i64 = r.try_get("", "is_planned").map_err(|e| decode_err("is_planned", e))?;
         failure_parts.push(FailurePart {
             id,
             ev_ts: ts_s,
-            eligible_flags_json: flags.clone(),
+            eligible_flags_json: flags,
+            is_planned,
             downtime_duration_hours: r
                 .try_get("", "downtime_duration_hours")
                 .map_err(|e| decode_err("downtime_duration_hours", e))?,
@@ -1522,7 +1526,8 @@ async fn kpi_refresh_core(
         events.push(KpiFailureEvent {
             id,
             event_ts: ts,
-            eligible_flags_json: flags,
+            // Live rule (every unplanned failure), not the stored flag kept above as provenance.
+            counts_in_mtbf: counts_in_mtbf(is_planned != 0),
             downtime_duration_hours: r
                 .try_get("", "downtime_duration_hours")
                 .map_err(|e| decode_err("downtime_duration_hours", e))?,

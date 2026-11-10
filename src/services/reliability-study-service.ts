@@ -18,7 +18,7 @@ const FilterOptionSchema = z.object({ id: num, label: z.string(), depth: num });
  * Fleet figures of one scope (period, class, site) — the one live calculation shared by RAMS and
  * Analytique (`src-tauri/src/reliability/study/fleet_kpis.rs`, definitions there).
  */
-const FleetKpisSchema = z.object({
+export const FleetKpisSchema = z.object({
   period_start: z.string(),
   period_end: z.string(),
   /** Window under 90 days: MTBF, MTTR, active repair and Aₒ are not given. */

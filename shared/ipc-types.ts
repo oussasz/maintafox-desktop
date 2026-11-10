@@ -4850,6 +4850,28 @@ export interface OverviewKpiCell {
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
+  /** Fleet reliability cells only: their window and hours basis (live `study::fleet_kpis`). */
+  fleet?: OverviewFleetBasis | null | undefined;
+}
+
+/**
+ * Window and live figures of a fleet reliability cell of the Vue d'ensemble (`study::fleet_kpis`;
+ * the full shape is `FleetKpis` in `src/services/reliability-study-service.ts`).
+ */
+export interface OverviewFleetBasis {
+  /** The last `window_months` calendar months. */
+  window_months: number;
+  /** The fields the card wording reads (window, hours basis, exclusions). */
+  kpis: {
+    window_too_short: boolean;
+    operating_basis_count: number;
+    calendar_basis_count: number;
+    mtbf_excluded_missing_date: number;
+    mtbf_excluded_outside_service: number;
+    restore_excluded_missing_failed_at: number;
+    restore_excluded_missing_restored_at: number;
+    restore_excluded_inconsistent: number;
+  };
 }
 
 export interface OverviewKpisPayload {
@@ -7779,7 +7801,7 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
-  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  /** `reliability_kpi_v2`+ (v3: every unplanned failure counts); legacy rows `reliability_kpi_v1`. */
   algorithm_version: string | null;
   /** Governed exposure (uptime) hours used as the KPI denominator. */
   exposure_hours: number | null;
@@ -8074,6 +8096,8 @@ export interface ReliabilityReadinessInput {
   period_start?: string | null;
   period_end?: string | null;
   min_sample_n?: number | null;
+  /** Analysis scoped to one failure mode: only that mode's failures are checked and counted. */
+  failure_mode_id?: number | null;
 }
 
 /** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
@@ -9770,16 +9794,25 @@ export interface AnalyticsExecutiveDashboard {
   avg_mtbf_hours: AnalyticsKpiValue;
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
+  /** Coding completeness (complete records / records) of the live calculation (`study::fleet_kpis`). */
   avg_data_quality: AnalyticsKpiValue;
+  /**
+   * "Taille d'échantillon": mean sample-size score of the latest stored KPI snapshot per equipment
+   * refreshed in the horizon. A sample-size measure, never data quality.
+   */
+  sample_size_score: AnalyticsKpiValue;
   /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
   /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
   maintenance_cost_pending: number | null;
+  /** Equipment with a stored KPI snapshot refreshed in the horizon. */
   reliability_snapshot_count: number;
+  /** Unplanned failures of the horizon (live calculation). */
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];
   workload_quality_badge: string | null;
   di_status_segments: AnalyticsDiStatusSegment[];
+  /** Trend series from the stored KPI snapshots (not the live calculation). */
   reliability_series: AnalyticsReliabilitySeriesPoint[];
   bad_actor_assets: AnalyticsBadActorAsset[];
 }
