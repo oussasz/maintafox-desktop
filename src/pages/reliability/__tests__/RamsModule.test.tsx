@@ -312,6 +312,34 @@ describe("RamsFleetPage", () => {
     expect(screen.getAllByText("period too short for the MTBF (under 90 days)").length).toBe(4);
   });
 
+  it("keeps period, site and class in the address: applied on load, updated on change", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+          equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability?months=24&site=4&class=7"]}>
+        <RamsFleetPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+      filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+    });
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("24");
+    expect(screen.getByRole("combobox", { name: "Site" })).toHaveValue("4");
+    fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Period" }), { target: { value: "12" } });
+    await waitFor(() => expect(screen.getByText("?site=4")).toBeInTheDocument());
+  });
+
   it("opens the quality page on the same period, site and class", async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_reliability_fleet_view")
