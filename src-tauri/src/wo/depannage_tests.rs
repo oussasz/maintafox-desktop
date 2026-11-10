@@ -585,11 +585,15 @@ async fn a_permit_needed_leaves_the_depannage_ready_and_waiting_without_a_draft_
     );
 }
 
-/// The user holds the permit-issue right at the site: one draft per required type, linked to the
-/// work order and its equipment, written by them, in draft (no review, no approval); the issuers'
-/// notice links to it. The draft made live, the normal start succeeds; before, it is refused.
+/// Two plant rules on the dépannage's work type, each calling for its own permit type (CMMS Advisor
+/// 2026-11-04, L4-10b): the work order is created with both types in its required set, waits with
+/// both listed (the ones the start gate reads), and the user who holds the permit-issue right at the
+/// site gets one draft per type, linked to the work order and its equipment, written by them, in
+/// draft (no review, no approval); the issuers' notice links to the first. The normal start is
+/// refused while a draft is not live, and while a type has no live permit (a live permit of the
+/// other type does not cover it); with a live permit of each type, it succeeds.
 #[tokio::test]
-async fn a_user_who_may_issue_permits_gets_a_draft_per_required_type() {
+async fn two_required_permit_types_give_two_drafts_and_the_start_waits_for_both() {
     let f = fixture().await;
     rule_on_depannage_type(&f.db, "DEP_HOT_WORK", "hot_work").await;
     rule_on_depannage_type(&f.db, "DEP_COLD_WORK", "cold_work").await;
@@ -606,18 +610,27 @@ async fn a_user_who_may_issue_permits_gets_a_draft_per_required_type() {
     let done = depannage::start_depannage(&f.db, i).await.expect("dépannage");
     assert_waiting(&f, &done, issuing_tech).await;
     let wo_id = done.wo.id;
-    // Every type the start gate requires is listed: the work order's plant rule type (one rule per
-    // work order until the multi-permit model, L4-10b).
+    // Both types are listed, sorted: exactly what the start gate requires.
+    let both = vec!["cold_work".to_string(), "hot_work".to_string()];
+    assert_eq!(done.required_permit_types, both);
     let gate = crate::permit::wo_gate::permit_requirement(&f.db, wo_id)
         .await
         .expect("requirement");
     assert!(gate.required);
     assert_eq!(done.required_permit_types, gate.permit_types);
-    assert_eq!(done.required_permit_types.len(), 1);
-    assert_eq!(
-        done.wo.permit_rule_permit_type.as_ref(),
-        done.required_permit_types.first()
-    );
+    // The creation stamped the whole set (as every work order's creation does), both types not
+    // cleared; the primary type is one of them.
+    let set = crate::permit::required_set::read(&f.db, wo_id)
+        .await
+        .expect("set")
+        .expect("work order");
+    assert!(set.stored(), "the set is stamped at creation");
+    assert_eq!(set.uncleared_types(), both);
+    assert!(done
+        .wo
+        .permit_rule_permit_type
+        .as_ref()
+        .is_some_and(|primary| both.contains(primary)));
 
     assert_eq!(
         done.permit_draft_ids.len(),
@@ -660,9 +673,63 @@ async fn a_user_who_may_issue_permits_gets_a_draft_per_required_type() {
     // A draft is not a live permit: the normal gate refuses the start.
     let err = start_normally(&f.db, wo_id, issuing_tech).await.unwrap_err();
     refused_with(&err, "PERMIT_NOT_ACTIVE");
-    for draft in &done.permit_draft_ids {
-        make_live(&f.db, *draft, f.lead).await;
-    }
+    let (cold_draft, hot_draft) = (done.permit_draft_ids[0], done.permit_draft_ids[1]);
+    // One open permit per type: a second cold-work permit is refused while its draft is open.
+    let cold_type = scalar(&f.db, "SELECT id FROM permit_types WHERE code = 'cold_work'").await;
+    let cold_input = || crate::permit::domain::WorkPermitCreateInput {
+        permit_type_id: cold_type,
+        asset_id: None,
+        entity_id: None,
+        linked_work_order_id: Some(wo_id),
+        expires_at: Some(stamp(crate::wo::time::now_utc_second() + Duration::hours(6))),
+    };
+    let err = crate::permit::queries::create_work_permit(&f.db, cold_input(), i64::from(issuing_tech))
+        .await
+        .unwrap_err();
+    refused_with(&err, "PERMIT_WO_ALREADY_HAS_OPEN");
+
+    // Hot work live, the cold-work draft still a draft: refused.
+    make_live(&f.db, hot_draft, f.lead).await;
+    let err = start_normally(&f.db, wo_id, issuing_tech).await.unwrap_err();
+    refused_with(&err, "PERMIT_NOT_ACTIVE");
+    // The cold-work draft cancelled: only hot work is live, cold work is missing — refused.
+    let cold = crate::permit::queries::get_work_permit(&f.db, cold_draft)
+        .await
+        .expect("get")
+        .expect("draft");
+    crate::permit::queries::set_work_permit_status(
+        &f.db,
+        crate::permit::domain::WorkPermitStatusInput {
+            id: cold_draft,
+            status: "cancelled".into(),
+            expected_row_version: cold.row_version,
+            reason: Some("remplacé".into()),
+        },
+        i64::from(issuing_tech),
+    )
+    .await
+    .expect("cancel the cold-work draft");
+    let err = start_normally(&f.db, wo_id, issuing_tech).await.unwrap_err();
+    refused_with(&err, "PERMIT_TYPE_REQUIRED_TO_START");
+    assert!(
+        format!("{err:?}").contains("cold_work"),
+        "names the missing type: {err:?}"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            &format!("SELECT COUNT(*) FROM work_orders WHERE id = {wo_id} AND actual_start IS NULL")
+        )
+        .await,
+        1,
+        "not started"
+    );
+
+    // A live permit of each type: the normal start succeeds.
+    let cold_permit = crate::permit::queries::create_work_permit(&f.db, cold_input(), i64::from(issuing_tech))
+        .await
+        .expect("cold-work permit");
+    make_live(&f.db, cold_permit.id, f.lead).await;
     let started = start_normally(&f.db, wo_id, issuing_tech).await.expect("normal start");
     assert_eq!(started.status_code.as_deref(), Some("in_progress"));
 }

@@ -5748,9 +5748,9 @@ export interface WoDepannageStartResult {
   /** The breakdown was found more than 7 days ago (a warning). */
   breakdown_old_warning: boolean;
   outcome: DepannageOutcome;
-  /** Permit type codes it waits for ("En attente de permis : …"); empty when started, or when a permit of no particular type is required. */
+  /** Every permit type code it waits for, sorted ("En attente de permis : …"); empty when started, or when a permit of no particular type is required. */
   required_permit_types: string[];
-  /** The permit drafts written for it (only when the user may issue permits at its site). */
+  /** The permit drafts written for it, at most one per required type (only when the user may issue permits at its site). */
   permit_draft_ids: number[];
 }
 

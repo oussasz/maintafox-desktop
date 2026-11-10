@@ -18,16 +18,20 @@
 //!
 //! A dépannage is never refused because a permit is needed (CMMS Advisor decision, 2026-11-05: a
 //! breakdown report is never lost). Whether the start would wait for a permit is read before the
-//! start, from the requirement the start gate itself reads (`permit::wo_gate::permit_requirement`).
-//! When it would, the work order stays "prête" (ready), assigned, not started
+//! start, from the requirement the start gate itself reads (`permit::wo_gate::permit_requirement`):
+//! every permit type of the work order's required set not cleared (`permit::required_set`, stamped
+//! at its creation by `create_work_order_in` from every matching plant rule — CMMS Advisor
+//! 2026-11-04). When it would, the work order stays "prête" (ready), assigned, not started
 //! ([`DepannageOutcome::WaitingForPermit`], with every permit type it needs), and:
 //! - when the user may create a permit at the work order's site (`ptw.issue`, as a permit created by
 //!   hand: `permit::access::check_create_at`), one permit draft per required type is written with
-//!   the dépannage, linked to the work order and its equipment (the work order carries the
-//!   description); hazards, isolations and the approval are the issuer's. A type whose maximum
-//!   duration is not set gets no draft (the expiry is the issuer's to enter, as on the create form);
+//!   the dépannage (a work order holds one open permit of each type, never two of the same), linked
+//!   to the work order and its equipment (the work order carries the description); hazards,
+//!   isolations and the approval are the issuer's. A type whose maximum duration is not set gets no
+//!   draft (the expiry is the issuer's to enter, as on the create form);
 //! - in every case the permit issuers of the site are told at once ([`PERMIT_NEEDED_CATEGORY`]),
-//!   with a link to the draft, or to "Créer le permis" for the work order when there is none, and
+//!   naming every type, with a link to the first draft, or to "Créer le permis" for the work order
+//!   when there is none, and
 //!   the planners and the node's responsibles are told the dépannage waits for its permit
 //!   ([`NOTIFICATION_CATEGORY`], message [`WAITING_MESSAGE_KEY`]).
 //!
@@ -517,9 +521,9 @@ pub async fn start_depannage_in(
 }
 
 /// A refusal of a permit draft by its checks, before anything is written (no right at the site, a
-/// site or an expiry the permit rules do not accept, an open permit already linked): no draft, the
-/// dépannage goes on and the issuers create the permit. Anything else (the database), and any error
-/// of the write itself, still fails the dépannage.
+/// site or an expiry the permit rules do not accept, an open permit of that type already linked):
+/// no draft of that type, the dépannage goes on and the issuers create the permit. Anything else (the
+/// database), and any error of the write itself, still fails the dépannage.
 fn draft_refused(err: &AppError) -> bool {
     matches!(
         err,

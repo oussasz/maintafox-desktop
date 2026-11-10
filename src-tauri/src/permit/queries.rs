@@ -1736,7 +1736,7 @@ pub(crate) struct CheckedPermitCreate {
 
 /// The rules of a new permit, before anything is written: the type exists, the equipment and node
 /// (and the linked work order's equipment) agree, the expiry is accepted for the type, and the
-/// linked work order has no open permit. A refusal here writes nothing.
+/// linked work order has no open permit of that type. A refusal here writes nothing.
 pub(crate) async fn check_work_permit_create(
     db: &impl ConnectionTrait,
     input: &WorkPermitCreateInput,
