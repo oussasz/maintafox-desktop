@@ -107,12 +107,16 @@ export function OverviewMetricCards(props: {
         sense: senseForDelta(points, direction),
       };
     }
-    // A small count changes in units ("+3"), uncoloured: never "+300 %" for 1 to 4 (L7-08).
+    // A small count changes in units ("+3"), never "+300 %" for 1 to 4 (L7-08); its colour
+    // still follows the KPI's sense (a rising overdue count stays red).
     if (cell.value_kind === "count") {
       const delta = smallCountChange(cell.value, cell.previous_value);
       if (delta === 0) return { label: t("kpi.stable"), sense: "neutral" };
       if (delta !== null) {
-        return { label: `${delta > 0 ? "+" : ""}${formatNumber(delta)}`, sense: "neutral" };
+        return {
+          label: `${delta > 0 ? "+" : ""}${formatNumber(delta)}`,
+          sense: senseForDelta(delta, direction),
+        };
       }
     }
     const pct = trendPercent(cell.value, cell.previous_value);

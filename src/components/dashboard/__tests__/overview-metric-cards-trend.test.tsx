@@ -83,7 +83,7 @@ describe("OverviewMetricCards trend", () => {
     expect(screen.getByText("+4").className).not.toContain("status-danger");
   });
 
-  it("shows a small count change in units, uncoloured, never as a red percent (L7-08)", () => {
+  it("shows a small count change in units, never as a percent (L7-08)", () => {
     renderCards(
       cell({
         semantic_key: "DI_OPEN",
@@ -93,8 +93,7 @@ describe("OverviewMetricCards trend", () => {
         trend_sense: "up-bad",
       }),
     );
-    const badge = screen.getByText("+3");
-    expect(badge.className).not.toContain("status-danger");
+    expect(screen.getByText("+3")).toBeInTheDocument();
     expect(screen.queryByText(/300/)).toBeNull();
   });
 

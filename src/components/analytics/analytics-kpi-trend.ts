@@ -12,14 +12,15 @@ export interface KpiTrend {
   percent: number;
   /** Set for a figure that is itself a percentage: the signed change in points, 0 when stable. */
   points?: number;
-  /** Set for a small count: the signed change in units ("+3"), never coloured. */
+  /** Set for a small count: the signed change in units ("+3"), coloured by the KPI's sense. */
   delta?: number;
   sense: VisualMetricTrendSense;
 }
 
 /**
  * Counts below this on both sides are compared in units ("+3"), not in percent: going from 1 to
- * 4 requests is "+3", not an alarming red "+300 %" (L7-08).
+ * 4 requests is "+3", not an alarming "+300 %" (L7-08). The colour still follows the KPI's
+ * sense, so a rising overdue count stays red.
  */
 export const SMALL_COUNT_BELOW = 10;
 
@@ -57,7 +58,7 @@ export function periodTrend(
   ratio?: RatioTrendOptions,
   /** Relative change (percent) below which a figure that is not a percentage reads "stable". */
   stablePercent: number = STABLE_PERCENT,
-  /** The figure is a count (requests, OT, items): small counts change in units, uncoloured. */
+  /** The figure is a count (requests, OT, items): small counts change in units. */
   count = false,
 ): KpiTrend | null {
   if (!kpi || !kpi.available) return null;
@@ -75,7 +76,11 @@ export function periodTrend(
   if (count) {
     const delta = smallCountChange(value, previous);
     if (delta === 0) return { percent: 0, sense: "neutral" };
-    if (delta !== null) return { percent: 0, delta, sense: "neutral" };
+    if (delta !== null) {
+      if (direction === "neutral") return { percent: 0, delta, sense: "neutral" };
+      const good = direction === "up-good" ? delta > 0 : delta < 0;
+      return { percent: 0, delta, sense: good ? "up-good" : "up-bad" };
+    }
   }
   if (previous === 0) return value === 0 ? { percent: 0, sense: "neutral" } : null;
   const percent = ((value - previous) / Math.abs(previous)) * 100;

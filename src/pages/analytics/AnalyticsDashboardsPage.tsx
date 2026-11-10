@@ -217,7 +217,7 @@ export function AnalyticsDashboardsPage() {
   /**
    * The trend of a hub tile: its sense and its "stable" band both come from the KPI registry
    * (D14), never from this screen. `percentage` is for a figure that is itself a percentage,
-   * `count` for a number of items (a small count changes in units, uncoloured).
+   * `count` for a number of items (a small count changes in units, not in percent).
    */
   const hubTrend = (
     key: AnalyticsHubKpiKey,
