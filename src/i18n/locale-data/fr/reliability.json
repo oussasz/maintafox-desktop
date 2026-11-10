@@ -711,6 +711,10 @@
     "emptyCanvasRbd": "Canevas RBD vide — créez un modèle pour commencer."
   },
   "rams": {
+    "rights": {
+      "required": "Droit requis : {{right}}",
+      "readOnly": "Lecture seule : les actions de modification demandent le droit « {{right}} »."
+    },
     "title": "Fiabilité (RAMS)",
     "common": {
       "cancel": "Annuler",

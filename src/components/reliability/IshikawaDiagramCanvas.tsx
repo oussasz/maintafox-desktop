@@ -19,6 +19,7 @@ import "@xyflow/react/dist/style.css";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { RamsReadOnlyNote, useRamsRight } from "@/components/reliability/study/rams-ui";
 import { ErrorState } from "@/components/ui/data-state";
 import {
   Dialog,
@@ -45,6 +46,7 @@ import { createWo } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type { RamIshikawaDiagram } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 /** A diagram cause handed to the study's FMECA form (the analyst rates it there). */
 export interface IshikawaFmecaPromotion {
@@ -357,6 +359,10 @@ function IshikawaDiagramInner({
 }) {
   const { t, i18n } = useTranslation("reliability");
   const { info } = useSession();
+  // The backend asks ram.manage for every write of the diagram, plus ot.create for a work order.
+  const { can, reasonFor } = useRamsRight();
+  const canManage = can(P.RAM_MANAGE);
+  const manageReason = reasonFor(P.RAM_MANAGE);
   const [nodes, setNodes, applyNodeChanges] = useNodesState<Node>([]);
   const [edges, setEdges, applyEdgeChanges] = useEdgesState<Edge>([]);
   /** Moves, links or deletions not stored yet ("Save diagram" stores them). */
@@ -660,7 +666,9 @@ function IshikawaDiagramInner({
         >
           <button
             type="button"
-            className="block w-full px-3 py-2 text-left text-text-primary hover:bg-surface-2"
+            className="block w-full px-3 py-2 text-left text-text-primary hover:bg-surface-2 disabled:opacity-50"
+            disabled={!canManage}
+            title={manageReason}
             onClick={() => openPromoteFromCtx(ctxMenu.nodeId)}
           >
             {t("governance.promoteMenu")}
@@ -682,7 +690,9 @@ function IshikawaDiagramInner({
           <button
             key={id}
             type="button"
-            className="rounded-md border border-surface-border bg-surface-2 px-2 py-1 text-[11px] text-text-primary hover:bg-surface-3"
+            className="rounded-md border border-surface-border bg-surface-2 px-2 py-1 text-[11px] text-text-primary hover:bg-surface-3 disabled:opacity-50"
+            disabled={!canManage}
+            title={manageReason}
             onClick={() => openAddCause(id)}
           >
             + {t("governance.addCause")} ({t(key)})
@@ -690,7 +700,8 @@ function IshikawaDiagramInner({
         ))}
         <button
           type="button"
-          disabled={saving}
+          disabled={saving || !canManage}
+          title={manageReason}
           className="rounded-md border border-primary/35 bg-primary/10 px-3 py-1 text-xs font-medium text-text-primary disabled:opacity-50"
           onClick={() => void onSave()}
         >
@@ -698,6 +709,7 @@ function IshikawaDiagramInner({
         </button>
         {dirty ? <StatusChip tone="warning" dot label={t("governance.unsaved")} /> : null}
       </div>
+      {canManage ? null : <RamsReadOnlyNote right={P.RAM_MANAGE} />}
       <UnsavedChangesGuard
         when={dirty}
         title={t("governance.unsavedTitle")}
@@ -864,9 +876,11 @@ function IshikawaDiagramInner({
               type="button"
               disabled={
                 promoteBusy ||
+                (promoteTarget === "wo" && !can(P.OT_CREATE)) ||
                 promoteCause.trim() === "" ||
                 (promoteTarget === "wo" && (promoteWoType === "" || info?.user_id == null))
               }
+              title={promoteTarget === "wo" ? reasonFor(P.OT_CREATE) : undefined}
               className="min-h-[44px] rounded-md border border-primary/35 bg-primary/10 px-3 py-1.5 text-xs font-medium text-text-primary disabled:opacity-50"
               onClick={() => void onPromoteSubmit()}
             >

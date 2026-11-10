@@ -18,7 +18,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_TACTIC_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import { cn } from "@/lib/utils";
 import {
@@ -36,7 +35,13 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import type { DecisionPrefill } from "./DecisionDialog";
 import { roundInterval } from "./StudyLifeStep";
-import { RAMS_SELECT_CLASS, RamsCallout, RamsCard } from "./rams-ui";
+import {
+  RAMS_SELECT_CLASS,
+  RamsCallout,
+  RamsCard,
+  RamsReadOnlyNote,
+  useRamsRight,
+} from "./rams-ui";
 
 const TACTICS = [
   "condition_based",
@@ -183,7 +188,7 @@ function RcmEditor({
 }) {
   const { t } = useTranslation("reliability");
   const { formatNumber, formatDecimal } = useFormatters();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const [answers, setAnswers] = useState<StudyRcmAnswers>(row.answers);
   const [pf, setPf] = useState<number | null>(row.pf_interval_hours ?? null);
   const [rec, setRec] = useState(row.recommendation);
@@ -219,6 +224,8 @@ function RcmEditor({
   const basis = (q: string) => row.bases.find((b) => b.question === q);
   const unit = timeBasis === "operating" ? t("rams.units.opHours") : t("rams.units.calHours");
   const needsJustification = tactic !== rec.recommended_tactic;
+  /** Shown to anyone on an open study; a missing right disables them with the reason. */
+  const showActions = editable || (!can(P.RAM_ANALYZE) && study.status !== "archived");
   const canSave =
     editable &&
     can(P.RAM_ANALYZE) &&
@@ -478,28 +485,39 @@ function RcmEditor({
             />
           </label>
         ) : null}
+        {!can(P.RAM_ANALYZE) && showActions ? (
+          <div className="mt-2">
+            <RamsReadOnlyNote right={P.RAM_ANALYZE} />
+          </div>
+        ) : null}
         <div className="mt-3 flex flex-wrap justify-end gap-2">
-          {editable && can(P.RAM_ANALYZE) ? (
+          {showActions ? (
             <Button
               variant="outline"
               className="h-11"
               disabled={!canSave || saving}
+              title={reasonFor(P.RAM_ANALYZE)}
               onClick={() => void save()}
             >
               <Save className="h-4 w-4" aria-hidden />
               {t("rams.rcm.save")}
             </Button>
           ) : null}
-          {editable && can(P.RAM_ANALYZE) ? (
+          {showActions ? (
             <Button
               className={mfLayout.primaryAction}
-              disabled={!savedMatches || row.saved?.selected_tactic === "run_to_failure"}
+              disabled={
+                !can(P.RAM_ANALYZE) ||
+                !savedMatches ||
+                row.saved?.selected_tactic === "run_to_failure"
+              }
               title={
-                !savedMatches
+                reasonFor(P.RAM_ANALYZE) ??
+                (!savedMatches
                   ? t("rams.rcm.saveFirst")
                   : row.saved?.selected_tactic === "run_to_failure"
                     ? t("rams.rcm.noTask")
-                    : undefined
+                    : undefined)
               }
               onClick={sendToDecisions}
             >

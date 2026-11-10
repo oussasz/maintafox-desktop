@@ -14,7 +14,6 @@ import { DecimalField } from "@/components/ui/decimal-field";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_PATTERN_TONE, toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
 import { describeAppError } from "@/lib/app-error";
 import {
   type LifeAnalysis,
@@ -26,7 +25,14 @@ import { P } from "@shared/rbac/permissions.generated";
 
 import type { DecisionPrefill } from "./DecisionDialog";
 import { CostRateChart, ReliabilityHazardChart, WeibullProbabilityPlot } from "./RamsCharts";
-import { RAMS_SELECT_CLASS, RAMS_TABLE_FRAME, RamsCallout, RamsCard } from "./rams-ui";
+import {
+  RAMS_SELECT_CLASS,
+  RAMS_TABLE_FRAME,
+  RamsCallout,
+  RamsCard,
+  RamsReadOnlyNote,
+  useRamsRight,
+} from "./rams-ui";
 
 /** Round an interval for display and for the decision (hundreds of hours above 1 000 h). */
 export function roundInterval(h: number): number {
@@ -55,7 +61,9 @@ export function StudyLifeStep({
 }) {
   const { t } = useTranslation("reliability");
   const { formatDecimal, formatNumber, formatCurrency, currencyCode } = useFormatters();
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
+  /** An archived study is a record (no reason to show actions); a missing right disables them. */
+  const stateOpen = study.status !== "archived";
   const [analysis, setAnalysis] = useState<LifeAnalysis | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -382,7 +390,12 @@ export function StudyLifeStep({
                 className: analysis.cost_class_name ?? "",
               })}
             </p>
-            {editable ? (
+            {stateOpen && !can(P.RAM_ANALYZE) ? (
+              <div className="mt-2">
+                <RamsReadOnlyNote right={P.RAM_ANALYZE} />
+              </div>
+            ) : null}
+            {stateOpen ? (
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 {shareClass != null && can(P.RAM_MANAGE) ? (
                   <label className="inline-flex min-h-[36px] items-center gap-2 text-sm text-text-secondary">
@@ -398,7 +411,8 @@ export function StudyLifeStep({
                 <Button
                   variant="outline"
                   className="h-10"
-                  disabled={plannedN == null || failureN == null || saving}
+                  disabled={!editable || plannedN == null || failureN == null || saving}
+                  title={reasonFor(P.RAM_ANALYZE)}
                   onClick={() => void saveCosts()}
                 >
                   <Save className="h-4 w-4" aria-hidden />
@@ -523,10 +537,12 @@ export function StudyLifeStep({
               </table>
             </div>
           </div>
-          {editable && proposed != null ? (
+          {stateOpen && proposed != null ? (
             <div className="mt-3 flex justify-end">
               <Button
                 className={mfLayout.primaryAction}
+                disabled={!editable}
+                title={reasonFor(P.RAM_ANALYZE)}
                 onClick={() =>
                   onDecide({
                     kind: plan ? "pm_interval" : "one_off_wo",
