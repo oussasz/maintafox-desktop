@@ -257,7 +257,14 @@ pub(crate) fn isolation_rule_breach(iso: &Payload, three_person: bool) -> Option
 /// one it was verified on a PC before the update (`PERMIT_ZERO_ENERGY_PRE_UPGRADE`: a person checks
 /// on site, then resolves). Once verified here, the comment (or its absence, for a verification
 /// recorded here before the update, which is not judged again) is never rewritten nor blanked.
-pub(crate) fn zero_energy_breach(held: Option<&Payload>, iso: &Payload) -> Option<(&'static str, String)> {
+/// `first_join`: the row is the plant's history received at this PC's first join
+/// (`sync::plant_join::first_join_snapshot_row`): a verification recorded before the update is
+/// history, not judged again (the note rules still apply).
+pub(crate) fn zero_energy_breach(
+    held: Option<&Payload>,
+    iso: &Payload,
+    first_join: bool,
+) -> Option<(&'static str, String)> {
     let point = field(iso, "isolation_point").unwrap_or("?");
     let note = field(iso, "zero_energy_note");
     if let Some(h) = held.filter(|h| field(h, "verified_at").is_some()) {
@@ -273,10 +280,12 @@ pub(crate) fn zero_energy_breach(held: Option<&Payload>, iso: &Payload) -> Optio
     }
     field(iso, "verified_at")?;
     match note {
+        None if first_join && held.is_none() => None,
         None => Some((
             "PERMIT_ZERO_ENERGY_PRE_UPGRADE",
             format!(
-                "isolation '{point}' verified without its zero-energy test (vérifiée avant la mise à jour, sans test                  d'énergie zéro enregistré) — check on site, then resolve"
+                "isolation '{point}' verified without its zero-energy test (vérifiée avant la mise à jour, sans test \
+                 d'énergie zéro enregistré) — check on site, then resolve"
             ),
         )),
         Some(n) if n.chars().count() > crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS => Some((
@@ -703,11 +712,14 @@ async fn children_with(
             continue;
         }
         let merged = overlay(rows.get(&sid), &received);
-        if table == "permit_isolations"
-            && (isolation_rule_breach(&merged, three_person).is_some()
-                || zero_energy_breach(rows.get(&sid), &merged).is_some())
-        {
-            continue;
+        if table == "permit_isolations" {
+            let first_join =
+                rows.get(&sid).is_none() && crate::sync::plant_join::first_join_snapshot_row(conn, table, &sid).await?;
+            if isolation_rule_breach(&merged, three_person).is_some()
+                || zero_energy_breach(rows.get(&sid), &merged, first_join).is_some()
+            {
+                continue;
+            }
         }
         if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
             continue;
@@ -1717,7 +1729,9 @@ pub(crate) async fn inbound_isolation_check(
     if let Some(verdict) = lock_record_kept(local.as_ref(), &iso) {
         return Ok(Some(verdict));
     }
-    if let Some((c, m)) = zero_energy_breach(local.as_ref(), &iso) {
+    let first_join = local.is_none()
+        && crate::sync::plant_join::first_join_snapshot_row(conn, "permit_isolations", entity_sync_id).await?;
+    if let Some((c, m)) = zero_energy_breach(local.as_ref(), &iso, first_join) {
         return conflict(c, m);
     }
     if local
