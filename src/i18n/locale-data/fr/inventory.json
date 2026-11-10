@@ -1172,6 +1172,20 @@
     },
     "loadError": "Les données d'achat n'ont pas pu être chargées",
     "sectionsLabel": "Rubriques achats",
+    "disabled": {
+      "saving": "Enregistrement en cours…",
+      "rejectReason": "Saisissez le motif du rejet.",
+      "poRequisition": "Choisissez une demande d'achat approuvée.",
+      "repairArticle": "Choisissez l'article à réparer.",
+      "repairSource": "Choisissez l'emplacement d'origine de l'article.",
+      "repairQty": "Saisissez une quantité supérieure à zéro.",
+      "supplierCode": "Renseignez le code du fournisseur.",
+      "supplierName": "Renseignez le nom du fournisseur.",
+      "priceArticle": "Choisissez l'article concerné par ce prix.",
+      "priceUnit": "Saisissez le prix unitaire.",
+      "docRef": "Renseignez la référence du document.",
+      "docPurpose": "Choisissez l'usage du document."
+    },
     "requisitionForm": {
       "title": "Nouvelle demande d'achat",
       "article": "Article",

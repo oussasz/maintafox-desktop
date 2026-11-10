@@ -238,7 +238,14 @@
     "signatureHint": "L'approbateur signe en saisissant son mot de passe sur ce poste. Un break-in urgent, ou qui force un contrôle bloquant (charge de l'équipe, fenêtre verrouillée, arrêt, préparation), doit être signé.",
     "noApprovers": "Personne d'autre ne détient plan.confirm sur le site de cette équipe : un break-in urgent ne peut pas être signé. Un travail d'urgence passe par un OT non planifié.",
     "inserted": "Ajouté en semaine gelée :",
-    "syncRefused": "refusé (sync)"
+    "syncRefused": "refusé (sync)",
+    "disabled": {
+      "noCommitment": "Choisissez l'engagement à déplacer.",
+      "noReason": "Choisissez le motif du break-in.",
+      "noApprover": "Choisissez l'approbateur qui signe ce break-in urgent.",
+      "noPassword": "L'approbateur doit saisir son mot de passe pour signer.",
+      "saving": "Enregistrement en cours…"
+    }
   },
   "override": {
     "title": "Déroger au double-booking",

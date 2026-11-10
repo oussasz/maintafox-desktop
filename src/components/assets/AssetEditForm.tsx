@@ -13,6 +13,7 @@ import {
   type EquipmentSearchOption,
   EquipmentSearchSelect,
 } from "@/components/assets/EquipmentSearchSelect";
+import { assetFormDisabledReasonKey } from "@/components/assets/asset-form-reason";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
   EntityFormCollapsible,
@@ -386,6 +387,12 @@ export function AssetEditForm() {
 
   const watchedOrgNode = watch("org_node_id");
   const busy = saving || photosBusy;
+  const disabledReasonKey = assetFormDisabledReasonKey({
+    saving,
+    photosBusy,
+    catalogReady,
+    catalogFailed: referenceCatalogError != null,
+  });
 
   if (!asset) {
     return null;
@@ -411,6 +418,7 @@ export function AssetEditForm() {
             onCancel={() => handleCloseRequest()}
             cancelDisabled={busy}
             primaryDisabled={!catalogReady}
+            primaryDisabledReason={disabledReasonKey ? t(disabledReasonKey) : undefined}
             primaryLoading={busy}
           />
         }
