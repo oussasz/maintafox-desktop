@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { smallCountChange } from "@/components/analytics/analytics-kpi-trend";
 import {
   VisualMetricCard,
   type VisualMetricTrendSense,
@@ -105,6 +106,14 @@ export function OverviewMetricCards(props: {
         label: t("kpi.points", { change: `${shown > 0 ? "+" : ""}${formatNumber(shown)}` }),
         sense: senseForDelta(points, direction),
       };
+    }
+    // A small count changes in units ("+3"), uncoloured: never "+300 %" for 1 to 4 (L7-08).
+    if (cell.value_kind === "count") {
+      const delta = smallCountChange(cell.value, cell.previous_value);
+      if (delta === 0) return { label: t("kpi.stable"), sense: "neutral" };
+      if (delta !== null) {
+        return { label: `${delta > 0 ? "+" : ""}${formatNumber(delta)}`, sense: "neutral" };
+      }
     }
     const pct = trendPercent(cell.value, cell.previous_value);
     if (pct === null) return undefined;

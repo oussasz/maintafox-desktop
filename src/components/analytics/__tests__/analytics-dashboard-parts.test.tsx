@@ -62,6 +62,25 @@ describe("periodTrend", () => {
     expect(periodTrend(kpi(80, 100), "up-bad")).toMatchObject({ sense: "up-good" });
     expect(periodTrend(kpi(80, 100), "up-good")?.percent).toBeCloseTo(-20);
   });
+
+  it("gives a small count's change in units, uncoloured (L7-08)", () => {
+    // 1 -> 4 requests is "+3", not a red "+300 %"; from 0 it still has a change to show.
+    expect(periodTrend(kpi(4, 1), "up-bad", undefined, 1, true)).toEqual({
+      percent: 0,
+      delta: 3,
+      sense: "neutral",
+    });
+    expect(periodTrend(kpi(3, 0), "up-bad", undefined, 1, true)).toMatchObject({ delta: 3 });
+    expect(periodTrend(kpi(2, 2), "up-bad", undefined, 1, true)).toEqual({
+      percent: 0,
+      sense: "neutral",
+    });
+    // Larger counts keep the percent and its colour.
+    expect(periodTrend(kpi(24, 12), "up-bad", undefined, 1, true)).toMatchObject({
+      percent: 100,
+      sense: "up-bad",
+    });
+  });
 });
 
 describe("AnalyticsDiStatusChart", () => {
