@@ -171,4 +171,28 @@ mod tests {
         assert_eq!(codes, expected);
         assert_eq!((res.created, res.updated), (0, 0));
     }
+
+    #[tokio::test]
+    async fn a_pair_held_twice_is_refused_and_exported_once() {
+        let db = db_with_data().await;
+        let (_, res) = run(&db, &format!("{HEADER}\nEQ1;A1;2;;;\n")).await;
+        assert_eq!(res.created, 1);
+        // A second PC added the same part offline: both lines are active after sync.
+        exec(
+            &db,
+            "INSERT INTO equipment_spare_parts (entity_sync_id, equipment_id, article_id, quantity, position_label, \
+             is_critical_spare, notes, is_active, row_version, created_by_id, created_at, updated_at) \
+             SELECT 'sp-dup', equipment_id, article_id, 3, NULL, 0, NULL, 1, 1, created_by_id, created_at, updated_at \
+             FROM equipment_spare_parts",
+        )
+        .await;
+        let (rows, res) = run(&db, &format!("{HEADER}\nEQ1;A1;5;;;\n")).await;
+        assert_eq!(
+            rows,
+            vec![("skip".to_string(), vec!["SPARE_IMPORT_PAIR_TWICE".to_string()])]
+        );
+        assert_eq!((res.updated, res.failed), (0, 0));
+        let table = bulk_import::export(&db, "equipment_spare_part").await.expect("export");
+        assert_eq!(table.rows, vec![vec!["EQ1", "A1", "2", "", "non", ""]]);
+    }
 }

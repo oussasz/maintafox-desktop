@@ -130,20 +130,32 @@ struct Line {
     row_version: i64,
 }
 
-/// The active spare-parts lines by (equipment id, article id).
-async fn lines(db: &impl ConnectionTrait) -> AppResult<HashMap<(i64, i64), Line>> {
-    let mut out = HashMap::new();
-    for r in db
-        .query_all(Statement::from_string(
+type Pair = (i64, i64);
+
+/// The active spare-parts lines by (equipment id, article id): all of them, or only one pair. A
+/// pair held twice (two PCs added it offline: there is no unique index on purpose) lands in
+/// `twice` and cannot be updated by an import.
+async fn lines(db: &impl ConnectionTrait, pair: Option<Pair>) -> AppResult<(HashMap<Pair, Line>, HashSet<Pair>)> {
+    let base = "SELECT id, equipment_id, article_id, quantity, position_label, is_critical_spare, notes, row_version \
+                FROM equipment_spare_parts WHERE is_active = 1";
+    let statement = match pair {
+        Some((equipment_id, article_id)) => Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, equipment_id, article_id, quantity, position_label, is_critical_spare, notes, row_version \
-             FROM equipment_spare_parts WHERE is_active = 1"
-                .to_string(),
-        ))
-        .await?
-    {
+            format!("{base} AND equipment_id = ? AND article_id = ? ORDER BY id"),
+            [equipment_id.into(), article_id.into()],
+        ),
+        None => Statement::from_string(DbBackend::Sqlite, format!("{base} ORDER BY id")),
+    };
+    let mut out = HashMap::new();
+    let mut twice = HashSet::new();
+    for r in db.query_all(statement).await? {
+        let k: Pair = (r.try_get("", "equipment_id")?, r.try_get("", "article_id")?);
+        if out.contains_key(&k) {
+            twice.insert(k);
+            continue;
+        }
         out.insert(
-            (r.try_get("", "equipment_id")?, r.try_get("", "article_id")?),
+            k,
             Line {
                 id: r.try_get("", "id")?,
                 quantity: r.try_get("", "quantity")?,
@@ -154,7 +166,14 @@ async fn lines(db: &impl ConnectionTrait) -> AppResult<HashMap<(i64, i64), Line>
             },
         );
     }
-    Ok(out)
+    Ok((out, twice))
+}
+
+fn held_twice(equipment: &str, article: &str) -> String {
+    format!(
+        "L'article « {article} » figure deux fois dans les pièces de l'équipement « {equipment} » : \
+         retirez le doublon sur la fiche équipement avant d'importer."
+    )
 }
 
 /// The values the line will have once applied: the filled cells over the current line.
@@ -182,7 +201,7 @@ fn changes(input: &SparePartInput, line: &Line) -> bool {
 pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>]) -> AppResult<Vec<RowOutcome>> {
     let (equipment, equipment_ambiguous) = equipment_by_code(db).await?;
     let (article_map, article_ambiguous) = articles(db).await?;
-    let existing = lines(db).await?;
+    let (existing, twice) = lines(db, None).await?;
     let mut first_row_of: HashMap<(String, String), usize> = HashMap::new();
     let mut out = Vec::new();
     for (i, raw) in rows.iter().enumerate() {
@@ -304,6 +323,12 @@ pub async fn validate(db: &DatabaseConnection, rows: &[HashMap<String, String>])
         });
         let mut action = "skip";
         if let (Some(equipment_id), Some(article), true) = (equipment_id, article, first) {
+            if twice.contains(&(equipment_id, article.id)) {
+                messages.push(RowMessage::error(
+                    "SPARE_IMPORT_PAIR_TWICE",
+                    held_twice(&equipment_code, &article.code),
+                ));
+            }
             match existing.get(&(equipment_id, article.id)) {
                 Some(line) => {
                     if let Some(input) = merged(&normalized, Some(line)) {
@@ -405,7 +430,11 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
         };
         // Read the line again: a change made on the equipment sheet since the preview is kept,
         // and only the filled cells of the file are written over it.
-        let current = lines(db).await?;
+        let (current, twice) = lines(db, Some((*equipment_id, article.id))).await?;
+        if !twice.is_empty() {
+            out.push(fail(row, held_twice(&equipment_code, &article.code)));
+            continue;
+        }
         let line = current.get(&(*equipment_id, article.id));
         let Some(input) = merged(&row.normalized, line) else {
             out.push(fail(
@@ -456,6 +485,8 @@ pub async fn export(db: &DatabaseConnection) -> AppResult<Vec<Vec<String>>> {
              JOIN equipment e ON e.id = sp.equipment_id \
              JOIN articles a ON a.id = sp.article_id \
              WHERE sp.is_active = 1 AND e.deleted_at IS NULL AND e.asset_id_code IS NOT NULL \
+               AND sp.id = (SELECT MIN(s2.id) FROM equipment_spare_parts s2 WHERE s2.is_active = 1 \
+                            AND s2.equipment_id = sp.equipment_id AND s2.article_id = sp.article_id) \
              ORDER BY e.asset_id_code, a.article_code"
                 .to_string(),
         ))
