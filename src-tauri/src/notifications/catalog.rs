@@ -156,6 +156,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "wo_permit_rule_missing",
     "insp_anomaly_origin_cancelled",
     "rel_decision_refused_wo_kept",
+    "di_safety_alert",
     "wo_depannage_permit_needed",
 ];
 
@@ -196,6 +197,12 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // planner, or the PM planners (`settings::received_notice::announce_refused_decision`).
     ("rel_decision_refused_wo_kept", "planner"),
     ("rel_decision_refused_wo_kept", "watcher"),
+    // A request flagged "sécurité" (CMMS Advisor decision on L4-11, 2026-11-06): the request
+    // reviewers and the permit-issue right holders of its site, plant-wide ones included
+    // (`settings::received_notice::announce_di_safety_alert`).
+    // ptw.hse_approve is planned in L4-03; when it lands it is added to these recipients.
+    ("di_safety_alert", "permission:di.review"),
+    ("di_safety_alert", "permission:ptw.issue"),
     // A dépannage waiting for its permit (CMMS Advisor 2026-11-05, `wo::depannage`): the
     // permit-issue right holders of the work order's site (plant-wide ones included).
     ("wo_depannage_permit_needed", "permission:ptw.issue"),
@@ -216,6 +223,8 @@ pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
     ("insp_anomaly_origin_cancelled", "reviewer"),
     // Neither a planner nor a proposer active here: the holders of the right to approve decisions.
     ("rel_decision_refused_wo_kept", "permission:ram.manage"),
+    // Nobody holds either right at the request's site here: the responsibles of its node.
+    ("di_safety_alert", "entity_manager"),
     // Nobody holds the permit-issue right at the dépannage's site: the settings administrators.
     ("wo_depannage_permit_needed", "permission:adm.settings"),
 ];

@@ -2,12 +2,45 @@
  * Shared pieces of the reliability (RAMS) module screens: section card, callout, field and the
  * period presets of the fleet view.
  */
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { mfCard } from "@/design-system/tokens";
 import { type Tone, mfTone } from "@/design-system/tone";
+import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionText } from "@/lib/permission-labels";
 import { cn } from "@/lib/utils";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
+
+/**
+ * Why a RAMS action is unavailable to the current user: `reasonFor(P.x, P.y)` returns the
+ * "Droit requis : <label>" text for the first right the user lacks, `undefined` when all are held.
+ * Use it as the `title` of a disabled control; the backend still enforces the right.
+ */
+export function useRamsRight() {
+  const { can } = usePermissions();
+  const { t } = useTranslation("reliability");
+  const text = usePermissionText();
+  const reasonFor = useCallback(
+    (...rights: PermissionName[]): string | undefined => {
+      const missing = rights.find((r) => !can(r));
+      return missing ? t("rams.rights.required", { right: text.label(missing) }) : undefined;
+    },
+    [can, t, text],
+  );
+  return { can, reasonFor };
+}
+
+/** One visible note for screens whose per-row actions are hidden when the right is missing. */
+export function RamsReadOnlyNote({ right }: { right: PermissionName }) {
+  const { t } = useTranslation("reliability");
+  const text = usePermissionText();
+  return (
+    <p role="note" className="text-xs text-text-muted">
+      {t("rams.rights.readOnly", { right: text.label(right) })}
+    </p>
+  );
+}
 
 export function RamsCard({
   title,

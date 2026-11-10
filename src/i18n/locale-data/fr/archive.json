@@ -21,9 +21,9 @@
   "class": {
     "other": "Autre type d’archive",
     "operational_history": "Historique d’exploitation",
-    "soft_delete": "Enregistrement supprimé",
-    "audit_retention": "Piste d’audit",
-    "config_snapshot": "Instantané de configuration",
+    "soft_delete": "Éléments supprimés (corbeille)",
+    "audit_retention": "Journal des actions (qui a fait quoi)",
+    "config_snapshot": "Copie des réglages",
     "report_copy": "Copie de rapport"
   },
   "restorePolicy": {
@@ -44,8 +44,8 @@
     "restore": "Restauration demandée",
     "export": "Exporté",
     "purge": "Supprimé définitivement",
-    "legal_hold_on": "Gel juridique posé",
-    "legal_hold_off": "Gel juridique levé"
+    "legal_hold_on": "Suppression bloquée",
+    "legal_hold_off": "Suppression débloquée"
   },
   "result": {
     "other": "Autre",
@@ -54,7 +54,7 @@
     "blocked": "Bloqué"
   },
   "status": {
-    "legalHold": "Gel juridique",
+    "legalHold": "Suppression bloquée",
     "normal": "Normal"
   },
   "record": {
@@ -62,8 +62,8 @@
   },
   "stats": {
     "total": "Enregistrements archivés",
-    "legalHold": "Sous gel juridique",
-    "withoutHold": "Sans gel juridique",
+    "legalHold": "Suppression bloquée",
+    "withoutHold": "Suppression non bloquée",
     "withoutHoldHint": "Supprimables à la fin de leur durée de conservation"
   },
   "explorer": {
@@ -72,7 +72,7 @@
     "treeEmpty": "Rien n’est encore archivé.",
     "unknownYear": "Date inconnue",
     "searchPlaceholder": "Rechercher dans les archives…",
-    "legalHoldOnly": "Gel juridique uniquement",
+    "legalHoldOnly": "Suppression bloquée uniquement",
     "classFilters": "Types d’archive",
     "dateFrom": "Archivé depuis le",
     "dateTo": "Archivé jusqu’au",
@@ -101,23 +101,23 @@
     "selected_one": "{{count}} enregistrement sélectionné",
     "selected_other": "{{count}} enregistrements sélectionnés",
     "export": "Exporter la sélection",
-    "legalHold": "Poser un gel juridique",
+    "legalHold": "Bloquer la suppression",
     "purge": "Supprimer définitivement",
     "clear": "Vider la sélection",
-    "legalHoldTitle": "Poser un gel juridique ?",
-    "legalHoldDescription_one": "L’enregistrement sélectionné sera protégé contre la suppression jusqu’à la levée du gel.",
-    "legalHoldDescription_other": "Les {{count}} enregistrements sélectionnés seront protégés contre la suppression jusqu’à la levée du gel.",
-    "legalHoldConfirm_one": "Poser le gel juridique",
-    "legalHoldConfirm_other": "Poser le gel sur {{count}} enregistrements",
-    "legalHoldDone_one": "Gel juridique posé sur {{count}} enregistrement.",
-    "legalHoldDone_other": "Gel juridique posé sur {{count}} enregistrements.",
+    "legalHoldTitle": "Bloquer la suppression ?",
+    "legalHoldDescription_one": "L’enregistrement sélectionné ne pourra pas être supprimé tant que ce blocage n’est pas levé (litige, contrôle, audit).",
+    "legalHoldDescription_other": "Les {{count}} enregistrements sélectionnés ne pourront pas être supprimés tant que ce blocage n’est pas levé (litige, contrôle, audit).",
+    "legalHoldConfirm_one": "Bloquer la suppression",
+    "legalHoldConfirm_other": "Bloquer la suppression de {{count}} enregistrements",
+    "legalHoldDone_one": "Suppression bloquée pour {{count}} enregistrement.",
+    "legalHoldDone_other": "Suppression bloquée pour {{count}} enregistrements.",
     "purgeTitle": "Supprimer définitivement ?",
-    "purgeDescription_one": "L’enregistrement sélectionné sera effacé des archives. Cette action est irréversible. Les enregistrements sous gel juridique ou encore en période de conservation sont conservés.",
-    "purgeDescription_other": "Les {{count}} enregistrements sélectionnés seront effacés des archives. Cette action est irréversible. Les enregistrements sous gel juridique ou encore en période de conservation sont conservés.",
+    "purgeDescription_one": "L’enregistrement sélectionné sera effacé des archives. Cette action est irréversible. Les enregistrements dont la suppression est bloquée ou encore en période de conservation sont conservés.",
+    "purgeDescription_other": "Les {{count}} enregistrements sélectionnés seront effacés des archives. Cette action est irréversible. Les enregistrements dont la suppression est bloquée ou encore en période de conservation sont conservés.",
     "purgeConfirm_one": "Supprimer définitivement",
     "purgeConfirm_other": "Supprimer {{count}} enregistrements définitivement",
     "purgeDone": "{{purged}} supprimé(s), {{blocked}} conservé(s).",
-    "purgeBlocked": "Les enregistrements conservés sont sous gel juridique ou encore en période de conservation.",
+    "purgeBlocked": "Les enregistrements conservés ont leur suppression bloquée ou sont encore en période de conservation.",
     "purgeBlockedStrict": "Rien n’a été supprimé : le mode strict refuse toute la sélection dès qu’un enregistrement ne peut pas l’être."
   },
   "export": {
@@ -146,21 +146,21 @@
     "noRetention": "Aucune règle de conservation",
     "export": "Exporter",
     "restore": "Demander la restauration",
-    "legalHoldOn": "Poser un gel juridique",
-    "legalHoldOff": "Lever le gel juridique",
+    "legalHoldOn": "Bloquer la suppression",
+    "legalHoldOff": "Débloquer la suppression",
     "purge": "Supprimer définitivement",
     "restoreBlocked": {
       "policy": "Cet enregistrement ne peut pas être restauré.",
-      "legalHold": "Levez le gel juridique avant de demander une restauration.",
+      "legalHold": "Débloquez la suppression avant de demander une restauration.",
       "retention": "La règle de conservation de ce type n’autorise pas la restauration."
     },
     "restoreTitle": "Demander une restauration ?",
     "restoreDescription": "La demande pour « {{name}} » est consignée dans l’historique de l’archive. La remise de l’enregistrement dans son module n’est pas encore disponible dans cette version.",
     "restoreConfirm": "Consigner la demande de restauration",
     "restoreRecorded": "Demande de restauration consignée dans l’historique de l’archive.",
-    "legalHoldOnTitle": "Poser un gel juridique ?",
-    "legalHoldOnDescription": "« {{name}} » sera protégé contre la suppression jusqu’à la levée du gel.",
-    "legalHoldOffTitle": "Lever le gel juridique ?",
+    "legalHoldOnTitle": "Bloquer la suppression ?",
+    "legalHoldOnDescription": "« {{name}} » ne pourra pas être supprimé tant que ce blocage n’est pas levé (litige, contrôle, audit).",
+    "legalHoldOffTitle": "Débloquer la suppression ?",
     "legalHoldOffDescription": "« {{name}} » pourra alors être supprimé à la fin de sa durée de conservation.",
     "purgeTitle": "Supprimer définitivement ?",
     "purgeDescription": "« {{name}} » sera effacé des archives. Cette action est irréversible.",
@@ -181,8 +181,8 @@
     "historyEmpty": "Aucun événement consigné."
   },
   "purgeCheck": {
-    "holdOn": "Sous gel juridique",
-    "holdOff": "Pas de gel juridique",
+    "holdOn": "Suppression bloquée",
+    "holdOff": "Suppression non bloquée",
     "noPolicy": "Aucune règle de conservation ne s’applique à cet enregistrement",
     "policyAllows": "La règle de conservation autorise la suppression",
     "policyForbids": "La règle de conservation n’autorise pas la suppression",
@@ -192,7 +192,7 @@
   },
   "retention": {
     "title": "Règles de conservation",
-    "subtitle": "Durée de conservation de chaque type d’enregistrement archivé, et possibilité de le restaurer ou de le supprimer.",
+    "subtitle": "Durée de conservation de chaque type d’enregistrement archivé, et possibilité de le restaurer ou de le supprimer. Les changements ne sont appliqués qu’après « Enregistrer les modifications ».",
     "loading": "Chargement des règles de conservation…",
     "loadError": "Les règles de conservation n’ont pas pu être chargées",
     "empty": "Aucune règle de conservation définie.",
@@ -209,6 +209,32 @@
       "purgeMode": "Suppression",
       "allowRestore": "Restauration autorisée",
       "allowPurge": "Suppression autorisée"
+    },
+    "yearsInvalid": "Indiquez un nombre entier d’années (0 ou plus).",
+    "pending_one": "{{count}} règle modifiée, pas encore enregistrée.",
+    "pending_other": "{{count}} règles modifiées, pas encore enregistrées.",
+    "save": "Enregistrer les modifications",
+    "cancel": "Annuler les modifications",
+    "unsaved": {
+      "title": "Quitter sans enregistrer ?",
+      "description": "Les modifications des règles de conservation seront perdues.",
+      "confirm": "Quitter sans enregistrer"
+    },
+    "warn": {
+      "title": "Confirmer ces changements ?",
+      "description": "Certains changements peuvent faire perdre des données ou empêcher de les récupérer :",
+      "confirm": "Enregistrer quand même",
+      "shorter": "{{name}} : conservé {{to}} ans au lieu de {{from}}. Les enregistrements plus anciens pourront être supprimés.",
+      "noRestore": "{{name}} : les enregistrements archivés ne pourront plus être restaurés.",
+      "purge": "{{name}} : la suppression définitive devient possible. Elle est irréversible.",
+      "scheduled": "{{name}} : les enregistrements seront supprimés automatiquement à la fin de leur durée de conservation, sans approbation."
     }
+  },
+  "classHint": {
+    "operational_history": "OT, DI et autres dossiers clôturés, retirés des listes courantes.",
+    "soft_delete": "Ce qu’un utilisateur a supprimé, gardé pour pouvoir le récupérer.",
+    "audit_retention": "Les actions enregistrées pour l’audit (connexions, validations, modifications).",
+    "config_snapshot": "Une copie des réglages prise avant chaque modification importante.",
+    "report_copy": "Les rapports produits et enregistrés."
   }
 }

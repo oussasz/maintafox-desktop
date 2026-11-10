@@ -9,6 +9,7 @@ use crate::notifications::emitter::{
     emit_device_event_with, emit_event_with as emit_notification_event_with, NotificationEventInput,
     NotificationMessage,
 };
+use crate::pm::access::{occurrence_view_filter, plan_access_node_sql, plan_view_filter};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
@@ -412,6 +413,7 @@ fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
         asset_name: row.try_get("", "asset_name")?,
         asset_scope_label: row.try_get("", "asset_scope_label")?,
         source_decision_to_review: row.try_get("", "source_decision_to_review")?,
+        access_node_id: row.try_get("", "access_node_id")?,
     })
 }
 
@@ -440,9 +442,21 @@ fn decode_pm_plan_version_row(row: &sea_orm::QueryResult) -> AppResult<PmPlanVer
     })
 }
 
-pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> AppResult<Vec<PmPlan>> {
-    let rows = db.query_all(Statement::from_string(DbBackend::Sqlite,
-        "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
+pub async fn list_pm_plans(db: &DatabaseConnection, filter: PmPlanFilter) -> AppResult<Vec<PmPlan>> {
+    list_pm_plans_scoped(db, filter, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`list_pm_plans`] limited to the plans a reader holding `pm.view` in `scope` sees
+/// (`pm::access::plan_view_filter`: their sites, and every family / criticality-group plan).
+pub async fn list_pm_plans_scoped(
+    db: &DatabaseConnection,
+    _filter: PmPlanFilter,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<Vec<PmPlan>> {
+    let node_sql = plan_access_node_sql("p");
+    let visible = plan_view_filter(scope, "p");
+    let rows = db.query_all(Statement::from_sql_and_values(DbBackend::Sqlite,
+        format!("SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
                 p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
                 tm.code AS assigned_team_code, tm.name AS assigned_team_name,
                 CASE
@@ -461,18 +475,21 @@ pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> Ap
                            AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
                                             WHERE d.id = cv.source_id AND d.status = 'applied'
                                               AND d.linked_pm_plan_version_id = cv.id
-                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review,
+                {node_sql} AS access_node_id
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
          LEFT JOIN equipment eq ON eq.id = p.asset_scope_id AND p.asset_scope_type = 'equipment'
-         ORDER BY p.code".to_string())).await?;
+         WHERE {}
+         ORDER BY p.code", visible.predicate), visible.binds)).await?;
     rows.iter().map(decode_pm_plan_row).collect()
 }
 
 pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<PmPlan> {
+    let node_sql = plan_access_node_sql("p");
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
+        format!("SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
                 p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
                 tm.code AS assigned_team_code, tm.name AS assigned_team_name,
                 CASE
@@ -491,12 +508,13 @@ pub async fn get_pm_plan(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<P
                            AND NOT EXISTS (SELECT 1 FROM reliability_study_decisions d
                                             WHERE d.id = cv.source_id AND d.status = 'applied'
                                               AND d.linked_pm_plan_version_id = cv.id
-                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review
+                                              AND d.sync_refused_at IS NULL)) AS source_decision_to_review,
+                {node_sql} AS access_node_id
          FROM pm_plans p
          LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
          LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
          LEFT JOIN equipment eq ON eq.id = p.asset_scope_id AND p.asset_scope_type = 'equipment'
-         WHERE p.id = ?", [plan_id.into()])).await?
+         WHERE p.id = ?"), [plan_id.into()])).await?
         .ok_or_else(|| AppError::NotFound{entity:"pm_plan".to_string(), id:plan_id.to_string()})?;
     decode_pm_plan_row(&row)
 }
@@ -552,6 +570,29 @@ pub async fn update_pm_plan(
     expected_row_version: i64,
     input: UpdatePmPlanInput,
 ) -> AppResult<PmPlan> {
+    update_pm_plan_recorded(db, plan_id, expected_row_version, input, None, None).await
+}
+
+fn anchor_changed_elsewhere() -> AppError {
+    AppError::ValidationFailed(vec![
+        "GATE_RECORD_CHANGED_ELSEWHERE: the plan's site changed since its rights were checked (its equipment moved); reload and try again."
+            .to_string(),
+    ])
+}
+
+/// [`update_pm_plan`] after `pm::access::check_plan_update`: inside the transaction the plan's
+/// anchor before and after the update is derived again and must be the one checked (else
+/// refused: its equipment moved in between), and a site change is recorded in the audit trail by
+/// `actor_id`, naming the plan by its sync id (a draft plan can be deleted later; the audit must
+/// not depend on the row). The change and its record are kept or rolled back together.
+pub async fn update_pm_plan_recorded(
+    db: &DatabaseConnection,
+    plan_id: i64,
+    expected_row_version: i64,
+    input: UpdatePmPlanInput,
+    checked: Option<&crate::pm::access::PlanUpdateCheck>,
+    actor_id: Option<i32>,
+) -> AppResult<PmPlan> {
     let current = get_pm_plan(db, plan_id).await?;
     if current.row_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![
@@ -571,6 +612,11 @@ pub async fn update_pm_plan(
         crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
     }
     let tx = db.begin().await?;
+    if let Some(checked) = checked {
+        if crate::pm::access::plan_anchor(&tx, plan_id).await? != checked.old_anchor {
+            return Err(anchor_changed_elsewhere());
+        }
+    }
     let result = tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_team_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id=? AND row_version=?",
@@ -579,6 +625,29 @@ pub async fn update_pm_plan(
         return Err(AppError::ValidationFailed(vec![
             "GATE_RECORD_CHANGED_ELSEWHERE: PM plan update failed.".to_string(),
         ]));
+    }
+    if let Some(checked) = checked {
+        if crate::pm::access::plan_anchor(&tx, plan_id).await? != checked.new_anchor {
+            return Err(anchor_changed_elsewhere());
+        }
+        if let Some(site_move) = checked.site_move.as_ref() {
+            let plan_sync_id = crate::sync::identity::optional_entity_sync_id(&tx, "pm_plans", plan_id)
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm plan {plan_id} has no sync id")))?;
+            crate::audit::emit_in(
+                &tx,
+                crate::audit::AuditEvent {
+                    event_type: crate::pm::access::AUDIT_ACTION_SITE_CHANGED,
+                    actor_id,
+                    entity_type: Some("pm_plan"),
+                    entity_id: Some(plan_sync_id.as_str()),
+                    summary: "PM plan moved to another site",
+                    detail_json: Some(site_move.details_json()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
     }
     tx.commit().await?;
     get_pm_plan(db, plan_id).await
@@ -607,9 +676,14 @@ pub async fn transition_pm_plan_lifecycle(
         ]));
     }
     let tx = db.begin().await?;
-    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+    let result = tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [next.into(), input.plan_id.into(), input.expected_row_version.into()])).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_RECORD_CHANGED_ELSEWHERE: PM lifecycle transition failed (the plan changed meanwhile).".to_string(),
+        ]));
+    }
     tx.commit().await?;
     get_pm_plan(db, input.plan_id).await
 }
@@ -1099,15 +1173,27 @@ pub(crate) async fn occurrence_sync_id(
 }
 
 pub async fn list_pm_occurrences(db: &DatabaseConnection, filter: PmOccurrenceFilter) -> AppResult<Vec<PmOccurrence>> {
+    list_pm_occurrences_scoped(db, filter, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`list_pm_occurrences`] limited to the occurrences of the plans a reader holding `pm.view` in
+/// `scope` sees (`pm::access::occurrence_view_filter`).
+pub async fn list_pm_occurrences_scoped(
+    db: &DatabaseConnection,
+    filter: PmOccurrenceFilter,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<Vec<PmOccurrence>> {
+    let visible = occurrence_view_filter(scope);
     let mut sql = format!(
         "SELECT {OCCURRENCE_COLUMNS}
          FROM pm_occurrences po
          JOIN pm_plans pp ON pp.id = po.pm_plan_id
          LEFT JOIN equipment eq ON eq.id = {OCCURRENCE_ASSET}
          LEFT JOIN work_orders wo ON wo.id = po.linked_work_order_id
-         WHERE 1 = 1",
+         WHERE {}",
+        visible.predicate
     );
-    let mut binds: Vec<sea_orm::Value> = Vec::new();
+    let mut binds: Vec<sea_orm::Value> = visible.binds;
 
     if let Some(pm_plan_id) = filter.pm_plan_id {
         sql.push_str(" AND po.pm_plan_id = ?");
@@ -1163,12 +1249,27 @@ pub const PM_DUE_NEXT_7D_SQL: &str = "po.status NOT IN ('completed','cancelled',
      AND po.due_at IS NOT NULL AND po.due_at >= ? AND po.due_at <= datetime(?, '+7 days')";
 
 pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetrics> {
+    get_pm_due_metrics_scoped(db, &crate::auth::scope::AccessScope::Everywhere).await
+}
+
+/// [`get_pm_due_metrics`] counting only the occurrences of the plans a reader holding `pm.view` in
+/// `scope` sees (`pm::access::occurrence_view_filter`).
+pub async fn get_pm_due_metrics_scoped(
+    db: &DatabaseConnection,
+    scope: &crate::auth::scope::AccessScope,
+) -> AppResult<PmDueMetrics> {
     let as_of = now_rfc3339();
+    let visible = occurrence_view_filter(scope);
+    let vp = &visible.predicate;
+    let with = |mut binds: Vec<sea_orm::Value>| {
+        binds.extend(visible.binds.iter().cloned());
+        binds
+    };
     let overdue_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_OVERDUE_SQL}"),
-            [as_of.clone().into()],
+            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_OVERDUE_SQL} AND {vp}"),
+            with(vec![as_of.clone().into()]),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm overdue metric row missing")))?;
@@ -1177,11 +1278,13 @@ pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetri
     let due_today_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences
-             WHERE status NOT IN ('completed','cancelled','missed')
-               AND due_at IS NOT NULL
-               AND date(due_at) = date('now')",
-            [],
+            format!(
+                "SELECT COUNT(*) AS cnt FROM pm_occurrences po
+                 WHERE po.status NOT IN ('completed','cancelled','missed')
+                   AND po.due_at IS NOT NULL
+                   AND date(po.due_at) = date('now') AND {vp}"
+            ),
+            with(Vec::new()),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm due today metric row missing")))?;
@@ -1190,8 +1293,8 @@ pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetri
     let due_next_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_DUE_NEXT_7D_SQL}"),
-            [as_of.clone().into(), as_of.clone().into()],
+            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE {PM_DUE_NEXT_7D_SQL} AND {vp}"),
+            with(vec![as_of.clone().into(), as_of.clone().into()]),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm due next metric row missing")))?;
@@ -1200,8 +1303,8 @@ pub async fn get_pm_due_metrics(db: &DatabaseConnection) -> AppResult<PmDueMetri
     let ready_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM pm_occurrences WHERE status = 'ready_for_scheduling'",
-            [],
+            format!("SELECT COUNT(*) AS cnt FROM pm_occurrences po WHERE po.status = 'ready_for_scheduling' AND {vp}"),
+            with(Vec::new()),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm ready metric row missing")))?;

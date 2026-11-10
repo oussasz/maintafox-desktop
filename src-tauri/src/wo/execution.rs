@@ -22,7 +22,10 @@ pub struct WoPlanInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
-    pub planner_id: i64,
+    /// The planner named; `None` (or `0`) keeps the recorded one, an empty one staying empty
+    /// ("planificateur à désigner", CMMS Advisor 2026-11-06 option b).
+    #[serde(default)]
+    pub planner_id: Option<i64>,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
     /// Old fixed shift code: refused; use `shift_class_version_id` (`wo::shifts`).
@@ -221,7 +224,7 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
             wo_id: input.wo_id,
             actor_id: input.actor_id,
             expected_row_version: input.expected_row_version,
-            planner_id: Some(input.planner_id),
+            planner_id: input.planner_id.filter(|&id| id > 0),
             planned_start: input.planned_start,
             planned_end: input.planned_end,
             shift: input.shift,

@@ -157,6 +157,8 @@
     },
     "filters": {
       "scopeNotClosed": "Pas encore clôturés",
+      "planner": "Planificateur",
+      "plannerToName": "Planificateur à désigner",
       "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
       "completed": "Terminés sur la période",
@@ -299,6 +301,8 @@
     "save": "Enregistrer la planification",
     "endBeforeStart": "La date de fin doit être après la date de début",
     "plannerId": "Planificateur",
+    "plannerToName": "planificateur à désigner",
+    "plannerRightRequired": "Seul un approbateur ou un planificateur peut choisir le planificateur de l'OT.",
     "plannedStart": "Début prévu",
     "plannedEnd": "Fin prévue",
     "selectShift": "Sélectionner le poste",
@@ -400,6 +404,8 @@
       "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
       "createRequisition": "Créer une demande d'achat",
       "requisitionCreated": "Demande d'achat créée",
+      "requisitionInProgress": "Demande d'achat {{number}} déjà en cours",
+      "requisitionCreatedNumber": "Demande d'achat {{number}} créée",
       "columns": {
         "article": "Article",
         "requested": "Demandé",

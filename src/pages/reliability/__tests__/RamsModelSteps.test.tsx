@@ -252,7 +252,7 @@ describe("StudyFmecaStep", () => {
       if (cmd === "get_reliability_study_fmeca") return fmeca;
       throw new Error(`unexpected ${cmd}`);
     });
-    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
     await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
     const picker = screen.getByRole("combobox", { name: /Equipment/ });
 
@@ -280,7 +280,7 @@ describe("StudyFmecaStep", () => {
       throw new Error(`unexpected ${cmd}`);
     });
     const onGoRcm = vi.fn();
-    render(<StudyFmecaStep study={study} editable onGoRcm={onGoRcm} />);
+    render(<StudyFmecaStep study={study} onGoRcm={onGoRcm} />);
 
     const table = await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
     const row = within(table).getByText("Drive-end bearing").closest("tr");
@@ -352,7 +352,7 @@ describe("StudyFmecaStep", () => {
         return { ...fmeca, rows: [...fmeca.rows, placeholder], rows_to_review: 1 };
       throw new Error(`unexpected ${cmd}`);
     });
-    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
     const table = await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
     const row = within(table).getByText("Coupling").closest("tr");
     if (!row) throw new Error("placeholder row missing");
@@ -367,7 +367,7 @@ describe("StudyFmecaStep", () => {
       if (cmd === "save_reliability_study_fmeca_item") return fmeca;
       throw new Error(`unexpected ${cmd}`);
     });
-    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "promote cause" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/Cause: Loose bolt/)).toBeInTheDocument();
@@ -394,13 +394,31 @@ describe("StudyFmecaStep", () => {
     );
   });
 
+  it("keeps 'Add another mode' visible but disabled, with the right it needs, and says it is read-only (L2-24)", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_study_fmeca") return fmeca;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    deniedRights = [P.RAM_ANALYZE];
+    try {
+      render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
+      await screen.findByRole("table", { name: /FMECA: Centrifugal pump/ });
+      const add = screen.getByRole("button", { name: "Add another mode" });
+      expect(add).toBeDisabled();
+      expect(add).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      expect(screen.getAllByRole("note")[0]).toHaveTextContent(/^Read-only: /);
+    } finally {
+      deniedRights = [];
+    }
+  });
+
   it("marks an analyst override when the proposed occurrence is changed", async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_reliability_study_fmeca") return fmeca;
       if (cmd === "save_reliability_study_fmeca_item") return fmeca;
       throw new Error(`unexpected ${cmd}`);
     });
-    render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit row Bearing seizure" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Occurrence"), { target: { value: "3" } });
@@ -492,7 +510,7 @@ describe("substitute FMECA grids", () => {
         return { ...rcm, grids_review: "former_grids_unreadable" };
       throw new Error(`unexpected ${cmd}`);
     });
-    const { unmount } = render(<StudyFmecaStep study={study} editable onGoRcm={() => undefined} />);
+    const { unmount } = render(<StudyFmecaStep study={study} onGoRcm={() => undefined} />);
     expect(
       await screen.findByText("Maintafox grids in place, plant grids to review"),
     ).toBeInTheDocument();
@@ -1062,6 +1080,25 @@ describe("StudyDecisionsStep", () => {
     expect(
       within(row).queryByText("You proposed it: another person approves."),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps 'Record a decision' visible but disabled and notes that approving needs ram.manage (L2-24)", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_reliability_study_decisions")
+        return [decision({ id: 1, title: "Interval", status: "proposed" })];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    deniedRights = [P.RAM_ANALYZE, P.RAM_MANAGE];
+    try {
+      render(<StudyDecisionsStep study={study} version={0} onRecord={() => undefined} />);
+      await screen.findByText("Interval");
+      const record = screen.getByRole("button", { name: "Record a decision" });
+      expect(record).toBeDisabled();
+      expect(record).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      expect(screen.getByRole("note")).toHaveTextContent(/^Read-only: /);
+    } finally {
+      deniedRights = [];
+    }
   });
 
   it("offers Apply only with the right of the module it writes in (AU-85)", async () => {

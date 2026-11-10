@@ -238,7 +238,7 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                planner_id: actor,
+                planner_id: Some(actor),
                 planned_start: Some("2026-04-10T08:00:00Z".to_string()),
                 planned_end: Some("2026-04-10T12:00:00Z".to_string()),
                 shift: None,

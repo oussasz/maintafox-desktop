@@ -22,6 +22,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{PmComplianceInput, PmComplianceReport};
 use crate::pm::schedule::{classify_timing, compliance_pct, rfc3339, time_window, OccurrenceWindow};
+use crate::wo::access::ScopeSql;
 
 fn parse(ts: &str, field: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(ts)
@@ -61,6 +62,21 @@ pub async fn compliance_between_for_criticality(
     scope: ComplianceScope,
     criticality_code: Option<&str>,
 ) -> AppResult<PmComplianceReport> {
+    compliance_between_visible(db, from, to, now, scope, criticality_code, &ScopeSql::everywhere()).await
+}
+
+/// [`compliance_between_for_criticality`] counting only the occurrences matching `visible` (an SQL
+/// predicate on the occurrence alias `po`: `pm::access::occurrence_view_filter`, the PM reader's
+/// sites).
+pub async fn compliance_between_visible(
+    db: &impl ConnectionTrait,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    now: DateTime<Utc>,
+    scope: ComplianceScope,
+    criticality_code: Option<&str>,
+    visible: &ScopeSql,
+) -> AppResult<PmComplianceReport> {
     let upper = to.min(now);
     // Timestamps are normalised to RFC3339 in SQL (rows written by SQLite defaults use another form).
     let mut sql = String::from(
@@ -86,6 +102,9 @@ pub async fn compliance_between_for_criticality(
            AND datetime(po.due_at) >= datetime(?) AND datetime(po.due_at) < datetime(?)",
     );
     let mut binds: Vec<sea_orm::Value> = vec![rfc3339(from).into(), rfc3339(upper).into()];
+    sql.push_str(" AND ");
+    sql.push_str(&visible.predicate);
+    binds.extend(visible.binds.iter().cloned());
     if let Some(plan_id) = scope.pm_plan_id {
         sql.push_str(" AND po.pm_plan_id = ?");
         binds.push(plan_id.into());
@@ -163,6 +182,16 @@ pub async fn compliance_between_for_criticality(
 
 /// IPC entry point (PM page): the period given, judged now.
 pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInput) -> AppResult<PmComplianceReport> {
+    get_pm_compliance_visible(db, input, &ScopeSql::everywhere()).await
+}
+
+/// [`get_pm_compliance`] counting only the occurrences matching `visible` (see
+/// [`compliance_between_visible`]).
+pub async fn get_pm_compliance_visible(
+    db: &impl ConnectionTrait,
+    input: PmComplianceInput,
+    visible: &ScopeSql,
+) -> AppResult<PmComplianceReport> {
     let from = parse(&input.from, "from")?;
     let to = parse(&input.to, "to")?;
     if to <= from {
@@ -170,7 +199,7 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
             "GATE_PM_PERIOD_ORDER: to must be after from.".to_string(),
         ]));
     }
-    compliance_between(
+    compliance_between_visible(
         db,
         from,
         to,
@@ -179,6 +208,8 @@ pub async fn get_pm_compliance(db: &impl ConnectionTrait, input: PmComplianceInp
             pm_plan_id: input.pm_plan_id,
             org_node_id: None,
         },
+        None,
+        visible,
     )
     .await
 }

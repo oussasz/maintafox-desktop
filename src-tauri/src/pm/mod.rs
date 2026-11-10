@@ -1,5 +1,6 @@
 //! Preventive Maintenance bounded context (PRD §6.9).
 
+pub mod access;
 pub mod compliance;
 pub mod domain;
 pub mod duplicate;
@@ -13,6 +14,8 @@ pub mod scheduler;
 pub mod version_clash;
 pub mod wo_content;
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod benchmark_tests;
 #[cfg(test)]

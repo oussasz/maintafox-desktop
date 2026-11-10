@@ -14,6 +14,7 @@ import {
   EquipmentSearchSelect,
   type EquipmentSearchOption,
 } from "@/components/assets/EquipmentSearchSelect";
+import { assetFormDisabledReasonKey } from "@/components/assets/asset-form-reason";
 import { isRetiredStatus } from "@/components/assets/asset-tones";
 import {
   EntityFormCollapsible,
@@ -310,6 +311,12 @@ export function AssetCreateForm() {
 
   const watchedOrgNode = watch("org_node_id");
   const busy = saving || uploadingPhotos;
+  const disabledReasonKey = assetFormDisabledReasonKey({
+    saving,
+    photosBusy: uploadingPhotos,
+    catalogReady,
+    catalogFailed: referenceCatalogError != null,
+  });
 
   return (
     <EntityFormDialog
@@ -330,6 +337,7 @@ export function AssetCreateForm() {
           onCancel={requestCancel}
           cancelDisabled={busy}
           primaryDisabled={!catalogReady}
+          primaryDisabledReason={disabledReasonKey ? t(disabledReasonKey) : undefined}
           primaryLoading={busy}
         />
       }

@@ -4,7 +4,7 @@
  * and the reason before saving, and the schedule editor checks its fields.
  */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import enInspections from "@/i18n/locale-data/en/inspections.json";
@@ -169,7 +169,59 @@ beforeEach(() => {
   svc.listInspectionReliabilitySignals.mockResolvedValue([]);
 });
 
+function SearchProbe() {
+  const { search } = useLocation();
+  return <p data-testid="search">{search}</p>;
+}
+
 describe("InspectionsPage", () => {
+  it("applies the tab and filters found in the address", async () => {
+    render(
+      <MemoryRouter initialEntries={["/inspections?status=completed&timing=overdue"]}>
+        <InspectionsPage />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(svc.listInspectionRoundPage).toHaveBeenCalledWith(
+        expect.objectContaining({ statuses: ["completed"], overdue_only: true }),
+      ),
+    );
+  });
+
+  it("opens the anomalies tab from the address", async () => {
+    render(
+      <MemoryRouter initialEntries={["/inspections?tab=anomalies&anomaly=all"]}>
+        <InspectionsPage />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(svc.listInspectionAnomalyRows).toHaveBeenCalledWith(
+        expect.objectContaining({ statuses: null }),
+      ),
+    );
+  });
+
+  it("writes the filters to the address when a figure opens its list", async () => {
+    render(
+      <MemoryRouter>
+        <InspectionsPage />
+        <SearchProbe />
+      </MemoryRouter>,
+    );
+    const tiles = await screen.findByTestId("inspection-kpis");
+    await waitFor(() =>
+      expect(within(tiles).getByRole("button", { name: /^Overdue: 2/ })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(tiles).getByRole("button", { name: /^Overdue: 2/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("search").textContent).toBe("?status=all&timing=overdue"),
+    );
+    fireEvent.click(within(tiles).getByRole("button", { name: /^Open anomalies: 3/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("search").textContent).toContain("tab=anomalies"),
+    );
+  });
+
   it("shows the figures and opens the list behind each tile", async () => {
     render(
       <MemoryRouter>

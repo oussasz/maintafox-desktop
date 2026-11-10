@@ -11,6 +11,7 @@ pub mod delay;
 pub mod depannage;
 pub mod domain;
 pub mod execution;
+pub mod execution_actor;
 pub mod execution_log;
 pub mod labor;
 pub mod lifecycle;
@@ -44,6 +45,8 @@ mod closeout_sync_tests;
 mod closeout_tests;
 #[cfg(test)]
 mod depannage_tests;
+#[cfg(test)]
+mod execution_actor_tests;
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]

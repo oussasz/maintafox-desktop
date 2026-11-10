@@ -15,6 +15,10 @@ vi.mock("react-i18next", async () => (await import("./pm-test-i18n")).pmI18nMock
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
 }));
+// Every right at the plan's site (the site gating is tested in `pm-site-scope.test.tsx`).
+vi.mock("@/hooks/use-access-at", () => ({
+  useAccessAt: () => ({ loading: false, can: () => true }),
+}));
 vi.mock("@/services/reference-service", () => ({
   listPublishedReferenceValuesByDomainCode: vi
     .fn()
@@ -282,6 +286,19 @@ describe("PmPlanDetailDialog", () => {
     expect(screen.getByText("Findings with a follow-up")).toBeInTheDocument();
     expect(screen.getByText("Effort variance")).toBeInTheDocument();
     expect(screen.queryByText(/Compliance:/)).not.toBeInTheDocument();
+  });
+
+  it("shows Retour only when the plan was opened from another screen", () => {
+    const onBackToOrigin = vi.fn();
+    const props = renderDialog({ onBackToOrigin });
+    fireEvent.click(screen.getByRole("button", { name: "action.back" }));
+    expect(onBackToOrigin).toHaveBeenCalledTimes(1);
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows no Retour on a plan opened from the list", () => {
+    renderDialog();
+    expect(screen.queryByRole("button", { name: "action.back" })).toBeNull();
   });
 
   it("shows a detail load failure with a retry", () => {

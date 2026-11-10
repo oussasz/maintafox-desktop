@@ -316,9 +316,14 @@ async fn location_plan_fans_out_one_occurrence_per_asset() {
         },
     )
     .await;
-    let preview = crate::pm::plan_tools::preview_pm_scope_assets(&db, "location", 1)
-        .await
-        .expect("preview");
+    let preview = crate::pm::plan_tools::preview_pm_scope_assets(
+        &db,
+        "location",
+        1,
+        &crate::auth::scope::AccessScope::Everywhere,
+    )
+    .await
+    .expect("preview");
     assert_eq!(
         preview.iter().map(|a| a.asset_code.as_str()).collect::<Vec<_>>(),
         vec!["CMP-01", "CMP-02"],

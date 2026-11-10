@@ -53,6 +53,7 @@ import type { KanbanCard, KanbanColumn } from "@/components/kanban";
 import { type ViewOption, ViewToggle } from "@/components/layout/ModuleHeaderControls";
 import { KpiTile } from "@/components/metrics/KpiTile";
 import { Timeline } from "@/components/timeline";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -1963,6 +1964,45 @@ export const ProcurementRepairablePanel = forwardRef<
     </div>
   );
 
+  // Why the main button of a dialog is grey (first missing item, in the order of the form).
+  const disabledText = (key: string | null) => (key ? t(`procurement.disabled.${key}`) : null);
+  const rejectBlockerKey = saving ? "saving" : !rejectReason.trim() ? "rejectReason" : null;
+  const poBlockerKey = saving
+    ? "saving"
+    : poDialogReqId <= 0 || !approvedRequisitions.some((r) => r.id === poDialogReqId)
+      ? "poRequisition"
+      : null;
+  const repairBlockerKey = saving
+    ? "saving"
+    : repairArticleId <= 0
+      ? "repairArticle"
+      : repairSourceLocationId <= 0
+        ? "repairSource"
+        : repairQty <= 0
+          ? "repairQty"
+          : null;
+  const supplierBlockerKey = saving
+    ? "saving"
+    : !supplierForm.code.trim()
+      ? "supplierCode"
+      : !supplierForm.name.trim()
+        ? "supplierName"
+        : null;
+  const priceBlockerKey = saving
+    ? "saving"
+    : priceFormArticleId <= 0
+      ? "priceArticle"
+      : !priceFormUnitPrice
+        ? "priceUnit"
+        : null;
+  const docLinkBlockerKey = saving
+    ? "saving"
+    : !docLinkFormRef.trim()
+      ? "docRef"
+      : !docLinkFormPurpose
+        ? "docPurpose"
+        : null;
+
   const reqLinesBlocker = requisitionLinesBlocker(reqDraftLines);
   const reqFormBlocker = reqLinesBlocker
     ? t(`procurement.requisitionForm.blockers.${reqLinesBlocker}`)
@@ -3293,6 +3333,9 @@ export const ProcurementRepairablePanel = forwardRef<
               placeholder={t("procurement.requisitions.reject.reasonPlaceholder")}
             />
           </div>
+          <ActionReason className="text-right" data-testid="inv-reject-reason-blocker">
+            {disabledText(rejectBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
@@ -3305,7 +3348,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               variant="destructive"
               className="h-11"
-              disabled={saving || !rejectReason.trim()}
+              disabled={rejectBlockerKey !== null}
               onClick={() => void rejectSelectedRequisition()}
             >
               {t("procurement.requisitions.reject.confirm")}
@@ -3493,6 +3536,9 @@ export const ProcurementRepairablePanel = forwardRef<
               <p className="text-xs text-text-muted">{t("procurement.poForm.currencyHint")}</p>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-po-blocker">
+            {disabledText(poBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               type="button"
@@ -3505,11 +3551,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               type="button"
               className="h-11"
-              disabled={
-                saving ||
-                poDialogReqId <= 0 ||
-                !approvedRequisitions.some((r) => r.id === poDialogReqId)
-              }
+              disabled={poBlockerKey !== null}
               onClick={() =>
                 void (async () => {
                   const created = { id: null as number | null };
@@ -3703,6 +3745,9 @@ export const ProcurementRepairablePanel = forwardRef<
               )}
             </div>
           ) : null}
+          <ActionReason className="text-right" data-testid="inv-repair-blocker">
+            {disabledText(repairBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button
               type="button"
@@ -3715,9 +3760,7 @@ export const ProcurementRepairablePanel = forwardRef<
             <Button
               type="button"
               className="h-11"
-              disabled={
-                saving || repairArticleId <= 0 || repairSourceLocationId <= 0 || repairQty <= 0
-              }
+              disabled={repairBlockerKey !== null}
               onClick={() =>
                 void (async () => {
                   const ok = await runSaving(async () => {
@@ -3851,13 +3894,16 @@ export const ProcurementRepairablePanel = forwardRef<
               <Label htmlFor="supplier-active">{t("procurement.suppliers.fields.active")}</Label>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-supplier-blocker">
+            {disabledText(supplierBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setSupplierEditOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || !supplierForm.code.trim() || !supplierForm.name.trim()}
+              disabled={supplierBlockerKey !== null}
               onClick={() => void saveSupplierForm()}
             >
               {t("common:action.save")}
@@ -3932,13 +3978,16 @@ export const ProcurementRepairablePanel = forwardRef<
               />
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-price-blocker">
+            {disabledText(priceBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setPriceFormOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || priceFormArticleId <= 0 || !priceFormUnitPrice}
+              disabled={priceBlockerKey !== null}
               onClick={() => void savePriceForm()}
             >
               {t("common:action.save")}
@@ -4016,13 +4065,16 @@ export const ProcurementRepairablePanel = forwardRef<
               </Label>
             </div>
           </div>
+          <ActionReason className="text-right" data-testid="inv-doclink-blocker">
+            {disabledText(docLinkBlockerKey)}
+          </ActionReason>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="h-11" onClick={() => setDocLinkFormOpen(false)}>
               {t("common:action.cancel")}
             </Button>
             <Button
               className="h-11"
-              disabled={saving || !docLinkFormRef.trim() || !docLinkFormPurpose}
+              disabled={docLinkBlockerKey !== null}
               onClick={() => void saveDocLinkForm()}
             >
               {t("common:action.save")}

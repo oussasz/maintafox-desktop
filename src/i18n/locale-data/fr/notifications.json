@@ -1,10 +1,26 @@
 {
   "bell": {
     "title": "Notifications",
-    "aria": "Notifications ({{count}} non lues)",
+    "aria": "Notifications ({{count}} à voir)",
     "unread": "{{count}} non lue(s)",
     "toAcknowledge": "{{count}} à acquitter",
-    "openInbox": "Ouvrir la boîte de réception"
+    "openInbox": "Ouvrir la boîte de réception",
+    "alerts": {
+      "aria": "Points à surveiller",
+      "heading": "À surveiller",
+      "lateWorkOrders": {
+        "title_one": "{{count}} OT en retard",
+        "title_other": "{{count}} OT en retard",
+        "body": "Leur fin prévue est dépassée et ils ne sont pas terminés.",
+        "action": "Ouvrir les OT en retard"
+      },
+      "overdueRequests": {
+        "title_one": "{{count}} demande hors délai",
+        "title_other": "{{count}} demandes hors délai",
+        "body": "Le délai de prise en charge ou de traitement est dépassé.",
+        "action": "Ouvrir les demandes hors délai ou en risque"
+      }
+    }
   },
   "page": {
     "title": "Notifications",
@@ -84,6 +100,12 @@
     "ackRequired": "À acquitter",
     "snoozedUntil": "Reportée jusqu'au {{when}}",
     "groupByObject": "Regrouper par fiche",
+    "syncGroup": {
+      "title_one": "{{count}} conflit de synchronisation à examiner",
+      "title_other": "{{count}} conflits de synchronisation à examiner",
+      "body": "Deux postes ont modifié la même information : choisissez la bonne version.",
+      "action": "Ouvrir la synchronisation"
+    },
     "groupCount_one": "({{count}} notification)",
     "groupCount_other": "({{count}} notifications)",
     "actions": {
@@ -192,6 +214,7 @@
     "permit_ended_under_work": "Permis terminé sur un autre poste pendant ou avant le travail",
     "wo_permit_rule_missing": "OT reçu démarré sans sa règle de permis de l'usine",
     "insp_anomaly_origin_cancelled": "Anomalie d'inspection d'origine annulée",
+    "di_safety_alert": "Signalement sécurité sur une demande",
     "rel_decision_refused_wo_kept": "Décision de fiabilité refusée à la synchronisation, OT ou version de plan conservés",
     "mobile_phone_enrolled": "Téléphone enrôlé",
     "stock_to_reconcile": "Stock à rapprocher après synchronisation",
@@ -242,7 +265,7 @@
     },
     "sync_conflict": {
       "title": "Conflit de synchronisation à examiner",
-      "body": "{{entity_type}} · {{conflict_type}} · depuis le {{created_at}}"
+      "body": "Deux postes ont modifié la même information : ouvrez la synchronisation pour choisir la bonne version. Depuis le {{created_at}}."
     },
     "di_pending_review": {
       "title": "Demande {{code}} à examiner",
@@ -326,6 +349,10 @@
     "loto_forced_removal": {
       "title": "Retrait forcé d’un cadenas : {{point}} (permis {{permit}})",
       "body": "{{authorised_by}} a autorisé {{removed_by}} à retirer le cadenas de {{worker}}, absent, le {{removed_at}} — motif : {{reason}}. Le travailleur doit en être informé (Permis de travail › retraits forcés à suivre)."
+    },
+    "di_safety_alert": {
+      "title": "Signalement sécurité : {{code}}",
+      "body": "La demande {{code}} « {{title}} » ({{equipment}}, {{site}}) signale un danger pour la sécurité. Traitez-la en priorité."
     },
     "insp_anomaly_origin_cancelled": {
       "title": "Anomalie d'origine annulée : {{code}}",
@@ -509,6 +536,7 @@
       "permit_suspended_work_held": "Toujours le responsable de l’OT lié au permis ; s’il n’en a pas, les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "permit_ended_under_work": "Toujours le responsable de l’OT lié au permis et les personnes qui détiennent le droit de clôture des permis sur le site du permis.",
       "wo_permit_rule_missing": "Toujours les personnes qui détiennent le droit d’émission des permis sur le site de l’OT (et sur toute l’usine) ; si personne ne le détient, les administrateurs des paramètres.",
+      "di_safety_alert": "Toujours les personnes qui détiennent le droit de revue des demandes (di.review) et le droit d’émission des permis (ptw.issue) sur le site de la demande (et sur toute l’usine) ; si personne ne les détient, les responsables du nœud de la demande.",
       "insp_anomaly_origin_cancelled": "Toujours le responsable de l’OT issu de l’anomalie (ou de l’OT issu de sa demande) ; s’il n’y en a pas, le planificateur de l’OT et le valideur de la demande (à défaut, les responsables de son nœud).",
       "rel_decision_refused_wo_kept": "Toujours le planificateur de l’OT créé à partir de la décision (à défaut son responsable), ou les personnes qui détiennent le droit de planification préventive (pm.edit) pour une version de plan publiée, et la personne qui a proposé la décision ; si personne n’est actif ici, les personnes qui détiennent le droit d’approuver les décisions de fiabilité (ram.manage).",
       "mobile_phone_enrolled": "Toujours les personnes qui détiennent le droit de gérer les utilisateurs (adm.users).",

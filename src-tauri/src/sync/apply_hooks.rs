@@ -79,7 +79,9 @@
 //!   protects its work orders not started yet (origin, permit required, a clearing withdrawn); a
 //!   work order new here received without the column and already started takes that origin; a
 //!   protected work order required again but still carrying its clearing ends protected
-//!   (`after_received_work_order`, recorded in its history and audit trail);
+//!   (`after_received_work_order`, recorded in its history and audit trail); a request received
+//!   flagged raises its safety alert here once (`settings::received_notice::announce_di_safety_alert`,
+//!   not for the plant history of a first join);
 //! - `work_orders` changing status (or new here): applied with its waiting reservations, tasks,
 //!   failure coding, labour, parts, downtime, tools, verifications and status changes; entering
 //!   `completed` or `closed`, then judged by the local completion and close gates on the written
@@ -846,6 +848,19 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "request not found after apply"))?;
             crate::wo::workflow::actions::permit_requirement::raise_work_orders_of_safety_request(conn, id, None)
                 .await?;
+            // Received flagged: its safety alert is raised here, once per request on this PC (the
+            // key is looked for first; CMMS Advisor decision on L4-11). Only while it is open (a
+            // closed or converted request raises nothing: `announce_di_safety_alert`), and not for
+            // plant history: a request new here received by the snapshot of this PC's first join.
+            let first_join_history = match row {
+                RowLocator::Identity(sync_id) if inserted => {
+                    crate::sync::plant_join::first_join_snapshot_row(conn, "intervention_requests", sync_id).await?
+                }
+                _ => false,
+            };
+            if !first_join_history {
+                crate::settings::received_notice::announce_di_safety_alert(conn, id).await;
+            }
             // Open on retired equipment here, or no longer: its review item (AU-73b).
             crate::wo::retired_equipment_review::reconcile_request_in(conn, id).await
         }

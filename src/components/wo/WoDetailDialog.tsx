@@ -56,11 +56,13 @@ import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
 } from "@/components/wo/WoExecutionControls";
+import { WoPartsRequisitionEntry } from "@/components/wo/WoPartsRequisitionEntry";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { WoResumeDialog } from "@/components/wo/WoResumeDialog";
 import { WoShutdownBadge } from "@/components/wo/WoShutdownRequirementField";
 import { WoNoSiteBadge, useWoAccess } from "@/components/wo/WoSiteScope";
+import { useWoExecutionStanding } from "@/components/wo/use-wo-execution-standing";
 import { useWoTypeLabels } from "@/components/wo/use-wo-type-labels";
 import { formatWoShift } from "@/components/wo/wo-shift-label";
 import { useFormatters } from "@/hooks/use-formatters";
@@ -86,6 +88,8 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
 
 const CLOSEOUT_VISIBLE: Set<string> = new Set(["in_progress", "on_hold", "completed", "closed"]);
 const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+/** Statuses whose footer offers execution steps (start, hold, resume, complete). */
+const FOOTER_EXECUTION_STATES = new Set(["ready", "in_progress", "on_hold"]);
 const ATTACHMENT_UPLOAD_DENY = new Set(["closed", "cancelled"]);
 
 interface WoDetailDialogProps {
@@ -113,6 +117,18 @@ export function WoDetailDialog({
   // The actions offered are the user's rights at this work order's site (its org node), not
   // anywhere in the plant; the backend checks the same and stays the authority.
   const { can } = useWoAccess(wo);
+  // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
+  const execution = useWoExecutionStanding(wo);
+  // The reason under the footer: the execution steps (start … complete) where they are offered,
+  // else cancelling only (which the creator of a draft keeps).
+  const footerStatus = wo?.status_code ?? "";
+  const footerExecutionReason = !can(P.OT_EDIT)
+    ? null
+    : FOOTER_EXECUTION_STATES.has(footerStatus)
+      ? execution.blocker
+      : CANCELLABLE_DENY.has(footerStatus)
+        ? null
+        : execution.cancelBlocker;
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
@@ -362,7 +378,11 @@ export function WoDetailDialog({
                 />
                 <InfoRow
                   label={t("detail.fields.planner")}
-                  value={wo.planner_display_name ?? wo.planner_username ?? "—"}
+                  value={
+                    wo.planner_display_name ??
+                    wo.planner_username ??
+                    (wo.planner_id == null ? t("planning.plannerToName") : "—")
+                  }
                 />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
@@ -439,6 +459,12 @@ export function WoDetailDialog({
 
             <WoCostPanel woId={wo.id} status={wo.status_code ?? "draft"} />
 
+            {/* "Créer une demande d'achat" (L6-11): on the sheet itself; on the Plan tab of an order in
+                planning the planning panel already shows the same block. */}
+            {!(activeTab === "plan" && wo.status_code === "planning") && (
+              <WoPartsRequisitionEntry woId={wo.id} statusCode={wo.status_code ?? ""} />
+            )}
+
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">
                 <TabsTrigger value="plan" className="gap-1.5 text-xs">
@@ -513,6 +539,12 @@ export function WoDetailDialog({
               </ul>
             </div>
           )}
+          {/* Said once, under the actions it greys: open work orders only. */}
+          {footerExecutionReason ? (
+            <p id="wo-execution-blocker" className="px-6 pt-3 text-xs text-text-muted">
+              {footerExecutionReason}
+            </p>
+          ) : null}
           {/* Single footer action line */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3">
             <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
@@ -524,6 +556,8 @@ export function WoDetailDialog({
                 wo={wo}
                 busy={footerBusy}
                 can={can}
+                executionBlocker={execution.blocker}
+                cancelBlocker={execution.cancelBlocker}
                 t={t}
                 needsApproval={
                   lifecycle.readinessReport
@@ -601,6 +635,10 @@ interface FooterActionsProps {
   wo: WorkOrder;
   busy: boolean;
   can: (p: PermissionName) => boolean;
+  /** Why the execution actions (start, hold, resume, complete) are greyed; null when open. */
+  executionBlocker: string | null;
+  /** Why cancelling is greyed (the creator of a draft cancels it); null when open. */
+  cancelBlocker: string | null;
   t: (key: string) => string;
   needsApproval: boolean;
   onEdit: () => void;
@@ -619,6 +657,8 @@ function FooterActions({
   wo,
   busy,
   can,
+  executionBlocker,
+  cancelBlocker,
   t,
   needsApproval,
   onEdit,
@@ -687,7 +727,14 @@ function FooterActions({
             <RotateCcw className="h-3.5 w-3.5" />
             {t("planning.returnToPlanning")}
           </Button>
-          <Button size="sm" onClick={onStart} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={onStart}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Play className="h-3.5 w-3.5" />
             {t("action.start")}
           </Button>
@@ -696,11 +743,26 @@ function FooterActions({
 
       {s === "in_progress" && can(P.OT_EDIT) && (
         <>
-          <Button size="sm" variant="outline" onClick={onHold} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onHold}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <Pause className="h-3.5 w-3.5" />
             {t("action.hold")}
           </Button>
-          <Button size="sm" onClick={onComplete} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={onComplete}
+            disabled={busy || executionBlocker !== null}
+            title={executionBlocker ?? undefined}
+            aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+            className="gap-1.5"
+          >
             <CheckCircle2 className="h-3.5 w-3.5" />
             {t("action.complete")}
           </Button>
@@ -708,7 +770,14 @@ function FooterActions({
       )}
 
       {s === "on_hold" && can(P.OT_EDIT) && (
-        <Button size="sm" onClick={onResume} disabled={busy} className="gap-1.5">
+        <Button
+          size="sm"
+          onClick={onResume}
+          disabled={busy || executionBlocker !== null}
+          title={executionBlocker ?? undefined}
+          aria-describedby={executionBlocker ? "wo-execution-blocker" : undefined}
+          className="gap-1.5"
+        >
           <Play className="h-3.5 w-3.5" />
           {t("footer.resume")}
         </Button>
@@ -719,7 +788,9 @@ function FooterActions({
           size="sm"
           variant="outline"
           onClick={onCancel}
-          disabled={busy}
+          disabled={busy || cancelBlocker !== null}
+          title={cancelBlocker ?? undefined}
+          aria-describedby={cancelBlocker ? "wo-execution-blocker" : undefined}
           className="gap-1.5 text-destructive"
         >
           <XCircle className="h-3.5 w-3.5" />

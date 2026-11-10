@@ -7,7 +7,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { PermissionGate } from "@/components/PermissionGate";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import {
   DecisionDialog,
@@ -22,15 +21,17 @@ import { StudySystemStep } from "@/components/reliability/study/StudySystemStep"
 import {
   RAMS_FILTER_LABEL,
   RAMS_SELECT_CLASS,
+  RamsReadOnlyNote,
   dayToIso,
   isoDay,
+  useRamsRight,
 } from "@/components/reliability/study/rams-ui";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { DateField } from "@/components/ui/date-field";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
-import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { listFailureCodes, listFailureHierarchies } from "@/services/reliability-service";
 import {
@@ -122,7 +123,10 @@ function StudyDateField({
 
 export function RamsStudyPage() {
   const { t } = useTranslation("reliability");
+  const { t: tc } = useTranslation("common");
   const navigate = useNavigate();
+  // Opened from another screen (the fleet, a link): "Retour" goes back there, filters intact.
+  const [cameFromScreen] = useState(hasScreenToReturnTo);
   const { studyId: raw } = useParams();
   const studyId = Number(raw);
   const [params, setParams] = useSearchParams();
@@ -130,7 +134,7 @@ export function RamsStudyPage() {
   const step: StudyStep = (STUDY_STEPS as readonly string[]).includes(stepParam ?? "")
     ? (stepParam as StudyStep)
     : "data";
-  const { can } = usePermissions();
+  const { can, reasonFor } = useRamsRight();
   const canAnalyze = can(P.RAM_ANALYZE);
   const [dataset, setDataset] = useState<StudyDataset | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -228,9 +232,13 @@ export function RamsStudyPage() {
     <ModulePageShell
       headerLeft={
         <div className="flex min-w-0 items-center gap-3">
-          <Button variant="outline" className="h-11" onClick={() => navigate("/reliability")}>
+          <Button
+            variant="outline"
+            className="h-11"
+            onClick={() => (cameFromScreen ? navigate(-1) : navigate("/reliability"))}
+          >
             <ArrowLeft className="h-4 w-4" aria-hidden />
-            {t("rams.study.back")}
+            {cameFromScreen ? tc("action.back") : t("rams.study.back")}
           </Button>
           <h1 className={cn(mfLayout.moduleTitle, "truncate")}>
             {study ? t("rams.study.title", { title: study.title }) : t("rams.title")}
@@ -249,16 +257,16 @@ export function RamsStudyPage() {
               </Button>
             ) : null}
             {!archived ? (
-              <PermissionGate permission={P.RAM_ANALYZE}>
-                <Button
-                  variant={step === "data" ? "outline" : "default"}
-                  className={step === "data" ? "h-11" : mfLayout.primaryAction}
-                  onClick={() => openDecision(null)}
-                >
-                  <ClipboardCheck className="h-4 w-4" aria-hidden />
-                  {t("rams.study.recordDecision")}
-                </Button>
-              </PermissionGate>
+              <Button
+                variant={step === "data" ? "outline" : "default"}
+                className={step === "data" ? "h-11" : mfLayout.primaryAction}
+                disabled={!canAnalyze}
+                title={reasonFor(P.RAM_ANALYZE)}
+                onClick={() => openDecision(null)}
+              >
+                <ClipboardCheck className="h-4 w-4" aria-hidden />
+                {t("rams.study.recordDecision")}
+              </Button>
             ) : null}
           </>
         ) : null
@@ -382,6 +390,7 @@ export function RamsStudyPage() {
             {toCheck > 0 ? (
               <StatusChip tone="warning" dot label={t("rams.study.toCheck", { count: toCheck })} />
             ) : null}
+            {!canAnalyze ? <RamsReadOnlyNote right={P.RAM_ANALYZE} /> : null}
           </div>
         ) : null
       }
@@ -476,11 +485,7 @@ export function RamsStudyPage() {
               />
             ) : null}
             {step === "fmeca" ? (
-              <StudyFmecaStep
-                study={dataset.study}
-                editable={editable}
-                onGoRcm={() => goStep("rcm")}
-              />
+              <StudyFmecaStep study={dataset.study} onGoRcm={() => goStep("rcm")} />
             ) : null}
             {step === "rcm" ? (
               <StudyRcmStep

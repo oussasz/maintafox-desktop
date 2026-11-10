@@ -9,6 +9,12 @@
 pub mod cost_centre;
 #[cfg(test)]
 mod cost_centre_tests;
+pub mod equipment_meter;
+#[cfg(test)]
+mod equipment_meter_tests;
+pub mod equipment_spare_part;
+#[cfg(test)]
+mod equipment_spare_part_tests;
 pub mod org_tree;
 #[cfg(test)]
 mod org_tree_tests;
@@ -16,6 +22,24 @@ pub mod personnel_certification;
 pub mod personnel_skill;
 #[cfg(test)]
 mod personnel_skill_tests;
+pub mod pm_plan;
+#[cfg(test)]
+mod pm_plan_tests;
+pub mod pm_task;
+#[cfg(test)]
+mod pm_task_tests;
+pub mod stock_article;
+#[cfg(test)]
+mod stock_article_tests;
+pub mod stock_opening;
+#[cfg(test)]
+mod stock_opening_tests;
+pub mod stock_store;
+#[cfg(test)]
+mod stock_store_tests;
+pub mod stock_supplier;
+#[cfg(test)]
+mod stock_supplier_tests;
 pub mod team;
 pub mod team_member;
 #[cfg(test)]
@@ -61,6 +85,15 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &team_member::SPEC,
     &personnel_skill::SPEC,
     &personnel_certification::SPEC,
+    &equipment_meter::SPEC,
+    &stock_store::STORE_SPEC,
+    &stock_store::LOCATION_SPEC,
+    &stock_supplier::SPEC,
+    &stock_article::SPEC,
+    &stock_opening::SPEC,
+    &equipment_spare_part::SPEC,
+    &pm_plan::SPEC,
+    &pm_task::SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -480,6 +513,7 @@ async fn validate(
     db: &DatabaseConnection,
     entity: &str,
     rows: &[HashMap<String, String>],
+    user_id: Option<i64>,
 ) -> AppResult<Vec<RowOutcome>> {
     match entity {
         "org_tree" => org_tree::validate(db, rows).await,
@@ -488,6 +522,15 @@ async fn validate(
         "team_member" => team_member::validate(db, rows).await,
         "personnel_skill" => personnel_skill::validate(db, rows).await,
         "personnel_certification" => personnel_certification::validate(db, rows).await,
+        "equipment_meter" => equipment_meter::validate(db, rows).await,
+        "stock_store" => stock_store::validate_stores(db, rows).await,
+        "stock_location" => stock_store::validate_locations(db, rows).await,
+        "stock_supplier" => stock_supplier::validate(db, rows).await,
+        "stock_article" => stock_article::validate(db, rows).await,
+        "stock_opening" => stock_opening::validate(db, rows).await,
+        "equipment_spare_part" => equipment_spare_part::validate(db, rows).await,
+        "pm_plan" => pm_plan::validate(db, rows, user_id).await,
+        "pm_task" => pm_task::validate(db, rows, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -507,7 +550,7 @@ pub async fn create_batch(
             "Le fichier ne contient aucune ligne à importer.",
         ));
     }
-    let outcomes = validate(db, spec.code, &rows).await?;
+    let outcomes = validate(db, spec.code, &rows, user_id).await?;
 
     let now = crate::clock::now().to_rfc3339();
     let (mut valid, mut warn, mut err) = (0i64, 0i64, 0i64);
@@ -685,6 +728,15 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "team_member" => team_member::apply(db, &todo, user_id).await,
         "personnel_skill" => personnel_skill::apply(db, &todo).await,
         "personnel_certification" => personnel_certification::apply(db, &todo).await,
+        "equipment_meter" => equipment_meter::apply(db, &todo, user_id).await,
+        "stock_store" => stock_store::apply_stores(db, &todo).await,
+        "stock_location" => stock_store::apply_locations(db, &todo).await,
+        "stock_supplier" => stock_supplier::apply(db, &todo).await,
+        "stock_article" => stock_article::apply(db, &todo).await,
+        "stock_opening" => stock_opening::apply(db, &todo, user_id).await,
+        "equipment_spare_part" => equipment_spare_part::apply(db, &todo, user_id).await,
+        "pm_plan" => pm_plan::apply(db, &todo, user_id).await,
+        "pm_task" => pm_task::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -803,6 +855,15 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "team_member" => team_member::export(db).await?,
         "personnel_skill" => personnel_skill::export(db).await?,
         "personnel_certification" => personnel_certification::export(db).await?,
+        "equipment_meter" => equipment_meter::export(db).await?,
+        "stock_store" => stock_store::export_stores(db).await?,
+        "stock_location" => stock_store::export_locations(db).await?,
+        "stock_supplier" => stock_supplier::export(db).await?,
+        "stock_article" => stock_article::export(db).await?,
+        "stock_opening" => stock_opening::export(db).await?,
+        "equipment_spare_part" => equipment_spare_part::export(db).await?,
+        "pm_plan" => pm_plan::export(db).await?,
+        "pm_task" => pm_task::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {

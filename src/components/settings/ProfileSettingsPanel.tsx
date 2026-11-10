@@ -36,7 +36,10 @@ import {
   revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
-import { intlLocaleForLanguage } from "@/utils/format-date";
+import {
+  formatDate as formatLocalDate,
+  formatDateTime as formatLocalDateTime,
+} from "@/utils/formatters";
 import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
@@ -51,11 +54,7 @@ import type {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatLocalDate(iso, i18n.language);
 }
 
 function formatDuration(seconds: number | null): string {
@@ -986,14 +985,7 @@ function TrustedDevicesDialog({
     }
   };
 
-  const formatDeviceDate = (iso: string) =>
-    new Date(iso).toLocaleDateString(intlLocaleForLanguage(i18n.language), {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const formatDeviceDate = (iso: string) => formatLocalDateTime(iso, i18n.language);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

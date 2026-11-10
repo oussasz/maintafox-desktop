@@ -9,12 +9,17 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { BreakInSignerFields, signatureMissing } from "@/components/planning/BreakInSignerFields";
+import {
+  BreakInSignerFields,
+  breakInDisabledReasonKey,
+  signatureMissing,
+} from "@/components/planning/BreakInSignerFields";
 import {
   breakInReasonLabel,
   isUrgentBreakInReason,
   useBreakInReasons,
 } from "@/components/planning/break-in-reasons";
+import { ActionReason } from "@/components/ui/action-reason";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,6 +75,13 @@ export function FrozenWeekBreakInDialog({
 
   const urgent = isUrgentBreakInReason(reasons.find((r) => r.code === reason));
   const evidenceMissing = signatureMissing(urgent, approverUserId, approverPassword);
+  const disabledReasonKey = breakInDisabledReasonKey({
+    hasTarget: reason !== "",
+    targetKey: "breakIns.disabled.noReason",
+    required: urgent,
+    approverUserId,
+    password: approverPassword,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -121,6 +133,9 @@ export function FrozenWeekBreakInDialog({
             />
           </div>
         </div>
+        <ActionReason className="text-right" data-testid="frozen-week-disabled-reason">
+          {disabledReasonKey ? t(disabledReasonKey) : null}
+        </ActionReason>
         <DialogFooter>
           <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             {t("dialogs.cancel")}

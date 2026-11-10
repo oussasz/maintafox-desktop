@@ -206,6 +206,9 @@ pub(super) fn action(iso: &PermitIsolation) -> PermitIsolationActionInput {
         isolation_id: iso.id,
         expected_row_version: iso.row_version,
         lock_number: None,
+        // The verifier's zero-energy test (L4-13); ignored by the other actions.
+        zero_energy_confirmed: Some(true),
+        zero_energy_note: Some("Essai de démarrage refusé, VAT 0 V".into()),
     }
 }
 
@@ -897,6 +900,54 @@ async fn verify_requires_application_first() {
     );
 }
 
+/// L4-13: an isolation is verified only with the zero-energy test confirmed and its measure or
+/// observation recorded (trimmed, not blank, bounded), kept with the verifier and the time.
+#[tokio::test]
+async fn verify_requires_the_zero_energy_test_with_a_comment() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-PTW-21Z").await;
+    let wp = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let iso = add_isolation(&db, wp.id, "Motor M-7 isolator").await;
+    let applied = queries::apply_permit_isolation(&db, action(&iso), APPLIER)
+        .await
+        .expect("apply");
+    let with = |confirmed: Option<bool>, note: Option<&str>| PermitIsolationActionInput {
+        zero_energy_confirmed: confirmed,
+        zero_energy_note: note.map(str::to_string),
+        ..action(&applied)
+    };
+    for (confirmed, note) in [(None, Some("VAT 0 V")), (Some(false), Some("VAT 0 V"))] {
+        assert_validation(
+            queries::verify_permit_isolation(&db, with(confirmed, note), VERIFIER).await,
+            "PERMIT_ZERO_ENERGY_NOT_CONFIRMED",
+        );
+    }
+    let too_long = "x".repeat(crate::permit::domain::MAX_ZERO_ENERGY_NOTE_CHARS + 1);
+    for note in [None, Some("   "), Some(too_long.as_str())] {
+        assert_validation(
+            queries::verify_permit_isolation(&db, with(Some(true), note), VERIFIER).await,
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+        );
+    }
+    let still = queries::list_permit_isolations(&db, wp.id).await.expect("list");
+    assert!(
+        still.iter().all(|i| i.verified_at.is_none()),
+        "nothing verified by a refusal"
+    );
+    let verified = queries::verify_permit_isolation(
+        &db,
+        with(Some(true), Some("  Essai de démarrage refusé, VAT 0 V  ")),
+        VERIFIER,
+    )
+    .await
+    .expect("verified with the test");
+    assert_eq!(verified.verified_by_id, Some(VERIFIER));
+    assert_eq!(
+        verified.zero_energy_note.as_deref(),
+        Some("Essai de démarrage refusé, VAT 0 V")
+    );
+}
+
 #[tokio::test]
 async fn applied_isolation_cannot_be_edited() {
     let db = setup().await;
@@ -1061,7 +1112,7 @@ pub(super) async fn assigned_wo_requiring_permit(db: &DatabaseConnection, asset_
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some("2026-04-10T08:00:00Z".into()),
             planned_end: Some("2026-04-10T16:00:00Z".into()),
             shift: None,

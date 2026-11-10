@@ -18,7 +18,7 @@
       "saveLayout": "Save layout",
       "cancel": "Cancel",
       "widgetsSection": "Blocks shown",
-      "reliabilityHint": "Pooled fleet figures from reliability snapshots over the last {{days}} days (limited to the selected organization). Changes compare with the previous {{days}} days.",
+      "reliabilityHint": "Live calculation on the failures, {{period}} (limited to the selected organization): the same calculation as the RAMS home. Changes compare with the previous period of the same length. Snapshots and sample size: series from the reliability snapshots refreshed in the period.",
       "vsPrior": "vs prior",
       "pmEmpty": "No open PM due-queue in this scope.",
       "sections": {
@@ -33,6 +33,7 @@
         "days7": "7 days",
         "days30": "30 days",
         "days90": "90 days",
+        "months12": "12 months",
         "orgScope": "Organization",
         "allOrgs": "All organizations"
       },
@@ -48,12 +49,8 @@
         "pmOverdue": "PM overdue",
         "pmDueToday": "PM due today",
         "pmDueNext7d": "PM due next 7 days",
-        "mtbf": "Fleet MTBF (h)",
-        "mttr": "Fleet MTTR (h)",
-        "availability": "Fleet operational availability (A_o)",
-        "dataQuality": "Avg data quality",
+        "sampleSize": "Sample size",
         "snapshots": "Assets with snapshots",
-        "failureEvents": "Failure events",
         "maintenanceCost": "Settled work-order cost"
       },
       "badActors": {
@@ -74,6 +71,7 @@
         "today": "Today",
         "next7": "Next 7 days",
         "horizon": "Last {{days}} days",
+        "snapshots": "{{period}} · series from the snapshots",
         "inService": "Registered, not deleted",
         "overdue": "Requests open > 7 days + overdue PM + overdue work orders",
         "costSettled": "Booked to the budget by Finance, last {{days}} days",

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IshikawaDiagramCanvas } from "@/components/reliability/IshikawaDiagramCanvas";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Stable like the real hook (the diagram reloads when `t` changes).
 const i18nMock = vi.hoisted(() => ({
@@ -9,6 +10,14 @@ const i18nMock = vi.hoisted(() => ({
   i18n: { language: "fr" },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => i18nMock }));
+let deniedRights: string[] = [];
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
+}));
 vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 1 } }) }));
 
 const svc = vi.hoisted(() => ({
@@ -23,6 +32,7 @@ vi.mock("@/services/wo-service", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deniedRights = [];
 });
 
 describe("IshikawaDiagramCanvas", () => {
@@ -43,5 +53,25 @@ describe("IshikawaDiagramCanvas", () => {
     expect(await screen.findByText("governance.unreadable")).toBeInTheDocument();
     expect(screen.queryByText("governance.save")).not.toBeInTheDocument();
     expect(svc.upsertRamIshikawaDiagram).not.toHaveBeenCalled();
+  });
+
+  it("disables adding a cause and saving, with the right they need, for someone without ram.manage (L2-24)", async () => {
+    svc.listRamIshikawaDiagrams.mockResolvedValueOnce([]);
+    deniedRights = [P.RAM_MANAGE];
+    render(<IshikawaDiagramCanvas equipmentId={10} />);
+    const save = await screen.findByRole("button", { name: "governance.save" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute("title", expect.stringMatching(/^rams\.rights\.required/));
+    const add = screen.getAllByRole("button", { name: /governance\.addCause/ });
+    expect(add.length).toBeGreaterThan(0);
+    for (const b of add) expect(b).toBeDisabled();
+    expect(screen.getByRole("note")).toHaveTextContent("rams.rights.readOnly");
+  });
+
+  it("leaves the buttons enabled with ram.manage", async () => {
+    svc.listRamIshikawaDiagrams.mockResolvedValueOnce([]);
+    render(<IshikawaDiagramCanvas equipmentId={10} />);
+    expect(await screen.findByRole("button", { name: "governance.save" })).toBeEnabled();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 });
