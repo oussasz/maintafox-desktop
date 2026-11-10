@@ -25,6 +25,9 @@ mod personnel_skill_tests;
 pub mod pm_plan;
 #[cfg(test)]
 mod pm_plan_tests;
+pub mod pm_task;
+#[cfg(test)]
+mod pm_task_tests;
 pub mod stock_article;
 #[cfg(test)]
 mod stock_article_tests;
@@ -90,6 +93,7 @@ pub const ENTITIES: &[&EntitySpec] = &[
     &stock_opening::SPEC,
     &equipment_spare_part::SPEC,
     &pm_plan::SPEC,
+    &pm_task::SPEC,
 ];
 
 pub fn spec(entity: &str) -> AppResult<&'static EntitySpec> {
@@ -526,6 +530,7 @@ async fn validate(
         "stock_opening" => stock_opening::validate(db, rows).await,
         "equipment_spare_part" => equipment_spare_part::validate(db, rows).await,
         "pm_plan" => pm_plan::validate(db, rows, user_id).await,
+        "pm_task" => pm_task::validate(db, rows, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     }
 }
@@ -731,6 +736,7 @@ pub async fn apply_batch(db: &DatabaseConnection, batch_id: i64, user_id: i32) -
         "stock_opening" => stock_opening::apply(db, &todo, user_id).await,
         "equipment_spare_part" => equipment_spare_part::apply(db, &todo, user_id).await,
         "pm_plan" => pm_plan::apply(db, &todo, user_id).await,
+        "pm_task" => pm_task::apply(db, &todo, user_id).await,
         _ => Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     let results = match applied {
@@ -857,6 +863,7 @@ pub async fn export(db: &DatabaseConnection, entity: &str) -> AppResult<ExportTa
         "stock_opening" => stock_opening::export(db).await?,
         "equipment_spare_part" => equipment_spare_part::export(db).await?,
         "pm_plan" => pm_plan::export(db).await?,
+        "pm_task" => pm_task::export(db).await?,
         _ => return Err(gate("GATE_BULK_IMPORT_ENTITY", "Ce type d'import n'existe pas.")),
     };
     Ok(ExportTable {

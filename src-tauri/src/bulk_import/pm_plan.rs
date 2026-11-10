@@ -146,20 +146,20 @@ const MAX_INTERVAL: f64 = 10_000.0;
 /// Largest tolerance of a file line, in days.
 const MAX_TOLERANCE_DAYS: f64 = 365.0;
 
-fn cell(raw: &HashMap<String, String>, field: &str) -> String {
+pub(super) fn cell(raw: &HashMap<String, String>, field: &str) -> String {
     raw.get(field).map(|s| s.trim().to_string()).unwrap_or_default()
 }
 
-fn has_error(messages: &[RowMessage]) -> bool {
+pub(super) fn has_error(messages: &[RowMessage]) -> bool {
     messages.iter().any(|m| m.severity == "error")
 }
 
-fn err(messages: &mut Vec<RowMessage>, code: &str, text: impl Into<String>) {
+pub(super) fn err(messages: &mut Vec<RowMessage>, code: &str, text: impl Into<String>) {
     messages.push(RowMessage::error(code, text));
 }
 
 /// The rights of the user now (a fresh cache, so a role changed a moment ago counts).
-async fn access_of(db: &DatabaseConnection, user_id: i64) -> AppResult<AccessMap> {
+pub(super) async fn access_of(db: &DatabaseConnection, user_id: i64) -> AppResult<AccessMap> {
     let user_id = i32::try_from(user_id).map_err(|_| AppError::Internal(anyhow::anyhow!("user id out of range")))?;
     let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
     crate::auth::scope::access_map_cached(db, &cache, user_id).await
