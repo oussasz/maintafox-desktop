@@ -78,6 +78,8 @@ import {
 interface InspectionRunnerProps {
   roundId: number;
   onClose: () => void;
+  /** True when the round was opened from another screen: "Retour" goes back to that screen. */
+  backToOrigin?: boolean;
   /** Called after any change so lists can refresh their counts. */
   onChanged?: () => void;
 }
@@ -128,8 +130,14 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
-export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunnerProps) {
+export function InspectionRunner({
+  roundId,
+  onClose,
+  backToOrigin,
+  onChanged,
+}: InspectionRunnerProps) {
   const { t } = useTranslation("inspections");
+  const { t: tc } = useTranslation("common");
   const { formatNumber } = useFormatters();
   const { can, canAny } = usePermissions();
   const [runner, setRunner] = useState<InspectionRoundRunner | null>(null);
@@ -363,7 +371,7 @@ export function InspectionRunner({ roundId, onClose, onChanged }: InspectionRunn
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" className="h-12" onClick={onClose}>
           <ArrowLeft className="mr-2 h-5 w-5" aria-hidden />
-          {t("runner.back")}
+          {backToOrigin ? tc("action.back") : t("runner.back")}
         </Button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-lg font-semibold text-text-primary">

@@ -8,7 +8,7 @@
 import { CalendarPlus, ClipboardCheck, Loader2, Plus, RefreshCcw } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -39,6 +39,7 @@ import {
 } from "@/components/inspections/inspection-rules";
 import { FilterToggleButton, RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
@@ -61,6 +62,9 @@ export function InspectionsPage() {
   const { t } = useTranslation("inspections");
   const { can } = usePermissions();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open round came from a link on another screen: "Retour" goes back there.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const [tab, setTab] = useState<Tab>("rounds");
   const [openRoundId, setOpenRoundId] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -94,7 +98,10 @@ export function InspectionsPage() {
     const raw = searchParams.get("openRound");
     if (!raw) return;
     const id = Number.parseInt(raw, 10);
-    if (!Number.isNaN(id)) setOpenRoundId(id);
+    if (!Number.isNaN(id)) {
+      setOpenRoundId(id);
+      setOpenedFromLink(hasScreenToReturnTo());
+    }
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -303,9 +310,14 @@ export function InspectionsPage() {
       {openRoundId != null ? (
         <InspectionRunner
           roundId={openRoundId}
+          backToOrigin={openedFromLink}
           onClose={() => {
             setOpenRoundId(null);
             bump();
+            if (openedFromLink) {
+              setOpenedFromLink(false);
+              void navigate(-1);
+            }
           }}
           onChanged={bump}
         />

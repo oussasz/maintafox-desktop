@@ -288,6 +288,19 @@ describe("PmPlanDetailDialog", () => {
     expect(screen.queryByText(/Compliance:/)).not.toBeInTheDocument();
   });
 
+  it("shows Retour only when the plan was opened from another screen", () => {
+    const onBackToOrigin = vi.fn();
+    const props = renderDialog({ onBackToOrigin });
+    fireEvent.click(screen.getByRole("button", { name: "action.back" }));
+    expect(onBackToOrigin).toHaveBeenCalledTimes(1);
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows no Retour on a plan opened from the list", () => {
+    renderDialog();
+    expect(screen.queryByRole("button", { name: "action.back" })).toBeNull();
+  });
+
   it("shows a detail load failure with a retry", () => {
     const props = renderDialog({ detailError: { code: "DB_ERROR", message: "boom" } });
     fireEvent.click(screen.getByRole("button", { name: /retry|ds\./i }));
