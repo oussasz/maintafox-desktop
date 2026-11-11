@@ -56,6 +56,7 @@ import {
   InspectionFollowUpDialog,
 } from "./InspectionFollowUpDialog";
 import { InspectionRoundReview } from "./InspectionRoundReview";
+import { PointTrendToggle } from "./PointTrendChart";
 import {
   MAX_PHOTO_MB,
   NOT_PERFORMED,
@@ -712,6 +713,12 @@ export function InspectionRunner({
             numeric={isNumeric}
             unit={cp.measurement_unit}
           />
+          {isNumeric ? (
+            <PointTrendToggle
+              templateId={runner.summary.round.template_id}
+              checkpointCode={cp.checkpoint_code}
+            />
+          ) : null}
 
           {notice ? (
             <p role="status" className="flex items-center gap-2 text-sm text-tone-success-fg">
