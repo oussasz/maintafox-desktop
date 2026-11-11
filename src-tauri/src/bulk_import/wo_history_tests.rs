@@ -6,7 +6,7 @@ mod tests {
 
     use crate::auth::scope_tests::{assign, role, tree, user, Tree};
     use crate::bulk_import::{self, CreateInput};
-    use crate::rbac::permissions::{OT_CREATE, OT_VIEW};
+    use crate::rbac::permissions::{OT_CREATE, OT_EDIT, OT_VIEW};
 
     const HEADER: &str = "n° OT d'origine;code équipement;nature;défaillance;date de début des travaux;\
                           date de fin des travaux;date de détection de la panne;date d'arrêt équipement;\
@@ -237,5 +237,192 @@ mod tests {
             ("skip".to_string(), vec!["HISTORY_IMPORT_SITE_RIGHT".to_string()])
         );
         assert_eq!((res.created, res.failed), (1, 0));
+    }
+
+    async fn id_of(db: &DatabaseConnection, sql: &str) -> i64 {
+        db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get("", "id")
+            .expect("id")
+    }
+
+    async fn access(db: &DatabaseConnection, user_id: i32) -> crate::auth::scope::AccessMap {
+        let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
+        crate::auth::scope::access_map_cached(db, &cache, user_id)
+            .await
+            .expect("access map")
+    }
+
+    /// One imported failure on EQ-A: labour 8 000 + parts 12 000, mode BRG. (record, equipment)
+    async fn one_failure(db: &DatabaseConnection, n: &str) -> (i64, i64) {
+        let file = format!(
+            "{HEADER}\n\
+             OT-9;EQ-A;{n};oui;10/03/2025 08:00;10/03/2025 12:00;;10/03/2025 07:00;10/03/2025 13:00;6;BRG;;;;;\
+             Bruit palier;Remplacement roulement;4;8000;12000;0;\n"
+        );
+        let (_, res) = run(db, &file, 1).await;
+        assert_eq!((res.created, res.failed), (1, 0));
+        let record = id_of(db, "SELECT id FROM wo_history_records WHERE import_ref = 'OT-9'").await;
+        let equipment = id_of(db, "SELECT id FROM equipment WHERE asset_id_code = 'EQ-A'").await;
+        (record, equipment)
+    }
+
+    #[tokio::test]
+    async fn imported_history_counts_in_the_cost_and_the_history_of_its_equipment() {
+        let (db, _, n) = setup().await;
+        let (record, equipment) = one_failure(&db, &n).await;
+
+        let costs = crate::finance::asset_costs::list_asset_cost_history(
+            &db,
+            crate::finance::asset_costs::AssetCostFilter {
+                search: Some("EQ-A".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("asset costs");
+        let row = costs
+            .rows
+            .iter()
+            .find(|r| r.equipment_id == equipment)
+            .expect("EQ-A has a cost");
+        assert_eq!(row.lifetime_cost, 20000.0);
+        assert_eq!(row.lifetime_labor, 8000.0);
+        assert_eq!(row.lifetime_parts, 12000.0);
+        assert_eq!(row.closed_work_orders, 1);
+        assert_eq!(row.last_closed_at.as_deref(), Some("2025-03-10T12:00:00Z"));
+
+        let profile = crate::assets::maintenance_profile::get_asset_maintenance_profile(
+            &db,
+            equipment,
+            false,
+            crate::clock::now(),
+        )
+        .await
+        .expect("profile");
+        assert_eq!(profile.work_order_count, 1);
+        assert_eq!(profile.failure_work_order_count, 1);
+        assert_eq!(profile.downtime_hours, 6.0);
+        assert_eq!(profile.cost_lifetime.total, 20000.0);
+        assert_eq!(profile.last_failure_at.as_deref(), Some("2025-03-10T07:00:00Z"));
+
+        let events = crate::assets::history::list_asset_history_events(
+            &db,
+            crate::assets::history::AssetHistoryQuery {
+                asset_id: equipment,
+                event_types: Some(vec!["history_imported".into()]),
+                period: None,
+                search: None,
+                limit: None,
+                offset: None,
+            },
+        )
+        .await
+        .expect("history");
+        assert_eq!(events.len(), 1);
+        let ev = &events[0];
+        assert_eq!(ev.occurred_at, "2025-03-10T12:00:00Z");
+        let r = ev.r#ref.as_ref().expect("ref");
+        assert_eq!((r.entity_type.as_str(), r.entity_id), ("history_record", Some(record)));
+        assert_eq!(ev.metadata["row_version"], serde_json::json!(1));
+        assert_eq!(ev.metadata["total_cost"], serde_json::json!(20000.0));
+        assert!(ev.metadata["failure_mode_id"].is_number());
+    }
+
+    #[tokio::test]
+    async fn failure_coding_of_imported_history_is_editable_at_the_equipment_site_only() {
+        use crate::bulk_import::wo_history::{check_coding_right, save_coding, HistoryCodingInput};
+
+        let (db, t, n) = setup().await;
+        let (record, _) = one_failure(&db, &n).await;
+        crate::wo::closeout_reference_catalog::ensure_value(
+            &db,
+            "WORK.FAILURE_MODES",
+            "SEAL",
+            "Étanchéité",
+            None,
+            None,
+            91,
+        )
+        .await
+        .expect("failure mode");
+        let seal = id_of(
+            &db,
+            "SELECT rv.id FROM reference_values rv JOIN reference_sets rs ON rs.id = rv.set_id \
+             JOIN reference_domains rd ON rd.id = rs.domain_id \
+             WHERE rd.code = 'WORK.FAILURE_MODES' AND rv.code = 'SEAL'",
+        )
+        .await;
+        let nature_id = id_of(
+            &db,
+            "SELECT type_id AS id FROM wo_history_records WHERE import_ref = 'OT-9'",
+        )
+        .await;
+
+        // The edit right on site B only: not on a record of site A.
+        let edit_role = role(&db, "History coding", &[OT_VIEW, OT_EDIT]).await;
+        let site_b = user(&db, "history_coder_b").await;
+        assign(&db, site_b, edit_role, "org_node", Some(t.site_b)).await;
+        let denied = check_coding_right(&db, &access(&db, site_b).await, record).await;
+        assert!(
+            matches!(denied, Err(crate::errors::AppError::PermissionDenied(_))),
+            "{denied:?}"
+        );
+        // No edit right anywhere: refused.
+        let viewer = user(&db, "history_viewer").await;
+        let view_role = role(&db, "History view", &[OT_VIEW]).await;
+        assign(&db, viewer, view_role, "org_node", Some(t.site_a)).await;
+        assert!(check_coding_right(&db, &access(&db, viewer).await, record)
+            .await
+            .is_err());
+        // The edit right on site A: allowed.
+        let site_a = user(&db, "history_coder_a").await;
+        assign(&db, site_a, edit_role, "org_node", Some(t.site_a)).await;
+        check_coding_right(&db, &access(&db, site_a).await, record)
+            .await
+            .expect("site A may code");
+
+        let coding = |mode: Option<i64>, version: i64| HistoryCodingInput {
+            record_id: record,
+            expected_row_version: version,
+            failure_mode_id: mode,
+            failure_cause_id: None,
+            failure_mechanism_id: None,
+            detection_method_id: None,
+            failure_effect_id: None,
+        };
+        // A value of another list is refused.
+        let wrong = save_coding(&db, coding(Some(nature_id), 1), site_a).await;
+        assert!(
+            matches!(wrong, Err(crate::errors::AppError::ValidationFailed(_))),
+            "{wrong:?}"
+        );
+        // A stale version is refused.
+        assert!(save_coding(&db, coding(Some(seal), 7), site_a).await.is_err());
+
+        let saved = save_coding(&db, coding(Some(seal), 1), site_a)
+            .await
+            .expect("coding saved");
+        assert_eq!(saved.row_version, 2);
+        // The record and its failure event (RAMS) carry the new coding; the coder is recorded.
+        let checks = [
+            format!(
+                "SELECT COUNT(*) AS n FROM wo_history_records WHERE id = {record} AND failure_mode_id = {seal} \
+                 AND coded_by_id = {site_a} AND coded_at IS NOT NULL AND row_version = 2"
+            ),
+            format!(
+                "SELECT COUNT(*) AS n FROM failure_events WHERE source_type = 'history_record' \
+                 AND source_id = {record} AND failure_mode_id = {seal}"
+            ),
+            format!(
+                "SELECT COUNT(*) AS n FROM audit_events WHERE action_code = 'wo_history.coding_saved' \
+                 AND target_id = '{record}'"
+            ),
+        ];
+        for sql in checks {
+            assert_eq!(count(&db, &sql).await, 1, "{sql}");
+        }
     }
 }

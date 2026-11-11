@@ -32,6 +32,7 @@ const TRANSLATED_TITLES = new Set([
   "meter_reading",
   "document_linked",
   "photo_added",
+  "history_imported",
 ]);
 
 function eventTitle(event: AssetHistoryEvent, t: TranslateFn): string {

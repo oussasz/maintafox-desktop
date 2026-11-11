@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { AssetLifeSummaryStrip } from "@/components/assets/history/AssetLifeSummaryStrip";
 import { AssetTimelineFilters } from "@/components/assets/history/AssetTimelineFilters";
 import { AssetTimelineList } from "@/components/assets/history/AssetTimelineList";
+import { HistoryRecordDialog } from "@/components/assets/history/HistoryRecordDialog";
 import { historyLinkTarget } from "@/components/assets/history/history-links";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
@@ -35,6 +36,8 @@ function mapTypeFilterToEventTypes(typeFilter: string): AssetHistoryEventType[] 
       return ["document_linked", "photo_added"];
     case "failures":
       return ["failure_recorded"];
+    case "history":
+      return ["history_imported"];
     default:
       return null;
   }
@@ -58,6 +61,7 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
   const [period, setPeriod] = useState<AssetHistoryPeriod>("all");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
+  const [historyRecord, setHistoryRecord] = useState<AssetHistoryEvent | null>(null);
 
   const eventTypes = useMemo(() => mapTypeFilterToEventTypes(typeFilter), [typeFilter]);
 
@@ -116,10 +120,16 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
   };
 
   const openRef = (ev: AssetHistoryEvent) => {
+    // An imported history record opens in place (read-only, failure coding editable).
+    if (ev.ref?.entity_type === "history_record") {
+      setHistoryRecord(ev);
+      return;
+    }
     const { path } = historyLinkTarget(ev);
     if (path) navigate(path);
   };
   const canOpenRef = (ev: AssetHistoryEvent) => {
+    if (ev.ref?.entity_type === "history_record") return true;
     const { path, permission } = historyLinkTarget(ev);
     // No screen to open, or one the user may not enter: not a link.
     return path !== null && (permission === null || can(permission));
@@ -145,6 +155,11 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
         onSearchChange={setSearch}
       />
       <AssetTimelineList events={events} onOpenRef={openRef} canOpenRef={canOpenRef} />
+      <HistoryRecordDialog
+        event={historyRecord}
+        onClose={() => setHistoryRecord(null)}
+        onSaved={retry}
+      />
       {mayHaveMore ? (
         <div
           role="status"

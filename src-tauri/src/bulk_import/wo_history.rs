@@ -27,7 +27,7 @@ use super::pm_plan::{access_of, cell, err, has_error};
 use super::{Column, EntitySpec, RowApplied, RowMessage, RowOutcome, StagedRow};
 use crate::auth::scope::AccessMap;
 use crate::errors::{AppError, AppResult};
-use crate::rbac::permissions::OT_CREATE;
+use crate::rbac::permissions::{OT_CREATE, OT_EDIT};
 
 /// `failure_events.source_type` of an imported history record.
 pub const HISTORY_FAILURE_SOURCE: &str = "history_record";
@@ -837,4 +837,205 @@ pub async fn export(db: &DatabaseConnection) -> AppResult<Vec<Vec<String>>> {
             ])
         })
         .collect()
+}
+
+// ── Failure coding of an imported record (Advisor Q3) ───────────────────────────────────────
+//
+// An imported record is read-only except its failure coding (mode, cause, mechanism, detection
+// method, effect): editable with the failure-coding right of a work order (`ot.edit`) at the
+// equipment's site, at the version the screen loaded, audited. Its failure event (RAMS) gets the
+// same coding. Both rows are synchronised like the import wrote them.
+
+/// The coding to store on one history record (`None`: not coded).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HistoryCodingInput {
+    pub record_id: i64,
+    pub expected_row_version: i64,
+    pub failure_mode_id: Option<i64>,
+    pub failure_cause_id: Option<i64>,
+    pub failure_mechanism_id: Option<i64>,
+    pub detection_method_id: Option<i64>,
+    pub failure_effect_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HistoryCodingSaved {
+    pub record_id: i64,
+    pub row_version: i64,
+}
+
+/// `ot.edit` at the site of the record's equipment (refused when held nowhere, not found when the
+/// record does not exist; equipment installed nowhere: plant-wide users only).
+pub async fn check_coding_right(db: &impl ConnectionTrait, access: &AccessMap, record_id: i64) -> AppResult<()> {
+    let scope = crate::wo::access::check_anywhere(access, OT_EDIT)?;
+    let equipment_id: i64 = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT equipment_id FROM wo_history_records WHERE id = ?",
+            [record_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "wo_history_record".into(),
+            id: record_id.to_string(),
+        })?
+        .try_get("", "equipment_id")?;
+    let node = crate::wo::access::equipment_node(db, equipment_id).await?;
+    crate::auth::scope::check_anchor(db, &scope, OT_EDIT, crate::auth::scope::Anchor::of(node)).await
+}
+
+/// `value` is an active value of the published list `domain`, or the value the record already has
+/// (a value retired since stays as it was).
+async fn coding_value_ok(
+    db: &impl ConnectionTrait,
+    domain: &str,
+    value: Option<i64>,
+    current: Option<i64>,
+) -> AppResult<bool> {
+    let Some(id) = value else { return Ok(true) };
+    if Some(id) == current {
+        return Ok(true);
+    }
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 FROM reference_values rv \
+             JOIN reference_sets rs ON rs.id = rv.set_id \
+             JOIN reference_domains rd ON rd.id = rs.domain_id \
+             WHERE rv.id = ? AND rd.code = ? AND rs.status = 'published' AND rv.is_active = 1",
+            [id.into(), domain.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Stores the coding of one record and of its failure event, in one transaction with its audit
+/// event. The caller checked [`check_coding_right`].
+pub async fn save_coding(
+    db: &DatabaseConnection,
+    input: HistoryCodingInput,
+    user_id: i32,
+) -> AppResult<HistoryCodingSaved> {
+    let tx = db.begin().await?;
+    let row = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT import_ref, failure_mode_id, failure_cause_id, failure_mechanism_id, detection_method_id, \
+             failure_effect_id FROM wo_history_records WHERE id = ?",
+            [input.record_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "wo_history_record".into(),
+            id: input.record_id.to_string(),
+        })?;
+    let import_ref: String = row.try_get("", "import_ref")?;
+    let checks = [
+        (
+            "WORK.FAILURE_MODES",
+            input.failure_mode_id,
+            "failure_mode_id",
+            "Mode de défaillance",
+        ),
+        (
+            "WORK.FAILURE_CAUSES",
+            input.failure_cause_id,
+            "failure_cause_id",
+            "Cause",
+        ),
+        (
+            "WORK.FAILURE_MECHANISMS",
+            input.failure_mechanism_id,
+            "failure_mechanism_id",
+            "Mécanisme",
+        ),
+        (
+            "WORK.DETECTION_METHODS",
+            input.detection_method_id,
+            "detection_method_id",
+            "Méthode de détection",
+        ),
+        (
+            "WORK.FAILURE_EFFECTS",
+            input.failure_effect_id,
+            "failure_effect_id",
+            "Effet",
+        ),
+    ];
+    let mut errors = Vec::new();
+    for (domain, value, column, label) in checks {
+        let current: Option<i64> = row.try_get("", column)?;
+        if !coding_value_ok(&tx, domain, value, current).await? {
+            errors.push(format!("{label} : valeur absente de la liste active « {domain} »."));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(AppError::ValidationFailed(errors));
+    }
+    let ts = crate::clock::now().to_rfc3339();
+    let updated = tx
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE wo_history_records SET failure_mode_id = ?, failure_cause_id = ?, failure_mechanism_id = ?, \
+             detection_method_id = ?, failure_effect_id = ?, coded_by_id = ?, coded_at = ?, \
+             row_version = row_version + 1, updated_at = ? WHERE id = ? AND row_version = ?",
+            [
+                input.failure_mode_id.into(),
+                input.failure_cause_id.into(),
+                input.failure_mechanism_id.into(),
+                input.detection_method_id.into(),
+                input.failure_effect_id.into(),
+                i64::from(user_id).into(),
+                ts.clone().into(),
+                ts.clone().into(),
+                input.record_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    crate::wo::closeout::check_concurrency(updated.rows_affected())?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE failure_events SET failure_mode_id = ?, failure_cause_id = ?, failure_effect_id = ?, \
+         failure_mechanism_id = ?, row_version = row_version + 1, updated_at = ? \
+         WHERE source_type = ? AND source_id = ?",
+        [
+            input.failure_mode_id.into(),
+            input.failure_cause_id.into(),
+            input.failure_effect_id.into(),
+            input.failure_mechanism_id.into(),
+            ts.into(),
+            HISTORY_FAILURE_SOURCE.into(),
+            input.record_id.into(),
+        ],
+    ))
+    .await?;
+    let record_id = input.record_id.to_string();
+    let detail = json!({
+        "import_ref": import_ref,
+        "failure_mode_id": input.failure_mode_id,
+        "failure_cause_id": input.failure_cause_id,
+        "failure_mechanism_id": input.failure_mechanism_id,
+        "detection_method_id": input.detection_method_id,
+        "failure_effect_id": input.failure_effect_id,
+    })
+    .to_string();
+    crate::audit::emit_in(
+        &tx,
+        crate::audit::AuditEvent {
+            event_type: "wo_history.coding_saved",
+            actor_id: Some(user_id),
+            entity_type: Some("wo_history_record"),
+            entity_id: Some(&record_id),
+            summary: "Codification de défaillance d'un historique importé",
+            detail_json: Some(detail),
+            ..Default::default()
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(HistoryCodingSaved {
+        record_id: input.record_id,
+        row_version: input.expected_row_version + 1,
+    })
 }
