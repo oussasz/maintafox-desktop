@@ -3,8 +3,10 @@
  *
  * OT/DI pattern: header (title · count · [Add document] [Refresh]), one search box, DataTable,
  * LoadingState / ErrorState with retry / EmptyState. Adding a document is an explicit dialog
- * (title, file, optional equipment) — nothing is uploaded until "Upload" is pressed. Deleting asks
- * first; downloads go through the native Save dialog.
+ * (file, title, category shown and changeable, reference number, revision, validity date, optional
+ * equipment) — nothing is uploaded until "Upload" is pressed. Expired documents and those expiring
+ * within 30 days are flagged in the list and counted above it (L7-18). Deleting asks first;
+ * downloads go through the native Save dialog.
  */
 import type { ColumnDef } from "@tanstack/react-table";
 import { Download, FilePlus2, Pencil, Trash2 } from "lucide-react";
@@ -16,6 +18,11 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { AssetPicker } from "@/components/assets/AssetPicker";
 import { DataTable } from "@/components/data/DataTable";
 import {
+  EXPIRY_WARNING_DAYS,
+  documentValidity,
+} from "@/components/documentation/document-validity";
+import {
+  type DocumentCategories,
   categoryFromSlug,
   documentCategoryPath,
   useDocumentCategories,
@@ -30,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +50,13 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReviewMark } from "@/components/ui/review-mark";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { mfLayout } from "@/design-system/tokens";
 import { saveBlobWithDialog } from "@/export/download";
 import { isExportCancelled } from "@/export/types";
@@ -80,17 +95,131 @@ function extensionOf(fileName: string): string | null {
   return dot > 0 && dot < fileName.length - 1 ? fileName.slice(dot + 1).toLowerCase() : null;
 }
 
+// ── Document control fields (category, number, revision, validity) ─────────────
+
+interface ControlValues {
+  category: LibraryDocumentCategory;
+  documentNumber: string;
+  revision: string;
+  validUntil: string;
+}
+
+interface ControlFieldsProps {
+  idPrefix: string;
+  values: ControlValues;
+  onChange: (next: ControlValues) => void;
+  categories: DocumentCategories;
+  disabled: boolean;
+}
+
+function DocumentControlFields({
+  idPrefix,
+  values,
+  onChange,
+  categories,
+  disabled,
+}: ControlFieldsProps) {
+  const { t } = useTranslation("documentation");
+  const set = (patch: Partial<ControlValues>) => onChange({ ...values, ...patch });
+  // A category no longer in the list stays shown (and kept) until another one is chosen.
+  const listed = categories.values.some((c) => c.code === values.category);
+  return (
+    <>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${idPrefix}-category`}>
+          {t("upload.fields.category")} <span aria-hidden>*</span>
+        </Label>
+        <Select
+          value={values.category}
+          onValueChange={(v) => set({ category: v })}
+          disabled={disabled}
+        >
+          <SelectTrigger id={`${idPrefix}-category`} className="h-10">
+            <SelectValue>{categories.text(values.category)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {!listed ? (
+              <SelectItem value={values.category}>{categories.text(values.category)}</SelectItem>
+            ) : null}
+            {categories.values.map((c) => (
+              <SelectItem key={c.code} value={c.code}>
+                {categories.text(c.code)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor={`${idPrefix}-number`}>{t("upload.fields.documentNumber")}</Label>
+          <Input
+            id={`${idPrefix}-number`}
+            value={values.documentNumber}
+            maxLength={64}
+            onChange={(e) => set({ documentNumber: e.target.value })}
+            placeholder={t("upload.fields.documentNumberPlaceholder")}
+            disabled={disabled}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor={`${idPrefix}-revision`}>{t("upload.fields.revision")}</Label>
+          <Input
+            id={`${idPrefix}-revision`}
+            value={values.revision}
+            maxLength={64}
+            onChange={(e) => set({ revision: e.target.value })}
+            placeholder={t("upload.fields.revisionPlaceholder")}
+            disabled={disabled}
+          />
+        </div>
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${idPrefix}-valid-until`}>{t("upload.fields.validUntil")}</Label>
+        <DateField
+          id={`${idPrefix}-valid-until`}
+          value={values.validUntil}
+          onChange={(v) => set({ validUntil: v })}
+          disabled={disabled}
+          aria-describedby={`${idPrefix}-valid-until-hint`}
+        />
+        <p id={`${idPrefix}-valid-until-hint`} className="text-xs text-text-muted">
+          {t("upload.fields.validUntilHint", { days: EXPIRY_WARNING_DAYS })}
+        </p>
+      </div>
+    </>
+  );
+}
+
+/** Blank → null (the backend stores nothing for an empty field). */
+function orNull(value: string): string | null {
+  const v = value.trim();
+  return v ? v : null;
+}
+
 // ── Upload dialog ─────────────────────────────────────────────────────────────
 
 interface UploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   category: LibraryDocumentCategory;
+  categories: DocumentCategories;
   onUploaded: () => void;
 }
 
-function DocumentUploadDialog({ open, onOpenChange, category, onUploaded }: UploadDialogProps) {
+function DocumentUploadDialog({
+  open,
+  onOpenChange,
+  category,
+  categories,
+  onUploaded,
+}: UploadDialogProps) {
   const { t } = useTranslation("documentation");
+  const [control, setControl] = useState<ControlValues>({
+    category,
+    documentNumber: "",
+    revision: "",
+    validUntil: "",
+  });
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -107,7 +236,9 @@ function DocumentUploadDialog({ open, onOpenChange, category, onUploaded }: Uplo
     setAsset(null);
     setFileError(null);
     setFileInputKey((k) => k + 1);
-  }, [open]);
+    // The category of the open tab is proposed, shown and changeable.
+    setControl({ category, documentNumber: "", revision: "", validUntil: "" });
+  }, [open, category]);
 
   const pickFile = (files: FileList | null) => {
     const picked = files?.[0] ?? null;
@@ -129,15 +260,27 @@ function DocumentUploadDialog({ open, onOpenChange, category, onUploaded }: Uplo
     setUploading(true);
     try {
       await uploadLibraryDocument({
-        category,
+        category: control.category,
         equipmentId: asset?.id ?? null,
         title: title.trim(),
         fileName: file.name,
         fileBytes: await fileToNumberArray(file),
         mimeType: file.type || "application/octet-stream",
         notes: notes.trim() ? notes.trim() : null,
+        documentNumber: orNull(control.documentNumber),
+        revision: orNull(control.revision),
+        validUntil: orNull(control.validUntil),
       });
-      pushAppToast({ title: t("upload.done", { title: title.trim() }), variant: "success" });
+      pushAppToast({
+        title:
+          control.category === category
+            ? t("upload.done", { title: title.trim() })
+            : t("upload.doneIn", {
+                title: title.trim(),
+                category: categories.text(control.category),
+              }),
+        variant: "success",
+      });
       onOpenChange(false);
       onUploaded();
     } catch {
@@ -186,6 +329,13 @@ function DocumentUploadDialog({ open, onOpenChange, category, onUploaded }: Uplo
               disabled={uploading}
             />
           </div>
+          <DocumentControlFields
+            idPrefix="doc"
+            values={control}
+            onChange={setControl}
+            categories={categories}
+            disabled={uploading}
+          />
           <div className="grid gap-1.5">
             <Label htmlFor="doc-equipment">{t("upload.fields.equipment")}</Label>
             <AssetPicker
@@ -229,13 +379,20 @@ function DocumentUploadDialog({ open, onOpenChange, category, onUploaded }: Uplo
 
 interface EditDialogProps {
   doc: LibraryDocument | null;
+  categories: DocumentCategories;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }
 
-function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
+function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDialogProps) {
   const { t } = useTranslation("documentation");
   const [title, setTitle] = useState("");
+  const [control, setControl] = useState<ControlValues>({
+    category: "",
+    documentNumber: "",
+    revision: "",
+    validUntil: "",
+  });
   const [asset, setAsset] = useState<AssetSearchResult | null>(null);
   const [assetLoading, setAssetLoading] = useState(false);
   const [assetMissing, setAssetMissing] = useState(false);
@@ -245,6 +402,12 @@ function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
     if (!doc) return;
     let cancelled = false;
     setTitle(doc.title);
+    setControl({
+      category: doc.category,
+      documentNumber: doc.documentNumber ?? "",
+      revision: doc.revision ?? "",
+      validUntil: doc.validUntil ?? "",
+    });
     setAsset(null);
     setAssetMissing(false);
     if (doc.equipmentId == null) {
@@ -280,7 +443,21 @@ function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
         title: title.trim(),
         clearEquipmentLink: !keepUnreadLink && asset == null,
         equipmentId: keepUnreadLink ? doc.equipmentId : (asset?.id ?? null),
+        category: control.category,
+        // An empty text clears the field.
+        documentNumber: control.documentNumber.trim(),
+        revision: control.revision.trim(),
+        validUntil: control.validUntil,
       });
+      if (control.category !== doc.category) {
+        pushAppToast({
+          title: t("edit.moved", {
+            title: title.trim(),
+            category: categories.text(control.category),
+          }),
+          variant: "success",
+        });
+      }
       onOpenChange(false);
       onSaved();
     } catch {
@@ -310,6 +487,13 @@ function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
               disabled={saving}
             />
           </div>
+          <DocumentControlFields
+            idPrefix="doc-edit"
+            values={control}
+            onChange={setControl}
+            categories={categories}
+            disabled={saving}
+          />
           <div className="grid gap-1.5">
             <Label htmlFor="doc-edit-equipment">{t("upload.fields.equipment")}</Label>
             {assetLoading ? (
@@ -358,7 +542,7 @@ function DocumentEditDialog({ doc, onOpenChange, onSaved }: EditDialogProps) {
 
 export function DocumentationCategoryPage() {
   const { t } = useTranslation("documentation");
-  const { formatDateTime, formatBytes: formatSize, formatNumber } = useFormatters();
+  const { formatDate, formatDateTime, formatBytes: formatSize, formatNumber } = useFormatters();
   const { categorySlug } = useParams<{ categorySlug: string }>();
   const { can } = usePermissions();
   const categories = useDocumentCategories();
@@ -444,14 +628,39 @@ export function DocumentationCategoryPage() {
     await load();
   }, [deleteTarget, load]);
 
+  // Expiry alert: how many documents of this category have expired or expire soon.
+  const expiry = useMemo(() => {
+    let expired = 0;
+    let soon = 0;
+    for (const d of docs) {
+      const v = documentValidity(d.validUntil);
+      if (v === "expired") expired += 1;
+      else if (v === "soon") soon += 1;
+    }
+    return { expired, soon };
+  }, [docs]);
+
   const columns = useMemo<ColumnDef<LibraryDocument>[]>(
     () => [
       {
-        accessorKey: "title",
+        id: "title",
+        accessorFn: (d) =>
+          [d.title, d.documentNumber ?? "", d.revision ?? ""].filter(Boolean).join(" "),
         header: t("list.columns.title"),
         cell: ({ row }) => (
           <div className="min-w-0">
             <div className="font-medium text-text-primary">{row.original.title}</div>
+            {row.original.documentNumber || row.original.revision ? (
+              <div className="text-xs text-text-secondary">
+                {row.original.documentNumber ? (
+                  <span className="font-mono">{row.original.documentNumber}</span>
+                ) : null}
+                {row.original.documentNumber && row.original.revision ? " · " : null}
+                {row.original.revision
+                  ? t("list.revisionLabel", { revision: row.original.revision })
+                  : null}
+              </div>
+            ) : null}
             {row.original.notes ? (
               <div className="truncate text-xs text-text-muted">{row.original.notes}</div>
             ) : null}
@@ -494,6 +703,41 @@ export function DocumentationCategoryPage() {
           ) : (
             <span className="text-text-muted">{t("upload.fields.noEquipment")}</span>
           ),
+      },
+      {
+        id: "validity",
+        accessorFn: (d) => d.validUntil ?? "9999-12-31",
+        header: t("list.columns.validity"),
+        cell: ({ row }) => {
+          const until = row.original.validUntil;
+          const validity = documentValidity(until);
+          if (validity == null || until == null) {
+            return <span className="text-xs text-text-muted">{t("list.validity.none")}</span>;
+          }
+          const date = formatDate(until);
+          if (validity === "expired") {
+            return (
+              <Badge variant="destructive" className="whitespace-nowrap">
+                {t("list.validity.expired", { date })}
+              </Badge>
+            );
+          }
+          if (validity === "soon") {
+            return (
+              <Badge
+                variant="outline"
+                className="whitespace-nowrap border-tone-warning-border bg-tone-warning-bg text-tone-warning-fg"
+              >
+                {t("list.validity.soon", { date })}
+              </Badge>
+            );
+          }
+          return (
+            <span className="whitespace-nowrap text-xs text-text-secondary">
+              {t("list.validity.until", { date })}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "uploadedAt",
@@ -556,6 +800,7 @@ export function DocumentationCategoryPage() {
     [
       t,
       formatSize,
+      formatDate,
       formatDateTime,
       fileStates,
       refreshFileStates,
@@ -604,6 +849,22 @@ export function DocumentationCategoryPage() {
         </div>
       </div>
 
+      {!loading && loadError == null && (expiry.expired > 0 || expiry.soon > 0) ? (
+        <div
+          role="status"
+          className="rounded-md border border-tone-warning-border bg-tone-warning-bg px-3 py-2 text-sm text-tone-warning-fg"
+        >
+          {[
+            expiry.expired > 0 ? t("expiry.expired", { count: expiry.expired }) : null,
+            expiry.soon > 0
+              ? t("expiry.soon", { count: expiry.soon, days: EXPIRY_WARNING_DAYS })
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      ) : null}
+
       {loading && docs.length === 0 ? (
         <LoadingState label={t("list.loading")} />
       ) : loadError != null ? (
@@ -633,10 +894,12 @@ export function DocumentationCategoryPage() {
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         category={category}
+        categories={categories}
         onUploaded={() => void load()}
       />
       <DocumentEditDialog
         doc={editing}
+        categories={categories}
         onOpenChange={(o) => !o && setEditing(null)}
         onSaved={() => void load()}
       />

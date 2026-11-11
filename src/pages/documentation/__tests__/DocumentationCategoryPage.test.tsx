@@ -74,6 +74,9 @@ const doc = {
   uploadedById: 1,
   uploadedAt: "2026-10-01T08:00:00Z",
   notes: null,
+  documentNumber: null,
+  revision: null,
+  validUntil: null,
 };
 
 const CATEGORIES = [
@@ -149,6 +152,51 @@ describe("DocumentationCategoryPage", () => {
         }),
       ),
     );
+  });
+
+  it("shows the category it will file into and sends number, revision and validity", async () => {
+    mockList.mockResolvedValue([]);
+    mockUpload.mockResolvedValueOnce({ ...doc, id: 9 });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "upload.open" }));
+    // The open tab's category is shown in the form, not decided silently.
+    expect(screen.getByLabelText(/upload\.fields\.category/)).toHaveTextContent(
+      "Modes opératoires",
+    );
+    const file = new File(["abc"], "loto.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("upload.fields.file"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("upload.fields.documentNumber"), {
+      target: { value: " PR-ELEC-012 " },
+    });
+    fireEvent.change(screen.getByLabelText("upload.fields.revision"), {
+      target: { value: "B" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "upload.submit" }));
+    await waitFor(() =>
+      expect(mockUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "sops",
+          documentNumber: "PR-ELEC-012",
+          revision: "B",
+          validUntil: null,
+        }),
+      ),
+    );
+  });
+
+  it("flags expired documents in the list and counts them above it", async () => {
+    mockList.mockResolvedValue([
+      { ...doc, documentNumber: "PR-1", revision: "C", validUntil: "2020-01-31" },
+      { ...doc, id: 8, title: "Open-ended", validUntil: null },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("PR-1")).toBeInTheDocument();
+    expect(screen.getByText("list.validity.expired")).toBeInTheDocument();
+    expect(screen.getByText("list.validity.none")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("expiry.expired");
   });
 
   it("asks before deleting a document", async () => {

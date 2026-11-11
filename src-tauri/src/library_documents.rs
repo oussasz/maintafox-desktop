@@ -20,6 +20,22 @@ pub const DOCUMENT_CATEGORIES_DOMAIN: &str = "DOCUMENT.CATEGORIES";
 /// Stable code of the refusal (translated in `training:errors`).
 pub const CODE_CATEGORY_NOT_IN_LIST: &str = "DOCUMENT_CATEGORY_NOT_IN_LIST";
 
+/// Refusal: the validity date is not a calendar date (`YYYY-MM-DD`).
+pub const GATE_VALID_UNTIL_INVALID: &str = "GATE_LIB_DOC_VALID_UNTIL_INVALID";
+/// Refusal: another document of the library already carries this reference number.
+pub const GATE_NUMBER_TAKEN: &str = "GATE_LIB_DOC_NUMBER_TAKEN";
+
+/// Longest reference number or revision label kept (a reference, not a description).
+const MAX_REFERENCE_LEN: usize = 64;
+
+/// Columns of a document row with its equipment (list, re-fetch after a write).
+const SELECT_DOCUMENT: &str = "SELECT ld.id, ld.category, ld.equipment_id, ld.title, ld.file_name, \
+     ld.relative_path, ld.mime_type, ld.size_bytes, ld.uploaded_by_id, ld.uploaded_at, ld.notes, \
+     ld.document_number, ld.revision, ld.valid_until, \
+     e.asset_id_code AS equipment_code, e.name AS equipment_name \
+     FROM library_documents ld \
+     LEFT JOIN equipment e ON e.id = ld.equipment_id";
+
 /// Seeded categories: (code, label FR, label EN).
 pub const LIBRARY_CATEGORIES: &[(&str, &str, &str)] = &[
     ("technical_manuals", "Manuels techniques", "Technical manuals"),
@@ -158,6 +174,12 @@ pub struct LibraryDocumentRow {
     pub uploaded_by_id: Option<i64>,
     pub uploaded_at: String,
     pub notes: Option<String>,
+    /// The plant's reference of the document (e.g. "PR-ELEC-012").
+    pub document_number: Option<String>,
+    /// Its revision label as printed on the document.
+    pub revision: Option<String>,
+    /// Last day it is valid (`YYYY-MM-DD`); `None` when it never expires.
+    pub valid_until: Option<String>,
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -203,7 +225,63 @@ fn map_row(row: &QueryResult) -> AppResult<LibraryDocumentRow> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
+        document_number: row
+            .try_get::<Option<String>>("", "document_number")
+            .map_err(|e| decode_err("document_number", e))?,
+        revision: row
+            .try_get::<Option<String>>("", "revision")
+            .map_err(|e| decode_err("revision", e))?,
+        valid_until: row
+            .try_get::<Option<String>>("", "valid_until")
+            .map_err(|e| decode_err("valid_until", e))?,
     })
+}
+
+/// A typed text field: trimmed, `None` when blank.
+fn cleaned(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// A reference number or revision label: trimmed, `None` when blank, at most 64 characters.
+fn cleaned_reference(value: Option<String>) -> Option<String> {
+    cleaned(value).map(|v| v.chars().take(MAX_REFERENCE_LEN).collect())
+}
+
+/// The validity date: a calendar date `YYYY-MM-DD`, `None` when blank.
+pub fn checked_valid_until(value: Option<String>) -> AppResult<Option<String>> {
+    let Some(date) = cleaned(value) else {
+        return Ok(None);
+    };
+    chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map(|d| Some(d.format("%Y-%m-%d").to_string()))
+        .map_err(|_| {
+            AppError::ValidationFailed(vec![format!(
+                "{GATE_VALID_UNTIL_INVALID}: The validity date must be a calendar date (YYYY-MM-DD)."
+            )])
+        })
+}
+
+/// A reference number is used by one document of the library only (compared ignoring case and
+/// surrounding spaces). `except_id`: the document being edited.
+async fn ensure_number_free(db: &impl ConnectionTrait, number: Option<&str>, except_id: Option<i64>) -> AppResult<()> {
+    let Some(number) = number else {
+        return Ok(());
+    };
+    let taken = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM library_documents \
+              WHERE UPPER(TRIM(document_number)) = UPPER(?) AND id <> ? LIMIT 1",
+            [number.into(), except_id.unwrap_or(-1).into()],
+        ))
+        .await?
+        .is_some();
+    if taken {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{GATE_NUMBER_TAKEN}: Another document of the library already has this reference number."
+        )]));
+    }
+    Ok(())
 }
 
 /// A document category: an active value of `DOCUMENT.CATEGORIES` (its list code). Replaces the
@@ -239,14 +317,7 @@ pub async fn list_library_documents(
     category: Option<String>,
     equipment_id: Option<i64>,
 ) -> AppResult<Vec<LibraryDocumentRow>> {
-    let mut sql = String::from(
-        "SELECT ld.id, ld.category, ld.equipment_id, ld.title, ld.file_name, ld.relative_path, \
-         ld.mime_type, ld.size_bytes, ld.uploaded_by_id, ld.uploaded_at, ld.notes, \
-         e.asset_id_code AS equipment_code, e.name AS equipment_name \
-         FROM library_documents ld \
-         LEFT JOIN equipment e ON e.id = ld.equipment_id \
-         WHERE 1=1",
-    );
+    let mut sql = format!("{SELECT_DOCUMENT} WHERE 1=1");
     let mut params: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(ref c) = category {
@@ -276,6 +347,9 @@ pub struct LibraryDocumentUploadInput {
     pub mime_type: String,
     pub notes: Option<String>,
     pub uploaded_by_id: i64,
+    pub document_number: Option<String>,
+    pub revision: Option<String>,
+    pub valid_until: Option<String>,
 }
 
 pub async fn save_library_document(
@@ -284,6 +358,9 @@ pub async fn save_library_document(
     input: LibraryDocumentUploadInput,
 ) -> AppResult<LibraryDocumentRow> {
     let category = checked_category(db, &input.category).await?;
+    let document_number = cleaned_reference(input.document_number);
+    let revision = cleaned_reference(input.revision);
+    let valid_until = checked_valid_until(input.valid_until)?;
     if input.file_bytes.is_empty() {
         return Err(AppError::ValidationFailed(vec![
             "GATE_LIB_DOC_EMPTY: The file is empty.".into(),
@@ -312,6 +389,7 @@ pub async fn save_library_document(
     let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
     // The document row and its media row commit together.
     let txn = db.begin().await?;
+    ensure_number_free(&txn, document_number.as_deref(), None).await?;
 
     if let Some(eid) = input.equipment_id {
         let exists = txn
@@ -359,8 +437,8 @@ pub async fn save_library_document(
         DbBackend::Sqlite,
         "INSERT INTO library_documents \
             (category, equipment_id, title, file_name, relative_path, mime_type, size_bytes, \
-             uploaded_by_id, uploaded_at, notes, entity_sync_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             uploaded_by_id, uploaded_at, notes, entity_sync_id, document_number, revision, valid_until) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             category.clone().into(),
             input
@@ -379,6 +457,9 @@ pub async fn save_library_document(
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             entity_sync_id.clone().into(),
+            document_number.into(),
+            revision.into(),
+            valid_until.into(),
         ],
     ))
     .await?;
@@ -399,12 +480,7 @@ pub async fn save_library_document(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT ld.id, ld.category, ld.equipment_id, ld.title, ld.file_name, ld.relative_path, \
-             ld.mime_type, ld.size_bytes, ld.uploaded_by_id, ld.uploaded_at, ld.notes, \
-             e.asset_id_code AS equipment_code, e.name AS equipment_name \
-             FROM library_documents ld \
-             LEFT JOIN equipment e ON e.id = ld.equipment_id \
-             WHERE ld.relative_path = ?",
+            &format!("{SELECT_DOCUMENT} WHERE ld.relative_path = ?"),
             [relative_path.into()],
         ))
         .await?
@@ -489,6 +565,16 @@ pub struct UpdateLibraryDocumentInput {
     pub equipment_id: Option<i64>,
     /// When true, clears `equipment_id` (ignores `equipment_id`).
     pub clear_equipment_link: bool,
+    /// New category (an active value of `DOCUMENT.CATEGORIES`); `None` keeps it.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Document control fields: `None` keeps the stored value, a blank text clears it.
+    #[serde(default)]
+    pub document_number: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
 }
 
 pub async fn update_library_document_metadata(
@@ -529,61 +615,51 @@ pub async fn update_library_document_metadata(
         }
     }
 
-    let new_title = input.title.map(|s| s.trim().to_string());
-
-    match (new_title.as_ref(), input.clear_equipment_link, input.equipment_id) {
-        (Some(t), true, _) => {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE library_documents SET title = ?, equipment_id = NULL WHERE id = ?",
-                [t.clone().into(), input.id.into()],
-            ))
-            .await?;
-        }
-        (None, true, _) => {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE library_documents SET equipment_id = NULL WHERE id = ?",
-                [input.id.into()],
-            ))
-            .await?;
-        }
-        (Some(t), false, Some(eid)) => {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE library_documents SET title = ?, equipment_id = ? WHERE id = ?",
-                [t.clone().into(), eid.into(), input.id.into()],
-            ))
-            .await?;
-        }
-        (None, false, Some(eid)) => {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE library_documents SET equipment_id = ? WHERE id = ?",
-                [eid.into(), input.id.into()],
-            ))
-            .await?;
-        }
-        (Some(t), false, None) => {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE library_documents SET title = ? WHERE id = ?",
-                [t.clone().into(), input.id.into()],
-            ))
-            .await?;
-        }
-        (None, false, None) => {}
+    // Every field is checked before the single write.
+    let mut sets: Vec<&str> = Vec::new();
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    if let Some(title) = input.title.map(|s| s.trim().to_string()) {
+        sets.push("title = ?");
+        values.push(title.into());
+    }
+    if input.clear_equipment_link {
+        sets.push("equipment_id = NULL");
+    } else if let Some(eid) = input.equipment_id {
+        sets.push("equipment_id = ?");
+        values.push(eid.into());
+    }
+    if let Some(category) = input.category {
+        sets.push("category = ?");
+        values.push(checked_category(db, &category).await?.into());
+    }
+    if input.document_number.is_some() {
+        let number = cleaned_reference(input.document_number);
+        ensure_number_free(db, number.as_deref(), Some(input.id)).await?;
+        sets.push("document_number = ?");
+        values.push(number.into());
+    }
+    if input.revision.is_some() {
+        sets.push("revision = ?");
+        values.push(cleaned_reference(input.revision).into());
+    }
+    if input.valid_until.is_some() {
+        sets.push("valid_until = ?");
+        values.push(checked_valid_until(input.valid_until)?.into());
+    }
+    if !sets.is_empty() {
+        values.push(input.id.into());
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &format!("UPDATE library_documents SET {} WHERE id = ?", sets.join(", ")),
+            values,
+        ))
+        .await?;
     }
 
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT ld.id, ld.category, ld.equipment_id, ld.title, ld.file_name, ld.relative_path, \
-             ld.mime_type, ld.size_bytes, ld.uploaded_by_id, ld.uploaded_at, ld.notes, \
-             e.asset_id_code AS equipment_code, e.name AS equipment_name \
-             FROM library_documents ld \
-             LEFT JOIN equipment e ON e.id = ld.equipment_id \
-             WHERE ld.id = ?",
+            &format!("{SELECT_DOCUMENT} WHERE ld.id = ?"),
             [input.id.into()],
         ))
         .await?
@@ -591,3 +667,7 @@ pub async fn update_library_document_metadata(
 
     map_row(&row)
 }
+
+#[cfg(test)]
+#[path = "library_documents_tests.rs"]
+mod tests;

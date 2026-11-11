@@ -188,6 +188,9 @@ function UploadDialog({
         fileBytes: await fileToNumberArray(file),
         mimeType: file.type || "application/octet-stream",
         notes: null,
+        documentNumber: null,
+        revision: null,
+        validUntil: null,
       });
       onSaved();
     } catch {
