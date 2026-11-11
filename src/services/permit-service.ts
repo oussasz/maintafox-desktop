@@ -239,7 +239,7 @@ const IsolationOptionSchema = z.object({
   review_required: z.boolean(),
 });
 
-const IsolationOptionsSchema = z.object({
+export const IsolationOptionsSchema = z.object({
   energy_types: z.array(IsolationOptionSchema),
   isolation_methods: z.array(IsolationOptionSchema),
 });

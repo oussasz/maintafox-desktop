@@ -417,5 +417,59 @@
     "hint": "Locks taken off while their worker was absent: the worker must be told (at their next sign-in, or record it here).",
     "item": "{{point}} — {{worker}}, taken off on {{date}}, authorised by {{authoriser}}",
     "loadError": "The forced removals to follow up could not be loaded"
+  },
+  "safety": {
+    "title": "Permit content and safety",
+    "loading": "Loading the permit content…",
+    "loadError": "The permit content could not be read.",
+    "issueBlockersTitle": "Before the issue:",
+    "issueBlocked": "The issue waits for the permit content, its HSE approval or its atmospheric test (see below).",
+    "field": {
+      "work_description": "Work to be done",
+      "risk_assessment": "Risk assessment",
+      "preventive_measures": "Preventive measures",
+      "ppe_required": "Required PPE"
+    },
+    "ppeHint": "Personal protective equipment to wear (helmet, gloves, goggles, harness, breathing apparatus…).",
+    "backToDraftHint": "Changing the content sends the permit back to draft: it will be submitted for review again.",
+    "saveContent": "Save the content",
+    "notFilled": "Not filled in",
+    "hse": {
+      "title": "HSE approval",
+      "recorded": "Recorded",
+      "missing": "Required, not recorded",
+      "byAt": "By {{name}} on {{date}}",
+      "note": "Comment (optional)",
+      "record": "Record the HSE approval",
+      "confirm": "Approve (HSE)"
+    },
+    "gas": {
+      "title": "Atmospheric tests",
+      "required": "Required before issue",
+      "limits": "Limits (Settings): O2 {{o2Min}} to {{o2Max}} %, LEL < {{lel}} %, H2S < {{h2s}} ppm, CO < {{co}} ppm. The latest reading counts.",
+      "empty": "No test recorded.",
+      "ok": "Within limits",
+      "outOfLimits": "Out of limits",
+      "reading": "O2 {{o2}} % · LEL {{lel}} % · H2S {{h2s}} ppm",
+      "readingCo": "CO {{co}} ppm",
+      "measuredBy": "by {{name}} on {{date}} ({{instrument}})",
+      "o2": "O2 (%)",
+      "lel": "LEL (% of LEL)",
+      "h2s": "H2S (ppm)",
+      "co": "CO (ppm, optional)",
+      "measuredAt": "Measured at",
+      "instrument": "Measuring instrument",
+      "invalidReading": "Enter a positive number.",
+      "now": "Now",
+      "record": "Record the test"
+    },
+    "proposed": {
+      "title": "Isolation points of the equipment",
+      "hint": "Points defined on the equipment: \"Use\" pre-fills the form below, which you can change before adding the isolation.",
+      "use": "Use",
+      "alreadyOnPermit": "Already on the permit",
+      "normalState": "Normal state: {{state}}",
+      "loadError": "The isolation points of the equipment could not be read."
+    }
   }
 }

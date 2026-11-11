@@ -21,6 +21,7 @@ use crate::permit::domain::{
     WorkPermitCreateInput, WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 use crate::permit::queries;
+use crate::permit::safety_content;
 use crate::rbac::permissions::{PTW_CLOSE, PTW_ISSUE, PTW_VIEW};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -501,4 +502,67 @@ pub async fn permit_compliance_kpi_30d(state: State<'_, AppState>) -> AppResult<
     // Rule §2.8: the figure of the user's sites only (never plant-wide for a site-only user).
     let scope = require_anywhere(&state, user.user_id, PTW_VIEW).await?;
     queries::permit_compliance_kpi_30d_in_scope(&state.db, &scope).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Content, HSE approval and gas tests (L4-03 / L4-04), proposed isolation points (L4-12)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// What the permit says (work, risks, preventive measures, PPE), its HSE approval, its gas tests
+/// with the limits of the settings, and what still blocks its issue. Read with the permit view
+/// right at its site.
+#[tauri::command]
+pub async fn get_permit_safety_content(
+    permit_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id).await?;
+    safety_content::get_permit_safety_content(&state.db, permit_id).await
+}
+
+/// Writes the permit's content (draft or waiting for review), with the right that writes and
+/// issues permits at its site.
+#[tauri::command]
+pub async fn save_permit_safety_content(
+    input: safety_content::PermitSafetyContentInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    safety_content::save_permit_safety_content(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records the session user as the permit's HSE approver (the approval right at its site).
+#[tauri::command]
+pub async fn record_permit_hse_approval(
+    input: safety_content::PermitHseApprovalInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    safety_content::record_permit_hse_approval(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records a gas test measured by the session user (the issue right at the permit's site).
+#[tauri::command]
+pub async fn record_permit_gas_test(
+    input: safety_content::PermitGasTestInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    safety_content::record_permit_gas_test(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// The isolation points of the permit's equipment, proposed on its isolation form (read with the
+/// permit view right at its site: no equipment right needed to use them).
+#[tauri::command]
+pub async fn list_permit_proposed_isolation_points(
+    permit_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::isolation_points::ProposedIsolationPoint>> {
+    let user = require_session!(state);
+    require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id).await?;
+    crate::assets::isolation_points::list_proposed_isolation_points(&state.db, permit_id).await
 }

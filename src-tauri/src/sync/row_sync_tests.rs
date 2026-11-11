@@ -39,6 +39,7 @@ pub(crate) const FOUNDATION_TYPES: &[&str] = &[
     "equipment_hierarchy",
     "equipment_meters",
     "asset_meter_readings",
+    "equipment_isolation_points",
     "equipment_lifecycle_events",
     "asset_document_links",
     "asset_external_ids",
@@ -204,6 +205,7 @@ pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
     "permit_handover_logs",
     "permit_isolations",
     "permit_suspensions",
+    "permit_gas_tests",
     "loto_card_print_jobs",
 ];
 

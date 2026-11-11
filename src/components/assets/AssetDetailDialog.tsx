@@ -18,6 +18,7 @@ import {
   GitFork,
   History,
   Info,
+  Lock,
   MoreHorizontal,
   Package,
   Pencil,
@@ -42,6 +43,7 @@ import { isRetiredStatus } from "@/components/assets/asset-tones";
 import { AssetCommercialDialog } from "@/components/assets/detail/AssetCommercialDialog";
 import { AssetCriticalityTab } from "@/components/assets/detail/AssetCriticalityTab";
 import { AssetDocumentsTab } from "@/components/assets/detail/AssetDocumentsTab";
+import { AssetIsolationPointsTab } from "@/components/assets/detail/AssetIsolationPointsTab";
 import { AssetMaintenanceTab } from "@/components/assets/detail/AssetMaintenanceTab";
 import { AssetMetersTab } from "@/components/assets/detail/AssetMetersTab";
 import { AssetOverviewTab } from "@/components/assets/detail/AssetOverviewTab";
@@ -86,6 +88,7 @@ const TAB_IDS = [
   "structure",
   "maintenance",
   "meters",
+  "isolation",
   "spares",
   "documents",
   "criticality",
@@ -98,6 +101,7 @@ const TAB_ICON: Record<AssetTab, typeof Info> = {
   structure: GitFork,
   maintenance: Wrench,
   meters: Gauge,
+  isolation: Lock,
   spares: Package,
   documents: FileText,
   criticality: ShieldAlert,
@@ -324,6 +328,9 @@ export function AssetDetailDialog({ onBackToOrigin }: { onBackToOrigin?: () => v
                 </TabsContent>
                 <TabsContent value="meters" className="pt-3">
                   <AssetMetersTab asset={asset} />
+                </TabsContent>
+                <TabsContent value="isolation" className="pt-3">
+                  <AssetIsolationPointsTab asset={asset} />
                 </TabsContent>
                 <TabsContent value="spares" className="pt-3">
                   <AssetSparePartsTab asset={asset} />

@@ -995,14 +995,46 @@ async fn lock_out(
     .await?;
     let permit_id = permit.id;
     ctx.count("permis de travail (consignation)", 1);
-    // …submitted by them, approved by the HSE officer (four-eyes), issued by the team
-    // leader (separation between who approves and who issues).
+    let hydraulic = matches!(asset.class, "PRESS" | "PUMP");
+    // …who writes what is done, its risks, the preventive measures and the PPE (L4-03)…
+    ctx.tick()?;
+    let rv = row_version(db, "work_permits", permit_id).await?;
+    crate::permit::safety_content::save_permit_safety_content(
+        db,
+        de(json!({
+            "permit_id": permit_id,
+            "expected_row_version": rv,
+            "work_description": format!("Intervention de maintenance sur {} sous consignation", asset.code),
+            "risk_assessment": if hydraulic {
+                "Pression hydraulique résiduelle, mouvement intempestif du vérin, projection de fluide"
+            } else {
+                "Électrisation, redémarrage intempestif, pièces en mouvement"
+            },
+            "preventive_measures": "Consignation des énergies avec cadenas personnel, vérification d'absence d'énergie, balisage de la zone",
+            "ppe_required": "Casque, chaussures de sécurité, gants, lunettes de protection",
+        }))?,
+        responsible,
+    )
+    .await?;
+    // …submitted by them, approved by the HSE officer (four-eyes) who also records the HSE
+    // approval the LOTO type requires, issued by the team leader (separation between who approves
+    // and who issues).
     for (status, actor) in [
         ("pending_review", responsible),
         ("approved", hse),
         ("issued", supervisor),
     ] {
         ctx.tick()?;
+        if status == "issued" {
+            let rv = row_version(db, "work_permits", permit_id).await?;
+            crate::permit::safety_content::record_permit_hse_approval(
+                db,
+                de(json!({ "permit_id": permit_id, "expected_row_version": rv, "note": null }))?,
+                hse,
+            )
+            .await?;
+            ctx.tick()?;
+        }
         let rv = row_version(db, "work_permits", permit_id).await?;
         crate::permit::queries::set_work_permit_status(
             db,
@@ -1011,7 +1043,6 @@ async fn lock_out(
         )
         .await?;
     }
-    let hydraulic = matches!(asset.class, "PRESS" | "PUMP");
     ctx.tick()?;
     let isolation = crate::permit::queries::upsert_permit_isolation(
         db,

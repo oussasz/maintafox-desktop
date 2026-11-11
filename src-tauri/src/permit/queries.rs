@@ -2158,7 +2158,7 @@ async fn update_work_permit_in(
 
 /// A permit back to draft is submitted again (four-eyes, migration 244): who submitted it and any
 /// approval are cleared, in the transaction that sends it back.
-async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
+pub(crate) async fn clear_review_record(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_permits SET submitted_by_id = NULL, submitted_at = NULL, approved_by_id = NULL, \
@@ -2330,6 +2330,12 @@ async fn set_work_permit_status_in(
         }
         ("pending_review", "approved") => {
             self_approved = Some(four_eyes_approval(db, &current, actor_id).await?);
+        }
+        // L4-03 / L4-04 (migration 290): the only way into `issued`. The permit says what work is
+        // done, its risks, preventive measures and PPE; its HSE approval is recorded when its type
+        // requires one; a permit needing a gas test has one, its latest reading within the limits.
+        ("approved", "issued") => {
+            crate::permit::safety_content::issue_ready(db, current.id).await?;
         }
         ("issued", "active") => {
             // No open-ended permit is activated (permits created before expiry was required).

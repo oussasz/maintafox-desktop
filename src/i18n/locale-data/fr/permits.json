@@ -417,5 +417,59 @@
     "hint": "Cadenas retirés en l'absence de leur travailleur : le travailleur doit en être informé (à sa prochaine connexion, ou enregistrez-le ici).",
     "item": "{{point}} — {{worker}}, retiré le {{date}}, autorisé par {{authoriser}}",
     "loadError": "Les retraits forcés à suivre n'ont pas pu être chargés"
+  },
+  "safety": {
+    "title": "Contenu du permis et sécurité",
+    "loading": "Chargement du contenu du permis…",
+    "loadError": "Le contenu du permis n'a pas pu être lu.",
+    "issueBlockersTitle": "Avant la délivrance :",
+    "issueBlocked": "La délivrance attend le contenu du permis, son approbation HSE ou son test atmosphérique (voir ci-dessous).",
+    "field": {
+      "work_description": "Travail à réaliser",
+      "risk_assessment": "Analyse des risques",
+      "preventive_measures": "Mesures de prévention",
+      "ppe_required": "EPI requis"
+    },
+    "ppeHint": "Équipements de protection individuelle à porter (casque, gants, lunettes, harnais, appareil respiratoire…).",
+    "backToDraftHint": "Modifier le contenu renvoie le permis en brouillon : il sera soumis de nouveau à la revue.",
+    "saveContent": "Enregistrer le contenu",
+    "notFilled": "Non renseigné",
+    "hse": {
+      "title": "Approbation HSE",
+      "recorded": "Enregistrée",
+      "missing": "Requise, non enregistrée",
+      "byAt": "Par {{name}} le {{date}}",
+      "note": "Commentaire (facultatif)",
+      "record": "Enregistrer l'approbation HSE",
+      "confirm": "Approuver (HSE)"
+    },
+    "gas": {
+      "title": "Tests atmosphériques",
+      "required": "Requis avant délivrance",
+      "limits": "Limites (Paramètres) : O2 de {{o2Min}} à {{o2Max}} %, LIE < {{lel}} %, H2S < {{h2s}} ppm, CO < {{co}} ppm. La dernière mesure fait foi.",
+      "empty": "Aucun test enregistré.",
+      "ok": "Dans les limites",
+      "outOfLimits": "Hors limites",
+      "reading": "O2 {{o2}} % · LIE {{lel}} % · H2S {{h2s}} ppm",
+      "readingCo": "CO {{co}} ppm",
+      "measuredBy": "par {{name}} le {{date}} ({{instrument}})",
+      "o2": "O2 (%)",
+      "lel": "LIE (% de la LIE)",
+      "h2s": "H2S (ppm)",
+      "co": "CO (ppm, facultatif)",
+      "measuredAt": "Mesuré le",
+      "instrument": "Appareil de mesure",
+      "invalidReading": "Saisissez un nombre positif.",
+      "now": "Maintenant",
+      "record": "Enregistrer le test"
+    },
+    "proposed": {
+      "title": "Points d'isolement de l'équipement",
+      "hint": "Points définis sur l'équipement : « Utiliser » pré-remplit le formulaire ci-dessous, que vous pouvez modifier avant d'ajouter l'isolement.",
+      "use": "Utiliser",
+      "alreadyOnPermit": "Déjà sur le permis",
+      "normalState": "État normal : {{state}}",
+      "loadError": "Les points d'isolement de l'équipement n'ont pas pu être lus."
+    }
   }
 }

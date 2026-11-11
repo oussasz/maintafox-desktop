@@ -250,7 +250,11 @@
       "SITE_ASSIGNMENT_NODE_INVALID": "A site given on another PC to a record without one, on a unit deleted here",
       "SITE_ASSIGNMENT_NOT_ALLOWED": "A site given on another PC to a record without one, by someone without the organisation administration right for the whole plant",
       "SITE_SET_WITHOUT_ASSIGNMENT": "A work order or request without a site received with a site, without the site assignment of an organisation administrator",
-      "other": "Needs review"
+      "other": "Needs review",
+      "PERMIT_ISSUE_CONTENT_MISSING": "A permit issued on another PC without its content (work, risk assessment, preventive measures, PPE)",
+      "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "A permit issued on another PC without the HSE approval its type requires",
+      "PERMIT_ISSUE_GAS_TEST_MISSING": "A permit issued on another PC without the atmospheric test it requires",
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "A permit issued on another PC on an atmospheric test outside the limits set here"
     },
     "history": {
       "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
@@ -440,7 +444,9 @@
       "budget_lines": "Budget line",
       "training_sessions": "Training session",
       "failure_events": "Failure event",
-      "app_settings": "Setting"
+      "app_settings": "Setting",
+      "permit_gas_tests": "Permit atmospheric test",
+      "equipment_isolation_points": "Equipment isolation point"
     },
     "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",

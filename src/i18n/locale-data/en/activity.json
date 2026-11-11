@@ -258,7 +258,9 @@
       "wo__service_cost_updated": "Work order service cost updated",
       "wo__shutdown_required_set": "Work order flagged as needing a shutdown",
       "wo__shutdown_required_cleared": "Work order no longer needs a shutdown",
-      "entitlement__envelope_applied": "Entitlement envelope applied"
+      "entitlement__envelope_applied": "Entitlement envelope applied",
+      "permit__hse_approved": "Permit HSE approval recorded",
+      "permit__gas_test_recorded": "Permit atmospheric test recorded"
     },
     "module": {
       "none": "No module",

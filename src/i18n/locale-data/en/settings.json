@@ -19,7 +19,8 @@
     "reliability": "Reliability",
     "documents": "Documents & Branding",
     "work_orders": "Work orders",
-    "inventory": "Inventory"
+    "inventory": "Inventory",
+    "permits": "Work permits"
   },
   "table": {
     "key": "Key",
@@ -77,7 +78,12 @@
     "inventory.count_four_eyes_value_threshold": "Four-eyes tolerance of a count: value of the variance",
     "inventory.count_four_eyes_percent_threshold": "Four-eyes tolerance of a count: share of the system quantity",
     "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
-    "locale.fiscal_year_start_month": "Fiscal year starts in"
+    "locale.fiscal_year_start_month": "Fiscal year starts in",
+    "permit.gas_o2_min_percent": "Atmospheric test: lowest O2 accepted (%)",
+    "permit.gas_o2_max_percent": "Atmospheric test: highest O2 accepted (%)",
+    "permit.gas_lel_max_percent": "Atmospheric test: LEL limit (%)",
+    "permit.gas_h2s_max_ppm": "Atmospheric test: H2S limit (ppm)",
+    "permit.gas_co_max_ppm": "Atmospheric test: CO limit (ppm)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Remove the logo?",
@@ -384,7 +390,12 @@
       "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
       "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
       "backup.retention_weekly": "Number of weekly backups kept in addition.",
-      "backup.retention_monthly": "Number of monthly backups kept in addition."
+      "backup.retention_monthly": "Number of monthly backups kept in addition.",
+      "permit.gas_o2_min_percent": "A permit that requires an atmospheric test is issued only when its latest oxygen reading is at least this value (shipped value: 19.5 %).",
+      "permit.gas_o2_max_percent": "… and at most this value (shipped value: 23.5 %).",
+      "permit.gas_lel_max_percent": "The latest flammable gas reading (% of the lower explosive limit) must stay below this value (shipped value: 10 %).",
+      "permit.gas_h2s_max_ppm": "The latest hydrogen sulphide reading must stay below this value (shipped value: 10 ppm).",
+      "permit.gas_co_max_ppm": "When carbon monoxide is measured, the latest reading must stay below this value (shipped value: 25 ppm)."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
@@ -398,7 +409,12 @@
       "backup.retention_weekly_one": "{{count}} week",
       "backup.retention_weekly_other": "{{count}} weeks",
       "backup.retention_monthly_one": "{{count}} month",
-      "backup.retention_monthly_other": "{{count}} months"
+      "backup.retention_monthly_other": "{{count}} months",
+      "permit.gas_o2_min_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LEL",
+      "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm"
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",

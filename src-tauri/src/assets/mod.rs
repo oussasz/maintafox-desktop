@@ -26,6 +26,7 @@ pub mod hierarchy;
 pub mod history;
 pub mod identity;
 pub mod import;
+pub mod isolation_points;
 pub mod lifecycle;
 pub mod maintenance_profile;
 pub mod meters;
@@ -46,6 +47,8 @@ mod hierarchy_tests;
 mod identity_tests;
 #[cfg(test)]
 mod import_tests;
+#[cfg(test)]
+mod isolation_points_tests;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]

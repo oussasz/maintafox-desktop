@@ -258,7 +258,9 @@
       "wo__service_cost_updated": "Coût de prestation de l'OT modifié",
       "wo__shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "wo__shutdown_required_cleared": "« Nécessite un arrêt » retiré de l'OT",
-      "entitlement__envelope_applied": "Enveloppe de droits appliquée"
+      "entitlement__envelope_applied": "Enveloppe de droits appliquée",
+      "permit__hse_approved": "Approbation HSE du permis enregistrée",
+      "permit__gas_test_recorded": "Test atmosphérique du permis enregistré"
     },
     "module": {
       "none": "Sans module",

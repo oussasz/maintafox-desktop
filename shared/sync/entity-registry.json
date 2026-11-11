@@ -480,6 +480,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "equipment_isolation_points",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "equipment_lifecycle_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -1212,6 +1223,17 @@
       "parents": [
         "org_structure_models",
         "org_node_types"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "user_accounts"
       ],
       "sync_status": "synced"
     },

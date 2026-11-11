@@ -15,6 +15,11 @@
 //!   recorded send none); a log naming a person not applied here yet waits for that person (the
 //!   generic apply);
 //! - a permit never changes its permit type (as no local edit does);
+//! - a permit held here before its issue (draft, waiting for review, approved) and received issued
+//!   or later (`issue_check`, L4-03 / L4-04, migration 290): its content (work, risks, preventive
+//!   measures, PPE) is complete, its HSE approval is recorded when its type here requires one, and,
+//!   when it needs a gas test, its latest gas test (with those received with it) is within the
+//!   limits set here;
 //! - four-eyes on its approval (`four_eyes_check`, migration 244): the approver is neither the
 //!   author nor the submitter written on the row, unless it is flagged a self-approval and the
 //!   permit's site opted out of four-eyes here; a permit past review names who approved it; the
@@ -114,6 +119,114 @@ const ISOLATION_SETUP: &[&str] = &[
 ];
 /// Permit statuses whose arrival is judged (and applied with the children it was judged on).
 const JUDGED_STATUSES: &[&str] = &["active", "closed", "handed_back", "suspended", "revalidation_required"];
+/// Statuses before the issue (`approved → issued` is the issue, `permit::queries`).
+const PRE_ISSUE: &[&str] = &["draft", "pending_review", "approved"];
+/// Statuses a permit reaches only through its issue.
+const ISSUED_ON: &[&str] = &[
+    "issued",
+    "active",
+    "suspended",
+    "revalidation_required",
+    "closed",
+    "handed_back",
+];
+
+/// The received row issues a permit held here before its issue (L4-03 / L4-04): its issue was made
+/// on another PC and is judged here on the issue gate (`issue_check`). A permit not held here is
+/// judged where it was issued (and its plant history is not judged again).
+fn issue_crossed(from: Option<&str>, to: &str) -> bool {
+    from.is_some_and(|f| PRE_ISSUE.contains(&f)) && ISSUED_ON.contains(&to)
+}
+
+/// A number of a payload (a JSON number, or numeric text as SQLite's REAL affinity keeps it).
+fn num(p: &Payload, key: &str) -> Option<f64> {
+    match p.get(key) {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// The issue gate of a permit issued on another PC (`permit::safety_content`, the same rules as the
+/// local issue): its content complete, its HSE approval recorded when its type (here) requires one,
+/// and, when it needs a gas test, its latest gas test (with the ones received with it) within the
+/// limits set here.
+async fn issue_check(
+    conn: &impl ConnectionTrait,
+    permit: &Payload,
+    code: &str,
+    gas_tests: &[&Payload],
+) -> AppResult<Option<InboundVerdict>> {
+    use crate::permit::safety_content::{content_blockers, gas_limits, needs_gas_test, reading_breaches};
+    let missing = content_blockers(
+        code,
+        field(permit, "work_description"),
+        field(permit, "risk_assessment"),
+        field(permit, "preventive_measures"),
+        field(permit, "ppe_required"),
+    );
+    if !missing.is_empty() {
+        let what: Vec<&str> = missing.iter().map(|b| b.code.as_str()).collect();
+        return conflict(
+            "PERMIT_ISSUE_CONTENT_MISSING",
+            format!("permit {code} was issued without its content ({})", what.join(", ")),
+        );
+    }
+    let Some(type_sync) = field(permit, "permit_type_sync_id") else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(requires_hse_approval, 0) AS hse, COALESCE(requires_atmospheric_test, 0) AS gas, code FROM permit_types WHERE entity_sync_id = ?",
+            [type_sync.into()],
+        ))
+        .await?
+    else {
+        return wait(format!("permit {code}: its permit type is not applied yet"));
+    };
+    let hse: i64 = row.try_get("", "hse").map_err(sync_err)?;
+    let gas: i64 = row.try_get("", "gas").map_err(sync_err)?;
+    let type_code: String = row.try_get("", "code").map_err(sync_err)?;
+    if hse != 0 && (field(permit, "hse_approved_at").is_none() || field(permit, "hse_approved_by_sync_id").is_none()) {
+        return conflict(
+            "PERMIT_ISSUE_HSE_APPROVAL_MISSING",
+            format!("permit {code} was issued without the HSE approval its type requires"),
+        );
+    }
+    if needs_gas_test(gas != 0, type_sync, &type_code) {
+        let latest = gas_tests
+            .iter()
+            .filter_map(|g| time(g, "measured_at").map(|t| (t, *g)))
+            .max_by_key(|(t, _)| *t);
+        let Some((_, test)) = latest else {
+            return conflict(
+                "PERMIT_ISSUE_GAS_TEST_MISSING",
+                format!("permit {code} was issued without the gas test it needs"),
+            );
+        };
+        let limits = gas_limits(conn).await?;
+        let breaches = reading_breaches(
+            &limits,
+            num(test, "o2_percent").unwrap_or(f64::NAN),
+            num(test, "lel_percent").unwrap_or(f64::NAN),
+            num(test, "h2s_ppm").unwrap_or(f64::NAN),
+            num(test, "co_ppm"),
+            code,
+        );
+        if !breaches.is_empty() {
+            let what: Vec<&str> = breaches.iter().map(|b| b.code.as_str()).collect();
+            return conflict(
+                "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS",
+                format!(
+                    "permit {code} was issued on a gas test out of the limits set here ({})",
+                    what.join(", ")
+                ),
+            );
+        }
+    }
+    Ok(None)
+}
 
 tokio::task_local! {
     /// While the children counted for a permit's change are applied with it (`apply_group`): that
@@ -1442,6 +1555,15 @@ pub(crate) async fn inbound_permit_check(
             );
         }
     }
+    if issue_crossed(from, to) {
+        let gas_tests = permit_children(conn, "permit_gas_tests", entity_sync_id).await?;
+        if let Some(why) = gas_tests.blocked.clone() {
+            return wait(format!("permit {code}: {why}"));
+        }
+        if let Some(verdict) = issue_check(conn, &permit, &code, &payloads(&gas_tests)).await? {
+            return Ok(Some(verdict));
+        }
+    }
     if !JUDGED_STATUSES.contains(&to) {
         return Ok(None);
     }
@@ -1532,12 +1654,20 @@ pub(crate) async fn permit_group(
     let (local, permit) = permit_transition(conn, entity_sync_id, received).await?;
     let to = field(&permit, "status").unwrap_or_default();
     let from = local.as_ref().and_then(|l| field(l, "status")).map(str::to_string);
-    if from.as_deref() == Some(to) || !JUDGED_STATUSES.contains(&to) {
+    let judged = JUDGED_STATUSES.contains(&to);
+    let issue = issue_crossed(from.as_deref(), to);
+    if from.as_deref() == Some(to) || !(judged || issue) {
         return Ok(None);
     }
     let mut rows = Vec::new();
-    for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
-        rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
+    if judged {
+        for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
+            rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
+        }
+    }
+    // The gas tests the issue was judged on (`issue_check`) are applied with it.
+    if issue {
+        rows.extend(permit_children(conn, "permit_gas_tests", entity_sync_id).await?.counted);
     }
     Ok((!rows.is_empty()).then(|| Group {
         parent_sync_id: entity_sync_id.to_string(),

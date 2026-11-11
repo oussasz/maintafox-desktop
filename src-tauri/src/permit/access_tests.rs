@@ -129,6 +129,9 @@ async fn set_status(db: &DatabaseConnection, wp: &WorkPermit, status: &str) -> W
     } else {
         1
     };
+    if status == "issued" {
+        crate::permit::safety_content::fill_issue_requirements_for_tests(db, wp.id).await;
+    }
     queries::set_work_permit_status(
         db,
         WorkPermitStatusInput {

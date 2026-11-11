@@ -91,7 +91,8 @@
       "spares": "Pièces de rechange",
       "documents": "Documents et photos",
       "criticality": "Criticité",
-      "history": "Historique"
+      "history": "Historique",
+      "isolation": "Points d'isolement"
     }
   },
   "form": {
@@ -926,5 +927,29 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."
+  },
+  "isolationPoints": {
+    "title": "Points d'isolement",
+    "description": "Où les énergies de cet équipement sont isolées. Ils sont proposés sur chaque permis de travail établi pour l'équipement.",
+    "empty": "Aucun point d'isolement défini.",
+    "add": "Ajouter un point",
+    "edit": "Modifier",
+    "deactivate": "Désactiver",
+    "reactivate": "Réactiver",
+    "inactive": "Désactivé",
+    "showInactive": "Afficher les points désactivés",
+    "code": "Code",
+    "label": "Libellé",
+    "energy": "Type d'énergie",
+    "method": "Méthode / dispositif d'isolement",
+    "normalState": "État normal",
+    "normalStatePlaceholder": "ex. fermé, sous tension",
+    "listsHint": "Types d'énergie et méthodes : Données de référence (listes des permis).",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "dialogTitleNew": "Nouveau point d'isolement",
+    "dialogTitleEdit": "Modifier le point d'isolement",
+    "required": "Ce champ est obligatoire.",
+    "optionsError": "Les listes de types d'énergie et de méthodes n'ont pas pu être lues."
   }
 }

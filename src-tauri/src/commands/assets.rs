@@ -748,3 +748,64 @@ pub async fn assess_asset_criticality(
         criticality::assess_asset_criticality(&state.db, payload, i64::from(user.user_id)).await?;
     Ok(AssessCriticalityResult { assessment, asset })
 }
+
+// ─── Isolation points (eq.view / eq.manage, L4-12) ───────────────────────────
+
+/// The isolation points of an equipment (deactivated ones too when asked).
+#[tauri::command]
+pub async fn list_equipment_isolation_points(
+    equipment_id: i64,
+    include_inactive: Option<bool>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::isolation_points::EquipmentIsolationPoint>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    crate::assets::isolation_points::list_equipment_isolation_points(
+        &state.db,
+        equipment_id,
+        include_inactive.unwrap_or(false),
+    )
+    .await
+}
+
+/// Choices of the isolation-point form: the energy types and the plant's isolation methods
+/// (Données de référence), read with the equipment view right.
+#[tauri::command]
+pub async fn list_equipment_isolation_point_options(
+    state: State<'_, AppState>,
+) -> AppResult<crate::permit::energy_reference::IsolationOptions> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    crate::permit::energy_reference::list_isolation_options(&state.db).await
+}
+
+#[tauri::command]
+pub async fn upsert_equipment_isolation_point(
+    input: crate::assets::isolation_points::EquipmentIsolationPointUpsertInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::isolation_points::EquipmentIsolationPoint> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    crate::assets::isolation_points::upsert_equipment_isolation_point(&state.db, input).await
+}
+
+/// Deactivates or reactivates a point (never deleted).
+#[tauri::command]
+pub async fn set_equipment_isolation_point_active(
+    input: crate::assets::isolation_points::EquipmentIsolationPointActiveInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::assets::isolation_points::EquipmentIsolationPoint> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::EQ_MANAGE,
+        PermissionScope::Global
+    );
+    crate::assets::isolation_points::set_equipment_isolation_point_active(&state.db, input).await
+}

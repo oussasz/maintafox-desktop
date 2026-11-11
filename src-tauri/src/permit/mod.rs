@@ -8,6 +8,7 @@ pub mod handover_roles;
 pub mod queries;
 pub mod required_set;
 pub mod requirement_rules;
+pub mod safety_content;
 pub(crate) mod sync_check;
 pub mod wo_gate;
 
@@ -17,6 +18,8 @@ mod access_tests;
 mod lock_removal_tests;
 #[cfg(test)]
 mod requirement_rules_tests;
+#[cfg(test)]
+mod safety_content_tests;
 #[cfg(test)]
 mod sync_check_tests;
 #[cfg(test)]
