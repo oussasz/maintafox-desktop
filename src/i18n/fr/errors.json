@@ -300,6 +300,7 @@
     "GATE_FIN_LABOR_SPLIT": "Un réalisé de main-d'œuvre doit garder au moins une ventilation : personne, équipe ou grille de taux.",
     "GATE_FIN_ACTUAL_NOT_PROVISIONAL": "Seul un réalisé provisoire peut être comptabilisé.",
     "GATE_FIN_ACTUAL_NOT_POSTED": "Seul un réalisé comptabilisé peut être contre-passé.",
+    "GATE_FIN_REVERSAL_FOLLOWS_WO": "Les écritures issues d'un OT se contre-passent en rouvrant l'OT.",
     "GATE_FIN_REVERSAL_OF_REVERSAL": "Une contre-passation ne peut pas être contre-passée à son tour.",
     "GATE_FIN_ACTUAL_ALREADY_REVERSED": "Ce réalisé a déjà été contre-passé.",
     "GATE_FIN_VARIANCE_DUPLICATE": "Une analyse d'écart ouverte existe déjà pour ce périmètre budgétaire.",

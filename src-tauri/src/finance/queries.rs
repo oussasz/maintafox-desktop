@@ -1549,6 +1549,33 @@ pub async fn reverse_budget_actual(
             "GATE_FIN_REVERSAL_OF_REVERSAL: Reversal records cannot be reversed again.".to_string(),
         ]));
     }
+    // OT settlement entries follow their work order (reopening it reverses them together with the
+    // settlement record); reversing one alone would let the next late-cost posting re-book it.
+    let current_source_type: String = row.try_get("", "source_type")?;
+    if current_source_type == crate::finance::settlement::SETTLEMENT_SOURCE_TYPE
+        || current_source_type == crate::finance::settlement::SETTLEMENT_LATE_SOURCE_TYPE
+    {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FIN_REVERSAL_FOLLOWS_WO: Work-order settlement entries are reversed by reopening the work order."
+                .to_string(),
+        ]));
+    }
+    // The reversal is booked in the entry's own month: a closed month stays as it was closed.
+    if let Some(month) = current_period_month.filter(|m| (1..=12).contains(m)) {
+        let fiscal_year: i64 = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT fiscal_year FROM budget_versions WHERE id = ?",
+                [current_budget_version_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "BudgetVersion".to_string(),
+                id: current_budget_version_id.to_string(),
+            })?
+            .try_get("", "fiscal_year")?;
+        crate::finance::periods::ensure_period_open(&txn, fiscal_year, month).await?;
+    }
     let already_reversed = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

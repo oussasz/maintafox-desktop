@@ -300,6 +300,7 @@
     "GATE_FIN_LABOR_SPLIT": "A labour actual must keep at least one split: person, team or rate card lane.",
     "GATE_FIN_ACTUAL_NOT_PROVISIONAL": "Only a provisional actual can be posted.",
     "GATE_FIN_ACTUAL_NOT_POSTED": "Only a posted actual can be reversed.",
+    "GATE_FIN_REVERSAL_FOLLOWS_WO": "Work-order settlement entries are reversed by reopening the work order.",
     "GATE_FIN_REVERSAL_OF_REVERSAL": "A reversal cannot be reversed in turn.",
     "GATE_FIN_ACTUAL_ALREADY_REVERSED": "This actual has already been reversed.",
     "GATE_FIN_VARIANCE_DUPLICATE": "An open variance review already exists for this budget scope.",
