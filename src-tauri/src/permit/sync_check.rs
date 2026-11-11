@@ -172,7 +172,7 @@ async fn issue_check(
     gas_tests: &[&Payload],
     workers: &[&Payload],
 ) -> AppResult<Option<InboundVerdict>> {
-    use crate::permit::safety_content::{content_blockers, needs_gas_test};
+    use crate::permit::safety_content::content_blockers;
     let missing = content_blockers(
         code,
         field(permit, "work_description"),

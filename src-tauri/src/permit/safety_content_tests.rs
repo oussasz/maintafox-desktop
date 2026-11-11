@@ -262,7 +262,7 @@ async fn a_content_change_in_review_returns_the_permit_to_draft_and_clears_the_h
     assert_eq!(shown.permit_status, "draft");
     assert_eq!(shown.hse_approved_at, None);
     let wp = reload(&db, &wp).await;
-    assert_eq!((wp.submitted_by_id, wp.submitted_at), (None, None));
+    assert_eq!((wp.submitted_by_id, wp.submitted_at.as_deref()), (None, None));
     // A stale version is refused.
     let err = safety_content::save_permit_safety_content(
         &db,
