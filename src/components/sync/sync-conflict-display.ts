@@ -471,3 +471,46 @@ export function clashingUsername(c: SyncConflictRecord): string | null {
   const value = parsePayload(c.inbound_payload_json)?.["username"];
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
+
+/** Columns that are bookkeeping, not something a person decides on (never shown side by side). */
+const TECHNICAL_FIELDS = new Set([
+  "id",
+  "entity_sync_id",
+  "row_version",
+  "created_at",
+  "updated_at",
+  "synced_at",
+  "origin_machine_id",
+  "deleted_at",
+]);
+
+export interface ConflictFieldDifference {
+  /** Column name as stored (humanised on screen). */
+  field: string;
+  local: unknown;
+  remote: unknown;
+}
+
+/**
+ * The columns whose value differs between this device's version and the server's, for the
+ * side-by-side view. Empty when one of the two versions is missing or unreadable.
+ */
+export function conflictFieldDifferences(c: SyncConflictRecord): ConflictFieldDifference[] {
+  const local = parsePayload(c.local_payload_json);
+  const remote = parsePayload(c.inbound_payload_json);
+  if (!local || !remote) return [];
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  const out: ConflictFieldDifference[] = [];
+  for (const field of keys) {
+    if (TECHNICAL_FIELDS.has(field) || field.endsWith("_sync_id")) continue;
+    if (JSON.stringify(local[field] ?? null) === JSON.stringify(remote[field] ?? null)) continue;
+    out.push({ field, local: local[field] ?? null, remote: remote[field] ?? null });
+  }
+  return out;
+}
+
+/** "planned_start_date" → "Planned start date" (no stored label exists for raw column names). */
+export function humaniseFieldName(field: string): string {
+  const words = field.replace(/_id$/, "").replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : field;
+}

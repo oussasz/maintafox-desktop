@@ -367,6 +367,19 @@ describe("InspectionAnomaliesPanel", () => {
 });
 
 describe("TemplateBuilderDialog", () => {
+  it("adds one point per pasted line with its own code, and duplicates a point", async () => {
+    render(<TemplateBuilderDialog target="new" onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByTestId("asset-picker");
+    fireEvent.change(document.getElementById("template-bulk") as HTMLElement, {
+      target: { value: "Oil pressure\nBearing temperature" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add these checks" }));
+    expect(await screen.findByLabelText("Code of checkpoint 2")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Code of checkpoint 3")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate check 1" }));
+    expect(await screen.findByLabelText("Code of checkpoint 3")).toBeInTheDocument();
+  });
+
   it("names the invalid rows and the reason instead of saving silently", async () => {
     render(<TemplateBuilderDialog target="new" onClose={vi.fn()} onSaved={vi.fn()} />);
     await screen.findByTestId("asset-picker");
@@ -376,8 +389,9 @@ describe("TemplateBuilderDialog", () => {
     fireEvent.change(document.getElementById("tpl-name") as HTMLElement, {
       target: { value: "Pump house" },
     });
-    // Row 1 has no code.
-    fireEvent.click(screen.getByRole("button", { name: "Save checklist" }));
+    // Row 1 starts with a suggested code; clearing it leaves a row without a code.
+    fireEvent.change(screen.getByLabelText("Code of checkpoint 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save round template" }));
     const summary = await screen.findByTestId("template-row-errors");
     expect(summary).toHaveTextContent("1 checkpoint has a problem. Nothing was saved.");
     expect(summary).toHaveTextContent("Checkpoint 1 (no code) : The code is required.");
@@ -388,7 +402,7 @@ describe("TemplateBuilderDialog", () => {
       expect(screen.queryByTestId("template-row-errors")).not.toBeInTheDocument(),
     );
     svc.createInspectionTemplate.mockResolvedValue([{}, {}, []]);
-    fireEvent.click(screen.getByRole("button", { name: "Save checklist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save round template" }));
     await waitFor(() =>
       expect(svc.createInspectionTemplate).toHaveBeenCalledWith(
         expect.objectContaining({

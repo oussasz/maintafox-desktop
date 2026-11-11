@@ -45,16 +45,20 @@ export const DEFAULT_DASHBOARD_METRIC_CARDS: DashboardWidgetLayoutEntry[] = [
   { id: DASHBOARD_METRIC_CARD_IDS.TOTAL_ASSETS, order: 3, visible: true },
 ];
 
-/** Role panels first, then the shared widgets — RAMS lives only under `/analytics` (not Home). */
+/**
+ * The key figures first (late OTs, open requests, OTs in progress), then the role panels. The two
+ * charts are offered but hidden by default: they live in Analytics, and the page stays short
+ * (field test L7-15). RAMS lives only under `/analytics` (not Home).
+ */
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
   version: 1,
   widgets: [
-    { id: DASHBOARD_WIDGET_IDS.MY_WORK, order: 0, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.SUPERVISION, order: 1, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.PLANNING, order: 2, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.KPIS, order: 3, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.WORKLOAD, order: 4, visible: true },
-    { id: DASHBOARD_WIDGET_IDS.DI_STATUS, order: 5, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.KPIS, order: 0, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.MY_WORK, order: 1, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.SUPERVISION, order: 2, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.PLANNING, order: 3, visible: true },
+    { id: DASHBOARD_WIDGET_IDS.WORKLOAD, order: 4, visible: false },
+    { id: DASHBOARD_WIDGET_IDS.DI_STATUS, order: 5, visible: false },
   ],
   metric_cards: DEFAULT_DASHBOARD_METRIC_CARDS.map((c) => ({ ...c })),
 };

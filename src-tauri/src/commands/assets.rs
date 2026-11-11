@@ -249,6 +249,27 @@ pub async fn move_asset_org_node(
     hierarchy::move_asset_org_node(&state.db, asset_id, new_org_node_id, expected_row_version, user.user_id).await
 }
 
+/// "Déplacer le composant" (L2-03): the component goes under another parent (or to stock), from
+/// an effective date. `eq.manage` where it is held: the component, its current parent and its new
+/// parent must each be in a site the person can act on (checked in the move's transaction).
+#[tauri::command]
+pub async fn move_asset_component(
+    payload: hierarchy::MoveAssetComponentPayload,
+    state: State<'_, AppState>,
+) -> AppResult<hierarchy::MoveAssetComponentResult> {
+    let user = require_session!(state);
+    let permission = crate::rbac::permissions::EQ_MANAGE;
+    let scope = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user.user_id)
+        .await?
+        .scope_of(permission);
+    if !scope.is_anywhere() {
+        return Err(AppError::PermissionDenied(format!("Permission requise : {permission}")));
+    }
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, permission).await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, permission).await?;
+    hierarchy::move_asset_component(&state.db, payload, &scope, user.user_id).await
+}
+
 // ─── Lifecycle events (eq.view / eq.manage) ───────────────────────────────────
 
 #[tauri::command]

@@ -402,6 +402,13 @@
     "noParts": "No part required.",
     "noSkills": "No skill in the catalogue."
   },
+  "coverage": {
+    "title": "Covering plan",
+    "hint": "An annual overhaul can replace the weekly check of the same asset: while the covering plan has an occurrence in the period, this plan does not generate one.",
+    "coveredBy": "Covered by plan",
+    "none": "None (this plan stands alone)",
+    "covers": "This plan covers: {{plans}}."
+  },
   "hints": {
     "partNecessityMissing": "Say for each part whether it is required or optional: {{codes}}.",
     "publishBlockedByLifecycle": "To publish, set plan status to approved, active, or suspended.",

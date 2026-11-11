@@ -171,6 +171,7 @@
       "article__created": "Article créé",
       "bulk_import__apply": "Import de données appliqué",
       "asset__moved": "Équipement déplacé",
+      "asset__parent_changed": "Composant posé / déposé",
       "asset__meter_reading_cancelled": "Relevé de compteur annulé",
       "inventory__count__line_approved": "Ligne d'inventaire validée",
       "inventory__count__line_entered": "Ligne d'inventaire saisie",

@@ -156,8 +156,16 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ]));
     }
 
-    let delete_result = state
-        .db
+    // Plans this draft covered stand alone again (nested plans, migration 292).
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE pm_plans SET covered_by_plan_id = NULL, row_version = row_version + 1 WHERE covered_by_plan_id = ?",
+        [plan_id.into()],
+    ))
+    .await?;
+
+    let delete_result = tx
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM pm_plans WHERE id = ? AND row_version = ? AND lifecycle_status = 'draft'",
@@ -165,10 +173,12 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
+        tx.rollback().await?;
         return Err(AppError::ValidationFailed(vec![
             "GATE_RECORD_CHANGED_ELSEWHERE: PM plan delete failed.".to_string(),
         ]));
     }
+    tx.commit().await?;
 
     Ok(())
 }

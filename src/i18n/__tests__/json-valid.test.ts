@@ -64,6 +64,8 @@ const COMMON_TOP_KEYS = [
   "discardGuard",
   // "Exporter (Excel/CSV)" button of the main lists (src/components/ui/ExportCsvButton.tsx).
   "listExport",
+  // Account without a personnel record (src/components/common/PersonnelLinkNotice.tsx).
+  "personnelLink",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

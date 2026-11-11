@@ -171,6 +171,7 @@
       "article__created": "Article created",
       "bulk_import__apply": "Data import applied",
       "asset__moved": "Equipment moved",
+      "asset__parent_changed": "Component installed / removed",
       "asset__meter_reading_cancelled": "Meter reading cancelled",
       "inventory__count__line_approved": "Count line approved",
       "inventory__count__line_entered": "Count line entered",
