@@ -462,7 +462,7 @@ async fn new_asset_figures_wait_for_real_data_and_age_runs_from_commissioning() 
     exec(
         &db,
         &format!(
-            "INSERT INTO equipment_lifecycle_events (sync_id, equipment_id, event_type, occurred_at, created_at)              VALUES ('l206-move', {id}, 'moved', '{now}', '{now}')",
+            "INSERT INTO equipment_lifecycle_events (entity_sync_id, equipment_id, event_type, occurred_at, created_at) VALUES ('l206-move', {id}, 'moved', '{now}', '{now}')",
             id = asset.id,
             now = chrono::Utc::now().to_rfc3339()
         ),
