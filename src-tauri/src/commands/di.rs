@@ -201,9 +201,6 @@ pub async fn create_di(
     if input.request_type.trim().is_empty() {
         errors.push("GATE_DI_REQUEST_TYPE_REQUIRED: Le type de demande est obligatoire.".into());
     }
-    if input.symptom_code_id.is_none() {
-        errors.push("GATE_DI_SYMPTOM_REQUIRED: Le symptôme est obligatoire.".into());
-    }
 
     let asset_exists = state
         .db
