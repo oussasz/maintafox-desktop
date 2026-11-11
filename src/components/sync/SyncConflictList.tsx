@@ -142,7 +142,7 @@ export function SyncConflictList({
   const formatValue = (v: unknown): string => {
     if (v === null || v === undefined || v === "") return t("sync.compare.empty");
     if (typeof v === "boolean") return v ? t("sync.compare.yes") : t("sync.compare.no");
-    if (typeof v === "string" && /^d{4}-d{2}-d{2}[T ]/.test(v)) {
+    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}[T ]/.test(v)) {
       const d = new Date(v.includes("T") ? v : v.replace(" ", "T"));
       if (!Number.isNaN(d.getTime())) return formatDateTime(v);
     }

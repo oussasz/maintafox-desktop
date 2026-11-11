@@ -143,6 +143,7 @@
     "activeToggle": "Valeur « {{label}} » active",
     "editValue": "Modifier « {{label}} »",
     "deactivateValue": "Désactiver « {{label}} »",
+    "parentMissing": "Choisissez le parent pour pouvoir enregistrer.",
     "parentChoose": "— Choisir —",
     "orphanParent": "Sans parent : jamais proposée dans les formulaires",
     "hierarchy": {

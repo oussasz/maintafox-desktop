@@ -1079,6 +1079,11 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         </option>
                       ))}
                     </select>
+                    {parentRequired && newRow.parentId == null ? (
+                      <p role="alert" className="mt-1 text-xs text-tone-danger-fg">
+                        {t("editor.parentMissing")}
+                      </p>
+                    ) : null}
                   </ReferenceValueTableCell>
                 ) : null}
                 {showNature ? (
@@ -1271,29 +1276,36 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                   {showParent ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       {isEditing ? (
-                        <select
-                          value={editRow.parentId == null ? "" : String(editRow.parentId)}
-                          onChange={(e) =>
-                            setEditRow({
-                              ...editRow,
-                              parentId: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                          aria-label={t("editor.colParent")}
-                          aria-invalid={parentRequired && editRow.parentId == null}
-                          className={cn(mfInput.nativeSelect, "h-9")}
-                        >
-                          <option value="">
-                            {parentRequired ? t("editor.parentChoose") : t("editor.none")}
-                          </option>
-                          {parentCandidates
-                            .filter((p) => p.id !== v.id)
-                            .map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {parentLabel(p)}
-                              </option>
-                            ))}
-                        </select>
+                        <>
+                          <select
+                            value={editRow.parentId == null ? "" : String(editRow.parentId)}
+                            onChange={(e) =>
+                              setEditRow({
+                                ...editRow,
+                                parentId: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                            aria-label={t("editor.colParent")}
+                            aria-invalid={parentRequired && editRow.parentId == null}
+                            className={cn(mfInput.nativeSelect, "h-9")}
+                          >
+                            <option value="">
+                              {parentRequired ? t("editor.parentChoose") : t("editor.none")}
+                            </option>
+                            {parentCandidates
+                              .filter((p) => p.id !== v.id)
+                              .map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {parentLabel(p)}
+                                </option>
+                              ))}
+                          </select>
+                          {parentRequired && editRow.parentId == null ? (
+                            <p role="alert" className="mt-1 text-xs text-tone-danger-fg">
+                              {t("editor.parentMissing")}
+                            </p>
+                          ) : null}
+                        </>
                       ) : parentValue ? (
                         parentLabel(parentValue)
                       ) : parentRequired ? (

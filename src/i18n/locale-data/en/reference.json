@@ -143,6 +143,7 @@
     "activeToggle": "Value \"{{label}}\" active",
     "editValue": "Edit \"{{label}}\"",
     "deactivateValue": "Deactivate \"{{label}}\"",
+    "parentMissing": "Choose the parent to be able to save.",
     "parentChoose": "— Choose —",
     "orphanParent": "No parent: never offered in forms",
     "hierarchy": {
