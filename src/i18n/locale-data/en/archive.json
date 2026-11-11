@@ -1,7 +1,13 @@
 {
   "page": {
     "title": "Archive",
-    "subtitle": "Find archived records, check their integrity and manage how long they are kept."
+    "subtitle": "Find archived records, check their integrity and manage how long they are kept.",
+    "about": {
+      "title": "What this screen is for",
+      "closed": "Closed work orders, handled requests and other finished records stay in their module: find them with the status filter of their list. Nothing is deleted or moved when a record is closed.",
+      "what": "Archives keeps copies of records removed from a module, with an integrity check, a deletion block and a retention period (“Retention rules” tab). In this version no module sends records here yet, so the counters stay at 0.",
+      "restore": "To restore: open the archived record, then “{{button}}” (archive restore right and password confirmation). The request is recorded in the archive history; putting the record back into its module is not available yet."
+    }
   },
   "tabs": {
     "explorer": "Archived records",

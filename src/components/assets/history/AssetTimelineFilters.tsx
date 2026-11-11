@@ -13,7 +13,16 @@ type Props = {
   onSearchChange: (v: string) => void;
 };
 
-const TYPE_FILTERS = ["all", "ot", "di", "pm", "inspection", "documents", "failures"] as const;
+const TYPE_FILTERS = [
+  "all",
+  "ot",
+  "di",
+  "pm",
+  "inspection",
+  "documents",
+  "failures",
+  "history",
+] as const;
 const PERIOD_FILTERS: AssetHistoryPeriod[] = [
   "today",
   "last_7_days",

@@ -741,6 +741,84 @@ pub async fn list_asset_history_events(
         );
     }
 
+    // 10) Imported maintenance history (L7-30): one event per record of the former system, at its
+    // end date, with its coding so the screen can edit it (`save_wo_history_coding`).
+    let history_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT h.id, h.import_ref, h.ended_at, h.started_at, h.is_failure, h.downtime_hours, \
+                    h.description, h.work_done, h.interveners_text, h.row_version, \
+                    h.failure_mode_id, h.failure_cause_id, h.failure_mechanism_id, h.detection_method_id, \
+                    h.failure_effect_id, h.labor_cost, h.parts_cost, h.service_cost, \
+                    COALESCE(t.label, t.code) AS nature_label \
+             FROM wo_history_records h \
+             LEFT JOIN reference_values t ON t.id = h.type_id \
+             WHERE h.equipment_id = ?",
+            [asset_id.into()],
+        ))
+        .await?;
+    for row in history_rows {
+        let id: i64 = row.try_get("", "id")?;
+        let import_ref: String = row.try_get("", "import_ref")?;
+        let ended_at: String = row.try_get("", "ended_at")?;
+        let description: Option<String> = row.try_get("", "description")?;
+        let work_done: Option<String> = row.try_get("", "work_done")?;
+        let downtime_h: Option<f64> = row.try_get("", "downtime_hours")?;
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source".into(), JsonValue::String("history_import".into()));
+        metadata.insert("started_at".into(), JsonValue::String(row.try_get("", "started_at")?));
+        metadata.insert(
+            "is_failure".into(),
+            JsonValue::Bool(row.try_get::<i64>("", "is_failure")? == 1),
+        );
+        metadata.insert(
+            "row_version".into(),
+            JsonValue::from(row.try_get::<i64>("", "row_version")?),
+        );
+        for column in [
+            "failure_mode_id",
+            "failure_cause_id",
+            "failure_mechanism_id",
+            "detection_method_id",
+            "failure_effect_id",
+        ] {
+            metadata.insert(
+                column.into(),
+                row.try_get::<Option<i64>>("", column)?
+                    .map_or(JsonValue::Null, JsonValue::from),
+            );
+        }
+        for column in ["nature_label", "work_done", "interveners_text"] {
+            if let Some(v) = row.try_get::<Option<String>>("", column)? {
+                metadata.insert(column.into(), JsonValue::String(v));
+            }
+        }
+        let cost: f64 = ["labor_cost", "parts_cost", "service_cost"]
+            .iter()
+            .map(|c| row.try_get::<Option<f64>>("", c).map(|v| v.unwrap_or(0.0)))
+            .sum::<Result<f64, _>>()?;
+        metadata.insert("total_cost".into(), JsonValue::from(cost));
+        push_event(
+            &mut events,
+            format!("history:{id}"),
+            asset_id,
+            "history_imported",
+            ended_at,
+            format!("Imported history {import_ref}"),
+            description.or(work_done),
+            None,
+            downtime_h.map(|h| (h * 60.0).round() as i64),
+            None,
+            metadata,
+            Some(AssetHistoryEventRef {
+                entity_type: "history_record".into(),
+                entity_id: Some(id),
+                entity_code: Some(import_ref),
+                route_hint: None,
+            }),
+        );
+    }
+
     // Filters.
     if let Some(types) = query.event_types {
         if !types.is_empty() {

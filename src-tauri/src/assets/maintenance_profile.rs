@@ -227,6 +227,66 @@ pub async fn get_asset_maintenance_profile(
             entry.work_order_count += 1;
         }
     }
+
+    // Imported maintenance history (L7-30) counts like closed work: its nature, downtime and cost.
+    let history_binds: Vec<sea_orm::Value> = ids.iter().map(|&id| id.into()).collect();
+    let history_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT t.semantic_tag AS nature_code, h.is_failure, \
+                    COALESCE(h.downtime_hours, 0.0) AS downtime_hours, \
+                    COALESCE(h.stopped_at, h.detected_at, h.started_at) AS failure_at, \
+                    h.ended_at AS cost_at, \
+                    COALESCE(h.labor_cost, 0.0) AS labor_cost, COALESCE(h.parts_cost, 0.0) AS parts_cost, \
+                    COALESCE(h.service_cost, 0.0) AS service_cost \
+                 FROM wo_history_records h \
+                 LEFT JOIN reference_values t ON t.id = h.type_id \
+                 WHERE h.equipment_id IN ({placeholders})"
+            ),
+            history_binds,
+        ))
+        .await?;
+    for row in &history_rows {
+        let nature_code: Option<String> = get(row, "nature_code")?;
+        let nature = nature_code
+            .as_deref()
+            .and_then(crate::wo::types::MaintenanceNature::parse);
+        let is_failure: i64 = get(row, "is_failure")?;
+        let cost_at: String = get(row, "cost_at")?;
+        profile.work_order_count += 1;
+        if is_failure == 1 || nature.is_some_and(|n| n.is_corrective()) {
+            profile.failure_work_order_count += 1;
+            let failure_at: String = get(row, "failure_at")?;
+            if profile
+                .last_failure_at
+                .as_deref()
+                .is_none_or(|last| failure_at.as_str() > last)
+            {
+                profile.last_failure_at = Some(failure_at);
+            }
+        } else if nature.is_some_and(|n| n.is_preventive()) {
+            profile.planned_work_order_count += 1;
+        }
+        profile.downtime_hours += get::<f64>(row, "downtime_hours")?;
+        let labor: f64 = get(row, "labor_cost")?;
+        let parts: f64 = get(row, "parts_cost")?;
+        let services: f64 = get(row, "service_cost")?;
+        let total = labor + parts + services;
+        profile.cost_lifetime.add(labor, parts, services, total);
+        if cost_at.as_str() >= recent_from.as_str() {
+            profile.cost_recent.add(labor, parts, services, total);
+        }
+        if let Some(year) = cost_at.get(0..4).and_then(|y| y.parse::<i32>().ok()) {
+            let entry = by_year.entry(year).or_insert(AssetYearCost {
+                year,
+                total: 0.0,
+                work_order_count: 0,
+            });
+            entry.total += total;
+            entry.work_order_count += 1;
+        }
+    }
     profile.cost_by_year = by_year.into_values().collect();
     profile.cost_to_replacement_ratio = replacement_value
         .filter(|v| *v > 0.0)

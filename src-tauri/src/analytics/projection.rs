@@ -655,7 +655,7 @@ pub async fn load_bad_actors(
         "(SELECT COALESCE(SUM(wo.total_cost), 0) FROM work_orders wo \
            JOIN work_order_statuses st ON st.id = wo.status_id \
           WHERE wo.equipment_id = e.id AND st.code = 'closed' AND wo.closed_at IS NOT NULL \
-            AND datetime(wo.closed_at) >= datetime(?1) AND datetime(wo.closed_at) <= datetime(?2))"
+            AND datetime(wo.closed_at) >= datetime(?1) AND datetime(wo.closed_at) <= datetime(?2))          + (SELECT COALESCE(SUM(COALESCE(h.labor_cost, 0) + COALESCE(h.parts_cost, 0) + COALESCE(h.service_cost, 0)), 0)               FROM wo_history_records h              WHERE h.equipment_id = e.id                AND datetime(h.ended_at) >= datetime(?1) AND datetime(h.ended_at) <= datetime(?2))"
     } else {
         "0"
     };
