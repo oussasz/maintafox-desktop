@@ -146,7 +146,8 @@
     },
     "summary": {
       "title": "Vie de l'équipement",
-      "created": "Créé",
+      "commissioned": "Mise en service",
+      "commissionedMissing": "Date de mise en service non renseignée (Modifier l'actif)",
       "age": "Âge",
       "wo": "OT",
       "pm": "PM",
@@ -600,6 +601,7 @@
     "fair": "Moyen",
     "poor": "Mauvais",
     "noData": "Aucun score de santé",
+    "noDataHint": "Pas encore de données : le score apparaît après un premier relevé de compteur, une demande d'intervention ou un ordre de travail sur cet équipement.",
     "unavailable": "Données de santé indisponibles",
     "loading": "Santé…",
     "hint": "Score de suivi indicatif (0–100) issu de l'activité récente, des DI et OT ouverts et des relevés de compteurs. Ce n'est ni une disponibilité ni une mesure d'état."
@@ -733,7 +735,9 @@
       "downtime": "Arrêts",
       "hours": "h",
       "downtimeHint": "Saisis sur les ordres de travail",
-      "costLifetime": "Coût de maintenance (depuis l’origine)",
+      "costLifetime": "Coût de maintenance (depuis le {{date}})",
+      "costLifetimeNone": "Coût de maintenance (total)",
+      "noCostYet": "Aucun ordre de travail sur cet équipement",
       "costSplit": "Main-d’œuvre {{labor}} · Pièces {{parts}} · Prestations {{services}}",
       "costRecent": "Coût de maintenance ({{months}} derniers mois)",
       "costVsReplacement": "Coût / valeur de remplacement",

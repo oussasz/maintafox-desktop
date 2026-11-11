@@ -42,6 +42,7 @@ export const AssetHistoryEventSchema = z.object({
 export const AssetHistorySummarySchema = z.object({
   asset_id: z.number(),
   created_at: z.string().nullable(),
+  commissioned_at: z.string().nullable(),
   age_days: z.number().nullable(),
   wo_count: z.number(),
   pm_count: z.number(),

@@ -51,6 +51,10 @@ pub struct AssetHistoryEvent {
 pub struct AssetHistorySummary {
     pub asset_id: i64,
     pub created_at: Option<String>,
+    /// Commissioning date (`equipment.commissioning_date`), the start of the asset's service life.
+    pub commissioned_at: Option<String>,
+    /// Days in service since `commissioned_at`; None while the commissioning date is not filled in.
+    /// Never counted from the record creation, which says nothing about the asset's age (L2-06).
     pub age_days: Option<i64>,
     pub wo_count: i64,
     pub pm_count: i64,
@@ -174,7 +178,7 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT created_at FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            "SELECT created_at, commissioning_date FROM equipment WHERE id = ? AND deleted_at IS NULL",
             [asset_id.into()],
         ))
         .await?
@@ -184,8 +188,12 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
         })?;
 
     let created_at: Option<String> = row.try_get::<Option<String>>("", "created_at").unwrap_or(None);
+    let commissioned_at: Option<String> = row
+        .try_get::<Option<String>>("", "commissioning_date")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("asset commissioning date decode: {e}")))?
+        .filter(|s| !s.trim().is_empty());
 
-    let age_days = created_at
+    let age_days = commissioned_at
         .as_deref()
         .and_then(parse_dt)
         .map(|dt| (crate::clock::now() - dt).num_days().max(0));
@@ -216,6 +224,7 @@ pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -
     Ok(AssetHistorySummary {
         asset_id,
         created_at,
+        commissioned_at,
         age_days,
         wo_count: binding.linked_wo_count.count.unwrap_or(0),
         pm_count: binding.linked_pm_plan_count.count.unwrap_or(0),

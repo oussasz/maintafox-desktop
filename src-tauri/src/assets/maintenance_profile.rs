@@ -71,6 +71,9 @@ pub struct AssetMaintenanceProfile {
     pub downtime_hours: f64,
     pub last_failure_at: Option<String>,
     pub cost_lifetime: AssetCostBreakdown,
+    /// Date of the earliest work counted in `cost_lifetime` (OT or imported history); None when
+    /// there is none. The screen names it ("depuis le …") instead of an unexplained "origin" (L2-06).
+    pub cost_since: Option<String>,
     pub cost_recent: AssetCostBreakdown,
     pub recent_window_months: u32,
     pub cost_by_year: Vec<AssetYearCost>,
@@ -78,6 +81,16 @@ pub struct AssetMaintenanceProfile {
     /// Lifetime maintenance cost / replacement value (Maximo "cost vs. replacement" indicator).
     pub cost_to_replacement_ratio: Option<f64>,
     pub pm_plans: Vec<AssetPmPlanLink>,
+}
+
+/// Keeps the earliest non-empty date seen.
+fn note_cost_since(since: &mut Option<String>, at: &str) {
+    if at.trim().is_empty() {
+        return;
+    }
+    if since.as_deref().is_none_or(|s| at < s) {
+        *since = Some(at.to_string());
+    }
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -172,6 +185,7 @@ pub async fn get_asset_maintenance_profile(
         downtime_hours: 0.0,
         last_failure_at: None,
         cost_lifetime: AssetCostBreakdown::default(),
+        cost_since: None,
         cost_recent: AssetCostBreakdown::default(),
         recent_window_months: RECENT_COST_WINDOW_MONTHS,
         cost_by_year: Vec::new(),
@@ -189,6 +203,7 @@ pub async fn get_asset_maintenance_profile(
             .and_then(crate::wo::types::MaintenanceNature::parse);
         let not_closed: i64 = get(row, "not_closed")?;
         let cost_at: String = get(row, "cost_at")?;
+        note_cost_since(&mut profile.cost_since, &cost_at);
         profile.work_order_count += 1;
         if not_closed == 1 {
             profile.open_work_order_count += 1;
@@ -254,6 +269,7 @@ pub async fn get_asset_maintenance_profile(
             .and_then(crate::wo::types::MaintenanceNature::parse);
         let is_failure: i64 = get(row, "is_failure")?;
         let cost_at: String = get(row, "cost_at")?;
+        note_cost_since(&mut profile.cost_since, &cost_at);
         profile.work_order_count += 1;
         if is_failure == 1 || nature.is_some_and(|n| n.is_corrective()) {
             profile.failure_work_order_count += 1;
