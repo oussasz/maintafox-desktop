@@ -31,6 +31,17 @@ import {
   removesCriticalTag,
 } from "@/components/lookups/AbsenceBehaviourPicker";
 import {
+  type CharacteristicEditState,
+  CharacteristicEditCells,
+  CharacteristicHeadCells,
+  CharacteristicReadCells,
+  EMPTY_CHARACTERISTIC_EDIT,
+  buildCharacteristicMetadata,
+  characteristicComplete,
+  characteristicStateFrom,
+  useCharacteristicUnits,
+} from "@/components/lookups/CharacteristicColumns";
+import {
   MaintenanceNatureSelect,
   MaintenanceNatureText,
   useMaintenanceNatures,
@@ -242,9 +253,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     showAbsenceBehaviour,
     showUnit,
     showPermitRule,
+    showCharacteristic,
     crossDomainParentCode,
     sameSetHierarchy,
   } = columnFlags;
+  // Technical characteristics per family (EQUIPMENT.CHARACTERISTICS): type, unit, required.
+  const characteristicUnits = useCharacteristicUnits(showCharacteristic);
+  const [editChar, setEditChar] = useState<CharacteristicEditState>(EMPTY_CHARACTERISTIC_EDIT);
+  const [newChar, setNewChar] = useState<CharacteristicEditState>(EMPTY_CHARACTERISTIC_EDIT);
   // A value that hangs under a value of another list (family -> class, sub-family -> family, ...)
   // is only offered by forms once its parent is chosen: without a parent it would never show up.
   const parentRequired = crossDomainParentCode != null;
@@ -368,12 +384,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       });
       if (showUnit) setEditUnit(unitEditStateFrom(v));
       if (showPermitRule) setEditRule(permitRuleStateFrom(v));
+      if (showCharacteristic) setEditChar(characteristicStateFrom(v));
       setAliasValueId(null);
       if (showSchedule) {
         setPatternValueId(v.id);
       }
     },
-    [setEditingValueId, showSchedule, showUnit, showPermitRule],
+    [setEditingValueId, showSchedule, showUnit, showPermitRule, showCharacteristic],
   );
 
   const cancelEdit = useCallback(() => {
@@ -416,10 +433,19 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           });
           return;
         }
+        if (showCharacteristic && !characteristicComplete(editChar)) return;
         if (parentRequired && editRow.parentId == null) return;
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
+          ...(showCharacteristic
+            ? {
+                metadata_json: buildCharacteristicMetadata(
+                  existing?.metadata_json ?? null,
+                  editChar,
+                ),
+              }
+            : {}),
           // "" clears the nature on the server (corrective fallback); null would leave it. An
           // absence type without a behaviour is refused by the server (required).
           ...(showSemanticTag ? { semantic_tag: editRow.natureTag ?? "" } : {}),
@@ -446,6 +472,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       editUnit,
       showPermitRule,
       editRule,
+      showCharacteristic,
+      editChar,
     ],
   );
 
@@ -454,6 +482,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     setNewRow({ code: "", label: "", description: "", parentId: null, natureTag: null });
     setNewUnit(EMPTY_UNIT_EDIT);
     setNewRule(EMPTY_PERMIT_RULE_EDIT);
+    setNewChar(EMPTY_CHARACTERISTIC_EDIT);
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -491,6 +520,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       });
       return;
     }
+    if (showCharacteristic && !characteristicComplete(newChar)) return;
     if (parentRequired && newRow.parentId == null) return;
     const payload: CreateReferenceValuePayload = {
       set_id: setId,
@@ -499,6 +529,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       label: newRow.label.trim(),
       description: newRow.description.trim() || null,
       ...(showSemanticTag && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
+      ...(showCharacteristic ? { metadata_json: buildCharacteristicMetadata(null, newChar) } : {}),
     };
     await addValue(payload);
   }, [
@@ -510,6 +541,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     newUnit,
     showPermitRule,
     newRule,
+    showCharacteristic,
+    newChar,
     parentRequired,
   ]);
 
@@ -968,6 +1001,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               </ReferenceValueTableHeadCell>
               {showUnit ? <UnitHeadCells /> : null}
               {showPermitRule ? <PermitRuleHeadCells /> : null}
+              {showCharacteristic ? <CharacteristicHeadCells /> : null}
               {showSchedule ? (
                 <ReferenceValueTableHeadCell>
                   {t("schedulePattern.column")}
@@ -1051,6 +1085,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     options={permitRuleOptions}
                   />
                 ) : null}
+                {showCharacteristic ? (
+                  <CharacteristicEditCells
+                    state={newChar}
+                    onChange={setNewChar}
+                    units={characteristicUnits.units}
+                  />
+                ) : null}
                 {showSchedule ? (
                   <ReferenceValueTableCell className="text-xs text-text-muted">
                     {t("schedulePattern.afterCreate")}
@@ -1122,7 +1163,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         !newRow.code.trim() ||
                         !newRow.label.trim() ||
                         (showUnit && !unitEditComplete(newUnit)) ||
-                        (showPermitRule && !permitRuleComplete(newRule))
+                        (showPermitRule && !permitRuleComplete(newRule)) ||
+                        (showCharacteristic && !characteristicComplete(newChar))
                       }
                     >
                       <Check className="h-4 w-4 text-status-success" aria-hidden />
@@ -1262,6 +1304,17 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       <PermitRuleReadCells value={v} options={permitRuleOptions} />
                     )
                   ) : null}
+                  {showCharacteristic ? (
+                    isEditing ? (
+                      <CharacteristicEditCells
+                        state={editChar}
+                        onChange={setEditChar}
+                        units={characteristicUnits.units}
+                      />
+                    ) : (
+                      <CharacteristicReadCells value={v} />
+                    )
+                  ) : null}
                   {showSchedule ? (
                     <ReferenceValueTableCell className="text-xs text-text-muted">
                       <button
@@ -1377,7 +1430,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           disabled={
                             savingValue ||
                             (showUnit && !unitEditComplete(editUnit)) ||
-                            (showPermitRule && !permitRuleComplete(editRule))
+                            (showPermitRule && !permitRuleComplete(editRule)) ||
+                            (showCharacteristic && !characteristicComplete(editChar))
                           }
                         >
                           <Check className="h-4 w-4 text-status-success" aria-hidden />

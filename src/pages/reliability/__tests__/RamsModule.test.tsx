@@ -242,15 +242,126 @@ describe("RamsFleetPage", () => {
     fireEvent.keyDown(row, { key: " " });
     const go = screen.getByRole("button", { name: /Study 2 equipment/ });
     fireEvent.click(go);
+    // The study is named before it is created (left empty: named automatically).
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Left empty: the study is named after its equipment/),
+    ).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Study name"), {
+      target: { value: "Pump bearings 2026" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create the study" }));
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("create_reliability_study", {
-        input: expect.objectContaining({ equipment_ids: [10, 11] }),
+        input: expect.objectContaining({
+          equipment_ids: [10, 11],
+          title: "Pump bearings 2026",
+          accept_mixed_classes: false,
+        }),
       }),
     );
     expect(await screen.findByText("study opened")).toBeInTheDocument();
     expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
       filter: expect.objectContaining({ org_node_id: null, equipment_class_id: null, limit: 50 }),
     });
+  });
+
+  it("asks to confirm a selection of different classes before creating the study (L2-18)", async () => {
+    const mixed = {
+      ...fleetView,
+      rows: [
+        fleetView.rows[0],
+        {
+          ...fleetView.rows[1],
+          equipment_id: 12,
+          asset_code: "PR-1",
+          class_id: 9,
+          class_name: "Overhead crane",
+        },
+      ],
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return mixed;
+      if (cmd === "list_reliability_studies") return [];
+      if (cmd === "create_reliability_study") return study;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <Routes>
+          <Route path="/reliability" element={<RamsFleetPage />} />
+          <Route path="/reliability/studies/:id" element={<p>study opened</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select P-101" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select PR-1" }));
+    fireEvent.click(screen.getByRole("button", { name: /Study 2 equipment/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        /The selection mixes several classes \(Centrifugal pump, Overhead crane\)/,
+      ),
+    ).toBeInTheDocument();
+    const create = within(dialog).getByRole("button", { name: "Create the study" });
+    expect(create).toBeDisabled();
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: /I confirm studying these equipment together/ }),
+    );
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("create_reliability_study", {
+        input: expect.objectContaining({
+          equipment_ids: [10, 12],
+          title: null,
+          accept_mixed_classes: true,
+        }),
+      }),
+    );
+    expect(await screen.findByText("study opened")).toBeInTheDocument();
+  });
+
+  it("searches the saved studies and renames one (L2-13)", async () => {
+    const other = {
+      ...study,
+      id: 8,
+      title: "Crane hoist",
+      assets: study.assets.slice(0, 1).map((a) => ({ ...a, asset_code: "PR-1" })),
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view") return fleetView;
+      if (cmd === "list_reliability_studies") return [study, other];
+      if (cmd === "update_reliability_study") return { ...study, title: "Pump bearings" };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability"]}>
+        <RamsFleetPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Crane hoist")).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search a study" });
+    fireEvent.change(search, { target: { value: "pr-1" } });
+    expect(screen.getByText("Crane hoist")).toBeInTheDocument();
+    expect(screen.queryByText(study.title)).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "nothing like it" } });
+    expect(screen.getByText('No study matches "nothing like it".')).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("button", { name: `Rename the study ${study.title}` }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("Study name");
+    expect(name).toHaveValue(study.title);
+    fireEvent.change(name, { target: { value: "  " } });
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toBeDisabled();
+    fireEvent.change(name, { target: { value: "Pump bearings" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("update_reliability_study", {
+        input: { id: 7, expected_row_version: 2, title: "Pump bearings" },
+      }),
+    );
   });
 
   it("selects the equipment handed over in the address, or says it could not be loaded", async () => {
@@ -736,6 +847,36 @@ describe("StudyLifeStep", () => {
     } finally {
       deniedRights = [];
     }
+  });
+
+  it("recommends no interval when wear-out is not shown, consistent with the reading (L2-12)", async () => {
+    mockInvoke.mockResolvedValue({
+      ...fitAnalysis,
+      fit: { ...fitAnalysis.fit, beta: 1.08, beta_lower: 0.7, beta_upper: 1.6, pattern: "random" },
+      cost: {
+        ...fitAnalysis.cost,
+        proposed: null,
+        rejection: "wear_out_not_proven",
+        saving_vs_run_to_failure: null,
+        annual_saving_vs_current: null,
+      },
+    });
+    render(
+      <StudyLifeStep
+        study={study}
+        editable
+        datasetVersion="v1"
+        onStudyChanged={vi.fn()}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/wear-out is not shown\. No replacement interval is recommended/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Proposed: replacement at/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record this decision" })).not.toBeInTheDocument();
+    // The note can be printed or exported.
+    expect(screen.getByRole("button", { name: "Export the note" })).toBeInTheDocument();
   });
 
   it("explains why no fit is shown when failures are too few", async () => {

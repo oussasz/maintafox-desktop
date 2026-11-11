@@ -423,6 +423,7 @@
     "WORK_FAILURE_CAUSES": "Causes de défaillance",
     "WORK_FAILURE_EFFECTS": "Effets de défaillance",
     "WORK_FAILURE_MECHANISMS": "Mécanismes de défaillance",
+    "WORK_FAILURE_REMEDIES": "Remèdes / actions correctives",
     "WORK_FAILURE_MODES": "Modes de défaillance",
     "WORK_MAINTENANCE_NATURES": "Natures de maintenance",
     "WORK_ORDER_SUBTYPES": "Types de travaux (sous-types d'OT)",
@@ -430,7 +431,8 @@
     "WORK_PART_UNUSED_REASON": "Motifs de pièce non utilisée",
     "WORK_PRIORITY": "Priorités des ordres de travail",
     "WORK_SYMPTOMS": "Symptômes",
-    "WORK_URGENCY": "Urgence / priorité (échelle commune DI et OT)"
+    "WORK_URGENCY": "Urgence / priorité (échelle commune DI et OT)",
+    "EQUIPMENT_CHARACTERISTICS": "Caractéristiques techniques par famille"
   },
   "combobox": {
     "searchPlaceholder": "Rechercher…",
@@ -580,6 +582,21 @@
     "reasonMin": "Écrivez au moins {{min}} caractères.",
     "cancel": "Annuler",
     "save": "Enregistrer"
+  },
+  "characteristics": {
+    "colType": "Type de valeur",
+    "colUnit": "Unité",
+    "colRequired": "Obligatoire",
+    "chooseType": "Choisir…",
+    "noUnit": "Sans unité",
+    "typeMissing": "Type manquant",
+    "yes": "Oui",
+    "no": "Non",
+    "types": {
+      "number": "Nombre",
+      "text": "Texte",
+      "boolean": "Oui / non"
+    }
   },
   "groups": {
     "requests": "Demandes d'intervention",

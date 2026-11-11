@@ -3128,8 +3128,9 @@ mod tests {
             // +inventory.count_critical_variance, +inventory.reconciliation_drift_break (migration 232),
             // -inventory.count_critical_variance, +inventory.count_four_eyes_value_threshold,
             // +inventory.count_four_eyes_percent_threshold (migration 259, not seeded),
-            // +backup.external_dir (L7-03)
-            24,
+            // +backup.external_dir (L7-03),
+            // +reliability.repeat_failure_count, +reliability.repeat_failure_window_days (L2-09)
+            26,
             "Default settings count changed; update migration and verification checks"
         );
     }

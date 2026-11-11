@@ -163,7 +163,10 @@ describe("DiCreateForm unsaved input in create mode with a prefilled equipment",
   it("asks once something is typed", async () => {
     renderForm(vi.fn(), { initial: null, prefillAsset: prefillAsset as never });
     await settle();
-    typeTitle("Nouvelle demande");
+    // A new request opens on the short form (no title field): the description is what is typed.
+    fireEvent.change(document.querySelector("#description") as HTMLTextAreaElement, {
+      target: { value: "Fuite sur la pompe" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "leave-page" }));
     expect(await screen.findByText("discardGuard.title")).toBeInTheDocument();
   });

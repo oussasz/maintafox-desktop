@@ -403,6 +403,24 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
     ),
+    // Repeat-failure follow-up of an equipment (L2-09, migration 289).
+    spec(
+        "asset_five_why_analyses",
+        &[
+            r("equipment_id", "equipment"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
+    ),
+    spec(
+        "asset_corrective_actions",
+        &[
+            r("equipment_id", "equipment"),
+            r("owner_personnel_id", "personnel"),
+            r("created_by_id", USER),
+            r("updated_by_id", USER),
+        ],
+    ),
     RowSpec {
         // The parents of a component move (`assets::lifecycle::record_parent_change_in`).
         json_refs: &[
@@ -503,6 +521,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                 // A request converted to a work order points to it, and the work order points
                 // back to its source request.
                 soft("converted_to_wo_id", "work_orders"),
+                // The meter reading that crossed an alarm threshold and raised it (migration 289).
+                r("source_meter_reading_id", "asset_meter_readings"),
             ],
         )
     },
@@ -1062,6 +1082,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_account", USER),
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
+                        // A received execution change applied without its author here (`wo::execution_actor_sync`):
+                        // the target is the work order or one of its tasks.
+                        ("work_order_task", "work_order_tasks"),
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),

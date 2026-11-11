@@ -188,6 +188,8 @@ export interface CreateStudyInput {
   period_start: string;
   period_end: string;
   failure_mode_id?: number | null;
+  /** The person confirmed studying equipment of different classes together (L2-18). */
+  accept_mixed_classes?: boolean;
 }
 
 export async function createReliabilityStudy(input: CreateStudyInput): Promise<ReliabilityStudy> {
@@ -208,6 +210,8 @@ export interface UpdateStudyInput {
   pm_plan_id?: number | null;
   clear_pm_plan?: boolean;
   equipment_ids?: number[] | null;
+  /** Read with `equipment_ids`: the mixed classes were confirmed (L2-18). */
+  accept_mixed_classes?: boolean;
   status?: "active" | "archived" | null;
 }
 
@@ -536,6 +540,20 @@ export async function createReliabilityStudyDecision(
   input: CreateDecisionInput,
 ): Promise<StudyDecision> {
   const raw = await invoke<unknown>("create_reliability_study_decision", { input });
+  return DecisionSchema.parse(raw);
+}
+
+/**
+ * Edit of a proposed decision by its proposer: the corrected decision is recorded and the one it
+ * replaces is withdrawn with `reason` (a decision never changes once proposed).
+ */
+export async function reviseReliabilityStudyDecision(input: {
+  decision_id: number;
+  expected_row_version: number;
+  reason: string;
+  decision: CreateDecisionInput;
+}): Promise<StudyDecision> {
+  const raw = await invoke<unknown>("revise_reliability_study_decision", { input });
   return DecisionSchema.parse(raw);
 }
 

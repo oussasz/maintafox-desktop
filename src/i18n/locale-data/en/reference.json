@@ -423,6 +423,7 @@
     "WORK_FAILURE_CAUSES": "Failure causes",
     "WORK_FAILURE_EFFECTS": "Failure effects",
     "WORK_FAILURE_MECHANISMS": "Failure mechanisms",
+    "WORK_FAILURE_REMEDIES": "Remedies / corrective actions",
     "WORK_FAILURE_MODES": "Failure modes",
     "WORK_MAINTENANCE_NATURES": "Maintenance natures",
     "WORK_ORDER_SUBTYPES": "Types of work (work-order sub-types)",
@@ -430,7 +431,8 @@
     "WORK_PART_UNUSED_REASON": "Unused part reasons",
     "WORK_PRIORITY": "Work order priorities",
     "WORK_SYMPTOMS": "Symptoms",
-    "WORK_URGENCY": "Urgency / priority (shared request and work-order scale)"
+    "WORK_URGENCY": "Urgency / priority (shared request and work-order scale)",
+    "EQUIPMENT_CHARACTERISTICS": "Technical characteristics per family"
   },
   "combobox": {
     "searchPlaceholder": "Search…",
@@ -580,6 +582,21 @@
     "reasonMin": "Write at least {{min}} characters.",
     "cancel": "Cancel",
     "save": "Save"
+  },
+  "characteristics": {
+    "colType": "Value type",
+    "colUnit": "Unit",
+    "colRequired": "Required",
+    "chooseType": "Choose…",
+    "noUnit": "No unit",
+    "typeMissing": "Type missing",
+    "yes": "Yes",
+    "no": "No",
+    "types": {
+      "number": "Number",
+      "text": "Text",
+      "boolean": "Yes / no"
+    }
   },
   "groups": {
     "requests": "Intervention requests",

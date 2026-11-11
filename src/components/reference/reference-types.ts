@@ -14,6 +14,7 @@
 export type ReferenceTypeId =
   | "equipment.family"
   | "equipment.subfamily"
+  | "equipment.characteristic"
   | "equipment.class"
   | "equipment.criticality"
   | "equipment.status"
@@ -90,6 +91,16 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     parentDomainCode: "EQUIPMENT.FAMILY",
     emptyMessageFr: "Aucune sous-famille disponible",
     emptyMessageEn: "No sub-family available",
+  },
+  "equipment.characteristic": {
+    id: "equipment.characteristic",
+    domainCode: "EQUIPMENT.CHARACTERISTICS",
+    entityLabelFr: "caractéristique",
+    entityLabelEn: "characteristic",
+    gender: "f",
+    parentDomainCode: "EQUIPMENT.FAMILY",
+    emptyMessageFr: "Aucune caractéristique disponible",
+    emptyMessageEn: "No characteristic available",
   },
   "equipment.class": {
     id: "equipment.class",

@@ -76,6 +76,7 @@ import { formatAssetLabel } from "@/lib/display";
 import { listLinks } from "@/lib/list-links";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
+import { useSessionStore } from "@/store/session-store";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDate } from "@/utils/format-date";
 import { isWoLifecycleState } from "@/utils/wo-lifecycle";
@@ -124,6 +125,7 @@ export function WoDetailDialog({
   // The actions offered are the user's rights at this work order's site (its org node), not
   // anywhere in the plant; the backend checks the same and stays the authority.
   const { can } = useWoAccess(wo);
+  const sessionInfo = useSessionStore((s) => s.info);
   const reopenWo = useWoStore((s) => s.openWo);
   // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
   const execution = useWoExecutionStanding(wo);
@@ -350,6 +352,8 @@ export function WoDetailDialog({
                 <WoDepannageFacts
                   wo={wo}
                   canEdit={can(P.OT_EDIT)}
+                  canApprove={can(P.OT_APPROVE)}
+                  userId={sessionInfo?.user_id ?? null}
                   onChanged={(updated) => void reopenWo(updated.id)}
                 />
                 <InfoRow

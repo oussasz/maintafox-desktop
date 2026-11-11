@@ -43,6 +43,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("backup/scheduler.rs", "{key} must be a non-negative integer"),
     ("settings/catalog.rs", "{key}: not a decimal setting"),
     ("settings/catalog.rs", "{key}: the setting is missing"),
+    ("settings/catalog.rs", "{key}: not an integer setting"),
     (
         "settings/catalog.rs",
         "{key}: not an optional decimal setting of the catalog",

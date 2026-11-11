@@ -104,6 +104,13 @@ export const RAMS_TABLE_FRAME =
 export const RAMS_FILTER_LABEL = "text-[11px] font-medium uppercase tracking-wide text-text-muted";
 
 /** Period presets of the fleet view, in months back from today. */
+/** Round an interval for display and for the decision (hundreds of hours above 1 000 h). */
+export function roundInterval(h: number): number {
+  if (h >= 1000) return Math.round(h / 100) * 100;
+  if (h >= 100) return Math.round(h / 10) * 10;
+  return Math.max(1, Math.round(h));
+}
+
 export const RAMS_PERIOD_MONTHS = [6, 12, 24, 36] as const;
 export type RamsPeriodMonths = (typeof RAMS_PERIOD_MONTHS)[number];
 /** Default window of the RAMS screens: 12 rolling months (Advisor decision L2-10 / L2-11). */

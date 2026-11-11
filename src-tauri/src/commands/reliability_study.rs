@@ -7,8 +7,8 @@ use crate::errors::AppResult;
 use crate::rbac::permissions::{OT_CREATE, PM_EDIT, RAM_ANALYZE, RAM_MANAGE, RAM_VIEW};
 use crate::reliability::study::domain::{
     ApproverOption, AssetReliabilityFigures, CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetView,
-    FleetViewFilter, LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, SaveStudyCostsInput, SetStudyRecordInput,
-    StudyDataset, StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
+    FleetViewFilter, LifeAnalysis, LifeAnalysisRequest, ReliabilityStudy, ReviseDecisionInput, SaveStudyCostsInput,
+    SetStudyRecordInput, StudyDataset, StudyDecision, UpdateStudyInput, DECISION_PM_INTERVAL,
 };
 use crate::reliability::study::{analysis, decisions, fleet_view, records, store};
 use crate::state::AppState;
@@ -174,6 +174,19 @@ pub async fn reject_reliability_study_decision(
         require_permission!(state, &user, RAM_MANAGE, PermissionScope::Global);
     }
     decisions::reject_decision(&state.db, input, actor).await
+}
+
+/// Edits a proposed decision: its proposer records the corrected decision and the one it replaces
+/// is withdrawn with the reason (a decision never changes once proposed). Same right as proposing
+/// (`ram.analyze`); the proposer check is in `decisions::revise_decision`.
+#[tauri::command]
+pub async fn revise_reliability_study_decision(
+    input: ReviseDecisionInput,
+    state: State<'_, AppState>,
+) -> AppResult<StudyDecision> {
+    let user = require_session!(state);
+    require_permission!(state, &user, RAM_ANALYZE, PermissionScope::Global);
+    decisions::revise_decision(&state.db, input, i64::from(user.user_id)).await
 }
 
 /// Create the PM plan draft version or the work order of an approved decision.

@@ -330,6 +330,15 @@
         "noDownStatus": "aucun statut marqué « à l'arrêt »",
         "listAria": "Équipements critiques à l'arrêt",
         "empty": "Aucun équipement critique à l'arrêt."
+      },
+      "repeatFailures": {
+        "title": "Pannes répétitives",
+        "count": "Équipements en pannes répétitives",
+        "listAria": "Équipements en pannes répétitives",
+        "empty": "Aucun équipement en pannes répétitives.",
+        "failures_one": "{{count}} panne",
+        "failures_other": "{{count}} pannes",
+        "error": "Pannes répétitives indisponibles : {{reason}}"
       }
     },
     "indicators": {
@@ -377,7 +386,9 @@
       "chartDi": "Demandes soumises ce jour-là.",
       "chartWo": "OT clôturés ce jour-là.",
       "chartPm": "Occurrences de MP dues ce jour-là, annulées exclues.",
-      "weekOvertime": "Heures supplémentaires que la planification peut encore ajouter sur la semaine (plafond d'heures supplémentaires des équipes). Au-delà de 100 %, le planning compte sur elles."
+      "weekOvertime": "Heures supplémentaires que la planification peut encore ajouter sur la semaine (plafond d'heures supplémentaires des équipes). Au-delà de 100 %, le planning compte sur elles.",
+      "repeatFailures": "Équipements ayant au moins {{min}} défaillances non planifiées dans les {{days}} derniers jours (règle réglée dans Paramètres > Fiabilité).",
+      "repeatFailuresRule": "Équipements ayant au moins N défaillances non planifiées dans les D derniers jours (règle réglée dans Paramètres > Fiabilité)."
     },
     "more_one": "+{{count}} autre — liste complète dans le module",
     "more_other": "+{{count}} autres — liste complète dans le module"
