@@ -1298,6 +1298,11 @@ async fn stock_authority(state: &AppState, user_id: i32) -> AppResult<parts::Sto
 pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
     require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // A hors-stock part is bought for the work order (`create_wo_non_stock_purchase`), never added
+    // from the store by hand. PM generation keeps its own path (`pm::wo_content`).
+    if let Some(article_id) = input.article_id {
+        crate::inventory::non_stock::ensure_stock_article_line(&state.db, article_id).await?;
+    }
     let authority = stock_authority(&state, user.user_id).await?;
     parts::add_planned_part(&state.db, input, authority).await
 }

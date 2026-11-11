@@ -434,26 +434,6 @@ async fn a_hors_stock_article_cannot_be_put_into_the_store() {
         message(&wrong_line).contains("GATE_INV_NON_STOCK_NO_WO_LINE"),
         "{wrong_line:?}"
     );
-
-    let planned = crate::wo::parts::add_planned_part(
-        &db,
-        crate::wo::parts::AddPartInput {
-            wo_id,
-            article_id: Some(asked.article.id),
-            article_ref: None,
-            quantity_planned: 1.0,
-            unit_cost: None,
-            stock_location_id: None,
-            auto_reserve: None,
-            notes: None,
-            origin: None,
-            is_required: true,
-        },
-        crate::wo::parts::StockAuthority::MayMoveStock,
-    )
-    .await
-    .expect_err("not planned from the store");
-    assert!(message(&planned).contains("GATE_INV_NON_STOCK_NEEDS_WO"), "{planned:?}");
 }
 
 #[tokio::test]
