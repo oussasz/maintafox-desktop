@@ -15,6 +15,7 @@ import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -29,9 +30,9 @@ import { listLinks } from "@/lib/list-links";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { useWoOpenRuleText } from "@/lib/wo-open-rule";
 import {
+  type AnalyticsExecutiveDashboardWithSmrp,
   getAnalyticsDashboardLayout,
   getAnalyticsExecutiveDashboard,
-  type AnalyticsExecutiveDashboardWithSmrp,
 } from "@/services/analytics-dashboard-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useSessionStore } from "@/store/session-store";
@@ -51,14 +52,38 @@ import {
   RELIABILITY_RAM_EVIDENCE_HASH,
 } from "@shared/kpi-definitions";
 import {
-  ANALYTICS_HUB_KPI_KEYS as HUB,
   type AnalyticsHubKpiKey,
+  ANALYTICS_HUB_KPI_KEYS as HUB,
   hubStableBelow,
   hubTrendSense,
 } from "@shared/overview-kpi-registry";
 import { P } from "@shared/rbac/permissions.generated";
 
-type Horizon = 7 | 30 | 90 | 365;
+type Horizon = number;
+
+function localIsoDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Number of days (1 to 366) covered by the chosen period, today included. */
+function periodToDays(period: string, fromDate: string): Horizon {
+  const today = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86_400_000;
+  const since = (d: Date) => Math.round((startOfDay(today) - startOfDay(d)) / dayMs) + 1;
+  // 365 means "12 calendar months" for the backend: a calendar window of exactly 365 days uses 366.
+  const clamp = (n: number) => (n === 365 ? 366 : Math.max(1, Math.min(366, n)));
+  if (period === "month") return clamp(since(new Date(today.getFullYear(), today.getMonth(), 1)));
+  if (period === "year") return clamp(since(new Date(today.getFullYear(), 0, 1)));
+  if (period === "custom") {
+    const d = new Date(`${fromDate}T00:00:00`);
+    if (fromDate && !Number.isNaN(d.getTime())) return clamp(since(d));
+    return DEFAULT_HORIZON;
+  }
+  const n = Number(period);
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_HORIZON;
+}
 /**
  * 12 rolling months when no other period is chosen: the RAMS home default, and long enough for
  * the MTBF (Advisor Q2; 7 and 30 days give counts only).
@@ -96,7 +121,11 @@ export function AnalyticsDashboardsPage() {
   const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
   const isAdmin = useSessionStore((s) => s.info?.is_admin === true);
 
-  const [horizon, setHorizon] = useState<Horizon>(DEFAULT_HORIZON);
+  // Period choice: rolling presets (7/30/90 days, 12 months), the calendar month or year to date,
+  // or a free start date (until today). The backend takes the resulting number of days.
+  const [period, setPeriod] = useState<string>(String(DEFAULT_HORIZON));
+  const [fromDate, setFromDate] = useState("");
+  const horizon = useMemo(() => periodToDays(period, fromDate), [period, fromDate]);
   const [orgNodeId, setOrgNodeId] = useState<number | null>(null);
   const [orgRows, setOrgRows] = useState<OrgTreeRow[]>([]);
   // The organisation scope filter needs the organisation view right: without it the tree is not
@@ -274,7 +303,13 @@ export function AnalyticsDashboardsPage() {
   const openWosRule = woOpenRuleText(data?.open_wos_rule);
   // "12 derniers mois" in the RAMS home's words (the backend takes 12 calendar months).
   const horizonText =
-    horizon === 365 ? fleetText.months(12) : t("hub.dashboards.context.horizon", { days: horizon });
+    period === "month"
+      ? t("hub.dashboards.context.thisMonth")
+      : period === "year"
+        ? t("hub.dashboards.context.thisYear")
+        : horizon === 365
+          ? fleetText.months(12)
+          : t("hub.dashboards.context.horizon", { days: horizon });
   // Live fleet figures of the horizon (the RAMS home calculation): window, hours basis, exclusions.
   const rel = data?.reliability ?? null;
   const snapshotContext = t("hub.dashboards.context.snapshots", { period: horizonText });
@@ -522,12 +557,14 @@ export function AnalyticsDashboardsPage() {
               { value: "7", label: t("hub.dashboards.filters.days7") },
               { value: "30", label: t("hub.dashboards.filters.days30") },
               { value: "90", label: t("hub.dashboards.filters.days90") },
-              { value: "365", label: t("hub.dashboards.filters.months12") },
+              { value: "month", label: t("hub.dashboards.filters.thisMonth") },
+              { value: "year", label: t("hub.dashboards.filters.thisYear") },
+              { value: "custom", label: t("hub.dashboards.filters.custom") },
             ],
             // 12 months is the dashboard's period when no other is chosen (shown as "all").
-            value: horizon === DEFAULT_HORIZON ? null : String(horizon),
+            value: period === String(DEFAULT_HORIZON) ? null : period,
             allLabel: t("hub.dashboards.filters.months12"),
-            onChange: (v) => setHorizon((v ? Number(v) : DEFAULT_HORIZON) as Horizon),
+            onChange: (v) => setPeriod(v ?? String(DEFAULT_HORIZON)),
           },
           ...(canReadOrg
             ? [
@@ -544,10 +581,24 @@ export function AnalyticsDashboardsPage() {
             : []),
         ]}
         onReset={() => {
-          setHorizon(DEFAULT_HORIZON);
+          setPeriod(String(DEFAULT_HORIZON));
+          setFromDate("");
           setOrgNodeId(null);
         }}
       />
+      {period === "custom" ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+          <span>{t("hub.dashboards.filters.customFrom")}</span>
+          <DateField
+            aria-label={t("hub.dashboards.filters.customFrom")}
+            className="w-44"
+            value={fromDate}
+            max={localIsoDate(new Date())}
+            onChange={setFromDate}
+          />
+          <span className="text-xs text-text-muted">{t("hub.dashboards.filters.customHint")}</span>
+        </div>
+      ) : null}
 
       {error ? (
         <ErrorState

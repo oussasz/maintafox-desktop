@@ -484,6 +484,21 @@
       "costRavHint": "SMRP indicator",
       "withoutRav": "Without replacement value",
       "withoutRavHint": "Set it on the asset record"
+    },
+    "lineFilter": "Production line (cost centre)",
+    "allLines": "All lines",
+    "export": {
+      "name": "Name",
+      "line": "Line / cost centre",
+      "preventive": "Preventive",
+      "other": "Other types"
+    },
+    "breakdown": {
+      "title": "Cost per production line and work type",
+      "hint": "Grouped by the equipment's cost centre. Corrective, preventive and other types (improvement, inspection…) on closed work orders.",
+      "line": "Line / cost centre",
+      "noLine": "No cost centre",
+      "total": "Total"
     }
   },
   "periods": {

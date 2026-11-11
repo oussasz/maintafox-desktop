@@ -1039,7 +1039,7 @@
     "GATE_SET_LOGO_TYPE_INVALID": "Logo refused: image type not allowed. Use png, jpg, jpeg, webp or gif.",
     "GATE_SET_LOGO_TOO_LARGE": "Logo refused: the file exceeds the {{max_mb}} MB limit.",
     "GATE_SET_LOGO_NOT_A_FILE": "Logo refused: the given path is not a file.",
-    "GATE_ANA_HORIZON_INVALID": "Period refused: the analysis horizon must be 7, 30 or 90 days (received: {{value}}).",
+    "GATE_ANA_HORIZON_INVALID": "Period refused: the analysis period must be between 1 and 366 days (received: {{value}}).",
     "GATE_ANA_LAYOUT_INVALID": "Dashboard layout refused: its structure is not valid. Restore the default layout and try again.",
     "GATE_SYNC_RENUMBER_NOT_CLASH": "Renumbering refused: it is only available for a number clash.",
     "GATE_SYNC_ENTITY_NO_NUMBER": "Renumbering refused: '{{entity}}' records have no generated number.",
