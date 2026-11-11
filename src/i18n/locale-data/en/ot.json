@@ -74,6 +74,11 @@
     "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
   },
+  "join": {
+    "action": "Join",
+    "hint": "Help on this work order: your labour starts now and the assignee is told. You do not become responsible for it.",
+    "done": "You joined the work order: your labour has started."
+  },
   "depannage": {
     "validation": {
       "badgeToValidate": "Breakdown — to validate",

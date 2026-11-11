@@ -280,6 +280,7 @@
     "GATE_WO_DEPANNAGE_TYPE_NOT_CORRECTIVE": "Dépannage refusé : le type d'OT « {{type}} » n'est pas correctif. Un dépannage est un OT correctif : choisissez un type de nature corrective.",
     "GATE_WO_DEPANNAGE_ASSIGNEE_UNKNOWN": "Dépannage refusé : la personne désignée pour l'intervention n'a pas de compte actif. Choisissez un autre intervenant.",
     "GATE_WO_DEPANNAGE_NOT_A_DEPANNAGE": "Modification refusée : cet OT n'est pas un dépannage, il n'a pas de date de constat de panne.",
+    "GATE_WO_JOIN_ALREADY_ON_IT": "Vous avez déjà de la main-d'œuvre en cours sur cet OT : clôturez-la avant de rejoindre à nouveau.",
     "GATE_WO_DEPANNAGE_CLOSED": "Modification refusée : la date de constat de la panne ne se modifie plus quand l'OT est « $t(ot:status.{{status}}) ».",
     "GATE_WO_DEPANNAGE_NOT_VALIDATED": "Clôture refusée : ce dépannage doit d'abord être validé par un approbateur du site, autre que la personne qui l'a lancé.",
     "GATE_WO_DEPANNAGE_ALREADY_VALIDATED": "Validation refusée : ce dépannage est déjà validé.",
