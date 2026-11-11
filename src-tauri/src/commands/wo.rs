@@ -14,7 +14,9 @@
 //!                close_wo, upload_wo_attachment, update_service_cost
 //!   ot.admin   — reopen_wo, delete_wo_attachment
 //!   ot.create + ot.edit (+ ot.emergency_assign to assign someone else) — start_depannage_wo
-//!   ot.edit    — set_wo_breakdown_at
+//!   ot.edit    — set_wo_breakdown_at, join_wo (own labour only; the joiner is not an execution actor)
+//!   ot.approve — validate_depannage_wo (never by the dépannage's starter)
+//!   ot.view    — get_depannage_times
 //!
 //! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every work order is checked at its org node
 //! `work_orders.entity_id` (`wo::access`), with the same permission as before; what belongs to a
@@ -1101,6 +1103,35 @@ pub async fn start_depannage_wo(
     Ok(result)
 }
 
+/// "Rejoindre": joins a work order in progress or on hold by starting one's own labour on it
+/// (ot.edit at the work order's site); the assignee is told. The joiner is not an execution actor
+/// (`wo::join`).
+#[tauri::command]
+pub async fn join_wo(
+    mut input: crate::wo::join::WoJoinInput,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoIntervener> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let wo_id = input.wo_id;
+    let entry = crate::wo::join::join_wo(&state.db, input).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "joined".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Joined the work order (own labour started)".into()),
+            details_json: Some(serde_json::json!({ "labor_entry_id": entry.id }).to_string()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(entry)
+}
+
 /// Changes the "Panne constatée à" of a dépannage until it is closed; audited with old → new.
 #[tauri::command]
 pub async fn set_wo_breakdown_at(
@@ -1130,6 +1161,50 @@ pub async fn set_wo_breakdown_at(
     )
     .await;
     Ok(result)
+}
+
+/// Validates a dépannage after the fact (four-eyes): ot.approve at the work order's site, never by
+/// the person who started it (`wo::depannage_validation`); audited.
+#[tauri::command]
+pub async fn validate_depannage_wo(
+    mut input: crate::wo::depannage_validation::WoDepannageValidateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
+    let wo = crate::wo::depannage_validation::validate_depannage(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "depannage_validated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Dépannage validated after the fact".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
+    )
+    .await;
+    Ok(wo)
+}
+
+/// The times of a dépannage (response, active repair, time to restore; EN 13306): ot.view at the
+/// work order's site. `None`: not a dépannage.
+#[tauri::command]
+pub async fn get_depannage_times(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Option<crate::wo::depannage_validation::DepannageTimes>> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    crate::wo::depannage_validation::depannage_times(&state.db, wo_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1537,8 +1612,65 @@ pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) ->
     let user = require_session!(state);
     // An execution action (L5-08): the edit right, then the execution-actor rule.
     require_execution_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    // A hors-stock part is bought for the work order (`create_wo_non_stock_purchase`), never added
+    // from the store by hand. PM generation keeps its own path (`pm::wo_content`).
+    if let Some(article_id) = input.article_id {
+        crate::inventory::non_stock::ensure_stock_article_line(&state.db, article_id).await?;
+    }
     let authority = stock_authority(&state, user.user_id).await?;
     parts::add_planned_part(&state.db, input, authority).await
+}
+
+// ── Hors-stock purchase charged to the work order (L3-04) ──────────────────────────────────
+
+/// Hors-stock articles to reuse before creating one — ot.view.
+#[tauri::command]
+pub async fn search_non_stock_articles(
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::inventory::non_stock::NonStockArticle>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
+    crate::inventory::non_stock::search_non_stock_articles(&state.db, query).await
+}
+
+/// Ask for a hors-stock part on the work order: article (reused or created "à revoir"), work-order
+/// line and requisition in one step — ot.edit at the work order's site. The requisition then goes
+/// through the normal approvals; the buyer orders it.
+#[tauri::command]
+pub async fn create_wo_non_stock_purchase(
+    input: crate::inventory::non_stock::CreateWoNonStockPurchaseInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::non_stock::WoNonStockPurchase> {
+    let user = require_session!(state);
+    // An execution action like adding a part: the edit right, then the execution-actor rule.
+    require_execution_on_wo(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        input.work_order_id,
+    )
+    .await?;
+    crate::inventory::non_stock::create_wo_non_stock_purchase(&state.db, input, user.user_id.into()).await
+}
+
+/// "Remis à <personne>" on a received hors-stock line — ot.edit at the work order's site.
+#[tauri::command]
+pub async fn set_wo_part_handed_to(
+    wo_part_id: i64,
+    personnel_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_execution_on_child(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::OT_EDIT,
+        access::WoChild::Part,
+        wo_part_id,
+    )
+    .await?;
+    crate::inventory::non_stock::set_part_handed_to(&state.db, wo_part_id, personnel_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

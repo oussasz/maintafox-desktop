@@ -45,6 +45,7 @@ import { addPart } from "@/services/wo-execution-service";
 import type { InventoryStockBalance } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { NON_STOCK_TYPE_CODE } from "./NonStockPartStatus";
 import { woActionFailureText } from "./wo-action-error";
 
 type PartMode = "stock" | "non_stock";
@@ -103,7 +104,13 @@ export function WoAddExecutionPartDialog({
     listInventoryArticles({ search: null })
       .then((rows) => {
         if (cancelled) return;
-        setArticles(rows.filter((row) => row.is_active === 1));
+        // A hors-stock article is bought for the work order ("Acheter une pièce hors stock"),
+        // never taken from the store.
+        setArticles(
+          rows.filter(
+            (row) => row.is_active === 1 && row.stocking_type_code !== NON_STOCK_TYPE_CODE,
+          ),
+        );
         setArticlesState("ready");
       })
       .catch(() => {

@@ -388,6 +388,8 @@ pub async fn build_overview_kpis(
                SELECT a.id FROM articles a \
                LEFT JOIN stock_balances sb ON sb.article_id = a.id \
                WHERE a.is_active = 1 \
+                 AND NOT EXISTS (SELECT 1 FROM lookup_values nslv \
+                                  WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK') \
                GROUP BY a.id \
                HAVING COALESCE(SUM(sb.available_qty), 0) <= 0 \
              )",

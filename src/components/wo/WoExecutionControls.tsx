@@ -104,7 +104,9 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+import { NonStockPartStatus } from "./NonStockPartStatus";
 import { WoAddExecutionPartDialog } from "./WoAddExecutionPartDialog";
+import { WoNonStockPurchaseDialog } from "./WoNonStockPurchaseDialog";
 import { useWoExecutionStanding } from "./use-wo-execution-standing";
 import { mergeLaborPeople, useWoLaborPeople } from "./use-wo-labor-people";
 import { woActionFailureText } from "./wo-action-error";
@@ -329,6 +331,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
 
     // Add part dialog (during execution)
     const [showAddPartDialog, setShowAddPartDialog] = useState(false);
+    const [showNonStockDialog, setShowNonStockDialog] = useState(false);
 
     // Add tool dialog
     const [showAddToolDialog, setShowAddToolDialog] = useState(false);
@@ -1283,7 +1286,19 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                               : t("execution.parts.badge.notUsed")}
                           </Badge>
                           <PartToIssueChip part={part} />
+                          {part.is_non_stock ? (
+                            <NonStockPartStatus
+                              received={part.non_stock_received_qty}
+                              planned={part.quantity_planned}
+                            />
+                          ) : null}
                         </div>
+                      ) : part.is_non_stock ? (
+                        // Hors-stock (L3-04): its use is the receipt, booked when it arrives.
+                        <NonStockPartStatus
+                          received={part.non_stock_received_qty}
+                          planned={part.quantity_planned}
+                        />
                       ) : (
                         <div className="flex items-center gap-1">
                           <DecimalField
@@ -1303,7 +1318,7 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         </div>
                       )}
                       <div className="flex items-center gap-1">
-                        {!isUsed && !isNotUsed && (
+                        {!isUsed && !isNotUsed && !part.is_non_stock && (
                           <>
                             <Button
                               size="sm"
@@ -1326,6 +1341,23 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                             </Button>
                           </>
                         )}
+                        {/* A hors-stock part whose purchase ended with nothing received is
+                            marked not used with a reason (refused while its purchase is open). */}
+                        {!isUsed &&
+                          !isNotUsed &&
+                          part.is_non_stock &&
+                          part.origin === "planned" &&
+                          part.non_stock_received_qty <= 0 && (
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              variant="outline"
+                              onClick={() => openNotUsedDialog(part.id)}
+                              disabled={controlsDisabled}
+                            >
+                              {t("execution.notUsed.cta")}
+                            </Button>
+                          )}
                       </div>
                     </div>
                   );
@@ -1368,6 +1400,15 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                   disabled={controlsDisabled}
                 >
                   {t("execution.parts.add.cta")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setShowNonStockDialog(true)}
+                  disabled={controlsDisabled}
+                >
+                  {t("nonStockPurchase.open")}
                 </Button>
                 {plannedParts.length === 0 && !wo.parts_actuals_confirmed && (
                   <Button
@@ -1412,10 +1453,17 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                     <span className="flex-1 font-medium">
                       {formatOrDash(part.article_ref ?? part.article_label)}
                     </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
-                      {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
-                    </span>
+                    {part.is_non_stock ? (
+                      <NonStockPartStatus
+                        received={part.non_stock_received_qty}
+                        planned={part.quantity_planned}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground tabular-nums">
+                        {t("execution.parts.usedQtyLabel", { qty: part.quantity_used ?? 0 })}
+                        {part.unit_symbol ? ` ${part.unit_symbol}` : ""}
+                      </span>
+                    )}
                     <OriginBadge origin={part.origin} t={t} />
                     <PartToIssueChip part={part} />
                   </div>
@@ -2159,6 +2207,12 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           open={showAddPartDialog}
           onOpenChange={setShowAddPartDialog}
           onAdded={loadData}
+        />
+        <WoNonStockPurchaseDialog
+          woId={wo.id}
+          open={showNonStockDialog}
+          onOpenChange={setShowNonStockDialog}
+          onCreated={loadData}
         />
 
         {/* Add tool dialog */}

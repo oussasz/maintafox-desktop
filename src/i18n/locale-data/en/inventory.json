@@ -407,8 +407,8 @@
     "dashboard": {
       "title": "Procurement overview",
       "openRequisitions": "Open requisitions",
-      "openPos": "Open POs",
-      "latePos": "Late POs",
+      "openPos": "Open purchase orders",
+      "latePos": "Late purchase orders",
       "receivingToday": "Receiving today",
       "pendingApprovals": "Pending approvals",
       "pendingReceipts": "Pending receipts",
@@ -425,7 +425,7 @@
       "title": "Alerts",
       "kinds": {
         "CRITICAL_STOCK": "Critical stock",
-        "LATE_PO": "Late PO",
+        "LATE_PO": "Late purchase order",
         "SUPPLIER_DELAY": "Supplier risk",
         "REPAIRABLE_OVERDUE": "Repair overdue",
         "other": "Alert"
@@ -774,8 +774,8 @@
         "avgLeadTime": "Avg lead time (d)",
         "deliveryAccuracy": "Delivery accuracy",
         "avgPrice": "Avg price",
-        "openPos": "Open POs",
-        "completedPos": "Completed POs",
+        "openPos": "Open purchase orders",
+        "completedPos": "Closed purchase orders",
         "lastPurchase": "Last purchase",
         "rejectedPct": "Rejected quantity",
         "risk": "Risk level",
@@ -1274,7 +1274,7 @@
     "current": "Current stock",
     "currentOnHand": "On hand",
     "available": "Available",
-    "incoming": "Incoming PO",
+    "incoming": "On order",
     "delta": "This delta",
     "projected": "Projected"
   },
@@ -1510,6 +1510,27 @@
       "locationCode": "e.g. A-01-02",
       "locationName": "e.g. Aisle A, rack 1, shelf 2"
     }
+  },
+  "nonStock": {
+    "tab": "Non-stock",
+    "title": "Non-stock parts",
+    "description": "Parts bought for a work order, never in the store: out of stock lists, counts, replenishment and valuation. Those created from a work order are to review.",
+    "toReviewOnly": "To review only",
+    "loading": "Loading non-stock parts…",
+    "loadFailed": "The non-stock parts could not be loaded.",
+    "empty": "No non-stock part to show.",
+    "fromWorkOrder": "Created from work order {{code}}",
+    "state": {
+      "toReview": "To review",
+      "reviewed": "Reviewed",
+      "duplicate": "Duplicate"
+    },
+    "keep": "Keep non-stock",
+    "promote": "Move to stock",
+    "duplicateOf": "Duplicate of…",
+    "markDuplicate": "Mark duplicate",
+    "chooseDuplicate": "Choose the article this one duplicates.",
+    "reviewFailed": "The review could not be saved."
   },
   "unitConversions": {
     "loadError": "The unit conversions could not be loaded",

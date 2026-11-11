@@ -4,6 +4,8 @@ import { invoke } from "@/lib/ipc-invoke";
 import { ipcErrorDetails } from "@/utils/errors";
 import type {
   ApproveInventoryCountLineInput,
+  NonStockArticle,
+  ReviewNonStockArticleInput,
   // Article / procurement analytics
   ArticleAssetUsage,
   ArticleConsumptionMonth,
@@ -1895,6 +1897,18 @@ export function createProcurementRequisitionFromWoPart(
     },
     ProcurementRequisitionSchema,
   );
+}
+
+/** Hors-stock articles (L3-04), those "à revoir" first. */
+export async function listNonStockArticles(toReviewOnly: boolean): Promise<NonStockArticle[]> {
+  return invoke<NonStockArticle[]>("list_non_stock_articles", { toReviewOnly });
+}
+
+/** Catalogue review of a hors-stock article: keep, promote to stocked, or mark a duplicate. */
+export async function reviewNonStockArticle(
+  input: ReviewNonStockArticleInput,
+): Promise<NonStockArticle> {
+  return invoke<NonStockArticle>("review_non_stock_article", { input });
 }
 
 /** Requests in these states no longer count as "in progress" for a part shortage. */

@@ -231,6 +231,10 @@
       "title": "Work order {{code}} assigned",
       "body": "{{title}} · responsible: {{assignee}}"
     },
+    "wo_joined": {
+      "title": "{{who}} joined work order {{code}}",
+      "body": "{{title}} · their labour has started"
+    },
     "wo_depannage_started": {
       "title": "Breakdown work order started — {{code}}",
       "body": "{{title}} · equipment {{asset}} · breakdown found {{breakdown_at}}"

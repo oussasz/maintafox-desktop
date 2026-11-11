@@ -5888,11 +5888,33 @@ export interface WoDepannageResult {
   breakdown_old_warning: boolean;
 }
 
+/** "Rejoindre" a work order in progress or on hold (`join_wo`): one's own labour starts now. */
+export interface WoJoinInput {
+  wo_id: number;
+}
+
 /** Changes the "Panne constatée à" of a dépannage until it is closed (audited). */
 export interface WoBreakdownAtInput {
   wo_id: number;
   expected_row_version: number;
   breakdown_at: string;
+}
+
+/** After-the-fact validation of a dépannage (`validate_depannage_wo`, ot.approve, never its starter). */
+export interface WoDepannageValidateInput {
+  wo_id: number;
+  expected_row_version: number;
+}
+
+/** Times of a dépannage in hours (EN 13306, `get_depannage_times`); null while an end is unknown. */
+export interface DepannageTimes {
+  breakdown_at: string | null;
+  downtime_start: string | null;
+  restored_at: string | null;
+  response_hours: number | null;
+  active_repair_hours: number | null;
+  restore_hours: number | null;
+  stopped_hours: number | null;
 }
 
 export interface WoPauseInput {
@@ -6151,6 +6173,56 @@ export interface WoExecPart {
    * someone without the stock right (inv.manage); the storekeeper issues it or cancels it.
    */
   pending_issue_qty: number;
+  /**
+   * Hors-stock article (stocking type NON_STOCK, L3-04): bought for this work order, received
+   * without any stock movement; its use is the receipt.
+   */
+  is_non_stock: boolean;
+  /** Hors-stock quantity received from the supplier ("reçu"). */
+  non_stock_received_qty: number;
+  /** Optional "remis à <personne>" of a received hors-stock part. */
+  handed_to_personnel_id: number | null;
+}
+
+/** A hors-stock article (L3-04): bought for one work order, never in the store. */
+export interface NonStockArticle {
+  id: number;
+  article_code: string;
+  article_name: string;
+  unit_value_id: number | null;
+  unit_symbol: string | null;
+  origin_work_order_id: number | null;
+  origin_work_order_code: string | null;
+  /** null | "TO_REVIEW" | "REVIEWED" | "DUPLICATE" */
+  catalogue_review_state: string | null;
+  duplicate_of_article_id: number | null;
+  is_active: boolean;
+}
+
+/** Ask for a hors-stock part on a work order: reuse `article_id`, or describe a new one. */
+export interface CreateWoNonStockPurchaseInput {
+  work_order_id: number;
+  article_id: number | null;
+  article_name: string | null;
+  unit_value_id: number | null;
+  quantity: number;
+  /** Estimated unit price (tenant currency): approval amount and starting order price. */
+  estimated_unit_cost: number | null;
+  notes: string | null;
+  reason: string | null;
+}
+
+export interface WoNonStockPurchase {
+  part: WoExecPart;
+  article: NonStockArticle;
+  requisition: { id: number; req_number: string; status: string };
+}
+
+/** Catalogue review of a hors-stock article. */
+export interface ReviewNonStockArticleInput {
+  article_id: number;
+  action: "KEEP" | "PROMOTE" | "DUPLICATE";
+  duplicate_of_article_id: number | null;
 }
 
 /** A work-order part line "à sortir", with its work order, for the storekeeper's issue desk. */

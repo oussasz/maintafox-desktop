@@ -18,6 +18,7 @@ import { InventoryIssueDesk } from "@/components/inventory/InventoryIssueDesk";
 import { InventoryValuationPanel } from "@/components/inventory/InventoryValuationPanel";
 import { NegativeStockBadge, isNegativeStock } from "@/components/inventory/NegativeStockBadge";
 import { NegativeStockReviewPanel } from "@/components/inventory/NegativeStockReviewPanel";
+import { NonStockReviewPanel } from "@/components/inventory/NonStockReviewPanel";
 import {
   type ProcurementPanelRequest,
   ProcurementRepairablePanel,
@@ -909,6 +910,7 @@ export function InventoryPage() {
           <TabsTrigger value="topology">{t("page.tabs.topology")}</TabsTrigger>
           <TabsTrigger value="rules">{t("page.tabs.rules")}</TabsTrigger>
           <TabsTrigger value="units">{t("unitConversions.tab")}</TabsTrigger>
+          <TabsTrigger value="nonStock">{t("nonStock.tab")}</TabsTrigger>
         </TabsList>
 
         {lookupError ? (
@@ -982,6 +984,10 @@ export function InventoryPage() {
 
         <TabsContent value="units" className="mt-4 data-[state=inactive]:hidden">
           <UnitConversionsPanel unitOptions={unitOptions} articles={articles} />
+        </TabsContent>
+
+        <TabsContent value="nonStock" className="mt-4 data-[state=inactive]:hidden">
+          <NonStockReviewPanel articles={articles} />
         </TabsContent>
 
         <TabsContent value="topology" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">

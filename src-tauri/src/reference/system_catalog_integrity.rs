@@ -25,6 +25,8 @@ pub async fn ensure_system_reference_catalog_integrity(db: &DatabaseConnection) 
     ensure_org_schedule_class_reference_catalog(db).await?;
     // WO close-out coding (symptoms, causes, effects, mechanisms, detection methods).
     crate::wo::closeout_reference_catalog::ensure_closeout_reference_catalogs(db).await?;
+    // Failure modes per equipment family (ISO 14224) and the corrective remedies list.
+    crate::wo::failure_catalogue::ensure_failure_catalogue(db).await?;
     // Shared DI / OT urgency scale and the OT types with their maintenance nature.
     crate::reference::urgency_scale::ensure_urgency_scale(db).await?;
     // FMECA rating grids (severity, occurrence, detection, criticality zones).

@@ -541,12 +541,20 @@ pub async fn apply_pm_content_to_work_order<C: ConnectionTrait + TransactionTrai
     }
     for part in &content.parts {
         if let Some((article_id, quantity)) = part.plannable() {
-            let stock_location_id = reservable_location(db, article_id, quantity).await?;
+            // A hors-stock article is bought for a work order, never planned from the store: the
+            // line is kept as a reference to buy (no article link, no reservation), so it can be
+            // settled by hand like any free-text line.
+            let non_stock = crate::inventory::non_stock::is_non_stock_article(db, article_id).await?;
+            let stock_location_id = if non_stock {
+                None
+            } else {
+                reservable_location(db, article_id, quantity).await?
+            };
             crate::wo::parts::add_planned_part(
                 db,
                 crate::wo::parts::AddPartInput {
                     wo_id,
-                    article_id: Some(article_id),
+                    article_id: if non_stock { None } else { Some(article_id) },
                     article_ref: Some(part.code.clone()),
                     quantity_planned: quantity,
                     unit_cost: None,

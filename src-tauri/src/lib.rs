@@ -747,6 +747,8 @@ pub fn run() {
         // ── WO material readiness ─────────────────────────────────────────────────────
         commands::inventory::check_wo_part_stock_availability,
         commands::inventory::create_procurement_requisition_from_wo_part,
+        commands::inventory::list_non_stock_articles,
+        commands::inventory::review_non_stock_article,
         commands::inventory::suggest_inventory_internal_transfer,
         // Inventory benchmark (migration 184)
         commands::inventory::issue_inventory_stock_to_work_order,
@@ -929,6 +931,9 @@ pub fn run() {
         commands::wo::emergency_reassign_wo,
         commands::wo::start_depannage_wo,
         commands::wo::set_wo_breakdown_at,
+        commands::wo::join_wo,
+        commands::wo::validate_depannage_wo,
+        commands::wo::get_depannage_times,
         commands::wo::start_wo,
         commands::wo::pause_wo,
         commands::wo::resume_wo,
@@ -942,6 +947,9 @@ pub fn run() {
         commands::wo::list_wo_labor_candidates,
         // Ã¢â€â‚¬Ã¢â€â‚¬ WO Parts Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::wo::add_part,
+        commands::wo::search_non_stock_articles,
+        commands::wo::create_wo_non_stock_purchase,
+        commands::wo::set_wo_part_handed_to,
         commands::wo::record_part_usage,
         commands::wo::list_wo_parts_to_issue,
         commands::wo::issue_wo_part_to_issue,

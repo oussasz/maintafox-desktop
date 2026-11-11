@@ -4,8 +4,10 @@ import { notifyWoCostChanged } from "@/lib/wo-cost-events";
 import type {
   AddWoToolInput,
   CancelWoPartToIssueInput,
+  CreateWoNonStockPurchaseInput,
   DowntimeType,
   IssueWoPartToIssueInput,
+  NonStockArticle,
   TaskResultCode,
   WoDelaySegment,
   WoDowntimeSegment,
@@ -13,7 +15,9 @@ import type {
   WoExecTask,
   WoExecutionEvent,
   WoIntervener,
+  WoJoinInput,
   WoMechCompleteInput,
+  WoNonStockPurchase,
   WoPartToIssue,
   WoPlanAdherence,
   WoTool,
@@ -107,6 +111,14 @@ export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
   return announceCost(await invoke<WoIntervener>("add_labor", { input }));
 }
 
+/**
+ * "Rejoindre": starts one's own labour now on a work order in progress or on hold (ot.edit at its
+ * site); the assignee is told. The joiner does not become an execution actor.
+ */
+export async function joinWo(input: WoJoinInput): Promise<WoIntervener> {
+  return announceCost(await invoke<WoIntervener>("join_wo", { input }));
+}
+
 /** Labour for a person of the register, login or not (contractor technicians included). */
 export interface AddPersonnelLaborInput {
   wo_id: number;
@@ -188,6 +200,31 @@ export async function listWoLaborCandidates(): Promise<WoLaborCandidate[]> {
 
 export async function addPart(input: AddPartInput): Promise<WoExecPart> {
   return announceCost(await invoke<WoExecPart>("add_part", { input }));
+}
+
+/** Hors-stock articles to reuse before creating one (L3-04). */
+export async function searchNonStockArticles(query: string | null): Promise<NonStockArticle[]> {
+  return invoke<NonStockArticle[]>("search_non_stock_articles", { query });
+}
+
+/**
+ * Ask for a hors-stock part on the work order: the article (reused or created "à revoir"), the
+ * work-order line and the purchase request, in one step (L3-04).
+ */
+export async function createWoNonStockPurchase(
+  input: CreateWoNonStockPurchaseInput,
+): Promise<WoNonStockPurchase> {
+  const created = await invoke<WoNonStockPurchase>("create_wo_non_stock_purchase", { input });
+  announceCost(created.part);
+  return created;
+}
+
+/** "Remis à <personne>" on a received hors-stock line (L3-04); `null` clears it. */
+export async function setWoPartHandedTo(
+  woPartId: number,
+  personnelId: number | null,
+): Promise<WoExecPart> {
+  return invoke<WoExecPart>("set_wo_part_handed_to", { woPartId, personnelId });
 }
 
 export async function recordPartUsage(

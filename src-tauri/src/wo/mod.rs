@@ -9,10 +9,14 @@ pub(crate) mod closeout_sync;
 pub mod costs;
 pub mod delay;
 pub mod depannage;
+pub mod depannage_validation;
 pub mod domain;
 pub mod execution;
 pub mod execution_actor;
+pub(crate) mod execution_actor_sync;
 pub mod execution_log;
+pub mod failure_catalogue;
+pub mod join;
 pub mod labor;
 pub mod lifecycle;
 pub mod parts;
@@ -47,11 +51,17 @@ mod closeout_tests;
 #[cfg(test)]
 mod depannage_tests;
 #[cfg(test)]
+mod depannage_validation_tests;
+#[cfg(test)]
+mod execution_actor_sync_tests;
+#[cfg(test)]
 mod execution_actor_tests;
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]
 mod gap06_regression_tests;
+#[cfg(test)]
+mod join_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]

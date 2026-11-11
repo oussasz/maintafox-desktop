@@ -1273,6 +1273,17 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // (b3) No hors-stock purchase still open (L3-04): receive it, or cancel the request or order
+    // with a reason, so the parts actual of the work order is complete.
+    let open_purchases = crate::inventory::non_stock::open_purchase_line_count(conn, wo_id).await?;
+    if open_purchases > 0 {
+        preflight.add(format!(
+            "GATE_CLOSEOUT_NON_STOCK_OPEN:count={open_purchases}: Clôture bloquée : {open_purchases} \
+             achat(s) hors stock encore ouvert(s). Réceptionnez-les ou annulez la demande ou la \
+             commande avec un motif. ({open_purchases} hors-stock purchase(s) still open.)"
+        ));
+    }
+
     // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
         let fd_row = conn
@@ -1571,6 +1582,14 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // A dépannage is validated after the fact before its close, unless its site opted out
+    // (`wo::depannage_validation`, CMMS Advisor decision 2026-11-04).
+    if let crate::wo::depannage_validation::CloseValidation::Refused(msg) =
+        crate::wo::depannage_validation::close_validation(conn, wo_id).await?
+    {
+        preflight.add(msg);
+    }
+
     Ok((preflight.errors, profile_id, signer_password_checked))
 }
 
@@ -1769,6 +1788,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         ))
         .await?;
     check_concurrency(result.rows_affected())?;
+
+    // A dépannage of a site that opted out of the validation is approved automatically at its close
+    // (flagged, no validator recorded).
+    if crate::wo::depannage_validation::close_validation(&txn, input.wo_id).await?
+        == crate::wo::depannage_validation::CloseValidation::AutoApproved
+    {
+        crate::wo::depannage_validation::mark_auto_approved(&txn, input.wo_id).await?;
+    }
 
     log_transition(
         &txn,

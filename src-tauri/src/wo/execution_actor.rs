@@ -219,7 +219,23 @@ pub async fn standing(
     user_id: i64,
     wo_id: i64,
 ) -> AppResult<ExecutionStanding> {
-    let wo = wo_people(db, wo_id).await?;
+    standing_at(db, map, user_id, wo_id, None).await
+}
+
+/// [`standing`], the creator's draft exception judged on `released_from` when given: the status the
+/// work order had before a change already written (a cancellation received by synchronisation,
+/// `wo::execution_actor_sync`); an unknown status counts as released (fail safe).
+async fn standing_at(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    user_id: i64,
+    wo_id: i64,
+    released_from: Option<&str>,
+) -> AppResult<ExecutionStanding> {
+    let mut wo = wo_people(db, wo_id).await?;
+    if let Some(code) = released_from {
+        wo.unreleased = WoStatus::try_from_str(code).is_ok_and(|st| !st.is_released());
+    }
     let own_draft = wo.unreleased && wo.creator == Some(user_id);
     let allowed = |role| ExecutionStanding {
         actor: Some(role),
@@ -296,8 +312,32 @@ pub async fn check_cancel(
     permission: &str,
     wo_id: i64,
 ) -> AppResult<()> {
+    cancel_rule(db, map, user_id, permission, wo_id, None).await
+}
+
+/// [`check_cancel`] of a cancellation already written (received by synchronisation): the creator's
+/// draft exception is judged on `from_status`, the status the work order was cancelled from.
+pub(crate) async fn check_cancel_from(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    user_id: i64,
+    permission: &str,
+    wo_id: i64,
+    from_status: &str,
+) -> AppResult<()> {
+    cancel_rule(db, map, user_id, permission, wo_id, Some(from_status)).await
+}
+
+async fn cancel_rule(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    user_id: i64,
+    permission: &str,
+    wo_id: i64,
+    released_from: Option<&str>,
+) -> AppResult<()> {
     access::check_on_wo(db, map, permission, wo_id).await?;
-    let standing = standing(db, map, user_id, wo_id).await?;
+    let standing = standing_at(db, map, user_id, wo_id, released_from).await?;
     match standing.refusal {
         Some(refusal) if !standing.own_draft => Err(refusal.into_error()),
         _ => Ok(()),
@@ -397,9 +437,15 @@ fn people_refusal() -> AppError {
 }
 
 /// A planner given at creation: refused without the right at the new work order's site (none
-/// given: nothing to check; the system flows create without one). Exceptions to come with L1-05
-/// (not on this branch): the dépannage self-assignment, assigning others through
-/// `ot.emergency_assign`, and the dépannage "join".
+/// given: nothing to check; the system flows create without one).
+///
+/// The dépannage (`wo::depannage`, L1-05) does not go through this check: it creates its work
+/// order with no planner, then assigns it in the same transaction — to the user who starts it
+/// (`ot.create` + `ot.edit` at the site), or to someone else only with `ot.emergency_assign` at the
+/// site (`wo::access::check_depannage_at`, checked by `start_depannage_wo`). The planning approval
+/// skipped there is replaced by the validation after the fact (`wo::depannage_validation`, L1-05
+/// B). Joining a work order in progress or on hold (starting one's own labour on it) does not make
+/// the joiner an execution actor: only an assignment does.
 pub async fn check_people_on_create(
     db: &impl ConnectionTrait,
     map: &AccessMap,

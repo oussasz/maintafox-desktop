@@ -1376,6 +1376,26 @@ pub async fn update_article(
         "stocking_type_value_id",
     )
     .await?;
+    // Hors-stock is not switched by hand in either direction: a part bought for a work order has
+    // its own review (`non_stock::review_non_stock_article`, which checks the open purchases), and
+    // a stocked part with shelves, counts or orders behind it must not be locked out of them.
+    let was_non_stock = crate::inventory::non_stock::is_non_stock_article(db, article_id).await?;
+    let becomes_non_stock = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS hit FROM lookup_values WHERE id = ? AND code = ?",
+            [
+                input.stocking_type_value_id.into(),
+                crate::inventory::non_stock::NON_STOCK_CODE.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if was_non_stock != becomes_non_stock {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NON_STOCK_TYPE_LOCKED: The hors-stock status of an item is not changed here.".to_string(),
+        ]));
+    }
     ensure_lookup_value_in_domain(
         db,
         input.tax_category_value_id,
@@ -1925,6 +1945,7 @@ pub async fn adjust_stock_full(
     input: InventoryStockAdjustInput,
     options: AdjustStockOptions,
 ) -> AppResult<InventoryStockBalance> {
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let unit_cost = options.unit_cost;
     let posting_date = crate::inventory::periods::resolve_posting_date(db, options.posting_date.as_deref()).await?;
     let tracking = crate::inventory::lots::article_tracking(db, input.article_id).await?;
@@ -2418,6 +2439,7 @@ pub async fn reserve_stock<C: ConnectionTrait + TransactionTrait>(
 
 /// Reserves stock inside the caller's transaction and returns the reservation id.
 pub(crate) async fn reserve_stock_in<C: ConnectionTrait>(tx: &C, input: &InventoryReserveInput) -> AppResult<i64> {
+    crate::inventory::non_stock::ensure_store_article(tx, input.article_id).await?;
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "GATE_INV_QTY_POSITIVE: quantity must be greater than 0.".to_string(),
@@ -3213,6 +3235,7 @@ pub async fn transfer_stock(
             &[],
         ));
     }
+    crate::inventory::non_stock::ensure_store_article(db, input.article_id).await?;
     let note = input.notes.as_deref().map(str::trim).unwrap_or_default().to_string();
     if note.chars().count() < TRANSFER_NOTE_MIN_CHARS {
         return Err(transfer_refusal(
@@ -3608,6 +3631,9 @@ pub async fn evaluate_reorder(
          JOIN warehouses w ON w.is_active = 1
          LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.warehouse_id = w.id
          WHERE a.is_active = 1
+           -- A hors-stock article (L3-04) is bought for a work order, never reordered.
+           AND NOT EXISTS (SELECT 1 FROM lookup_values nslv
+                            WHERE nslv.id = a.stocking_type_value_id AND nslv.code = 'NON_STOCK')
            AND (
              -- An article is judged in the stores that stock it (a balance row), so an empty
              -- extra store does not flag every article.

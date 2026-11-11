@@ -215,6 +215,9 @@ describe("WoPlanningPanel — required / optional part lines", () => {
         notes: null,
         is_required: false,
         pending_issue_qty: 0,
+        is_non_stock: false,
+        non_stock_received_qty: 0,
+        handed_to_personnel_id: null,
       },
     ]);
     render(
@@ -252,6 +255,9 @@ function savedPart(overrides: Record<string, unknown> = {}) {
     quantity_reserved: 2,
     quantity_issued: 0,
     pending_issue_qty: 0,
+    is_non_stock: false,
+    non_stock_received_qty: 0,
+    handed_to_personnel_id: null,
     notes: null,
     origin: "planned",
     consumption_status: "pending",

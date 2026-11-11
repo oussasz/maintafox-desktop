@@ -466,6 +466,8 @@
     "WO_PART_LINE_SETTLED": "This part line is already settled ({{status}}).",
     "WO_PART_LINE_CANCELLED": "This part line is cancelled: add a new line to plan the part again.",
     "WO_PART_LINE_CHANGED": "This part line was changed meanwhile: reload the work order.",
+    "WO_PART_LINE_NON_STOCK_BY_RECEIPT": "A non-stock part is counted on the work order when it is received: its use is not entered by hand.",
+    "WO_PART_LINE_NON_STOCK_PURCHASE_OPEN": "The purchase of this non-stock part is still open: cancel the request or order first.",
     "INV_TRANSFER_QUANTITY_INVALID": "The quantity to transfer must be greater than 0.",
     "INV_TRANSFER_SAME_LOCATION": "Choose a destination store different from the source store.",
     "INV_TRANSFER_NOTE_TOO_SHORT": "A transfer needs a reason of at least {{min}} characters.",
