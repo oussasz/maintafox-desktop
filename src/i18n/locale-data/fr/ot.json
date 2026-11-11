@@ -80,6 +80,20 @@
     "done": "Vous avez rejoint l'OT : votre main-d'œuvre a démarré."
   },
   "depannage": {
+    "validation": {
+      "badgeToValidate": "Dépannage — à valider",
+      "pending": "Validation après coup en attente (approbateur du site, autre que la personne qui l'a lancé).",
+      "validate": "Valider le dépannage",
+      "validated": "Dépannage validé le {{date}}",
+      "autoApproved": "Approuvé automatiquement à la clôture (règle du site), sans validateur.",
+      "notStarter": "Vous avez lancé ce dépannage : un autre approbateur doit le valider."
+    },
+    "times": {
+      "response": "Temps de réponse",
+      "activeRepair": "Réparation active",
+      "restore": "Remise en service",
+      "hours": "{{value}} h"
+    },
     "action": "Dépannage",
     "title": "Dépannage : intervention immédiate",
     "intro": "Pour une panne à traiter tout de suite : l'OT correctif est créé et démarré en une fois. La planification est validée après coup.",

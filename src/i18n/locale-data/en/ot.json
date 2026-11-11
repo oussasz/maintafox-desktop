@@ -80,6 +80,20 @@
     "done": "You joined the work order: your labour has started."
   },
   "depannage": {
+    "validation": {
+      "badgeToValidate": "Breakdown — to validate",
+      "pending": "Validation after the fact pending (an approver of the site other than the person who started it).",
+      "validate": "Validate the breakdown",
+      "validated": "Breakdown validated on {{date}}",
+      "autoApproved": "Approved automatically at the close (site rule), with no validator.",
+      "notStarter": "You started this breakdown: another approver must validate it."
+    },
+    "times": {
+      "response": "Response time",
+      "activeRepair": "Active repair",
+      "restore": "Time to restore",
+      "hours": "{{value}} h"
+    },
     "action": "Breakdown",
     "title": "Breakdown: immediate work",
     "intro": "For a failure to deal with now: the corrective work order is created and started in one go. Its planning is validated afterwards.",

@@ -926,6 +926,8 @@ pub fn run() {
         commands::wo::start_depannage_wo,
         commands::wo::set_wo_breakdown_at,
         commands::wo::join_wo,
+        commands::wo::validate_depannage_wo,
+        commands::wo::get_depannage_times,
         commands::wo::start_wo,
         commands::wo::pause_wo,
         commands::wo::resume_wo,

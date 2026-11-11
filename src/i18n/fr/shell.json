@@ -192,6 +192,7 @@
       "PERMIT_TYPE_REQUIRED_TO_START": "Un ordre de travail démarré sans permis du type exigé par une règle de l'usine",
       "WO_PERMIT_RULE_CHANGED": "La règle de l'usine qui exige le permis d'un ordre de travail a été retirée ou modifiée ailleurs",
       "WO_DEPANNAGE_FACTS_INVALID": "Un OT de dépannage reçu sans sa date de constat de panne ou sans « machine arrêtée », avec une panne constatée après le moment où il a été écrit, ou redevenu un OT ordinaire : vérifiez ses faits avec la personne qui l'a signalé",
+      "WO_DEPANNAGE_VALIDATION_INVALID": "Une validation de dépannage reçue qui ne tient pas ici : validée par la personne qui l'a lancé, par quelqu'un sans droit d'approbation sur le site, après la clôture, approuvée automatiquement sur un site qui exige la validation, ou clôturé sans validation : vérifiez-la avec l'approbateur du site",
       "INSP_ANOMALY_PERMIT_REVIEW_CLEARED": "Un constat d'inspection reçu avec sa « revue permis requise » levée",
       "INSP_ANOMALY_LINK_CHANGED": "Un constat d'inspection reçu avec la demande ou l'OT créé à partir de lui retiré ou remplacé",
       "INSP_ANOMALY_DECISION_INVALID": "Un constat d'inspection reçu clos sans décision, ou un constat déjà décidé modifié ailleurs (il se décide en créant une demande ou un OT, ou en le reportant)",

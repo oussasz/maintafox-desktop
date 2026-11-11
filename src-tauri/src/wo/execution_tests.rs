@@ -892,7 +892,7 @@ mod tests {
         // `issue_wo_part_to_issue`, `cancel_wo_part_to_issue`). L5-08: whether the user carries out
         // the work order (`get_wo_execution_standing`). Migration 277: the dépannage
         // (`start_depannage_wo`) and its "Panne constatée à" edit (`set_wo_breakdown_at`).
-        assert_eq!(wo_lines.len(), 83, "invoke_handler must contain exactly 83 WO commands");
+        assert_eq!(wo_lines.len(), 86, "invoke_handler must contain exactly 86 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
