@@ -209,6 +209,7 @@
       "mix": "Nature des travaux",
       "completed": "Terminés sur la période",
       "completedValue": "Du {{from}} au {{to}}",
+      "ramsFailures": "Pannes comptées par RAMS",
       "mixValue": {
         "planned": "Planifiés (préventif et amélioration)",
         "reactive": "Réactifs (correctif)",
