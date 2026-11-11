@@ -29,11 +29,13 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PersonnelLinkNotice } from "@/components/common/PersonnelLinkNotice";
 import { Button, Input, Label, Textarea } from "@/components/ui";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { toneOf } from "@/design-system/tone";
 import { useFormatters } from "@/hooks/use-formatters";
+import { useMyPersonnelLink } from "@/hooks/use-my-personnel-link";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import {
@@ -140,6 +142,9 @@ export function InspectionRunner({
   const { t: tc } = useTranslation("common");
   const { formatNumber } = useFormatters();
   const { can, canAny } = usePermissions();
+  // Readings are attributed to the signed-in person's personnel record: without one the server
+  // refuses every answer, so say so before anything is entered.
+  const { linked: personnelLinked } = useMyPersonnelLink();
   const [runner, setRunner] = useState<InspectionRoundRunner | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [index, setIndex] = useState(0);
@@ -193,7 +198,8 @@ export function InspectionRunner({
 
   const status = runner.summary.round.status;
   const open = ROUND_OPEN_STATUSES.has(status);
-  const editable = open && can(P.INS_EXECUTE);
+  const noPersonnelRecord = personnelLinked === false;
+  const editable = open && can(P.INS_EXECUTE) && !noPersonnelRecord;
   const canDi = can(P.INS_EXECUTE) && canAny(P.DI_CREATE, P.DI_CREATE_OWN);
   const total = runner.checkpoints.length;
   const answered = runner.checkpoints.filter((c) => c.result).length;
@@ -439,6 +445,10 @@ export function InspectionRunner({
               : t("sync.allSynced")}
         </span>
       </div>
+
+      {open && noPersonnelRecord && can(P.INS_EXECUTE) ? (
+        <PersonnelLinkNotice context="rounds" />
+      ) : null}
 
       {!open ? (
         <p className="rounded-md bg-surface-2 px-3 py-2 text-sm text-text-muted">

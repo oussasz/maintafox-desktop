@@ -38,7 +38,9 @@ import {
 import {
   REFERENCE_SET_STATUS_TONE,
   isSyntheticReferenceId,
+  REFERENCE_DOMAIN_GROUPS,
   pendingCandidateSet,
+  referenceDomainGroup,
   referenceDomainLabel,
   referenceSetStatusLabelKey,
 } from "@/components/lookups/reference-set-ui";
@@ -140,9 +142,16 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
   // ── Client-side filtering ───────────────────────────────────────────────
 
   const filteredDomains = useMemo(() => {
-    if (!searchFilter.trim()) return domains;
+    // Grouped by domain (module), alphabetical inside each group: the same order as on screen.
+    const groupRank = (code: string) => REFERENCE_DOMAIN_GROUPS.indexOf(referenceDomainGroup(code));
+    const ordered = [...domains].sort(
+      (a, b) =>
+        groupRank(a.code) - groupRank(b.code) ||
+        referenceDomainLabel(a, label).localeCompare(referenceDomainLabel(b, label)),
+    );
+    if (!searchFilter.trim()) return ordered;
     const lower = searchFilter.toLowerCase();
-    return domains.filter((d) => {
+    return ordered.filter((d) => {
       if (referenceDomainLabel(d, label).toLowerCase().includes(lower)) return true;
       if (d.code.toLowerCase().includes(lower)) return true;
       const sets = setsMap[d.id];
@@ -249,6 +258,33 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
         </div>
       </div>
 
+      {/* Legend of the badges */}
+      <details className="border-b border-surface-border px-3 py-2 text-xs text-text-secondary">
+        <summary className="cursor-pointer select-none font-medium">
+          {t("browser.legend.title")}
+        </summary>
+        <dl className="mt-2 space-y-1.5">
+          <div>
+            <dt className="font-medium text-text-primary">
+              {t("governance.categoryShort.operationalDictionary")}
+            </dt>
+            <dd>{t("browser.legend.operationalDictionary")}</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-text-primary">
+              {t("governance.categoryShort.controlledCatalog")}
+            </dt>
+            <dd>{t("browser.legend.controlledCatalog")}</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-text-primary">
+              {t("governance.categoryShort.systemCatalog")}
+            </dt>
+            <dd>{t("browser.legend.systemCatalog")}</dd>
+          </div>
+        </dl>
+      </details>
+
       {/* Tree */}
       <div
         ref={treeRef}
@@ -267,7 +303,11 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
           </div>
         )}
 
-        {filteredDomains.map((domain) => {
+        {filteredDomains.map((domain, domainIndex) => {
+          const group = referenceDomainGroup(domain.code);
+          const showGroupHeader =
+            domainIndex === 0 ||
+            referenceDomainGroup(filteredDomains[domainIndex - 1]?.code ?? "") !== group;
           const isSynthetic = isSyntheticReferenceId(domain.id);
           const domainLabel = referenceDomainLabel(domain, label);
           const isExpanded = expandedDomainIds.includes(domain.id);
@@ -287,168 +327,178 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
           const shortCategoryLabel = String(t(governanceCategoryShortLabelKey(category)));
 
           return (
-            <div key={domain.id} role="treeitem" aria-expanded={isExpanded}>
-              <DomainTreeRow
-                selected={isSelected}
-                focused={focusedIndex === flatIdx}
-                onActivate={() => selectDomain(domain.id)}
-              >
-                {/* 1. Expand */}
-                <button
-                  type="button"
-                  className={DOMAIN_TREE_CHEVRON_SLOT}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleDomainExpanded(domain.id);
-                  }}
-                  aria-label={isExpanded ? t("browser.collapse") : t("browser.expand")}
+            <div key={domain.id} role="none">
+              {showGroupHeader ? (
+                <div
+                  role="presentation"
+                  className="sticky top-0 z-10 border-b border-surface-border bg-surface-1 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted"
                 >
-                  {isExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                </button>
-
-                {/* 2. Folder */}
-                {isExpanded ? (
-                  <FolderOpen className={DOMAIN_TREE_LEADING_ICON} aria-hidden />
-                ) : (
-                  <FolderClosed className={DOMAIN_TREE_LEADING_ICON} aria-hidden />
-                )}
-
-                {/* 3. Label — flexible, truncates last */}
-                <span className={DOMAIN_TREE_LABEL_CLASS} title={domainLabel}>
-                  {domainLabel}
-                </span>
-
-                {/* 4. Governance badge — fixed slot, secondary */}
-                {!isSynthetic ? (
-                  <span
-                    className={DOMAIN_TREE_BADGE_SLOT}
-                    title={fullCategoryLabel}
-                    aria-label={fullCategoryLabel}
-                  >
-                    <span className={DOMAIN_TREE_BADGE_TEXT}>{shortCategoryLabel}</span>
-                  </span>
-                ) : (
-                  /* Reserve badge width so synthetic rows align with governed ones */
-                  <span className="w-[5.25rem] shrink-0" aria-hidden />
-                )}
-
-                {/* 5–6. Lock + overflow — far-right rail */}
-                <div className={DOMAIN_TREE_TRAIL_CLASS}>
-                  <div className={DOMAIN_TREE_ICON_SLOT}>
-                    {showLock ? (
-                      <span title={t("browser.systemCatalogDomain")} className="inline-flex">
-                        <Lock className="h-3.5 w-3.5 text-status-warning" aria-hidden />
-                        <span className="sr-only">{t("browser.systemCatalogDomain")}</span>
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className={DOMAIN_TREE_ICON_SLOT}>
-                    {canCreateDraft ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9"
-                            aria-label={t("browser.domainActions", { domain: domainLabel })}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <MoreVertical className="h-4 w-4" aria-hidden />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-56">
-                          {candidate ? (
-                            <DropdownMenuItem
-                              className="min-h-9"
-                              onClick={() => selectSet(candidate.id, domain.id)}
-                            >
-                              <FolderOpen className="mr-2 h-4 w-4" aria-hidden />
-                              {t("governance.readOnly.openCandidate", {
-                                version: candidate.version_no,
-                              })}
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              className="min-h-9"
-                              onClick={() => onCreateDraftSet?.(domain.id)}
-                            >
-                              <Plus className="mr-2 h-4 w-4" aria-hidden />
-                              {t("browser.newSet")}
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : null}
-                  </div>
+                  {t(`groups.${group}`)}
                 </div>
-              </DomainTreeRow>
+              ) : null}
+              <div role="treeitem" aria-expanded={isExpanded}>
+                <DomainTreeRow
+                  selected={isSelected}
+                  focused={focusedIndex === flatIdx}
+                  onActivate={() => selectDomain(domain.id)}
+                >
+                  {/* 1. Expand */}
+                  <button
+                    type="button"
+                    className={DOMAIN_TREE_CHEVRON_SLOT}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleDomainExpanded(domain.id);
+                    }}
+                    aria-label={isExpanded ? t("browser.collapse") : t("browser.expand")}
+                  >
+                    {isExpanded ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                  </button>
 
-              {isExpanded && (
-                <fieldset className="contents">
-                  {isLoadingSets && (
-                    <div
-                      className={cn(
-                        DOMAIN_TREE_SET_INDENT,
-                        "flex items-center gap-2 py-1.5 text-xs text-text-muted",
-                      )}
-                    >
-                      <div className="h-3 w-3 animate-spin rounded-full border border-surface-3 border-t-primary" />
-                      {t("browser.loadingSets")}
-                    </div>
+                  {/* 2. Folder */}
+                  {isExpanded ? (
+                    <FolderOpen className={DOMAIN_TREE_LEADING_ICON} aria-hidden />
+                  ) : (
+                    <FolderClosed className={DOMAIN_TREE_LEADING_ICON} aria-hidden />
                   )}
 
-                  {!isLoadingSets && sets.length === 0 && (
-                    <div
-                      className={cn(
-                        DOMAIN_TREE_SET_INDENT,
-                        "py-1.5 text-xs italic text-text-muted",
-                      )}
+                  {/* 3. Label — flexible, truncates last */}
+                  <span className={DOMAIN_TREE_LABEL_CLASS} title={domainLabel}>
+                    {domainLabel}
+                  </span>
+
+                  {/* 4. Governance badge — fixed slot, secondary */}
+                  {!isSynthetic ? (
+                    <span
+                      className={DOMAIN_TREE_BADGE_SLOT}
+                      title={fullCategoryLabel}
+                      aria-label={fullCategoryLabel}
                     >
-                      {t("browser.noSets")}
-                    </div>
+                      <span className={DOMAIN_TREE_BADGE_TEXT}>{shortCategoryLabel}</span>
+                    </span>
+                  ) : (
+                    /* Reserve badge width so synthetic rows align with governed ones */
+                    <span className="w-[5.25rem] shrink-0" aria-hidden />
                   )}
 
-                  {sets.map((refSet) => {
-                    const isSetSelected = selectedSetId === refSet.id;
-                    const setFlatIdx = flatItems.findIndex(
-                      (fi) => fi.type === "set" && fi.set.id === refSet.id,
-                    );
-                    const versioned = !isSynthetic && category !== "operational_dictionary";
-                    const setLabel = isSynthetic
-                      ? String(t("browser.liveTable"))
-                      : versioned
-                        ? String(t("editor.version", { version: refSet.version_no }))
-                        : String(t("browser.workingCatalog"));
-
-                    return (
-                      <DomainTreeRow
-                        key={refSet.id}
-                        role="treeitem"
-                        selected={isSetSelected}
-                        focused={focusedIndex === setFlatIdx}
-                        onActivate={() => selectSet(refSet.id, domain.id)}
-                        className={DOMAIN_TREE_SET_INDENT}
-                      >
-                        <span className={DOMAIN_TREE_LABEL_CLASS} title={setLabel}>
-                          {setLabel}
+                  {/* 5–6. Lock + overflow — far-right rail */}
+                  <div className={DOMAIN_TREE_TRAIL_CLASS}>
+                    <div className={DOMAIN_TREE_ICON_SLOT}>
+                      {showLock ? (
+                        <span title={t("browser.systemCatalogDomain")} className="inline-flex">
+                          <Lock className="h-3.5 w-3.5 text-status-warning" aria-hidden />
+                          <span className="sr-only">{t("browser.systemCatalogDomain")}</span>
                         </span>
-                        {versioned ? (
-                          <StatusChip
-                            label={label(referenceSetStatusLabelKey(refSet.status))}
-                            tone={toneOf(REFERENCE_SET_STATUS_TONE, refSet.status)}
-                            className="shrink-0"
-                          />
-                        ) : null}
-                      </DomainTreeRow>
-                    );
-                  })}
-                </fieldset>
-              )}
+                      ) : null}
+                    </div>
+                    <div className={DOMAIN_TREE_ICON_SLOT}>
+                      {canCreateDraft ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9"
+                              aria-label={t("browser.domainActions", { domain: domainLabel })}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            {candidate ? (
+                              <DropdownMenuItem
+                                className="min-h-9"
+                                onClick={() => selectSet(candidate.id, domain.id)}
+                              >
+                                <FolderOpen className="mr-2 h-4 w-4" aria-hidden />
+                                {t("governance.readOnly.openCandidate", {
+                                  version: candidate.version_no,
+                                })}
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                className="min-h-9"
+                                onClick={() => onCreateDraftSet?.(domain.id)}
+                              >
+                                <Plus className="mr-2 h-4 w-4" aria-hidden />
+                                {t("browser.newSet")}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
+                    </div>
+                  </div>
+                </DomainTreeRow>
+
+                {isExpanded && (
+                  <fieldset className="contents">
+                    {isLoadingSets && (
+                      <div
+                        className={cn(
+                          DOMAIN_TREE_SET_INDENT,
+                          "flex items-center gap-2 py-1.5 text-xs text-text-muted",
+                        )}
+                      >
+                        <div className="h-3 w-3 animate-spin rounded-full border border-surface-3 border-t-primary" />
+                        {t("browser.loadingSets")}
+                      </div>
+                    )}
+
+                    {!isLoadingSets && sets.length === 0 && (
+                      <div
+                        className={cn(
+                          DOMAIN_TREE_SET_INDENT,
+                          "py-1.5 text-xs italic text-text-muted",
+                        )}
+                      >
+                        {t("browser.noSets")}
+                      </div>
+                    )}
+
+                    {sets.map((refSet) => {
+                      const isSetSelected = selectedSetId === refSet.id;
+                      const setFlatIdx = flatItems.findIndex(
+                        (fi) => fi.type === "set" && fi.set.id === refSet.id,
+                      );
+                      const versioned = !isSynthetic && category !== "operational_dictionary";
+                      const setLabel = isSynthetic
+                        ? String(t("browser.liveTable"))
+                        : versioned
+                          ? String(t("editor.version", { version: refSet.version_no }))
+                          : String(t("browser.workingCatalog"));
+
+                      return (
+                        <DomainTreeRow
+                          key={refSet.id}
+                          role="treeitem"
+                          selected={isSetSelected}
+                          focused={focusedIndex === setFlatIdx}
+                          onActivate={() => selectSet(refSet.id, domain.id)}
+                          className={DOMAIN_TREE_SET_INDENT}
+                        >
+                          <span className={DOMAIN_TREE_LABEL_CLASS} title={setLabel}>
+                            {setLabel}
+                          </span>
+                          {versioned ? (
+                            <StatusChip
+                              label={label(referenceSetStatusLabelKey(refSet.status))}
+                              tone={toneOf(REFERENCE_SET_STATUS_TONE, refSet.status)}
+                              className="shrink-0"
+                            />
+                          ) : null}
+                        </DomainTreeRow>
+                      );
+                    })}
+                  </fieldset>
+                )}
+              </div>
             </div>
           );
         })}
