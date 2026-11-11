@@ -274,6 +274,7 @@ export function WorkOrdersPage() {
     setEquipmentFilter(null);
     setMixFilter(null);
     setCompletedWindow(null);
+    setRamsFailures(null);
     setFilter({
       search: null,
       status_codes: null,
@@ -285,6 +286,9 @@ export function WorkOrdersPage() {
       not_closed_only: null,
       overdue_only: null,
       planner_unassigned: null,
+      completed_from: null,
+      completed_to: null,
+      rams_failures: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
@@ -627,8 +631,16 @@ export function WorkOrdersPage() {
       LIST_PARAM.ramsFrom,
     ];
     if (linked.some((k) => p.has(k))) return;
+    // Link-only filters (chips that exist only while their link is followed) do not outlive the
+    // visit: without a link, a later visit never lists through a filter it shows no chip for.
+    setFilter({
+      equipment_id: null,
+      completed_from: null,
+      completed_to: null,
+      rams_failures: null,
+    });
     void loadWos();
-  }, [loadWos]);
+  }, [loadWos, setFilter]);
 
   useEffect(() => {
     void loadWoTypes();
