@@ -79,6 +79,7 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_WO_HISTORY_CODING_VALUE": "Codification refusée : une valeur choisie n'est plus dans sa liste active (Données de référence). Rechargez la fiche et choisissez une valeur de la liste.",
     "GATE_INV_LOOKUP": "Valeur refusée : une valeur de référence de l'article (unité, criticité, type de stockage ou catégorie fiscale) n'est pas acceptée. Vérifiez-la dans les Données de référence.",
     "GATE_UNIT": "Unité refusée : vérifiez-la dans les Données de référence.",
     "GATE_NOTIFICATION_ACK_REQUIRED": "Prenez connaissance de cet avis de sécurité avant de le masquer.",

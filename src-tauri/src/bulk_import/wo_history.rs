@@ -1003,7 +1003,9 @@ pub async fn save_coding(
         let current: Option<i64> = row.try_get("", column)?;
         before.insert(column.to_string(), json!(current));
         if !coding_value_ok(&tx, domain, value, current).await? {
-            errors.push(format!("{label} : valeur absente de la liste active « {domain} »."));
+            errors.push(format!(
+                "GATE_WO_HISTORY_CODING_VALUE:field={column}: {label} : valeur absente de la liste active « {domain} »."
+            ));
         }
     }
     if !errors.is_empty() {
