@@ -5790,8 +5790,8 @@ export interface WoAssignInput {
   assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   scheduled_at?: string | null;
-  /** Required — unguarded assign is retired; use emergency_reassign_wo from UI. */
-  override_reason: string;
+  /** Only the emergency override (`emergency_reassign_wo`) needs a reason. */
+  override_reason?: string;
 }
 
 export interface WoEmergencyReassignInput {

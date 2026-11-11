@@ -23,7 +23,7 @@ pub struct WoAssignSaveInput {
     pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
-    /// Required for any non-Planning assignment write.
+    /// Only the emergency override needs a reason; a routine assignment sends none.
     pub override_reason: String,
 }
 
@@ -196,7 +196,7 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
                 && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED
             {
                 return Err(AppError::ValidationFailed(vec![
-                    "GATE_WO_ASSIGN_CREW_VIA_PLANNING: The slot is committed to another crew: move it in Planning,                      or use the emergency reassignment for a real exception."
+                    "GATE_WO_ASSIGN_CREW_VIA_PLANNING: The slot is committed to another crew: move it in Planning, or use the emergency reassignment for a real exception."
                         .to_string(),
                 ]));
             }
