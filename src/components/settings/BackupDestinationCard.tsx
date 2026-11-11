@@ -85,8 +85,6 @@ export function BackupDestinationCard({
     if (path && typeof path === "string") await change(path);
   }, [change, t]);
 
-  const dataDir = overview?.app_backup_dir.replace(/[\\/]backups[\\/]?$/, "") ?? "";
-
   return (
     <div className="space-y-3 rounded-md border border-border p-3">
       <h4 className="flex items-center gap-2 text-sm font-medium">
@@ -150,8 +148,9 @@ export function BackupDestinationCard({
           <ol className="list-decimal space-y-1 pl-5">
             <li>{t("backupDest.guideNewPc1")}</li>
             <li>{t("backupDest.guideNewPc2")}</li>
-            <li>{t("backupDest.guideNewPc3", { dataDir })}</li>
+            <li>{t("backupDest.guideNewPc3")}</li>
             <li>{t("backupDest.guideNewPc4")}</li>
+            <li>{t("backupDest.guideNewPc5")}</li>
           </ol>
         </div>
       </details>

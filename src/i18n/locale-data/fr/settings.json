@@ -613,8 +613,9 @@
     "guideSamePc": "Cliquez sur « Restaurer une sauvegarde… » et choisissez le fichier. Les données actuelles sont d'abord sauvegardées, puis Maintafox redémarre.",
     "guideNewPcTitle": "Sur un nouveau PC (panne, remplacement)",
     "guideNewPc1": "Gardez la clé de récupération hors de ce PC (section « Chiffrement de la base de données ») : sans elle, aucune sauvegarde ne peut être ouverte sur un autre PC.",
-    "guideNewPc2": "Installez Maintafox sur le nouveau PC, sans l'ouvrir.",
-    "guideNewPc3": "Copiez la dernière sauvegarde (fichier .db du dossier externe) dans le dossier de données de Maintafox du nouveau PC et renommez-la « maintafox.db ». Sur ce PC, ce dossier est : {{dataDir}}",
-    "guideNewPc4": "Ouvrez Maintafox : il demande la clé de chiffrement. Saisissez la clé de récupération de l'ancien PC. Si Maintafox demande ensuite l'activation du poste, suivez l'écran d'activation."
+    "guideNewPc2": "Installez sur le nouveau PC la même version de Maintafox (ou une plus récente), ouvrez-la une fois puis fermez-la.",
+    "guideNewPc3": "Copiez la dernière sauvegarde (fichier .db du dossier externe) dans le dossier %APPDATA%\\systems.maintafox.desktop du nouveau PC, à la place du fichier « maintafox.db » (renommez la sauvegarde « maintafox.db »).",
+    "guideNewPc4": "Ouvrez Maintafox : il demande la clé de chiffrement. Saisissez la clé de récupération de l'ancien PC. Si Maintafox demande ensuite l'activation du poste, suivez l'écran d'activation.",
+    "guideNewPc5": "N'utilisez plus l'ancien PC avec ces données : deux PC ne doivent pas travailler sur la même copie."
   }
 }

@@ -9,7 +9,10 @@
 //!   `trigger = 'scheduled'`. A failure is recorded as a `failed` run and retried after
 //!   `RETRY_AFTER_FAILURE`.
 //! - Retention: grandfather-father-son over the `backup.retention_daily/weekly/monthly` settings.
-//!   Only scheduled backup files inside the backup folder are ever deleted.
+//!   Only scheduled backup files inside the backup folder are ever deleted. Retention applies to
+//!   each folder (application folder and external folder) on its own.
+//! - The file name carries the PC's name, so PCs sharing one network folder never prune each
+//!   other's files.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -138,6 +141,23 @@ async fn last_scheduled_success(db: &DatabaseConnection) -> AppResult<Option<Dat
         .map(|d| d.with_timezone(&Local)))
 }
 
+/// This PC's name for backup file names: letters, digits and `-` only.
+fn pc_name() -> String {
+    let raw = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "pc".to_string());
+    let clean: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .take(40)
+        .collect();
+    if clean.is_empty() {
+        "pc".to_string()
+    } else {
+        clean
+    }
+}
+
 /// Runs one scheduler tick. Returns `true` when a backup was written.
 pub async fn run_due_backup(
     db: &DatabaseConnection,
@@ -159,7 +179,7 @@ pub async fn run_due_backup(
     }
 
     let target_dir = super::destination::scheduled_target_dir(db, backup_dir).await;
-    let target = target_dir.join(format!("maintafox-{}.db", now.format("%Y%m%d-%H%M%S")));
+    let target = target_dir.join(format!("maintafox-{}-{}.db", pc_name(), now.format("%Y%m%d-%H%M%S")));
     let target_str = target.to_string_lossy().to_string();
     if let Err(err) = super::run_manual_backup(db, &target_str, super::TRIGGER_SCHEDULED, None).await {
         record_failed_run(db, &target_str, &err.to_string()).await;
@@ -279,6 +299,20 @@ mod tests {
         let s = parse_backup_schedule("0 2 * * *").unwrap();
         let next = s.after(&at(2026, 10, 10, 3)).next().unwrap();
         assert_eq!(next, at(2026, 10, 11, 2));
+    }
+
+    #[test]
+    fn the_screen_presets_run_when_they_say() {
+        use chrono::{Datelike, Timelike, Weekday};
+        // `src/components/settings/backup-schedule.ts`: the screen's choices, as stored.
+        let from = at(2026, 1, 1, 0);
+        let next = |expr: &str| parse_backup_schedule(expr).unwrap().after(&from).next().unwrap();
+        assert_eq!(next("0 2 * * *").hour(), 2);
+        assert_eq!(next("0 12 * * *").hour(), 12);
+        assert_eq!(next("0 20 * * *").hour(), 20);
+        assert_eq!(next("0 */6 * * *").hour(), 6);
+        let monday = next("0 2 * * MON");
+        assert_eq!((monday.weekday(), monday.hour()), (Weekday::Mon, 2));
     }
 
     #[test]

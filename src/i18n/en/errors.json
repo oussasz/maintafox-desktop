@@ -79,6 +79,11 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_BACKUP_DIR_NOT_ABSOLUTE": "Folder refused: choose a full folder, with its drive or network share.",
+    "GATE_BACKUP_DIR_UNREACHABLE": "Folder refused: it cannot be found or reached (disk unplugged, network down?).",
+    "GATE_BACKUP_DIR_NOT_FOLDER": "Folder refused: this path is not a folder.",
+    "GATE_BACKUP_DIR_SAME_DISK": "Folder refused: it is on the application's disk and would be lost with the PC. Choose another disk, a USB key or a network folder.",
+    "GATE_BACKUP_DIR_NOT_WRITABLE": "Folder refused: Maintafox cannot write to it. Check the rights on this folder.",
     "GATE_INV_LOOKUP": "Value refused: a reference value of the article (unit, criticality, stocking type or tax category) is not accepted. Check it in Reference data.",
     "GATE_UNIT": "Unit refused: check it in Reference data.",
     "GATE_REF_SYSTEM_DOMAIN_READ_ONLY": "Change refused: this list is maintained by Maintafox and cannot be changed in Reference data. Its values stay available in the forms that use them.",

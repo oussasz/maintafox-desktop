@@ -613,8 +613,9 @@
     "guideSamePc": "Click “Restore a backup…” and choose the file. The current data is backed up first, then Maintafox restarts.",
     "guideNewPcTitle": "On a new PC (failure, replacement)",
     "guideNewPc1": "Keep the recovery key outside this PC (“Database encryption” section): without it, no backup can be opened on another PC.",
-    "guideNewPc2": "Install Maintafox on the new PC, without opening it.",
-    "guideNewPc3": "Copy the latest backup (.db file of the external folder) into Maintafox's data folder on the new PC and rename it “maintafox.db”. On this PC, that folder is: {{dataDir}}",
-    "guideNewPc4": "Open Maintafox: it asks for the encryption key. Enter the old PC's recovery key. If Maintafox then asks to activate the workstation, follow the activation screen."
+    "guideNewPc2": "Install the same Maintafox version (or a newer one) on the new PC, open it once, then close it.",
+    "guideNewPc3": "Copy the latest backup (.db file of the external folder) into the new PC's %APPDATA%\\systems.maintafox.desktop folder, in place of the “maintafox.db” file (rename the backup “maintafox.db”).",
+    "guideNewPc4": "Open Maintafox: it asks for the encryption key. Enter the old PC's recovery key. If Maintafox then asks to activate the workstation, follow the activation screen.",
+    "guideNewPc5": "Stop using the old PC with this data: two PCs must not work on the same copy."
   }
 }
