@@ -566,6 +566,7 @@ describe("BudgetCockpitView", () => {
           equipment_code: "PMP-001",
           event_at: "2026-10-10T10:00:00Z",
           is_reversal: false,
+          row_version: 1,
         },
       ],
       commitments: [],
@@ -642,6 +643,7 @@ describe("BudgetCockpitView", () => {
         equipment_code: null,
         event_at: "2026-10-10T10:00:00Z",
         is_reversal: false,
+        row_version: 1,
       });
       svc.getBudgetCockpitDrilldown.mockReset();
       svc.getBudgetCockpitDrilldown

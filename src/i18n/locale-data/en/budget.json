@@ -314,6 +314,13 @@
       "wo_settlement": "Work order settlement",
       "reversal": "Reversal",
       "manual": "Manual entry"
+    },
+    "reverse": {
+      "action": "Reverse",
+      "title": "Reverse this entry?",
+      "description": "An opposite entry of {{amount}} is added to the actuals; the original entry is kept and marked reversed. Entries coming from a work order are corrected by reopening the work order.",
+      "confirm": "Reverse entry",
+      "reason": "Reason for the reversal (required)"
     }
   },
   "settlements": {

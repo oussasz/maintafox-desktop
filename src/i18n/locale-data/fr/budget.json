@@ -314,6 +314,13 @@
       "wo_settlement": "Imputation d'OT",
       "reversal": "Contre-passation",
       "manual": "Saisie manuelle"
+    },
+    "reverse": {
+      "action": "Contre-passer",
+      "title": "Contre-passer cette écriture ?",
+      "description": "Une écriture inverse de {{amount}} est ajoutée au réel ; l'écriture d'origine est conservée et marquée contre-passée. Les écritures issues d'un OT se corrigent en rouvrant l'OT.",
+      "confirm": "Contre-passer l'écriture",
+      "reason": "Motif de la contre-passation (obligatoire)"
     }
   },
   "settlements": {

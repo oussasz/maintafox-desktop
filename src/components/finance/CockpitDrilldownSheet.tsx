@@ -8,6 +8,8 @@ import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { useFinanceCatalogs } from "@/components/finance/use-finance-catalogs";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
 import {
   Sheet,
@@ -25,14 +27,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { mfTable } from "@/design-system/tokens";
 import { useFormatters } from "@/hooks/use-formatters";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { reverseBudgetActual } from "@/services/budget-service";
 import {
   type BudgetCockpitDrilldown,
+  type DrilldownActual,
   type BudgetCockpitRow,
   getBudgetCockpitDrilldown,
 } from "@/services/finance-cost-service";
+import { P } from "@shared/rbac/permissions.generated";
+
+/** Entries that follow their work order: reopening the OT reverses them, never this screen. */
+const OT_SETTLEMENT_SOURCES = new Set(["wo_settlement", "wo_late_cost"]);
 
 /** Actual lines read per page (the server allows 1 to 500). */
 const DRILLDOWN_PAGE = 200;
@@ -59,6 +69,15 @@ export function CockpitDrilldownSheet({
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const { can } = usePermissions();
+  const [toReverse, setToReverse] = useState<DrilldownActual | null>(null);
+  const [reason, setReason] = useState("");
+  // A posted manual entry that is not itself a reversal and not an OT settlement can be reversed.
+  const canReverse = (a: DrilldownActual) =>
+    can(P.FIN_POST) &&
+    a.posting_status === "posted" &&
+    !a.is_reversal &&
+    !OT_SETTLEMENT_SOURCES.has(a.source_type);
   const [loadingMore, setLoadingMore] = useState(false);
   /**
    * Which figure the sheet is showing. Bumped whenever the row, year, version or retry changes,
@@ -246,6 +265,22 @@ export function CockpitDrilldownSheet({
                                 )}
                               >
                                 {money(a.amount)}
+                                {canReverse(a) ? (
+                                  <div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 px-2 text-xs font-sans"
+                                      onClick={() => {
+                                        setReason("");
+                                        setToReverse(a);
+                                      }}
+                                    >
+                                      {t("drill.reverse.action")}
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -326,6 +361,36 @@ export function CockpitDrilldownSheet({
           </>
         ) : null}
       </SheetContent>
+      <ConfirmDialog
+        open={toReverse !== null}
+        onOpenChange={(open) => {
+          if (!open) setToReverse(null);
+        }}
+        title={t("drill.reverse.title")}
+        description={t("drill.reverse.description", {
+          amount: toReverse ? money(toReverse.amount) : "",
+        })}
+        confirmLabel={t("drill.reverse.confirm")}
+        destructive
+        confirmDisabled={reason.trim().length === 0}
+        onConfirm={async () => {
+          if (!toReverse) return;
+          await reverseBudgetActual({
+            actual_id: toReverse.actual_id,
+            expected_row_version: toReverse.row_version,
+            reason: reason.trim(),
+          });
+          setAttempt((n) => n + 1);
+        }}
+      >
+        <Textarea
+          aria-label={t("drill.reverse.reason")}
+          placeholder={t("drill.reverse.reason")}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+        />
+      </ConfirmDialog>
     </Sheet>
   );
 }
