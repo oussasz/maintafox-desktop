@@ -650,6 +650,9 @@ async fn record_reading_inner(
     confirm_jump: bool,
     actor_id: i32,
 ) -> AppResult<MeterReading> {
+    // A crossed threshold raises a request only where requests are licensed (same checks as any
+    // request creation); read before the transaction because the licence helpers take the pool.
+    let threshold_licence_block = threshold_request_licence_block(db, actor_id).await?;
     let txn = db.begin().await?;
 
     // ── 1. Validate meter exists and is active ───────────────────────────
@@ -816,7 +819,7 @@ async fn record_reading_inner(
     // A counted reading that crosses a threshold raises an intervention request, in a savepoint:
     // a request that cannot be raised never loses the reading (the reason is returned).
     if counts {
-        apply_threshold_outcome(&txn, &mut reading, equipment_id, actor_id).await?;
+        apply_threshold_outcome(&txn, &mut reading, equipment_id, actor_id, threshold_licence_block).await?;
     }
 
     txn.commit().await?;
@@ -1505,11 +1508,29 @@ pub async fn raise_threshold_request(
 /// Evaluates the thresholds of the reading's meter and writes the outcome on `reading`. The
 /// request is raised in a savepoint of `txn`: if it cannot be raised, nothing of it is kept and the
 /// reason is returned on the reading, which is recorded anyway.
+/// Why a crossed threshold may not raise a request here: the requests module entitlement and the
+/// licence permission matrix for `di.create`, the same checks as any request creation. `None` when
+/// a request may be raised; other errors (database) are returned.
+async fn threshold_request_licence_block(db: &DatabaseConnection, actor_id: i32) -> AppResult<Option<String>> {
+    use crate::rbac::permissions::DI_CREATE;
+    match crate::entitlements::queries::enforce_capability_for_permission(db, DI_CREATE).await {
+        Ok(()) => {}
+        Err(AppError::PermissionDenied(message)) => return Ok(Some(message)),
+        Err(e) => return Err(e),
+    }
+    match crate::license::queries::enforce_permission_matrix(db, actor_id, DI_CREATE).await {
+        Ok(()) => Ok(None),
+        Err(e @ AppError::LicenseDenied { .. }) => Ok(Some(e.to_string())),
+        Err(e) => Err(e),
+    }
+}
+
 async fn apply_threshold_outcome(
     txn: &sea_orm::DatabaseTransaction,
     reading: &mut MeterReading,
     equipment_id: i64,
     actor_id: i32,
+    licence_block: Option<String>,
 ) -> AppResult<()> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
@@ -1533,6 +1554,11 @@ async fn apply_threshold_outcome(
         return Ok(());
     };
     reading.threshold_level = Some(level.as_str().to_string());
+    if let Some(reason) = licence_block {
+        // The reading is kept; the screen says why no request was raised.
+        reading.threshold_problem = Some(reason);
+        return Ok(());
+    }
     let savepoint = txn.begin().await?;
     match raise_threshold_request(&savepoint, reading, equipment_id, level, actor_id).await {
         Ok(outcome) => {

@@ -1225,7 +1225,7 @@ mod tests {
         assert_eq!(shown.raised_request_code, critical.raised_request_code);
         assert_eq!(shown.threshold_level.as_deref(), Some("critical"));
 
-        // Once the alert request is closed, a new crossing raises a new one.
+        // Closing the alert request leaves the critical one open: no second critical request.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET status = 'closed' WHERE id = ?",
@@ -1241,6 +1241,23 @@ mod tests {
             "critical request still open"
         );
         assert!(critical_again.open_request_code.is_some());
+
+        // Once the critical request is closed, a new crossing raises a new one.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET status = 'closed' WHERE id = ?",
+            [critical.raised_request_id.expect("critical id").into()],
+        ))
+        .await
+        .expect("close critical");
+        let critical_third = meters::record_meter_reading(&db, reading(meter.id, 270.0, "2026-05-06T08:00:00Z"), 1)
+            .await
+            .expect("critical after close");
+        assert!(
+            critical_third.raised_request_id.is_some(),
+            "a closed request no longer blocks a new one"
+        );
+        assert_ne!(critical_third.raised_request_id, critical.raised_request_id);
     }
 
     #[tokio::test]
