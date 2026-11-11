@@ -721,7 +721,8 @@
     "cancel": "Annuler",
     "confirm": "Déplacer",
     "confirmRemove": "Déposer en stock",
-    "done": "Déplacement de {{code}} enregistré."
+    "done": "Déplacement de {{code}} enregistré.",
+    "severalParents": "Ce composant est rattaché à {{count}} équipements parents à la fois ; corrigez la structure avant de le déplacer."
   },
   "structure": {
     "parent": "Équipement parent",

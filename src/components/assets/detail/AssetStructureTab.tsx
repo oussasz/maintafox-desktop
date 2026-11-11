@@ -24,8 +24,8 @@ import { P } from "@shared/rbac/permissions.generated";
 const SINGLE_PARENT_TYPES = ["PARENT_CHILD", "INSTALLED_IN"];
 
 interface StructureData {
-  parent: Asset | null;
-  parentRelation: string | null;
+  /** Every active single-parent relation: one normally, several only from an inconsistent link. */
+  parents: { row: AssetHierarchyRow; asset: Asset }[];
   children: { row: AssetHierarchyRow; asset: Asset }[];
 }
 
@@ -39,16 +39,16 @@ async function loadStructure(assetId: number): Promise<StructureData> {
   const active = parents.filter(
     (r) => r.effective_to == null && SINGLE_PARENT_TYPES.includes(r.relation_type),
   );
-  const parentRow = active[0] ?? null;
-  const parent = parentRow ? await getAssetById(parentRow.parent_asset_id) : null;
+  const parentAssets = await Promise.all(
+    active.map(async (row) => ({ row, asset: await getAssetById(row.parent_asset_id) })),
+  );
   const childAssets = await Promise.all(
     children
       .filter((r) => r.effective_to == null)
       .map(async (row) => ({ row, asset: await getAssetById(row.child_asset_id) })),
   );
   return {
-    parent,
-    parentRelation: parentRow?.relation_type ?? null,
+    parents: parentAssets,
     children: childAssets.sort((a, b) => a.asset.asset_code.localeCompare(b.asset.asset_code)),
   };
 }
@@ -100,23 +100,41 @@ export function AssetStructureTab({ asset, onOpenAsset, onMoved }: AssetStructur
   if (error || !data) {
     return <ErrorState error={error} onRetry={() => void reload()} retrying={loading} />;
   }
-  const parent = data.parent;
+  // Several parents at once: the server refuses the move (GATE_ASSET_MOVE_SEVERAL_PARENTS), so it
+  // is not offered; every parent is listed with the reason.
+  const severalParents = data.parents.length > 1;
+  const parent = data.parents.length === 1 ? (data.parents[0]?.asset ?? null) : null;
 
   return (
     <div className="space-y-4">
       <DetailSectionCard title={t("structure.parent")} icon={GitFork}>
-        {parent ? (
-          <AssetLinkRow
-            asset={parent}
-            relation={data.parentRelation}
-            onOpen={() => onOpenAsset(parent.id)}
-          />
-        ) : (
+        {data.parents.length === 0 ? (
           <p className="text-sm text-text-muted">{t("structure.noParent")}</p>
+        ) : (
+          <div className="space-y-2">
+            {data.parents.map(({ row, asset: p }) => (
+              <AssetLinkRow
+                key={row.relation_id}
+                asset={p}
+                relation={row.relation_type}
+                onOpen={() => onOpenAsset(p.id)}
+              />
+            ))}
+          </div>
         )}
+        {severalParents ? (
+          <p role="note" className="pt-2 text-sm text-tone-warning-fg">
+            {t("moveComponent.severalParents", { count: data.parents.length })}
+          </p>
+        ) : null}
         <PermissionGate permission={P.EQ_MANAGE}>
           <div className="flex justify-end pt-2">
-            <Button variant="outline" className="h-11 gap-1.5" onClick={() => setShowMove(true)}>
+            <Button
+              variant="outline"
+              className="h-11 gap-1.5"
+              disabled={severalParents}
+              onClick={() => setShowMove(true)}
+            >
               <ArrowRightLeft className="h-4 w-4" aria-hidden />
               {t("moveComponent.action")}
             </Button>

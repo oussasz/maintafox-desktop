@@ -418,7 +418,7 @@
     "GATE_ASSET_MOVE_DATE_INVALID": "Move refused: the effective date cannot be read.",
     "GATE_ASSET_MOVE_RETIRED": "Move refused: the equipment has status “{{status}}” and cannot be installed or removed.",
     "GATE_ASSET_MOVE_SAME_PARENT": "Move refused: the component is already at this location.",
-    "GATE_ASSET_MOVE_SEVERAL_PARENTS": "Move refused: the component has {{count}} active parent equipment. Unlink one of them in the structure first.",
+    "GATE_ASSET_MOVE_SEVERAL_PARENTS": "This component is attached to {{count}} parent equipment at once; correct the structure before moving it.",
     "GATE_ASSET_PARENT_CHANGE_THROUGH_MOVE": "A parent equipment change is recorded with “Move component”.",
     "GATE_ASSET_IMPORT_ALREADY_APPLIED": "Import refused: this batch has already been applied.",
     "GATE_ASSET_IMPORT_CLASS_REQUIRED": "Import refused: the class is required on every row.",

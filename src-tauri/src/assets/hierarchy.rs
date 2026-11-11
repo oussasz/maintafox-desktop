@@ -559,8 +559,8 @@ async fn move_asset_component_in(
     if active.len() > 1 {
         let count = active.len();
         return Err(AppError::ValidationFailed(vec![format!(
-            "GATE_ASSET_MOVE_SEVERAL_PARENTS:count={count}: Le composant a {count} parents actifs ; \
-             dissociez-en d'abord un dans la structure."
+            "GATE_ASSET_MOVE_SEVERAL_PARENTS:count={count}: Ce composant est rattaché à {count} équipements \
+             parents à la fois ; corrigez la structure avant de le déplacer."
         )]));
     }
     let current = active.into_iter().next();

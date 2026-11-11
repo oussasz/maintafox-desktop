@@ -1365,11 +1365,15 @@ mod tests {
         .await
         .expect("no site");
         let only_first_site = AccessScope::Subtrees([node_id].into_iter().collect());
+        let version_before = identity::get_asset_by_id(&db, motor).await.expect("motor").row_version;
 
         let err = move_component_in_scope(&db, motor, Some(a), &only_first_site)
             .await
             .expect_err("component without site");
         assert_eq!(scope_code(err), "SCOPE_RECORD_WITHOUT_SITE");
+        assert!(hierarchy_rows(&db, motor).await.is_empty(), "nothing written");
+        let stored = identity::get_asset_by_id(&db, motor).await.expect("motor");
+        assert_eq!(stored.row_version, version_before, "version unchanged");
     }
 
     #[tokio::test]
@@ -1441,15 +1445,23 @@ mod tests {
         assert!(text.contains("GATE_ASSET_MOVE_DATE_BEFORE_REMOVAL"), "{text}");
         assert!(text.contains(&format!("removed_on={}", days_ago(3))), "{text}");
 
-        // The removal day itself is accepted, not stamped before the removal.
+        // The removal happened in the afternoon of that day (a backdated date is stamped at
+        // midnight): a reinstall on the same day starts at the removal time, never before it.
+        let removed_at = format!("{}T14:30:00+00:00", days_ago(3));
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment_hierarchy SET effective_to = ? WHERE child_equipment_id = ?",
+            [removed_at.clone().into(), motor.into()],
+        ))
+        .await
+        .expect("removal in the afternoon");
         let reinstalled = move_component(&db, motor, Some(b), Some(days_ago(3)), None)
             .await
             .expect("reinstall on the removal day");
-        let rows = hierarchy_rows(&db, motor).await;
         assert_eq!(
             reinstalled.new_relation.and_then(|r| r.effective_from),
-            rows[0].2,
-            "starts when the last relation ended"
+            Some(removed_at),
+            "starts exactly when the last relation ended"
         );
     }
 }

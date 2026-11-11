@@ -721,7 +721,8 @@
     "cancel": "Cancel",
     "confirm": "Move",
     "confirmRemove": "Remove to stock",
-    "done": "Move of {{code}} recorded."
+    "done": "Move of {{code}} recorded.",
+    "severalParents": "This component is attached to {{count}} parent equipment at once; correct the structure before moving it."
   },
   "structure": {
     "parent": "Parent equipment",

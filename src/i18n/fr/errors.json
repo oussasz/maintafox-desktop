@@ -418,7 +418,7 @@
     "GATE_ASSET_MOVE_DATE_INVALID": "Déplacement refusé : la date d'effet est illisible.",
     "GATE_ASSET_MOVE_RETIRED": "Déplacement refusé : l'équipement est au statut « {{status}} » et ne peut pas être posé ni déposé.",
     "GATE_ASSET_MOVE_SAME_PARENT": "Déplacement refusé : le composant est déjà à cet emplacement.",
-    "GATE_ASSET_MOVE_SEVERAL_PARENTS": "Déplacement refusé : le composant a {{count}} équipements parents actifs. Dissociez-en d'abord un dans la structure.",
+    "GATE_ASSET_MOVE_SEVERAL_PARENTS": "Ce composant est rattaché à {{count}} équipements parents à la fois ; corrigez la structure avant de le déplacer.",
     "GATE_ASSET_PARENT_CHANGE_THROUGH_MOVE": "Un changement d'équipement parent s'enregistre par « Déplacer le composant ».",
     "GATE_ASSET_IMPORT_ALREADY_APPLIED": "Import refusé : ce lot a déjà été appliqué.",
     "GATE_ASSET_IMPORT_CLASS_REQUIRED": "Import refusé : la classe est obligatoire sur chaque ligne.",
