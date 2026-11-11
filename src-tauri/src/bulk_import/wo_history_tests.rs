@@ -257,11 +257,16 @@ mod tests {
              OT-1001;EQ-B;{n};non;02/01/2025;02/01/2025;;;;;;;;;;;;;;;;\n"
         );
         let (rows, res) = run(&db, &file, 1).await;
-        assert_eq!(rows, vec![("create".to_string(), vec![]), ("create".to_string(), vec![])]);
+        assert_eq!(
+            rows,
+            vec![("create".to_string(), vec![]), ("create".to_string(), vec![])]
+        );
         assert_eq!((res.created, res.failed), (2, 0));
         // Imported again: both are there already.
         let (rows, _) = run(&db, &file, 1).await;
-        assert!(rows.iter().all(|(a, m)| a == "skip" && m == &["HISTORY_IMPORT_EXISTS".to_string()]));
+        assert!(rows
+            .iter()
+            .all(|(a, m)| a == "skip" && m == &["HISTORY_IMPORT_EXISTS".to_string()]));
         // Its sync id derives from the equipment and the n°: another PC importing the same line
         // makes the same row.
         let expected = {
