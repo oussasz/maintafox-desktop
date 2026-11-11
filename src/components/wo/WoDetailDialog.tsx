@@ -122,6 +122,7 @@ export function WoDetailDialog({
   // anywhere in the plant; the backend checks the same and stays the authority.
   const { can } = useWoAccess(wo);
   const reopenWo = useWoStore((s) => s.openWo);
+  const [joining, setJoining] = useState(false);
   // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
   const execution = useWoExecutionStanding(wo);
   // The reason under the footer: the execution steps (start … complete) where they are offered,
@@ -246,7 +247,7 @@ export function WoDetailDialog({
 
   const statusKey = statusToI18nKey(wo.status_code ?? "draft");
   const isCancelled = (wo.status_code ?? "") === "cancelled";
-  const footerBusy = saving || lifecycle.busy;
+  const footerBusy = saving || lifecycle.busy || joining;
 
   return (
     <>
@@ -598,6 +599,8 @@ export function WoDetailDialog({
                 onComplete={openCompletionDialog}
                 onCancel={() => setShowCancelDialog(true)}
                 onJoin={() => {
+                  if (joining) return;
+                  setJoining(true);
                   setActiveTab("execution");
                   joinWo({ wo_id: wo.id })
                     .then(() => {
@@ -606,7 +609,8 @@ export function WoDetailDialog({
                     })
                     .catch((err: unknown) =>
                       pushAppToast({ title: describeAppError(err).title, variant: "destructive" }),
-                    );
+                    )
+                    .finally(() => setJoining(false));
                 }}
               />
               <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">

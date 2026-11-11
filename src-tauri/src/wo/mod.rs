@@ -10,10 +10,10 @@ pub mod costs;
 pub mod delay;
 pub mod depannage;
 pub mod domain;
-pub mod join;
 pub mod execution;
 pub mod execution_actor;
 pub mod execution_log;
+pub mod join;
 pub mod labor;
 pub mod lifecycle;
 pub mod parts;
@@ -47,13 +47,13 @@ mod closeout_tests;
 #[cfg(test)]
 mod depannage_tests;
 #[cfg(test)]
-mod join_tests;
-#[cfg(test)]
 mod execution_actor_tests;
 #[cfg(test)]
 mod execution_tests;
 #[cfg(test)]
 mod gap06_regression_tests;
+#[cfg(test)]
+mod join_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]

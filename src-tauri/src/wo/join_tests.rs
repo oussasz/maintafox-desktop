@@ -106,7 +106,12 @@ async fn joining_starts_ones_own_labour_tells_the_assignee_and_never_makes_an_ac
         .expect("standing");
     assert!(standing.refusal.is_some(), "joining never makes an execution actor");
 
-    // The assignee joining their own work order tells nobody.
+    // The assignee joining their own work order tells nobody: still the one notice (the helper's).
+    let notices = format!(
+        "SELECT COUNT(*) FROM notification_events WHERE event_code = 'wo_joined' AND source_record_id = '{}'",
+        wo.id
+    );
+    let before = scalar(&db, &notices).await;
     join::join_wo(
         &db,
         WoJoinInput {
@@ -116,5 +121,9 @@ async fn joining_starts_ones_own_labour_tells_the_assignee_and_never_makes_an_ac
     )
     .await
     .expect("the assignee books their own labour");
-    assert!(!told(&db, wo.id, helper).await);
+    assert_eq!(
+        scalar(&db, &notices).await,
+        before,
+        "no notice for the assignee's own join"
+    );
 }

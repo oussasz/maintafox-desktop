@@ -42,23 +42,36 @@ fn read_err(e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!("wo join: {e}"))
 }
 
-/// Joins the work order: starts the user's own labour now and tells the assignee.
-pub async fn join_wo(db: &DatabaseConnection, input: WoJoinInput) -> AppResult<WoIntervener> {
-    let open: i64 = db
+/// Open labour entries of `user` on `wo_id` (started, not ended), those older than `before_id`
+/// only when it is given.
+async fn open_entries(db: &DatabaseConnection, wo_id: i64, user: i64, before_id: Option<i64>) -> AppResult<i64> {
+    Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS n FROM work_order_interveners \
-              WHERE work_order_id = ? AND intervener_id = ? AND ended_at IS NULL AND hours_worked IS NULL",
-            [input.wo_id.into(), input.actor_id.into()],
+            "SELECT COUNT(*) AS n FROM work_order_interveners               WHERE work_order_id = ? AND intervener_id = ? AND ended_at IS NULL AND hours_worked IS NULL                 AND (? IS NULL OR id < ?)",
+            [wo_id.into(), user.into(), before_id.into(), before_id.into()],
         ))
         .await?
         .map(|r| r.try_get::<i64>("", "n").map_err(read_err))
         .transpose()?
-        .unwrap_or(0);
-    if open > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{CODE_ALREADY_ON_IT}: Vous avez déjà de la main-d'œuvre en cours sur cet OT."
-        )]));
+        .unwrap_or(0))
+}
+
+fn already_on_it() -> AppError {
+    AppError::ValidationFailed(vec![format!(
+        "{CODE_ALREADY_ON_IT}: Vous avez déjà de la main-d'œuvre en cours sur cet OT."
+    )])
+}
+
+/// Joins the work order: starts the user's own labour now and tells the assignee.
+///
+/// The booking runs in its own transaction (`wo::labor::book_labor`), so two joins sent at the
+/// same moment could both pass the first check: after the booking, an entry that finds an older
+/// open one of the same person on the work order is removed again (it holds no hours yet) and the
+/// join is refused — only the first stays.
+pub async fn join_wo(db: &DatabaseConnection, input: WoJoinInput) -> AppResult<WoIntervener> {
+    if open_entries(db, input.wo_id, input.actor_id, None).await? > 0 {
+        return Err(already_on_it());
     }
     let entry = add_labor_entry(
         db,
@@ -74,6 +87,15 @@ pub async fn join_wo(db: &DatabaseConnection, input: WoJoinInput) -> AppResult<W
         },
     )
     .await?;
+    if open_entries(db, input.wo_id, input.actor_id, Some(entry.id)).await? > 0 {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM work_order_interveners WHERE id = ? AND ended_at IS NULL AND hours_worked IS NULL",
+            [entry.id.into()],
+        ))
+        .await?;
+        return Err(already_on_it());
+    }
     notify_joined(db, input.wo_id, input.actor_id).await;
     Ok(entry)
 }
