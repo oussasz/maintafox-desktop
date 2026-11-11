@@ -404,14 +404,22 @@ describe("RamsFleetPage ranking (L2-17 / L2-23)", () => {
   it("sorts by a column on the backend and reverses on a second click", async () => {
     mountFleet();
     expect(await screen.findByText("P-101")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Failures|Failur/ }));
+    // The column header's sort button (rows also carry a "failures → OTs" button, L2-21).
+    const failuresSort = () => {
+      const header = screen
+        .getAllByRole("columnheader")
+        .find((h) => /Failures|Failur/.test(h.textContent ?? ""));
+      if (!header) throw new Error("failures column header not found");
+      return within(header).getByRole("button");
+    };
+    fireEvent.click(failuresSort());
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
         filter: expect.objectContaining({ sort_by: "failures", sort_desc: true }),
       }),
     );
     expect(await screen.findByText(/sort=failures/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Failures|Failur/ }));
+    fireEvent.click(failuresSort());
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
         filter: expect.objectContaining({ sort_by: "failures", sort_desc: false }),
