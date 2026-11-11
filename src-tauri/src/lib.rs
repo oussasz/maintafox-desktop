@@ -1119,6 +1119,7 @@ pub fn run() {
         commands::reliability_study::create_reliability_study_decision,
         commands::reliability_study::approve_reliability_study_decision,
         commands::reliability_study::reject_reliability_study_decision,
+        commands::reliability_study::revise_reliability_study_decision,
         commands::reliability_study::apply_reliability_study_decision,
         commands::reliability_study::get_reliability_study_fmeca,
         commands::reliability_study::save_reliability_study_fmeca_item,

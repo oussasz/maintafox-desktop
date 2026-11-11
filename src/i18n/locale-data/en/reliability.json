@@ -837,7 +837,12 @@
       "archive": "Archive",
       "archiveNamed": "Archive study {{title}}",
       "archiveConfirm": "Study “{{title}}” will no longer be listed. Its records, costs and decisions are kept.",
-      "archiveAction": "Archive study"
+      "archiveAction": "Archive study",
+      "search": "Search a study",
+      "searchPlaceholder": "Name, equipment or mode",
+      "noMatch": "No study matches \"{{query}}\".",
+      "rename": "Rename",
+      "renameNamed": "Rename the study {{title}}"
     },
     "steps": {
       "data": "Failure data",
@@ -1100,7 +1105,8 @@
         "no_wear_out": "Without clear wear-out (β ≤ 1), scheduled replacement does not lower the cost per hour. Keep condition monitoring and review the study after the next failures.",
         "failure_not_costlier": "A breakdown costs no more than a planned replacement: replacing before failure saves nothing.",
         "no_benefit": "The best interval saves less than 1 % against running to failure.",
-        "invalid_input": "The costs entered are not valid."
+        "invalid_input": "The costs entered are not valid.",
+        "wear_out_not_proven": "β is estimated above 1, but its 90 % confidence interval goes below 1: wear-out is not shown. No replacement interval is recommended; keep condition monitoring and review the study after the next failures."
       },
       "colStrategy": "Strategy",
       "colRate": "Cost per {{unit}}",
@@ -1147,15 +1153,24 @@
       "noPlans": "No interval PM plan targets this equipment: choose a work order.",
       "plan": "PM plan",
       "planOption": "{{code}} · {{title}} ({{hours}} h)",
-      "interval": "New interval (study hours)",
+      "interval": "New interval ({{unit}}, study basis)",
       "equipment": "Equipment",
       "chooseEquipment": "Choose…",
       "woType": "Work order type",
       "approver": "Approver",
       "anyApprover": "Anyone authorised",
-      "justification": "Justification",
+      "justification": "Justification (required)",
       "submit": "Send for approval",
-      "loadError": "The plans, work-order types or approvers could not be loaded"
+      "loadError": "The plans, work-order types or approvers could not be loaded",
+      "chooseWoType": "Choose the work-order type…",
+      "choosePlan": "Choose the plan…",
+      "justificationHint": "What the decision rests on: study evidence, field finding…",
+      "intervalHint": "Converted when recorded into the plan's unit ({{planUnit}}) with the observed running ratio: the log shows both values.",
+      "approverHint": "With no designated approver, anyone holding the right to approve reliability decisions may approve it, except you.",
+      "reviseTitle": "Edit the decision",
+      "reviseHint": "A decision no longer changes once proposed: the corrected decision is recorded and the previous one is withdrawn with the reason.",
+      "reviseReason": "What changes (required)",
+      "reviseSubmit": "Save the change"
     },
     "decisions": {
       "title": "Decision log",
@@ -1177,7 +1192,7 @@
       "evB10": "B10 {{b10}} h",
       "evFailures_one": "1 failure",
       "evFailures_other": "{{count}} failures",
-      "evSaving": "saves {{saving}} {{currency}}/yr",
+      "evSaving": "saving {{saving}}/yr",
       "status": {
         "proposed": "Awaiting approval",
         "approved": "Approved",
@@ -1215,7 +1230,18 @@
       "selfApproved": "Self-approved",
       "selfApprovedHint": "Approved by the person who proposed it.",
       "syncRefused": "Refused at synchronisation",
-      "syncRefusedHint": "This decision's approval is not valid on a PC: it can no longer be approved or applied. Propose a new decision."
+      "syncRefusedHint": "This decision's approval is not valid on a PC: it can no longer be approved or applied. Propose a new decision.",
+      "edit": "Edit",
+      "editNamed": "Edit the decision {{title}}",
+      "approverAny": "approver: anyone authorised",
+      "newIntervalFrom": "new interval {{value}} {{unit}} (that is {{hours}} {{basis}} of the study, converted to the plan's unit)",
+      "justificationText": "Justification: {{text}}",
+      "decidedBy": {
+        "approved": "Approved by {{name}} on {{date}}",
+        "applied": "Approved by {{name}} on {{date}}",
+        "rejected": "Rejected by {{name}} on {{date}}",
+        "withdrawn": "Withdrawn by {{name}} on {{date}}"
+      }
     },
     "backToModule": "Fleet and studies",
     "fmeca": {
@@ -1338,45 +1364,45 @@
       "modesTitle": "FMECA modes",
       "rpn": "RPN {{rpn}}",
       "title": "RCM decision: {{mode}}",
-      "hint": "SAE JA1011 decision logic, one failure mode at a time. Answers pre-filled from the FMECA and the life analysis, editable.",
+      "hint": "SAE JA1011 decision logic, one failure mode at a time. No answer is ticked in advance: choose Yes or No for each question. The suggestion from the FMECA and the life analysis is shown under the question.",
       "yes": "Yes",
       "no": "No",
       "q": {
         "failure_evident": {
-          "code": "H",
-          "text": "Will the loss of function be evident to operators under normal circumstances?"
+          "text": "Will the loss of function be evident to operators under normal circumstances?",
+          "label": "Visible failure?"
         },
         "safety_or_environmental": {
-          "code": "S",
-          "text": "Could it hurt someone or breach an environmental limit?"
+          "text": "Could it hurt someone or breach an environmental limit?",
+          "label": "Safety or environment?"
         },
         "operational_impact": {
-          "code": "O",
-          "text": "Does it affect output, quality or customer service?"
+          "text": "Does it affect output, quality or customer service?",
+          "label": "Effect on production?"
         },
         "multiple_failure_affects_safety": {
-          "code": "H5",
-          "text": "Would the multiple failure (with the protected function) have safety consequences?"
+          "text": "Would the multiple failure (with the protected function) have safety consequences?",
+          "label": "Dangerous multiple failure?"
         },
         "on_condition_feasible": {
-          "code": "1",
-          "text": "Is an on-condition task feasible and worth doing? (detectable P-F interval)"
+          "text": "Is an on-condition task feasible and worth doing? (detectable P-F interval)",
+          "label": "Monitoring possible?"
         },
         "scheduled_restoration_feasible": {
-          "code": "2",
-          "text": "Is scheduled restoration feasible? (clear wear-out, β > 1)"
+          "text": "Is scheduled restoration feasible? (clear wear-out, β > 1)",
+          "label": "Periodic restoration?"
         },
         "scheduled_discard_feasible": {
-          "code": "3",
-          "text": "Is scheduled discard feasible and worth doing?"
+          "text": "Is scheduled discard feasible and worth doing?",
+          "label": "Periodic replacement?"
         },
         "failure_finding_feasible": {
-          "code": "H4",
-          "text": "Is a failure-finding test feasible and worth doing?"
+          "text": "Is a failure-finding test feasible and worth doing?",
+          "label": "Failure-finding test?"
         },
         "combination_feasible": {
-          "code": "S4",
-          "text": "Does a combination of tasks bring the risk to a tolerable level?"
+          "text": "Does a combination of tasks bring the risk to a tolerable level?",
+          "label": "Combination of tasks?"
         }
       },
       "basis": {
@@ -1425,7 +1451,9 @@
         "time_based": "Replace or restore the part at a fixed age; economic interval from step 2: {{replacement}} {{unit}}.",
         "failure_finding": "Test the hidden function periodically to find the failure before it is called upon.",
         "run_to_failure": "No proactive task is justified: repair on failure.",
-        "redesign": "No task brings the risk to a tolerable level: modify the installation."
+        "redesign": "No task brings the risk to a tolerable level: modify the installation.",
+        "condition_based_noInterval": "Monitor the warning sign and act before the failure. Enter the P-F interval: monitoring is done at half of it.",
+        "time_based_noInterval": "Replace or restore the part at a fixed age. Step 2 gives no economic interval: set the interval in the decision."
       },
       "redesignCompulsory": "Redesign is compulsory (safety or environmental risk).",
       "fitNote": "Life of this mode: β = {{beta}} — {{pattern}}.",
@@ -1443,7 +1471,15 @@
       "decisionRedesign": "Modification: {{element}}",
       "rowsToReviewBody": "Rate them in the FMECA step to analyse them here.",
       "previewError": "The recommendation could not be recomputed: the one shown may be out of date, saving waits",
-      "previewRetry": "Recompute"
+      "previewRetry": "Recompute",
+      "suggested": "Suggested: {{answer}}.",
+      "answerAll_one": "Answer the last question to get the recommended tactic.",
+      "answerAll_other": "Answer the {{count}} remaining questions to get the recommended tactic.",
+      "criticalTitle": "Critical mode: RPN {{rpn}}, plant critical threshold {{threshold}}",
+      "criticalBody": "Running to failure is not accepted for this mode. Choose a task or a modification, and justify it.",
+      "refusedOption": "{{tactic}} (refused: critical mode)",
+      "decisionTimeBasedNoInterval": "Fixed-age replacement: {{element}}",
+      "decisionConditionNoInterval": "Condition monitoring: {{element}}"
     },
     "system": {
       "tool": "Modelling tool",
@@ -1687,6 +1723,50 @@
       "dismissTitle": "Dismiss this data issue?",
       "dismissBody": "\"{{issue}}\" on {{asset}} will no longer be listed. Dismiss it only when the data is right as it is.",
       "truncated": "Only the first ones are listed: fix these, then refresh to see the next."
+    },
+    "studyName": {
+      "createTitle": "New study",
+      "createHint": "Give the study a name to find it again among the saved studies.",
+      "renameTitle": "Rename the study",
+      "name": "Study name",
+      "autoHint": "Left empty: the study is named after its equipment, its mode and today's date.",
+      "mixedBody": "The selection mixes several classes ({{classes}}). The Weibull analysis pools the failures as if the equipment were alike: the result only makes sense for one class.",
+      "mixedAck": "I confirm studying these equipment together despite their different classes.",
+      "noClass": "no class",
+      "create": "Create the study",
+      "renameAction": "Rename"
+    },
+    "export": {
+      "button": "Export",
+      "noteButton": "Export the note",
+      "print": "Print or save as PDF",
+      "csv": "Export (Excel/CSV)",
+      "saved": "File saved",
+      "failed": "The export failed",
+      "studyTitle": "Reliability study: {{title}}",
+      "noteTitle": "Decision note: {{title}}",
+      "printedAt": "Printed on {{date}}",
+      "scope": "Scope",
+      "equipment": "Equipment",
+      "period": "Period",
+      "periodValue": "from {{from}} to {{to}}",
+      "mode": "Failure mode",
+      "basis": "Time basis",
+      "author": "Created by",
+      "lifeTitle": "Life analysis (Weibull)",
+      "noFit": "No Weibull fit",
+      "reading": "Reading",
+      "noCosts": "Costs not entered: no interval computed.",
+      "colSection": "Section",
+      "colItem": "Item",
+      "colValue": "Value",
+      "colApproval": "Approval",
+      "noDecisions": "No decision recorded.",
+      "fileBase": "reliability-study",
+      "noteFileBase": "decision-note",
+      "labelled": "{{label}}: {{value}}",
+      "plannedCost": "Cost of a planned replacement",
+      "failureCost": "Cost of a breakdown (lost production included)"
     }
   },
   "errors": {

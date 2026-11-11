@@ -227,12 +227,17 @@ async fn scenario(f: &Fixture) -> i64 {
             period_start: "2025-02-01T00:00:00Z".into(),
             period_end: "2025-12-31T00:00:00Z".into(),
             failure_mode_id: Some(f.mode_id),
+            accept_mixed_classes: false,
         },
         f.admin,
     )
     .await
     .expect("study");
-    assert_eq!(study.title, "P-101, P-102 · Rupture roulement");
+    assert!(
+        study.title.starts_with("P-101, P-102 · Rupture roulement · 20"),
+        "default name: equipment, mode and creation day ({})",
+        study.title
+    );
     assert_eq!(study.assets.len(), 2);
     study.id
 }
@@ -445,6 +450,7 @@ async fn run_hours_meter_gives_operating_ages() {
             period_start: "2025-02-01T00:00:00Z".into(),
             period_end: "2025-12-31T00:00:00Z".into(),
             failure_mode_id: m,
+            accept_mixed_classes: false,
         },
         f.admin,
     )
@@ -476,6 +482,7 @@ async fn run_hours_meter_gives_operating_ages() {
             pm_plan_id: None,
             clear_pm_plan: false,
             equipment_ids: None,
+            accept_mixed_classes: false,
             status: None,
         },
     )
@@ -519,6 +526,7 @@ async fn life_fixture(f: &Fixture) -> i64 {
             period_start: "2025-01-02T00:00:00Z".into(),
             period_end: day.and_hms_opt(0, 0, 0).expect("t").and_utc().to_rfc3339(),
             failure_mode_id: m,
+            accept_mixed_classes: false,
         },
         f.admin,
     )
@@ -787,7 +795,7 @@ async fn decision_creates_a_pm_revision_with_the_new_interval_then_a_work_order(
         approver_id: None,
         fmeca_item_id: None,
         rcm_decision_id: None,
-        justification: None,
+        justification: Some("Taux de défaillance relevé par l'étude".into()),
         planned_cost: None,
         failure_cost: None,
     };
@@ -1089,7 +1097,7 @@ async fn the_decision_site_comes_from_the_resolved_equipment_and_the_strictest_s
         approver_id: Some(f.admin),
         fmeca_item_id: None,
         rcm_decision_id: None,
-        justification: None,
+        justification: Some("Taux de défaillance relevé par l'étude".into()),
         planned_cost: None,
         failure_cost: None,
     };
@@ -2083,6 +2091,7 @@ fn update_basis(id: i64, row_version: i64, competing: Option<&str>) -> UpdateStu
         pm_plan_id: None,
         clear_pm_plan: false,
         equipment_ids: None,
+        accept_mixed_classes: false,
         status: None,
     }
 }
@@ -2226,6 +2235,55 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
         !r.prefilled.scheduled_restoration_feasible,
         "no fit: not pre-answered yes"
     );
+    // L2-15 (b): the RCM row is written with the logic in one transaction. With this row critical
+    // and the logic recommending run to failure, a save refused by the logic (redesign without a
+    // justification) and a save of run to failure both leave no RCM row behind.
+    let rcm_rows = |item: i64| {
+        let db = &f.db;
+        async move {
+            scalar(
+                db,
+                &format!("SELECT COUNT(*) FROM rcm_decisions WHERE fmeca_item_id = {item}"),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        crate::reliability::rcm_loop::recommend_tactic(&r.prefilled).recommended_tactic,
+        "run_to_failure"
+    );
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE app_settings SET setting_value_json = '{}' WHERE setting_key = 'ram.fmeca_rpn_critical_threshold'",
+            row.rpn
+        ),
+    )
+    .await;
+    for (tactic, code) in [
+        ("redesign", "GATE_REL_TACTIC_JUSTIFICATION_REQUIRED"),
+        ("run_to_failure", "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"),
+    ] {
+        assert_eq!(
+            refusal_code(
+                crate::reliability::study::rcm::save_decision(
+                    &f.db,
+                    crate::reliability::study::rcm::SaveRcmInput {
+                        study_id,
+                        fmeca_item_id: row.item_id,
+                        answers: r.prefilled.clone(),
+                        selected_tactic: Some(tactic.into()),
+                        justification: None,
+                        pf_interval_hours: None,
+                    },
+                    admin,
+                )
+                .await
+            ),
+            code
+        );
+        assert_eq!(rcm_rows(row.item_id).await, 0, "{tactic}: nothing stored");
+    }
     let mut answers = r.prefilled.clone();
     answers.on_condition_feasible = true;
     let rcm = crate::reliability::study::rcm::save_decision(
@@ -2248,6 +2306,82 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
     assert_eq!(r.inspection_interval_hours, Some(200.0));
     assert!(rcm.rcm_study_id.is_some());
 
+    // L2-15: with the plant's critical RPN at this row's RPN, running to failure is refused.
+    exec(
+        &f.db,
+        &format!(
+            "UPDATE app_settings SET setting_value_json = '{}' WHERE setting_key = 'ram.fmeca_rpn_critical_threshold'",
+            row.rpn
+        ),
+    )
+    .await;
+    let critical = crate::reliability::study::rcm::get_worksheet(&f.db, study_id)
+        .await
+        .expect("rcm");
+    assert_eq!(critical.rpn_threshold, row.rpn);
+    assert_eq!(
+        refusal_code(
+            crate::reliability::study::rcm::save_decision(
+                &f.db,
+                crate::reliability::study::rcm::SaveRcmInput {
+                    study_id,
+                    fmeca_item_id: row.item_id,
+                    answers: critical.rows[0].answers.clone(),
+                    selected_tactic: Some("run_to_failure".into()),
+                    justification: Some("Pièce de rechange en stock".into()),
+                    pf_interval_hours: Some(400.0),
+                },
+                admin,
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    // L2-15 (a): the same rule in the shared RCM logic and in the RCM row edit (advanced RAMS
+    // commands), for a decision that answers this critical row.
+    assert_eq!(
+        refusal_code(
+            crate::reliability::rcm_loop::apply_rcm_decision_logic(
+                &f.db,
+                crate::reliability::rcm_loop::ApplyRcmLogicInput {
+                    decision_id: saved.decision_id,
+                    expected_row_version: saved.row_version,
+                    answers: critical.rows[0].answers.clone(),
+                    selected_tactic: Some("run_to_failure".into()),
+                    justification: Some("Pièce de rechange en stock".into()),
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    assert_eq!(
+        refusal_code(
+            crate::reliability::advanced_rams::queries::upsert_rcm_decision(
+                &f.db,
+                crate::reliability::advanced_rams::domain::UpsertRcmDecisionInput {
+                    id: Some(saved.decision_id),
+                    study_id: rcm.rcm_study_id.expect("rcm study"),
+                    expected_row_version: Some(saved.row_version),
+                    function_description: None,
+                    functional_failure: None,
+                    failure_mode_id: None,
+                    consequence_category: None,
+                    selected_tactic: "run_to_failure".into(),
+                    justification: Some("Pièce de rechange en stock".into()),
+                    review_due_at: None,
+                    linked_pm_plan_id: None,
+                },
+            )
+            .await
+        ),
+        "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL"
+    );
+    let still = crate::reliability::rcm_loop::get_rcm_decision_logic(&f.db, saved.decision_id)
+        .await
+        .expect("logic");
+    assert_eq!(still.selected_tactic, "condition_based");
+
     // Step 6 decision linked to the FMECA row and the RCM decision.
     let d = create_decision(
         &f.db,
@@ -2262,7 +2396,7 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
             approver_id: None,
             fmeca_item_id: Some(row.item_id),
             rcm_decision_id: Some(saved.decision_id),
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2355,7 +2489,7 @@ async fn fmeca_worksheet_proposes_modes_saves_rows_and_feeds_rcm_and_decisions()
             approver_id: None,
             fmeca_item_id: Some(placeholder),
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2650,7 +2784,7 @@ async fn a_received_decision_keeps_the_strictest_site_and_its_local_fields() {
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -2729,7 +2863,7 @@ async fn a_received_decision_moved_to_the_copy_of_its_deleted_site_is_judged_on_
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -3089,7 +3223,7 @@ async fn wo_decision(
             approver_id: approver,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: None,
             failure_cost: None,
         },
@@ -3408,7 +3542,7 @@ async fn pm_decision(f: &Fixture, study_id: i64, plan_id: i64) -> crate::reliabi
             approver_id: None,
             fmeca_item_id: None,
             rcm_decision_id: None,
-            justification: None,
+            justification: Some("Taux de défaillance relevé par l'étude".into()),
             planned_cost: Some(1_000.0),
             failure_cost: Some(9_000.0),
         },
@@ -3541,6 +3675,162 @@ async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_app
     );
     let published = publish(own).await.expect("publish the applied decision's draft");
     assert_eq!(published.status, "published");
+}
+
+/// L2-18: equipment of different classes are pooled only once the person acknowledged it.
+#[tokio::test]
+async fn a_study_of_mixed_classes_needs_the_acknowledgement() {
+    let f = setup().await;
+    exec(
+        &f.db,
+        "INSERT INTO equipment_classes (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)          VALUES ('st-class-crane', 'ST_CRANE', 'Pont roulant', NULL, 'class', 1, datetime('now'), datetime('now'))",
+    )
+    .await;
+    let crane_class = scalar(&f.db, "SELECT id FROM equipment_classes WHERE code = 'ST_CRANE'").await;
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO equipment (entity_sync_id, asset_id_code, name, class_id, lifecycle_status,              installed_at_node_id, created_at, updated_at) VALUES ('st-PR-1', 'PR-1', 'Pont roulant 1', {crane_class},              'active_in_service', 1, datetime('now'), datetime('now'))"
+        ),
+    )
+    .await;
+    let crane = scalar(&f.db, "SELECT id FROM equipment WHERE asset_id_code = 'PR-1'").await;
+    let input = |accept: bool| CreateStudyInput {
+        title: None,
+        equipment_ids: vec![f.p101, crane],
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        failure_mode_id: None,
+        accept_mixed_classes: accept,
+    };
+    assert_eq!(
+        refusal_code(create_study(&f.db, input(false), f.admin).await),
+        "GATE_REL_STUDY_MIXED_CLASSES"
+    );
+    let study = create_study(&f.db, input(true), f.admin)
+        .await
+        .expect("acknowledged mixed study");
+    assert_eq!(study.assets.len(), 2);
+    // Same class: no acknowledgement needed; adding the crane later asks for it again.
+    let pumps = create_study(
+        &f.db,
+        CreateStudyInput {
+            equipment_ids: vec![f.p101, f.p102],
+            ..input(false)
+        },
+        f.admin,
+    )
+    .await
+    .expect("same class");
+    let mut grow = update_basis(pumps.id, pumps.row_version, None);
+    grow.equipment_ids = Some(vec![f.p101, f.p102, crane]);
+    assert_eq!(
+        refusal_code(update_study(&f.db, grow.clone()).await),
+        "GATE_REL_STUDY_MIXED_CLASSES"
+    );
+    grow.accept_mixed_classes = true;
+    assert_eq!(update_study(&f.db, grow).await.expect("acknowledged").assets.len(), 3);
+}
+
+/// L2-13: a study without a name is named after its equipment and its creation day, and can be
+/// renamed.
+#[tokio::test]
+async fn a_study_is_named_at_creation_and_can_be_renamed() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let study = crate::reliability::study::store::get_study(&f.db, study_id)
+        .await
+        .expect("study");
+    let day = crate::clock::now().format("%Y-%m-%d").to_string();
+    assert!(study.title.ends_with(&day), "{} names its day", study.title);
+    let mut rename = update_basis(study_id, study.row_version, None);
+    rename.title = Some("  Roulements pompes de transfert  ".into());
+    let renamed = update_study(&f.db, rename).await.expect("rename");
+    assert_eq!(renamed.title, "Roulements pompes de transfert");
+}
+
+/// L2-16: a decision always says why; its proposer edits it by recording the corrected decision,
+/// the one it replaces being withdrawn with the reason; nobody else edits it, nor once decided.
+#[tokio::test]
+async fn a_decision_needs_a_justification_and_is_edited_by_its_proposer() {
+    let f = setup().await;
+    let study_id = scenario(&f).await;
+    let blank = |justification: Option<&str>| CreateDecisionInput {
+        study_id,
+        title: "Contrôle d'alignement P-101".into(),
+        action_kind: "one_off_wo".into(),
+        equipment_id: Some(f.p101),
+        pm_plan_id: None,
+        proposed_interval_hours: None,
+        wo_type_code: Some("corrective".into()),
+        approver_id: None,
+        fmeca_item_id: None,
+        rcm_decision_id: None,
+        justification: justification.map(str::to_string),
+        planned_cost: None,
+        failure_cost: None,
+    };
+    for missing in [None, Some("   ")] {
+        assert_eq!(
+            refusal_code(create_decision(&f.db, blank(missing), f.admin).await),
+            "GATE_REL_DECISION_JUSTIFICATION_REQUIRED"
+        );
+    }
+    let first = wo_decision(&f, study_id, None).await;
+    let revise = |d: &crate::reliability::study::domain::StudyDecision, reason: &str| {
+        crate::reliability::study::domain::ReviseDecisionInput {
+            decision_id: d.id,
+            expected_row_version: d.row_version,
+            reason: reason.into(),
+            decision: CreateDecisionInput {
+                title: "Contrôle d'alignement et de jeu P-101".into(),
+                ..blank(Some("Deux ruptures en six mois"))
+            },
+        }
+    };
+    use crate::reliability::study::decisions::revise_decision;
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&first, " "), f.admin).await),
+        "GATE_REL_DECISION_REVISE_REASON_REQUIRED"
+    );
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&first, "Titre précisé"), f.reviewer).await),
+        "GATE_REL_DECISION_REVISE_NOT_PROPOSER"
+    );
+    let second = revise_decision(&f.db, revise(&first, "Titre précisé"), f.admin)
+        .await
+        .expect("revise");
+    assert_eq!(second.status, "proposed");
+    assert_eq!(second.title, "Contrôle d'alignement et de jeu P-101");
+    assert_eq!(second.justification, "Deux ruptures en six mois");
+    assert_eq!(decision_status(&f, first.id).await, "rejected");
+    let replaced = crate::reliability::study::decisions::get_decision(&f.db, first.id)
+        .await
+        .expect("replaced");
+    assert_eq!(replaced.decision_note.as_deref(), Some("Titre précisé"));
+    assert_eq!(replaced.decided_by_id, Some(f.admin));
+    // The replaced one cannot be edited again; a stale edit leaves a single proposal open.
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, revise(&replaced, "Encore"), f.admin).await),
+        "GATE_REL_DECISION_ALREADY_DECIDED"
+    );
+    let stale = crate::reliability::study::domain::ReviseDecisionInput {
+        expected_row_version: second.row_version + 7,
+        ..revise(&second, "Version périmée")
+    };
+    assert_eq!(
+        refusal_code(revise_decision(&f.db, stale, f.admin).await),
+        "DECISION_STALE"
+    );
+    let open = list_decisions(&f.db, study_id)
+        .await
+        .expect("list")
+        .into_iter()
+        .filter(|d| d.status == "proposed")
+        .count();
+    assert_eq!(open, 1, "a refused edit records nothing");
+    let total = list_decisions(&f.db, study_id).await.expect("list").len();
+    assert_eq!(total, 2, "the replaced decision and its correction only");
 }
 
 /// L2-21: a RAMS failure figure opens the OT list behind it. The list's RAMS filter reuses the

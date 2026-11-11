@@ -98,6 +98,8 @@ export const KNOWN_CONFLICT_KINDS = new Set([
   "DECISION_APPLIER_UNAUTHORISED",
   // A work-order part line received as cancelled although it has recorded use.
   "WO_PART_LINE_HAS_USE",
+  // An RCM decision received that leaves a critical FMECA mode to run to failure (L2-15).
+  "RCM_RUN_TO_FAILURE_CRITICAL",
   "SITE_SETTING_UNAUDITED",
   "SITE_SETTING_INVALID",
   "SITE_SETTING_EVENT_INVALID",

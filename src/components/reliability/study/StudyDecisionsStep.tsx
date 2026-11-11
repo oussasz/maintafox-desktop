@@ -2,7 +2,7 @@
  * Study step 6 — decision log: each decision with its evidence, status (proposed → approved →
  * applied, or rejected), what it created in maintenance and its measured effect.
  */
-import { Check, ClipboardCheck, Play, X } from "lucide-react";
+import { Check, ClipboardCheck, Pencil, Play, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -41,13 +41,16 @@ export function StudyDecisionsStep({
   study,
   version,
   onRecord,
+  onRevise,
 }: {
   study: ReliabilityStudy;
   version: number;
   onRecord: () => void;
+  /** Edit a proposed decision (its proposer): opens the decision dialog on it. */
+  onRevise: (d: StudyDecision) => void;
 }) {
   const { t } = useTranslation("reliability");
-  const { formatNumber, formatDecimal, formatDate } = useFormatters();
+  const { formatNumber, formatDecimal, formatDate, formatCurrency, currencyCode } = useFormatters();
   const { can, reasonFor } = useRamsRight();
   const { info } = useSession();
   const me = info?.user_id ?? null;
@@ -100,6 +103,9 @@ export function StudyDecisionsStep({
     d.proposed_by_id === me &&
     (can(P.RAM_ANALYZE) || can(P.RAM_MANAGE)) &&
     study.status === "active";
+  /** The proposer edits a proposal not yet decided (a corrected one replaces it). */
+  const canEdit = (d: StudyDecision) =>
+    canWithdraw(d) && can(P.RAM_ANALYZE) && d.sync_refused_at == null;
   /** Reject (as the approver) or withdraw (as the proposer). */
   const canReject = (d: StudyDecision) =>
     d.status === "proposed" && ((canManage && !designatedElsewhere(d)) || canWithdraw(d));
@@ -130,14 +136,39 @@ export function StudyDecisionsStep({
     if (e.beta != null) parts.push(t("rams.decisions.evBeta", { beta: formatDecimal(e.beta, 2) }));
     if (e.b10 != null) parts.push(t("rams.decisions.evB10", { b10: hours(e.b10) }));
     parts.push(t("rams.decisions.evFailures", { count: e.n_failures }));
+    // In the currency the costs were entered in, else the plant currency (never a bare number).
     if (e.annual_saving_vs_current != null)
       parts.push(
         t("rams.decisions.evSaving", {
-          saving: formatNumber(Math.round(e.annual_saving_vs_current)),
-          currency: e.currency_code ?? "",
+          saving: formatCurrency(
+            Math.round(e.annual_saving_vs_current),
+            e.currency_code ?? currencyCode,
+          ),
         }),
       );
     return parts.join(" · ");
+  };
+
+  /**
+   * New interval of a PM decision: in the plan's unit (what the plan will say), with the hours of
+   * the study it was converted from, so "24 days" and "270 h" read as one value.
+   */
+  const intervalText = (d: StudyDecision) => {
+    const value = formatNumber(d.proposed_trigger_interval_value ?? 0);
+    const unit = t(`rams.units.interval.${d.proposed_trigger_interval_unit ?? "operating_hours"}`);
+    const basis =
+      d.evidence.time_basis === "operating" ? t("rams.units.opHours") : t("rams.units.calHours");
+    const sameUnit =
+      d.proposed_trigger_interval_unit == null ||
+      d.proposed_trigger_interval_unit === "operating_hours";
+    return d.proposed_interval_hours != null && !sameUnit
+      ? t("rams.decisions.newIntervalFrom", {
+          value,
+          unit,
+          hours: formatNumber(Math.round(d.proposed_interval_hours)),
+          basis,
+        })
+      : t("rams.decisions.newInterval", { value, unit });
   };
 
   const effect = (d: StudyDecision) => {
@@ -220,12 +251,7 @@ export function StudyDecisionsStep({
                         {t(`rams.decision.kinds.${d.action_kind}`)}
                         {d.action_kind === "pm_interval" &&
                         d.proposed_trigger_interval_value != null
-                          ? ` · ${t("rams.decisions.newInterval", {
-                              value: formatNumber(d.proposed_trigger_interval_value),
-                              unit: t(
-                                `rams.units.interval.${d.proposed_trigger_interval_unit ?? "operating_hours"}`,
-                              ),
-                            })}`
+                          ? ` · ${intervalText(d)}`
                           : ""}
                         {d.asset_code ? ` · ${d.asset_code}` : ""}
                       </p>
@@ -234,10 +260,25 @@ export function StudyDecisionsStep({
                           name: d.proposed_by_name ?? "—",
                           date: formatDate(d.proposed_at),
                         })}
-                        {d.approver_name
-                          ? ` · ${t("rams.decisions.approver", { name: d.approver_name })}`
-                          : ""}
+                        {` · ${
+                          d.approver_name
+                            ? t("rams.decisions.approver", { name: d.approver_name })
+                            : t("rams.decisions.approverAny")
+                        }`}
                       </p>
+                      {d.decided_by_name && d.decided_at && d.status !== "proposed" ? (
+                        <p className="text-xs text-text-muted">
+                          {t(`rams.decisions.decidedBy.${statusKey(d)}`, {
+                            name: d.decided_by_name,
+                            date: formatDate(d.decided_at),
+                          })}
+                        </p>
+                      ) : null}
+                      {d.justification ? (
+                        <p className="text-xs text-text-secondary">
+                          {t("rams.decisions.justificationText", { text: d.justification })}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-xs text-text-secondary">{evidence(d)}</td>
                     <td className="px-3 py-2">
@@ -296,6 +337,18 @@ export function StudyDecisionsStep({
                     <td className="px-3 py-2">
                       {canManage || canWithdraw(d) ? (
                         <div className="flex justify-end gap-1.5">
+                          {canEdit(d) ? (
+                            <Button
+                              variant="outline"
+                              className="h-10"
+                              disabled={busy}
+                              aria-label={t("rams.decisions.editNamed", { title: d.title })}
+                              onClick={() => onRevise(d)}
+                            >
+                              <Pencil className="h-4 w-4" aria-hidden />
+                              {t("rams.decisions.edit")}
+                            </Button>
+                          ) : null}
                           {canManage && d.status === "proposed" && designatedElsewhere(d) ? (
                             <span className="self-center text-xs text-text-muted">
                               {t("rams.decisions.awaitingApprover", {

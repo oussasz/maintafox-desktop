@@ -2,7 +2,7 @@
  * Reliability study workspace: scope bar (equipment, period, failure mode, time base) and the six
  * steps — data, life (Weibull), FMECA, RCM decision, system model, decisions.
  */
-import { ArrowLeft, ArrowRight, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardCheck, Pencil } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -14,8 +14,10 @@ import {
 } from "@/components/reliability/study/DecisionDialog";
 import { StudyDataStep } from "@/components/reliability/study/StudyDataStep";
 import { StudyDecisionsStep } from "@/components/reliability/study/StudyDecisionsStep";
+import { StudyExportMenu } from "@/components/reliability/study/StudyExportMenu";
 import { StudyFmecaStep } from "@/components/reliability/study/StudyFmecaStep";
 import { StudyLifeStep } from "@/components/reliability/study/StudyLifeStep";
+import { StudyNameDialog } from "@/components/reliability/study/StudyNameDialog";
 import { StudyRcmStep } from "@/components/reliability/study/StudyRcmStep";
 import { StudySystemStep } from "@/components/reliability/study/StudySystemStep";
 import {
@@ -36,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { listFailureCodes, listFailureHierarchies } from "@/services/reliability-service";
 import {
   type StudyDataset,
+  type StudyDecision,
   type UpdateStudyInput,
   getReliabilityStudyDataset,
   updateReliabilityStudy,
@@ -142,6 +145,9 @@ export function RamsStudyPage() {
   const [modes, setModes] = useState<FailureCode[]>([]);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [prefill, setPrefill] = useState<DecisionPrefill | null>(null);
+  /** A proposed decision its proposer edits in the decision dialog. */
+  const [revising, setRevising] = useState<StudyDecision | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [dateError, setDateError] = useState<string | null>(null);
@@ -212,7 +218,13 @@ export function RamsStudyPage() {
   };
 
   const openDecision = (p: DecisionPrefill | null) => {
+    setRevising(null);
     setPrefill(p);
+    setDecisionOpen(true);
+  };
+  const reviseDecision = (d: StudyDecision) => {
+    setPrefill(null);
+    setRevising(d);
     setDecisionOpen(true);
   };
 
@@ -244,11 +256,25 @@ export function RamsStudyPage() {
             {study ? t("rams.study.title", { title: study.title }) : t("rams.title")}
           </h1>
           {archived ? <StatusChip tone="neutral" label={t("rams.study.archived")} /> : null}
+          {study && !archived ? (
+            <Button
+              variant="ghost"
+              className="h-10"
+              disabled={!canAnalyze}
+              title={reasonFor(P.RAM_ANALYZE)}
+              aria-label={t("rams.studies.renameNamed", { title: study.title })}
+              onClick={() => setRenameOpen(true)}
+            >
+              <Pencil className="h-4 w-4" aria-hidden />
+              {t("rams.studies.rename")}
+            </Button>
+          ) : null}
         </div>
       }
       actions={
         study ? (
           <>
+            <StudyExportMenu study={study} scope="study" />
             {step === "data" ? (
               // The main action of the first step stays in the header: no scrolling to find it.
               <Button className={mfLayout.primaryAction} onClick={() => goStep("life")}>
@@ -503,6 +529,7 @@ export function RamsStudyPage() {
                 study={dataset.study}
                 version={decisionsVersion}
                 onRecord={() => openDecision(null)}
+                onRevise={reviseDecision}
               />
             ) : null}
           </div>
@@ -514,10 +541,27 @@ export function RamsStudyPage() {
           onOpenChange={setDecisionOpen}
           study={study}
           prefill={prefill}
+          revising={revising}
           onCreated={() => {
             setDecisionsVersion((v) => v + 1);
             void load();
             goStep("decisions");
+          }}
+        />
+      ) : null}
+      {study ? (
+        <StudyNameDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          mode="rename"
+          initialName={study.title}
+          onSubmit={async (name) => {
+            await updateReliabilityStudy({
+              id: study.id,
+              expected_row_version: study.row_version,
+              title: name,
+            });
+            await load();
           }}
         />
       ) : null}

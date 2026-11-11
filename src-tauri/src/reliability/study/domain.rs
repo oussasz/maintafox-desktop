@@ -172,6 +172,10 @@ pub struct CreateStudyInput {
     pub period_end: String,
     #[serde(default)]
     pub failure_mode_id: Option<i64>,
+    /// The person acknowledged that the equipment belong to different classes (their failure
+    /// data are pooled as if alike). Without it, a mixed selection is refused (L2-18).
+    #[serde(default)]
+    pub accept_mixed_classes: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,6 +204,9 @@ pub struct UpdateStudyInput {
     pub clear_pm_plan: bool,
     #[serde(default)]
     pub equipment_ids: Option<Vec<i64>>,
+    /// See [`CreateStudyInput::accept_mixed_classes`]; read when `equipment_ids` is given.
+    #[serde(default)]
+    pub accept_mixed_classes: bool,
     #[serde(default)]
     pub status: Option<String>,
 }
@@ -528,6 +535,16 @@ pub struct DecideDecisionInput {
     pub expected_row_version: i64,
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// Edit of a proposed decision by its proposer: the corrected decision is recorded and the one it
+/// replaces is withdrawn with `reason` (a decision never changes once proposed). L2-16.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReviseDecisionInput {
+    pub decision_id: i64,
+    pub expected_row_version: i64,
+    pub reason: String,
+    pub decision: CreateDecisionInput,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

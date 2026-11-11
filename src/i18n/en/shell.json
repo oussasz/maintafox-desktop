@@ -126,6 +126,7 @@
       "DECISION_NOT_DESIGNATED_APPROVER": "A reliability decision approved by someone other than its designated approver. Keep this PC's decision: it is then refused on every PC",
       "DECISION_APPROVER_UNAUTHORISED": "A reliability decision approved by someone without the right to approve (ram.manage, plant-wide) here. The conflict closes by itself if the right arrives; otherwise keep this PC's decision",
       "DECISION_APPLIER_UNAUTHORISED": "A reliability decision applied by someone without the rights to apply it (ram.manage and pm.edit or ot.create) here. The conflict closes by itself if the rights arrive; otherwise keep this PC's decision",
+      "RCM_RUN_TO_FAILURE_CRITICAL": "An RCM decision received from another PC leaves a critical FMECA mode (RPN at or above the plant's critical threshold) to run to failure, which is refused here: check the decision with the reliability analyst before deciding",
       "WO_PART_LINE_HAS_USE": "A planned part line was cancelled on another device, but parts were already used or issued from the store for it here: check the line with the planner and the store before deciding",
       "SITE_SETTING_UNAUDITED": "A site rule changed without its audited change (step-up, reason, settings right)",
       "SITE_SETTING_INVALID": "A site rule with an unreadable value or time",

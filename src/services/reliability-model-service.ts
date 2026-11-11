@@ -242,6 +242,8 @@ const RcmWorksheetSchema = z.object({
   time_basis: z.string(),
   /** FMECA rows still to review: not offered for an RCM decision. */
   rows_to_review: num,
+  /** The plant's critical RPN: a row at or above it is never run to failure (L2-15). */
+  rpn_threshold: num,
   /** Set while the plant's FMECA grids must be reviewed (Maintafox grids standing in). */
   grids_review: z.string().nullable().optional(),
 });

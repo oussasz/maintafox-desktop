@@ -351,6 +351,10 @@ pub(crate) async fn before_upsert_checked(
         // A crew's site change carrying its committed jobs across a week frozen here (AU-129).
         "teams" => Some(crate::planning::sync_check::inbound_crew_site_check(conn, entity_sync_id, payload).await?),
         "work_order_parts" => Some(crate::wo::parts::inbound_part_line_check(conn, entity_sync_id, payload).await?),
+        // An RCM decision leaving a critical FMECA mode to run to failure (`reliability::rcm_loop`, L2-15).
+        "rcm_decisions" => {
+            Some(crate::reliability::rcm_loop::inbound_rcm_decision_check(conn, entity_sync_id, payload).await?)
+        }
         // An anomaly closed without a decision, reopened, its link changed or its "revue permis
         // requise" cleared (`inspection::sync_check`, audit finding AU-72).
         "inspection_anomalies" => {
