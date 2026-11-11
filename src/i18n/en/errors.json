@@ -215,6 +215,7 @@
     "GATE_INV_NON_STOCK_NEEDS_WO": "A non-stock part is bought for a work order: request it from the work order.",
     "GATE_INV_NON_STOCK_NO_WO_LINE": "This non-stock order line is linked to no work-order line: it cannot be received.",
     "GATE_INV_NON_STOCK_NOT_HORS_STOCK": "Only a received non-stock part can be handed to someone.",
+    "GATE_INV_NON_STOCK_TYPE_LOCKED": "Change refused here: the hors-stock status of an item is not edited by hand. An item bought for a work order goes through the catalogue review; a stocked item does not become hors-stock.",
     "GATE_INV_NON_STOCK_DUPLICATE": "This part was marked a duplicate: choose the part it duplicates.",
     "GATE_INV_NON_STOCK_NAME_REQUIRED": "Describe the part to buy.",
     "GATE_INV_NON_STOCK_UNIT_REQUIRED": "Choose the unit of the part to buy.",

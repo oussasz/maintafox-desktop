@@ -215,6 +215,7 @@
     "GATE_INV_NON_STOCK_NEEDS_WO": "Une pièce hors stock s’achète pour un OT : faites la demande depuis l’OT.",
     "GATE_INV_NON_STOCK_NO_WO_LINE": "Cette ligne de commande hors stock n’est liée à aucune ligne d’OT : elle ne peut pas être réceptionnée.",
     "GATE_INV_NON_STOCK_NOT_HORS_STOCK": "Seule une pièce hors stock reçue peut être remise à quelqu’un.",
+    "GATE_INV_NON_STOCK_TYPE_LOCKED": "Changement impossible ici : le statut hors-stock d'un article ne se modifie pas à la main. Un article acheté pour un OT passe par la revue du catalogue ; un article en stock ne devient pas hors-stock.",
     "GATE_INV_NON_STOCK_DUPLICATE": "Cette pièce a été marquée comme doublon : choisissez la pièce qu’elle double.",
     "GATE_INV_NON_STOCK_NAME_REQUIRED": "Décrivez la pièce à acheter.",
     "GATE_INV_NON_STOCK_UNIT_REQUIRED": "Choisissez l’unité de la pièce à acheter.",

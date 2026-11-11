@@ -1376,6 +1376,27 @@ pub async fn update_article(
         "stocking_type_value_id",
     )
     .await?;
+    // Hors-stock is not switched by hand in either direction: a part bought for a work order has
+    // its own review (`non_stock::review_non_stock_article`, which checks the open purchases), and
+    // a stocked part with shelves, counts or orders behind it must not be locked out of them.
+    let was_non_stock = crate::inventory::non_stock::is_non_stock_article(db, article_id).await?;
+    let becomes_non_stock = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS hit FROM lookup_values WHERE id = ? AND code = ?",
+            [
+                input.stocking_type_value_id.into(),
+                crate::inventory::non_stock::NON_STOCK_CODE.into(),
+            ],
+        ))
+        .await?
+        .is_some();
+    if was_non_stock != becomes_non_stock {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{}: The hors-stock status of an item is not changed here.",
+            crate::inventory::non_stock::codes::TYPE_LOCKED
+        )]));
+    }
     ensure_lookup_value_in_domain(
         db,
         input.tax_category_value_id,

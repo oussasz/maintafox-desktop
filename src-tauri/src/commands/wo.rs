@@ -1568,7 +1568,8 @@ pub async fn create_wo_non_stock_purchase(
     state: State<'_, AppState>,
 ) -> AppResult<crate::inventory::non_stock::WoNonStockPurchase> {
     let user = require_session!(state);
-    require_on_wo(
+    // An execution action like adding a part: the edit right, then the execution-actor rule.
+    require_execution_on_wo(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,
@@ -1586,7 +1587,7 @@ pub async fn set_wo_part_handed_to(
     state: State<'_, AppState>,
 ) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
-    require_on_child(
+    require_execution_on_child(
         &state,
         user.user_id,
         crate::rbac::permissions::OT_EDIT,

@@ -40,6 +40,7 @@ pub mod codes {
     pub const NEEDS_WORK_ORDER: &str = "GATE_INV_NON_STOCK_NEEDS_WO";
     pub const NO_WORK_ORDER_LINE: &str = "GATE_INV_NON_STOCK_NO_WO_LINE";
     pub const NOT_NON_STOCK: &str = "GATE_INV_NON_STOCK_NOT_HORS_STOCK";
+    pub const TYPE_LOCKED: &str = "GATE_INV_NON_STOCK_TYPE_LOCKED";
     pub const DUPLICATE: &str = "GATE_INV_NON_STOCK_DUPLICATE";
     pub const NAME_REQUIRED: &str = "GATE_INV_NON_STOCK_NAME_REQUIRED";
     pub const UNIT_REQUIRED: &str = "GATE_INV_NON_STOCK_UNIT_REQUIRED";
