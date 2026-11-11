@@ -1,13 +1,15 @@
 /**
  * Structure tab: the asset's place in the equipment hierarchy (parent and components), each one
- * opening its own record, and a shortcut to register a new component under this asset.
+ * opening its own record, a shortcut to register a new component under this asset, and
+ * "Déplacer le composant" (L2-03) to pose this asset on another parent or remove it to stock.
  */
 
-import { ChevronRight, GitFork, Plus } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowRightLeft, ChevronRight, GitFork, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { AssetMoveComponentDialog } from "@/components/assets/AssetMoveComponentDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
@@ -47,6 +49,8 @@ async function loadStructure(assetId: number): Promise<StructureData> {
 interface AssetStructureTabProps {
   asset: Asset;
   onOpenAsset: (assetId: number) => void;
+  /** Called after "Déplacer le composant" was recorded (the caller reloads the asset). */
+  onMoved?: () => void | Promise<void>;
 }
 
 function AssetLinkRow({
@@ -78,9 +82,10 @@ function AssetLinkRow({
   );
 }
 
-export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps) {
+export function AssetStructureTab({ asset, onOpenAsset, onMoved }: AssetStructureTabProps) {
   const { t } = useTranslation("equipment");
   const openCreateForm = useAssetStore((s) => s.openCreateForm);
+  const [showMove, setShowMove] = useState(false);
   const load = useMemo(() => () => loadStructure(asset.id), [asset.id]);
   const { data, error, loading, reload } = useLoad(load, `${asset.id}:${asset.row_version}`);
 
@@ -102,6 +107,14 @@ export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps
         ) : (
           <p className="text-sm text-text-muted">{t("structure.noParent")}</p>
         )}
+        <PermissionGate permission={P.EQ_MANAGE}>
+          <div className="flex justify-end pt-2">
+            <Button variant="outline" className="h-11 gap-1.5" onClick={() => setShowMove(true)}>
+              <ArrowRightLeft className="h-4 w-4" aria-hidden />
+              {t("moveComponent.action")}
+            </Button>
+          </div>
+        </PermissionGate>
       </DetailSectionCard>
 
       <DetailSectionCard
@@ -135,6 +148,18 @@ export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps
           </div>
         </PermissionGate>
       </DetailSectionCard>
+
+      <AssetMoveComponentDialog
+        open={showMove}
+        asset={asset}
+        currentParent={parent}
+        onClose={() => setShowMove(false)}
+        onMoved={async () => {
+          setShowMove(false);
+          await reload();
+          await onMoved?.();
+        }}
+      />
     </div>
   );
 }

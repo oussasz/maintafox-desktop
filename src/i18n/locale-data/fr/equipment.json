@@ -225,7 +225,11 @@
       "meter_reading": "Relevé de compteur",
       "document_linked": "Document lié",
       "photo_added": "Photo ajoutée",
-      "history_imported": "Historique importé {{code}}"
+      "history_imported": "Historique importé {{code}}",
+      "component_installed": "Posé le {{date}} sur {{parent}}",
+      "component_removed": "Déposé le {{date}} de {{parent}}",
+      "child_installed": "Composant {{component}} posé le {{date}}",
+      "child_removed": "Composant {{component}} déposé le {{date}}"
     },
     "quality": {
       "accepted": "Accepté",
@@ -701,6 +705,23 @@
     "scheduleNone": "Non défini (24 h/24 supposé)",
     "utilization": "Facteur d’utilisation",
     "hint": "Utilisé par le module RAMS pour convertir le temps calendaire en temps de fonctionnement."
+  },
+  "moveComponent": {
+    "action": "Déplacer le composant",
+    "title": "Déplacer le composant",
+    "descriptionInstalled": "{{code}} est actuellement posé sur {{parent}}. Il garde sa fiche et son numéro de série.",
+    "descriptionStock": "{{code}} n’est posé sur aucun équipement (en stock). Il garde sa fiche et son numéro de série.",
+    "target": "Nouvel équipement parent",
+    "targetHint": "Laissez vide pour déposer le composant en stock (sans parent).",
+    "sameParent": "Le composant est déjà posé sur cet équipement.",
+    "alreadyInStock": "Le composant est déjà en stock : choisissez l’équipement sur lequel le poser.",
+    "date": "Date d’effet",
+    "dateRequired": "Indiquez une date valide (aujourd’hui ou avant).",
+    "notes": "Motif / note",
+    "cancel": "Annuler",
+    "confirm": "Déplacer",
+    "confirmRemove": "Déposer en stock",
+    "done": "Déplacement de {{code}} enregistré."
   },
   "structure": {
     "parent": "Équipement parent",
