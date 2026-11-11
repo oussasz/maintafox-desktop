@@ -379,7 +379,17 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
     setRows((rs) => {
       // An untouched suggested row (P1 with nothing else) makes way for the pasted points.
       const untouched = (r: CheckRow) =>
-        /^P\d+$/.test(r.code.trim()) && r.description.trim() === "" && r.assetId == null;
+        /^P\d+$/.test(r.code.trim()) &&
+        r.description.trim() === "" &&
+        r.assetId == null &&
+        r.checkType === "pass_fail" &&
+        r.unitId == null &&
+        r.normalMin === "" &&
+        r.normalMax === "" &&
+        r.warningMin === "" &&
+        r.warningMax === "" &&
+        !r.requiresPhoto &&
+        !r.commentOnException;
       const base = rs.filter((r) => !untouched(r));
       const next = [...base];
       for (const line of lines) {
