@@ -1,7 +1,13 @@
 {
   "page": {
     "title": "Archives",
-    "subtitle": "Retrouvez les enregistrements archivés, vérifiez leur intégrité et gérez leur durée de conservation."
+    "subtitle": "Retrouvez les enregistrements archivés, vérifiez leur intégrité et gérez leur durée de conservation.",
+    "about": {
+      "title": "À quoi sert cet écran",
+      "closed": "Les OT clôturés, les demandes traitées et les autres enregistrements terminés restent dans leur module : retrouvez-les avec le filtre de statut de leur liste. Rien n’est supprimé ni déplacé à la clôture.",
+      "what": "Archives conserve les copies des enregistrements retirés d’un module, avec contrôle d’intégrité, blocage de suppression et durée de conservation (onglet « Règles de conservation »). Dans cette version, aucun module n’y envoie encore d’enregistrement : les compteurs restent donc à 0.",
+      "restore": "Restaurer : ouvrez l’enregistrement archivé puis « {{button}} » (droit de restauration des archives et confirmation du mot de passe). La demande est consignée dans l’historique de l’archive ; la remise dans le module n’est pas encore disponible."
+    }
   },
   "tabs": {
     "explorer": "Enregistrements archivés",
