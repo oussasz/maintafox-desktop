@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WoDepannageForm } from "@/components/wo/WoDepannageDialog";
+import { P } from "@shared/rbac/permissions.generated";
 
 const i18nMock = vi.hoisted(() => ({
   t: (key: string, opts?: Record<string, unknown>) =>
@@ -13,7 +14,7 @@ vi.mock("@/hooks/use-session", () => ({ useSession: () => ({ info: { user_id: 1 
 const perms = vi.hoisted(() => ({ emergency: false }));
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
-    can: (p: string) => (p === "ot.emergency_assign" ? perms.emergency : true),
+    can: (p: string) => (p === P.OT_EMERGENCY_ASSIGN ? perms.emergency : true),
   }),
 }));
 const svc = vi.hoisted(() => ({ listWos: vi.fn(), startDepannageWo: vi.fn() }));
