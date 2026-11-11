@@ -12,6 +12,7 @@ pub mod safety_content;
 pub(crate) mod sync_check;
 pub mod wo_gate;
 pub mod workers;
+pub(crate) mod workers_sync;
 
 #[cfg(test)]
 mod access_tests;

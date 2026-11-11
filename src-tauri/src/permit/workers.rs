@@ -1,5 +1,5 @@
 //! The people working under a work permit, their induction and qualifications, and their personal
-//! padlocks on the permit's group lock box (L4-05, L4-06, L4-18, migration 291).
+//! padlocks on the permit's group lock box (L4-05, L4-06, L4-18, migration 294).
 //!
 //! - **Workers** (`permit_workers`): a personnel record (internal staff, or contractor staff with a
 //!   card), or an external worker without a card: a name and a company of the contractor list
@@ -15,10 +15,18 @@
 //!   worker is added, when they place their padlock, and at the issue.
 //! - **Personal padlocks** (`permit_personal_locks`, L4-18): a worker holding `ptw.lock_own` places
 //!   and removes their own padlock on the group lock box of a permit they are listed on, and nobody
-//!   else's. Placed while the permit is issued or active; removed by its owner while the permit is in
-//!   use or ended. When the owner is absent, a `ptw.close` holder (after a step-up) removes it by
-//!   force with a reason and the attestation that the worker is not on site. While a padlock is on
-//!   the box, no isolation lock comes off and the permit is not closed (the group lockout rule).
+//!   else's. Placed while the permit is issued or active, only when the box protects something:
+//!   every counted isolation verified and none taken off; removed by its owner while the permit is in
+//!   use or ended (closed and handed back too: a padlock left on a permit closed on another PC is
+//!   cleared). When the owner is absent, the isolation locks' forced-removal process (migration 249)
+//!   applies: a `ptw.close` holder (after a step-up) authorises a named person to take it off, with a
+//!   reason, the attestation that the worker is not on site and the attempts made to reach them; the
+//!   `ptw.close` holders of the site are told; the worker is told (their own acknowledgement, or a
+//!   `ptw.close` holder records it) before they place a padlock or fit a lock again. While a padlock
+//!   is on the box, no isolation lock comes off and the permit is not closed (the group lockout
+//!   rule).
+//! - "Mes cadenas": the permits of the sites where the session user holds `ptw.lock_own` on which
+//!   they are a listed worker ([`list_my_padlock_permits`]).
 
 use chrono::{NaiveDate, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -43,7 +51,8 @@ const PRE_ISSUE_STATUSES: &[&str] = &["draft", "pending_review", "approved"];
 /// Statuses in which a personal padlock is placed on the group lock box.
 pub const LOCK_PLACE_STATUSES: &[&str] = &["issued", "active"];
 /// Statuses in which a personal padlock comes off: while the permit is in use (the worker leaves),
-/// and once it ended without being closed (cancelled, expired: the lock must come off).
+/// and once it ended (cancelled, expired; closed or handed back on another PC while a padlock was
+/// still on here: the lock must come off, by its owner or by force).
 pub const LOCK_REMOVE_STATUSES: &[&str] = &[
     "issued",
     "active",
@@ -51,6 +60,8 @@ pub const LOCK_REMOVE_STATUSES: &[&str] = &[
     "revalidation_required",
     "cancelled",
     "expired",
+    "closed",
+    "handed_back",
 ];
 
 /// Longest name, company-free text or role of a worker.
@@ -65,6 +76,16 @@ pub const CODE_QUALIFICATION_UNVERIFIABLE: &str = "GATE_PERMIT_WORKER_QUALIFICAT
 pub const CODE_PERSONAL_LOCKS_ON: &str = "GATE_PERMIT_PERSONAL_LOCKS_ON";
 pub const CODE_LOCK_NOT_YOURS: &str = "GATE_PERMIT_PERSONAL_LOCK_NOT_YOURS";
 pub const CODE_LOCK_NOT_A_WORKER: &str = "GATE_PERMIT_PERSONAL_LOCK_NOT_A_WORKER";
+/// The group lock box protects nothing yet (or any more): no isolation, one not verified, or one
+/// taken off.
+pub const CODE_LOCK_NOTHING_PROTECTED: &str = "GATE_PERMIT_PERSONAL_LOCK_NOTHING_PROTECTED";
+pub const CODE_FORCE_REMOVER_IS_OWNER: &str = "GATE_PERMIT_PERSONAL_LOCK_FORCE_REMOVER_IS_OWNER";
+pub const CODE_FORCE_AUTHORISER_IS_REMOVER: &str = "GATE_PERMIT_PERSONAL_LOCK_FORCE_AUTHORISER_IS_REMOVER";
+pub const CODE_FORCE_REMOVER_UNKNOWN: &str = "GATE_PERMIT_PERSONAL_LOCK_FORCE_REMOVER_UNKNOWN";
+pub const CODE_LOCK_NOT_FORCED: &str = "GATE_PERMIT_PERSONAL_LOCK_NOT_FORCED";
+pub const CODE_LOCK_ALREADY_INFORMED: &str = "GATE_PERMIT_PERSONAL_LOCK_ALREADY_INFORMED";
+pub const CODE_LOCK_INFORMED_SELF: &str = "GATE_PERMIT_PERSONAL_LOCK_INFORMED_SELF";
+pub const CODE_LOCK_INFORMED_TIME_INVALID: &str = "GATE_PERMIT_PERSONAL_LOCK_INFORMED_TIME_INVALID";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitPersonalLock {
@@ -79,9 +100,20 @@ pub struct PermitPersonalLock {
     pub removed_by_id: Option<i64>,
     pub removed_by_name: Option<String>,
     pub removed_at: Option<String>,
-    /// Removed by a `ptw.close` holder while its owner was absent.
+    /// Removed by force while its owner was absent (migration 249's process): `removed_by` took it
+    /// off on the authority of `forced_authorized_by` (a `ptw.close` holder).
     pub forced_removal: bool,
     pub forced_reason: Option<String>,
+    pub forced_authorized_by_id: Option<i64>,
+    pub forced_authorized_by_name: Option<String>,
+    pub forced_worker_absent: bool,
+    pub forced_contact_attempts: Vec<crate::permit::domain::ContactAttempt>,
+    /// The worker told of the forced removal (their acknowledgement, or a `ptw.close` holder).
+    pub informed_by_id: Option<i64>,
+    pub informed_by_name: Option<String>,
+    pub informed_at: Option<String>,
+    pub informed_method: Option<String>,
+    pub informed_in_app: bool,
     pub row_version: i64,
 }
 
@@ -175,15 +207,39 @@ pub struct PersonalLockRemoveInput {
     pub expected_row_version: i64,
 }
 
-/// A padlock whose owner is absent, removed by a `ptw.close` holder (the session user, step-up).
+/// A padlock whose owner is absent, removed by force (the isolation locks' process, migration 249):
+/// the session user (a `ptw.close` holder, step-up) authorises `removed_by_id` to take it off.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalLockForceRemoveInput {
     pub lock_id: i64,
     pub expected_row_version: i64,
+    /// The person who physically takes the padlock off (an active account, not its owner, not the
+    /// authoriser).
+    pub removed_by_id: i64,
     /// At least `MIN_FORCED_REMOVAL_REASON_CHARS` characters once trimmed.
     pub reason: String,
     /// "Le travailleur n'est pas sur le site": must be true.
     pub worker_absent_attested: bool,
+    /// The attempts made to reach the worker: at least one.
+    pub contact_attempts: Vec<crate::permit::domain::ContactAttempt>,
+}
+
+/// The owner of a padlock removed by force was told, recorded by a `ptw.close` holder (the session
+/// user): how (a method of the plant's list) and when (now when omitted).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalLockInformedInput {
+    pub lock_id: i64,
+    pub expected_row_version: i64,
+    pub method: String,
+    #[serde(default)]
+    pub informed_at: Option<String>,
+}
+
+/// A permit of "Mes cadenas": a permit the session user works under, with its workers and padlocks.
+#[derive(Debug, Clone, Serialize)]
+pub struct MyPadlockPermit {
+    pub permit: crate::permit::domain::WorkPermit,
+    pub workers: PermitWorkersView,
 }
 
 fn refused(code: &str, message: impl Into<String>, params: &[(&str, String)]) -> AppError {
@@ -267,7 +323,7 @@ fn ensure_status(permit: &PermitFacts, allowed: &[&str], code: &str, what: &str)
 
 const WORKER_SELECT: &str = "SELECT w.id, w.entity_sync_id, w.permit_id, w.personnel_id, p.full_name AS personnel_name, p.employee_code, p.employment_origin, w.external_name, w.external_company_id, COALESCE(ec.name, pec.name) AS company_name, w.role_on_permit, w.induction_at, w.induction_by_id, COALESCE(ui.display_name, ui.username) AS induction_by_name, w.added_by_id, COALESCE(ua.display_name, ua.username) AS added_by_name, w.added_at, w.withdrawn_at, w.row_version FROM permit_workers w LEFT JOIN personnel p ON p.id = w.personnel_id LEFT JOIN external_companies ec ON ec.id = w.external_company_id LEFT JOIN external_companies pec ON pec.id = p.external_company_id LEFT JOIN user_accounts ui ON ui.id = w.induction_by_id LEFT JOIN user_accounts ua ON ua.id = w.added_by_id";
 
-const LOCK_SELECT: &str = "SELECT l.id, l.entity_sync_id, l.permit_id, l.worker_id, l.lock_number, l.placed_by_id, COALESCE(up.display_name, up.username) AS placed_by_name, l.placed_at, l.removed_by_id, COALESCE(ur.display_name, ur.username) AS removed_by_name, l.removed_at, l.forced_removal, l.forced_reason, l.row_version FROM permit_personal_locks l LEFT JOIN user_accounts up ON up.id = l.placed_by_id LEFT JOIN user_accounts ur ON ur.id = l.removed_by_id";
+const LOCK_SELECT: &str = "SELECT l.id, l.entity_sync_id, l.permit_id, l.worker_id, l.lock_number, l.placed_by_id, COALESCE(up.display_name, up.username) AS placed_by_name, l.placed_at, l.removed_by_id, COALESCE(ur.display_name, ur.username) AS removed_by_name, l.removed_at, l.forced_removal, l.forced_reason, l.forced_authorized_by_id, COALESCE(ufa.display_name, ufa.username) AS forced_authorized_by_name, l.forced_worker_absent, l.forced_contact_attempts_json, l.informed_by_id, COALESCE(uin.display_name, uin.username) AS informed_by_name, l.informed_at, l.informed_method, l.informed_in_app, l.row_version FROM permit_personal_locks l LEFT JOIN user_accounts up ON up.id = l.placed_by_id LEFT JOIN user_accounts ur ON ur.id = l.removed_by_id LEFT JOIN user_accounts ufa ON ufa.id = l.forced_authorized_by_id LEFT JOIN user_accounts uin ON uin.id = l.informed_by_id";
 
 fn map_worker(r: &sea_orm::QueryResult) -> AppResult<PermitWorker> {
     let personnel_id: Option<i64> = r.try_get("", "personnel_id")?;
@@ -313,6 +369,18 @@ fn map_lock(r: &sea_orm::QueryResult) -> AppResult<PermitPersonalLock> {
         removed_at: r.try_get("", "removed_at")?,
         forced_removal: r.try_get::<i64>("", "forced_removal")? != 0,
         forced_reason: r.try_get("", "forced_reason")?,
+        forced_authorized_by_id: r.try_get("", "forced_authorized_by_id")?,
+        forced_authorized_by_name: r.try_get("", "forced_authorized_by_name")?,
+        forced_worker_absent: r.try_get::<i64>("", "forced_worker_absent")? != 0,
+        forced_contact_attempts: r
+            .try_get::<Option<String>>("", "forced_contact_attempts_json")?
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default(),
+        informed_by_id: r.try_get("", "informed_by_id")?,
+        informed_by_name: r.try_get("", "informed_by_name")?,
+        informed_at: r.try_get("", "informed_at")?,
+        informed_method: r.try_get("", "informed_method")?,
+        informed_in_app: r.try_get::<i64>("", "informed_in_app")? != 0,
         row_version: r.try_get("", "row_version")?,
     })
 }
@@ -965,6 +1033,18 @@ pub(crate) async fn place_my_personal_lock_in(
     if !blockers.is_empty() {
         return Err(blockers_error(blockers, "Padlock refused"));
     }
+    ensure_box_protects(db, &permit).await?;
+    // A worker not yet told of the forced removal of one of their locks (isolation lock or padlock)
+    // places no new padlock (migration 249, as for an isolation lock).
+    if let Some((code, lock)) = crate::permit::queries::open_forced_removal_of(db, actor_id, None).await? {
+        return Err(refused(
+            crate::permit::queries::CODE_WORKER_NOT_INFORMED,
+            format!(
+                "Your lock '{lock}' on permit {code} was taken off by a forced removal: acknowledge it before placing a padlock."
+            ),
+            &[("permit", code), ("point", lock)],
+        ));
+    }
     let lock_number = checked_text(
         "lock_number",
         &input.lock_number,
@@ -1014,6 +1094,46 @@ pub(crate) async fn place_my_personal_lock_in(
     )
     .await?;
     list_permit_workers(db, permit.id, actor_id).await
+}
+
+/// The group lock box protects the work only when the permit has isolations, every counted one
+/// verified and none taken off (its lock removed or its removal verified): a padlock placed
+/// otherwise protects nothing (review of L4-18).
+async fn ensure_box_protects(db: &impl ConnectionTrait, permit: &PermitFacts) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN verified_at IS NULL THEN 1 ELSE 0 END), 0) AS unverified, COALESCE(SUM(CASE WHEN removed_at IS NOT NULL OR removal_verified_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS removed FROM permit_isolations WHERE permit_id = ? AND {}",
+                crate::permit::queries::COUNTED_ISOLATION_SQL
+            ),
+            [permit.id.into()],
+        ))
+        .await?;
+    let (n, unverified, removed) = match row {
+        Some(r) => (
+            r.try_get::<i64>("", "n")?,
+            r.try_get::<i64>("", "unverified")?,
+            r.try_get::<i64>("", "removed")?,
+        ),
+        None => (0, 0, 0),
+    };
+    if n > 0 && unverified == 0 && removed == 0 {
+        return Ok(());
+    }
+    Err(refused(
+        CODE_LOCK_NOTHING_PROTECTED,
+        format!(
+            "Permit {}: the group lock box protects nothing ({n} isolation(s), {unverified} not verified, {removed} taken off): a padlock is placed once every isolation is verified and none is taken off.",
+            permit.code
+        ),
+        &[
+            ("permit", permit.code.clone()),
+            ("count", n.to_string()),
+            ("unverified", unverified.to_string()),
+            ("removed", removed.to_string()),
+        ],
+    ))
 }
 
 /// "J'ai retiré mon cadenas" (L4-18): only the padlock's owner, listed on the permit, takes it off,
@@ -1113,6 +1233,7 @@ pub(crate) async fn force_remove_personal_lock_in(
     actor_id: i64,
 ) -> AppResult<PermitWorkersView> {
     use crate::permit::domain::MIN_FORCED_REMOVAL_REASON_CHARS;
+    use crate::permit::queries as q;
     let lock = lock_row(db, input.lock_id).await?;
     if lock.row_version != input.expected_row_version {
         return Err(changed_elsewhere("permit_personal_locks"));
@@ -1126,11 +1247,33 @@ pub(crate) async fn force_remove_personal_lock_in(
             &[("lock", lock.lock_number.clone())],
         ));
     }
+    let owner = lock.placed_by_id;
     let me = crate::qualification::gate::personnel_for_user(db, actor_id).await?;
-    if lock.placed_by_id == actor_id || (me.is_some() && worker.personnel_id == me) {
+    if owner == actor_id || (me.is_some() && worker.personnel_id == me) {
         return Err(refused(
             "GATE_PERMIT_PERSONAL_LOCK_FORCE_OWN",
             "This padlock is yours: remove it yourself.",
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    if input.removed_by_id == owner {
+        return Err(refused(
+            CODE_FORCE_REMOVER_IS_OWNER,
+            "The owner of the padlock is absent: name the person who physically takes it off.",
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    if input.removed_by_id == actor_id {
+        return Err(refused(
+            CODE_FORCE_AUTHORISER_IS_REMOVER,
+            "The person who authorises a forced removal does not take the padlock off themselves.",
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    if !q::active_user(db, input.removed_by_id).await? {
+        return Err(refused(
+            CODE_FORCE_REMOVER_UNKNOWN,
+            "The person named to take the padlock off is not an active account.",
             &[("lock", lock.lock_number.clone())],
         ));
     }
@@ -1149,22 +1292,144 @@ pub(crate) async fn force_remove_personal_lock_in(
             &[],
         ));
     }
+    let attempts = q::checked_contact_attempts(db, &input.contact_attempts).await?;
     ensure_status(
         &permit,
         LOCK_REMOVE_STATUSES,
         "GATE_PERMIT_PERSONAL_LOCK_WRONG_STATUS",
         "Removing a padlock",
     )?;
+    // The command checked `ptw.close` at the permit's site; checked again on the rule a received
+    // row is judged on (`permit::workers_sync`).
+    if !crate::permit::access::may_receive_handover(db, permit.id, actor_id).await? {
+        return Err(refused(
+            q::CODE_FORCED_UNAUTHORISED,
+            "A forced removal is authorised by a person holding the permit close right at the permit's site.",
+            &[],
+        ));
+    }
+    let now = now_ts();
+    let attempts_json = serde_json::to_string(&attempts)?;
+    let affected = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_personal_locks SET removed_by_id = ?, removed_at = ?, forced_removal = 1, forced_reason = ?, forced_authorized_by_id = ?, forced_worker_absent = 1, forced_contact_attempts_json = ?, row_version = row_version + 1, updated_at = ? WHERE id = ? AND row_version = ? AND removed_at IS NULL",
+            [
+                input.removed_by_id.into(),
+                now.clone().into(),
+                reason.clone().into(),
+                actor_id.into(),
+                attempts_json.into(),
+                now.clone().into(),
+                lock.id.into(),
+                lock.row_version.into(),
+            ],
+        ))
+        .await?;
+    if affected.rows_affected() == 0 {
+        return Err(changed_elsewhere("permit_personal_locks"));
+    }
+    let label = worker_label(&worker);
+    audit(
+        db,
+        "permit.personal_lock_forced_removal",
+        permit.id,
+        actor_id,
+        serde_json::json!({
+            "code": permit.code,
+            "worker": label.clone(),
+            "lock_number": lock.lock_number,
+            "placed_by_id": owner,
+            "removed_by_id": input.removed_by_id,
+            "removed_at": now,
+            "authorized_by_id": actor_id,
+            "reason": reason,
+            "worker_absent_attested": true,
+            "contact_attempts": attempts,
+            "permit_status": permit.status,
+            "step_up": true,
+        }),
+    )
+    .await?;
+    crate::settings::received_notice::announce_padlock_forced_removal(
+        db,
+        permit.id,
+        &permit.code,
+        &lock.entity_sync_id,
+        &lock.lock_number,
+        Some(label),
+        input.removed_by_id,
+        actor_id,
+        &now,
+        &reason,
+    )
+    .await?;
+    list_permit_workers(db, permit.id, actor_id).await
+}
+
+/// A padlock removed by force whose owner was not told yet: its owner's user id.
+fn ensure_owner_to_inform(lock: &PermitPersonalLock) -> AppResult<i64> {
+    if !lock.forced_removal || lock.removed_at.is_none() {
+        return Err(refused(
+            CODE_LOCK_NOT_FORCED,
+            format!("Padlock {} was not taken off by a forced removal.", lock.lock_number),
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    if lock.informed_at.is_some() {
+        return Err(refused(
+            CODE_LOCK_ALREADY_INFORMED,
+            format!(
+                "The worker was already told of the forced removal of padlock {}.",
+                lock.lock_number
+            ),
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    Ok(lock.placed_by_id)
+}
+
+/// The owner of a padlock removed by force acknowledges it in the app (recorded as told by
+/// themselves now). Only the padlock's owner (`actor_id`, the session user); whatever the permit's
+/// status. Until then they place no padlock and fit no lock.
+pub async fn acknowledge_forced_padlock_removal(
+    db: &DatabaseConnection,
+    lock_id: i64,
+    actor_id: i64,
+) -> AppResult<PermitWorkersView> {
+    let txn = db.begin().await?;
+    let out = acknowledge_forced_padlock_removal_in(&txn, lock_id, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+pub(crate) async fn acknowledge_forced_padlock_removal_in(
+    db: &impl ConnectionTrait,
+    lock_id: i64,
+    actor_id: i64,
+) -> AppResult<PermitWorkersView> {
+    let lock = lock_row(db, lock_id).await?;
+    let owner = ensure_owner_to_inform(&lock)?;
+    let permit = permit_facts(db, lock.permit_id).await?;
+    if owner != actor_id {
+        return Err(refused(
+            CODE_LOCK_NOT_YOURS,
+            format!(
+                "Padlock {} is not yours: only its owner acknowledges its forced removal.",
+                lock.lock_number
+            ),
+            &[("permit", permit.code.clone()), ("lock", lock.lock_number.clone())],
+        ));
+    }
     let now = now_ts();
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE permit_personal_locks SET removed_by_id = ?, removed_at = ?, forced_removal = 1, forced_reason = ?, row_version = row_version + 1, updated_at = ? WHERE id = ? AND row_version = ? AND removed_at IS NULL",
+            "UPDATE permit_personal_locks SET informed_by_id = ?, informed_at = ?, informed_method = NULL, informed_in_app = 1, row_version = row_version + 1, updated_at = ? WHERE id = ? AND row_version = ? AND informed_at IS NULL",
             [
                 actor_id.into(),
                 now.clone().into(),
-                reason.clone().into(),
-                now.into(),
+                now.clone().into(),
                 lock.id.into(),
                 lock.row_version.into(),
             ],
@@ -1175,25 +1440,172 @@ pub(crate) async fn force_remove_personal_lock_in(
     }
     audit(
         db,
-        "permit.personal_lock_forced_removal",
+        "permit.personal_lock_forced_removal_acknowledged",
         permit.id,
         actor_id,
         serde_json::json!({
             "code": permit.code,
-            "worker": worker_label(&worker),
             "lock_number": lock.lock_number,
-            "reason": reason,
-            "worker_absent_attested": true,
+            "removed_at": lock.removed_at,
+            "informed_at": now,
+            "method": "in_app_acknowledgement",
         }),
     )
     .await?;
     list_permit_workers(db, permit.id, actor_id).await
 }
 
+/// A `ptw.close` holder at the permit's site (`actor_id`, the session user) records that the owner
+/// of a padlock removed by force was told: how (a method of the plant's list) and when (not before
+/// the removal nor in the future; now when omitted). Not the owner themselves (they acknowledge).
+pub async fn record_padlock_worker_informed(
+    db: &DatabaseConnection,
+    input: PersonalLockInformedInput,
+    actor_id: i64,
+) -> AppResult<PermitWorkersView> {
+    let txn = db.begin().await?;
+    let out = record_padlock_worker_informed_in(&txn, input, actor_id).await?;
+    txn.commit().await?;
+    Ok(out)
+}
+
+pub(crate) async fn record_padlock_worker_informed_in(
+    db: &impl ConnectionTrait,
+    input: PersonalLockInformedInput,
+    actor_id: i64,
+) -> AppResult<PermitWorkersView> {
+    use crate::permit::queries as q;
+    let lock = lock_row(db, input.lock_id).await?;
+    if lock.row_version != input.expected_row_version {
+        return Err(changed_elsewhere("permit_personal_locks"));
+    }
+    let owner = ensure_owner_to_inform(&lock)?;
+    let permit = permit_facts(db, lock.permit_id).await?;
+    if owner == actor_id {
+        return Err(refused(
+            CODE_LOCK_INFORMED_SELF,
+            "This forced removal is of your own padlock: acknowledge it yourself.",
+            &[("lock", lock.lock_number.clone())],
+        ));
+    }
+    if !crate::permit::access::may_receive_handover(db, permit.id, actor_id).await? {
+        return Err(refused(
+            q::CODE_INFORMED_UNAUTHORISED,
+            "The worker told of a forced removal is recorded by a person holding the permit close right at the permit's site.",
+            &[],
+        ));
+    }
+    let method = crate::permit::contact_methods::checked_method(db, "method", &input.method).await?;
+    let invalid = || {
+        refused(
+            CODE_LOCK_INFORMED_TIME_INVALID,
+            "The worker is told after the forced removal, and not in the future.",
+            &[("lock", lock.lock_number.clone())],
+        )
+    };
+    let informed_at = match input.informed_at.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(raw) => q::normalize_ts("informed_at", raw).map_err(|_| invalid())?,
+        None => now_ts(),
+    };
+    let removed_at = lock.removed_at.clone().unwrap_or_default();
+    if informed_at < removed_at || informed_at > q::latest_accepted_ts() {
+        return Err(invalid());
+    }
+    let affected = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE permit_personal_locks SET informed_by_id = ?, informed_at = ?, informed_method = ?, informed_in_app = 0, row_version = row_version + 1, updated_at = ? WHERE id = ? AND row_version = ? AND informed_at IS NULL",
+            [
+                actor_id.into(),
+                informed_at.clone().into(),
+                method.clone().into(),
+                now_ts().into(),
+                lock.id.into(),
+                lock.row_version.into(),
+            ],
+        ))
+        .await?;
+    if affected.rows_affected() == 0 {
+        return Err(changed_elsewhere("permit_personal_locks"));
+    }
+    audit(
+        db,
+        "permit.personal_lock_worker_informed",
+        permit.id,
+        actor_id,
+        serde_json::json!({
+            "code": permit.code,
+            "lock_number": lock.lock_number,
+            "placed_by_id": owner,
+            "removed_at": lock.removed_at,
+            "informed_at": informed_at,
+            "method": method,
+        }),
+    )
+    .await?;
+    list_permit_workers(db, permit.id, actor_id).await
+}
+
+/// Who may be named to take off a padlock in a forced removal: active accounts other than the
+/// person asking and the padlock's owner (`permit::queries::lock_removers_except`).
+pub async fn list_padlock_removers(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    lock_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<crate::permit::queries::HandoverReceiverPage> {
+    let lock = lock_row(db, lock_id).await?;
+    crate::permit::queries::lock_removers_except(db, actor_id, Some(lock.placed_by_id), search, limit, offset).await
+}
+
+/// Statuses in which "Mes cadenas" lists a permit: a padlock may be placed, or one of the user's is
+/// still on the box.
+const MY_PADLOCK_PERMIT_SQL: &str = "SELECT DISTINCT wp.id FROM work_permits wp JOIN permit_workers pw ON pw.permit_id = wp.id AND pw.withdrawn_at IS NULL WHERE pw.personnel_id = ? AND (wp.status IN ('issued', 'active') OR EXISTS (SELECT 1 FROM permit_personal_locks pl WHERE pl.worker_id = pw.id AND (pl.removed_at IS NULL OR (pl.forced_removal = 1 AND pl.informed_at IS NULL))))";
+
+/// "Mes cadenas" (L4-18): the permits of `scope` (where the session user holds `ptw.lock_own`) on
+/// which `user_id` is a listed, not withdrawn, worker: issued or active ones, and any still holding
+/// their padlock or a forced removal of it they were not told of. Latest first. A user without a
+/// personnel card works under no permit: empty.
+pub async fn list_my_padlock_permits(
+    db: &impl ConnectionTrait,
+    scope: &crate::auth::scope::AccessScope,
+    user_id: i64,
+) -> AppResult<Vec<MyPadlockPermit>> {
+    let Some(pid) = crate::qualification::gate::personnel_for_user(db, user_id).await? else {
+        return Ok(Vec::new());
+    };
+    let scope_sql = crate::permit::access::scope_sql(scope);
+    let mut values: Vec<sea_orm::Value> = vec![pid.into()];
+    values.extend(scope_sql.binds);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "{MY_PADLOCK_PERMIT_SQL} AND ({}) ORDER BY wp.id DESC",
+                scope_sql.predicate
+            ),
+            values,
+        ))
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: i64 = r.try_get("", "id")?;
+        let Some(permit) = crate::permit::queries::get_work_permit(db, id).await? else {
+            continue;
+        };
+        let workers = list_permit_workers(db, id, user_id).await?;
+        out.push(MyPadlockPermit { permit, workers });
+    }
+    Ok(out)
+}
+
 /// Issue checks of a permit issued on another PC (`permit::sync_check::issue_check`): its workers as
 /// received (`workers`: payloads of `permit_workers`), judged on the issue day. Returns the first
 /// breach as `(conflict code, message)`; `Ok(None)` when they keep the rules, `Err` only on a read
 /// failure. A worker naming a card or company not here yet makes the caller wait (`missing`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn received_workers_breach(
     conn: &impl ConnectionTrait,
     code: &str,
@@ -1201,9 +1613,25 @@ pub(crate) async fn received_workers_breach(
     linked_wo_id: Option<i64>,
     issued_on: NaiveDate,
     workers: &[&serde_json::Map<String, serde_json::Value>],
+    after_issue: bool,
 ) -> AppResult<Option<(&'static str, String)>> {
     use crate::permit::sync_check::field;
     use crate::qualification::gate;
+    // A worker added to a permit already issued (`after_issue`, `permit::workers_sync`) is judged on
+    // the same rules, on the day they were added, under their own conflict kinds.
+    let (induction_code, qualification_code, verb) = if after_issue {
+        (
+            "PERMIT_WORKER_ADDED_INDUCTION_MISSING",
+            "PERMIT_WORKER_ADDED_QUALIFICATION",
+            "received, after its issue,",
+        )
+    } else {
+        (
+            "PERMIT_ISSUE_WORKER_INDUCTION_MISSING",
+            "PERMIT_ISSUE_WORKER_QUALIFICATION",
+            "was issued",
+        )
+    };
     let mut personal: Option<bool> = None;
     for w in workers.iter().filter(|w| field(w, "withdrawn_at").is_none()) {
         let name = field(w, "external_name").map(str::to_string);
@@ -1234,8 +1662,8 @@ pub(crate) async fn received_workers_breach(
         let external = personnel.as_ref().is_none_or(|(_, _, origin)| origin == "external");
         if external && field(w, "induction_at").is_none() {
             return Ok(Some((
-                "PERMIT_ISSUE_WORKER_INDUCTION_MISSING",
-                format!("permit {code} was issued with external worker {label} not inducted"),
+                induction_code,
+                format!("permit {code} {verb} with external worker {label} not inducted"),
             )));
         }
         match personnel {
@@ -1249,9 +1677,9 @@ pub(crate) async fn received_workers_breach(
                         .map(|g| format!("{} ({})", g.label, g.status))
                         .collect();
                     return Ok(Some((
-                        "PERMIT_ISSUE_WORKER_QUALIFICATION",
+                        qualification_code,
                         format!(
-                            "permit {code} was issued with worker {label} lacking, on {issued_on}: {}",
+                            "permit {code} {verb} with worker {label} lacking, on {issued_on}: {}",
                             what.join(", ")
                         ),
                     )));
@@ -1271,9 +1699,9 @@ pub(crate) async fn received_workers_breach(
                 };
                 if needs {
                     return Ok(Some((
-                        "PERMIT_ISSUE_WORKER_QUALIFICATION",
+                        qualification_code,
                         format!(
-                            "permit {code} was issued with external worker {label} whose qualifications cannot be checked"
+                            "permit {code} {verb} with external worker {label} whose qualifications cannot be checked"
                         ),
                     )));
                 }

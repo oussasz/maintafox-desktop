@@ -2,36 +2,52 @@
  * The people working under a permit (L4-05): personnel or external workers with their company and
  * role, the safety induction of external staff, what each lacks for the permit (L4-06, the
  * server's verdict), and the personal padlocks on the group lock box (L4-18): a worker places and
- * removes only their own; a `ptw.close` holder removes an absent worker's padlock by force. Every
- * rule is judged by the server (`permit::workers`); this panel shows its verdict.
+ * removes only their own; an absent worker's padlock comes off by the isolation locks' forced-removal
+ * process (a `ptw.close` holder authorises a named person, with the reason, the attestation and the
+ * contact attempts), and the worker is told (their acknowledgement, or a `ptw.close` holder records
+ * it) before placing a padlock again. Every rule is judged by the server (`permit::workers`); this
+ * panel shows its verdict.
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Button, FormField, Input, Textarea } from "@/components/ui";
+import {
+  Button,
+  FormField,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ErrorState } from "@/components/ui/data-state";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useFormatters } from "@/hooks/use-formatters";
-import { isStepUpCancelled, useStepUp } from "@/hooks/use-step-up";
+import { isStepUpCancelled } from "@/hooks/use-step-up";
 import { appErrorReason } from "@/lib/app-error";
-import type { WorkPermitRecord } from "@/services/permit-service";
+import { type WorkPermitRecord, listPermitContactMethods } from "@/services/permit-service";
 import {
-  addPermitWorker,
-  forceRemovePermitLock,
-  listPermitWorkers,
   type PermitPersonalLock,
   type PermitWorker,
   type PermitWorkersView,
+  acknowledgeForcedPadlockRemoval,
+  addPermitWorker,
+  forceRemovePermitLock,
+  listPermitPadlockRemovers,
+  listPermitWorkers,
   placeMyPermitLock,
+  recordPadlockWorkerInformed,
   recordPermitWorkerInduction,
   removeMyPermitLock,
   withdrawPermitWorker,
 } from "@/services/permit-workers-service";
 import { listExternalCompanies, listPersonnel } from "@/services/personnel-service";
-import type { ExternalCompany, Personnel } from "@shared/ipc-types";
+import type { ExternalCompany, PermitHandoverRoleOption, Personnel } from "@shared/ipc-types";
 
+import { ForcedLockRemovalDialog } from "./ForcedRemovalDialog";
 import { useIssueBlockerText } from "./PermitSafetyContentPanel";
 
 /** `permit::workers::WORKER_EDIT_STATUSES`. */
@@ -54,6 +70,8 @@ const LOCK_REMOVE_STATUSES: ReadonlySet<string> = new Set([
   "revalidation_required",
   "cancelled",
   "expired",
+  "closed",
+  "handed_back",
 ]);
 
 interface PermitWorkersPanelProps {
@@ -86,15 +104,14 @@ export function PermitWorkersPanel({
   const { t } = useTranslation("permits");
   const blockerText = useIssueBlockerText();
   const { formatDateTime } = useFormatters();
-  const { withStepUp, StepUpDialogElement } = useStepUp();
   const [view, setView] = useState<PermitWorkersView | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lockNumber, setLockNumber] = useState("");
   const [forcing, setForcing] = useState<PermitPersonalLock | null>(null);
-  const [forceReason, setForceReason] = useState("");
-  const [forceAttested, setForceAttested] = useState(false);
+  const [methods, setMethods] = useState<PermitHandoverRoleOption[] | null>(null);
+  const [informMethod, setInformMethod] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -108,6 +125,23 @@ export function PermitWorkersPanel({
   useEffect(() => {
     void load();
   }, [load, permit.status, permit.row_version]);
+
+  // The plant's contact methods, to record that a worker was told of a forced removal.
+  const untold = view?.locks.some((l) => l.forced_removal && l.informed_at == null) ?? false;
+  useEffect(() => {
+    if (!canClose || !untold || methods != null) return;
+    let cancelled = false;
+    listPermitContactMethods()
+      .then((m) => {
+        if (!cancelled) setMethods(m);
+      })
+      .catch(() => {
+        if (!cancelled) setMethods([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canClose, untold, methods]);
 
   const run = async (fn: () => Promise<PermitWorkersView>): Promise<boolean> => {
     setBusy(true);
@@ -149,25 +183,8 @@ export function PermitWorkersPanel({
   const removed = view.locks.filter((l) => l.removed_at != null);
   const workerOf = (id: number) => view.workers.find((w) => w.id === id);
 
-  const handleForce = async (e: FormEvent) => {
-    e.preventDefault();
-    if (forcing == null) return;
-    const ok = await run(() =>
-      withStepUp(() =>
-        forceRemovePermitLock({
-          lock_id: forcing.id,
-          expected_row_version: forcing.row_version,
-          reason: forceReason.trim(),
-          worker_absent_attested: forceAttested,
-        }),
-      ),
-    );
-    if (ok) {
-      setForcing(null);
-      setForceReason("");
-      setForceAttested(false);
-    }
-  };
+  const forcingWorker = forcing ? workerOf(forcing.worker_id) : undefined;
+  const untoldLocks = view.locks.filter((l) => l.forced_removal && l.informed_at == null);
 
   return (
     <section className="space-y-2" data-testid="permit-workers">
@@ -338,34 +355,104 @@ export function PermitWorkersPanel({
         </form>
       ) : null}
 
-      {forcing != null ? (
-        <form
-          className="space-y-2 rounded-md border border-tone-warning-border p-2"
-          onSubmit={(e) => void handleForce(e)}
-          data-testid="permit-lock-force"
-        >
-          <FormField name="force-reason" label={t("workers.force.reason")} required>
-            <Textarea
-              id="force-reason"
-              rows={2}
-              value={forceReason}
-              onChange={(e) => setForceReason(e.target.value)}
-            />
-          </FormField>
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox checked={forceAttested} onCheckedChange={setForceAttested} />
-            <span>{t("workers.force.attest")}</span>
-          </label>
-          <p className="text-xs text-text-muted">{t("workers.force.stepUpHint")}</p>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={busy}>
-              {t("workers.force.confirm")}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setForcing(null)}>
-              {t("actions.cancel")}
-            </Button>
-          </div>
-        </form>
+      <ForcedLockRemovalDialog
+        target={
+          forcing == null
+            ? null
+            : {
+                key: `padlock-${forcing.id}`,
+                point: t("workers.force.point", { lock: forcing.lock_number }),
+                worker: forcingWorker ? workerName(forcingWorker) : t("detail.unknownPerson"),
+              }
+        }
+        onOpenChange={(open) => {
+          if (!open) setForcing(null);
+        }}
+        listRemovers={(search) =>
+          forcing == null
+            ? Promise.reject(new Error("no padlock"))
+            : listPermitPadlockRemovers(forcing.id, search)
+        }
+        submit={async (payload) => {
+          if (forcing == null) return;
+          const saved = await forceRemovePermitLock({
+            lock_id: forcing.id,
+            expected_row_version: forcing.row_version,
+            ...payload,
+          });
+          setView(saved);
+          onChanged();
+        }}
+      />
+
+      {untoldLocks.length > 0 ? (
+        <ul className="space-y-2" data-testid="permit-lock-untold">
+          {untoldLocks.map((l) => {
+            const w = workerOf(l.worker_id);
+            const mine = w?.is_me ?? false;
+            return (
+              <li
+                key={l.id}
+                className="space-y-1 rounded-md border border-tone-warning-border p-2 text-xs"
+              >
+                <p>
+                  {t("workers.told.pending", {
+                    lock: l.lock_number,
+                    name: w ? workerName(w) : t("detail.unknownPerson"),
+                    by: l.forced_authorized_by_name ?? t("detail.unknownPerson"),
+                  })}
+                </p>
+                {mine ? (
+                  <Button
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void run(() => acknowledgeForcedPadlockRemoval(l.id))}
+                  >
+                    {t("workers.told.acknowledge")}
+                  </Button>
+                ) : canClose ? (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Select value={informMethod} onValueChange={setInformMethod}>
+                      <SelectTrigger
+                        className="w-56"
+                        aria-label={t("workers.told.method")}
+                        disabled={methods == null}
+                      >
+                        <SelectValue placeholder={t("workers.told.method")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(methods ?? []).map((m) => (
+                          <SelectItem key={m.code} value={m.code}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || informMethod === ""}
+                      onClick={() =>
+                        void run(() =>
+                          recordPadlockWorkerInformed({
+                            lock_id: l.id,
+                            expected_row_version: l.row_version,
+                            method: informMethod,
+                            informed_at: null,
+                          }),
+                        ).then((ok) => {
+                          if (ok) setInformMethod("");
+                        })
+                      }
+                    >
+                      {t("workers.told.record")}
+                    </Button>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
 
       {editable ? <AddWorkerForm permit={permit} busy={busy} run={run} /> : null}
@@ -393,7 +480,6 @@ export function PermitWorkersPanel({
           </ul>
         </details>
       ) : null}
-      {StepUpDialogElement}
     </section>
   );
 }

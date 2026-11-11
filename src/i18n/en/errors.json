@@ -1262,7 +1262,7 @@
     "GATE_PERMIT_WORKER_INDUCTION_NOT_EXTERNAL": "Induction refused: {{worker}} is internal staff.",
     "GATE_PERMIT_WORKER_INDUCTION_ALREADY_RECORDED": "The safety induction of {{worker}} is already recorded.",
     "GATE_PERMIT_WORKER_LOCK_ON": "Withdrawal refused: {{worker}}'s padlock is still on the group lock box of permit {{permit}}.",
-    "GATE_PERMIT_PERSONAL_LOCK_WRONG_STATUS": "Refused: permit {{permit}} is {{status}}; a padlock is placed on an issued or active permit, and removed while the permit is in use or ended without being closed.",
+    "GATE_PERMIT_PERSONAL_LOCK_WRONG_STATUS": "Refused: permit {{permit}} is {{status}}; a padlock is placed on an issued or active permit, and removed while the permit is in use or after it ended (closed or handed back included).",
     "GATE_PERMIT_PERSONAL_LOCK_NUMBER_REQUIRED": "Padlock refused: give the number of your padlock.",
     "GATE_PERMIT_PERSONAL_LOCK_ALREADY_ON": "Your padlock {{lock}} is already on the group lock box of permit {{permit}}.",
     "GATE_PERMIT_PERSONAL_LOCK_ALREADY_REMOVED": "Padlock {{lock}} is already removed.",
@@ -1272,7 +1272,16 @@
     "GATE_ASSET_ISOLATION_POINT_CODE_REQUIRED": "Isolation point refused: the code is required.",
     "GATE_ASSET_ISOLATION_POINT_LABEL_REQUIRED": "Isolation point refused: the label is required.",
     "GATE_ASSET_ISOLATION_POINT_CODE_TAKEN": "Isolation point refused: code {{code}} already exists on this equipment.",
-    "GATE_ASSET_ISOLATION_POINT_TOO_LONG": "Isolation point refused: at most {{max}} characters."
+    "GATE_ASSET_ISOLATION_POINT_TOO_LONG": "Isolation point refused: at most {{max}} characters.",
+    "GATE_PERMIT_PERSONAL_LOCK_NOTHING_PROTECTED": "Padlock refused: the group lock box of permit {{permit}} protects nothing ({{count}} isolation(s), {{unverified}} not verified, {{removed}} taken off). Place your padlock once every isolation is verified and none is taken off.",
+    "GATE_PERMIT_PERSONAL_LOCK_FORCE_REMOVER_IS_OWNER": "Forced removal refused: the owner of padlock {{lock}} is absent; name the person who physically takes it off.",
+    "GATE_PERMIT_PERSONAL_LOCK_FORCE_AUTHORISER_IS_REMOVER": "Forced removal refused: the person who authorises the removal of padlock {{lock}} does not take it off themselves.",
+    "GATE_PERMIT_PERSONAL_LOCK_FORCE_REMOVER_UNKNOWN": "Forced removal refused: the person named to take padlock {{lock}} off is not an active account.",
+    "GATE_PERMIT_PERSONAL_LOCK_NOT_FORCED": "Padlock {{lock}} was not taken off by a forced removal.",
+    "GATE_PERMIT_PERSONAL_LOCK_ALREADY_INFORMED": "The worker was already told of the forced removal of padlock {{lock}}.",
+    "GATE_PERMIT_PERSONAL_LOCK_INFORMED_SELF": "Padlock {{lock}} is yours: acknowledge its forced removal yourself.",
+    "GATE_PERMIT_PERSONAL_LOCK_INFORMED_TIME_INVALID": "Refused: the worker is told of the forced removal of padlock {{lock}} after it, and not in the future.",
+    "GATE_PERMIT_HSE_SELF_APPROVAL": "Issue refused: the HSE approval of permit {{permit}} was recorded by its author or submitter ({{approver}}) without its site opting out of four-eyes. Another person must record the HSE approval."
   },
   "scope": {
     "SCOPE_OUTSIDE_SITE": "This record belongs to a site outside your roles.",

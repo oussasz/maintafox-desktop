@@ -517,13 +517,22 @@
     },
     "force": {
       "open": "Retrait forcé (propriétaire absent)",
-      "reason": "Raison du retrait forcé",
-      "attest": "J'atteste que l'intervenant n'est pas sur le site",
-      "confirm": "Retirer le cadenas",
-      "stepUpHint": "Votre mot de passe sera demandé.",
-      "forced": "Retiré de force : {{reason}}"
+      "forced": "Retiré de force : {{reason}}",
+      "point": "cadenas personnel {{lock}}"
     },
     "history": "Cadenas retirés",
-    "removedAt": "Cadenas {{lock}} de {{name}} retiré le {{date}} par {{by}}"
+    "removedAt": "Cadenas {{lock}} de {{name}} retiré le {{date}} par {{by}}",
+    "told": {
+      "pending": "Cadenas {{lock}} de {{name}} retiré de force (autorisé par {{by}}) : l'intervenant doit en être informé avant de poser un cadenas.",
+      "acknowledge": "J'ai été informé du retrait de mon cadenas",
+      "method": "Moyen d'information",
+      "record": "Intervenant informé"
+    }
+  },
+  "myPadlocks": {
+    "title": "Mes cadenas",
+    "hint": "Les permis sur lesquels vous êtes intervenant : posez votre cadenas sur la boîte de consignation avant de travailler, retirez-le en partant.",
+    "empty": "Vous n'êtes intervenant sur aucun permis en cours.",
+    "loadError": "Impossible de charger vos permis"
   }
 }

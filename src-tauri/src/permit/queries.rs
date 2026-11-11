@@ -161,7 +161,7 @@ fn now_ts() -> String {
 
 /// Parses an RFC 3339 timestamp and returns it in the canonical stored form
 /// (`%Y-%m-%dT%H:%M:%SZ`, UTC) so lexical comparisons against `now_ts()` are valid.
-fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
+pub(crate) fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
     chrono::DateTime::parse_from_rfc3339(value.trim())
         .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .map_err(|_| {
@@ -2794,6 +2794,20 @@ pub async fn list_lock_removers(
     offset: Option<u64>,
 ) -> AppResult<HandoverReceiverPage> {
     let iso = get_permit_isolation(db, isolation_id).await?;
+    lock_removers_except(db, actor_id, iso.applied_by_id, search, limit, offset).await
+}
+
+/// Who may be named to take off a lock (an isolation lock, or a personal padlock of the group lock
+/// box, `permit::workers`) in a forced removal: active accounts other than the person asking and
+/// the lock's owner (`owner`), by name, paged with the total.
+pub(crate) async fn lock_removers_except(
+    db: &impl ConnectionTrait,
+    actor_id: i64,
+    owner: Option<i64>,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<HandoverReceiverPage> {
     let name = handover_person_name_sql("ua");
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -2802,7 +2816,7 @@ pub async fn list_lock_removers(
                 "SELECT ua.id, {name} AS display_name FROM user_accounts ua \
                  WHERE ua.is_active = 1 AND ua.deleted_at IS NULL AND ua.id <> ? AND ua.id IS NOT ?"
             ),
-            [actor_id.into(), opt_i64(iso.applied_by_id)],
+            [actor_id.into(), opt_i64(owner)],
         ))
         .await?;
     people_page(&rows, search, limit, offset)
@@ -3314,7 +3328,9 @@ async fn apply_permit_isolation_in(
 pub const CODE_WORKER_NOT_INFORMED: &str = "PERMIT_WORKER_NOT_INFORMED";
 
 /// A forced removal of `worker`'s lock that they were not told of yet, other than the isolation
-/// `except`: `(permit code, isolation point)`, the oldest first.
+/// `except`: `(permit code, isolation point)`, the oldest first. A personal padlock of a group lock
+/// box removed by force (`permit::workers`, L4-18) counts the same way (its padlock number as the
+/// point): the worker fits no lock and places no padlock until told.
 pub(crate) async fn open_forced_removal_of(
     db: &impl ConnectionTrait,
     worker: i64,
@@ -3323,12 +3339,8 @@ pub(crate) async fn open_forced_removal_of(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wp.code AS code, pi.isolation_point AS point FROM permit_isolations pi \
-               JOIN work_permits wp ON wp.id = pi.permit_id \
-              WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
-                AND pi.id IS NOT ? \
-              ORDER BY pi.removed_at, pi.id LIMIT 1",
-            [worker.into(), opt_i64(except)],
+            "SELECT code, point FROM (SELECT wp.code AS code, pi.isolation_point AS point, pi.removed_at AS removed_at, 0 AS kind, pi.id AS id FROM permit_isolations pi JOIN work_permits wp ON wp.id = pi.permit_id WHERE pi.applied_by_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL AND pi.id IS NOT ? UNION ALL SELECT wp.code AS code, pl.lock_number AS point, pl.removed_at AS removed_at, 1 AS kind, pl.id AS id FROM permit_personal_locks pl JOIN work_permits wp ON wp.id = pl.permit_id WHERE pl.placed_by_id = ? AND pl.forced_removal = 1 AND pl.informed_at IS NULL) ORDER BY removed_at, kind, id LIMIT 1",
+            [worker.into(), opt_i64(except), worker.into()],
         ))
         .await?;
     row.map(|r| -> AppResult<(String, String)> {
@@ -3678,7 +3690,7 @@ pub const AUDIT_WORKER_ACKNOWLEDGED: &str = "permit.forced_removal_acknowledged"
 pub const AUDIT_WORKER_INFORMED: &str = "permit.forced_removal_worker_informed";
 
 /// Latest time this PC accepts for a time given by a person (the tolerated clock difference).
-fn latest_accepted_ts() -> String {
+pub(crate) fn latest_accepted_ts() -> String {
     (crate::clock::now() + Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
@@ -3688,7 +3700,7 @@ fn latest_accepted_ts() -> String {
 /// one, at most [`super::domain::MAX_CONTACT_ATTEMPTS`]; each at a readable time not in the future,
 /// with a method of the plant's list (`permit::contact_methods`) and a result of 1 to
 /// [`super::domain::MAX_CONTACT_RESULT_CHARS`] characters.
-async fn checked_contact_attempts(
+pub(crate) async fn checked_contact_attempts(
     db: &impl ConnectionTrait,
     attempts: &[super::domain::ContactAttempt],
 ) -> AppResult<Vec<super::domain::ContactAttempt>> {
@@ -3726,7 +3738,7 @@ async fn checked_contact_attempts(
 }
 
 /// An active account with this id (a person who can be named on a lock record).
-async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+pub(crate) async fn active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

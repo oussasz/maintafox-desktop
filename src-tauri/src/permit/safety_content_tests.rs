@@ -717,3 +717,184 @@ async fn a_permit_issued_elsewhere_on_an_out_of_date_gas_test_is_a_conflict() {
         "{outcome:?}"
     );
 }
+
+// ── Review of 1ed86d7e2: the gas gate's future bound, the order by instant, four-eyes ─────────────
+
+/// A reading as received by sync (any stored form of its time), recorded by APPLIER.
+async fn insert_reading(db: &DatabaseConnection, wp: &WorkPermit, o2: f64, measured_at: &str) {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO permit_gas_tests (entity_sync_id, permit_id, o2_percent, lel_percent, h2s_ppm, co_ppm, measured_at, measured_by_id, instrument, row_version, created_at, updated_at) VALUES (?, ?, ?, 0, 0, NULL, ?, ?, 'Détecteur reçu', 1, ?, ?)",
+        [
+            uuid::Uuid::new_v4().to_string().into(),
+            wp.id.into(),
+            o2.into(),
+            measured_at.into(),
+            APPLIER.into(),
+            now().into(),
+            now().into(),
+        ],
+    ))
+    .await
+    .expect("received reading");
+}
+
+fn in_minutes(minutes: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::minutes(minutes))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// BLOCKING 2 of the review: a reading dated in the future (beyond the tolerated clock difference)
+/// never counts locally: it is not the latest one (a failing one does not hide behind it, a good one
+/// does not allow the issue) and it never has a negative age.
+#[tokio::test]
+async fn a_future_dated_reading_is_ignored_by_the_local_gate() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-F1").await;
+    let wp = confined_approved(&db, asset).await;
+    // Only a good reading dated three hours ahead: no reading counts.
+    insert_reading(&db, &wp, 20.9, &in_minutes(180)).await;
+    let err = issue(&db, &reload(&db, &wp).await).await.expect_err("future only");
+    assert_eq!(codes(&err), vec![CODE_GAS_TEST_MISSING]);
+    let shown = safety_content::get_permit_safety_content(&db, wp.id)
+        .await
+        .expect("read");
+    assert!(
+        shown.gas_tests.iter().all(|g| !g.counts),
+        "the future reading does not count"
+    );
+
+    // A failing reading of now, and the future good one: the failing one is the latest that counts.
+    insert_reading(&db, &wp, 17.5, &in_minutes(-1)).await;
+    let err = issue(&db, &reload(&db, &wp).await).await.expect_err("low O2 now");
+    assert_eq!(codes(&err), vec![CODE_GAS_O2_OUT_OF_LIMITS]);
+    // A good reading of now: issued, the future one still ignored.
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 0), APPLIER)
+        .await
+        .expect("good reading");
+    assert_eq!(
+        issue(&db, &reload(&db, &wp).await).await.expect("issued").status,
+        "issued"
+    );
+}
+
+/// The latest reading is the latest instant, not the latest text: a reading stored with a +02:00
+/// offset (written later as text) but taken earlier does not hide a newer failing one.
+#[tokio::test]
+async fn readings_are_ordered_by_instant_not_by_text() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-J1").await;
+    let wp = confined_approved(&db, asset).await;
+    let offset = chrono::FixedOffset::east_opt(2 * 3600).expect("offset");
+    let earlier_good = (chrono::Utc::now() - chrono::Duration::minutes(20))
+        .with_timezone(&offset)
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string();
+    insert_reading(&db, &wp, 20.9, &earlier_good).await;
+    insert_reading(&db, &wp, 17.5, &in_minutes(-5)).await;
+    assert!(
+        earlier_good.as_str() > in_minutes(-5).as_str(),
+        "the text order differs"
+    );
+    let err = issue(&db, &reload(&db, &wp).await)
+        .await
+        .expect_err("latest is failing");
+    assert_eq!(codes(&err), vec![CODE_GAS_O2_OUT_OF_LIMITS]);
+    let shown = safety_content::get_permit_safety_content(&db, wp.id)
+        .await
+        .expect("read");
+    assert!(
+        (shown.gas_tests[0].o2_percent - 17.5).abs() < 1e-9,
+        "latest first, by instant"
+    );
+}
+
+/// SHOULD-FIX 3 of the review: four-eyes on the HSE approval is checked again at the issue (here the
+/// approver became the permit's recorded author).
+#[tokio::test]
+async fn the_hse_four_eyes_is_checked_again_at_the_issue() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L403-F1").await;
+    let wp = confined_approved(&db, asset).await;
+    safety_content::record_permit_gas_test(&db, gas(&wp, 20.9, 1), APPLIER)
+        .await
+        .expect("reading");
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_permits SET created_by_id = ? WHERE id = ?",
+        [VERIFIER.into(), wp.id.into()],
+    ))
+    .await
+    .expect("author");
+    let err = issue(&db, &reload(&db, &wp).await).await.expect_err("self-approved");
+    assert_eq!(codes(&err), vec![safety_content::CODE_HSE_SELF_APPROVAL]);
+}
+
+/// A permit received issued whose HSE approval was recorded by its author, not flagged a
+/// self-approval: a conflict.
+#[tokio::test]
+async fn a_permit_issued_elsewhere_with_a_self_hse_approval_is_a_conflict() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L403-S3").await;
+    let wp = approved(&db, write_content(&db, &create(&db, "cold_work", asset).await).await).await;
+    let held = wire(&db, &wp.entity_sync_id).await;
+    let author = held.get("created_by_sync_id").cloned().expect("author");
+    let issued = with(
+        held,
+        &[
+            ("status", json!("issued")),
+            ("issued_at", json!(now())),
+            ("hse_approved_by_sync_id", author),
+            ("hse_approved_at", json!(now())),
+            ("hse_self_approved", json!(0)),
+        ],
+    );
+    let outcome = apply(&db, &wp.entity_sync_id, &issued).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PERMIT_ISSUE_HSE_SELF_APPROVAL"),
+        "{outcome:?}"
+    );
+    assert_eq!(reload(&db, &wp).await.status, "approved", "nothing written");
+}
+
+/// A permit received active whose latest counting reading was out of date when it was activated:
+/// `PERMIT_ACTIVE_GAS_TEST_INVALID`.
+#[tokio::test]
+async fn a_permit_activated_elsewhere_on_an_out_of_date_gas_test_is_a_conflict() {
+    let db = setup().await;
+    let asset = insert_equipment(&db, "EQ-L404-S3").await;
+    // The activation is judged on its gas test only (no isolation asked of the type here).
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE permit_types SET requires_energy_isolation = 0 WHERE code = 'confined_space'".to_string(),
+    ))
+    .await
+    .expect("type");
+    let cs = confined_approved(&db, asset).await;
+    safety_content::record_permit_gas_test(&db, gas(&cs, 20.9, 1), APPLIER)
+        .await
+        .expect("reading");
+    let cs = issue(&db, &reload(&db, &cs).await).await.expect("issued");
+    // That reading is now five hours old (the permit raised ten hours ago).
+    raised_hours_ago(&db, &cs, 10).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE permit_gas_tests SET measured_at = ? WHERE permit_id = ?",
+        [in_minutes(-300).into(), cs.id.into()],
+    ))
+    .await
+    .expect("aged");
+    let active = with(
+        wire(&db, &cs.entity_sync_id).await,
+        &[("status", json!("active")), ("activated_at", json!(now()))],
+    );
+    let outcome = apply(&db, &cs.entity_sync_id, &active).await;
+    assert_eq!(
+        conflict_code(&outcome),
+        Some("PERMIT_ACTIVE_GAS_TEST_INVALID"),
+        "{outcome:?}"
+    );
+    assert_eq!(reload(&db, &cs).await.status, "issued", "nothing written");
+}

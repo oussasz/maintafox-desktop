@@ -327,9 +327,25 @@ impl TestServer {
 /// cross-column constraints). `(entity type, column, SQL literal)`.
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // A permit worker is a personnel record or an external worker (name + company), never both
-    // (migration 291 CHECK): the generic row is a personnel record.
+    // (migration 294 CHECK): the generic row is a personnel record.
     ("permit_workers", "external_name", "NULL"),
     ("permit_workers", "external_company_id", "NULL"),
+    // A personal padlock received is judged (`permit::workers_sync`): the generic one is still on
+    // the box (a removal needs its owner or a whole forced-removal record, which generic people
+    // cannot give), placed by the worker of its line (the round trip links the placer's account to
+    // that worker's card), and its number is set at placement, never the column the round trip edits.
+    ("permit_personal_locks", "lock_number", "'CAD-01'"),
+    ("permit_personal_locks", "removed_at", "NULL"),
+    ("permit_personal_locks", "removed_by_id", "NULL"),
+    ("permit_personal_locks", "forced_removal", "0"),
+    ("permit_personal_locks", "forced_reason", "NULL"),
+    ("permit_personal_locks", "forced_authorized_by_id", "NULL"),
+    ("permit_personal_locks", "forced_worker_absent", "0"),
+    ("permit_personal_locks", "forced_contact_attempts_json", "NULL"),
+    ("permit_personal_locks", "informed_by_id", "NULL"),
+    ("permit_personal_locks", "informed_at", "NULL"),
+    ("permit_personal_locks", "informed_method", "NULL"),
+    ("permit_personal_locks", "informed_in_app", "0"),
     // What a reliability decision proposes never changes once proposed (a received change is a
     // `DECISION_CONTENT_CHANGED` conflict, `reliability::study::decision_sync`, AU-76b): these are
     // set at creation and never the column the round trip edits (its decision note is).

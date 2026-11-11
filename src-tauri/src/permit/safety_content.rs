@@ -93,6 +93,8 @@ pub const CODE_GAS_H2S_TOO_HIGH: &str = "GATE_PERMIT_GAS_H2S_TOO_HIGH";
 pub const CODE_GAS_CO_TOO_HIGH: &str = "GATE_PERMIT_GAS_CO_TOO_HIGH";
 pub const CODE_GAS_TEST_EXPIRED: &str = "GATE_PERMIT_GAS_TEST_EXPIRED";
 pub const CODE_GAS_TEST_BEFORE_PERMIT: &str = "GATE_PERMIT_GAS_TEST_BEFORE_PERMIT";
+/// The HSE approval was recorded by the permit's author or submitter without a valid opt-out.
+pub const CODE_HSE_SELF_APPROVAL: &str = "GATE_PERMIT_HSE_SELF_APPROVAL";
 
 /// The acceptance limits of a gas test, read from the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -412,8 +414,16 @@ pub(crate) fn validity_duration(validity_hours: f64) -> chrono::Duration {
     chrono::Duration::seconds((validity_hours * 3600.0).round() as i64)
 }
 
-/// The gas part of the gates, at `at`: the latest counting reading exists, is younger than the
-/// re-test interval and within the limits. `tests`: latest first.
+/// The latest a reading may be dated to count at `at`: `at` plus the tolerated difference between
+/// device clocks (`MAX_CLOCK_SKEW_MINUTES`), as `permit::sync_check::gas_verdict` bounds it. A reading
+/// dated later never becomes the latest one (it would seem fresh for ever).
+pub(crate) fn gas_reading_bound(at: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    at + chrono::Duration::minutes(crate::settings::site::MAX_CLOCK_SKEW_MINUTES)
+}
+
+/// The gas part of the gates, at `at`: the latest counting reading (not dated after `at` plus the
+/// tolerated clock difference) exists, is younger than the re-test interval and within the limits.
+/// `tests`: latest first.
 pub(crate) fn gas_blockers(
     permit_code: &str,
     limits: &GasLimits,
@@ -421,7 +431,11 @@ pub(crate) fn gas_blockers(
     tests: &[PermitGasTest],
     at: chrono::DateTime<Utc>,
 ) -> Vec<IssueBlocker> {
-    let Some(t) = tests.iter().find(|t| t.counts) else {
+    let bound = gas_reading_bound(at);
+    let Some(t) = tests
+        .iter()
+        .find(|t| t.counts && crate::settings::site::instant(&t.measured_at).is_some_and(|m| m <= bound))
+    else {
         return vec![IssueBlocker::new(
             CODE_GAS_TEST_MISSING,
             &[("permit", permit_code.to_string())],
@@ -442,7 +456,8 @@ pub(crate) fn gas_blockers(
 }
 
 /// The gas tests of a permit, latest first (by instant), judged against `limits`; `since`: from
-/// when a reading counts ([`safety_content_since`]).
+/// when a reading counts ([`safety_content_since`]). A reading dated after now plus the tolerated
+/// clock difference does not count ([`gas_reading_bound`]): it is never the latest one.
 pub async fn list_permit_gas_tests(
     db: &impl ConnectionTrait,
     permit_id: i64,
@@ -463,10 +478,13 @@ pub async fn list_permit_gas_tests(
             let h2s: f64 = r.try_get("", "h2s_ppm")?;
             let co: Option<f64> = r.try_get("", "co_ppm")?;
             let measured_at: String = r.try_get("", "measured_at")?;
-            let counts = match since {
-                None => true,
-                Some(s) => crate::settings::site::instant(&measured_at).is_some_and(|m| m >= s),
-            };
+            let measured = crate::settings::site::instant(&measured_at);
+            let not_future = measured.is_some_and(|m| m <= gas_reading_bound(crate::clock::now()));
+            let counts = not_future
+                && match since {
+                    None => true,
+                    Some(s) => measured.is_some_and(|m| m >= s),
+                };
             Ok(PermitGasTest {
                 id: r.try_get("", "id")?,
                 entity_sync_id: r.try_get("", "entity_sync_id")?,
@@ -521,14 +539,45 @@ fn blockers_of(row: &PermitRow, limits: &GasLimits, validity_hours: f64, tests: 
     out
 }
 
-/// What blocks the issue of the permit now (empty: its content, HSE approval, gas test and workers
-/// allow it).
+/// The HSE approval's four-eyes, checked again at the issue (review of L4-03): an approval recorded
+/// by the permit's author or submitter counts only when it was recorded as a self-approval
+/// (`hse_self_approved`) and the permit's site opted out of four-eyes now — the rule the sync gate
+/// applies (`permit::sync_check::issue_check`). `None`: no approval, or a valid one.
+async fn hse_four_eyes_blocker(db: &impl ConnectionTrait, row: &PermitRow) -> AppResult<Option<IssueBlocker>> {
+    use crate::reliability::study::decisions::SelfApprovalRule;
+    let Some(approver) = row.hse_approved_by_id.filter(|_| row.hse_approved_at.is_some()) else {
+        return Ok(None);
+    };
+    if crate::permit::queries::approver_is_second_person(
+        row.created_by_id.as_ref(),
+        row.submitted_by_id.as_ref(),
+        &approver,
+    ) {
+        return Ok(None);
+    }
+    if row.hse_self_approved == Some(true)
+        && crate::permit::queries::permit_four_eyes_rule(db, row.entity_id).await? == SelfApprovalRule::Allowed
+    {
+        return Ok(None);
+    }
+    Ok(Some(IssueBlocker::new(
+        CODE_HSE_SELF_APPROVAL,
+        &[
+            ("permit", row.code.clone()),
+            ("approver", row.hse_approved_by_name.clone().unwrap_or_default()),
+        ],
+    )))
+}
+
+/// What blocks the issue of the permit now (empty: its content, HSE approval and its four-eyes, gas
+/// test and workers allow it).
 pub async fn issue_blockers(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<Vec<IssueBlocker>> {
     let row = permit_row(db, permit_id).await?;
     let limits = gas_limits(db).await?;
     let hours = gas_validity_hours(db).await?;
     let tests = list_permit_gas_tests(db, permit_id, &limits, row.since()).await?;
     let mut out = blockers_of(&row, &limits, hours, &tests);
+    out.extend(hse_four_eyes_blocker(db, &row).await?);
     out.extend(crate::permit::workers::issue_blockers(db, permit_id).await?);
     Ok(out)
 }
@@ -577,6 +626,7 @@ pub async fn get_permit_safety_content(db: &impl ConnectionTrait, permit_id: i64
     let hours = gas_validity_hours(db).await?;
     let tests = list_permit_gas_tests(db, permit_id, &limits, row.since()).await?;
     let mut issue_blockers = blockers_of(&row, &limits, hours, &tests);
+    issue_blockers.extend(hse_four_eyes_blocker(db, &row).await?);
     issue_blockers.extend(crate::permit::workers::issue_blockers(db, permit_id).await?);
     Ok(PermitSafetyContent {
         permit_id: row.id,

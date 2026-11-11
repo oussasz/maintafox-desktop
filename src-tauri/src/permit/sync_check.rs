@@ -8,6 +8,13 @@
 //!   the work (activation or last reinstatement), and, when its type requires energy isolation, at
 //!   least one isolation; every isolation verified by a second person and no lock removed before that
 //!   moment;
+//! - a permit `closed` or `handed_back` has no personal padlock left on its group lock box (L4-18,
+//!   with the padlock removals received with it: `PERMIT_CLOSED_PERSONAL_LOCKS_ON`); an isolation
+//!   lock is not taken off while one is on (`PERMIT_ISOLATION_PERSONAL_LOCKS_ON`); the workers and
+//!   padlocks themselves are re-checked by `permit::workers_sync`;
+//! - a work order started or resumed while its permit needs a gas test has, at that moment, a
+//!   counting gas test within the limits and the re-test interval (`PERMIT_WO_START_GAS_TEST_INVALID`,
+//!   as `permit::wo_gate::activation_ready` locally);
 //! - a permit `closed` or `handed_back` has every lock removal verified; `handed_back` has a handover
 //!   log that keeps the hand-over rule; `suspended` / `revalidation_required` has an open suspension;
 //! - a handover log (`handover_rule_breach`): the person receiving the permit is not the person who
@@ -22,7 +29,7 @@
 //!   of four-eyes here), and, when it needs a gas test, its latest counting gas test at the issue
 //!   (with those received with it; measured after the permit was raised or last reset, not after
 //!   this PC's future bound) is within the limits and the re-test interval set here; its workers
-//!   (migration 291, L4-05 / L4-06) are inducted when external and hold, on the issue day, the
+//!   (migration 294, L4-05 / L4-06) are inducted when external and hold, on the issue day, the
 //!   qualifications its type requires here;
 //! - a permit becoming `active` that needs a gas test has, at the moment it protects the work, a
 //!   counting gas test within the limits and the re-test interval (`PERMIT_ACTIVE_GAS_TEST_INVALID`);
@@ -74,7 +81,8 @@
 //!   changed it, when (later than the change recorded here) and why, and that person holds the
 //!   settings and permit-issue rights here; the shipped LOTO type's energy-isolation rule is never
 //!   switched off, and a type's code never changes (`inbound_permit_type_check`);
-//! - deletes (this device never deletes them): a permit, its isolations and suspensions only while
+//! - deletes (this device never deletes them): a permit's workers and personal padlocks never; a
+//!   permit, its isolations and suspensions only while
 //!   the permit is a draft (the LOTO history of any other permit is kept); a permit type or a
 //!   qualification requirement never (they are deactivated or edited).
 //!
@@ -274,7 +282,7 @@ async fn issue_gas_and_workers(
         None => None,
     };
     if let Some((c, m)) =
-        crate::permit::workers::received_workers_breach(conn, code, type_id, wo_id, issued.date_naive(), workers)
+        crate::permit::workers::received_workers_breach(conn, code, type_id, wo_id, issued.date_naive(), workers, false)
             .await?
     {
         return conflict(c, m);
@@ -377,7 +385,7 @@ pub(crate) fn field<'a>(p: &'a Payload, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-fn flag(p: &Payload, key: &str) -> bool {
+pub(crate) fn flag(p: &Payload, key: &str) -> bool {
     match p.get(key) {
         Some(Value::Bool(b)) => *b,
         Some(Value::Number(n)) => n.as_i64().is_some_and(|v| v != 0),
@@ -385,7 +393,7 @@ fn flag(p: &Payload, key: &str) -> bool {
     }
 }
 
-fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn time(p: &Payload, key: &str) -> Option<DateTime<Utc>> {
     field(p, key).and_then(instant)
 }
 
@@ -405,7 +413,7 @@ fn hours(p: &Payload, key: &str) -> Hours {
 }
 
 /// Latest time a received row may carry: this device's clock plus the tolerated difference.
-fn future_bound() -> DateTime<Utc> {
+pub(crate) fn future_bound() -> DateTime<Utc> {
     crate::clock::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
 }
 
@@ -548,11 +556,23 @@ pub(crate) fn zero_energy_breach(
 /// `permit::queries::record_permit_isolation_removed`, `force_permit_isolation_removal`,
 /// `acknowledge_forced_removal`, `record_worker_informed`). Judged on the row alone.
 fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, String)> {
-    let applier = field(iso, "applied_by_sync_id");
+    removal_record_breach(iso, &format!("isolation '{point}'"), "applied_by_sync_id", "applied_at")
+}
+
+/// The lock-removal rules of migration 249 on any lock record: an isolation lock (its applier
+/// `applied_by_sync_id`, fitted `applied_at`) or a personal padlock of the group lock box (its owner
+/// `placed_by_sync_id`, placed `placed_at`, `permit::workers_sync`). `lock`: how the messages name it.
+pub(crate) fn removal_record_breach(
+    iso: &Payload,
+    lock: &str,
+    owner_key: &str,
+    fitted_key: &str,
+) -> Option<(&'static str, String)> {
+    let applier = field(iso, owner_key);
     let remover = field(iso, "removed_by_sync_id");
     let removed_at = field(iso, "removed_at");
     let forced = flag(iso, "forced_removal");
-    let invalid = |code: &'static str, what: &str| Some((code, format!("isolation '{point}': {what}")));
+    let invalid = |code: &'static str, what: &str| Some((code, format!("{lock}: {what}")));
     if remover.is_some() != removed_at.is_some() || removed_at.is_some_and(|t| instant(t).is_none()) {
         return invalid(
             "PERMIT_LOCK_REMOVAL_INVALID",
@@ -560,7 +580,7 @@ fn lock_removal_breach(iso: &Payload, point: &str) -> Option<(&'static str, Stri
         );
     }
     let removed = removed_at.and_then(instant);
-    if removed.is_some() && (applier.is_none() || field(iso, "applied_at").is_none()) {
+    if removed.is_some() && (applier.is_none() || field(iso, fitted_key).is_none()) {
         return invalid("PERMIT_ISOLATION_NOT_APPLIED", "lock taken off but never applied");
     }
     if removed.is_some_and(|t| t > future_bound()) {
@@ -980,6 +1000,11 @@ async fn children_with(
             }
         }
         if table == "permit_handover_logs" && handover_rule_breach(&merged).is_some() {
+            continue;
+        }
+        if table == "permit_personal_locks"
+            && crate::permit::workers_sync::personal_lock_breach(&merged, &sid).is_some()
+        {
             continue;
         }
         rows.insert(sid.clone(), merged);
@@ -1763,6 +1788,26 @@ pub(crate) async fn inbound_permit_check(
             }
         }
         "closed" | "handed_back" => {
+            // The group lockout (L4-18): no personal padlock left on the box, the removals received
+            // with the permit counted (applied with it, before its isolations).
+            let padlocks = permit_children(conn, "permit_personal_locks", entity_sync_id).await?;
+            if let Some(why) = padlocks.blocked.clone() {
+                return wait(format!("permit {code}: {why}"));
+            }
+            let on: Vec<&str> = payloads(&padlocks)
+                .iter()
+                .filter(|l| field(l, "removed_at").is_none())
+                .map(|l| field(l, "lock_number").unwrap_or("?"))
+                .collect();
+            if !on.is_empty() {
+                return conflict(
+                    crate::permit::workers_sync::CLOSED_PERSONAL_LOCKS_ON,
+                    format!(
+                        "permit {code} is {to} while personal padlock(s) {} are still on its group lock box",
+                        on.join(", ")
+                    ),
+                );
+            }
             let pending = payloads(&isolations)
                 .iter()
                 .filter(|i| field(i, "removal_verified_at").is_none() && !cancelled_line(i))
@@ -1812,6 +1857,14 @@ pub(crate) async fn permit_group(
     }
     let mut rows = Vec::new();
     if judged {
+        // Padlock removals first: an isolation lock taken off in the group is judged after them.
+        if matches!(to, "closed" | "handed_back") {
+            rows.extend(
+                permit_children(conn, "permit_personal_locks", entity_sync_id)
+                    .await?
+                    .counted,
+            );
+        }
         for table in ["permit_isolations", "permit_suspensions", "permit_handover_logs"] {
             rows.extend(permit_children(conn, table, entity_sync_id).await?.counted);
         }
@@ -2125,6 +2178,19 @@ pub(crate) async fn inbound_isolation_check(
             format!("isolation '{point}': lock taken off while permit {code} is '{current}'"),
         );
     }
+    // The group lockout (L4-18): no isolation lock comes off while a personal padlock is on the box.
+    if changed("removed_at") {
+        if let Some(verdict) = crate::permit::workers_sync::open_padlocks_verdict(
+            conn,
+            crate::permit::workers_sync::PadlocksOf::Permit(permit_sync),
+            crate::permit::workers_sync::ISOLATION_PERSONAL_LOCKS_ON,
+            &format!("isolation '{point}': lock taken off"),
+        )
+        .await?
+        {
+            return Ok(Some(verdict));
+        }
+    }
     lock_record_check(conn, local.as_ref(), &iso, entity_sync_id, permit_sync, &point).await
 }
 
@@ -2168,7 +2234,7 @@ pub(crate) async fn local_user(conn: &impl ConnectionTrait, user_sync_id: &str) 
 /// `ptw.close` of `user_sync` at the site of the permit `permit_sync` here (the rule of
 /// `permit::access::may_receive_handover`, the local saves' check): `Ok(None)` when held, else the
 /// verdict (waiting while the person or their rights may still arrive, else `code`).
-async fn close_right_at_permit(
+pub(crate) async fn close_right_at_permit(
     conn: &impl ConnectionTrait,
     user_sync: &str,
     permit_sync: &str,
@@ -2629,7 +2695,7 @@ pub(crate) async fn inbound_delete_check(
 ) -> AppResult<Option<InboundVerdict>> {
     if matches!(
         entity_type,
-        "qualification_requirements" | "permit_types" | "work_permits"
+        "qualification_requirements" | "permit_types" | "work_permits" | "permit_workers" | "permit_personal_locks"
     ) {
         let held = conn
             .query_one(Statement::from_sql_and_values(
@@ -2647,6 +2713,13 @@ pub(crate) async fn inbound_delete_check(
                 format!(
                     "permit {entity_sync_id} cannot be deleted by synchronisation: a permit is cancelled, never \
                      deleted (its isolation lines and suspensions would be left without it)"
+                ),
+            )
+        } else if entity_type == "permit_workers" || entity_type == "permit_personal_locks" {
+            conflict(
+                "PERMIT_DELETE_REFUSED",
+                format!(
+                    "{entity_type} {entity_sync_id} cannot be deleted by synchronisation: a worker is withdrawn and a padlock taken off, never deleted (the group lockout record is kept)"
                 ),
             )
         } else if entity_type == "permit_types" {
@@ -3966,6 +4039,21 @@ pub(crate) async fn inbound_work_order_check(
         if let Some((c, m)) = isolations_ready(pcode, needs, three_person, &held, at) {
             return conflict(c, m);
         }
+        // The gas part of the gate at that start or resume (`permit::wo_gate::activation_ready`).
+        match type_needs_gas_test(conn, p).await? {
+            None => return wait(format!("permit {pcode}: its permit type is not applied yet")),
+            Some(false) => {}
+            Some(true) => {
+                let gas_tests = permit_children(conn, "permit_gas_tests", permit_sync).await?;
+                if let Some(why) = gas_tests.blocked.clone() {
+                    return wait(format!("work order {code}: permit {pcode}: {why}"));
+                }
+                let when = format!("used by work order {code} started or resumed");
+                if let Some((_, m)) = gas_verdict(conn, p, pcode, &payloads(&gas_tests), at, &when).await? {
+                    return conflict("PERMIT_WO_START_GAS_TEST_INVALID", m);
+                }
+            }
+        }
     }
     if live_at_start == 0 && flag(&wo, "requires_permit") {
         return conflict(
@@ -4037,7 +4125,7 @@ pub(crate) async fn work_order_group(
     // applies them itself first (they are then skipped here); those of a permit already here are
     // applied here.
     for (permit_sync, _) in &permits.rows {
-        for table in ["permit_isolations", "permit_suspensions"] {
+        for table in ["permit_isolations", "permit_suspensions", "permit_gas_tests"] {
             rows.extend(permit_children(conn, table, permit_sync).await?.counted);
         }
     }

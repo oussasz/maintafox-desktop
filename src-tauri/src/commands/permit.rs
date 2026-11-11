@@ -563,7 +563,7 @@ pub async fn record_permit_gas_test(
     safety_content::record_permit_gas_test(&state.db, input, i64::from(user.user_id)).await
 }
 
-// ── Workers and personal padlocks (L4-05, L4-06, L4-18, migration 291) ────────────────────────────
+// ── Workers and personal padlocks (L4-05, L4-06, L4-18, migration 294) ────────────────────────────
 
 /// The workers of a permit and the padlocks on its group lock box: read with the permit view right
 /// at its site, or with the narrow padlock right there (a worker without other permit rights sees
@@ -659,6 +659,55 @@ pub async fn force_remove_permit_lock(
     require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
     crate::require_step_up!(state);
     workers::force_remove_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Who may be named to take off an absent worker's padlock (active accounts other than the person
+/// asking and the padlock's owner): the close right at the permit's site.
+#[tauri::command]
+pub async fn list_permit_padlock_removers(
+    lock_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+    state: State<'_, AppState>,
+) -> AppResult<queries::HandoverReceiverPage> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    workers::list_padlock_removers(&state.db, i64::from(user.user_id), lock_id, search, limit, offset).await
+}
+
+/// The owner of a padlock removed by force acknowledges it (the session only: the save refuses
+/// anyone but the padlock's owner), as for an isolation lock.
+#[tauri::command]
+pub async fn acknowledge_forced_padlock_removal(
+    lock_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    workers::acknowledge_forced_padlock_removal(&state.db, lock_id, i64::from(user.user_id)).await
+}
+
+/// The owner of a padlock removed by force was told, recorded by the session user (the close right
+/// at the permit's site).
+#[tauri::command]
+pub async fn record_padlock_worker_informed(
+    input: workers::PersonalLockInformedInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    workers::record_padlock_worker_informed(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "Mes cadenas" (L4-18): the permits, at the sites where the session user holds the narrow padlock
+/// right, on which they are a listed worker, with their workers and padlocks.
+#[tauri::command]
+pub async fn list_my_padlock_permits(state: State<'_, AppState>) -> AppResult<Vec<workers::MyPadlockPermit>> {
+    let user = require_session!(state);
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN).await?;
+    workers::list_my_padlock_permits(&state.db, &scope, i64::from(user.user_id)).await
 }
 
 /// The isolation points of the permit's equipment, proposed on its isolation form (read with the

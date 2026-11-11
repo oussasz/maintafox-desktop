@@ -517,13 +517,22 @@
     },
     "force": {
       "open": "Forced removal (owner absent)",
-      "reason": "Reason for the forced removal",
-      "attest": "I attest that the worker is not on site",
-      "confirm": "Remove the padlock",
-      "stepUpHint": "Your password will be asked.",
-      "forced": "Removed by force: {{reason}}"
+      "forced": "Removed by force: {{reason}}",
+      "point": "personal padlock {{lock}}"
     },
     "history": "Padlocks removed",
-    "removedAt": "Padlock {{lock}} of {{name}} removed on {{date}} by {{by}}"
+    "removedAt": "Padlock {{lock}} of {{name}} removed on {{date}} by {{by}}",
+    "told": {
+      "pending": "Padlock {{lock}} of {{name}} removed by force (authorised by {{by}}): the worker must be told before placing a padlock.",
+      "acknowledge": "I was told of the removal of my padlock",
+      "method": "How they were told",
+      "record": "Worker told"
+    }
+  },
+  "myPadlocks": {
+    "title": "My padlocks",
+    "hint": "The permits you work under: place your padlock on the group lock box before working, remove it when you leave.",
+    "empty": "You are not a worker on any permit in progress.",
+    "loadError": "Your permits could not be loaded"
   }
 }

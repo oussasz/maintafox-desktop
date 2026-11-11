@@ -259,7 +259,17 @@
       "PERMIT_ISSUE_GAS_TEST_EXPIRED": "Un permis délivré sur un autre poste sur un test atmosphérique plus ancien que la durée de validité fixée ici",
       "PERMIT_ACTIVE_GAS_TEST_INVALID": "Un permis activé sur un autre poste sans test atmosphérique valable (manquant, périmé ou hors limites) au moment de l'activation",
       "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "Un permis délivré sur un autre poste avec un intervenant extérieur sans accueil sécurité",
-      "PERMIT_ISSUE_WORKER_QUALIFICATION": "Un permis délivré sur un autre poste avec un intervenant sans les habilitations valables exigées par son type"
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "Un permis délivré sur un autre poste avec un intervenant sans les habilitations valables exigées par son type",
+      "PERMIT_PERSONAL_LOCK_RECORD_CHANGED": "La pose, le retrait d'un cadenas personnel ou l'information de son propriétaire, connus ici, ont été modifiés",
+      "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID": "Un cadenas personnel posé sans qui ni quand, ou à une heure illisible ou future",
+      "PERMIT_PERSONAL_LOCK_NOT_OWNER": "Un cadenas personnel posé par une autre personne que l'intervenant de sa ligne",
+      "PERMIT_WORKER_RECORD_CHANGED": "L'identité, l'accueil sécurité ou le retrait d'un intervenant de permis, connus ici, ont été modifiés",
+      "PERMIT_WORKER_WITHDRAWN_LOCK_ON": "Un intervenant retiré du permis alors que son cadenas est encore sur la boîte de consignation ici",
+      "PERMIT_ISOLATION_PERSONAL_LOCKS_ON": "Un cadenas d'isolement retiré alors qu'un cadenas personnel est encore sur la boîte de consignation ici",
+      "PERMIT_CLOSED_PERSONAL_LOCKS_ON": "Un permis clôturé ou restitué sur un autre poste alors qu'un cadenas personnel est encore sur sa boîte de consignation ici",
+      "PERMIT_WORKER_ADDED_INDUCTION_MISSING": "Un intervenant extérieur ajouté après la délivrance, sans accueil sécurité",
+      "PERMIT_WORKER_ADDED_QUALIFICATION": "Un intervenant ajouté après la délivrance sans les habilitations valables exigées par le type du permis",
+      "PERMIT_WO_START_GAS_TEST_INVALID": "Un OT démarré ou repris sur un autre poste alors que le test atmosphérique de son permis n'était pas valable (manquant, périmé ou hors limites)"
     },
     "history": {
       "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
@@ -592,7 +602,8 @@
     "profile": "Mon profil",
     "help": "Aide & Documentation",
     "reports": "Rapports",
-    "admin": "Administration"
+    "admin": "Administration",
+    "myPadlocks": "Mes cadenas"
   },
   "notFound": {
     "title": "Cette page n'existe pas",

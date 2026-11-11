@@ -5,6 +5,12 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import {
+  PermitHandoverReceiverPageSchema,
+  type WorkPermitRecord,
+  WorkPermitSchema,
+} from "@/services/permit-service";
+import type { PermitHandoverReceiverPage } from "@shared/ipc-types";
 
 const IssueBlockerSchema = z.object({
   /** A `GATE_` code translated under `errors:gateError`. */
@@ -26,6 +32,19 @@ const PermitPersonalLockSchema = z.object({
   removed_at: z.string().nullable(),
   forced_removal: z.boolean(),
   forced_reason: z.string().nullable(),
+  /** The `ptw.close` holder who authorised the forced removal (migration 249's process). */
+  forced_authorized_by_id: z.number().nullable(),
+  forced_authorized_by_name: z.string().nullable(),
+  forced_worker_absent: z.boolean(),
+  forced_contact_attempts: z.array(
+    z.object({ at: z.string(), method: z.string(), result: z.string() }),
+  ),
+  /** The owner told of the forced removal (their acknowledgement, or a `ptw.close` holder). */
+  informed_by_id: z.number().nullable(),
+  informed_by_name: z.string().nullable(),
+  informed_at: z.string().nullable(),
+  informed_method: z.string().nullable(),
+  informed_in_app: z.boolean(),
   row_version: z.number(),
 });
 
@@ -124,12 +143,59 @@ export async function removeMyPermitLock(input: {
   return PermitWorkersViewSchema.parse(raw);
 }
 
+/** An absent worker's padlock: a named person takes it off on the signed-in user's authority. */
 export async function forceRemovePermitLock(input: {
   lock_id: number;
   expected_row_version: number;
+  removed_by_id: number;
   reason: string;
   worker_absent_attested: boolean;
+  contact_attempts: { at: string; method: string; result: string }[];
 }): Promise<PermitWorkersView> {
   const raw = await invoke<unknown>("force_remove_permit_lock", { input });
   return PermitWorkersViewSchema.parse(raw);
+}
+
+/** Who may be named to take off an absent worker's padlock (not its owner, not the asker). */
+export async function listPermitPadlockRemovers(
+  lockId: number,
+  search: string | null,
+): Promise<PermitHandoverReceiverPage> {
+  const raw = await invoke<unknown>("list_permit_padlock_removers", {
+    lockId,
+    search: search && search.trim() ? search.trim() : null,
+    limit: null,
+    offset: null,
+  });
+  return PermitHandoverReceiverPageSchema.parse(raw);
+}
+
+/** The owner acknowledges the forced removal of their padlock (the session: server-checked). */
+export async function acknowledgeForcedPadlockRemoval(lockId: number): Promise<PermitWorkersView> {
+  const raw = await invoke<unknown>("acknowledge_forced_padlock_removal", { lockId });
+  return PermitWorkersViewSchema.parse(raw);
+}
+
+/** A `ptw.close` holder records that the owner of a padlock removed by force was told. */
+export async function recordPadlockWorkerInformed(input: {
+  lock_id: number;
+  expected_row_version: number;
+  method: string;
+  informed_at: string | null;
+}): Promise<PermitWorkersView> {
+  const raw = await invoke<unknown>("record_padlock_worker_informed", { input });
+  return PermitWorkersViewSchema.parse(raw);
+}
+
+export interface MyPadlockPermit {
+  permit: WorkPermitRecord;
+  workers: PermitWorkersView;
+}
+
+/** "Mes cadenas": the permits the signed-in user works under, where they hold `ptw.lock_own`. */
+export async function listMyPadlockPermits(): Promise<MyPadlockPermit[]> {
+  const raw = await invoke<unknown>("list_my_padlock_permits");
+  // Built here: the permit schema is read when the list is asked for.
+  const schema = z.array(z.object({ permit: WorkPermitSchema, workers: PermitWorkersViewSchema }));
+  return schema.parse(raw);
 }

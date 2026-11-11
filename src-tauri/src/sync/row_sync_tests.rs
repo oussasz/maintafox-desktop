@@ -429,6 +429,16 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         .await;
         *row = created_row(&a, row.entity_type, row.rowid).await.expect("verification");
     }
+    // A personal padlock is placed by the worker of its line (`permit::workers_sync`): the generic
+    // placer's account is linked to the card of the padlock's worker.
+    for row in created.iter().filter(|r| r.entity_type == "permit_personal_locks") {
+        exec(
+            &a,
+            "UPDATE user_accounts SET personnel_id = (SELECT pw.personnel_id FROM permit_personal_locks pl JOIN permit_workers pw ON pw.id = pl.worker_id WHERE pl.rowid = ?) WHERE id = (SELECT placed_by_id FROM permit_personal_locks WHERE rowid = ?)",
+            vec![row.rowid.into(), row.rowid.into()],
+        )
+        .await;
+    }
     // Personal rows travel only to devices where their owner is signed in or trusted: they are
     // given to the seeded administrator (same identity on A and B), who is trusted on B. All rows
     // of personal tables move (a personal row's personal parent belongs to the same person); a
@@ -515,6 +525,7 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
     // History rows are never deleted (append-only; sync refuses such deletes, see
     // `append_only_rows_are_never_deleted_by_sync`); media attachments are the exception. Permits
     // past draft with its isolations and suspensions, permit types and qualification requirements
+    // and the workers and personal padlocks of permits (withdrawn and taken off, never deleted)
     // are not deleted either (`permit::sync_check::inbound_delete_check`; the generic rows carry no
     // real permit status).
     let created: Vec<_> = created
@@ -527,6 +538,8 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
                 "permit_suspensions",
                 "permit_types",
                 "qualification_requirements",
+                "permit_workers",
+                "permit_personal_locks",
             ]
             .contains(&row.entity_type)
         })

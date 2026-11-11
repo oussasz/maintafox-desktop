@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import enPermits from "@/i18n/locale-data/en/permits.json";
 import type { WorkPermitRecord } from "@/services/permit-service";
-import type { PermitWorker, PermitWorkersView } from "@/services/permit-workers-service";
+import type {
+  PermitPersonalLock,
+  PermitWorker,
+  PermitWorkersView,
+} from "@/services/permit-workers-service";
 
 import { PermitWorkersPanel } from "../PermitWorkersPanel";
 
@@ -38,6 +42,14 @@ const svc = vi.hoisted(() => ({
   placeMyPermitLock: vi.fn(),
   removeMyPermitLock: vi.fn(),
   forceRemovePermitLock: vi.fn(),
+  listPermitPadlockRemovers: vi.fn(),
+  acknowledgeForcedPadlockRemoval: vi.fn(),
+  recordPadlockWorkerInformed: vi.fn(),
+}));
+vi.mock("@/services/permit-service", () => ({
+  listPermitContactMethods: vi.fn().mockResolvedValue([]),
+  forcePermitIsolationRemoval: vi.fn(),
+  listPermitLockRemovers: vi.fn(),
 }));
 vi.mock("@/services/permit-workers-service", () => svc);
 vi.mock("@/services/personnel-service", () => ({
@@ -146,5 +158,49 @@ describe("PermitWorkersPanel", () => {
     expect(screen.getByTestId("permit-worker-blockers")).toBeTruthy();
     expect(screen.queryByRole("button", { name: enPermits.workers.myLock.place })).toBeNull();
     expect(screen.getByRole("button", { name: enPermits.workers.recordInduction })).toBeTruthy();
+  });
+
+  it("asks the owner of a padlock removed by force to acknowledge it before placing again", async () => {
+    const forced: PermitPersonalLock = {
+      id: 9,
+      entity_sync_id: "l9",
+      permit_id: 41,
+      worker_id: 7,
+      lock_number: "C-12",
+      placed_by_id: 2,
+      placed_by_name: "Omar Mechanic",
+      placed_at: "2026-11-11T08:00:00Z",
+      removed_by_id: 5,
+      removed_by_name: "Remover",
+      removed_at: "2026-11-11T18:00:00Z",
+      forced_removal: true,
+      forced_reason: "Left the site without removing the padlock",
+      forced_authorized_by_id: 4,
+      forced_authorized_by_name: "Shift lead",
+      forced_worker_absent: true,
+      forced_contact_attempts: [
+        { at: "2026-11-11T17:50:00Z", method: "PHONE", result: "No answer" },
+      ],
+      informed_by_id: null,
+      informed_by_name: null,
+      informed_at: null,
+      informed_method: null,
+      informed_in_app: false,
+      row_version: 2,
+    };
+    svc.listPermitWorkers.mockResolvedValue({ ...view([worker()]), locks: [forced] });
+    svc.acknowledgeForcedPadlockRemoval.mockResolvedValue(view([worker()]));
+    render(
+      <PermitWorkersPanel
+        permit={PERMIT}
+        canIssue={false}
+        canClose={false}
+        canLockOwn
+        onChanged={vi.fn()}
+      />,
+    );
+    await screen.findByTestId("permit-lock-untold");
+    fireEvent.click(screen.getByRole("button", { name: enPermits.workers.told.acknowledge }));
+    await waitFor(() => expect(svc.acknowledgeForcedPadlockRemoval).toHaveBeenCalledWith(9));
   });
 });

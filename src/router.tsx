@@ -44,6 +44,9 @@ const InspectionsPage = lazy(() =>
     default: m.InspectionsPage,
   })),
 );
+const MyPadlocksPage = lazy(() =>
+  import("@/pages/MyPadlocksPage").then((m) => ({ default: m.MyPadlocksPage })),
+);
 const TrainingPage = lazy(() =>
   import("@/pages/TrainingPage").then((m) => ({ default: m.TrainingPage })),
 );
@@ -245,6 +248,11 @@ const routes: RouteObject[] = [
                   {
                     element: <PermissionRoute permission={P.PTW_VIEW} />,
                     children: [{ path: "permits", element: <PermitsPage /> }],
+                  },
+                  {
+                    // "Mes cadenas" (L4-18): reachable with the narrow padlock right alone.
+                    element: <PermissionRoute permission={P.PTW_LOCK_OWN} />,
+                    children: [{ path: "my-padlocks", element: <MyPadlocksPage /> }],
                   },
                   {
                     element: <PermissionRoute permission={P.INS_VIEW} />,

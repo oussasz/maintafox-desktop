@@ -1,4 +1,4 @@
-//! Migration 291 — the people working under a work permit and their personal padlocks on its group
+//! Migration 294 — the people working under a work permit and their personal padlocks on its group
 //! lock box (L4-05, L4-06, L4-18).
 //!
 //! - `permit_workers` (new synced table): one person on a permit, either a personnel record
@@ -9,7 +9,12 @@
 //!   when; withdrawn (never deleted) when the person leaves the permit.
 //! - `permit_personal_locks` (new synced table): a worker's personal padlock on the permit's group
 //!   lock box (the box holding the keys of the isolation locks). Placed and removed by its owner
-//!   (`ptw.lock_own`), or removed by force by a `ptw.close` holder when the owner is absent.
+//!   (`ptw.lock_own`), or removed by force when the owner is absent, with the record of the
+//!   isolation locks' forced removal (migration 249): a `ptw.close` holder authorises
+//!   (`forced_authorized_by_id`) a named person (`removed_by_id`) to take it off, with a reason, the
+//!   attestation that the worker is not on site (`forced_worker_absent`) and the attempts made to
+//!   reach them (`forced_contact_attempts_json`); the worker is then told (`informed_by_id`,
+//!   `informed_at`, `informed_method`, `informed_in_app`) before they place a padlock again.
 //!
 //! - `work_permits` gains `safety_reset_at` (nullable: when its HSE approval was last cleared and its
 //!   earlier gas tests stopped counting, after a return to draft or a change of equipment or site) and
@@ -26,9 +31,26 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m20261111_000291_permit_workers"
+        "m20261111_000294_permit_workers"
     }
 }
+
+/// The forced-removal record of a personal padlock (the columns of `permit_isolations`, migration 249).
+const LOCK_COLUMNS: &[(&str, &str)] = &[
+    ("forced_authorized_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
+    (
+        "forced_worker_absent",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (forced_worker_absent IN (0, 1))",
+    ),
+    ("forced_contact_attempts_json", "TEXT NULL"),
+    ("informed_by_id", "INTEGER NULL REFERENCES user_accounts(id)"),
+    ("informed_at", "TEXT NULL"),
+    ("informed_method", "TEXT NULL"),
+    (
+        "informed_in_app",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (informed_in_app IN (0, 1))",
+    ),
+];
 
 const PERMIT_COLUMNS: &[(&str, &str)] = &[
     ("safety_reset_at", "TEXT NULL"),
@@ -109,6 +131,20 @@ impl MigrationTrait for Migration {
             "CREATE INDEX IF NOT EXISTS idx_permit_personal_locks_open ON permit_personal_locks(permit_id) WHERE removed_at IS NULL",
         )
         .await?;
+        for (column, ddl) in LOCK_COLUMNS {
+            let exists = txn
+                .query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT 1 AS ok FROM pragma_table_info('permit_personal_locks') WHERE name = ?",
+                    [(*column).into()],
+                ))
+                .await?
+                .is_some();
+            if !exists {
+                txn.execute_unprepared(&format!("ALTER TABLE permit_personal_locks ADD COLUMN {column} {ddl}"))
+                    .await?;
+            }
+        }
         txn.commit().await
     }
 
@@ -149,6 +185,10 @@ mod tests {
             ("permit_personal_locks", "worker_id"),
             ("permit_personal_locks", "removed_at"),
             ("permit_personal_locks", "forced_removal"),
+            ("permit_personal_locks", "forced_authorized_by_id"),
+            ("permit_personal_locks", "forced_contact_attempts_json"),
+            ("permit_personal_locks", "informed_at"),
+            ("permit_personal_locks", "informed_in_app"),
             ("work_permits", "safety_reset_at"),
             ("work_permits", "hse_self_approved"),
         ] {
