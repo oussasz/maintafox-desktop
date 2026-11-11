@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 use crate::settings::site::{InboundVerdict, MAX_CLOCK_SKEW_MINUTES};
-use crate::wo::depannage::CODE_NOT_A_DEPANNAGE;
 use crate::wo::domain::WorkOrder;
 use crate::wo::queries::get_work_order;
 use crate::wo::workflow::transition::{check_concurrency, load_wo_status};
@@ -64,7 +63,7 @@ pub async fn validate_depannage(db: &DatabaseConnection, input: WoDepannageValid
         })?;
     if !current.is_depannage {
         return Err(AppError::ValidationFailed(vec![format!(
-            "{CODE_NOT_A_DEPANNAGE}: Cet OT n'est pas un dépannage."
+            "GATE_WO_DEPANNAGE_NOT_A_DEPANNAGE: Cet OT n'est pas un dépannage."
         )]));
     }
     if current.validated_by_id.is_some() || current.validation_auto_approved == Some(true) {
