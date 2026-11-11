@@ -593,7 +593,7 @@
   },
   "backupDest": {
     "title": "Copy outside this PC",
-    "description": "If this PC fails or is stolen, only copies kept elsewhere bring the data back. Choose an external disk, a USB key or a network folder: automatic backups are written there. When it cannot be reached (disk unplugged, network down), the backup is made on this PC and the alert below says so.",
+    "description": "If this PC fails or is stolen, only copies kept elsewhere bring the data back. Choose an external disk (not another partition of this disk), a USB key or a network folder: automatic backups are written there. When it cannot be reached (disk unplugged, network down), the backup is made on this PC and the alert below says so.",
     "loadError": "Could not read the backup status",
     "outsideNone": "No backup has been copied outside this PC yet. Choose an external folder or run a backup to a USB key.",
     "outsideOld": "Last copy outside this PC: {{date}}, more than {{days}} days ago. Check that the external folder is plugged in or reachable.",

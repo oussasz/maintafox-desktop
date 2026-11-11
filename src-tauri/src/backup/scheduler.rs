@@ -4,15 +4,15 @@
 //!   5-field form (`0 2 * * *`) and the `cron` crate's 6/7-field form (seconds first) are accepted.
 //! - A run is due when a scheduled time has passed since the last successful scheduled backup, so
 //!   a backup missed while the app was closed runs at the next tick.
-//! - Output: `maintafox-YYYYMMDD-HHMMSS.db` in this PC's external backup folder when one is set and
+//! - Output: `maintafox-<PC>-YYYYMMDD-HHMMSS.db` in this PC's external backup folder when one is set and
 //!   reachable (`destination`), else in `<app_data_dir>/backups/`, recorded with
 //!   `trigger = 'scheduled'`. A failure is recorded as a `failed` run and retried after
 //!   `RETRY_AFTER_FAILURE`.
 //! - Retention: grandfather-father-son over the `backup.retention_daily/weekly/monthly` settings.
 //!   Only scheduled backup files inside the backup folder are ever deleted. Retention applies to
 //!   each folder (application folder and external folder) on its own.
-//! - The file name carries the PC's name, so PCs sharing one network folder never prune each
-//!   other's files.
+//! - The file name carries the PC's name, so two PCs sharing one network folder never write the
+//!   same file at the same second. Each PC only prunes the files of its own `backup_runs`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

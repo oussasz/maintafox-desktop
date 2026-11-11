@@ -125,7 +125,7 @@ pub fn check_external_dir(path: &Path, app_data_dir: &Path) -> AppResult<PathBuf
     if is_inside(&canonical, &app_canonical) || !is_outside(&canonical, &app_canonical) {
         return Err(refuse(
             "GATE_BACKUP_DIR_SAME_DISK",
-            "ce dossier est sur le disque de l'application : choisissez un autre disque, une clé USB ou un dossier réseau.",
+            "ce dossier est sur le disque de l'application : choisissez un autre disque physique, une clé USB ou un dossier réseau.",
         ));
     }
     // A new file of its own (never an existing file or link of the share), then removed.

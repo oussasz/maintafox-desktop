@@ -593,7 +593,7 @@
   },
   "backupDest": {
     "title": "Copie hors de ce PC",
-    "description": "Si ce PC tombe en panne ou est volé, seules les copies rangées ailleurs permettent de retrouver les données. Choisissez un disque externe, une clé USB ou un dossier réseau : les sauvegardes automatiques y seront écrites. S'il est inaccessible (disque débranché, réseau coupé), la sauvegarde est faite sur ce PC et l'alerte ci-dessous le signale.",
+    "description": "Si ce PC tombe en panne ou est volé, seules les copies rangées ailleurs permettent de retrouver les données. Choisissez un disque externe (pas une autre partition de ce disque), une clé USB ou un dossier réseau : les sauvegardes automatiques y seront écrites. S'il est inaccessible (disque débranché, réseau coupé), la sauvegarde est faite sur ce PC et l'alerte ci-dessous le signale.",
     "loadError": "Impossible de lire l'état des sauvegardes",
     "outsideNone": "Aucune sauvegarde n'a encore été copiée hors de ce PC. Choisissez un dossier externe ou lancez une sauvegarde vers une clé USB.",
     "outsideOld": "Dernière copie hors de ce PC : {{date}}, il y a plus de {{days}} jours. Vérifiez que le dossier externe est branché ou accessible.",
