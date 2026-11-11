@@ -34,6 +34,7 @@ pub mod registry_metrics;
 pub mod search;
 pub mod spare_parts;
 pub mod taxonomy_reference;
+pub mod transfer;
 pub mod tree;
 
 #[cfg(test)]
@@ -50,6 +51,8 @@ mod import_tests;
 mod lifecycle_tests;
 #[cfg(test)]
 mod meters_tests;
+#[cfg(test)]
+mod transfer_tests;
 #[cfg(test)]
 mod tree_tests;
 #[cfg(test)]
