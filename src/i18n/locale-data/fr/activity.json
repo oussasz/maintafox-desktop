@@ -245,6 +245,7 @@
       "wo__emergency_reassigned": "OT réaffecté en urgence",
       "wo__depannage_started": "OT dépannage créé et démarré",
       "wo__depannage_waiting_permit": "OT dépannage créé, en attente de permis",
+      "wo__joined": "OT rejoint (main-d'œuvre démarrée)",
       "wo__breakdown_at_changed": "Date de constat de la panne modifiée",
       "wo__depannage_validated": "Dépannage validé",
       "wo__started": "Travaux de l'OT démarrés",
@@ -261,7 +262,15 @@
       "wo__service_cost_updated": "Coût de prestation de l'OT modifié",
       "wo__shutdown_required_set": "OT marqué « nécessite un arrêt »",
       "wo__shutdown_required_cleared": "« Nécessite un arrêt » retiré de l'OT",
-      "entitlement__envelope_applied": "Enveloppe de droits appliquée"
+      "entitlement__envelope_applied": "Enveloppe de droits appliquée",
+      "permit__hse_approved": "Approbation HSE du permis enregistrée",
+      "permit__gas_test_recorded": "Test atmosphérique du permis enregistré",
+      "permit__worker_added": "Intervenant ajouté au permis",
+      "permit__worker_inducted": "Accueil sécurité d'un intervenant enregistré",
+      "permit__worker_withdrawn": "Intervenant retiré du permis",
+      "permit__personal_lock_placed": "Cadenas personnel posé sur la boîte de consignation",
+      "permit__personal_lock_removed": "Cadenas personnel retiré",
+      "permit__personal_lock_forced_removal": "Cadenas personnel retiré de force (propriétaire absent)"
     },
     "module": {
       "none": "Sans module",

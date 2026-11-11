@@ -8,6 +8,37 @@
   "criticalityReview": {
     "hint": "Criticité reprise de l'ancienne liste de criticité : un planificateur doit la fixer dans l'onglet Criticité."
   },
+  "transfer": {
+    "action": "Transférer",
+    "title": "Transférer l'équipement",
+    "description": "{{code}} quitte {{from}} pour une autre unité de l'organisation (ligne, atelier, site). Le transfert est enregistré dans l'historique avec le motif, la date et votre nom.",
+    "noLocation": "Aucune unité",
+    "target": "Unité de destination",
+    "targetHint": "Seules les unités où vous gérez les équipements sont proposées.",
+    "targetPlaceholder": "Choisir une unité…",
+    "targetRequired": "Choisissez l'unité de destination.",
+    "noDestination": "Aucune autre unité ne peut recevoir cet équipement dans votre périmètre.",
+    "date": "Date d'effet",
+    "dateRequired": "Indiquez une date d'effet valide (pas dans le futur).",
+    "reason": "Motif du transfert",
+    "reasonRequired": "Indiquez le motif du transfert.",
+    "impact": {
+      "title": "Restent rattachés à l'équipement",
+      "none": "Aucun plan préventif actif, aucune pièce de rechange et aucun OT ouvert sur cet équipement.",
+      "pmPlans_one": "{{count}} plan préventif actif",
+      "pmPlans_other": "{{count}} plans préventifs actifs",
+      "spareParts_one": "{{count}} ligne de pièces de rechange (dont {{critical}} critique)",
+      "spareParts_other": "{{count}} lignes de pièces de rechange (dont {{critical}} critiques)",
+      "openWo_one": "{{count}} OT non clôturé",
+      "openWo_other": "{{count}} OT non clôturés",
+      "notChanged": "Rien n'est arrêté ni réaffecté automatiquement : vérifiez-les après le transfert."
+    },
+    "cancel": "Annuler",
+    "confirm": "Transférer",
+    "done": "{{code}} transféré vers {{to}}.",
+    "editHint": "L'unité se change par « Transférer » : motif, date et historique.",
+    "saveEditFirst": "Enregistrez ou annulez d'abord vos modifications."
+  },
   "recommission": {
     "action": "Remettre en service",
     "title": "Remettre l'équipement en service ?",
@@ -67,7 +98,7 @@
       "parentEquipment": "Équipement parent",
       "criticality": "Criticité",
       "status": "Statut",
-      "site": "Site",
+      "site": "Unité d'organisation",
       "entity": "Entité",
       "manufacturer": "Fabricant",
       "model": "Modèle",
@@ -93,6 +124,7 @@
       "documents": "Documents et photos",
       "criticality": "Criticité",
       "history": "Historique",
+      "isolation": "Points d'isolement",
       "repeatFailures": "Pannes répétitives"
     }
   },
@@ -137,6 +169,7 @@
     "more": "Plus d'actions"
   },
   "history": {
+    "orgMove": "De {{from}} vers {{to}}",
     "noRightToOpen": "Vous n'avez pas le droit d'ouvrir cet élément.",
     "loadError": "Impossible de charger l'historique de cet équipement",
     "partial": "Les {{count}} événements les plus récents sont affichés ; des événements plus anciens peuvent exister.",
@@ -985,6 +1018,30 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Indiquez le motif de la remise en service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choisissez un statut en service : un statut retiré n'est pas une remise en service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Rechargez l'équipement avant de le remettre en service."
+  },
+  "isolationPoints": {
+    "title": "Points d'isolement",
+    "description": "Où les énergies de cet équipement sont isolées. Ils sont proposés sur chaque permis de travail établi pour l'équipement.",
+    "empty": "Aucun point d'isolement défini.",
+    "add": "Ajouter un point",
+    "edit": "Modifier",
+    "deactivate": "Désactiver",
+    "reactivate": "Réactiver",
+    "inactive": "Désactivé",
+    "showInactive": "Afficher les points désactivés",
+    "code": "Code",
+    "label": "Libellé",
+    "energy": "Type d'énergie",
+    "method": "Méthode / dispositif d'isolement",
+    "normalState": "État normal",
+    "normalStatePlaceholder": "ex. fermé, sous tension",
+    "listsHint": "Types d'énergie et méthodes : Données de référence (listes des permis).",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "dialogTitleNew": "Nouveau point d'isolement",
+    "dialogTitleEdit": "Modifier le point d'isolement",
+    "required": "Ce champ est obligatoire.",
+    "optionsError": "Les listes de types d'énergie et de méthodes n'ont pas pu être lues."
   },
   "characteristics": {
     "title": "Caractéristiques techniques",

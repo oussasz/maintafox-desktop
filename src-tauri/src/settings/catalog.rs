@@ -116,6 +116,91 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // ── Work permits ────────────────────────────────────────────────────────────────────────
+    // Acceptance limits of a permit's gas test (L4-04, migration 290): a permit that needs a gas
+    // test is issued only when its latest reading is within them (`permit::safety_content`).
+    // Shipped values: the usual confined-space limits (O2 19.5-23.5 %, LEL < 10 %, H2S < 10 ppm,
+    // CO < 25 ppm). Safety values: a change needs a step-up and a reason.
+    // Lowest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MIN,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"19.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Highest oxygen reading accepted (%, inclusive).
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_O2_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"23.5",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Flammable gas (% of the lower explosive limit): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_LEL_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 100_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Hydrogen sulphide (ppm): a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_H2S_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"10",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 1_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Carbon monoxide (ppm), when measured: a reading must stay below it.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_CO_MAX,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"25",
+        kind: SettingKind::Decimal {
+            min_millionths: 0,
+            max_millionths: 10_000_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
+    // Re-test interval of a gas test (hours; CMMS Advisor 2026-11-11): a reading older than this is
+    // out of date at the issue, the activation, the reinstatement and each start or resume of the
+    // work. Shipped value 4 h; between a quarter of an hour and 24 h.
+    SettingDefinition {
+        key: crate::permit::safety_content::SETTING_GAS_VALIDITY_HOURS,
+        category: "permits",
+        scope: "tenant",
+        shipped_value_json: r"4",
+        kind: SettingKind::Decimal {
+            min_millionths: 250_000,
+            max_millionths: 24_000_000,
+        },
+        editor: SettingEditor::Section,
+        risk: "high",
+    },
     // ── Inventory ───────────────────────────────────────────────────────────────────────────
     // Four-eyes tolerance of a stock count variance (D11, migration 259): above it ("critique"), the
     // variance is approved by someone other than the counter. Above = any threshold set is exceeded

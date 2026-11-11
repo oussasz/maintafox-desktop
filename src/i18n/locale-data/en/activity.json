@@ -245,6 +245,7 @@
       "wo__emergency_reassigned": "Work order emergency reassigned",
       "wo__depannage_started": "Breakdown work order created and started",
       "wo__depannage_waiting_permit": "Breakdown work order created, waiting for its permit",
+      "wo__joined": "Work order joined (own labour started)",
       "wo__breakdown_at_changed": "Breakdown time changed",
       "wo__depannage_validated": "Breakdown validated",
       "wo__started": "Work order started",
@@ -261,7 +262,15 @@
       "wo__service_cost_updated": "Work order service cost updated",
       "wo__shutdown_required_set": "Work order flagged as needing a shutdown",
       "wo__shutdown_required_cleared": "Work order no longer needs a shutdown",
-      "entitlement__envelope_applied": "Entitlement envelope applied"
+      "entitlement__envelope_applied": "Entitlement envelope applied",
+      "permit__hse_approved": "Permit HSE approval recorded",
+      "permit__gas_test_recorded": "Permit atmospheric test recorded",
+      "permit__worker_added": "Worker added to the permit",
+      "permit__worker_inducted": "Worker safety induction recorded",
+      "permit__worker_withdrawn": "Worker withdrawn from the permit",
+      "permit__personal_lock_placed": "Personal padlock placed on the group lock box",
+      "permit__personal_lock_removed": "Personal padlock removed",
+      "permit__personal_lock_forced_removal": "Personal padlock removed by force (owner absent)"
     },
     "module": {
       "none": "No module",

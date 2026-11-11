@@ -8,6 +8,37 @@
   "criticalityReview": {
     "hint": "Criticality taken from the old criticality list: a planner should set it in the Criticality tab."
   },
+  "transfer": {
+    "action": "Transfer",
+    "title": "Transfer the asset",
+    "description": "{{code}} leaves {{from}} for another unit of the organisation (line, workshop, site). The transfer is recorded in the history with the reason, the date and your name.",
+    "noLocation": "No unit",
+    "target": "Destination unit",
+    "targetHint": "Only units where you manage equipment are offered.",
+    "targetPlaceholder": "Choose a unit…",
+    "targetRequired": "Choose the destination unit.",
+    "noDestination": "No other unit in your scope can receive this asset.",
+    "date": "Effective date",
+    "dateRequired": "Give a valid effective date (not in the future).",
+    "reason": "Reason for the transfer",
+    "reasonRequired": "Give the reason for the transfer.",
+    "impact": {
+      "title": "Still attached to the asset",
+      "none": "No active preventive plan, no spare part and no open work order on this asset.",
+      "pmPlans_one": "{{count}} active preventive plan",
+      "pmPlans_other": "{{count}} active preventive plans",
+      "spareParts_one": "{{count}} spare-parts line ({{critical}} critical)",
+      "spareParts_other": "{{count}} spare-parts lines ({{critical}} critical)",
+      "openWo_one": "{{count}} work order not yet closed",
+      "openWo_other": "{{count}} work orders not yet closed",
+      "notChanged": "Nothing is stopped or reassigned automatically: check them after the transfer."
+    },
+    "cancel": "Cancel",
+    "confirm": "Transfer",
+    "done": "{{code}} transferred to {{to}}.",
+    "editHint": "The unit is changed with “Transfer”: reason, date and history.",
+    "saveEditFirst": "Save or cancel your changes first."
+  },
   "recommission": {
     "action": "Recommission",
     "title": "Return the asset to service?",
@@ -67,7 +98,7 @@
       "parentEquipment": "Parent equipment",
       "criticality": "Criticality",
       "status": "Status",
-      "site": "Site",
+      "site": "Organisation unit",
       "entity": "Entity",
       "manufacturer": "Manufacturer",
       "model": "Model",
@@ -93,6 +124,7 @@
       "documents": "Documents & photos",
       "criticality": "Criticality",
       "history": "History",
+      "isolation": "Isolation points",
       "repeatFailures": "Repeat failures"
     }
   },
@@ -137,6 +169,7 @@
     "more": "More actions"
   },
   "history": {
+    "orgMove": "From {{from}} to {{to}}",
     "noRightToOpen": "You do not have the right to open this item.",
     "loadError": "This equipment's history could not be loaded",
     "partial": "The {{count}} most recent events are shown; older events may exist.",
@@ -985,6 +1018,30 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Give the reason for returning the asset to service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choose a status in service: a retired status is not a return to service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Reload the asset before returning it to service."
+  },
+  "isolationPoints": {
+    "title": "Isolation points",
+    "description": "Where the energies of this equipment are isolated. They are proposed on every work permit raised for the equipment.",
+    "empty": "No isolation point defined.",
+    "add": "Add a point",
+    "edit": "Edit",
+    "deactivate": "Deactivate",
+    "reactivate": "Reactivate",
+    "inactive": "Deactivated",
+    "showInactive": "Show deactivated points",
+    "code": "Code",
+    "label": "Label",
+    "energy": "Energy type",
+    "method": "Isolation method / device",
+    "normalState": "Normal state",
+    "normalStatePlaceholder": "e.g. closed, energised",
+    "listsHint": "Energy types and methods: Reference data (permit lists).",
+    "save": "Save",
+    "cancel": "Cancel",
+    "dialogTitleNew": "New isolation point",
+    "dialogTitleEdit": "Edit the isolation point",
+    "required": "This field is required.",
+    "optionsError": "The energy type and method lists could not be read."
   },
   "characteristics": {
     "title": "Technical characteristics",

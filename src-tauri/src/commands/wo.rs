@@ -14,7 +14,7 @@
 //!                close_wo, upload_wo_attachment, update_service_cost
 //!   ot.admin   — reopen_wo, delete_wo_attachment
 //!   ot.create + ot.edit (+ ot.emergency_assign to assign someone else) — start_depannage_wo
-//!   ot.edit    — set_wo_breakdown_at
+//!   ot.edit    — set_wo_breakdown_at, join_wo (own labour only; the joiner is not an execution actor)
 //!   ot.approve — validate_depannage_wo (never by the dépannage's starter)
 //!   ot.view    — get_depannage_times
 //!
@@ -1095,6 +1095,35 @@ pub async fn start_depannage_wo(
     )
     .await;
     Ok(result)
+}
+
+/// "Rejoindre": joins a work order in progress or on hold by starting one's own labour on it
+/// (ot.edit at the work order's site); the assignee is told. The joiner is not an execution actor
+/// (`wo::join`).
+#[tauri::command]
+pub async fn join_wo(
+    mut input: crate::wo::join::WoJoinInput,
+    state: State<'_, AppState>,
+) -> AppResult<labor::WoIntervener> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_EDIT, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let wo_id = input.wo_id;
+    let entry = crate::wo::join::join_wo(&state.db, input).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "joined".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Joined the work order (own labour started)".into()),
+            details_json: Some(serde_json::json!({ "labor_entry_id": entry.id }).to_string()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(entry)
 }
 
 /// Changes the "Panne constatée à" of a dépannage until it is closed; audited with old → new.

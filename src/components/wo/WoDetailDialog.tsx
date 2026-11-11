@@ -24,6 +24,7 @@ import {
   Printer,
   RotateCcw,
   Settings,
+  UserPlus,
   X,
   XCircle,
 } from "lucide-react";
@@ -74,6 +75,7 @@ import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lif
 import { describeAppError } from "@/lib/app-error";
 import { formatAssetLabel } from "@/lib/display";
 import { listLinks } from "@/lib/list-links";
+import { joinWo } from "@/services/wo-execution-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useSessionStore } from "@/store/session-store";
@@ -127,6 +129,7 @@ export function WoDetailDialog({
   const { can } = useWoAccess(wo);
   const sessionInfo = useSessionStore((s) => s.info);
   const reopenWo = useWoStore((s) => s.openWo);
+  const [joining, setJoining] = useState(false);
   // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
   const execution = useWoExecutionStanding(wo);
   // The reason under the footer: the execution steps (start … complete) where they are offered,
@@ -251,7 +254,7 @@ export function WoDetailDialog({
 
   const statusKey = statusToI18nKey(wo.status_code ?? "draft");
   const isCancelled = (wo.status_code ?? "") === "cancelled";
-  const footerBusy = saving || lifecycle.busy;
+  const footerBusy = saving || lifecycle.busy || joining;
 
   return (
     <>
@@ -618,6 +621,20 @@ export function WoDetailDialog({
                 onResume={() => setShowResumeDialog(true)}
                 onComplete={openCompletionDialog}
                 onCancel={() => setShowCancelDialog(true)}
+                onJoin={() => {
+                  if (joining) return;
+                  setJoining(true);
+                  setActiveTab("execution");
+                  joinWo({ wo_id: wo.id })
+                    .then(() => {
+                      pushAppToast({ title: t("join.done"), variant: "success" });
+                      void reopenWo(wo.id);
+                    })
+                    .catch((err: unknown) =>
+                      pushAppToast({ title: describeAppError(err).title, variant: "destructive" }),
+                    )
+                    .finally(() => setJoining(false));
+                }}
               />
               <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
                 <X className="h-3.5 w-3.5" />
@@ -686,6 +703,8 @@ interface FooterActionsProps {
   onResume: () => void;
   onComplete: () => void;
   onCancel: () => void;
+  /** "Rejoindre": start one's own labour on a work order one does not carry out. */
+  onJoin: () => void;
 }
 
 function FooterActions({
@@ -706,6 +725,7 @@ function FooterActions({
   onResume,
   onComplete,
   onCancel,
+  onJoin,
 }: FooterActionsProps) {
   const s = (wo.status_code ?? "") as WoStatus;
 
@@ -815,6 +835,21 @@ function FooterActions({
         >
           <Play className="h-3.5 w-3.5" />
           {t("footer.resume")}
+        </Button>
+      )}
+
+      {(s === "in_progress" || s === "on_hold") && can(P.OT_EDIT) && executionBlocker !== null && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onJoin}
+          disabled={busy}
+          title={t("join.hint")}
+          className="gap-1.5"
+          data-testid="wo-join"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          {t("join.action")}
         </Button>
       )}
 

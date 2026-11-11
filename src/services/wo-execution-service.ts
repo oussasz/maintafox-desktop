@@ -13,6 +13,7 @@ import type {
   WoExecTask,
   WoExecutionEvent,
   WoIntervener,
+  WoJoinInput,
   WoMechCompleteInput,
   WoPartToIssue,
   WoPlanAdherence,
@@ -105,6 +106,14 @@ export async function completeMechanically(input: WoMechCompleteInput): Promise<
 
 export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
   return announceCost(await invoke<WoIntervener>("add_labor", { input }));
+}
+
+/**
+ * "Rejoindre": starts one's own labour now on a work order in progress or on hold (ot.edit at its
+ * site); the assignee is told. The joiner does not become an execution actor.
+ */
+export async function joinWo(input: WoJoinInput): Promise<WoIntervener> {
+  return announceCost(await invoke<WoIntervener>("join_wo", { input }));
 }
 
 /** Labour for a person of the register, login or not (contractor technicians included). */

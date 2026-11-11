@@ -19,7 +19,8 @@
     "reliability": "Fiabilité",
     "documents": "Documents et identité visuelle",
     "work_orders": "Ordres de travail",
-    "inventory": "Inventaire"
+    "inventory": "Inventaire",
+    "permits": "Permis de travail"
   },
   "table": {
     "key": "Clé",
@@ -78,6 +79,12 @@
     "inventory.count_four_eyes_percent_threshold": "Tolérance de double validation d'un comptage : part de la quantité théorique",
     "inventory.reconciliation_drift_break": "Écart de rupture du rapprochement de stock",
     "locale.fiscal_year_start_month": "Début de l'exercice comptable",
+    "permit.gas_o2_min_percent": "Test atmosphérique : O2 minimal accepté (%)",
+    "permit.gas_o2_max_percent": "Test atmosphérique : O2 maximal accepté (%)",
+    "permit.gas_lel_max_percent": "Test atmosphérique : limite de la LIE (%)",
+    "permit.gas_h2s_max_ppm": "Test atmosphérique : limite de l'H2S (ppm)",
+    "permit.gas_co_max_ppm": "Test atmosphérique : limite du CO (ppm)",
+    "permit.gas_test_validity_hours": "Test atmosphérique : durée de validité (h)",
     "reliability.repeat_failure_count": "Pannes répétitives : nombre de défaillances",
     "reliability.repeat_failure_window_days": "Pannes répétitives : période (jours)"
   },
@@ -387,6 +394,12 @@
       "backup.retention_daily": "Nombre de sauvegardes planifiées quotidiennes conservées (au moins une).",
       "backup.retention_weekly": "Nombre de sauvegardes hebdomadaires conservées en plus.",
       "backup.retention_monthly": "Nombre de sauvegardes mensuelles conservées en plus.",
+      "permit.gas_o2_min_percent": "Un permis qui exige un test atmosphérique n'est délivré que si sa dernière mesure d'oxygène est au moins égale à cette valeur (valeur livrée : 19,5 %).",
+      "permit.gas_o2_max_percent": "… et au plus égale à cette valeur (valeur livrée : 23,5 %).",
+      "permit.gas_lel_max_percent": "La dernière mesure de gaz inflammables (% de la limite inférieure d'explosivité) doit rester inférieure à cette valeur (valeur livrée : 10 %).",
+      "permit.gas_h2s_max_ppm": "La dernière mesure d'hydrogène sulfuré doit rester inférieure à cette valeur (valeur livrée : 10 ppm).",
+      "permit.gas_co_max_ppm": "Quand le monoxyde de carbone est mesuré, la dernière mesure doit rester inférieure à cette valeur (valeur livrée : 25 ppm).",
+      "permit.gas_test_validity_hours": "Un test atmosphérique n'est valable que ce nombre d'heures : au-delà, il faut refaire le test avant de délivrer ou d'activer le permis, de le reprendre après suspension, ou de démarrer ou reprendre le travail (valeur livrée : 4 h).",
       "reliability.repeat_failure_count": "Un équipement est signalé « pannes répétitives » à partir de ce nombre de défaillances non planifiées dans la période ci-dessous.",
       "reliability.repeat_failure_window_days": "Période, en jours jusqu'à aujourd'hui, sur laquelle les défaillances non planifiées sont comptées pour le signalement « pannes répétitives »."
     },
@@ -403,6 +416,12 @@
       "backup.retention_weekly_other": "{{count}} semaines",
       "backup.retention_monthly_one": "{{count}} mois",
       "backup.retention_monthly_other": "{{count}} mois",
+      "permit.gas_o2_min_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_o2_max_percent": "{{value, number(maximumFractionDigits: 6)}} %",
+      "permit.gas_lel_max_percent": "{{value, number(maximumFractionDigits: 6)}} % LIE",
+      "permit.gas_h2s_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_co_max_ppm": "{{value, number(maximumFractionDigits: 6)}} ppm",
+      "permit.gas_test_validity_hours": "{{value, number(maximumFractionDigits: 6)}} h",
       "reliability.repeat_failure_count_one": "{{count}} défaillance",
       "reliability.repeat_failure_count_other": "{{count}} défaillances",
       "reliability.repeat_failure_window_days_one": "{{count}} jour",

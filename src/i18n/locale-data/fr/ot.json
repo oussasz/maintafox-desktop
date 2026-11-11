@@ -74,6 +74,11 @@
     "none": "Aucune personne à proposer. Si vous ne voyez pas le registre du personnel, demandez à l'administrateur de relier votre compte à votre fiche dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
+  "join": {
+    "action": "Rejoindre",
+    "hint": "Aider sur cet OT : votre main-d'œuvre démarre maintenant et le responsable est prévenu. Vous ne devenez pas responsable de l'OT.",
+    "done": "Vous avez rejoint l'OT : votre main-d'œuvre a démarré."
+  },
   "depannage": {
     "validation": {
       "badgeToValidate": "Dépannage — à valider",

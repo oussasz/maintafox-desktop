@@ -437,9 +437,15 @@ fn people_refusal() -> AppError {
 }
 
 /// A planner given at creation: refused without the right at the new work order's site (none
-/// given: nothing to check; the system flows create without one). Exceptions to come with L1-05
-/// (not on this branch): the dépannage self-assignment, assigning others through
-/// `ot.emergency_assign`, and the dépannage "join".
+/// given: nothing to check; the system flows create without one).
+///
+/// The dépannage (`wo::depannage`, L1-05) does not go through this check: it creates its work
+/// order with no planner, then assigns it in the same transaction — to the user who starts it
+/// (`ot.create` + `ot.edit` at the site), or to someone else only with `ot.emergency_assign` at the
+/// site (`wo::access::check_depannage_at`, checked by `start_depannage_wo`). The planning approval
+/// skipped there is replaced by the validation after the fact (`wo::depannage_validation`, L1-05
+/// B). Joining a work order in progress or on hold (starting one's own labour on it) does not make
+/// the joiner an execution actor: only an assignment does.
 pub async fn check_people_on_create(
     db: &impl ConnectionTrait,
     map: &AccessMap,

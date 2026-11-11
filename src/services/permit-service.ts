@@ -39,7 +39,7 @@ const PermitTypeSchema = z.object({
   row_version: z.number(),
 });
 
-const WorkPermitSchema = z.object({
+export const WorkPermitSchema = z.object({
   id: z.number(),
   entity_sync_id: z.string(),
   code: z.string(),
@@ -126,7 +126,7 @@ const PermitHandoverRoleOptionSchema = z.object({
   review_required: z.boolean(),
 });
 
-const PermitHandoverReceiverPageSchema = z.object({
+export const PermitHandoverReceiverPageSchema = z.object({
   items: z.array(z.object({ id: z.number(), display_name: z.string() })),
   total: z.number(),
   empty_reason: z.string().nullable(),
@@ -239,7 +239,7 @@ const IsolationOptionSchema = z.object({
   review_required: z.boolean(),
 });
 
-const IsolationOptionsSchema = z.object({
+export const IsolationOptionsSchema = z.object({
   energy_types: z.array(IsolationOptionSchema),
   isolation_methods: z.array(IsolationOptionSchema),
 });

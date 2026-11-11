@@ -168,7 +168,7 @@
       "PERMIT_ISOLATION_CANCEL_APPLIED": "An isolation line cancelled on another PC although it was applied (here or there)",
       "PERMIT_ISOLATION_CANCEL_WRONG_STATUS": "An isolation line cancelled on another PC while its permit is no longer a draft or waiting for review here",
       "PERMIT_ISOLATION_CANCEL_INVALID": "An isolation line cancelled without a readable author or time",
-      "PERMIT_DELETE_REFUSED": "A permit, isolation or suspension still protecting work was deleted elsewhere",
+      "PERMIT_DELETE_REFUSED": "A permit, isolation, suspension, permit worker or personal padlock still protecting work was deleted elsewhere",
       "QUALIFICATION_OVERRIDE_USE_PERSON": "A qualification override on a login that has a personnel record",
       "SYNC_GROUP_REFUSED": "A change arrived with rows it depends on, and one of them breaks a rule",
       "SYNC_TIME_INCONSISTENT": "A received change carries times that do not fit together (or are in the future)",
@@ -254,7 +254,27 @@
       "SITE_ASSIGNMENT_NODE_INVALID": "A site given on another PC to a record without one, on a unit deleted here",
       "SITE_ASSIGNMENT_NOT_ALLOWED": "A site given on another PC to a record without one, by someone without the organisation administration right for the whole plant",
       "SITE_SET_WITHOUT_ASSIGNMENT": "A work order or request without a site received with a site, without the site assignment of an organisation administrator",
-      "other": "Needs review"
+      "other": "Needs review",
+      "PERMIT_ISSUE_CONTENT_MISSING": "A permit issued on another PC without its content (work, risk assessment, preventive measures, PPE)",
+      "PERMIT_ISSUE_HSE_APPROVAL_MISSING": "A permit issued on another PC without the HSE approval its type requires",
+      "PERMIT_ISSUE_GAS_TEST_MISSING": "A permit issued on another PC without the atmospheric test it requires",
+      "PERMIT_ISSUE_GAS_TEST_OUT_OF_LIMITS": "A permit issued on another PC on an atmospheric test outside the limits set here",
+      "PERMIT_ISSUE_HSE_SELF_APPROVAL": "A permit issued on another PC whose HSE approval was recorded by its author or submitter, without its site opting out of four-eyes here",
+      "PERMIT_ISSUE_GAS_TEST_EXPIRED": "A permit issued on another PC on an atmospheric test older than the validity set here",
+      "PERMIT_ACTIVE_GAS_TEST_INVALID": "A permit activated on another PC without a valid atmospheric test (missing, out of date or out of limits) when it was activated",
+      "PERMIT_ISSUE_WORKER_INDUCTION_MISSING": "A permit issued on another PC with an external worker without a safety induction",
+      "PERMIT_ISSUE_WORKER_QUALIFICATION": "A permit issued on another PC with a worker lacking the valid qualifications its type requires",
+      "PERMIT_PERSONAL_LOCK_RECORD_CHANGED": "The placement or removal of a personal padlock, or the record of its owner told, held here, was changed",
+      "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID": "A personal padlock placed without who or when, or at an unreadable or future time",
+      "PERMIT_PERSONAL_LOCK_NOT_OWNER": "A personal padlock placed by someone other than the worker of its line",
+      "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED": "A personal padlock placed on another PC on a permit not issued here",
+      "PERMIT_WORKER_RECORD_CHANGED": "Who a permit worker is, their induction or their withdrawal, held here, was changed",
+      "PERMIT_WORKER_WITHDRAWN_LOCK_ON": "A worker withdrawn from a permit while their padlock is still on the group lock box here",
+      "PERMIT_ISOLATION_PERSONAL_LOCKS_ON": "An isolation lock taken off while a personal padlock is still on the group lock box here",
+      "PERMIT_CLOSED_PERSONAL_LOCKS_ON": "A permit closed or handed back on another PC while a personal padlock is still on its group lock box here",
+      "PERMIT_WORKER_ADDED_INDUCTION_MISSING": "An external worker added after the issue without a safety induction",
+      "PERMIT_WORKER_ADDED_QUALIFICATION": "A worker added after the issue without the valid qualifications the permit's type requires",
+      "PERMIT_WO_START_GAS_TEST_INVALID": "A work order started or resumed on another PC while its permit's atmospheric test was not valid (missing, out of date or out of limits)"
     },
     "history": {
       "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
@@ -445,7 +465,11 @@
       "budget_lines": "Budget line",
       "training_sessions": "Training session",
       "failure_events": "Failure event",
-      "app_settings": "Setting"
+      "app_settings": "Setting",
+      "permit_gas_tests": "Permit atmospheric test",
+      "permit_workers": "Permit worker",
+      "permit_personal_locks": "Permit personal padlock",
+      "equipment_isolation_points": "Equipment isolation point"
     },
     "negativeStock": "{{count}} stock location(s) below zero after sync, to reconcile by a count (Inventory › Controls).",
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
@@ -605,7 +629,8 @@
     "profile": "My Profile",
     "help": "Help",
     "reports": "Reports",
-    "admin": "Administration"
+    "admin": "Administration",
+    "myPadlocks": "My padlocks"
   },
   "notFound": {
     "title": "This page does not exist",
