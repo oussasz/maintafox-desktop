@@ -1,4 +1,4 @@
-//! Migration 280 — hors-stock purchase charged to a work order (L3-04, CMMS Advisor option B).
+//! Migration 291 — hors-stock purchase charged to a work order (L3-04, CMMS Advisor option B).
 //!
 //! A hors-stock article is an article whose stocking type (system reference list
 //! `inventory.stocking_type`) is `NON_STOCK`: no new flag, the list already holds the value.
