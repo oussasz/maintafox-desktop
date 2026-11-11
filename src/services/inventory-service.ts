@@ -863,6 +863,9 @@ const GoodsReceiptLineSchema = z.object({
   unit_cost_tenant: z.number().nullable(),
   status: z.string(),
   created_at: z.string(),
+  returned_qty: z.number(),
+  return_reason: z.string().nullable(),
+  returned_at: z.string().nullable(),
 });
 
 /** Goods receipt with the currency and the rate captured when it was posted. */
@@ -2263,5 +2266,25 @@ export function setInventoryPurchaseOrderLinePrice(
     "set_inventory_purchase_order_line_price",
     { poLineId, unitPrice },
     PurchaseOrderLineSchema,
+  );
+}
+
+export interface ReturnGoodsToSupplierInput {
+  goods_receipt_line_id: number;
+  /** In the stock unit. */
+  quantity: number;
+  reason: string;
+  /** Lot or serial sent back (lot- or serial-tracked articles). */
+  lot_id: number | null;
+}
+
+/** A part found non-conforming after reception goes back to its supplier (L3-05). */
+export function returnInventoryGoodsToSupplier(
+  input: ReturnGoodsToSupplierInput,
+): Promise<GoodsReceiptLineRow> {
+  return invokeParsed(
+    "return_inventory_goods_to_supplier",
+    { input: { ...input, actor_id: null } },
+    GoodsReceiptLineSchema,
   );
 }

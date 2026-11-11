@@ -934,6 +934,10 @@ pub struct GoodsReceiptLine {
     pub actual_lead_time_days: Option<f64>,
     pub status: String,
     pub created_at: String,
+    /// Quantity already sent back to the supplier (stock unit), with the reason of the last return.
+    pub returned_qty: f64,
+    pub return_reason: Option<String>,
+    pub returned_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1564,5 +1568,16 @@ pub struct ReplaceRequisitionLinesInput {
     pub requisition_id: i64,
     pub expected_row_version: i64,
     pub lines: Vec<RequisitionLineInput>,
+    pub actor_id: Option<i64>,
+}
+
+/// Return of accepted goods to the supplier (non-conforming part found after reception). The
+/// quantity is in the stock unit; a lot- or serial-tracked article names the lot sent back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReturnGoodsToSupplierInput {
+    pub goods_receipt_line_id: i64,
+    pub quantity: f64,
+    pub reason: String,
+    pub lot_id: Option<i64>,
     pub actor_id: Option<i64>,
 }

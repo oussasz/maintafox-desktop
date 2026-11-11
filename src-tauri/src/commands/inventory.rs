@@ -783,6 +783,25 @@ pub async fn receive_inventory_purchase_order_goods(
     Ok(receipt)
 }
 
+/// Part sent back to its supplier after reception: leaves the stock and is recorded on the
+/// receipt line (the receiving right, like the reception it reverses).
+#[tauri::command]
+pub async fn return_inventory_goods_to_supplier(
+    mut input: crate::inventory::domain::ReturnGoodsToSupplierInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::inventory::domain::GoodsReceiptLine> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INV_RECEIVE,
+        PermissionScope::Global
+    );
+    // Who did it comes from the session, never from the UI payload.
+    input.actor_id = Some(i64::from(user.user_id));
+    procurement::return_goods_to_supplier(&state.db, input).await
+}
+
 #[tauri::command]
 pub async fn list_inventory_goods_receipts(state: State<'_, AppState>) -> AppResult<Vec<GoodsReceipt>> {
     let user = require_session!(state);

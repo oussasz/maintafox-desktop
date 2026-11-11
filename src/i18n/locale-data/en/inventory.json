@@ -708,8 +708,22 @@
           "received": "Received",
           "accepted": "Accepted",
           "rejected": "Rejected",
-          "reason": "Rejection reason"
+          "reason": "Rejection reason",
+          "returned": "Returned",
+          "actions": "Actions"
         }
+      },
+      "return": {
+        "action": "Return to supplier",
+        "title": "Return goods to the supplier",
+        "description": "{{article}} — up to {{max}} can still be returned (accepted quantity not yet returned). The part leaves the stock.",
+        "quantity": "Quantity returned",
+        "quantityInvalid": "Enter a quantity between 0 and {{max}}.",
+        "lot": "Lot or serial number sent back",
+        "lotPlaceholder": "Choose the lot or serial number",
+        "reason": "Why does it go back? (non-conformity)",
+        "cancel": "Cancel",
+        "confirm": "Return to supplier"
       }
     },
     "posting": {

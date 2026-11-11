@@ -1897,6 +1897,9 @@ pub struct AdjustStockOptions {
     pub first_entry_only: bool,
     /// Audit event written in the posting's transaction: recorded with the movement, or neither.
     pub audit: Option<crate::audit::writer::AuditEventInput>,
+    /// Statements run in the posting's transaction, after the movement (the caller's own record of
+    /// the posting, e.g. the quantity returned on a receipt line): committed with it, or neither.
+    pub extra_statements: Vec<Statement>,
 }
 
 /// Whether the article has stock history at the location: any movement (entries, exits,
@@ -2111,6 +2114,16 @@ pub async fn adjust_stock_full(
             },
         )
         .await?;
+    }
+
+    for statement in options.extra_statements {
+        let done = tx.execute(statement).await?;
+        if done.rows_affected() == 0 {
+            return Err(AppError::ValidationFailed(vec![
+                "GATE_GR_RETURN_EXCEEDS:max=0: The quantity returned changed meanwhile; reload the reception."
+                    .to_string(),
+            ]));
+        }
     }
 
     if let Some(audit) = options.audit {

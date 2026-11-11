@@ -708,8 +708,22 @@
           "received": "Réceptionné",
           "accepted": "Accepté",
           "rejected": "Refusé",
-          "reason": "Motif du refus"
+          "reason": "Motif du refus",
+          "returned": "Retourné",
+          "actions": "Actions"
         }
+      },
+      "return": {
+        "action": "Retourner au fournisseur",
+        "title": "Retourner des marchandises au fournisseur",
+        "description": "{{article}} — jusqu'à {{max}} peuvent encore être retournés (quantité acceptée pas encore retournée). La pièce sort du stock.",
+        "quantity": "Quantité retournée",
+        "quantityInvalid": "Saisissez une quantité entre 0 et {{max}}.",
+        "lot": "Lot ou numéro de série renvoyé",
+        "lotPlaceholder": "Choisissez le lot ou le numéro de série",
+        "reason": "Pourquoi retourne-t-elle ? (non-conformité)",
+        "cancel": "Annuler",
+        "confirm": "Retourner au fournisseur"
       }
     },
     "posting": {

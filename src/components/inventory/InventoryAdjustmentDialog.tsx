@@ -178,7 +178,8 @@ export function InventoryAdjustmentDialog({
     void Promise.all([listInventoryArticles({}), getLookupValues("inventory.movement_type")])
       .then(([articles, movementTypes]) => {
         setArticle(articles.find((a) => a.id === articleId) ?? null);
-        setMotifs(movementTypes);
+        // The supplier return is posted from the reception line, never as a manual adjustment.
+        setMotifs(movementTypes.filter((m) => m.code !== "RETOUR_FOURNISSEUR"));
       })
       .catch((err: unknown) => setError(err))
       .finally(() => setLoadingArticle(false));

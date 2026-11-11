@@ -21,6 +21,7 @@ pub mod plan_adherence;
 pub mod queries;
 pub mod retired_equipment_review;
 pub mod shifts;
+pub mod subcontracting;
 pub mod stats;
 pub mod statuses;
 pub mod tasks;
