@@ -1571,6 +1571,14 @@ pub(crate) async fn close_preflight(
         ));
     }
 
+    // A dépannage is validated after the fact before its close, unless its site opted out
+    // (`wo::depannage_validation`, CMMS Advisor decision 2026-11-04).
+    if let crate::wo::depannage_validation::CloseValidation::Refused(msg) =
+        crate::wo::depannage_validation::close_validation(conn, wo_id).await?
+    {
+        preflight.add(msg);
+    }
+
     Ok((preflight.errors, profile_id, signer_password_checked))
 }
 
@@ -1769,6 +1777,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         ))
         .await?;
     check_concurrency(result.rows_affected())?;
+
+    // A dépannage of a site that opted out of the validation is approved automatically at its close
+    // (flagged, no validator recorded).
+    if crate::wo::depannage_validation::close_validation(&txn, input.wo_id).await?
+        == crate::wo::depannage_validation::CloseValidation::AutoApproved
+    {
+        crate::wo::depannage_validation::mark_auto_approved(&txn, input.wo_id).await?;
+    }
 
     log_transition(
         &txn,

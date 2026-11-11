@@ -183,6 +183,40 @@ async fn validate_assets(db: &impl ConnectionTrait, ids: &[i64]) -> AppResult<Ve
     Ok(unique)
 }
 
+/// Whether the equipment belong to more than one class (no class counts as one more class).
+pub(crate) async fn mixed_classes(db: &impl ConnectionTrait, ids: &[i64]) -> AppResult<bool> {
+    let mut classes: Vec<Option<i64>> = Vec::new();
+    for id in ids {
+        if let Some(r) = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT class_id FROM equipment WHERE id = ?",
+                [(*id).into()],
+            ))
+            .await?
+        {
+            let class: Option<i64> = get(&r, "class_id")?;
+            if !classes.contains(&class) {
+                classes.push(class);
+            }
+        }
+    }
+    Ok(classes.len() > 1)
+}
+
+/// A study pools the failure data of its equipment as if they were alike: equipment of different
+/// classes are accepted only once the person acknowledged it (L2-18).
+async fn check_classes(db: &impl ConnectionTrait, ids: &[i64], acknowledged: bool) -> AppResult<()> {
+    if !acknowledged && mixed_classes(db, ids).await? {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_STUDY_MIXED_CLASSES: The equipment belong to different classes: their failure data would be \
+             pooled as if they were alike. Confirm the mixed selection or study each class separately."
+                .into(),
+        ]));
+    }
+    Ok(())
+}
+
 async fn validate_mode(db: &impl ConnectionTrait, mode: Option<i64>) -> AppResult<()> {
     if let Some(m) = mode {
         let ok = db
@@ -233,6 +267,9 @@ async fn default_title(db: &impl ConnectionTrait, ids: &[i64], mode: Option<i64>
             title.push_str(&get::<String>(&r, "label")?);
         }
     }
+    // The creation day tells apart studies of the same equipment (L2-13).
+    title.push_str(" · ");
+    title.push_str(&crate::clock::now().format("%Y-%m-%d").to_string());
     Ok(title)
 }
 
@@ -282,6 +319,7 @@ pub async fn create_study(
     validate_period(&input.period_start, &input.period_end)?;
     validate_mode(db, input.failure_mode_id).await?;
     let ids = validate_assets(db, &input.equipment_ids).await?;
+    check_classes(db, &ids, input.accept_mixed_classes).await?;
     let title = match input.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         Some(t) => t.to_string(),
         None => default_title(db, &ids, input.failure_mode_id).await?,
@@ -359,7 +397,11 @@ pub async fn update_study(db: &DatabaseConnection, input: UpdateStudyInput) -> A
         input.pm_plan_id.or(current.pm_plan_id)
     };
     let ids = match &input.equipment_ids {
-        Some(ids) => Some(validate_assets(db, ids).await?),
+        Some(ids) => {
+            let ids = validate_assets(db, ids).await?;
+            check_classes(db, &ids, input.accept_mixed_classes).await?;
+            Some(ids)
+        }
         None => None,
     };
     let txn = db.begin().await?;

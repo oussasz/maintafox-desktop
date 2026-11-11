@@ -179,6 +179,13 @@ pub async fn access_map_cached(
     Ok(map)
 }
 
+/// Every permission of `user_id` with where it is held now, uncached: the arrival re-checks of
+/// synchronisation judge a change made on another PC with the rights its author holds here now
+/// (`wo::execution_actor_sync`), through the same rules as the local commands.
+pub async fn access_map_now(db: &impl ConnectionTrait, user_id: i32) -> AppResult<AccessMap> {
+    load_access_map(db, user_id).await
+}
+
 /// Where `user_id` holds `permission` (uncached; tests and one-off reads).
 pub async fn access_scope(db: &impl ConnectionTrait, user_id: i32, permission: &str) -> AppResult<AccessScope> {
     Ok(load_access_map(db, user_id).await?.scope_of(permission))

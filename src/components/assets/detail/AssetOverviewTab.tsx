@@ -1,5 +1,6 @@
 /**
- * Overview tab of the asset record: identification, technical data, location and cost centre,
+ * Overview tab of the asset record: identification, technical data and the technical
+ * characteristics of its family, location and cost centre,
  * commercial / warranty data, reliability profile and the records linked to the asset.
  */
 
@@ -8,6 +9,7 @@ import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetBindingSummary } from "@/components/assets/AssetBindingSummary";
+import { AssetCharacteristicsCard } from "@/components/assets/detail/AssetCharacteristicsCard";
 import {
   WARRANTY_TONE,
   warrantyDaysLeft,
@@ -62,6 +64,8 @@ export function AssetOverviewTab({ asset, onEditCommercial }: AssetOverviewTabPr
           />
         ) : null}
       </DetailSectionCard>
+
+      <AssetCharacteristicsCard assetId={asset.id} />
 
       <DetailSectionCard title={t("detail.sections.location")} icon={Building2}>
         <DetailFieldRow label={t("detail.fields.site")} value={asset.org_node_name} />

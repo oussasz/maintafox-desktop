@@ -372,9 +372,32 @@ pub async fn create_decision(
     input: CreateDecisionInput,
     actor_id: i64,
 ) -> AppResult<StudyDecision> {
+    record_decision(db, input, actor_id, None).await
+}
+
+/// Records a decision; with `replacing`, withdraws that proposal in the same transaction (an edit).
+async fn record_decision(
+    db: &DatabaseConnection,
+    input: CreateDecisionInput,
+    actor_id: i64,
+    replacing: Option<(DecideDecisionInput, DecisionParties)>,
+) -> AppResult<StudyDecision> {
     let title = input.title.trim().to_string();
     if title.is_empty() {
         return Err(invalid("DECISION_TITLE_REQUIRED"));
+    }
+    // A decision goes to an approver and stays in the log: it always says why (L2-16).
+    let justification = input
+        .justification
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    if justification.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_JUSTIFICATION_REQUIRED: Say why this decision is proposed (the evidence it rests on)."
+                .into(),
+        ]));
     }
     let study = get_study(db, input.study_id).await?;
     if study.status != STUDY_ACTIVE {
@@ -553,7 +576,11 @@ pub async fn create_decision(
 
     let ts = crate::clock::now().to_rfc3339();
     let sync_id = crate::sync::identity::new_entity_sync_id();
-    db.execute(Statement::from_sql_and_values(
+    let txn = db.begin().await?;
+    if let Some((replaced, parties)) = &replacing {
+        withdraw_or_reject_in(&txn, replaced, parties, true, actor_id).await?;
+    }
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reliability_study_decisions (entity_sync_id, study_id, title, action_kind, equipment_id,
             pm_plan_id, proposed_interval_hours, proposed_trigger_definition_json, wo_type_code, justification,
@@ -571,7 +598,7 @@ pub async fn create_decision(
             opt_f64(interval),
             opt_str(trigger_json),
             opt_str(wo_type),
-            input.justification.unwrap_or_default().trim().to_string().into(),
+            justification.into(),
             serde_json::to_string(&evidence)?.into(),
             opt_f64(baseline_mtbf),
             baseline_failures.into(),
@@ -588,7 +615,7 @@ pub async fn create_decision(
     ))
     .await?;
     let id: i64 = get(
-        &db.query_one(Statement::from_sql_and_values(
+        &txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM reliability_study_decisions WHERE entity_sync_id = ?",
             [sync_id.into()],
@@ -597,6 +624,7 @@ pub async fn create_decision(
         .ok_or_else(|| AppError::SyncError("decision insert missing".into()))?,
         "id",
     )?;
+    txn.commit().await?;
     get_decision(db, id).await
 }
 
@@ -865,8 +893,23 @@ pub async fn reject_decision(
         return Err(invalid("DECISION_NOT_DESIGNATED_APPROVER"));
     }
     let txn = db.begin().await?;
-    if let Err(e) = set_status(&txn, &input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await {
-        let status = decision_parties(&txn, input.decision_id).await?.status;
+    withdraw_or_reject_in(&txn, &input, &parties, withdrawal, actor_id).await?;
+    txn.commit().await?;
+    get_decision(db, input.decision_id).await
+}
+
+/// Sets a proposed decision rejected (or withdrawn by its proposer) and audits it with the reason,
+/// on the caller's transaction. Refused once the decision is decided.
+async fn withdraw_or_reject_in<C: ConnectionTrait>(
+    txn: &C,
+    input: &DecideDecisionInput,
+    parties: &DecisionParties,
+    withdrawal: bool,
+    actor_id: i64,
+) -> AppResult<()> {
+    let note = input.note.as_deref().map(str::trim).unwrap_or_default().to_string();
+    if let Err(e) = set_status(txn, input, STATUS_PROPOSED, STATUS_REJECTED, actor_id).await {
+        let status = decision_parties(txn, input.decision_id).await?.status;
         return Err(if status == STATUS_PROPOSED {
             e
         } else {
@@ -877,7 +920,7 @@ pub async fn reject_decision(
         });
     }
     // Sync ids, not local ids: the event travels (review of #179).
-    let mut details = audit_refs(&txn, input.decision_id).await?;
+    let mut details = audit_refs(txn, input.decision_id).await?;
     details.insert(
         "summary".into(),
         if withdrawal {
@@ -888,9 +931,9 @@ pub async fn reject_decision(
         .into(),
     );
     details.insert("title".into(), parties.title.clone().into());
-    details.insert("reason".into(), note.clone().into());
+    details.insert("reason".into(), note.into());
     crate::audit::writer::write_audit_event_in(
-        &txn,
+        txn,
         crate::audit::writer::AuditEventInput {
             action_code: if withdrawal {
                 "reliability.decision.withdrawn"
@@ -899,7 +942,7 @@ pub async fn reject_decision(
             }
             .to_string(),
             target_type: Some("reliability_study_decisions".to_string()),
-            target_id: Some(audit_target(&parties, input.decision_id)),
+            target_id: Some(audit_target(parties, input.decision_id)),
             actor_id: Some(actor_id),
             auth_context: "session".to_string(),
             result: "success".to_string(),
@@ -910,8 +953,68 @@ pub async fn reject_decision(
         },
     )
     .await?;
-    txn.commit().await?;
-    get_decision(db, input.decision_id).await
+    Ok(())
+}
+
+/// Edits a proposed decision for its proposer (L2-16).
+///
+/// A decision never changes once proposed: its content is checked again when it arrives on another
+/// PC (`decision_sync`). An edit therefore records the corrected decision (all the checks of
+/// [`create_decision`]) and withdraws the one it replaces, with the reason given, audited as any
+/// withdrawal, in one transaction: when the withdrawal is refused (decided or changed meanwhile),
+/// nothing is recorded and that refusal is returned.
+pub async fn revise_decision(
+    db: &DatabaseConnection,
+    input: crate::reliability::study::domain::ReviseDecisionInput,
+    actor_id: i64,
+) -> AppResult<StudyDecision> {
+    let reason = input.reason.trim().to_string();
+    if reason.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_REVISE_REASON_REQUIRED: Say what changes in this decision.".into(),
+        ]));
+    }
+    let parties = decision_parties(db, input.decision_id).await?;
+    if parties.proposer != Some(actor_id) {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_REVISE_NOT_PROPOSER: Only the person who proposed this decision can edit it.".into(),
+        ]));
+    }
+    if parties.status != STATUS_PROPOSED {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_ALREADY_DECIDED: The decision has already been approved, rejected or applied: it can no longer be withdrawn or rejected."
+                .into(),
+        ]));
+    }
+    if parties.study_id != input.decision.study_id {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_REL_DECISION_REVISE_OTHER_STUDY: The corrected decision must belong to the study of the decision it replaces."
+                .into(),
+        ]));
+    }
+    // Changed meanwhile (another edit, a sync): refused before anything is recorded.
+    let current: i64 = get(
+        &db.query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT row_version FROM reliability_study_decisions WHERE id = ?",
+            [input.decision_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reliability_study_decision".into(),
+            id: input.decision_id.to_string(),
+        })?,
+        "row_version",
+    )?;
+    if current != input.expected_row_version {
+        return Err(invalid("DECISION_STALE"));
+    }
+    let withdraw = DecideDecisionInput {
+        decision_id: input.decision_id,
+        expected_row_version: input.expected_row_version,
+        note: Some(reason),
+    };
+    record_decision(db, input.decision, actor_id, Some((withdraw, parties))).await
 }
 
 /// Carry out an approved decision in maintenance: a draft PM plan version with the proposed

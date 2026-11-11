@@ -1,8 +1,9 @@
 /**
- * Study step 4 — RCM decision (SAE JA1011 logic), one FMECA row at a time. Answers come
- * pre-filled from the FMECA row and the life analysis (each with its basis) and stay editable;
- * the recommendation is recomputed by the backend logic; the decision is recorded and sent to
- * the decision log (step 6).
+ * Study step 4 — RCM decision (SAE JA1011 logic), one FMECA row at a time. No answer is ticked
+ * in advance: each question shows what the FMECA row and the life analysis suggest, and waits for
+ * Yes or No. The recommendation is recomputed by the backend logic once every question is
+ * answered; a critical row (RPN at or above the plant threshold) is never run to failure. The
+ * decision is recorded and sent to the decision log (step 6).
  */
 import { ArrowRight, Save } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -34,12 +35,12 @@ import type { RcmAnswers } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 import type { DecisionPrefill } from "./DecisionDialog";
-import { roundInterval } from "./StudyLifeStep";
 import {
   RAMS_SELECT_CLASS,
   RamsCallout,
   RamsCard,
   RamsReadOnlyNote,
+  roundInterval,
   useRamsRight,
 } from "./rams-ui";
 
@@ -162,6 +163,7 @@ export function StudyRcmStep({
           study={study}
           row={row}
           timeBasis={ws.time_basis}
+          rpnThreshold={ws.rpn_threshold}
           editable={editable && ws.editable}
           onSaved={setWs}
           onDecide={onDecide}
@@ -171,10 +173,20 @@ export function StudyRcmStep({
   );
 }
 
+/** Answer suggested by the data (FMECA grids, life analysis, P-F interval); never pre-ticked. */
+const DATA_BASES = new Set([
+  "detection",
+  "severity",
+  "weibull_wear_out",
+  "weibull_no_wear_out",
+  "pf_interval",
+]);
+
 function RcmEditor({
   study,
   row,
   timeBasis,
+  rpnThreshold,
   editable,
   onSaved,
   onDecide,
@@ -182,6 +194,7 @@ function RcmEditor({
   study: ReliabilityStudy;
   row: RcmRow;
   timeBasis: string;
+  rpnThreshold: number;
   editable: boolean;
   onSaved: (w: RcmWorksheet) => void;
   onDecide: (p: DecisionPrefill) => void;
@@ -190,11 +203,21 @@ function RcmEditor({
   const { formatNumber, formatDecimal } = useFormatters();
   const { can, reasonFor } = useRamsRight();
   const [answers, setAnswers] = useState<StudyRcmAnswers>(row.answers);
+  /**
+   * Questions the person answered. Nothing is answered in advance (L2-15): a saved decision's
+   * answers were chosen by a person; otherwise every question waits for Yes or No.
+   */
+  const [answered, setAnswered] = useState<ReadonlySet<RcmQuestion>>(
+    () =>
+      new Set(
+        row.saved
+          ? (Object.keys(row.answers).filter((k) => k !== "weibull_beta") as RcmQuestion[])
+          : [],
+      ),
+  );
   const [pf, setPf] = useState<number | null>(row.pf_interval_hours ?? null);
   const [rec, setRec] = useState(row.recommendation);
-  const [tactic, setTactic] = useState<string>(
-    row.saved?.selected_tactic ?? row.recommendation.recommended_tactic,
-  );
+  const [tactic, setTactic] = useState<string>(row.saved?.selected_tactic ?? "");
   const [justification, setJustification] = useState(row.saved?.justification ?? "");
   const [saving, setSaving] = useState(false);
   /** The recommendation could not be recomputed: the shown one is stale, saving waits. */
@@ -203,32 +226,50 @@ function RcmEditor({
   /** "On-condition feasible" was answered by typing a P-F interval (undone if it is cleared). */
   const [pfAnswered, setPfAnswered] = useState(false);
   const pfValid = pf == null || pf > 0;
-
-  useEffect(() => {
-    const h = setTimeout(() => {
-      void previewStudyRcm(answers)
-        .then((r) => {
-          setRec(r);
-          setPreviewError(null);
-          if (!row.saved) setTactic(r.recommended_tactic);
-        })
-        .catch((e: unknown) => setPreviewError(e));
-    }, 150);
-    return () => clearTimeout(h);
-  }, [answers, row.saved, previewRun]);
+  /** At or above the plant's critical RPN: never run to failure (backend refuses it too). */
+  const critical = row.rpn >= rpnThreshold;
 
   const questions = useMemo(
     () => visibleQuestions(answers as unknown as RcmAnswers) as RcmQuestion[],
     [answers],
   );
+  const missing = questions.filter((q) => !answered.has(q)).length;
+  const complete = missing === 0;
+
+  useEffect(() => {
+    if (!complete) return;
+    const h = setTimeout(() => {
+      void previewStudyRcm(answers)
+        .then((r) => {
+          setRec(r);
+          setPreviewError(null);
+          // The recommendation becomes the tactic, unless it is refused for this mode.
+          if (!row.saved)
+            setTactic(
+              critical && r.recommended_tactic === "run_to_failure" ? "" : r.recommended_tactic,
+            );
+        })
+        .catch((e: unknown) => setPreviewError(e));
+    }, 150);
+    return () => clearTimeout(h);
+  }, [answers, complete, critical, row.saved, previewRun]);
+
+  const answer = (q: RcmQuestion, v: boolean) => {
+    setAnswers((a) => ({ ...a, [q]: v }));
+    setAnswered((s) => new Set(s).add(q));
+  };
   const basis = (q: string) => row.bases.find((b) => b.question === q);
   const unit = timeBasis === "operating" ? t("rams.units.opHours") : t("rams.units.calHours");
-  const needsJustification = tactic !== rec.recommended_tactic;
+  const needsJustification = tactic !== "" && tactic !== rec.recommended_tactic;
+  const refusedTactic = critical && tactic === "run_to_failure";
   /** Shown to anyone on an open study; a missing right disables them with the reason. */
   const showActions = editable || (!can(P.RAM_ANALYZE) && study.status !== "archived");
   const canSave =
     editable &&
     can(P.RAM_ANALYZE) &&
+    complete &&
+    tactic !== "" &&
+    !refusedTactic &&
     pfValid &&
     previewError == null &&
     (!needsJustification || justification.trim().length > 0) &&
@@ -257,6 +298,7 @@ function RcmEditor({
   const inspection = pf != null && pfValid ? pf / 2 : null;
   const replacement =
     row.replacement_interval_hours != null ? roundInterval(row.replacement_interval_hours) : null;
+  const element = row.component_label || row.mode_label || "";
   const sendToDecisions = () => {
     const saved = row.saved;
     if (!saved) return;
@@ -273,20 +315,22 @@ function RcmEditor({
         ...base,
         kind: "pm_interval",
         intervalHours: replacement,
-        title: t("rams.rcm.decisionTimeBased", {
-          element: row.component_label || row.mode_label || "",
-          interval: replacement != null ? formatNumber(replacement) : "…",
-          unit,
-        }),
+        // No interval in the title when none is established (never a "…" left in the text).
+        title:
+          replacement != null
+            ? t("rams.rcm.decisionTimeBased", {
+                element,
+                interval: formatNumber(replacement),
+                unit,
+              })
+            : t("rams.rcm.decisionTimeBasedNoInterval", { element }),
       });
     } else if (kind === "redesign") {
       onDecide({
         ...base,
         kind: "modification_wo",
         intervalHours: null,
-        title: t("rams.rcm.decisionRedesign", {
-          element: row.component_label || row.mode_label || "",
-        }),
+        title: t("rams.rcm.decisionRedesign", { element }),
       });
     } else {
       onDecide({
@@ -295,16 +339,28 @@ function RcmEditor({
         intervalHours: null,
         title:
           kind === "condition_based"
-            ? t("rams.rcm.decisionCondition", {
-                element: row.component_label || row.mode_label || "",
-                interval: inspection != null ? formatNumber(Math.round(inspection)) : "…",
-                unit,
-              })
-            : t("rams.rcm.decisionFailureFinding", {
-                element: row.component_label || row.mode_label || "",
-              }),
+            ? inspection != null
+              ? t("rams.rcm.decisionCondition", {
+                  element,
+                  interval: formatNumber(Math.round(inspection)),
+                  unit,
+                })
+              : t("rams.rcm.decisionConditionNoInterval", { element })
+            : t("rams.rcm.decisionFailureFinding", { element }),
       });
     }
+  };
+  /** The recommended tactic in words, without an unfilled interval. */
+  const tacticBody = (x: string) => {
+    if (x === "condition_based" && inspection == null)
+      return t("rams.rcm.tacticBody.condition_based_noInterval");
+    if (x === "time_based" && replacement == null)
+      return t("rams.rcm.tacticBody.time_based_noInterval");
+    return t(`rams.rcm.tacticBody.${x}`, {
+      inspection: inspection != null ? formatNumber(Math.round(inspection)) : "",
+      replacement: replacement != null ? formatNumber(replacement) : "",
+      unit,
+    });
   };
 
   const savedMatches =
@@ -325,13 +381,14 @@ function RcmEditor({
         <div className="grid gap-1.5">
           {questions.map((q) => {
             const b = basis(q);
+            const isAnswered = answered.has(q);
             return (
               <div
                 key={q}
-                className="grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-surface-border bg-surface-1 px-3 py-2"
+                className="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-surface-border bg-surface-1 px-3 py-2"
               >
-                <span className="font-mono text-xs text-text-muted">
-                  {t(`rams.rcm.q.${q}.code`)}
+                <span className="text-xs font-medium text-text-secondary">
+                  {t(`rams.rcm.q.${q}.label`)}
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm text-text-primary">{t(`rams.rcm.q.${q}.text`)}</p>
@@ -344,6 +401,11 @@ function RcmEditor({
                             ? formatDecimal(b.value, b.basis.startsWith("weibull") ? 2 : 0)
                             : "",
                       })}
+                      {DATA_BASES.has(b.basis) && !isAnswered
+                        ? ` ${t("rams.rcm.suggested", {
+                            answer: row.prefilled[q] ? t("rams.rcm.yes") : t("rams.rcm.no"),
+                          })}`
+                        : ""}
                     </p>
                   ) : null}
                 </div>
@@ -356,12 +418,12 @@ function RcmEditor({
                     <button
                       key={String(v)}
                       type="button"
-                      aria-pressed={answers[q] === v}
+                      aria-pressed={isAnswered && answers[q] === v}
                       disabled={!editable}
-                      onClick={() => setAnswers((a) => ({ ...a, [q]: v }))}
+                      onClick={() => answer(q, v)}
                       className={cn(
                         "min-h-9 rounded px-3 text-sm",
-                        answers[q] === v
+                        isAnswered && answers[q] === v
                           ? "bg-primary text-white"
                           : "text-text-secondary hover:bg-surface-2",
                       )}
@@ -385,14 +447,22 @@ function RcmEditor({
             onValueChange={(v) => {
               setPf(v);
               const known = v != null && v > 0;
-              // A known P-F interval makes condition monitoring feasible; clearing it gives the
-              // question back to the analyst only when the interval had answered it.
-              if (known && !answers.on_condition_feasible) {
+              // A known P-F interval answers "monitoring possible"; clearing it gives the question
+              // back to the analyst only when the interval had answered it.
+              if (
+                known &&
+                !(answered.has("on_condition_feasible") && answers.on_condition_feasible)
+              ) {
                 setPfAnswered(true);
-                setAnswers((x) => ({ ...x, on_condition_feasible: true }));
+                answer("on_condition_feasible", true);
               } else if (!known && pfAnswered) {
                 setPfAnswered(false);
                 setAnswers((x) => ({ ...x, on_condition_feasible: false }));
+                setAnswered((s) => {
+                  const next = new Set(s);
+                  next.delete("on_condition_feasible");
+                  return next;
+                });
               }
             }}
           />
@@ -418,38 +488,53 @@ function RcmEditor({
             </RamsCallout>
           </div>
         ) : null}
-        <div
-          className="flex flex-wrap items-center gap-1.5 text-xs"
-          aria-label={t("rams.rcm.pathLabel")}
-        >
-          {rec.path.map((p, i) => (
-            <span key={`${p}-${i}`} className="flex items-center gap-1.5">
-              {i > 0 ? (
-                <span aria-hidden className="text-text-muted">
-                  →
+        {!complete ? (
+          <p className="text-sm text-text-muted" role="status">
+            {t("rams.rcm.answerAll", { count: missing })}
+          </p>
+        ) : (
+          <>
+            <div
+              className="flex flex-wrap items-center gap-1.5 text-xs"
+              aria-label={t("rams.rcm.pathLabel")}
+            >
+              {rec.path.map((p, i) => (
+                <span key={`${p}-${i}`} className="flex items-center gap-1.5">
+                  {i > 0 ? (
+                    <span aria-hidden className="text-text-muted">
+                      →
+                    </span>
+                  ) : null}
+                  <span className="rounded-full border border-surface-border bg-surface-1 px-2.5 py-0.5">
+                    {t(`rams.rcm.path.${p.replace(":", "_")}`)}
+                  </span>
                 </span>
-              ) : null}
-              <span className="rounded-full border border-surface-border bg-surface-1 px-2.5 py-0.5">
-                {t(`rams.rcm.path.${p.replace(":", "_")}`)}
-              </span>
-            </span>
-          ))}
-        </div>
-        <div className="mt-3">
-          <RamsCallout
-            tone={toneOf(RELIABILITY_TACTIC_TONE, rec.recommended_tactic)}
-            title={t(`rams.rcm.tactic.${rec.recommended_tactic}`)}
-          >
-            {t(`rams.rcm.tacticBody.${rec.recommended_tactic}`, {
-              inspection: inspection != null ? formatNumber(Math.round(inspection)) : "…",
-              replacement: replacement != null ? formatNumber(replacement) : "…",
-              unit,
-            })}
-            {rec.redesign_compulsory ? (
-              <span className="block font-medium">{t("rams.rcm.redesignCompulsory")}</span>
-            ) : null}
-          </RamsCallout>
-        </div>
+              ))}
+            </div>
+            <div className="mt-3">
+              <RamsCallout
+                tone={toneOf(RELIABILITY_TACTIC_TONE, rec.recommended_tactic)}
+                title={t(`rams.rcm.tactic.${rec.recommended_tactic}`)}
+              >
+                {tacticBody(rec.recommended_tactic)}
+                {rec.redesign_compulsory ? (
+                  <span className="block font-medium">{t("rams.rcm.redesignCompulsory")}</span>
+                ) : null}
+              </RamsCallout>
+            </div>
+          </>
+        )}
+        {critical &&
+        (refusedTactic || (complete && rec.recommended_tactic === "run_to_failure")) ? (
+          <div className="mt-3">
+            <RamsCallout
+              tone="danger"
+              title={t("rams.rcm.criticalTitle", { rpn: row.rpn, threshold: rpnThreshold })}
+            >
+              {t("rams.rcm.criticalBody")}
+            </RamsCallout>
+          </div>
+        ) : null}
         {row.beta != null ? (
           <p className="mt-2 text-xs text-text-muted">
             {t("rams.rcm.fitNote", {
@@ -465,12 +550,17 @@ function RcmEditor({
           <select
             className={RAMS_SELECT_CLASS}
             value={tactic}
-            disabled={!editable}
+            disabled={!editable || !complete}
             onChange={(e) => setTactic(e.target.value)}
           >
+            <option value="" disabled>
+              {t("rams.decision.chooseEquipment")}
+            </option>
             {TACTICS.map((x) => (
-              <option key={x} value={x}>
-                {t(`rams.rcm.tactic.${x}`)}
+              <option key={x} value={x} disabled={critical && x === "run_to_failure"}>
+                {critical && x === "run_to_failure"
+                  ? t("rams.rcm.refusedOption", { tactic: t(`rams.rcm.tactic.${x}`) })
+                  : t(`rams.rcm.tactic.${x}`)}
               </option>
             ))}
           </select>

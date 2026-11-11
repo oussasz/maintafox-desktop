@@ -837,7 +837,12 @@
       "archive": "Archiver",
       "archiveNamed": "Archiver l'étude {{title}}",
       "archiveConfirm": "L'étude « {{title}} » ne sera plus proposée dans la liste. Ses enregistrements, coûts et décisions sont conservés.",
-      "archiveAction": "Archiver l'étude"
+      "archiveAction": "Archiver l'étude",
+      "search": "Rechercher une étude",
+      "searchPlaceholder": "Nom, équipement ou mode",
+      "noMatch": "Aucune étude ne correspond à « {{query}} ».",
+      "rename": "Renommer",
+      "renameNamed": "Renommer l'étude {{title}}"
     },
     "steps": {
       "data": "Données de défaillance",
@@ -1100,7 +1105,8 @@
         "no_wear_out": "Sans usure nette (β ≤ 1), un remplacement systématique ne réduit pas le coût par heure. Maintenir la surveillance conditionnelle et revoir l'étude après les prochaines défaillances.",
         "failure_not_costlier": "Une panne ne coûte pas plus qu'un remplacement planifié : remplacer avant la panne ne fait pas gagner d'argent.",
         "no_benefit": "Le meilleur intervalle ne fait pas gagner plus de 1 % par rapport au fonctionnement jusqu'à la panne.",
-        "invalid_input": "Les coûts saisis ne sont pas valides."
+        "invalid_input": "Les coûts saisis ne sont pas valides.",
+        "wear_out_not_proven": "β est estimé au-dessus de 1, mais son intervalle de confiance à 90 % descend sous 1 : l'usure n'est pas démontrée. Aucun intervalle de remplacement n'est recommandé ; maintenir la surveillance conditionnelle et revoir l'étude après les prochaines défaillances."
       },
       "colStrategy": "Stratégie",
       "colRate": "Coût par {{unit}}",
@@ -1147,15 +1153,24 @@
       "noPlans": "Aucun plan de MP à intervalle ne cible ces équipements : choisissez un OT.",
       "plan": "Plan de MP",
       "planOption": "{{code}} · {{title}} ({{hours}} h)",
-      "interval": "Nouvel intervalle (h de l'étude)",
+      "interval": "Nouvel intervalle ({{unit}}, base de l'étude)",
       "equipment": "Équipement",
       "chooseEquipment": "Choisir…",
       "woType": "Type d'OT",
       "approver": "Approbateur",
       "anyApprover": "Toute personne habilitée",
-      "justification": "Justification",
+      "justification": "Justification (obligatoire)",
       "submit": "Envoyer pour approbation",
-      "loadError": "Les plans, types d'OT ou approbateurs n'ont pas pu être chargés"
+      "loadError": "Les plans, types d'OT ou approbateurs n'ont pas pu être chargés",
+      "chooseWoType": "Choisir le type d'OT…",
+      "choosePlan": "Choisir le plan…",
+      "justificationHint": "Ce qui motive la décision : preuves de l'étude, constat sur le terrain…",
+      "intervalHint": "Converti à l'enregistrement dans l'unité du plan ({{planUnit}}) avec le taux de marche observé : le journal affiche les deux valeurs.",
+      "approverHint": "Sans approbateur désigné, toute personne ayant le droit d'approuver les décisions de fiabilité peut l'approuver, sauf vous.",
+      "reviseTitle": "Modifier la décision",
+      "reviseHint": "Une décision ne change plus une fois proposée : la décision corrigée est enregistrée et la précédente est retirée avec le motif.",
+      "reviseReason": "Ce qui change (obligatoire)",
+      "reviseSubmit": "Enregistrer la modification"
     },
     "decisions": {
       "title": "Journal des décisions",
@@ -1177,7 +1192,7 @@
       "evB10": "B10 {{b10}} h",
       "evFailures_one": "1 défaillance",
       "evFailures_other": "{{count}} défaillances",
-      "evSaving": "économie {{saving}} {{currency}}/an",
+      "evSaving": "économie {{saving}}/an",
       "status": {
         "proposed": "En attente d'approbation",
         "approved": "Approuvée",
@@ -1215,7 +1230,18 @@
       "selfApproved": "Auto-approuvée",
       "selfApprovedHint": "Approuvée par la personne qui l'a proposée.",
       "syncRefused": "Refusée à la synchronisation",
-      "syncRefusedHint": "L'approbation de cette décision n'est pas valable sur un poste : elle ne peut plus être approuvée ni appliquée. Proposez une nouvelle décision."
+      "syncRefusedHint": "L'approbation de cette décision n'est pas valable sur un poste : elle ne peut plus être approuvée ni appliquée. Proposez une nouvelle décision.",
+      "edit": "Modifier",
+      "editNamed": "Modifier la décision {{title}}",
+      "approverAny": "approbateur : toute personne habilitée",
+      "newIntervalFrom": "nouvel intervalle {{value}} {{unit}} (soit {{hours}} {{basis}} de l'étude, converties dans l'unité du plan)",
+      "justificationText": "Justification : {{text}}",
+      "decidedBy": {
+        "approved": "Approuvée par {{name}} le {{date}}",
+        "applied": "Approuvée par {{name}} le {{date}}",
+        "rejected": "Refusée par {{name}} le {{date}}",
+        "withdrawn": "Retirée par {{name}} le {{date}}"
+      }
     },
     "backToModule": "Parc et études",
     "fmeca": {
@@ -1338,45 +1364,45 @@
       "modesTitle": "Modes de l'AMDEC",
       "rpn": "IPR {{rpn}}",
       "title": "Décision MBF (RCM) : {{mode}}",
-      "hint": "Logique de décision SAE JA1011, un mode de défaillance à la fois. Réponses préremplies depuis l'AMDEC et l'analyse de durée de vie, modifiables.",
+      "hint": "Logique de décision SAE JA1011, un mode de défaillance à la fois. Aucune réponse n'est cochée d'avance : choisissez Oui ou Non pour chaque question. La suggestion tirée de l'AMDEC et de la durée de vie est indiquée sous la question.",
       "yes": "Oui",
       "no": "Non",
       "q": {
         "failure_evident": {
-          "code": "H",
-          "text": "La perte de fonction est-elle évidente pour les opérateurs en conditions normales ?"
+          "text": "La perte de fonction est-elle évidente pour les opérateurs en conditions normales ?",
+          "label": "Panne visible ?"
         },
         "safety_or_environmental": {
-          "code": "S",
-          "text": "Peut-elle blesser quelqu'un ou dépasser une limite environnementale ?"
+          "text": "Peut-elle blesser quelqu'un ou dépasser une limite environnementale ?",
+          "label": "Sécurité ou environnement ?"
         },
         "operational_impact": {
-          "code": "O",
-          "text": "Affecte-t-elle la production, la qualité ou le service client ?"
+          "text": "Affecte-t-elle la production, la qualité ou le service client ?",
+          "label": "Effet sur la production ?"
         },
         "multiple_failure_affects_safety": {
-          "code": "H5",
-          "text": "La défaillance multiple (avec celle de la fonction protégée) aurait-elle des conséquences de sécurité ?"
+          "text": "La défaillance multiple (avec celle de la fonction protégée) aurait-elle des conséquences de sécurité ?",
+          "label": "Panne multiple dangereuse ?"
         },
         "on_condition_feasible": {
-          "code": "1",
-          "text": "Une tâche conditionnelle est-elle faisable et rentable ? (intervalle P-F détectable)"
+          "text": "Une tâche conditionnelle est-elle faisable et rentable ? (intervalle P-F détectable)",
+          "label": "Surveillance possible ?"
         },
         "scheduled_restoration_feasible": {
-          "code": "2",
-          "text": "Une restauration systématique est-elle faisable ? (usure nette, β > 1)"
+          "text": "Une restauration systématique est-elle faisable ? (usure nette, β > 1)",
+          "label": "Remise en état périodique ?"
         },
         "scheduled_discard_feasible": {
-          "code": "3",
-          "text": "Un remplacement systématique est-il faisable et rentable ?"
+          "text": "Un remplacement systématique est-il faisable et rentable ?",
+          "label": "Remplacement périodique ?"
         },
         "failure_finding_feasible": {
-          "code": "H4",
-          "text": "Un essai de détection de panne cachée est-il faisable et rentable ?"
+          "text": "Un essai de détection de panne cachée est-il faisable et rentable ?",
+          "label": "Essai de détection ?"
         },
         "combination_feasible": {
-          "code": "S4",
-          "text": "Une combinaison de tâches ramène-t-elle le risque à un niveau tolérable ?"
+          "text": "Une combinaison de tâches ramène-t-elle le risque à un niveau tolérable ?",
+          "label": "Combinaison de tâches ?"
         }
       },
       "basis": {
@@ -1425,7 +1451,9 @@
         "time_based": "Remplacer ou restaurer la pièce à âge fixe ; intervalle économique de l'étape 2 : {{replacement}} {{unit}}.",
         "failure_finding": "Tester périodiquement la fonction cachée pour trouver la panne avant qu'elle ne soit sollicitée.",
         "run_to_failure": "Aucune tâche proactive n'est justifiée : réparer à la panne.",
-        "redesign": "Aucune tâche ne ramène le risque à un niveau tolérable : modifier l'installation."
+        "redesign": "Aucune tâche ne ramène le risque à un niveau tolérable : modifier l'installation.",
+        "condition_based_noInterval": "Surveiller le signe avant-coureur et intervenir avant la défaillance. Indiquez l'intervalle P-F : la surveillance se fait à la moitié de cet intervalle.",
+        "time_based_noInterval": "Remplacer ou restaurer la pièce à âge fixe. L'étape 2 n'établit pas d'intervalle économique : fixez l'intervalle dans la décision."
       },
       "redesignCompulsory": "La reconception est obligatoire (risque sécurité ou environnement).",
       "fitNote": "Durée de vie de ce mode : β = {{beta}} — {{pattern}}.",
@@ -1443,7 +1471,15 @@
       "decisionRedesign": "Modification : {{element}}",
       "rowsToReviewBody": "Cotez-les à l'étape AMDEC pour les analyser ici.",
       "previewError": "La recommandation n'a pas pu être recalculée : celle affichée peut être périmée, l'enregistrement attend",
-      "previewRetry": "Recalculer"
+      "previewRetry": "Recalculer",
+      "suggested": "Suggestion : {{answer}}.",
+      "answerAll_one": "Répondez à la dernière question pour obtenir la tactique recommandée.",
+      "answerAll_other": "Répondez aux {{count}} questions restantes pour obtenir la tactique recommandée.",
+      "criticalTitle": "Mode critique : IPR {{rpn}}, seuil critique de l'usine {{threshold}}",
+      "criticalBody": "Le fonctionnement jusqu'à la panne n'est pas accepté pour ce mode. Choisissez une tâche ou une modification, et justifiez-la.",
+      "refusedOption": "{{tactic}} (refusé : mode critique)",
+      "decisionTimeBasedNoInterval": "Remplacement à âge fixe : {{element}}",
+      "decisionConditionNoInterval": "Surveillance conditionnelle : {{element}}"
     },
     "system": {
       "tool": "Outil de modélisation",
@@ -1687,6 +1723,50 @@
       "dismissTitle": "Écarter cet écart de données ?",
       "dismissBody": "« {{issue}} » sur {{asset}} ne sera plus listé. Écartez-le seulement si les données sont justes telles quelles.",
       "truncated": "Seuls les premiers sont listés : corrigez-les puis actualisez pour voir les suivants."
+    },
+    "studyName": {
+      "createTitle": "Nouvelle étude",
+      "createHint": "Donnez un nom à l'étude pour la retrouver parmi les études enregistrées.",
+      "renameTitle": "Renommer l'étude",
+      "name": "Nom de l'étude",
+      "autoHint": "Laissé vide : l'étude est nommée d'après ses équipements, son mode et la date du jour.",
+      "mixedBody": "La sélection mêle plusieurs classes ({{classes}}). L'analyse de Weibull regroupe les défaillances comme si les équipements étaient semblables : le résultat n'a de sens que pour une même classe.",
+      "mixedAck": "Je confirme l'étude de ces équipements ensemble, malgré leurs classes différentes.",
+      "noClass": "sans classe",
+      "create": "Créer l'étude",
+      "renameAction": "Renommer"
+    },
+    "export": {
+      "button": "Exporter",
+      "noteButton": "Exporter la note",
+      "print": "Imprimer ou enregistrer en PDF",
+      "csv": "Exporter (Excel/CSV)",
+      "saved": "Fichier enregistré",
+      "failed": "L'export n'a pas abouti",
+      "studyTitle": "Étude de fiabilité : {{title}}",
+      "noteTitle": "Note de décision : {{title}}",
+      "printedAt": "Édité le {{date}}",
+      "scope": "Périmètre",
+      "equipment": "Équipements",
+      "period": "Période",
+      "periodValue": "du {{from}} au {{to}}",
+      "mode": "Mode de défaillance",
+      "basis": "Base de temps",
+      "author": "Créée par",
+      "lifeTitle": "Analyse de durée de vie (Weibull)",
+      "noFit": "Pas d'ajustement de Weibull",
+      "reading": "Lecture",
+      "noCosts": "Coûts non saisis : pas de calcul d'intervalle.",
+      "colSection": "Rubrique",
+      "colItem": "Élément",
+      "colValue": "Valeur",
+      "colApproval": "Approbation",
+      "noDecisions": "Aucune décision enregistrée.",
+      "fileBase": "etude-fiabilite",
+      "noteFileBase": "note-decision",
+      "labelled": "{{label}} : {{value}}",
+      "plannedCost": "Coût d'un remplacement planifié",
+      "failureCost": "Coût d'une panne (perte de production incluse)"
     }
   },
   "errors": {

@@ -12,14 +12,14 @@
 //! The decision is recorded in `rcm_decisions` (linked to the FMECA item) and sent to the study
 //! decision log by the analyst.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::advanced_rams::domain::{CreateRcmStudyInput, UpsertRcmDecisionInput};
 use crate::reliability::advanced_rams::queries as rams_queries;
 use crate::reliability::rcm_loop::{
-    apply_rcm_decision_logic, get_rcm_decision_logic, recommend_tactic, ApplyRcmLogicInput, RcmAnswers,
+    apply_rcm_decision_logic_in, get_rcm_decision_logic, recommend_tactic, ApplyRcmLogicInput, RcmAnswers,
     RcmRecommendation,
 };
 use crate::reliability::study::analysis::life_analysis;
@@ -92,6 +92,9 @@ pub struct RcmWorksheet {
     pub time_basis: String,
     /// FMECA rows still to review (ratings nobody chose): not offered for an RCM decision.
     pub rows_to_review: i64,
+    /// The plant's critical RPN (setting `ram.fmeca_rpn_critical_threshold`): a row at or above it
+    /// is never left to run to failure (`rcm_loop::run_to_failure_refused`).
+    pub rpn_threshold: i64,
     /// Set while the plant's FMECA grids must be reviewed (`scales::RatingScales::review`): the
     /// consequences and ratings read here come from the Maintafox grids standing in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -320,6 +323,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
         editable: study.status == STUDY_ACTIVE,
         time_basis,
         rows_to_review,
+        rpn_threshold: rams_queries::fmeca_rpn_critical_threshold_i64(db).await?,
         grids_review: scales.review.clone(),
     })
 }
@@ -359,7 +363,7 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let item = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT component_label, functional_failure, failure_mode_id, review_required FROM fmeca_items              WHERE id = ? AND analysis_id = ?",
+            "SELECT component_label, functional_failure, failure_mode_id, review_required FROM fmeca_items WHERE id = ? AND analysis_id = ?",
             [input.fmeca_item_id.into(), analysis.into()],
         ))
         .await?
@@ -374,7 +378,10 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
         }
     }
     let rcm_study = ensure_rcm_study(db, &study, actor_id).await?;
-    let existing = db
+    // The RCM row, its link to the FMECA row and the logic are written together: a refusal of the
+    // logic (a critical mode run to failure, L2-15; a missing justification) leaves nothing stored.
+    let txn = db.begin().await?;
+    let existing = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, row_version FROM rcm_decisions WHERE fmeca_item_id = ? AND study_id = ? ORDER BY id DESC LIMIT 1",
@@ -385,8 +392,8 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let (decision_id, row_version) = match existing {
         Some(r) => (get::<i64>(&r, "id")?, get::<i64>(&r, "row_version")?),
         None => {
-            let d = rams_queries::upsert_rcm_decision(
-                db,
+            let d = rams_queries::upsert_rcm_decision_in(
+                &txn,
                 UpsertRcmDecisionInput {
                     id: None,
                     study_id: rcm_study,
@@ -402,7 +409,7 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
                 },
             )
             .await?;
-            db.execute(Statement::from_sql_and_values(
+            txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE rcm_decisions SET fmeca_item_id = ? WHERE id = ?",
                 [input.fmeca_item_id.into(), d.id.into()],
@@ -411,8 +418,8 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
             (d.id, d.row_version)
         }
     };
-    let logic = apply_rcm_decision_logic(
-        db,
+    let logic = apply_rcm_decision_logic_in(
+        &txn,
         ApplyRcmLogicInput {
             decision_id,
             expected_row_version: row_version,
@@ -422,18 +429,20 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
         },
     )
     .await?;
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE rcm_decisions SET pf_interval_hours = ? WHERE id = ?",
         [opt_f64(input.pf_interval_hours), logic.decision_id.into()],
     ))
     .await?;
+    txn.commit().await?;
     get_worksheet(db, input.study_id).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reliability::rcm_loop::{run_to_failure_refused, TACTIC_RUN_TO_FAILURE};
     use crate::reliability::study::scales::default_scales;
 
     #[test]
@@ -459,6 +468,17 @@ mod tests {
         let (a, b) = prefill_answers(&s, 8, 5, Some((1.0, "random")), None);
         assert_eq!(recommend_tactic(&a).recommended_tactic, "run_to_failure");
         assert!(b.iter().any(|x| x.basis == "weibull_no_wear_out"));
+    }
+
+    /// L2-15: a critical row (RPN at or above the plant threshold) is never run to failure; other
+    /// tactics, and run-to-failure below the threshold, stay allowed.
+    #[test]
+    fn run_to_failure_is_refused_for_a_critical_row() {
+        assert!(run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 392, 150));
+        assert!(run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 150, 150));
+        assert!(!run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 149, 150));
+        assert!(!run_to_failure_refused("condition_based", 392, 150));
+        assert!(!run_to_failure_refused("redesign", 392, 150));
     }
 
     #[test]

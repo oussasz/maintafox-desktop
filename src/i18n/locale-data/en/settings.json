@@ -77,7 +77,9 @@
     "inventory.count_four_eyes_value_threshold": "Four-eyes tolerance of a count: value of the variance",
     "inventory.count_four_eyes_percent_threshold": "Four-eyes tolerance of a count: share of the system quantity",
     "inventory.reconciliation_drift_break": "Stock reconciliation break gap",
-    "locale.fiscal_year_start_month": "Fiscal year starts in"
+    "locale.fiscal_year_start_month": "Fiscal year starts in",
+    "reliability.repeat_failure_count": "Repeat failures: number of failures",
+    "reliability.repeat_failure_window_days": "Repeat failures: period (days)"
   },
   "documentHeader": {
     "removeLogoConfirmTitle": "Remove the logo?",
@@ -384,7 +386,9 @@
       "ram.fmeca_rpn_critical_threshold": "From this risk priority number (S × O × D) an FMECA failure mode is critical.",
       "backup.retention_daily": "Number of daily scheduled backups kept (at least one).",
       "backup.retention_weekly": "Number of weekly backups kept in addition.",
-      "backup.retention_monthly": "Number of monthly backups kept in addition."
+      "backup.retention_monthly": "Number of monthly backups kept in addition.",
+      "reliability.repeat_failure_count": "An equipment is flagged “repeat failures” from this number of unplanned failures within the period below.",
+      "reliability.repeat_failure_window_days": "Period, in days up to today, over which unplanned failures are counted for the “repeat failures” flag."
     },
     "units": {
       "wo.reopen_window_days_one": "{{count}} day",
@@ -398,7 +402,11 @@
       "backup.retention_weekly_one": "{{count}} week",
       "backup.retention_weekly_other": "{{count}} weeks",
       "backup.retention_monthly_one": "{{count}} month",
-      "backup.retention_monthly_other": "{{count}} months"
+      "backup.retention_monthly_other": "{{count}} months",
+      "reliability.repeat_failure_count_one": "{{count}} failure",
+      "reliability.repeat_failure_count_other": "{{count}} failures",
+      "reliability.repeat_failure_window_days_one": "{{count}} day",
+      "reliability.repeat_failure_window_days_other": "{{count}} days"
     },
     "currencyLoadError": "The currency list (Reference data › Currencies) could not be loaded: the currency cannot be changed.",
     "currencyLoading": "Loading currencies…",
@@ -538,6 +546,14 @@
     "history": "History",
     "historyError": "The history could not be loaded",
     "noHistory": "No change at this site.",
+    "depannageValidation": {
+      "title": "Breakdown validation",
+      "label": "Approve breakdowns automatically at their close",
+      "help": "Off (recommended): each breakdown is validated after the fact by an approver of the site other than the person who started it, before its close. Turn on only for a site without a second approver: the breakdown is then marked \"approved automatically (site rule)\", with no validator.",
+      "active": "Breakdowns approved automatically at this site",
+      "confirmOnBody": "At {{site}}, breakdowns not validated will be approved automatically at their close, with no validator. Other sites keep the validation.",
+      "confirmOffBody": "At {{site}}, each breakdown must again be validated by an approver of the site before its close."
+    },
     "selfApproval": {
       "label": "Allow self-approval of reliability decisions and work permits",
       "help": "Off (recommended): a second person approves every reliability decision and every work permit of this site (four-eyes: not the person who wrote or submitted the permit). Turn on only for a site where one person both prepares and approves; such approvals are marked \"self-approval (site without four-eyes)\" on the permit and \"Self-approved\" on the decision.",

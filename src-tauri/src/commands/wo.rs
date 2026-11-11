@@ -15,6 +15,8 @@
 //!   ot.admin   — reopen_wo, delete_wo_attachment
 //!   ot.create + ot.edit (+ ot.emergency_assign to assign someone else) — start_depannage_wo
 //!   ot.edit    — set_wo_breakdown_at
+//!   ot.approve — validate_depannage_wo (never by the dépannage's starter)
+//!   ot.view    — get_depannage_times
 //!
 //! Site scope (step 6, `docs/SITE_SCOPED_ROLES.md`): every work order is checked at its org node
 //! `work_orders.entity_id` (`wo::access`), with the same permission as before; what belongs to a
@@ -1130,6 +1132,50 @@ pub async fn set_wo_breakdown_at(
     )
     .await;
     Ok(result)
+}
+
+/// Validates a dépannage after the fact (four-eyes): ot.approve at the work order's site, never by
+/// the person who started it (`wo::depannage_validation`); audited.
+#[tauri::command]
+pub async fn validate_depannage_wo(
+    mut input: crate::wo::depannage_validation::WoDepannageValidateInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_APPROVE, input.wo_id).await?;
+    input.actor_id = i64::from(user.user_id);
+    let before = queries::get_work_order(&state.db, input.wo_id).await.ok().flatten();
+    let expected = input.expected_row_version;
+    let wo = crate::wo::depannage_validation::validate_depannage(&state.db, input).await?;
+    audit::record_wo_change_with_diff(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "depannage_validated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Dépannage validated after the fact".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+        before.as_ref(),
+        Some(&wo),
+        Some(expected),
+    )
+    .await;
+    Ok(wo)
+}
+
+/// The times of a dépannage (response, active repair, time to restore; EN 13306): ot.view at the
+/// work order's site. `None`: not a dépannage.
+#[tauri::command]
+pub async fn get_depannage_times(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Option<crate::wo::depannage_validation::DepannageTimes>> {
+    let user = require_session!(state);
+    require_on_wo(&state, user.user_id, crate::rbac::permissions::OT_VIEW, wo_id).await?;
+    crate::wo::depannage_validation::depannage_times(&state.db, wo_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
