@@ -212,6 +212,7 @@ pub(crate) const RELIABILITY_TYPES: &[&str] = &[
     "failure_hierarchies",
     "failure_codes",
     "failure_events",
+    "wo_history_records",
     "runtime_exposure_logs",
     "ram_advanced_guardrails",
     "reliability_beta_benchmarks",

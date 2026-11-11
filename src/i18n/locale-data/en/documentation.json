@@ -20,11 +20,20 @@
       "notes": "Notes",
       "notesPlaceholder": "Optional description",
       "file": "File",
-      "equipmentHint": "Optional — the document also appears on the equipment record."
+      "equipmentHint": "Optional — the document also appears on the equipment record.",
+      "category": "Category",
+      "documentNumber": "Document number",
+      "documentNumberPlaceholder": "E.g. PR-ELEC-012",
+      "revision": "Revision",
+      "revisionPlaceholder": "E.g. B or 3",
+      "validUntil": "Valid until",
+      "validUntilHint": "Optional — a document that has expired, or expires within {{days}} days, is flagged in the list.",
+      "validUntilInvalid": "Incomplete or impossible date: enter a valid date, or clear the field if the document never expires."
     },
     "open": "Add document",
     "submit": "Upload",
-    "done": "Document \"{{title}}\" added"
+    "done": "Document \"{{title}}\" added",
+    "doneIn": "Document “{{title}}” added to “{{category}}”"
   },
   "list": {
     "empty": "No documents in this category yet.",
@@ -33,10 +42,11 @@
       "file": "File",
       "equipment": "Equipment",
       "uploaded": "Uploaded",
-      "actions": "Actions"
+      "actions": "Actions",
+      "validity": "Validity"
     },
     "download": "Download",
-    "edit": "Edit link",
+    "edit": "Edit",
     "delete": "Delete",
     "loading": "Loading documents…",
     "loadError": "The documents of this category could not be loaded",
@@ -49,24 +59,63 @@
     "downloadFailed": "The document could not be saved",
     "editNamed": "Edit {{title}}",
     "deleteNamed": "Delete {{title}}",
-    "openEquipment": "Open equipment {{code}}"
+    "openEquipment": "Open equipment {{code}}",
+    "revisionLabel": "Rev. {{revision}}",
+    "validity": {
+      "none": "No expiry",
+      "expired": "Expired on {{date}}",
+      "soon": "Expires on {{date}}",
+      "until": "Until {{date}}"
+    }
   },
   "edit": {
     "title": "Edit document",
     "save": "Save",
     "cancel": "Cancel",
     "saving": "Saving…",
-    "linkUnreadable": "The linked equipment ({{code}}) could not be read; the link is kept unless you choose another one."
+    "linkUnreadable": "The linked equipment ({{code}}) could not be read; the link is kept unless you choose another one.",
+    "moved": "Document “{{title}}” moved to “{{category}}”"
   },
   "confirm": {
     "delete": "\"{{title}}\" will be removed from the library. The file is kept on disk for audit purposes.",
     "deleteTitle": "Delete this document?",
-    "deleteAction": "Delete document"
+    "deleteAction": "Delete document",
+    "deleteVersion": "Revision {{revision}} of “{{title}}” will be withdrawn; the previous version becomes the current one again. The file stays on disk for the audit."
   },
   "errors": {
     "fileTooLarge": "File exceeds {{mb}} MB."
   },
   "category": {
     "description": "Documents in the “{{name}}” category."
+  },
+  "expiry": {
+    "expired_one": "{{count}} document has expired",
+    "expired_other": "{{count}} documents have expired",
+    "soon_one": "{{count}} document expires within {{days}} days",
+    "soon_other": "{{count}} documents expire within {{days}} days"
+  },
+  "versions": {
+    "new": "New version",
+    "newNamed": "New version of {{title}}",
+    "newTitle": "New version of the document",
+    "newDescription": "“{{title}}” — current version: {{revision}}. The new file replaces the current one in the library.",
+    "noRevision": "no revision",
+    "sameRevision": "Enter a revision different from the current version.",
+    "changes": "What changes",
+    "changesPlaceholder": "Optional — e.g. added a verification step",
+    "keepsHistory": "The current version stays readable and downloadable in the document's history; it can no longer be edited.",
+    "submit": "Upload the version",
+    "done": "“{{title}}”: revision {{revision}} saved",
+    "history": "Version history",
+    "historyNamed": "Version history of {{title}}",
+    "historyTitle": "Versions of “{{title}}”",
+    "historyDescription": "Newest first. Earlier versions are kept as they are.",
+    "loadError": "The version history could not be read",
+    "current": "Current",
+    "uploaded": "Uploaded on {{date}} by {{by}}",
+    "replaced": "replaced on {{date}}",
+    "unknownUser": "unknown user",
+    "downloadNamed": "Download revision {{revision}}",
+    "close": "Close"
   }
 }

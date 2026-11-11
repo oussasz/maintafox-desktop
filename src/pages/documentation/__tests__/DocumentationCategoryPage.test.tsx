@@ -11,6 +11,9 @@ const mockList = vi.fn();
 const mockUpload = vi.fn();
 const mockDelete = vi.fn();
 const mockCategories = vi.fn();
+const mockUpdate = vi.fn();
+const mockNewVersion = vi.fn();
+const mockVersions = vi.fn();
 
 vi.mock("@/services/documentation-service", () => ({
   MAX_LIBRARY_DOCUMENT_BYTES: 25 * 1024 * 1024,
@@ -18,7 +21,9 @@ vi.mock("@/services/documentation-service", () => ({
   uploadLibraryDocument: (...a: unknown[]) => mockUpload(...a),
   deleteLibraryDocument: (...a: unknown[]) => mockDelete(...a),
   listDocumentCategories: () => mockCategories(),
-  updateLibraryDocument: vi.fn(),
+  updateLibraryDocument: (...a: unknown[]) => mockUpdate(...a),
+  uploadLibraryDocumentVersion: (...a: unknown[]) => mockNewVersion(...a),
+  listLibraryDocumentVersions: (...a: unknown[]) => mockVersions(...a),
   getLibraryDocumentFile: vi.fn(),
   fileToNumberArray: vi.fn().mockResolvedValue([1, 2, 3]),
 }));
@@ -74,6 +79,12 @@ const doc = {
   uploadedById: 1,
   uploadedAt: "2026-10-01T08:00:00Z",
   notes: null,
+  documentNumber: null,
+  revision: null,
+  validUntil: null,
+  previousVersionId: null,
+  supersededAt: null,
+  uploadedByName: "Admin",
 };
 
 const CATEGORIES = [
@@ -149,6 +160,138 @@ describe("DocumentationCategoryPage", () => {
         }),
       ),
     );
+  });
+
+  it("shows the category it will file into and sends number, revision and validity", async () => {
+    mockList.mockResolvedValue([]);
+    mockUpload.mockResolvedValueOnce({ ...doc, id: 9 });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "upload.open" }));
+    // The open tab's category is shown in the form, not decided silently.
+    expect(screen.getByLabelText(/upload\.fields\.category/)).toHaveTextContent(
+      "Modes opératoires",
+    );
+    const file = new File(["abc"], "loto.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("upload.fields.file"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("upload.fields.documentNumber"), {
+      target: { value: " PR-ELEC-012 " },
+    });
+    fireEvent.change(screen.getByLabelText("upload.fields.revision"), {
+      target: { value: "B" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "upload.submit" }));
+    await waitFor(() =>
+      expect(mockUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "sops",
+          documentNumber: "PR-ELEC-012",
+          revision: "B",
+          validUntil: null,
+        }),
+      ),
+    );
+  });
+
+  it("flags expired documents in the list and counts them above it", async () => {
+    mockList.mockResolvedValue([
+      { ...doc, documentNumber: "PR-1", revision: "C", validUntil: "2020-01-31" },
+      { ...doc, id: 8, title: "Open-ended", validUntil: null },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("PR-1")).toBeInTheDocument();
+    expect(screen.getByText("list.validity.expired")).toBeInTheDocument();
+    expect(screen.getByText("list.validity.none")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("expiry.expired");
+  });
+
+  it("edits number, revision and validity; an empty date clears it", async () => {
+    mockList.mockResolvedValue([
+      { ...doc, documentNumber: "PR-1", revision: "B", validUntil: "2030-01-31" },
+    ]);
+    mockUpdate.mockResolvedValueOnce(doc);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "list.editNamed" }));
+    expect(screen.getByLabelText("upload.fields.documentNumber")).toHaveValue("PR-1");
+    expect(screen.getByLabelText(/upload\.fields\.category/)).toHaveTextContent(
+      "Modes opératoires",
+    );
+    fireEvent.change(screen.getByLabelText("upload.fields.revision"), {
+      target: { value: "C" },
+    });
+    fireEvent.change(screen.getByLabelText("upload.fields.validUntil"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "edit.save" }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 7,
+          category: "sops",
+          documentNumber: "PR-1",
+          revision: "C",
+          validUntil: "",
+        }),
+      ),
+    );
+  });
+
+  it("refuses to upload an unfinished validity date instead of storing no date", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "upload.open" }));
+    const file = new File(["abc"], "loto.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("upload.fields.file"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("upload.fields.validUntil"), {
+      target: { value: "31/02/2027" },
+    });
+    expect(await screen.findByText("upload.fields.validUntilInvalid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "upload.submit" })).toBeDisabled();
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+
+  it("uploads a new version with a new revision; the same revision is refused", async () => {
+    mockList.mockResolvedValue([{ ...doc, documentNumber: "PR-1", revision: "B" }]);
+    mockNewVersion.mockResolvedValueOnce({ ...doc, id: 8, revision: "C", previousVersionId: 7 });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "versions.newNamed" }));
+    const file = new File(["v2"], "lube-v2.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload\.fields\.file/), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText(/upload\.fields\.revision/), {
+      target: { value: "b" },
+    });
+    expect(screen.getByText("versions.sameRevision")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "versions.submit" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/upload\.fields\.revision/), {
+      target: { value: "C" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "versions.submit" }));
+    await waitFor(() =>
+      expect(mockNewVersion).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 7, revision: "C", fileName: "lube-v2.pdf" }),
+      ),
+    );
+  });
+
+  it("shows the history of a document that has earlier versions", async () => {
+    const current = { ...doc, id: 8, revision: "C", previousVersionId: 7 };
+    mockList.mockResolvedValue([current]);
+    mockVersions.mockResolvedValueOnce([
+      current,
+      { ...doc, revision: "B", supersededAt: "2026-11-01T09:00:00Z" },
+    ]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "versions.historyNamed" }));
+    await waitFor(() => expect(mockVersions).toHaveBeenCalledWith(8));
+    expect(await screen.findByText("versions.current")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "versions.downloadNamed" })).toHaveLength(2);
   });
 
   it("asks before deleting a document", async () => {

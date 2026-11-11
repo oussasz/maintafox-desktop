@@ -116,6 +116,7 @@
       "login__offline": "Connexion hors ligne",
       "login__failure": "Échec de connexion",
       "logout": "Déconnexion",
+      "wo_history__coding_saved": "Codification d’un historique importé modifiée",
       "session__unlocked_with_pin": "Session déverrouillée par code PIN",
       "session__idle_locked": "Session verrouillée après inactivité",
       "session__expired": "Session expirée",

@@ -3,13 +3,13 @@
  * safety protocols, certificates) with download and upload, and the asset's photos.
  */
 
-import { Download, FileText, Upload } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { FileText, Upload } from "lucide-react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { AssetPhotoGallery } from "@/components/assets/AssetPhotoGallery";
-import { useLoad } from "@/components/assets/detail/use-load";
+import { AssetLibraryDocumentList } from "@/components/assets/detail/AssetLibraryDocumentList";
 import { DetailSectionCard } from "@/components/detail";
 import {
   type DocumentCategories,
@@ -18,10 +18,9 @@ import {
 import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
-import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { ErrorState } from "@/components/ui/data-state";
 import { Input } from "@/components/ui/input";
 import { ListAccessNote } from "@/components/ui/list-access-note";
-import { ReviewMark } from "@/components/ui/review-mark";
 import {
   Select,
   SelectContent,
@@ -29,19 +28,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isExportCancelled, saveBlobWithDialog } from "@/export";
-import { useFormatters } from "@/hooks/use-formatters";
-import { usePermissions } from "@/hooks/use-permissions";
-import { describeAppError } from "@/lib/app-error";
 import {
   MAX_LIBRARY_DOCUMENT_BYTES,
   fileToNumberArray,
-  getLibraryDocumentFile,
-  listLibraryDocuments,
   uploadLibraryDocument,
 } from "@/services/documentation-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import type { Asset, LibraryDocument, LibraryDocumentCategory } from "@shared/ipc-types";
+import type { Asset, LibraryDocumentCategory } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 function toast(title: string, variant: "success" | "destructive", description?: string | null) {
@@ -50,74 +43,15 @@ function toast(title: string, variant: "success" | "destructive", description?: 
 
 export function AssetDocumentsTab({ asset }: { asset: Asset }) {
   const { t } = useTranslation(["equipment", "documentation"]);
-  const { formatDate, formatBytes } = useFormatters();
-  const { can } = usePermissions();
-  const canView = can(P.DOC_VIEW);
-  const load = useMemo(
-    () => (canView ? () => listLibraryDocuments(null, asset.id) : null),
-    [asset.id, canView],
-  );
-  const { data, error, loading, reload } = useLoad<LibraryDocument[]>(load, String(asset.id));
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
   // Document categories come from the plant's list (Données de référence), by exact code.
   const categories = useDocumentCategories();
-
-  const download = async (doc: LibraryDocument) => {
-    try {
-      const bytes = await getLibraryDocumentFile(doc.id);
-      const copy = new Uint8Array(bytes.byteLength);
-      copy.set(bytes);
-      await saveBlobWithDialog(
-        new Blob([copy], { type: doc.mimeType || "application/octet-stream" }),
-        doc.fileName,
-      );
-      toast(t("documents.saved", { name: doc.fileName }), "success");
-    } catch (err) {
-      if (isExportCancelled(err)) return;
-      const { title, description } = describeAppError(err);
-      toast(title, "destructive", description);
-    }
-  };
 
   return (
     <div className="space-y-4">
       <DetailSectionCard title={t("documents.title")} icon={FileText}>
-        {!canView ? (
-          <p className="text-sm text-text-muted">{t("documents.noPermission")}</p>
-        ) : loading && !data ? (
-          <LoadingState />
-        ) : error || !data ? (
-          <ErrorState error={error} onRetry={() => void reload()} retrying={loading} />
-        ) : data.length === 0 ? (
-          <p className="text-sm text-text-muted">{t("empty.noDocuments")}</p>
-        ) : (
-          <ul className="divide-y divide-surface-border">
-            {data.map((doc) => (
-              <li key={doc.id} className="flex flex-wrap items-center gap-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{doc.title}</p>
-                  <p className="text-xs text-text-muted">
-                    {categories.text(doc.category)}
-                    {categories.loaded &&
-                    (categories.option(doc.category)?.review_required ?? true) ? (
-                      <ReviewMark className="ms-1" />
-                    ) : null}{" "}
-                    · {doc.fileName} · {formatBytes(doc.sizeBytes)} · {formatDate(doc.uploadedAt)}
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-9 gap-1.5"
-                  aria-label={t("documents.downloadNamed", { name: doc.title })}
-                  onClick={() => void download(doc)}
-                >
-                  <Download className="h-4 w-4" aria-hidden />
-                  {t("documents.download")}
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <AssetLibraryDocumentList assetId={asset.id} reloadToken={reloadToken} />
         <PermissionGate permission={P.DOC_MANAGE}>
           <div className="flex justify-end pt-2">
             <Button variant="outline" className="h-11 gap-1.5" onClick={() => setUploadOpen(true)}>
@@ -142,7 +76,7 @@ export function AssetDocumentsTab({ asset }: { asset: Asset }) {
           onClose={() => setUploadOpen(false)}
           onSaved={() => {
             setUploadOpen(false);
-            void reload();
+            setReloadToken((n) => n + 1);
           }}
         />
       ) : null}
@@ -188,6 +122,9 @@ function UploadDialog({
         fileBytes: await fileToNumberArray(file),
         mimeType: file.type || "application/octet-stream",
         notes: null,
+        documentNumber: null,
+        revision: null,
+        validUntil: null,
       });
       onSaved();
     } catch {

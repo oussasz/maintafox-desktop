@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WoAssetDocumentsCard } from "@/components/wo/WoAssetDocumentsCard";
 import { WoAttachmentPanel } from "@/components/wo/WoAttachmentPanel";
 import { WoAuditTimeline } from "@/components/wo/WoAuditTimeline";
 import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
@@ -525,7 +526,11 @@ export function WoDetailDialog({
                 <WoAuditTimeline woId={wo.id} />
               </TabsContent>
 
-              <TabsContent value="attachments" className="pt-3">
+              <TabsContent value="attachments" className="space-y-4 pt-3">
+                <WoAssetDocumentsCard
+                  equipmentId={wo.equipment_id}
+                  assetLabel={formatAssetLabel(wo.asset_code, wo.asset_label)}
+                />
                 <WoAttachmentPanel
                   woId={wo.id}
                   canUpload={canUploadAttachments}

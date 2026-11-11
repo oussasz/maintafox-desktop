@@ -183,7 +183,8 @@
       "failure_recorded": "Panne",
       "meter_reading": "Compteur",
       "document_linked": "Document",
-      "photo_added": "Photo"
+      "photo_added": "Photo",
+      "history_imported": "Historique importé"
     },
     "filters": {
       "types": {
@@ -193,7 +194,8 @@
         "pm": "PM",
         "inspection": "Inspection",
         "documents": "Documents",
-        "failures": "Pannes"
+        "failures": "Pannes",
+        "history": "Historique importé"
       },
       "periods": {
         "today": "Aujourd'hui",
@@ -222,7 +224,8 @@
       "failure_recorded": "Panne enregistrée",
       "meter_reading": "Relevé de compteur",
       "document_linked": "Document lié",
-      "photo_added": "Photo ajoutée"
+      "photo_added": "Photo ajoutée",
+      "history_imported": "Historique importé {{code}}"
     },
     "quality": {
       "accepted": "Accepté",
@@ -244,9 +247,34 @@
     "failureSource": {
       "work_order": "Issue d’un ordre de travail",
       "inspection": "Issue d’une inspection",
-      "manual": "Saisie manuelle"
+      "manual": "Saisie manuelle",
+      "history_record": "Historique importé"
     },
-    "title": "Historique de l’équipement"
+    "title": "Historique de l’équipement",
+    "record": {
+      "readOnly": "Intervention reprise de l’ancien système : seule la codification de défaillance peut être modifiée.",
+      "nature": "Nature",
+      "started": "Début",
+      "ended": "Fin",
+      "failure": "Défaillance",
+      "yes": "Oui",
+      "no": "Non",
+      "downtime": "Arrêt",
+      "cost": "Coût",
+      "description": "Description",
+      "workDone": "Travaux réalisés",
+      "interveners": "Intervenants",
+      "coding": "Codification de la défaillance",
+      "failureMode": "Mode de défaillance",
+      "failureCause": "Cause",
+      "mechanism": "Mécanisme",
+      "detection": "Méthode de détection",
+      "failureEffect": "Effet",
+      "noRight": "Modifier la codification demande le droit de modifier les OT sur le site de l’équipement.",
+      "close": "Fermer",
+      "save": "Enregistrer la codification",
+      "saving": "Enregistrement…"
+    }
   },
   "empty": {
     "list": "Aucun équipement trouvé.",
@@ -838,7 +866,9 @@
     "categoryRequired": "Choisissez la catégorie du document.",
     "file": "Fichier",
     "tooBig": "Le fichier dépasse {{mb}} Mo.",
-    "docTitle": "Titre"
+    "docTitle": "Titre",
+    "onWoTitle": "Documents de l'équipement — {{asset}}",
+    "onWoHint": "Manuels, modes opératoires et certificats de cet équipement, issus de la documentation. Pour en ajouter un, ouvrez l'équipement, onglet Documents."
   },
   "critMethod": {
     "title": "Évaluation de la criticité",

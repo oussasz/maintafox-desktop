@@ -1499,6 +1499,18 @@ export interface SupportBundle {
 
 // â”€â”€â”€ Backup & Restore â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Where scheduled backups go and the last copy outside this PC (L7-03). */
+export interface BackupOverview {
+  external_dir: string | null;
+  external_reachable: boolean;
+  app_backup_dir: string;
+  last_success_at: string | null;
+  last_outside_at: string | null;
+  last_outside_path: string | null;
+  outside_copy_missing_or_old: boolean;
+  outside_copy_max_age_days: number;
+}
+
 export interface BackupRunRecord {
   id: number;
   trigger: string;
@@ -2461,6 +2473,18 @@ export interface LibraryDocument {
   uploadedById: number | null;
   uploadedAt: string;
   notes: string | null;
+  /** The plant's reference of the document (e.g. "PR-ELEC-012"). */
+  documentNumber: string | null;
+  /** Revision label as printed on the document. */
+  revision: string | null;
+  /** Last valid day `YYYY-MM-DD`; null when it never expires. */
+  validUntil: string | null;
+  /** The version this one replaces; null for a first version. */
+  previousVersionId: number | null;
+  /** When a newer version replaced this one; null for the current version. */
+  supersededAt: string | null;
+  /** Who uploaded this version. */
+  uploadedByName: string | null;
 }
 
 export interface UpdateLibraryDocumentPayload {
@@ -2468,6 +2492,12 @@ export interface UpdateLibraryDocumentPayload {
   title?: string | null;
   equipmentId?: number | null;
   clearEquipmentLink: boolean;
+  /** New category code; omitted keeps it. */
+  category?: string | null;
+  /** Control fields: omitted keeps the stored value, an empty text clears it. */
+  documentNumber?: string | null;
+  revision?: string | null;
+  validUntil?: string | null;
 }
 
 export interface DomainBindingEntry {
@@ -2607,10 +2637,19 @@ export type AssetHistoryEventType =
   | "failure_recorded"
   | "meter_reading"
   | "document_linked"
-  | "photo_added";
+  | "photo_added"
+  | "history_imported";
 
 export interface AssetHistoryEventRef {
-  entity_type: "asset" | "wo" | "di" | "pm" | "inspection" | "document" | "photo";
+  entity_type:
+    | "asset"
+    | "wo"
+    | "di"
+    | "pm"
+    | "inspection"
+    | "document"
+    | "photo"
+    | "history_record";
   entity_id: number | null;
   entity_code: string | null;
   route_hint: string | null;
@@ -2628,6 +2667,22 @@ export interface AssetHistoryEvent {
   status_label: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ref: AssetHistoryEventRef | null;
+}
+
+/** Failure coding of an imported maintenance history record (L7-30). */
+export interface WoHistoryCodingInput {
+  record_id: number;
+  expected_row_version: number;
+  failure_mode_id: number | null;
+  failure_cause_id: number | null;
+  failure_mechanism_id: number | null;
+  detection_method_id: number | null;
+  failure_effect_id: number | null;
+}
+
+export interface WoHistoryCodingSaved {
+  record_id: number;
+  row_version: number;
 }
 
 export interface AssetHistorySummary {
