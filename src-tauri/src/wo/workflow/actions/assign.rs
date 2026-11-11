@@ -189,17 +189,8 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
         // receiving the row (`planning::sync_check`): a crew change of a committed slot is a move,
         // an assignee change alone is not, and a released or cancelled slot enters no week.
         if let Some(next_team) = input.assigned_team_id {
-            // A routine assignment never moves a committed slot onto another crew: that is a
-            // Planning move (capacity and double-booking are checked there, not skipped here).
-            if !emergency
-                && next_team != cmt.assigned_team_id
-                && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED
-            {
-                return Err(AppError::ValidationFailed(vec![
-                    "GATE_WO_ASSIGN_CREW_VIA_PLANNING: The slot is committed to another crew: move it in Planning, or use the emergency reassignment for a real exception."
-                        .to_string(),
-                ]));
-            }
+            // A frozen week on the new crew's site is reported first (it names the week and the
+            // break-in), before the general "move it in Planning" refusal below.
             if next_team != cmt.assigned_team_id && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED {
                 if let Some(week) = crate::planning::weekly_schedule::frozen_week_for_slot(
                     &txn,
@@ -219,6 +210,17 @@ async fn reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput, emer
                         std::collections::HashMap::from([("week_start".to_string(), week.week_start.clone())]),
                     ));
                 }
+            }
+            // A routine assignment never moves a committed slot onto another crew: that is a
+            // Planning move (capacity and double-booking are checked there, not skipped here).
+            if !emergency
+                && next_team != cmt.assigned_team_id
+                && cmt.status == crate::planning::lifecycle::STATUS_COMMITTED
+            {
+                return Err(AppError::ValidationFailed(vec![
+                    "GATE_WO_ASSIGN_CREW_VIA_PLANNING: The slot is committed to another crew: move it in Planning, or use the emergency reassignment for a real exception."
+                        .to_string(),
+                ]));
             }
         }
     }
