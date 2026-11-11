@@ -613,7 +613,13 @@ pub(crate) async fn before_delete_checked(
         }
     }
     let verdict = match layout.def.entity_type {
-        "work_permits" | "permit_isolations" | "permit_suspensions" | "permit_types" | "qualification_requirements" => {
+        "work_permits"
+        | "permit_isolations"
+        | "permit_suspensions"
+        | "permit_types"
+        | "qualification_requirements"
+        | "permit_workers"
+        | "permit_personal_locks" => {
             crate::permit::sync_check::inbound_delete_check(conn, layout.def.entity_type, entity_sync_id).await?
         }
         // Rows of the safety rule notice are local to each PC: never deleted by sync.

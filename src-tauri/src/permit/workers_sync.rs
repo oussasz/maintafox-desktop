@@ -33,6 +33,9 @@ use crate::settings::site::InboundVerdict;
 pub(crate) const PERSONAL_LOCK_RECORD_CHANGED: &str = "PERMIT_PERSONAL_LOCK_RECORD_CHANGED";
 pub(crate) const PERSONAL_LOCK_PLACEMENT_INVALID: &str = "PERMIT_PERSONAL_LOCK_PLACEMENT_INVALID";
 pub(crate) const PERSONAL_LOCK_NOT_OWNER: &str = "PERMIT_PERSONAL_LOCK_NOT_OWNER";
+pub(crate) const PERSONAL_LOCK_PERMIT_NOT_ISSUED: &str = "PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED";
+pub(crate) const PERSONAL_LOCK_NOTHING_PROTECTED: &str = "PERMIT_PERSONAL_LOCK_NOTHING_PROTECTED";
+pub(crate) const PERSONAL_LOCK_WORKER_WITHDRAWN: &str = "PERMIT_PERSONAL_LOCK_WORKER_WITHDRAWN";
 pub(crate) const WORKER_RECORD_CHANGED: &str = "PERMIT_WORKER_RECORD_CHANGED";
 pub(crate) const WORKER_WITHDRAWN_LOCK_ON: &str = "PERMIT_WORKER_WITHDRAWN_LOCK_ON";
 pub(crate) const ISOLATION_PERSONAL_LOCKS_ON: &str = "PERMIT_ISOLATION_PERSONAL_LOCKS_ON";
@@ -181,8 +184,15 @@ pub(crate) async fn inbound_personal_lock_check(
 }
 
 /// A padlock new here: placed by the worker of its line (the account linked to that worker's card),
-/// who has no forced removal they were not told of, taken off before this placement
-/// (`PERMIT_WORKER_NOT_INFORMED`, as `permit::queries::open_forced_removal_of` locally).
+/// on a permit held here at or past its issue (`PERMIT_PERSONAL_LOCK_PERMIT_NOT_ISSUED`), by a
+/// worker who has no forced removal they were not told of, taken off before this placement
+/// (`PERMIT_WORKER_NOT_INFORMED`, as `permit::queries::open_forced_removal_of` locally). A padlock
+/// received still on is also judged as the local placement is (`permit::workers`): on a line not
+/// withdrawn here (`PERMIT_PERSONAL_LOCK_WORKER_WITHDRAWN`) and, while the permit is issued or active
+/// here, on a group lock box that protects something: an isolation verified and none taken off
+/// (`PERMIT_PERSONAL_LOCK_NOTHING_PROTECTED`). An isolation line added after the padlock was placed,
+/// not verified yet, does not count against it: the box is judged on what protects it. A padlock
+/// received already taken off is a record of the past, not judged on the state held now.
 async fn placement_check(
     conn: &impl ConnectionTrait,
     lock: &Payload,
@@ -196,7 +206,7 @@ async fn placement_check(
     let Some(worker) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT personnel_id FROM permit_workers WHERE entity_sync_id = ?",
+            "SELECT personnel_id, withdrawn_at FROM permit_workers WHERE entity_sync_id = ?",
             [worker_sync.into()],
         ))
         .await?
@@ -204,6 +214,7 @@ async fn placement_check(
         return wait(format!("{label}: its worker line {worker_sync} is not applied yet"));
     };
     let personnel: Option<i64> = worker.try_get("", "personnel_id")?;
+    let withdrawn: Option<String> = worker.try_get("", "withdrawn_at")?;
     let Some(placer) = local_user(conn, placer_sync).await? else {
         return wait(format!("{label}: the person who placed it is not applied yet"));
     };
@@ -213,6 +224,9 @@ async fn placement_check(
             PERSONAL_LOCK_NOT_OWNER,
             format!("{label}: placed by someone who is not the worker of its line"),
         );
+    }
+    if let Some(verdict) = permit_state_check(conn, lock, label, withdrawn.is_some()).await? {
+        return Ok(Some(verdict));
     }
     let placed = time(lock, "placed_at");
     let open = conn
@@ -246,6 +260,95 @@ async fn placement_check(
         );
     }
     Ok(None)
+}
+
+/// The permit, the worker line and the group lock box held here, for a padlock new here (see
+/// [`placement_check`]). A permit held here before its issue makes the padlock wait while a newer
+/// state of that permit is waiting in the inbox.
+async fn permit_state_check(
+    conn: &impl ConnectionTrait,
+    lock: &Payload,
+    label: &str,
+    withdrawn: bool,
+) -> AppResult<Option<InboundVerdict>> {
+    let Some(permit_sync) = field(lock, "permit_sync_id") else {
+        return Ok(None);
+    };
+    let Some(permit) = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, status FROM work_permits WHERE entity_sync_id = ?",
+            [permit_sync.into()],
+        ))
+        .await?
+    else {
+        return wait(format!("{label}: its permit {permit_sync} is not applied yet"));
+    };
+    let permit_id: i64 = permit.try_get("", "id")?;
+    let permit_status: String = permit.try_get("", "status")?;
+    let permit_status = permit_status.as_str();
+    // A padlock is placed on an issued or active permit, which then only moves on through the
+    // statuses a padlock comes off in (`workers::LOCK_REMOVE_STATUSES`).
+    if !crate::permit::workers::LOCK_REMOVE_STATUSES.contains(&permit_status) {
+        if permit_waiting(conn, permit_sync).await? {
+            return wait(format!("{label}: a newer state of its permit is still arriving"));
+        }
+        return conflict(
+            PERSONAL_LOCK_PERMIT_NOT_ISSUED,
+            format!("{label}: placed on a permit not issued here (status '{permit_status}')"),
+        );
+    }
+    if field(lock, "removed_at").is_some() {
+        return Ok(None);
+    }
+    if withdrawn {
+        return conflict(
+            PERSONAL_LOCK_WORKER_WITHDRAWN,
+            format!("{label}: still on the group lock box, its worker withdrawn from the permit here"),
+        );
+    }
+    if !crate::permit::workers::LOCK_PLACE_STATUSES.contains(&permit_status) {
+        return Ok(None);
+    }
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COALESCE(SUM(CASE WHEN verified_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS verified, \
+                        COALESCE(SUM(CASE WHEN removed_at IS NOT NULL OR removal_verified_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS removed \
+                   FROM permit_isolations WHERE permit_id = ? AND {}",
+                crate::permit::queries::COUNTED_ISOLATION_SQL
+            ),
+            [permit_id.into()],
+        ))
+        .await?;
+    let (verified, removed) = match row {
+        Some(r) => (r.try_get::<i64>("", "verified")?, r.try_get::<i64>("", "removed")?),
+        None => (0, 0),
+    };
+    if verified == 0 || removed > 0 {
+        return conflict(
+            PERSONAL_LOCK_NOTHING_PROTECTED,
+            format!(
+                "{label}: still on a group lock box that protects nothing here ({verified} isolation(s) verified, \
+                 {removed} taken off)"
+            ),
+        );
+    }
+    Ok(None)
+}
+
+/// A waiting inbox row of the permit `sync_id`.
+async fn permit_waiting(conn: &impl ConnectionTrait, sync_id: &str) -> AppResult<bool> {
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'work_permits' AND entity_sync_id = ? \
+               AND apply_status IN ('pending', 'deferred') LIMIT 1",
+            [sync_id.into()],
+        ))
+        .await?
+        .is_some())
 }
 
 /// A waiting inbox row of `table` for `sync_id` that sets `key`.

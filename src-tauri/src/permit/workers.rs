@@ -1561,12 +1561,15 @@ pub async fn list_padlock_removers(
 }
 
 /// Statuses in which "Mes cadenas" lists a permit: a padlock may be placed, or one of the user's is
-/// still on the box.
-const MY_PADLOCK_PERMIT_SQL: &str = "SELECT DISTINCT wp.id FROM work_permits wp JOIN permit_workers pw ON pw.permit_id = wp.id AND pw.withdrawn_at IS NULL WHERE pw.personnel_id = ? AND (wp.status IN ('issued', 'active') OR EXISTS (SELECT 1 FROM permit_personal_locks pl WHERE pl.worker_id = pw.id AND (pl.removed_at IS NULL OR (pl.forced_removal = 1 AND pl.informed_at IS NULL))))";
+/// still on the box (on a line not withdrawn); or a forced removal of one of the user's padlocks
+/// they were not told of, even on a line withdrawn since, so they can acknowledge it (they place no
+/// new lock until they do).
+const MY_PADLOCK_PERMIT_SQL: &str = "SELECT DISTINCT wp.id FROM work_permits wp JOIN permit_workers pw ON pw.permit_id = wp.id WHERE pw.personnel_id = ? AND ((pw.withdrawn_at IS NULL AND (wp.status IN ('issued', 'active') OR EXISTS (SELECT 1 FROM permit_personal_locks pl WHERE pl.worker_id = pw.id AND pl.removed_at IS NULL))) OR EXISTS (SELECT 1 FROM permit_personal_locks pl WHERE pl.worker_id = pw.id AND pl.forced_removal = 1 AND pl.informed_at IS NULL))";
 
 /// "Mes cadenas" (L4-18): the permits of `scope` (where the session user holds `ptw.lock_own`) on
 /// which `user_id` is a listed, not withdrawn, worker: issued or active ones, and any still holding
-/// their padlock or a forced removal of it they were not told of. Latest first. A user without a
+/// their padlock; and any with a forced removal of their padlock they were not told of, their line
+/// withdrawn or not. Latest first. A user without a
 /// personnel card works under no permit: empty.
 pub async fn list_my_padlock_permits(
     db: &impl ConnectionTrait,

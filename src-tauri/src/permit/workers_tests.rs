@@ -736,3 +736,240 @@ async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
         .try_get::<String>("", "v")
         .expect("text")
 }
+
+// ── Review of 976237463: deletes, received placements, forced removals of padlocks ───────────────
+
+async fn delete_entity(db: &DatabaseConnection, entity_type: &str, sync_id: &str) -> ApplyOutcome {
+    use sea_orm::TransactionTrait;
+    let layout = crate::sync::row_layout::layout(db, entity_type).await.expect("layout");
+    let payload = crate::sync::row_codec::delete_payload(&layout, None);
+    let tx = db.begin().await.expect("begin");
+    let outcome = crate::sync::row_codec::apply_row(
+        &tx,
+        &layout,
+        sync_id,
+        "delete",
+        &serde_json::to_string(&payload).expect("json"),
+    )
+    .await
+    .expect("apply");
+    if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::Unchanged) {
+        tx.commit().await.expect("commit");
+    } else {
+        tx.rollback().await.expect("rollback");
+    }
+    crate::sync::row_codec::clear_ref_cache();
+    outcome
+}
+
+async fn worker_sync_of(db: &DatabaseConnection, lock: &workers::PermitPersonalLock) -> String {
+    scalar_text(
+        db,
+        &format!(
+            "SELECT entity_sync_id AS v FROM permit_workers WHERE id = {}",
+            lock.worker_id
+        ),
+    )
+    .await
+}
+
+/// Omar's padlock taken off by the forced-removal process; Omar not told yet.
+async fn force_off(db: &DatabaseConnection, lock: &workers::PermitPersonalLock, tag: &str) {
+    let authoriser = user_with(db, &format!("{tag}-chef"), &[PTW_CLOSE]).await;
+    let remover = user_with(db, &format!("{tag}-remover"), &[]).await;
+    workers::force_remove_personal_lock(
+        db,
+        PersonalLockForceRemoveInput {
+            lock_id: lock.id,
+            expected_row_version: lock.row_version,
+            removed_by_id: remover,
+            reason: "Intervenant parti sans retirer son cadenas, injoignable par téléphone".into(),
+            worker_absent_attested: true,
+            contact_attempts: vec![contact_attempt(db).await],
+        },
+        authoriser,
+    )
+    .await
+    .expect("forced");
+}
+
+/// A delete received by sync never takes a personal padlock off the box nor a worker off the permit:
+/// both are refused (`PERMIT_DELETE_REFUSED`) and the rows stay, the group lockout still on.
+#[tokio::test]
+async fn a_received_delete_of_a_padlock_or_a_worker_is_refused() {
+    let db = setup().await;
+    let (_, _, lock) = padlock_on(&db, "EQ-L4R-D").await;
+    let worker_sync = worker_sync_of(&db, &lock).await;
+    for (entity_type, sync_id) in [
+        ("permit_personal_locks", lock.entity_sync_id.clone()),
+        ("permit_workers", worker_sync.clone()),
+    ] {
+        let outcome = delete_entity(&db, entity_type, &sync_id).await;
+        assert_eq!(
+            conflict_of(&outcome),
+            Some("PERMIT_DELETE_REFUSED"),
+            "{entity_type}: {outcome:?}"
+        );
+        let kept = scalar_i64(
+            &db,
+            &format!("SELECT COUNT(*) FROM \"{entity_type}\" WHERE entity_sync_id = '{sync_id}'"),
+        )
+        .await;
+        assert_eq!(kept, 1, "{entity_type}: the row stays");
+    }
+    let open = scalar_i64(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM permit_personal_locks WHERE id = {} AND removed_at IS NULL",
+            lock.id
+        ),
+    )
+    .await;
+    assert_eq!(open, 1, "the padlock stays on the box");
+}
+
+/// A padlock received still on, new here, is judged as the local placement is: on a permit issued
+/// here, a worker line not withdrawn here, and a group lock box that protects something.
+#[tokio::test]
+async fn a_received_padlock_placement_is_judged_as_the_local_one() {
+    let db = setup().await;
+    let (wp, iso, lock) = padlock_on(&db, "EQ-L4R-P").await;
+    let received = wire_of(&db, "permit_personal_locks", &lock.entity_sync_id).await;
+    // Not held here yet: the padlock arrives from another PC.
+    exec(
+        &db,
+        &format!("DELETE FROM permit_personal_locks WHERE id = {}", lock.id),
+    )
+    .await;
+    let verified_at = scalar_text(
+        &db,
+        &format!("SELECT verified_at AS v FROM permit_isolations WHERE id = {}", iso.id),
+    )
+    .await;
+    let cases: [(String, String, &str); 4] = [
+        (
+            format!("UPDATE work_permits SET status = 'approved' WHERE id = {}", wp.id),
+            format!("UPDATE work_permits SET status = 'active' WHERE id = {}", wp.id),
+            super::workers_sync::PERSONAL_LOCK_PERMIT_NOT_ISSUED,
+        ),
+        (
+            format!(
+                "UPDATE permit_workers SET withdrawn_at = '{}', withdrawn_by_id = {APPLIER} WHERE id = {}",
+                stamp(),
+                lock.worker_id
+            ),
+            format!(
+                "UPDATE permit_workers SET withdrawn_at = NULL, withdrawn_by_id = NULL WHERE id = {}",
+                lock.worker_id
+            ),
+            super::workers_sync::PERSONAL_LOCK_WORKER_WITHDRAWN,
+        ),
+        (
+            format!("UPDATE permit_isolations SET verified_at = NULL WHERE id = {}", iso.id),
+            format!(
+                "UPDATE permit_isolations SET verified_at = '{verified_at}' WHERE id = {}",
+                iso.id
+            ),
+            super::workers_sync::PERSONAL_LOCK_NOTHING_PROTECTED,
+        ),
+        (
+            format!(
+                "UPDATE permit_isolations SET removed_at = '{}' WHERE id = {}",
+                stamp(),
+                iso.id
+            ),
+            format!("UPDATE permit_isolations SET removed_at = NULL WHERE id = {}", iso.id),
+            super::workers_sync::PERSONAL_LOCK_NOTHING_PROTECTED,
+        ),
+    ];
+    for (break_it, restore, expected) in &cases {
+        exec(&db, break_it).await;
+        let outcome = apply_entity(&db, "permit_personal_locks", &lock.entity_sync_id, &received).await;
+        assert_eq!(conflict_of(&outcome), Some(*expected), "{break_it}: {outcome:?}");
+        exec(&db, restore).await;
+    }
+    let held = scalar_i64(
+        &db,
+        &format!(
+            "SELECT COUNT(*) FROM permit_personal_locks WHERE entity_sync_id = '{}'",
+            lock.entity_sync_id
+        ),
+    )
+    .await;
+    assert_eq!(held, 0, "nothing written");
+    // On an active permit whose box protects the work, by its listed worker: applied.
+    let outcome = apply_entity(&db, "permit_personal_locks", &lock.entity_sync_id, &received).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// An isolation lock received as fitted by a worker with a forced removal of their padlock they were
+/// not told of (taken off before) is refused, as the local fitting is
+/// (`permit::queries::open_forced_removal_of`).
+#[tokio::test]
+async fn a_received_lock_of_a_worker_not_told_of_a_padlock_forced_removal_is_refused() {
+    let db = setup().await;
+    let (_, _, lock) = padlock_on(&db, "EQ-L4R-F").await;
+    force_off(&db, &lock, "l4rf").await;
+    // The padlock taken off by force is APPLIER's, not told yet.
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_personal_locks SET placed_by_id = {APPLIER} WHERE id = {}",
+            lock.id
+        ),
+    )
+    .await;
+    let asset = insert_equipment(&db, "EQ-L4R-F2").await;
+    let other = advance_to_issued(&db, create_permit(&db, "loto", asset).await).await;
+    let line = add_isolation(&db, other.id, "Valve V-L4RF").await;
+    let applier = user_sync_id(&db, APPLIER).await;
+    let fitted_now = with_keys(
+        wire_of(&db, "permit_isolations", &line.entity_sync_id).await,
+        &[("applied_by_sync_id", json!(applier)), ("applied_at", json!(stamp()))],
+    );
+    let outcome = apply_entity(&db, "permit_isolations", &line.entity_sync_id, &fitted_now).await;
+    assert_eq!(conflict_of(&outcome), Some("PERMIT_WORKER_NOT_INFORMED"), "{outcome:?}");
+    // Fitted before the forced removal: the worker could not have been told yet, accepted.
+    let earlier = (chrono::Utc::now() - chrono::Duration::minutes(90))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let fitted_before = with_keys(fitted_now, &[("applied_at", json!(earlier))]);
+    let outcome = apply_entity(&db, "permit_isolations", &line.entity_sync_id, &fitted_before).await;
+    assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
+}
+
+/// A worker withdrawn after their padlock was taken off by force, not told yet, still finds the
+/// permit in "Mes cadenas" to acknowledge it; once told, a withdrawn line lists it no more.
+#[tokio::test]
+async fn a_withdrawn_worker_still_sees_an_untold_forced_removal_in_my_padlocks() {
+    use crate::auth::scope::AccessScope;
+    let db = setup().await;
+    let (wp, _, lock) = padlock_on(&db, "EQ-L4R-W").await;
+    force_off(&db, &lock, "l4rw").await;
+    exec(
+        &db,
+        &format!(
+            "UPDATE permit_workers SET withdrawn_at = '{}', withdrawn_by_id = {APPLIER} WHERE id = {}",
+            stamp(),
+            lock.worker_id
+        ),
+    )
+    .await;
+    let listed = workers::list_my_padlock_permits(&db, &AccessScope::Everywhere, VERIFIER)
+        .await
+        .expect("listed");
+    assert!(
+        listed.iter().any(|p| p.permit.id == wp.id),
+        "the untold forced removal keeps the permit in Mes cadenas"
+    );
+    workers::acknowledge_forced_padlock_removal(&db, lock.id, VERIFIER)
+        .await
+        .expect("told");
+    let listed = workers::list_my_padlock_permits(&db, &AccessScope::Everywhere, VERIFIER)
+        .await
+        .expect("listed");
+    assert!(
+        listed.iter().all(|p| p.permit.id != wp.id),
+        "withdrawn and told: nothing left to do on it"
+    );
+}

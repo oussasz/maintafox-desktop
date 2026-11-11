@@ -330,6 +330,10 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // (migration 294 CHECK): the generic row is a personnel record.
     ("permit_workers", "external_name", "NULL"),
     ("permit_workers", "external_company_id", "NULL"),
+    // The generic worker is still listed: their padlock, still on, is refused on a withdrawn line
+    // (`permit::workers_sync`, `PERMIT_PERSONAL_LOCK_WORKER_WITHDRAWN`).
+    ("permit_workers", "withdrawn_at", "NULL"),
+    ("permit_workers", "withdrawn_by_id", "NULL"),
     // A personal padlock received is judged (`permit::workers_sync`): the generic one is still on
     // the box (a removal needs its owner or a whole forced-removal record, which generic people
     // cannot give), placed by the worker of its line (the round trip links the placer's account to

@@ -2324,17 +2324,23 @@ async fn forced_removal_block(
         return Ok(None);
     };
     let applied = instant(applied_at);
+    // Isolation locks and personal padlocks alike (`permit::queries::open_forced_removal_of`).
     let open = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT pi.entity_sync_id AS sid, pi.removed_at AS removed_at FROM permit_isolations pi \
-               JOIN user_accounts u ON u.id = pi.applied_by_id \
+            "SELECT 'permit_isolations' AS t, pi.entity_sync_id AS sid, pi.removed_at AS removed_at \
+               FROM permit_isolations pi JOIN user_accounts u ON u.id = pi.applied_by_id \
               WHERE u.entity_sync_id = ? AND pi.forced_removal = 1 AND pi.informed_at IS NULL \
-                AND pi.entity_sync_id IS NOT ?",
-            [worker.into(), entity_sync_id.into()],
+                AND pi.entity_sync_id IS NOT ? \
+             UNION ALL \
+             SELECT 'permit_personal_locks' AS t, pl.entity_sync_id AS sid, pl.removed_at AS removed_at \
+               FROM permit_personal_locks pl JOIN user_accounts u ON u.id = pl.placed_by_id \
+              WHERE u.entity_sync_id = ? AND pl.forced_removal = 1 AND pl.informed_at IS NULL",
+            [worker.into(), entity_sync_id.into(), worker.into()],
         ))
         .await?;
     for r in open {
+        let table: String = r.try_get("", "t").map_err(sync_err)?;
         let sid: Option<String> = r.try_get("", "sid").map_err(sync_err)?;
         let removed: Option<String> = r.try_get("", "removed_at").map_err(sync_err)?;
         // Taken off after this lock was applied: the worker could not have been told before.
@@ -2349,10 +2355,10 @@ async fn forced_removal_block(
             Some(sid) => conn
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
-                    "SELECT 1 AS w FROM sync_inbox WHERE entity_type = 'permit_isolations' \
+                    "SELECT 1 AS w FROM sync_inbox WHERE entity_type = ? \
                        AND entity_sync_id = ? AND apply_status IN ('pending', 'deferred') \
                        AND json_extract(payload_json, '$.informed_at') IS NOT NULL LIMIT 1",
-                    [sid.as_str().into()],
+                    [table.as_str().into(), sid.as_str().into()],
                 ))
                 .await?
                 .is_some(),
@@ -2366,8 +2372,8 @@ async fn forced_removal_block(
         return conflict(
             "PERMIT_WORKER_NOT_INFORMED",
             format!(
-                "isolation '{point}': applied by a worker not yet told of the forced removal of their lock \
-                 (taken off before)"
+                "isolation '{point}': applied by a worker not yet told of the forced removal of one of their \
+                 locks or padlocks (taken off before)"
             ),
         );
     }
