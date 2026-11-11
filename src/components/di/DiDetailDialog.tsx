@@ -204,11 +204,16 @@ export function DiDetailDialog({
     if (di) void openDi(di.id);
   });
 
+  const duplicates = useMemo(
+    () => (di ? similar.filter((s) => s.id !== di.id && s.status !== "closed") : []),
+    [similar, di],
+  );
+
   // Merge: the other open requests on this equipment and symptom are closed as duplicates linked to
   // this one, which goes on to its work order. Only those a decision can still close are merged
   // (in review, awaiting approval, approved); the rest are named, never silently skipped.
   const handleMerge = useCallback(async () => {
-    if (!di || !info) return;
+    if (!di || info?.user_id == null) return;
     setMergeNote(null);
     let merged = 0;
     const failed: string[] = [];
@@ -295,10 +300,6 @@ export function DiDetailDialog({
     [transitions],
   );
   const answer = useMemo(() => lastTransition(transitions, "re_submitted"), [transitions]);
-  const duplicates = useMemo(
-    () => (di ? similar.filter((s) => s.id !== di.id && s.status !== "closed") : []),
-    [similar, di],
-  );
 
   if (!di) return null;
 
