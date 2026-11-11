@@ -271,7 +271,7 @@
       "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
       "state": {
         "starting": "Starting…",
-        "idle": "Up to date",
+        "idle": "Synchronised",
         "running": "Syncing…",
         "paused": "Paused",
         "offline": "Offline: retried automatically",
@@ -322,10 +322,10 @@
       }
     },
     "indicator": {
-      "idle": "Up to date",
+      "idle": "Synchronised",
       "scheduled": "Sync starting",
       "running": "Syncing",
-      "degraded": "To check",
+      "degraded": "To review",
       "paused": "Paused",
       "blocked": "Sync stopped",
       "error": "Sync error",
@@ -360,7 +360,7 @@
     "inboxLoading": "Loading conflicts…",
     "versionNumber": "version {{version}}",
     "detectedAt": "detected {{date}}",
-    "recordUnidentified": "(number not available)",
+    "recordUnidentified": "(no number: see \"Technical details\")",
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
     "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
@@ -390,7 +390,8 @@
       "renumber_local": "The record on this device gets a new number; the received record keeps its own (\"{{record}}\").",
       "dismiss": "The conflict on \"{{record}}\" is dismissed without applying either version.",
       "retry_later": "The conflict on \"{{record}}\" stays open and is reviewed again later; nothing is applied.",
-      "escalate": "The conflict on \"{{record}}\" is marked for review by a supervisor; nothing is applied."
+      "escalate": "The conflict on \"{{record}}\" is marked \"Escalated\" and stays open with your reason, for someone allowed to resolve conflicts to review; no message is sent and nothing is applied.",
+      "dismissWarning": "Warning: the conflict leaves the list and neither version is applied. The two PCs may stay different on this record."
     },
     "reason": {
       "label": "Reason for this choice",
@@ -446,7 +447,28 @@
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
     "doublePosting": "{{count}} stock count(s) posted twice (the same count on two PCs, older version): to verify with a new count (Inventory › Controls).",
     "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
-    "openNegativeStock": "Open the stock to reconcile"
+    "openNegativeStock": "Open the stock to reconcile",
+    "compare": {
+      "title": "Values in disagreement",
+      "field": "Field",
+      "local": "This device",
+      "remote": "Server",
+      "empty": "(empty)",
+      "yes": "Yes",
+      "no": "No",
+      "more": "… and {{count}} more field(s) — see \"Technical details\".",
+      "none": "No readable value differs between the two versions: the difference is technical (see \"Technical details\")."
+    },
+    "actionHelp": {
+      "accept_local": "Your version is kept and sent again to the server; the received version is discarded.",
+      "accept_remote": "The server's version replaces this device's; your local changes to this record are lost.",
+      "renumber_local": "Your record gets a new number; the received one keeps its own.",
+      "retry_later": "The conflict stays open and nothing is applied: review it again later.",
+      "escalate": "Marks the conflict as \"Escalated\": it stays open in this list with your reason, for someone allowed to resolve conflicts to handle. No message is sent and nothing is applied.",
+      "dismiss": "Closes the conflict without applying either version. Use only when the matter is already settled."
+    },
+    "actionDisabledRemote": "Unavailable: the server sent no version of this record, so there is nothing to take.",
+    "actionDisabledBusy": "Action in progress…"
   },
   "status": {
     "dbOk": "Database: OK",

@@ -36,7 +36,9 @@ import {
   clashingNumber,
   clashingUsername,
   conflictActions,
+  conflictFieldDifferences,
   conflictRecordIdentity,
+  humaniseFieldName,
 } from "./sync-conflict-display";
 
 type ConflictAction = ResolveSyncConflictInput["action"];
@@ -137,6 +139,17 @@ export function SyncConflictList({
   const entityOf = (c: SyncConflictRecord) =>
     t(`sync.entity.${KNOWN_SYNC_ENTITY_TYPES.has(c.entity_type) ? c.entity_type : "other"}`);
 
+  const formatValue = (v: unknown): string => {
+    if (v === null || v === undefined || v === "") return t("sync.compare.empty");
+    if (typeof v === "boolean") return v ? t("sync.compare.yes") : t("sync.compare.no");
+    if (typeof v === "string" && /^d{4}-d{2}-d{2}[T ]/.test(v)) {
+      const d = new Date(v.includes("T") ? v : v.replace(" ", "T"));
+      if (!Number.isNaN(d.getTime())) return formatDateTime(v);
+    }
+    const text = typeof v === "string" ? v : typeof v === "number" ? String(v) : JSON.stringify(v);
+    return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  };
+
   const versionLabel = (v: number | null) =>
     v === null ? t("sync.versionUnknown") : t("sync.versionNumber", { version: v });
 
@@ -197,13 +210,72 @@ export function SyncConflictList({
                 ) : null}
               </p>
               <p className="mt-1 text-xs text-text-muted">
-                {t("sync.conflictVersions", {
-                  local: versionLabel(c.local_row_version),
-                  remote: versionLabel(c.inbound_row_version),
-                })}
-                {" · "}
+                {c.local_row_version !== null || c.inbound_row_version !== null ? (
+                  <>
+                    {t("sync.conflictVersions", {
+                      local: versionLabel(c.local_row_version),
+                      remote: versionLabel(c.inbound_row_version),
+                    })}
+                    {" · "}
+                  </>
+                ) : null}
                 {t("sync.detectedAt", { date: formatDateTime(c.created_at) })}
               </p>
+              {c.local_payload_json !== null && c.inbound_payload_json !== null
+                ? (() => {
+                    const diffs = conflictFieldDifferences(c);
+                    const shown = diffs.slice(0, 8);
+                    return (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-text-secondary">
+                          {t("sync.compare.title")}
+                        </p>
+                        {diffs.length === 0 ? (
+                          <p className="text-xs text-text-muted">{t("sync.compare.none")}</p>
+                        ) : (
+                          <table className="mt-1 w-full table-fixed border-collapse text-xs">
+                            <thead>
+                              <tr className="text-start text-text-muted">
+                                <th className="py-0.5 pe-2 text-start font-normal">
+                                  {t("sync.compare.field")}
+                                </th>
+                                <th className="py-0.5 pe-2 text-start font-normal">
+                                  {t("sync.compare.local")}
+                                </th>
+                                <th className="py-0.5 text-start font-normal">
+                                  {t("sync.compare.remote")}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {shown.map((d) => (
+                                <tr
+                                  key={d.field}
+                                  className="border-t border-surface-border align-top"
+                                >
+                                  <td className="py-0.5 pe-2 text-text-secondary">
+                                    {humaniseFieldName(d.field)}
+                                  </td>
+                                  <td className="break-words py-0.5 pe-2 text-text-primary">
+                                    {formatValue(d.local)}
+                                  </td>
+                                  <td className="break-words py-0.5 text-text-primary">
+                                    {formatValue(d.remote)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {diffs.length > shown.length ? (
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t("sync.compare.more", { count: diffs.length - shown.length })}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })()
+                : null}
               {c.conflict_type === "CODE_CLASH" ? (
                 <p className="mt-1 text-xs text-text-primary">
                   {t("sync.codeClash", { number: clashingNumber(c) ?? t("sync.versionUnknown") })}
@@ -278,33 +350,36 @@ export function SyncConflictList({
                 </p>
               ) : null}
               {canResolve ? (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {actions.map((action) => {
                     const isRecommended = action === recommended;
-                    const disabled =
-                      busyId === c.id ||
-                      (action === "accept_remote" && c.inbound_payload_json === null);
+                    const noRemote = action === "accept_remote" && c.inbound_payload_json === null;
+                    const disabled = busyId === c.id || noRemote;
                     return (
-                      <Button
-                        key={action}
-                        type="button"
-                        variant={
-                          isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
-                        }
-                        className="h-10"
-                        disabled={disabled}
-                        title={
-                          action === "accept_remote" && c.inbound_payload_json === null
-                            ? t("sync.noRemoteVersion")
-                            : undefined
-                        }
-                        onClick={() => choose(c, action)}
-                      >
-                        {actionLabel(action)}
-                        {isRecommended ? (
-                          <span className="sr-only"> — {t("sync.recommendedShort")}</span>
-                        ) : null}
-                      </Button>
+                      <div key={action} className="flex flex-col gap-1">
+                        <Button
+                          type="button"
+                          variant={
+                            isRecommended ? "default" : action === "dismiss" ? "ghost" : "outline"
+                          }
+                          className="h-10 justify-start"
+                          disabled={disabled}
+                          title={noRemote ? t("sync.actionDisabledRemote") : undefined}
+                          onClick={() => choose(c, action)}
+                        >
+                          {actionLabel(action)}
+                          {isRecommended ? (
+                            <span className="sr-only"> — {t("sync.recommendedShort")}</span>
+                          ) : null}
+                        </Button>
+                        <p className="text-xs text-text-muted">
+                          {noRemote
+                            ? t("sync.actionDisabledRemote")
+                            : KNOWN_ACTIONS.has(action)
+                              ? t(`sync.actionHelp.${action}`)
+                              : null}
+                        </p>
+                      </div>
                     );
                   })}
                 </div>
@@ -350,6 +425,11 @@ export function SyncConflictList({
           if (pending && reasonOk) await run(pending.conflict, pending.action, reason);
         }}
       >
+        {pending?.action === "dismiss" ? (
+          <p className="mb-2 text-sm text-tone-danger-fg" role="alert">
+            {t("sync.confirm.dismissWarning")}
+          </p>
+        ) : null}
         <label className="grid gap-1.5 text-sm">
           <span className="text-text-secondary">{t("sync.reason.label")}</span>
           <Textarea

@@ -245,6 +245,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     crossDomainParentCode,
     sameSetHierarchy,
   } = columnFlags;
+  // A value that hangs under a value of another list (family -> class, sub-family -> family, ...)
+  // is only offered by forms once its parent is chosen: without a parent it would never show up.
+  const parentRequired = crossDomainParentCode != null;
+  const hierarchyHintKey = `editor.hierarchy.${
+    domain?.code === "EQUIPMENT.FAMILY" || domain?.code === "EQUIPMENT.SUBFAMILY"
+      ? domain.code.replace(".", "_")
+      : "generic"
+  }`;
   // The nature (request types) and the absence behaviour (absence types) are both `semantic_tag`.
   const showSemanticTag = showNature || showAbsenceBehaviour;
   // Permit requirement rules (PERMIT.REQUIREMENT_RULES): class / work type → permit type.
@@ -408,6 +416,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           });
           return;
         }
+        if (parentRequired && editRow.parentId == null) return;
         await saveValue(valueId, {
           label: editRow.label,
           description: editRow.description || null,
@@ -431,6 +440,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       editRow,
       values,
       showParent,
+      parentRequired,
       showSemanticTag,
       showUnit,
       editUnit,
@@ -481,6 +491,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       });
       return;
     }
+    if (parentRequired && newRow.parentId == null) return;
     const payload: CreateReferenceValuePayload = {
       set_id: setId,
       ...(newRow.parentId != null ? { parent_id: newRow.parentId } : {}),
@@ -490,7 +501,17 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
       ...(showSemanticTag && newRow.natureTag ? { semantic_tag: newRow.natureTag } : {}),
     };
     await addValue(payload);
-  }, [addValue, setId, newRow, showSemanticTag, showUnit, newUnit, showPermitRule, newRule]);
+  }, [
+    addValue,
+    setId,
+    newRow,
+    showSemanticTag,
+    showUnit,
+    newUnit,
+    showPermitRule,
+    newRule,
+    parentRequired,
+  ]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deleteTarget) return;
@@ -732,6 +753,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           <>
             {showPermitRule ? (
               <p className="px-1 pb-2 text-xs text-text-secondary">{t("permitRules.intro")}</p>
+            ) : null}
+            {parentRequired ? (
+              <p className="px-1 pb-2 text-xs text-text-secondary">
+                {t(hierarchyHintKey as "editor.none", {
+                  parent: parentDomain?.name ?? crossDomainParentCode,
+                })}
+              </p>
             ) : null}
             {showPermitRule && unusableRules.length > 0 ? (
               <p
@@ -1039,9 +1067,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         })
                       }
                       aria-label={t("editor.colParent")}
+                      aria-invalid={parentRequired && newRow.parentId == null}
                       className={cn(mfInput.nativeSelect, "h-9")}
                     >
-                      <option value="">{t("editor.none")}</option>
+                      <option value="">
+                        {parentRequired ? t("editor.parentChoose") : t("editor.none")}
+                      </option>
                       {parentCandidates.map((p) => (
                         <option key={p.id} value={p.id}>
                           {parentLabel(p)}
@@ -1249,9 +1280,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                             })
                           }
                           aria-label={t("editor.colParent")}
+                          aria-invalid={parentRequired && editRow.parentId == null}
                           className={cn(mfInput.nativeSelect, "h-9")}
                         >
-                          <option value="">{t("editor.none")}</option>
+                          <option value="">
+                            {parentRequired ? t("editor.parentChoose") : t("editor.none")}
+                          </option>
                           {parentCandidates
                             .filter((p) => p.id !== v.id)
                             .map((p) => (
@@ -1262,6 +1296,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         </select>
                       ) : parentValue ? (
                         parentLabel(parentValue)
+                      ) : parentRequired ? (
+                        <span className="text-tone-warning-fg">{t("editor.orphanParent")}</span>
                       ) : (
                         "—"
                       )}
