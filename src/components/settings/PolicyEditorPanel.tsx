@@ -52,6 +52,11 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { AppSetting, PolicySnapshot } from "@shared/ipc-types";
 
+import {
+  BACKUP_SCHEDULE_PRESETS,
+  backupSchedulePreset,
+  describeBackupSchedule,
+} from "./backup-schedule";
 import { policyTestText } from "./policy-test-text";
 
 // ── Governed setting domains ────────────────────────────────────────────────
@@ -92,7 +97,8 @@ export function partitionSettings(settings: AppSetting[]): {
 
 interface PolicyField {
   key: string;
-  type: "number" | "boolean" | "string";
+  /** `schedule`: the backup frequency, chosen among plain-language presets. */
+  type: "number" | "boolean" | "string" | "schedule";
 }
 
 const POLICY_FIELDS: Record<string, PolicyField[]> = {
@@ -114,8 +120,16 @@ const POLICY_FIELDS: Record<string, PolicyField[]> = {
   // Only the schedule is read (backup scheduler). `retention_days`, `include_photos` and
   // `compression_level` stay in the stored policy but nothing uses them, so they are not shown;
   // retention is the daily / weekly / monthly settings of the Backup section.
-  backup: [{ key: "schedule_cron", type: "string" }],
+  backup: [{ key: "schedule_cron", type: "schedule" }],
 };
+
+type Translate = (key: string, opts?: Record<string, unknown>) => string;
+
+/** A policy value as shown: the backup frequency in words, anything else as stored. */
+function shownValue(key: string, val: unknown, t: Translate): string {
+  if (key === "schedule_cron" && typeof val === "string") return describeBackupSchedule(val, t);
+  return String(val);
+}
 
 /** Domains that require step-up auth to activate. */
 const SECURITY_DOMAINS = new Set(["session", "password"]);
@@ -164,6 +178,7 @@ export function PolicyEditorPanel({
   onToast,
 }: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
+  const tr = t as unknown as Translate;
   const tText = t as unknown as (key: string, options?: Record<string, unknown>) => string;
   // Session and password policies need a recent re-authentication (the backend requires it):
   // the step-up dialog opens when it is missing, then the activation runs.
@@ -480,7 +495,7 @@ export function PolicyEditorPanel({
                         })}
                       </span>
                       <span className="shrink-0 text-sm tabular-nums text-text-muted">
-                        {String(val)}
+                        {shownValue(key, val, tr)}
                       </span>
                     </li>
                   ))}
@@ -537,6 +552,22 @@ export function PolicyEditorPanel({
                             }
                           />
                         </div>
+                      ) : field.type === "schedule" ? (
+                        <select
+                          id={`draft-${field.key}`}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                          value={val !== undefined ? String(val) : ""}
+                          onChange={(e) => updateDraftField(field.key, e.target.value)}
+                        >
+                          {BACKUP_SCHEDULE_PRESETS.map((preset) => (
+                            <option key={preset.cron} value={preset.cron}>
+                              {tr(`policy.schedule.${preset.key}`)}
+                            </option>
+                          ))}
+                          {val !== undefined && backupSchedulePreset(String(val)) === null ? (
+                            <option value={String(val)}>{shownValue(field.key, val, tr)}</option>
+                          ) : null}
+                        </select>
                       ) : field.type === "string" ? (
                         <Input
                           id={`draft-${field.key}`}
@@ -590,11 +621,13 @@ export function PolicyEditorPanel({
                           <span
                             className={`text-sm tabular-nums ${changed ? "font-semibold text-tone-warning-fg" : "text-text-muted"}`}
                           >
-                            {String(val)}
+                            {shownValue(key, val, tr)}
                           </span>
                           {changed ? (
                             <span className="text-xs text-tone-warning-fg">
-                              {String(activeValues[key] ?? "—")}
+                              {activeValues[key] == null
+                                ? "—"
+                                : shownValue(key, activeValues[key], tr)}
                             </span>
                           ) : null}
                         </div>

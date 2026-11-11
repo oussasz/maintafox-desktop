@@ -372,6 +372,8 @@ pub fn run() {
         // Ã¢â€â‚¬Ã¢â€â‚¬ Backup Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         commands::backup::run_manual_backup,
         commands::backup::list_backup_runs,
+        commands::backup::get_backup_overview,
+        commands::backup::set_backup_external_dir,
         commands::backup::validate_backup_file,
         commands::backup::restore_from_backup,
         commands::backup::factory_reset,
@@ -518,6 +520,7 @@ pub fn run() {
         commands::bulk_import::apply_bulk_import_batch,
         commands::bulk_import::get_bulk_import_template,
         commands::bulk_import::export_bulk_import_data,
+        commands::bulk_import::save_wo_history_coding,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,

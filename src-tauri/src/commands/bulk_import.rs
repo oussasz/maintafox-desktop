@@ -81,3 +81,20 @@ pub async fn export_bulk_import_data(entity: String, state: State<'_, AppState>)
     require_permission!(state, &user, spec.permission, PermissionScope::Global);
     bulk_import::export(&state.db, &entity).await
 }
+
+/// Failure coding of an imported maintenance history record (L7-30, Advisor Q3): the failure
+/// coding right of a work order (`ot.edit`) at the site of the record's equipment.
+#[tauri::command]
+pub async fn save_wo_history_coding(
+    input: bulk_import::wo_history::HistoryCodingInput,
+    state: State<'_, AppState>,
+) -> AppResult<bulk_import::wo_history::HistoryCodingSaved> {
+    let user = require_session!(state);
+    let access = crate::auth::scope::access_map_cached(&state.db, &state.permission_cache, user.user_id).await?;
+    bulk_import::wo_history::check_coding_right(&state.db, &access, input.record_id).await?;
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::OT_EDIT)
+        .await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, crate::rbac::permissions::OT_EDIT)
+        .await?;
+    bulk_import::wo_history::save_coding(&state.db, input, user.user_id).await
+}

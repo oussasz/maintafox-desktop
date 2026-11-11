@@ -103,6 +103,13 @@ pub async fn install_capture_in(conn: &impl ConnectionTrait) -> AppResult<Captur
     specs.sort_by_key(|s| registry::apply_priority(s.entity_type));
     let mut report = CaptureInstallReport::default();
     for spec in specs {
+        // Upgrade tests start the capture of an earlier version, whose schema has no table of an
+        // entity type added later: that version captured no such type. Startup always runs every
+        // migration first, so outside tests a missing table stays an error.
+        #[cfg(test)]
+        if !table_exists(conn, spec.entity_type).await? {
+            continue;
+        }
         let layout = row_layout::layout(conn, spec.entity_type).await?;
         if layout.natural_pk.is_none() {
             conn.execute_unprepared(&format!(
@@ -128,6 +135,20 @@ pub async fn install_capture_in(conn: &impl ConnectionTrait) -> AppResult<Captur
         report.entity_types += 1;
     }
     Ok(report)
+}
+
+/// Whether the table of `entity_type` exists in this schema (upgrade tests only).
+#[cfg(test)]
+async fn table_exists(conn: &impl ConnectionTrait, entity_type: &str) -> AppResult<bool> {
+    let table = registry::require_entity(entity_type)?.table;
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            [table.into()],
+        ))
+        .await?
+        .is_some())
 }
 
 /// Owner (`owner_user_sync_id`) of a row of a user-scoped entity, as SQL over `alias`.
