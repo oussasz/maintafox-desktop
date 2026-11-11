@@ -3114,8 +3114,9 @@ mod tests {
             // +ram.fmeca_rating_scales, +locale.fiscal_year_start_month,
             // +inventory.count_critical_variance, +inventory.reconciliation_drift_break (migration 232),
             // -inventory.count_critical_variance, +inventory.count_four_eyes_value_threshold,
-            // +inventory.count_four_eyes_percent_threshold (migration 259, not seeded)
-            23,
+            // +inventory.count_four_eyes_percent_threshold (migration 259, not seeded),
+            // +backup.external_dir (L7-03)
+            24,
             "Default settings count changed; update migration and verification checks"
         );
     }

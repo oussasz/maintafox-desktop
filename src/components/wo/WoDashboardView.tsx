@@ -28,7 +28,7 @@ export function WoDashboardView({ reloadSignal = 0 }: { reloadSignal?: number })
   const [stats, setStats] = useState<WoStatsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const { formatNumber } = useFormatters();
+  const { formatNumber, formatDate } = useFormatters();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -177,7 +177,7 @@ export function WoDashboardView({ reloadSignal = 0 }: { reloadSignal?: number })
               const maxVal = Math.max(...stats.daily_completed.map((p) => p.count), 1);
               return (
                 <div key={pt.date} className="flex items-center gap-2 text-xs">
-                  <span className="w-20 text-text-muted font-mono">{pt.date}</span>
+                  <span className="w-20 text-text-muted font-mono">{formatDate(pt.date)}</span>
                   <div className="flex-1 h-3 rounded bg-surface-1">
                     <div
                       className="h-3 rounded bg-tone-success-fg"

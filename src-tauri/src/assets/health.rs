@@ -41,6 +41,29 @@ async fn count_i64(db: &DatabaseConnection, sql: &str, asset_id: i64) -> AppResu
     Ok(row.try_get::<i64>("", "cnt").unwrap_or(0))
 }
 
+/// Whether the asset has maintenance evidence the score can rest on: a counted meter reading
+/// (`meters::VALID_READING_SQL`), an intervention request or a work order. Lifecycle events alone
+/// (creation, move, reclassification) are register changes, not condition data: without evidence
+/// the score is "no data" ("—"), never a good-looking default (L2-06).
+pub(crate) async fn has_maintenance_evidence(db: &DatabaseConnection, asset_id: i64) -> AppResult<bool> {
+    let n = count_i64(
+        db,
+        &format!(
+            "SELECT ( \
+                (SELECT COUNT(*) FROM asset_meter_readings mr \
+                  JOIN equipment_meters m ON m.id = mr.meter_id \
+                  WHERE m.equipment_id = ?1 AND {valid}) \
+              + (SELECT COUNT(*) FROM intervention_requests ir WHERE ir.equipment_id = ?1) \
+              + (SELECT COUNT(*) FROM work_orders wo WHERE wo.equipment_id = ?1) \
+             ) AS cnt",
+            valid = crate::assets::meters::VALID_READING_SQL
+        ),
+        asset_id,
+    )
+    .await?;
+    Ok(n > 0)
+}
+
 /// Combines recency of lifecycle/meter activity with open DI/WO pressure.
 pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> AppResult<AssetHealthScore> {
     let lifecycle_n = count_i64(
@@ -50,7 +73,7 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
     )
     .await?;
 
-    if lifecycle_n == 0 {
+    if lifecycle_n == 0 || !has_maintenance_evidence(db, asset_id).await? {
         return Ok(AssetHealthScore {
             asset_id,
             score: None,

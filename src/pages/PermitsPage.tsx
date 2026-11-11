@@ -14,7 +14,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CalendarCheck, HardHat, Plus, Settings2, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
@@ -45,6 +45,7 @@ import {
 } from "@/components/permits/permit-rules";
 import { usePermitTypeName } from "@/components/permits/permit-type-name";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { BackToOriginButton, hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
 import {
@@ -101,6 +102,9 @@ export function PermitsPage() {
   const typeName = usePermitTypeName();
   const { formatDateTime, formatNumber, formatPercent } = useFormatters();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // True when the open permit came from a link on another screen: it then offers "Retour".
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const { can } = usePermissions();
   // Permit types are plant-wide: the issue right counts at no node only.
   const plantWide = usePermitPlantWideAccess();
@@ -213,7 +217,10 @@ export function PermitsPage() {
     const woParam = searchParams.get(PERMIT_QUERY_CREATE_FOR_WO);
     if (selectParam) {
       const id = Number(selectParam);
-      if (Number.isFinite(id) && id > 0) setSelectedId(id);
+      if (Number.isFinite(id) && id > 0) {
+        setSelectedId(id);
+        setOpenedFromLink(hasScreenToReturnTo());
+      }
     }
     if (!woParam) return;
     let cancelled = false;
@@ -614,12 +621,22 @@ export function PermitsPage() {
         onOpenChange={(open) => {
           if (open) return;
           setSelectedId(null);
+          setOpenedFromLink(false);
           setLinkError(null);
           clearParam(PERMIT_QUERY_SELECT);
         }}
       >
         <DialogContent className="flex max-h-[90vh] w-full max-w-4xl flex-col gap-0 p-0">
           <DialogHeader className="px-6 pt-5 pb-3">
+            {openedFromLink ? (
+              <BackToOriginButton
+                onClick={() => {
+                  setSelectedId(null);
+                  setOpenedFromLink(false);
+                  void navigate(-1);
+                }}
+              />
+            ) : null}
             <DialogTitle>
               {selected ? t("detail.title", { code: selected.code }) : t("page.title")}
             </DialogTitle>

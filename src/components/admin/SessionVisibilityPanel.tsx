@@ -20,7 +20,7 @@ import { i18n } from "@/i18n";
 import { roleLabel } from "@/lib/role-labels";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
 import { pushAppToast } from "@/store/app-toast-store";
-import { intlLocaleForLanguage } from "@/utils/format-date";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 import type { SessionSummary } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -133,13 +133,7 @@ export function SessionVisibilityPanel() {
         accessorKey: "session_started_at",
         header: t("sessions.columns.sessionStart", "Started"),
         cell: ({ row }) => {
-          try {
-            return new Date(row.original.session_started_at).toLocaleString(
-              intlLocaleForLanguage(i18n.language),
-            );
-          } catch {
-            return row.original.session_started_at;
-          }
+          return formatLocalDateTime(row.original.session_started_at, i18n.language);
         },
       },
       {
@@ -148,11 +142,7 @@ export function SessionVisibilityPanel() {
         cell: ({ row }) => {
           const v = row.original.last_activity_at;
           if (!v) return "—";
-          try {
-            return new Date(v).toLocaleString(intlLocaleForLanguage(i18n.language));
-          } catch {
-            return v;
-          }
+          return formatLocalDateTime(v, i18n.language);
         },
       },
       {

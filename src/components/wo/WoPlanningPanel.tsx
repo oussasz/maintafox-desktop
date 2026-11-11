@@ -35,7 +35,6 @@ import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import { useReadableLists } from "@/lib/list-access";
 import {
   checkWoPartStockAvailability,
-  createProcurementRequisitionFromWoPart,
   evaluateInventoryUnitCost,
   listInventoryArticles,
   listInventoryLocations,
@@ -84,6 +83,7 @@ import {
   permitRuleFlagActive,
 } from "./WoPermitRuleNote";
 import { WoShiftSelect } from "./WoShiftSelect";
+import { WoShortageSection } from "./WoShortageSection";
 import { WoShutdownRequirementField } from "./WoShutdownRequirementField";
 import { useWoAccess } from "./WoSiteScope";
 import { useWoPeopleOptions } from "./use-wo-people";
@@ -253,8 +253,16 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
     const people = useWoPeopleOptions();
     // Emergency reassignment is offered from the user's rights at this work order's site.
-    const { can: canAtSite } = useWoAccess(wo);
+    const siteAccess = useWoAccess(wo);
+    const canAtSite = siteAccess.can;
     const canEmergencyAssign = canAtSite(P.OT_EMERGENCY_ASSIGN);
+    // Naming the planner needs ot.approve or plan.confirm at the site (CMMS Advisor 2026-11-06,
+    // `plan_wo`): greyed with the reason once the rights are read; the recorded planner is kept.
+    const mayChoosePlanner = canAtSite(P.OT_APPROVE) || canAtSite(P.PLAN_CONFIRM);
+    const plannerBlocker =
+      !siteAccess.loading && !siteAccess.failed && !mayChoosePlanner
+        ? t("planning.plannerRightRequired")
+        : null;
 
     const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
     const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -330,8 +338,6 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
 
     // Material readiness (shortage detection)
     const [materialReadiness, setMaterialReadiness] = useState<WoMaterialReadiness | null>(null);
-    const [shortageReqCreating, setShortageReqCreating] = useState<number | null>(null);
-    const [shortageSuccessIds, setShortageSuccessIds] = useState<number[]>([]);
 
     useEffect(() => {
       setStatusCode(wo.status_code ?? "draft");
@@ -358,10 +364,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     }, [wo]);
 
     useEffect(() => {
-      if (!plannerId && info?.user_id) {
+      // Proposed as planner only to someone who may name one (never a self-promotion).
+      if (!plannerId && info?.user_id && mayChoosePlanner) {
         setPlannerId(String(info.user_id));
       }
-    }, [plannerId, info?.user_id]);
+    }, [plannerId, info?.user_id, mayChoosePlanner]);
 
     useEffect(() => {
       let cancelled = false;
@@ -624,7 +631,10 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
     const tasksPartsDisabled = !canEdit || !isPlanningEditable || busy;
     const allFieldsDisabled = scheduleFieldsDisabled;
 
-    const planReady = plannerId.trim().length > 0;
+    // Naming a planner is optional (CMMS Advisor 2026-11-06, option b): without the right to name
+    // one, the dates, duration and priority are saved with the planner left to be named. Someone
+    // who may name one still chooses it before saving, as before.
+    const planReady = !mayChoosePlanner || plannerId.trim().length > 0;
 
     const assignReady = assignedTeamId.trim().length > 0 || primaryResponsibleId.trim().length > 0;
     const hasCommitment = wo.schedule_commitment_id != null;
@@ -688,7 +698,7 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           wo_id: wo.id,
           actor_id: requireActor,
           expected_row_version: rowVersion,
-          planner_id: Number(plannerId),
+          planner_id: plannerId.trim() ? Number(plannerId) : null,
           planned_start: hasCommitment
             ? null
             : plannedStart.trim()
@@ -1178,13 +1188,16 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
               <Select
                 value={plannerId || "__none"}
                 onValueChange={(value) => setPlannerId(value === "__none" ? "" : value)}
-                disabled={allFieldsDisabled}
+                disabled={allFieldsDisabled || !mayChoosePlanner}
               >
-                <SelectTrigger>
+                <SelectTrigger
+                  title={plannerBlocker ?? undefined}
+                  aria-describedby={plannerBlocker ? "wo-planner-blocker" : undefined}
+                >
                   <SelectValue placeholder={t("planning.plannerId")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">—</SelectItem>
+                  <SelectItem value="__none">{t("planning.plannerToName")}</SelectItem>
                   {plannerOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
@@ -1192,6 +1205,11 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
                   ))}
                 </SelectContent>
               </Select>
+              {plannerBlocker ? (
+                <p id="wo-planner-blocker" className="text-xs text-text-muted">
+                  {plannerBlocker}
+                </p>
+              ) : null}
             </div>
             {!hasCommitment ? (
               <>
@@ -1917,72 +1935,8 @@ export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanel
           </section>
         ) : null}
 
-        {/* ── Parts shortage → purchase requisition ── */}
-        {materialReadiness &&
-        !materialReadiness.is_fully_available &&
-        materialReadiness.shortages.length > 0 ? (
-          <section className="space-y-2 rounded-md border border-tone-warning-border bg-tone-warning-bg p-3">
-            <h3 className="text-sm font-semibold text-tone-warning-fg">
-              {t("planning.shortage.title")}
-            </h3>
-            <p className="text-xs text-tone-warning-fg">{t("planning.shortage.description")}</p>
-            <div className="space-y-1.5">
-              {materialReadiness.shortages.map((shortage) => {
-                const wasCreated = shortageSuccessIds.includes(shortage.article_id);
-                return (
-                  <div
-                    key={shortage.article_id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-tone-warning-border bg-surface-0 p-2 text-xs"
-                  >
-                    <span className="font-medium">{shortage.article_code}</span>
-                    <span className="text-muted-foreground">— {shortage.article_name}</span>
-                    <span className="ml-auto tabular-nums text-tone-warning-fg">
-                      {t("planning.shortage.columns.requested")}: {shortage.requested_qty} ·{" "}
-                      {t("planning.shortage.columns.available")}: {shortage.available_qty} ·{" "}
-                      <span className="font-semibold text-tone-danger-fg">
-                        {t("planning.shortage.columns.shortage")}: {shortage.shortage_qty}
-                      </span>
-                    </span>
-                    {wasCreated ? (
-                      <span className="text-xs font-medium text-tone-success-fg">
-                        ✓ {t("planning.shortage.requisitionCreated")}
-                      </span>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-xs"
-                        disabled={shortageReqCreating === shortage.article_id}
-                        onClick={() => {
-                          setShortageReqCreating(shortage.article_id);
-                          void createProcurementRequisitionFromWoPart(
-                            wo.id,
-                            shortage.article_id,
-                            shortage.shortage_qty,
-                            shortage.preferred_location_id,
-                          )
-                            .then(() => {
-                              setShortageSuccessIds((prev) => [...prev, shortage.article_id]);
-                            })
-                            .catch((err) => {
-                              setError(describeAppError(err).title);
-                            })
-                            .finally(() => {
-                              setShortageReqCreating(null);
-                            });
-                        }}
-                      >
-                        {shortageReqCreating === shortage.article_id
-                          ? "…"
-                          : t("planning.shortage.createRequisition")}
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
+        {/* Parts shortage -> purchase requisition (shared with the work order sheet) */}
+        <WoShortageSection woId={wo.id} readiness={materialReadiness} />
 
         {statusCode === "planning" && readinessReport && (
           <section className="space-y-2 rounded-md border p-3">

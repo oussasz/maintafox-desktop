@@ -721,4 +721,85 @@ mod tests {
         assert_eq!(lowered.pending_issue_qty, 1.0, "the use is now to issue in full");
         assert_eq!(issues(&db, article_id).await, 0);
     }
+
+    /// L5-08 (CMMS Advisor 2026-11-06), through the commands: the issue desk is outside the
+    /// execution-actor rule. A storekeeper who does not carry out the work order (not its assignee,
+    /// team, planner or an approver) still issues and withdraws its "à sortir" lines; a colleague
+    /// without the stock right who does not carry it out cannot withdraw a use from it (review of
+    /// 8a77d5784: that resets the recorded use).
+    #[tokio::test]
+    async fn the_issue_desk_is_open_to_the_storekeeper_and_closed_to_a_colleague() {
+        use crate::auth::scope_tests::{assign, code_of, role, user};
+        use crate::rbac::permissions::{INV_MANAGE, INV_VIEW, OT_EDIT, OT_VIEW};
+
+        let db = crate::db::test_db::seeded().await;
+        let wo_id = wo_in_planning(&db).await;
+        let (article_a, location_a) = seed_stock_article(&db, "TI-STORE-A", 10.0).await;
+        let (article_b, location_b) = seed_stock_article(&db, "TI-STORE-B", 10.0).await;
+        let line_a = parts::add_planned_part(&db, input(wo_id, article_a, Some(location_a), 2.0), RequestOnly)
+            .await
+            .expect("plan A");
+        let line_b = parts::add_planned_part(&db, input(wo_id, article_b, Some(location_b), 1.0), RequestOnly)
+            .await
+            .expect("plan B");
+        set_wo_status(&db, wo_id, "in_progress").await;
+        for line in [line_a.id, line_b.id] {
+            parts::record_actual_usage(&db, line, if line == line_a.id { 2.0 } else { 1.0 }, None, RequestOnly)
+                .await
+                .expect("record use");
+        }
+        let technician = admin_id(&db).await;
+        exec(
+            &db,
+            "UPDATE work_orders SET primary_responsible_id = ?, assigned_team_id = NULL, planner_id = NULL \
+             WHERE id = ?",
+            vec![technician.into(), wo_id.into()],
+        )
+        .await;
+
+        let storekeeper = user(&db, "store_l5_08").await;
+        let store_role = role(&db, "Store L5-08", &[INV_VIEW, INV_MANAGE, OT_VIEW, OT_EDIT]).await;
+        assign(&db, storekeeper, store_role, "tenant", None).await;
+        let colleague = user(&db, "colleague_l5_08").await;
+        let tech_role = role(&db, "Tech L5-08", &[OT_VIEW, OT_EDIT]).await;
+        assign(&db, colleague, tech_role, "tenant", None).await;
+        let store = crate::wo::execution_actor_tests::state_for(&db, storekeeper).await;
+        let tech = crate::wo::execution_actor_tests::state_for(&db, colleague).await;
+
+        // The colleague (request only, not an actor) cannot withdraw the use.
+        let withdraw = |line: i64| CancelPartToIssueInput {
+            wo_part_id: line,
+            reason: "pièce non prise au magasin".into(),
+        };
+        let refused = crate::commands::wo::cancel_wo_part_to_issue_impl(&tech, withdraw(line_b.id))
+            .await
+            .expect_err("not an execution actor");
+        assert_eq!(code_of(&refused), crate::wo::execution_actor::codes::ASSIGNED_PERSON);
+        let untouched = scalar_f64(
+            &db,
+            "SELECT pending_issue_qty FROM work_order_parts WHERE id = ?",
+            vec![line_b.id.into()],
+        )
+        .await;
+        assert_eq!(untouched, 1.0, "the use is kept");
+
+        // The storekeeper withdraws one line and issues the other.
+        crate::commands::wo::cancel_wo_part_to_issue_impl(&store, withdraw(line_b.id))
+            .await
+            .expect("the storekeeper withdraws");
+        let issued = crate::commands::wo::issue_wo_part_to_issue_impl(
+            &store,
+            IssuePartToIssueInput {
+                wo_part_id: line_a.id,
+                quantity: 2.0,
+                stock_location_id: None,
+                correction_reason: None,
+            },
+        )
+        .await
+        .expect("the storekeeper issues");
+        assert_eq!(issued.pending_issue_qty, 0.0);
+        assert_eq!(issued.quantity_issued, 2.0);
+        assert_eq!(on_hand(&db, article_a, location_a).await, 8.0);
+    }
 }

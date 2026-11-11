@@ -36,6 +36,7 @@ import {
   computeArticleKpis,
 } from "@/components/inventory/article-activity";
 import { useLookupOptions } from "@/components/inventory/use-lookup-options";
+import { BackToOriginButton } from "@/components/ui/back-to-origin-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -109,6 +110,8 @@ export interface ArticleDetailWorkspaceProps {
   onStockAdjusted?: () => void;
   /** Optional: open a purchase order from the purchase history section. */
   onOpenPurchaseOrder?: (purchaseOrderId: number) => void;
+  /** Set when the article was opened by a link from another screen: shows "← Retour". */
+  onBackToOrigin?: () => void;
 }
 
 /** One independently loaded section of the article detail. */
@@ -176,6 +179,7 @@ export function ArticleDetailWorkspace({
   onCreateRequisition,
   onStockAdjusted,
   onOpenPurchaseOrder,
+  onBackToOrigin,
 }: ArticleDetailWorkspaceProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
@@ -388,6 +392,7 @@ export function ArticleDetailWorkspace({
 
   return (
     <div className="flex h-full flex-col space-y-4 overflow-auto p-4">
+      {onBackToOrigin ? <BackToOriginButton onClick={onBackToOrigin} /> : null}
       <EntityDetailHeader
         code={article.article_code}
         designation={article.article_name}

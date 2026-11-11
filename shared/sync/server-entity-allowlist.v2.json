@@ -240,6 +240,10 @@
       "scope": "tenant"
     },
     {
+      "entity_type": "wo_history_records",
+      "scope": "tenant"
+    },
+    {
       "entity_type": "work_order_interveners",
       "scope": "tenant"
     },

@@ -74,6 +74,52 @@
     "none": "Nobody to offer. If you cannot see the staff register, ask the administrator to link your account to your record in Personnel so you can book your hours.",
     "loadFailed": "The staff list could not be loaded."
   },
+  "depannage": {
+    "action": "Breakdown",
+    "title": "Breakdown: immediate work",
+    "intro": "For a failure to deal with now: the corrective work order is created and started in one go. Its planning is validated afterwards.",
+    "badge": "Breakdown work",
+    "breakdownAt": {
+      "save": "Save",
+      "edit": "Correct the breakdown time",
+      "label": "Breakdown found at",
+      "required": "Enter the date and time the breakdown was found.",
+      "future": "A breakdown cannot be found in the future."
+    },
+    "machineStopped": {
+      "label": "Machine stopped",
+      "required": "Say whether the machine is stopped.",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "titlePlaceholder": "E.g. oil leak on the gearbox",
+    "type": {
+      "default": "Plant type for immediate corrective work"
+    },
+    "assignee": {
+      "label": "Technician",
+      "me": "Me",
+      "onlyMe": "Naming someone else needs the emergency assignment right."
+    },
+    "openWos": {
+      "title_one": "{{count}} work order already open on this equipment",
+      "title_other": "{{count}} work orders already open on this equipment",
+      "open": "Open",
+      "hint": "Open the existing work order if it already covers this breakdown; otherwise launch the breakdown work."
+    },
+    "submit": "Launch breakdown work",
+    "close": "Close",
+    "openWo": "Open work order {{code}}",
+    "result": {
+      "started": "Work order {{code}} created and started.",
+      "waiting": "Work order {{code}} created, ready and waiting for its permit: it starts once the permit is live.",
+      "permitTypes": "Waiting for permit: {{types}}",
+      "draftsWritten_one": "{{count}} permit draft prepared.",
+      "draftsWritten_other": "{{count}} permit drafts prepared.",
+      "issuersNotified": "The site's permit issuers have been notified.",
+      "oldBreakdown": "The breakdown was found more than 7 days ago: check the date entered."
+    }
+  },
   "page": {
     "title": "Work Orders",
     "titleDetail": "Work order detail",
@@ -157,6 +203,8 @@
     },
     "filters": {
       "scopeNotClosed": "Not yet closed",
+      "planner": "Planner",
+      "plannerToName": "Planner to be named",
       "scopeOverdue": "Overdue (open, planned end passed)",
       "mix": "Work mix",
       "completed": "Completed in the period",
@@ -327,6 +375,8 @@
     "save": "Save planning",
     "endBeforeStart": "End date must be after start date",
     "plannerId": "Planner",
+    "plannerToName": "planner to be named",
+    "plannerRightRequired": "Only an approver or a planner can choose the work order's planner.",
     "plannedStart": "Planned start",
     "plannedEnd": "Planned end",
     "selectShift": "Select shift",
@@ -428,6 +478,8 @@
       "description": "Some planned parts are not fully available in stock.",
       "createRequisition": "Create purchase requisition",
       "requisitionCreated": "Purchase requisition created",
+      "requisitionInProgress": "Purchase requisition {{number}} already in progress",
+      "requisitionCreatedNumber": "Purchase requisition {{number}} created",
       "columns": {
         "article": "Article",
         "requested": "Requested",
@@ -884,6 +936,7 @@
     "title": "Work order history",
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
+    "originDepannage": "Origin: breakdown",
     "actions": {
       "task_reopened": "Task reopened",
       "labor_closed_by_cancellation": "Open labour closed by the cancellation",

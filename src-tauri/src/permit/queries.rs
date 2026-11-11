@@ -92,7 +92,7 @@ const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permi
      pi.energy_type, pi.isolation_method, pi.energy_type_id, et.code AS energy_type_code, \
      et.label AS energy_type_label, pi.isolation_method_id, im.label AS isolation_method_label, \
      pi.mapping_review_required, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
-     pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
+     pi.applied_at, pi.verified_at, pi.zero_energy_note, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
      pi.cancelled_at, pi.cancelled_by_id, \
      COALESCE(ua.display_name, ua.username) AS applied_by_name, \
      COALESCE(uv.display_name, uv.username) AS verified_by_name, \
@@ -394,6 +394,7 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         verified_by_id: row.try_get("", "verified_by_id").ok(),
         applied_at: row.try_get("", "applied_at").ok(),
         verified_at: row.try_get("", "verified_at").ok(),
+        zero_energy_note: row.try_get("", "zero_energy_note").ok().flatten(),
         removal_verified_at: row.try_get("", "removal_verified_at").ok(),
         removal_verified_by_id: row.try_get("", "removal_verified_by_id").ok(),
         row_version: row
@@ -1715,16 +1716,37 @@ pub async fn create_work_permit(
     Ok(out)
 }
 
-async fn create_work_permit_in(
+/// [`create_work_permit`] in the caller's transaction (also the permit drafts of a dépannage,
+/// `wo::depannage`, written with the dépannage itself). The rights are the caller's to check.
+pub(crate) async fn create_work_permit_in(
     db: &impl ConnectionTrait,
     input: WorkPermitCreateInput,
     actor_id: i64,
 ) -> AppResult<WorkPermit> {
+    let checked = check_work_permit_create(db, &input).await?;
+    insert_work_permit(db, &input, checked, actor_id).await
+}
+
+/// What the checks of a new permit settled: its equipment, its org node and its expiry.
+#[derive(Debug, Clone)]
+pub(crate) struct CheckedPermitCreate {
+    asset_id: i64,
+    entity_id: i64,
+    expires_at: String,
+}
+
+/// The rules of a new permit, before anything is written: the type exists, the equipment and node
+/// (and the linked work order's equipment) agree, the expiry is accepted for the type, and the
+/// linked work order has no open permit of that type. A refusal here writes nothing.
+pub(crate) async fn check_work_permit_create(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+) -> AppResult<CheckedPermitCreate> {
     // The type must exist (NotFound otherwise).
     let _ = permit_type_requires_energy_isolation(db, input.permit_type_id).await?;
-    let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
+    let (asset_id, entity_id) = resolve_permit_scope(db, input).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
-    let expires_at = Some(checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?);
+    let expires_at = checked_expiry(db, input.permit_type_id, input.expires_at.as_deref()).await?;
 
     // A work order has at most one open permit of each type: the plant's rules can require several
     // types of it, and its start needs a live permit of each (`permit::required_set`, CMMS Advisor
@@ -1742,7 +1764,27 @@ async fn create_work_permit_in(
             ));
         }
     }
+    Ok(CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    })
+}
 
+/// Writes the permit draft [`check_work_permit_create`] accepted. Any error here is a failure of
+/// the write itself (the caller's transaction must not be committed), never a refusal.
+pub(crate) async fn insert_work_permit(
+    db: &impl ConnectionTrait,
+    input: &WorkPermitCreateInput,
+    checked: CheckedPermitCreate,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
+    let CheckedPermitCreate {
+        asset_id,
+        entity_id,
+        expires_at,
+    } = checked;
+    let expires_at = Some(expires_at);
     let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
     let insert_result = db.execute(Statement::from_sql_and_values(
@@ -3334,13 +3376,36 @@ async fn verify_permit_isolation_in(
             &[],
         ));
     }
+    let note = zero_energy_note(&input)?;
     write_isolation_action(
         db,
         &iso,
-        "verified_by_id = ?, verified_at = ?",
-        vec![actor_id.into(), now_ts().into()],
+        "verified_by_id = ?, verified_at = ?, zero_energy_note = ?",
+        vec![actor_id.into(), now_ts().into(), note.into()],
     )
     .await
+}
+
+/// The zero-energy test of a verification (L4-13): the verifier confirms it was done and says what
+/// was measured or seen (trimmed, not blank, at most `MAX_ZERO_ENERGY_NOTE_CHARS` characters).
+fn zero_energy_note(input: &PermitIsolationActionInput) -> AppResult<String> {
+    if input.zero_energy_confirmed != Some(true) {
+        return Err(refused(
+            "PERMIT_ZERO_ENERGY_NOT_CONFIRMED",
+            "Confirm that the zero-energy test was done before verifying the isolation.",
+            &[],
+        ));
+    }
+    let note = input.zero_energy_note.as_deref().map(str::trim).unwrap_or_default();
+    let max = super::domain::MAX_ZERO_ENERGY_NOTE_CHARS;
+    if note.is_empty() || note.chars().count() > max {
+        return Err(refused(
+            "PERMIT_ZERO_ENERGY_NOTE_REQUIRED",
+            format!("Record the measure or observation of the zero-energy test (1 to {max} characters)."),
+            &[("max", max.to_string())],
+        ));
+    }
+    Ok(note.to_string())
 }
 
 /// Records verified lock removal. Same two-person rule as verification: the person
@@ -3669,6 +3734,8 @@ async fn force_permit_isolation_removal_in(
         isolation_id: input.isolation_id,
         expected_row_version: input.expected_row_version,
         lock_number: None,
+        zero_energy_confirmed: None,
+        zero_energy_note: None,
     };
     let (iso, permit) = load_isolation_for_action(db, &action).await?;
     let applier = ensure_lock_removable(db, &iso, &permit).await?;
@@ -3860,6 +3927,8 @@ pub async fn record_worker_informed(
         isolation_id: input.isolation_id,
         expected_row_version: input.expected_row_version,
         lock_number: None,
+        zero_energy_confirmed: None,
+        zero_energy_note: None,
     };
     let (iso, permit) = load_isolation_for_action(&txn, &action).await?;
     let applier = ensure_worker_to_inform(&iso)?;
@@ -4026,7 +4095,7 @@ pub async fn get_loto_card_view(
             DbBackend::Sqlite,
             "SELECT wp.code AS permit_code, wp.expires_at AS permit_expires, pi.id AS isolation_id, \
              pi.isolation_point, COALESCE(et.label, pi.energy_type) AS energy_type, pi.lock_number, \
-             pi.verified_by_id, pi.verified_at, pi.cancelled_at, \
+             pi.verified_by_id, pi.verified_at, pi.zero_energy_note, pi.cancelled_at, \
              COALESCE(pi.forced_removal, 0) AS forced_removal, pi.removed_at, pi.forced_reason, \
              COALESCE(uf.display_name, uf.username) AS forced_authorized_by, \
              e.asset_id_code, e.name AS equipment_name, ua.username AS verifier_username \
@@ -4075,6 +4144,11 @@ pub async fn get_loto_card_view(
     let verified_at: Option<String> = row.try_get("", "verified_at").ok().flatten();
     let verifier_username: Option<String> = row.try_get("", "verifier_username").ok().flatten();
     let verifier_signature = if verified_at.is_some() { verifier_username } else { None };
+    let zero_energy_note: Option<String> = if verified_at.is_some() {
+        row.try_get("", "zero_energy_note").ok().flatten()
+    } else {
+        None
+    };
     let iso_id: i64 = row
         .try_get("", "isolation_id")
         .map_err(|e| decode_err("isolation_id", e))?;
@@ -4099,6 +4173,7 @@ pub async fn get_loto_card_view(
         isolation_point,
         lock_number,
         verifier_signature,
+        zero_energy_note,
         expires_at,
         forced_removal,
         forced_authorized_by: forced_text("forced_authorized_by"),

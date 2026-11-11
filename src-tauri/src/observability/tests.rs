@@ -271,7 +271,7 @@ async fn transition_planned_assigned_in_progress_for_user(
             wo_id,
             actor_id: actor,
             expected_row_version: plan_rv,
-            planner_id: actor,
+            planner_id: Some(actor),
             planned_start: Some("2026-04-10T08:00:00Z".to_string()),
             planned_end: Some("2026-04-10T16:00:00Z".to_string()),
             shift: None,

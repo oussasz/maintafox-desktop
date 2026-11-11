@@ -74,6 +74,52 @@
     "none": "Aucune personne à proposer. Si vous ne voyez pas le registre du personnel, demandez à l'administrateur de relier votre compte à votre fiche dans Personnel pour pouvoir saisir vos heures.",
     "loadFailed": "La liste du personnel n'a pas pu être chargée."
   },
+  "depannage": {
+    "action": "Dépannage",
+    "title": "Dépannage : intervention immédiate",
+    "intro": "Pour une panne à traiter tout de suite : l'OT correctif est créé et démarré en une fois. La planification est validée après coup.",
+    "badge": "Dépannage",
+    "breakdownAt": {
+      "save": "Enregistrer",
+      "edit": "Corriger la date de constat",
+      "label": "Panne constatée à",
+      "required": "Saisissez la date et l'heure de constat de la panne.",
+      "future": "La panne ne peut pas être constatée dans le futur."
+    },
+    "machineStopped": {
+      "label": "Machine arrêtée",
+      "required": "Indiquez si la machine est arrêtée.",
+      "yes": "Oui",
+      "no": "Non"
+    },
+    "titlePlaceholder": "Ex. : fuite d'huile sur le réducteur",
+    "type": {
+      "default": "Type de l'usine pour le correctif immédiat"
+    },
+    "assignee": {
+      "label": "Intervenant",
+      "me": "Moi",
+      "onlyMe": "Désigner une autre personne demande le droit d'affectation d'urgence."
+    },
+    "openWos": {
+      "title_one": "{{count}} OT déjà ouvert sur cet équipement",
+      "title_other": "{{count}} OT déjà ouverts sur cet équipement",
+      "open": "Ouvrir",
+      "hint": "Ouvrez l'OT existant s'il traite déjà cette panne ; sinon lancez le dépannage."
+    },
+    "submit": "Lancer le dépannage",
+    "close": "Fermer",
+    "openWo": "Ouvrir l'OT {{code}}",
+    "result": {
+      "started": "OT {{code}} créé et démarré.",
+      "waiting": "OT {{code}} créé, prêt et en attente de permis : il démarrera dès que le permis sera actif.",
+      "permitTypes": "En attente de permis : {{types}}",
+      "draftsWritten_one": "{{count}} brouillon de permis préparé.",
+      "draftsWritten_other": "{{count}} brouillons de permis préparés.",
+      "issuersNotified": "Les émetteurs de permis du site sont prévenus.",
+      "oldBreakdown": "La panne a été constatée il y a plus de 7 jours : vérifiez la date saisie."
+    }
+  },
   "page": {
     "title": "Ordres de travail",
     "titleDetail": "Détail de l'ordre de travail",
@@ -157,6 +203,8 @@
     },
     "filters": {
       "scopeNotClosed": "Pas encore clôturés",
+      "planner": "Planificateur",
+      "plannerToName": "Planificateur à désigner",
       "scopeOverdue": "En retard (ouverts, fin prévue dépassée)",
       "mix": "Nature des travaux",
       "completed": "Terminés sur la période",
@@ -327,6 +375,8 @@
     "save": "Enregistrer la planification",
     "endBeforeStart": "La date de fin doit être après la date de début",
     "plannerId": "Planificateur",
+    "plannerToName": "planificateur à désigner",
+    "plannerRightRequired": "Seul un approbateur ou un planificateur peut choisir le planificateur de l'OT.",
     "plannedStart": "Début prévu",
     "plannedEnd": "Fin prévue",
     "selectShift": "Sélectionner le poste",
@@ -428,6 +478,8 @@
       "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
       "createRequisition": "Créer une demande d'achat",
       "requisitionCreated": "Demande d'achat créée",
+      "requisitionInProgress": "Demande d'achat {{number}} déjà en cours",
+      "requisitionCreatedNumber": "Demande d'achat {{number}} créée",
       "columns": {
         "article": "Article",
         "requested": "Demandé",
@@ -884,6 +936,7 @@
     "title": "Historique de l’ordre de travail",
     "permitRequired": "Permis / consignation désormais exigé",
     "permitNotRequired": "Permis / consignation plus exigé",
+    "originDepannage": "Origine : dépannage",
     "actions": {
       "task_reopened": "Tâche rouverte",
       "labor_closed_by_cancellation": "Main-d'œuvre ouverte clôturée par l'annulation",

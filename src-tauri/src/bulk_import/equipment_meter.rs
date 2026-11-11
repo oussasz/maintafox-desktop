@@ -100,7 +100,7 @@ struct Stored {
 }
 
 /// Live equipment by code key; codes held twice (letter case aside) are returned apart.
-async fn equipment_by_code(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, i64>, HashSet<String>)> {
+pub(super) async fn equipment_by_code(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, i64>, HashSet<String>)> {
     let mut out = HashMap::new();
     let mut ambiguous = HashSet::new();
     for r in db
@@ -146,7 +146,7 @@ async fn meter_types(db: &impl ConnectionTrait) -> AppResult<HashMap<String, Str
 
 /// Units of the published MEASURE.UNITS list by code key and by symbol key: (id, active).
 /// A key two different units answer to is returned apart.
-async fn units(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, (i64, bool)>, HashSet<String>)> {
+pub(super) async fn units(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, (i64, bool)>, HashSet<String>)> {
     let mut out: HashMap<String, (i64, bool)> = HashMap::new();
     let mut ambiguous = HashSet::new();
     for r in db
@@ -188,7 +188,7 @@ async fn units(db: &impl ConnectionTrait) -> AppResult<(HashMap<String, (i64, bo
 }
 
 /// A decimal written with a comma or a dot.
-fn parse_number(raw: &str) -> Option<f64> {
+pub(super) fn parse_number(raw: &str) -> Option<f64> {
     raw.trim()
         .replace(' ', "")
         .replace(',', ".")

@@ -10,6 +10,7 @@ import { RamsFleetPage } from "@/pages/reliability/RamsFleetPage";
 import type { ReliabilityStudy, StudyDataset } from "@/services/reliability-study-service";
 import { useLocaleStore } from "@/stores/locale-store";
 import { mockInvoke } from "@/test/mocks/tauri";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Keys resolve against the real English catalogue: a missing key fails the test.
 function lookup(catalog: unknown, key: string): string | undefined {
@@ -46,8 +47,13 @@ vi.mock("react-i18next", () => ({
 }));
 const assetSvc = vi.hoisted(() => ({ getAssetById: vi.fn() }));
 vi.mock("@/services/asset-service", () => assetSvc);
+let deniedRights: string[] = [];
 vi.mock("@/hooks/use-permissions", () => ({
-  usePermissions: () => ({ can: () => true, canAny: () => true, isLoading: false }),
+  usePermissions: () => ({
+    can: (p: string) => !deniedRights.includes(p),
+    canAny: () => true,
+    isLoading: false,
+  }),
 }));
 
 const TS = "2026-10-01T10:00:00Z";
@@ -221,8 +227,14 @@ describe("RamsFleetPage", () => {
     expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("12");
     const start = screen.getByRole("button", { name: /Study the selection/ });
     expect(start).toBeDisabled();
+    // The grey button says what is missing, in a sentence (not only a tooltip).
+    expect(screen.getByTestId("rams-study-reason")).toHaveTextContent(
+      "Tick at least one equipment in the table",
+    );
+    expect(start).toHaveAttribute("aria-describedby", "rams-study-reason");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select P-101" }));
+    expect(screen.queryByTestId("rams-study-reason")).not.toBeInTheDocument();
     const row = screen.getByText("P-102").closest("tr");
     if (!row) throw new Error("P-102 row missing");
     fireEvent.keyDown(row, { key: " " });
@@ -310,6 +322,34 @@ describe("RamsFleetPage", () => {
     );
     expect(await screen.findByText("P-101")).toBeInTheDocument();
     expect(screen.getAllByText("period too short for the MTBF (under 90 days)").length).toBe(4);
+  });
+
+  it("keeps period, site and class in the address: applied on load, updated on change", async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_reliability_fleet_view")
+        return {
+          ...fleetView,
+          org_nodes: [{ id: 4, label: "Usine", depth: 0 }],
+          equipment_classes: [{ id: 7, label: "Pump", depth: 0 }],
+        };
+      if (cmd === "list_reliability_studies") return [];
+      throw new Error(`unexpected ${cmd}`);
+    });
+    render(
+      <MemoryRouter initialEntries={["/reliability?months=24&site=4&class=7"]}>
+        <RamsFleetPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("P-101")).toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("get_reliability_fleet_view", {
+      filter: expect.objectContaining({ org_node_id: 4, equipment_class_id: 7 }),
+    });
+    expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("24");
+    expect(screen.getByRole("combobox", { name: "Site" })).toHaveValue("4");
+    fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Period" }), { target: { value: "12" } });
+    await waitFor(() => expect(screen.getByText("?site=4")).toBeInTheDocument());
   });
 
   it("opens the quality page on the same period, site and class", async () => {
@@ -594,6 +634,32 @@ describe("StudyLifeStep", () => {
     expect(decide).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "pm_interval", pmPlanId: 14, intervalHours: 1900 }),
     );
+  });
+
+  it("keeps the cost and decision buttons visible but disabled, with the right they need (L2-24)", async () => {
+    mockInvoke.mockResolvedValue(fitAnalysis);
+    deniedRights = [P.RAM_ANALYZE];
+    try {
+      render(
+        <StudyLifeStep
+          study={study}
+          editable={false}
+          datasetVersion="v1"
+          onStudyChanged={vi.fn()}
+          onDecide={vi.fn()}
+        />,
+      );
+      expect(await screen.findByText("3.04")).toBeInTheDocument();
+      const save = screen.getByRole("button", { name: "Save the costs" });
+      expect(save).toBeDisabled();
+      expect(save).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      const record = screen.getByRole("button", { name: "Record this decision" });
+      expect(record).toBeDisabled();
+      expect(record).toHaveAttribute("title", expect.stringMatching(/^Right required: /));
+      expect(screen.getByRole("note")).toHaveTextContent(/^Read-only: /);
+    } finally {
+      deniedRights = [];
+    }
   });
 
   it("explains why no fit is shown when failures are too few", async () => {

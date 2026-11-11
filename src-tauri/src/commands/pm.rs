@@ -1,10 +1,25 @@
 //! Preventive maintenance IPC commands.
+//!
+//! Site scope (`pm::access`, CMMS Advisor decision on PM plan rights): the plan rights
+//! (`pm.create`, `pm.edit`, `pm.approve`, `pm.delete`) are checked at the plan's anchor — its
+//! equipment's site, its location's node, plant-wide for a family or criticality-group plan. A plan
+//! moved to another site (or made plant-wide) must be a draft, needs `pm.edit` at both ends and is
+//! audited.
+//!
+//! Reading (`pm.view`, CMMS Advisor decision 2026-11-06): the plan list, the occurrence lists, the
+//! due figures and the compliance are limited to the plans the reader sees (their sites, and every
+//! family / criticality-group plan); a plan and what belongs to it is read with `pm.view` at the
+//! plan's anchor. The cross-plan reads without a plan (readiness, governance KPIs, recurring
+//! findings, executions) keep the plant-wide check. The occurrence and execution writes, the
+//! generation and the meter readings keep their plant-wide checks.
 
 use tauri::State;
 
 use crate::auth::rbac::{self, PermissionScope};
+use crate::auth::scope::AccessScope;
 use crate::auth::session_manager::AuthenticatedUser;
 use crate::errors::{AppError, AppResult};
+use crate::pm::access as pm_access;
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmExecution, PmExecutionFilter, PmFinding,
@@ -24,21 +39,30 @@ use crate::{require_permission, require_session};
 #[tauri::command]
 pub async fn list_pm_plans(filter: PmPlanFilter, state: State<'_, AppState>) -> AppResult<Vec<PmPlan>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    queries::list_pm_plans(&state.db, filter).await
+    let scope = view_scope(&state, &user).await?;
+    queries::list_pm_plans_scoped(&state.db, filter, &scope).await
 }
 
 #[tauri::command]
 pub async fn get_pm_plan(plan_id: i64, state: State<'_, AppState>) -> AppResult<PmPlan> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    require_view_plan(&state, &user, plan_id).await?;
     queries::get_pm_plan(&state.db, plan_id).await
 }
 
 #[tauri::command]
 pub async fn create_pm_plan(input: CreatePmPlanInput, state: State<'_, AppState>) -> AppResult<PmPlan> {
     let user = require_session!(state);
-    require_pm_create_or_manage(&state, &user).await?;
+    // `pm.create` at the new plan's target (its equipment's site, its location; a family or a
+    // criticality group: plant-wide roles only).
+    pm_access::require_create_at(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        &input.asset_scope_type,
+        input.asset_scope_id,
+    )
+    .await?;
     queries::create_pm_plan(&state.db, input).await
 }
 
@@ -50,8 +74,29 @@ pub async fn update_pm_plan(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlan> {
     let user = require_session!(state);
-    require_pm_edit_or_manage(&state, &user).await?;
-    queries::update_pm_plan(&state.db, plan_id, expected_row_version, input).await
+    // `pm.edit` at the plan's anchor; a change of anchor (another site, or plant-wide) only on a
+    // draft, with `pm.edit` at the new anchor too, recorded with the update.
+    let checked = pm_access::require_plan_update(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        plan_id,
+        expected_row_version,
+        input.asset_scope_type.as_deref(),
+        input.asset_scope_id,
+    )
+    .await?;
+    // The anchors checked are derived again inside the update's transaction (refused when the
+    // plan's equipment moved in between); a site change is audited there, by the plan's sync id.
+    queries::update_pm_plan_recorded(
+        &state.db,
+        plan_id,
+        expected_row_version,
+        input,
+        Some(&checked),
+        Some(user.user_id),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -61,24 +106,20 @@ pub async fn transition_pm_plan_lifecycle(
 ) -> AppResult<PmPlan> {
     let user = require_session!(state);
     let next = input.next_status.trim().to_lowercase();
-    if next == "approved" {
-        require_permission!(
-            state,
-            &user,
-            crate::rbac::permissions::PM_APPROVE,
-            PermissionScope::Global
-        );
-        enforce_pm_capability(&state, &user, crate::rbac::permissions::PM_APPROVE).await?;
+    // Approval: `pm.approve` at the plan's anchor; the other steps: `pm.edit` there.
+    let permission = if next == "approved" {
+        crate::rbac::permissions::PM_APPROVE
     } else {
-        require_pm_edit_or_manage(&state, &user).await?;
-    }
+        crate::rbac::permissions::PM_EDIT
+    };
+    require_on_plan(&state, &user, permission, input.plan_id).await?;
     queries::transition_pm_plan_lifecycle(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn list_pm_plan_versions(pm_plan_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmPlanVersion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    require_view_plan(&state, &user, pm_plan_id).await?;
     queries::list_pm_plan_versions(&state.db, pm_plan_id).await
 }
 
@@ -89,7 +130,7 @@ pub async fn create_pm_plan_version(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlanVersion> {
     let user = require_session!(state);
-    require_pm_create_or_manage(&state, &user).await?;
+    require_on_plan(&state, &user, crate::rbac::permissions::PM_CREATE, pm_plan_id).await?;
     queries::create_pm_plan_version(&state.db, pm_plan_id, input).await
 }
 
@@ -101,7 +142,7 @@ pub async fn update_pm_plan_version(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlanVersion> {
     let user = require_session!(state);
-    require_pm_edit_or_manage(&state, &user).await?;
+    require_on_version(&state, &user, crate::rbac::permissions::PM_EDIT, version_id).await?;
     queries::update_pm_plan_version(&state.db, version_id, expected_row_version, input).await
 }
 
@@ -111,7 +152,7 @@ pub async fn publish_pm_plan_version(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlanVersion> {
     let user = require_session!(state);
-    require_pm_edit_or_manage(&state, &user).await?;
+    require_on_version(&state, &user, crate::rbac::permissions::PM_EDIT, input.version_id).await?;
     queries::publish_pm_plan_version(&state.db, input).await
 }
 
@@ -121,8 +162,11 @@ pub async fn list_pm_occurrences(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmOccurrence>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    queries::list_pm_occurrences(&state.db, filter).await
+    let scope = view_scope(&state, &user).await?;
+    if let Some(plan_id) = filter.pm_plan_id {
+        require_view_plan(&state, &user, plan_id).await?;
+    }
+    queries::list_pm_occurrences_scoped(&state.db, filter, &scope).await
 }
 
 #[tauri::command]
@@ -138,7 +182,8 @@ pub async fn generate_pm_occurrences(
 #[tauri::command]
 pub async fn get_pm_generation_status(state: State<'_, AppState>) -> AppResult<PmGenerationStatus> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    // The auto-pilot status is plant-wide (no site's records): any `pm.view` holder reads it.
+    view_scope(&state, &user).await?;
     generation_control::get_pm_generation_status(&state.db).await
 }
 
@@ -174,8 +219,8 @@ pub async fn transition_pm_occurrence(
 #[tauri::command]
 pub async fn get_pm_due_metrics(state: State<'_, AppState>) -> AppResult<PmDueMetrics> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    queries::get_pm_due_metrics(&state.db).await
+    let scope = view_scope(&state, &user).await?;
+    queries::get_pm_due_metrics_scoped(&state.db, &scope).await
 }
 
 #[tauri::command]
@@ -184,7 +229,7 @@ pub async fn list_pm_planning_readiness(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlanningReadinessProjection> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    require_view_records_or_plant(&state, &user, input.pm_plan_id).await?;
     queries::list_pm_planning_readiness(&state.db, input).await
 }
 
@@ -194,7 +239,7 @@ pub async fn get_pm_governance_kpi_report(
     state: State<'_, AppState>,
 ) -> AppResult<PmGovernanceKpiReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    require_view_records_or_plant(&state, &user, input.pm_plan_id).await?;
     queries::get_pm_governance_kpi_report(&state.db, input).await
 }
 /// Reasons (deferral / miss / cancel) and finding severities of the PM dialogs, read with the PM
@@ -204,7 +249,7 @@ pub async fn list_pm_execution_options(
     state: State<'_, AppState>,
 ) -> AppResult<crate::pm::reason_catalog::PmExecutionOptions> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    view_scope(&state, &user).await?;
     crate::pm::reason_catalog::list_pm_execution_options(&state.db).await
 }
 
@@ -222,14 +267,29 @@ pub async fn execute_pm_occurrence(
 #[tauri::command]
 pub async fn list_pm_executions(filter: PmExecutionFilter, state: State<'_, AppState>) -> AppResult<Vec<PmExecution>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    // One occurrence's executions: at the occurrence's own site. A whole plan's: at the plan's
+    // anchor (a family / group plan's: plant-wide). Neither: plant-wide, as before.
+    match (filter.pm_plan_id, filter.occurrence_id) {
+        (None, None) => require_view_records_or_plant(&state, &user, None).await?,
+        (plan_id, occurrence_id) => {
+            if let Some(occurrence_id) = occurrence_id {
+                pm_access::require_view_occurrence(&state.db, &state.permission_cache, user.user_id, occurrence_id)
+                    .await?;
+            }
+            if let Some(plan_id) = plan_id {
+                require_view_records_or_plant(&state, &user, Some(plan_id)).await?;
+            }
+        }
+    }
     queries::list_pm_executions(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn list_pm_findings(execution_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmFinding>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    // At the site of the execution's occurrence (`pm.view` anywhere first: no id is resolved for a
+    // user without the right).
+    pm_access::require_view_execution(&state.db, &state.permission_cache, user.user_id, execution_id).await?;
     queries::list_pm_findings(&state.db, execution_id).await
 }
 
@@ -239,14 +299,15 @@ pub async fn list_pm_recurring_findings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmRecurringFinding>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    require_view_records_or_plant(&state, &user, input.pm_plan_id).await?;
     queries::list_pm_recurring_findings(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn get_pm_occurrence(occurrence_id: i64, state: State<'_, AppState>) -> AppResult<PmOccurrence> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    // At the occurrence's own site (its equipment's node, else its plan's anchor).
+    pm_access::require_view_occurrence(&state.db, &state.permission_cache, user.user_id, occurrence_id).await?;
     queries::get_pm_occurrence_by_id(&state.db, occurrence_id).await
 }
 
@@ -254,15 +315,20 @@ pub async fn get_pm_occurrence(occurrence_id: i64, state: State<'_, AppState>) -
 #[tauri::command]
 pub async fn get_pm_compliance(input: PmComplianceInput, state: State<'_, AppState>) -> AppResult<PmComplianceReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    crate::pm::compliance::get_pm_compliance(&state.db, input).await
+    let scope = view_scope(&state, &user).await?;
+    if let Some(plan_id) = input.pm_plan_id {
+        require_view_plan(&state, &user, plan_id).await?;
+    }
+    let visible = pm_access::occurrence_view_filter(&scope);
+    crate::pm::compliance::get_pm_compliance_visible(&state.db, input, &visible).await
 }
 
 #[tauri::command]
 pub async fn list_pm_scope_options(scope_type: String, state: State<'_, AppState>) -> AppResult<Vec<PmScopeOption>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    crate::pm::plan_tools::list_pm_scope_options(&state.db, &scope_type).await
+    // Locations: those where the reader holds `pm.view`; families and criticality groups: all.
+    let scope = view_scope(&state, &user).await?;
+    crate::pm::plan_tools::list_pm_scope_options(&state.db, &scope_type, &scope).await
 }
 
 #[tauri::command]
@@ -272,14 +338,30 @@ pub async fn preview_pm_scope_assets(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmScopeAsset>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
-    crate::pm::plan_tools::preview_pm_scope_assets(&state.db, &scope_type, scope_id).await
+    let scope = view_scope(&state, &user).await?;
+    pm_access::require_view_target(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        &scope_type,
+        Some(scope_id),
+    )
+    .await?;
+    // Only the assets the reader may see (a family / group spans sites).
+    crate::pm::plan_tools::preview_pm_scope_assets(&state.db, &scope_type, scope_id, &scope).await
 }
 
 #[tauri::command]
 pub async fn list_pm_asset_meters(equipment_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmAssetMeter>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    pm_access::require_view_target(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        "equipment",
+        Some(equipment_id),
+    )
+    .await?;
     crate::pm::plan_tools::list_pm_asset_meters(&state.db, equipment_id).await
 }
 
@@ -298,7 +380,15 @@ pub async fn record_pm_meter_reading(
 #[tauri::command]
 pub async fn create_pm_revision_from_finding(finding_id: i64, state: State<'_, AppState>) -> AppResult<PmPlanVersion> {
     let user = require_session!(state);
-    require_pm_create_or_manage(&state, &user).await?;
+    // `pm.create` anywhere first (no id is resolved for a user without it), then at the plan.
+    pm_access::require_on_finding_plan(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PM_CREATE,
+        finding_id,
+    )
+    .await?;
     crate::pm::plan_tools::create_pm_revision_from_finding(&state.db, finding_id).await
 }
 
@@ -310,7 +400,8 @@ pub async fn duplicate_pm_plan(
     state: State<'_, AppState>,
 ) -> AppResult<crate::pm::domain::DuplicatePmPlanResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+    // Reading the source plan: `pm.view` at its site (a family / group plan: any PM reader).
+    require_view_plan(&state, &user, input.source_plan_id).await?;
     let source = queries::get_pm_plan(&state.db, input.source_plan_id).await?;
     let (scope_type, scope_id) = crate::pm::duplicate::resolve_target(&source, &input)?;
     let anchor = crate::pm::duplicate::target_anchor(&state.db, &scope_type, scope_id).await?;
@@ -323,6 +414,55 @@ pub async fn duplicate_pm_plan(
     )
     .await?;
     crate::pm::duplicate::duplicate_pm_plan(&state.db, input, Some(i64::from(user.user_id))).await
+}
+
+/// Where the reader holds `pm.view` (held nowhere: refused as before); filters the lists.
+async fn view_scope(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<AccessScope> {
+    pm_access::require_view_anywhere(&state.db, &state.permission_cache, user.user_id).await
+}
+
+/// `pm.view` on the plan `plan_id` and what belongs to it (`pm::access::check_view_plan`).
+async fn require_view_plan(state: &State<'_, AppState>, user: &AuthenticatedUser, plan_id: i64) -> AppResult<()> {
+    pm_access::require_view_plan(&state.db, &state.permission_cache, user.user_id, plan_id).await
+}
+
+/// The records of one whole plan (`pm::access::check_view_plan_records`: at its anchor, a family /
+/// group plan's plant-wide), or across plans: then the plant-wide right, as before (these
+/// cross-plan figures are not limited to the reader's sites yet).
+async fn require_view_records_or_plant(
+    state: &State<'_, AppState>,
+    user: &AuthenticatedUser,
+    plan_id: Option<i64>,
+) -> AppResult<()> {
+    match plan_id {
+        Some(plan_id) => {
+            pm_access::require_view_plan_records(&state.db, &state.permission_cache, user.user_id, plan_id).await
+        }
+        None => {
+            require_permission!(state, user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
+            Ok(())
+        }
+    }
+}
+
+/// `permission` at the anchor of the plan `plan_id` (`pm::access`).
+pub(crate) async fn require_on_plan(
+    state: &State<'_, AppState>,
+    user: &AuthenticatedUser,
+    permission: &str,
+    plan_id: i64,
+) -> AppResult<()> {
+    pm_access::require_on_plan(&state.db, &state.permission_cache, user.user_id, permission, plan_id).await
+}
+
+/// `permission` at the anchor of the plan of the version `version_id` (`pm::access`).
+pub(crate) async fn require_on_version(
+    state: &State<'_, AppState>,
+    user: &AuthenticatedUser,
+    permission: &str,
+    version_id: i64,
+) -> AppResult<()> {
+    pm_access::require_on_version(&state.db, &state.permission_cache, user.user_id, permission, version_id).await
 }
 
 async fn enforce_pm_capability(state: &State<'_, AppState>, user: &AuthenticatedUser, perm: &str) -> AppResult<()> {
@@ -371,28 +511,6 @@ pub(crate) async fn require_pm_edit_or_manage(state: &State<'_, AppState>, user:
     Err(AppError::PermissionDenied(format!(
         "Permission requise : {}",
         crate::rbac::permissions::PM_EDIT
-    )))
-}
-
-pub(crate) async fn require_pm_delete_or_manage(
-    state: &State<'_, AppState>,
-    user: &AuthenticatedUser,
-) -> AppResult<()> {
-    let scope = PermissionScope::Global;
-    if rbac::check_permission_cached(
-        &state.db,
-        &state.permission_cache,
-        user.user_id,
-        crate::rbac::permissions::PM_DELETE,
-        &scope,
-    )
-    .await?
-    {
-        return enforce_pm_capability(state, user, crate::rbac::permissions::PM_DELETE).await;
-    }
-    Err(AppError::PermissionDenied(format!(
-        "Permission requise : {}",
-        crate::rbac::permissions::PM_DELETE
     )))
 }
 

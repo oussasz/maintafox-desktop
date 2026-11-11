@@ -510,6 +510,8 @@
     "PERMIT_ISOLATION_ALREADY_APPLIED": "Cette isolation est déjà posée.",
     "PERMIT_ISOLATION_NOT_APPLIED": "L’isolation doit être posée avant d’être vérifiée.",
     "PERMIT_TWO_PERSON_VERIFY": "Règle des deux personnes : la personne qui a posé une isolation ne peut pas la vérifier.",
+    "PERMIT_ZERO_ENERGY_NOT_CONFIRMED": "Confirmez que le test d’énergie zéro a été effectué avant de vérifier l’isolation.",
+    "PERMIT_ZERO_ENERGY_NOTE_REQUIRED": "Indiquez la mesure ou le constat du test d’énergie zéro ({{max}} caractères au plus).",
     "PERMIT_REMOVAL_NOT_VERIFIABLE": "Seule une isolation vérifiée peut faire l’objet d’une vérification de retrait.",
     "PERMIT_REMOVAL_ALREADY_VERIFIED": "Le retrait du cadenas est déjà vérifié.",
     "PERMIT_TWO_PERSON_REMOVAL": "Règle des deux personnes : la personne qui a posé une isolation ne peut pas vérifier son retrait.",

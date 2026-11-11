@@ -1,7 +1,13 @@
 {
   "page": {
     "title": "Archive",
-    "subtitle": "Find archived records, check their integrity and manage how long they are kept."
+    "subtitle": "Find archived records, check their integrity and manage how long they are kept.",
+    "about": {
+      "title": "What this screen is for",
+      "closed": "Closed work orders, handled requests and other finished records stay in their module: find them with the status filter of their list. Nothing is deleted or moved when a record is closed.",
+      "what": "Archives keeps copies of records removed from a module, with an integrity check, a deletion block and a retention period (“Retention rules” tab). In this version no module sends records here yet, so the counters stay at 0.",
+      "restore": "To restore: open the archived record, then “{{button}}” (archive restore right and password confirmation). The request is recorded in the archive history; putting the record back into its module is not available yet."
+    }
   },
   "tabs": {
     "explorer": "Archived records",
@@ -21,9 +27,9 @@
   "class": {
     "other": "Other archive type",
     "operational_history": "Operational history",
-    "soft_delete": "Deleted record",
-    "audit_retention": "Audit trail",
-    "config_snapshot": "Configuration snapshot",
+    "soft_delete": "Deleted items (recycle bin)",
+    "audit_retention": "Action log (who did what)",
+    "config_snapshot": "Copy of the settings",
     "report_copy": "Report copy"
   },
   "restorePolicy": {
@@ -192,7 +198,7 @@
   },
   "retention": {
     "title": "Retention rules",
-    "subtitle": "How long each type of archived record is kept, and whether it may be restored or deleted.",
+    "subtitle": "How long each type of archived record is kept, and whether it may be restored or deleted. Changes apply only after “Save changes”.",
     "loading": "Loading the retention rules…",
     "loadError": "The retention rules could not be loaded",
     "empty": "No retention rule defined.",
@@ -209,6 +215,32 @@
       "purgeMode": "Deletion",
       "allowRestore": "Restore allowed",
       "allowPurge": "Deletion allowed"
+    },
+    "yearsInvalid": "Enter a whole number of years (0 or more).",
+    "pending_one": "{{count}} rule changed, not saved yet.",
+    "pending_other": "{{count}} rules changed, not saved yet.",
+    "save": "Save changes",
+    "cancel": "Discard changes",
+    "unsaved": {
+      "title": "Leave without saving?",
+      "description": "The changes to the retention rules will be lost.",
+      "confirm": "Leave without saving"
+    },
+    "warn": {
+      "title": "Confirm these changes?",
+      "description": "Some changes can lose data or prevent getting it back:",
+      "confirm": "Save anyway",
+      "shorter": "{{name}}: kept {{to}} years instead of {{from}}. Older records may then be deleted.",
+      "noRestore": "{{name}}: archived records can no longer be restored.",
+      "purge": "{{name}}: permanent deletion becomes possible. It cannot be undone.",
+      "scheduled": "{{name}}: records will be deleted automatically at the end of their retention period, without approval."
     }
+  },
+  "classHint": {
+    "operational_history": "Closed work orders, requests and other files, removed from the current lists.",
+    "soft_delete": "What a user deleted, kept so it can be recovered.",
+    "audit_retention": "Actions recorded for the audit (sign-ins, approvals, changes).",
+    "config_snapshot": "A copy of the settings taken before each important change.",
+    "report_copy": "Reports produced and saved."
   }
 }

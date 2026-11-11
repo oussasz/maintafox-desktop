@@ -13,6 +13,7 @@ import {
   wrapDocumentHeaderBlock,
 } from "@/export/templates/document-header";
 import type { LotoCardViewRecord } from "@/services/permit-service";
+import { formatDateTime as formatLocalDateTime } from "@/utils/formatters";
 
 type TFn = (key: string) => string;
 
@@ -27,15 +28,8 @@ function esc(v: string | null | undefined): string {
 
 function fmtDateTime(iso: string | null | undefined, locale: string, none: string): string {
   if (!iso) return none;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return none;
-  return d.toLocaleString(locale, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const text = formatLocalDateTime(iso, locale);
+  return text === "—" ? none : text;
 }
 
 export function buildLotoCardHtml(
@@ -52,6 +46,12 @@ export function buildLotoCardHtml(
     [t("card.point"), card.isolation_point],
     [t("card.lock"), card.lock_number ?? none],
     [t("card.verifier"), card.verifier_signature ?? none],
+    // The zero-energy test recorded at verification (L4-13); "not recorded" before that version.
+    [
+      t("card.zeroEnergy"),
+      card.zero_energy_note ??
+        (card.verifier_signature ? t("isolation.zeroEnergyNotRecorded") : none),
+    ],
     [t("card.expiry"), fmtDateTime(card.expires_at, locale, none)],
   ];
   // A lock taken off by a forced removal (applier absent): who authorised it, when and why.

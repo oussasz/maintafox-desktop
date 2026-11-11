@@ -1499,6 +1499,18 @@ export interface SupportBundle {
 
 // â”€â”€â”€ Backup & Restore â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Where scheduled backups go and the last copy outside this PC (L7-03). */
+export interface BackupOverview {
+  external_dir: string | null;
+  external_reachable: boolean;
+  app_backup_dir: string;
+  last_success_at: string | null;
+  last_outside_at: string | null;
+  last_outside_path: string | null;
+  outside_copy_missing_or_old: boolean;
+  outside_copy_max_age_days: number;
+}
+
 export interface BackupRunRecord {
   id: number;
   trigger: string;
@@ -2461,6 +2473,18 @@ export interface LibraryDocument {
   uploadedById: number | null;
   uploadedAt: string;
   notes: string | null;
+  /** The plant's reference of the document (e.g. "PR-ELEC-012"). */
+  documentNumber: string | null;
+  /** Revision label as printed on the document. */
+  revision: string | null;
+  /** Last valid day `YYYY-MM-DD`; null when it never expires. */
+  validUntil: string | null;
+  /** The version this one replaces; null for a first version. */
+  previousVersionId: number | null;
+  /** When a newer version replaced this one; null for the current version. */
+  supersededAt: string | null;
+  /** Who uploaded this version. */
+  uploadedByName: string | null;
 }
 
 export interface UpdateLibraryDocumentPayload {
@@ -2468,6 +2492,12 @@ export interface UpdateLibraryDocumentPayload {
   title?: string | null;
   equipmentId?: number | null;
   clearEquipmentLink: boolean;
+  /** New category code; omitted keeps it. */
+  category?: string | null;
+  /** Control fields: omitted keeps the stored value, an empty text clears it. */
+  documentNumber?: string | null;
+  revision?: string | null;
+  validUntil?: string | null;
 }
 
 export interface DomainBindingEntry {
@@ -2607,10 +2637,19 @@ export type AssetHistoryEventType =
   | "failure_recorded"
   | "meter_reading"
   | "document_linked"
-  | "photo_added";
+  | "photo_added"
+  | "history_imported";
 
 export interface AssetHistoryEventRef {
-  entity_type: "asset" | "wo" | "di" | "pm" | "inspection" | "document" | "photo";
+  entity_type:
+    | "asset"
+    | "wo"
+    | "di"
+    | "pm"
+    | "inspection"
+    | "document"
+    | "photo"
+    | "history_record";
   entity_id: number | null;
   entity_code: string | null;
   route_hint: string | null;
@@ -2630,9 +2669,28 @@ export interface AssetHistoryEvent {
   ref: AssetHistoryEventRef | null;
 }
 
+/** Failure coding of an imported maintenance history record (L7-30). */
+export interface WoHistoryCodingInput {
+  record_id: number;
+  expected_row_version: number;
+  failure_mode_id: number | null;
+  failure_cause_id: number | null;
+  failure_mechanism_id: number | null;
+  detection_method_id: number | null;
+  failure_effect_id: number | null;
+}
+
+export interface WoHistoryCodingSaved {
+  record_id: number;
+  row_version: number;
+}
+
 export interface AssetHistorySummary {
   asset_id: number;
   created_at: string | null;
+  /** Commissioning date: the start of the asset's service life. */
+  commissioned_at: string | null;
+  /** Days in service since `commissioned_at`; null while it is not filled in. */
   age_days: number | null;
   wo_count: number;
   pm_count: number;
@@ -4850,6 +4908,28 @@ export interface OverviewKpiCell {
   quality_badge?: string | null | undefined;
   value_kind: OverviewKpiValueKind;
   trend_sense: OverviewKpiTrendSense;
+  /** Fleet reliability cells only: their window and hours basis (live `study::fleet_kpis`). */
+  fleet?: OverviewFleetBasis | null | undefined;
+}
+
+/**
+ * Window and live figures of a fleet reliability cell of the Vue d'ensemble (`study::fleet_kpis`;
+ * the full shape is `FleetKpis` in `src/services/reliability-study-service.ts`).
+ */
+export interface OverviewFleetBasis {
+  /** The last `window_months` calendar months. */
+  window_months: number;
+  /** The fields the card wording reads (window, hours basis, exclusions). */
+  kpis: {
+    window_too_short: boolean;
+    operating_basis_count: number;
+    calendar_basis_count: number;
+    mtbf_excluded_missing_date: number;
+    mtbf_excluded_outside_service: number;
+    restore_excluded_missing_failed_at: number;
+    restore_excluded_missing_restored_at: number;
+    restore_excluded_inconsistent: number;
+  };
 }
 
 export interface OverviewKpisPayload {
@@ -5380,6 +5460,16 @@ export interface WorkOrder {
   permit_rule_clear_reason: string | null;
   /** The requirement came from the request it was converted from, flagged "sécurité" (cleared like a rule flag). */
   permit_from_safety_di?: boolean;
+  /** Created and started by the dépannage path: unscheduled, planning validated after the fact. */
+  is_depannage?: boolean;
+  /** "Panne constatée à" (UTC) of a dépannage. */
+  breakdown_at?: string | null;
+  /** "Machine arrêtée" of a dépannage. */
+  machine_stopped?: boolean | null;
+  /** After-the-fact validation of a dépannage (empty until validated). */
+  validated_by_id?: number | null;
+  validated_at?: string | null;
+  validation_auto_approved?: boolean | null;
   entity_sync_id?: string | null;
   closeout_validation_profile_id?: number | null;
   closeout_validation_passed?: boolean;
@@ -5585,6 +5675,8 @@ export interface WoListFilter {
   equipment_id?: number | null;
   entity_id?: number | null;
   planner_id?: number | null;
+  /** Only the work orders without a planner ("planificateur à désigner"). */
+  planner_unassigned?: boolean | null;
   primary_responsible_id?: number | null;
   urgency_code?: UrgencyCode | null;
   source_di_id?: number | null;
@@ -5616,6 +5708,21 @@ export interface WoListPage {
 export interface WoGetResponse {
   wo: WorkOrder;
   transitions: WoTransitionRow[];
+}
+
+/** Why the signed-in user carries out a work order (`get_wo_execution_standing`, L5-08). */
+export type WoExecutionActorRole = "assignee" | "team_member" | "planner" | "approver";
+
+/**
+ * Whether the signed-in user carries out the work order (its assignee, a member of its team, its
+ * planner, or an `ot.approve` holder at its site), and else why not: a `GATE_WO_EXECUTION_*` code
+ * with the names it shows (`assignee`, `team`).
+ */
+export interface WoExecutionStanding {
+  actor: WoExecutionActorRole | null;
+  refusal: { code: string; params: Record<string, string> } | null;
+  /** The user created this work order and it is not released yet (a draft): they may cancel it. */
+  own_draft: boolean;
 }
 
 export interface WoCancelInput {
@@ -5656,7 +5763,8 @@ export interface WoPlanInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  planner_id: number;
+  /** null: the recorded planner is kept (empty stays empty: "planificateur à désigner"). */
+  planner_id: number | null;
   /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
   planned_start?: string | null;
   planned_end?: string | null;
@@ -5703,6 +5811,58 @@ export interface WoStartInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+}
+
+/**
+ * Dépannage: creates a corrective work order and starts it at once (one transaction). The actor is
+ * the signed-in user (set by the backend).
+ */
+export interface WoDepannageInput {
+  equipment_id: number;
+  /** An OT type of a corrective nature; omitted: the plant's type for immediate corrective work. */
+  type_code?: string | null;
+  urgency_code?: string | null;
+  subtype_code?: string | null;
+  title: string;
+  description?: string | null;
+  /** "Panne constatée à": required, not in the future (the screen defaults it to now). */
+  breakdown_at: string;
+  /** "Machine arrêtée": required, no default. */
+  machine_stopped: boolean;
+  /** Who carries the work out; omitted: the user (another person needs ot.emergency_assign). */
+  assignee_id?: number | null;
+  requires_permit?: boolean | null;
+}
+
+/** Where a dépannage stopped: started, or ready ("prête") and waiting for its permit. */
+export type DepannageOutcome = "started" | "waiting_for_permit";
+
+/**
+ * The dépannage just created. A dépannage is never refused because a permit is needed: it then
+ * stays ready, assigned, not started, until every required permit is live (the normal start).
+ */
+export interface WoDepannageStartResult {
+  wo: WorkOrder;
+  /** The breakdown was found more than 7 days ago (a warning). */
+  breakdown_old_warning: boolean;
+  outcome: DepannageOutcome;
+  /** Every permit type code it waits for, sorted ("En attente de permis : …"); empty when started, or when a permit of no particular type is required. */
+  required_permit_types: string[];
+  /** The permit drafts written for it, at most one per required type (only when the user may issue permits at its site). */
+  permit_draft_ids: number[];
+}
+
+/** A dépannage after its breakdown time changed, and whether that breakdown is more than 7 days old. */
+export interface WoDepannageResult {
+  wo: WorkOrder;
+  breakdown_old_warning: boolean;
+}
+
+/** Changes the "Panne constatée à" of a dépannage until it is closed (audited). */
+export interface WoBreakdownAtInput {
+  wo_id: number;
+  expected_row_version: number;
+  breakdown_at: string;
 }
 
 export interface WoPauseInput {
@@ -7811,7 +7971,7 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
-  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  /** `reliability_kpi_v2`+ (v3: every unplanned failure counts); legacy rows `reliability_kpi_v1`. */
   algorithm_version: string | null;
   /** Governed exposure (uptime) hours used as the KPI denominator. */
   exposure_hours: number | null;
@@ -8106,6 +8266,8 @@ export interface ReliabilityReadinessInput {
   period_start?: string | null;
   period_end?: string | null;
   min_sample_n?: number | null;
+  /** Analysis scoped to one failure mode: only that mode's failures are checked and counted. */
+  failure_mode_id?: number | null;
 }
 
 /** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
@@ -9802,16 +9964,25 @@ export interface AnalyticsExecutiveDashboard {
   avg_mtbf_hours: AnalyticsKpiValue;
   avg_mttr_hours: AnalyticsKpiValue;
   avg_availability: AnalyticsKpiValue;
+  /** Coding completeness (complete records / records) of the live calculation (`study::fleet_kpis`). */
   avg_data_quality: AnalyticsKpiValue;
+  /**
+   * "Taille d'échantillon": mean sample-size score of the latest stored KPI snapshot per equipment
+   * refreshed in the horizon. A sample-size measure, never data quality.
+   */
+  sample_size_score: AnalyticsKpiValue;
   /** OT costs settled into the budget over the horizon (Finance settlement flow; finance view). */
   maintenance_cost: AnalyticsKpiValue;
   /** Work orders closed in the horizon whose settlement is pending; null without finance view. */
   maintenance_cost_pending: number | null;
+  /** Equipment with a stored KPI snapshot refreshed in the horizon. */
   reliability_snapshot_count: number;
+  /** Unplanned failures of the horizon (live calculation). */
   reliability_total_events: number;
   workload_days: AnalyticsWorkloadDay[];
   workload_quality_badge: string | null;
   di_status_segments: AnalyticsDiStatusSegment[];
+  /** Trend series from the stored KPI snapshots (not the live calculation). */
   reliability_series: AnalyticsReliabilitySeriesPoint[];
   bad_actor_assets: AnalyticsBadActorAsset[];
 }
@@ -11282,6 +11453,11 @@ export interface PermitIsolationActionInput {
   expected_row_version: number;
   /** Only used by apply: lock number fitted at application time. */
   lock_number: string | null;
+  /** Only used by verify (required there): the zero-energy test was done (start attempt,
+   * absence-of-voltage measurement). */
+  zero_energy_confirmed?: boolean | null;
+  /** Only used by verify (required there): what was measured or seen, at most 500 characters. */
+  zero_energy_note?: string | null;
 }
 
 /** One attempt to reach an absent worker before a forced lock removal. */
@@ -11409,6 +11585,8 @@ export interface AssetMaintenanceProfile {
   downtime_hours: number;
   last_failure_at: string | null;
   cost_lifetime: AssetCostBreakdown;
+  /** Date of the earliest work counted in `cost_lifetime`; null when there is none. */
+  cost_since: string | null;
   cost_recent: AssetCostBreakdown;
   recent_window_months: number;
   cost_by_year: AssetYearCost[];

@@ -510,6 +510,8 @@
     "PERMIT_ISOLATION_ALREADY_APPLIED": "This isolation is already applied.",
     "PERMIT_ISOLATION_NOT_APPLIED": "The isolation must be applied before it can be verified.",
     "PERMIT_TWO_PERSON_VERIFY": "Two-person rule: the person who applied an isolation cannot verify it.",
+    "PERMIT_ZERO_ENERGY_NOT_CONFIRMED": "Confirm that the zero-energy test was done before verifying the isolation.",
+    "PERMIT_ZERO_ENERGY_NOTE_REQUIRED": "Record the measure or observation of the zero-energy test (at most {{max}} characters).",
     "PERMIT_REMOVAL_NOT_VERIFIABLE": "Only a verified isolation can have its removal verified.",
     "PERMIT_REMOVAL_ALREADY_VERIFIED": "The lock removal is already verified.",
     "PERMIT_TWO_PERSON_REMOVAL": "Two-person rule: the person who applied an isolation cannot verify its removal.",

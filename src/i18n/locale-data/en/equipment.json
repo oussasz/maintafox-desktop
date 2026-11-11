@@ -1,4 +1,10 @@
 {
+  "actionReason": {
+    "saving": "Saving in progress…",
+    "photosBusy": "Sending photos…",
+    "catalogLoading": "Loading the reference lists (class, criticality, status)…",
+    "catalogFailed": "The reference lists are not loaded: close and reopen the form to try again."
+  },
   "criticalityReview": {
     "hint": "Criticality taken from the old criticality list: a planner should set it in the Criticality tab."
   },
@@ -140,7 +146,8 @@
     },
     "summary": {
       "title": "Equipment life",
-      "created": "Created",
+      "commissioned": "Commissioned",
+      "commissionedMissing": "Commissioning date not filled in (Edit asset)",
       "age": "Age",
       "wo": "WO",
       "pm": "PM",
@@ -177,7 +184,8 @@
       "failure_recorded": "Failure",
       "meter_reading": "Meter",
       "document_linked": "Document",
-      "photo_added": "Photo"
+      "photo_added": "Photo",
+      "history_imported": "Imported history"
     },
     "filters": {
       "types": {
@@ -187,7 +195,8 @@
         "pm": "PM",
         "inspection": "Inspection",
         "documents": "Documents",
-        "failures": "Failures"
+        "failures": "Failures",
+        "history": "Imported history"
       },
       "periods": {
         "today": "Today",
@@ -216,7 +225,8 @@
       "failure_recorded": "Failure recorded",
       "meter_reading": "Meter reading",
       "document_linked": "Document linked",
-      "photo_added": "Photo added"
+      "photo_added": "Photo added",
+      "history_imported": "Imported history {{code}}"
     },
     "quality": {
       "accepted": "Accepted",
@@ -238,9 +248,34 @@
     "failureSource": {
       "work_order": "From a work order",
       "inspection": "From an inspection",
-      "manual": "Entered manually"
+      "manual": "Entered manually",
+      "history_record": "Imported history"
     },
-    "title": "Asset history"
+    "title": "Asset history",
+    "record": {
+      "readOnly": "Work carried over from the former system: only its failure coding can be changed.",
+      "nature": "Nature",
+      "started": "Start",
+      "ended": "End",
+      "failure": "Failure",
+      "yes": "Yes",
+      "no": "No",
+      "downtime": "Downtime",
+      "cost": "Cost",
+      "description": "Description",
+      "workDone": "Work done",
+      "interveners": "Technicians",
+      "coding": "Failure coding",
+      "failureMode": "Failure mode",
+      "failureCause": "Cause",
+      "mechanism": "Mechanism",
+      "detection": "Detection method",
+      "failureEffect": "Effect",
+      "noRight": "Changing the coding requires the right to edit work orders at the equipment's site.",
+      "close": "Close",
+      "save": "Save coding",
+      "saving": "Saving…"
+    }
   },
   "empty": {
     "list": "No equipment found.",
@@ -566,6 +601,7 @@
     "fair": "Fair",
     "poor": "Poor",
     "noData": "No health score",
+    "noDataHint": "No data yet: the score appears after a first meter reading, intervention request or work order on this asset.",
     "unavailable": "Health data unavailable",
     "loading": "Health…",
     "hint": "Indicative follow-up score (0–100) from recent activity, open requests and work orders and meter readings. Not an availability or condition measurement."
@@ -699,7 +735,9 @@
       "downtime": "Downtime",
       "hours": "h",
       "downtimeHint": "Recorded on the work orders",
-      "costLifetime": "Maintenance cost (lifetime)",
+      "costLifetime": "Maintenance cost (since {{date}})",
+      "costLifetimeNone": "Maintenance cost (total)",
+      "noCostYet": "No work order on this asset",
       "costSplit": "Labour {{labor}} · Parts {{parts}} · Services {{services}}",
       "costRecent": "Maintenance cost (last {{months}} months)",
       "costVsReplacement": "Cost vs replacement value",
@@ -832,7 +870,9 @@
     "categoryRequired": "Choose the category the document goes under.",
     "file": "File",
     "tooBig": "The file is larger than {{mb}} MB.",
-    "docTitle": "Title"
+    "docTitle": "Title",
+    "onWoTitle": "Equipment documents — {{asset}}",
+    "onWoHint": "Manuals, procedures and certificates of this equipment, from the document library. To add one, open the equipment, Documents tab."
   },
   "critMethod": {
     "title": "Criticality assessment",

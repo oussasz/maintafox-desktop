@@ -618,6 +618,29 @@ pub fn guard_transition(from: &DiStatus, to: &DiStatus) -> Result<(), String> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Safety flag and urgency (CMMS Advisor decision on L4-11, 2026-11-06)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Lowest urgency of a request flagged "sécurité": its reported urgency is raised to it (the
+/// requester may choose `emergency`, never less), and a reviewer may validate it lower only with
+/// the reason of the review, audited (`di::review::screen_di`). The flag itself is kept.
+pub const SAFETY_MIN_URGENCY: crate::reference::urgency_scale::UrgencyCode =
+    crate::reference::urgency_scale::UrgencyCode::Urgent;
+
+/// The urgency a request keeps: `level`, raised to [`SAFETY_MIN_URGENCY`] when it is flagged
+/// "sécurité" and less urgent than that.
+pub fn safety_urgency_floor(
+    safety_flag: bool,
+    level: crate::reference::urgency_scale::UrgencyCode,
+) -> crate::reference::urgency_scale::UrgencyCode {
+    if safety_flag && level.rank() > SAFETY_MIN_URGENCY.rank() {
+        SAFETY_MIN_URGENCY
+    } else {
+        level
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DI code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -636,6 +659,17 @@ pub async fn generate_di_code(db: &impl ConnectionTrait) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_safety_flag_raises_the_urgency_to_urgent_at_least() {
+        use crate::reference::urgency_scale::UrgencyCode as U;
+        assert_eq!(safety_urgency_floor(true, U::Normal), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Low), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::High), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Urgent), U::Urgent);
+        assert_eq!(safety_urgency_floor(true, U::Emergency), U::Emergency);
+        assert_eq!(safety_urgency_floor(false, U::Low), U::Low);
+    }
 
     #[test]
     fn test_all_status_round_trip() {

@@ -125,6 +125,17 @@ function requiresPermitOf(detailsJson: string | null): boolean | null {
   }
 }
 
+/** `{"origin": "depannage"}` of an assignment made by a dépannage (`wo::depannage`); else false. */
+function fromDepannage(detailsJson: string | null): boolean {
+  if (!detailsJson) return false;
+  try {
+    const parsed = JSON.parse(detailsJson) as { origin?: unknown };
+    return parsed.origin === "depannage";
+  } catch {
+    return false;
+  }
+}
+
 interface WoAuditTimelineProps {
   woId: number;
 }
@@ -166,6 +177,10 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
         const unavailable = payloadChangesUnavailable(evt.details_json);
         const permitText =
           permit !== null ? t(permit ? "audit.permitRequired" : "audit.permitNotRequired") : null;
+        const originText =
+          evt.action === "assigned" && fromDepannage(evt.details_json)
+            ? t("audit.originDepannage")
+            : null;
         // Audit-trail events are named like in the audit log (`activity` labels).
         const title = fromAudit
           ? eventLabel(tActivity, evt.action)
@@ -175,10 +190,11 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
         return {
           id: `${evt.source}-${evt.id}`,
           title,
-          ...(permitText !== null || changes.length > 0 || unavailable
+          ...(permitText !== null || originText !== null || changes.length > 0 || unavailable
             ? {
                 description: (
                   <>
+                    {originText !== null ? <span className="block">{originText}</span> : null}
                     {permitText !== null ? <span className="block">{permitText}</span> : null}
                     <AuditChangeList changes={changes} className="text-xs" />
                     {unavailable ? (

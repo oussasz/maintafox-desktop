@@ -27,6 +27,10 @@ import { listLabor, listParts, listTasks } from "@/services/wo-execution-service
 import { useLocaleStore } from "@/stores/locale-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { formatCurrency, formatHours, formatNumber } from "@/utils/formatters";
+import {
+  formatDate as formatLocalDate,
+  formatDateTime as formatLocalDateTime,
+} from "@/utils/formatters";
 import type { WoExecPart, WoExecTask, WoIntervener, WorkOrder } from "@shared/ipc-types";
 
 // ── i18n keys for the print template ────────────────────────────────────────
@@ -39,17 +43,7 @@ const DEFAULT_T: TFn = (key) => key;
 
 function fmtDate(iso: string | null | undefined, locale: string): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(locale, {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+  return formatLocalDateTime(iso, locale);
 }
 
 function esc(v: string | null | undefined): string {
@@ -83,7 +77,7 @@ function buildHtml(
   typeText: string,
   qrSvg: string,
 ): string {
-  const now = new Date().toLocaleDateString(locale);
+  const now = formatLocalDate(new Date(), locale);
   // Print HTML is built outside React: read the tenant currency from the locale store.
   const loc = useLocaleStore.getState();
   const money = (v: number) =>

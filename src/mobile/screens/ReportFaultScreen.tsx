@@ -70,6 +70,13 @@ async function readFormLists(): Promise<FormLists> {
   return { origin, requestType, symptom, impact, urgency };
 }
 
+/**
+ * Least urgent level of a request flagged "sécurité" (`di::domain::SAFETY_MIN_URGENCY`, CMMS
+ * Advisor decision on L4-11): the engine raises a lower urgency to it; the screen chooses it and
+ * offers only it or a more urgent level.
+ */
+const SAFETY_MIN_URGENCY = "urgent";
+
 /** The urgency scale has French and English labels; Arabic screens show the French one. */
 function urgencyLabel(level: UrgencyLevel, language: MobileLanguage): string {
   return language === "en" ? level.label_en : level.label_fr;
@@ -208,6 +215,19 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
     setQuality(false);
   }
 
+  const urgencyLevels = load.kind === "ok" ? load.lists.urgency : [];
+  const safetyMinRank = urgencyLevels.find((u) => u.code === SAFETY_MIN_URGENCY)?.rank;
+  const rankOf = (code: string) =>
+    urgencyLevels.find((u) => u.code === code)?.rank ?? Number.MAX_SAFE_INTEGER;
+
+  /** Ticking "sécurité" takes "Urgent" unless a more urgent level is chosen. */
+  function onSafetyChange(next: boolean) {
+    setSafety(next);
+    if (next && safetyMinRank != null && (urgency === "" || rankOf(urgency) > safetyMinRank)) {
+      setUrgency(SAFETY_MIN_URGENCY);
+    }
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setSavedCode(null);
@@ -336,7 +356,10 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
             />
           </Section>
 
-          <Section header={t("di.classification")}>
+          <Section
+            header={t("di.classification")}
+            {...(safety ? { footer: t("di.safetyMinUrgency") } : {})}
+          >
             <PickerRow
               label={t("di.origin")}
               options={load.lists.origin}
@@ -360,11 +383,13 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
             />
             <PickerRow
               label={t("di.urgency")}
-              options={load.lists.urgency.map((u) => ({
-                value: u.code,
-                label: urgencyLabel(u, language),
-                color: u.color_hex,
-              }))}
+              options={load.lists.urgency
+                .filter((u) => !safety || safetyMinRank == null || u.rank <= safetyMinRank)
+                .map((u) => ({
+                  value: u.code,
+                  label: urgencyLabel(u, language),
+                  color: u.color_hex,
+                }))}
               value={urgency}
               onChange={setUrgency}
               placeholder={t("common.choose")}
@@ -384,7 +409,7 @@ export function ReportFaultScreen({ userId }: { userId: number | null }) {
               icon={<HardHat aria-hidden />}
               iconColor="var(--mf-red)"
               checked={safety}
-              onChange={setSafety}
+              onChange={onSafetyChange}
             />
             <ToggleRow
               label={t("di.production")}

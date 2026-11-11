@@ -17,6 +17,11 @@ import { DATE_PARAMS, DATE_TIME_PARAMS } from "@/utils/date-params";
 export const MESSAGE_KEYS = [
   "wo_assigned",
   "wo_overdue",
+  // A dépannage started, or waiting for its permit (planners, node responsibles), and the permit
+  // to issue for it (permit issuers of its site).
+  "wo_depannage_started",
+  "wo_depannage_waiting_permit",
+  "wo_depannage_permit_needed",
   "inspection_round_missed",
   "stock_critical",
   // Stock left below zero or counted twice by sync (inv.manage holders).
@@ -78,6 +83,8 @@ export const MESSAGE_KEYS = [
   "wo_permit_types_added",
   // An inspection anomaly cancelled after it was routed (its follow-up's responsible).
   "insp_anomaly_origin_cancelled",
+  // A request flagged "sécurité" (its reviewers and the permit issuers of its site).
+  "di_safety_alert",
   // A work order or request open on retired equipment, crossed in sync (planner / reviewer, the
   // responsibles of its site).
   "retired_equipment_wo",

@@ -17,7 +17,8 @@ function humanizeAge(days: number | null, t: Translator) {
 }
 
 /**
- * Life summary of an asset. Availability is the operational availability of the latest
+ * Life summary of an asset. Age runs from the commissioning date, never from the record creation;
+ * without a commissioning date it reads "—" and says what to fill in (L2-06). Availability is the operational availability of the latest
  * reliability analysis of the asset (RAMS), with the date it covers; without one it reads "—"
  * and says why. No figure is estimated here, and no count reads 0 before the summary is loaded.
  */
@@ -29,9 +30,9 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
     const count = (n: number | undefined) => (summary && n != null ? formatNumber(n) : "—");
     return [
       {
-        label: t("history.summary.created"),
-        value: summary?.created_at ? formatDate(summary.created_at) : "—",
-        hint: null,
+        label: t("history.summary.commissioned"),
+        value: summary?.commissioned_at ? formatDate(summary.commissioned_at) : "—",
+        hint: summary && !summary.commissioned_at ? t("history.summary.commissionedMissing") : null,
       },
       {
         label: t("history.summary.age"),

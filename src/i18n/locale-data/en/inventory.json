@@ -1172,6 +1172,20 @@
     },
     "loadError": "Purchasing data could not be loaded",
     "sectionsLabel": "Purchasing sections",
+    "disabled": {
+      "saving": "Saving in progress…",
+      "rejectReason": "Enter the rejection reason.",
+      "poRequisition": "Choose an approved purchase request.",
+      "repairArticle": "Choose the article to repair.",
+      "repairSource": "Choose the article's source location.",
+      "repairQty": "Enter a quantity greater than zero.",
+      "supplierCode": "Enter the supplier code.",
+      "supplierName": "Enter the supplier name.",
+      "priceArticle": "Choose the article this price applies to.",
+      "priceUnit": "Enter the unit price.",
+      "docRef": "Enter the document reference.",
+      "docPurpose": "Choose what the document is used for."
+    },
     "requisitionForm": {
       "title": "New purchase requisition",
       "article": "Article",

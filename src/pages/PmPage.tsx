@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -52,6 +52,7 @@ import {
   filterPlans,
 } from "@/components/pm/pm-model";
 import { usePmCalendarLoad } from "@/components/pm/use-pm-calendar-load";
+import { hasScreenToReturnTo } from "@/components/ui/back-to-origin-button";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState } from "@/components/ui/data-state";
@@ -104,6 +105,7 @@ type PendingDelete =
 export function PmPage() {
   const { t } = useTranslation("pm");
   const { formatNumber, formatPercent } = useFormatters();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const plans = usePmStore((s) => s.plans);
@@ -200,6 +202,7 @@ export function PmPage() {
   }, [refreshCompliance]);
 
   // Notification deep link: `/pm?occurrence=<id>` opens that occurrence in its plan.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   useEffect(() => {
     const raw = searchParams.get("occurrence");
     if (!raw) return;
@@ -213,6 +216,7 @@ export function PmPage() {
       { replace: true },
     );
     if (!Number.isFinite(id) || id <= 0) return;
+    setOpenedFromLink(hasScreenToReturnTo());
     getPmOccurrence(id)
       .then((occ) => {
         setFocusOccurrenceId(occ.id);
@@ -228,6 +232,7 @@ export function PmPage() {
     if (!raw) return;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return;
+    setOpenedFromLink(hasScreenToReturnTo());
     void openPlan(id);
     setSearchParams(
       (prev) => {
@@ -629,9 +634,20 @@ export function PmPage() {
           if (activePlanId != null) void openPlan(activePlanId);
         }}
         onClose={() => {
+          setOpenedFromLink(false);
           setFocusOccurrenceId(null);
           closePlan();
         }}
+        {...(openedFromLink
+          ? {
+              onBackToOrigin: () => {
+                setOpenedFromLink(false);
+                setFocusOccurrenceId(null);
+                closePlan();
+                void navigate(-1);
+              },
+            }
+          : {})}
         onEditPlan={() => {
           setPlanFormMode("edit");
           setPlanFormOpen(true);

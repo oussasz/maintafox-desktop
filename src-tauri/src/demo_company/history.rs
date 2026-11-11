@@ -603,6 +603,17 @@ impl Corrective {
                     vec![self.di_id.into()],
                 )
                 .await?;
+                // A safety report was raised to at least "urgent" when it was saved; the supervisor
+                // confirms that urgency rather than lowering it (lowering needs a review reason).
+                // The flag is read from the request itself: one raised from an inspection anomaly can be
+                // flagged whatever this story says.
+                let validated = super::scalar_text(
+                    db,
+                    "SELECT reported_urgency FROM intervention_requests WHERE id = ? AND safety_flag = 1",
+                    vec![self.di_id.into()],
+                )
+                .await?
+                .unwrap_or_else(|| self.urgency.to_string());
                 if self.rejected {
                     crate::di::review::close_di(
                         db,
@@ -625,7 +636,7 @@ impl Corrective {
                         "di_id": self.di_id,
                         "actor_id": supervisor,
                         "expected_row_version": rv,
-                        "validated_urgency": self.urgency,
+                        "validated_urgency": validated,
                         "classification_code_id": symptom,
                         "reviewer_note": null,
                     }))?,
@@ -1031,10 +1042,21 @@ async fn lock_out(
     .await?;
     ctx.at(ctx.last + sim.minutes(5, 15))?;
     let rv = row_version(db, "permit_isolations", isolation_id).await?;
-    // …verified by the HSE officer (a different person).
+    // …verified by the HSE officer (a different person), after the zero-energy test.
+    let zero_energy_note = if hydraulic {
+        "Pression résiduelle purgée, manomètre à 0 bar ; essai de manœuvre du vérin sans mouvement"
+    } else {
+        "Essai de démarrage local refusé, VAT 0 V entre phases et phase-terre"
+    };
     crate::permit::queries::verify_permit_isolation(
         db,
-        de(json!({ "isolation_id": isolation_id, "expected_row_version": rv, "lock_number": null }))?,
+        de(json!({
+            "isolation_id": isolation_id,
+            "expected_row_version": rv,
+            "lock_number": null,
+            "zero_energy_confirmed": true,
+            "zero_energy_note": zero_energy_note,
+        }))?,
         hse,
     )
     .await?;

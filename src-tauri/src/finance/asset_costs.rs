@@ -4,6 +4,9 @@
 //! (`settlement::write_back_wo_costs`), so this view, the asset record, SMRP cost/RAV and the RAMS
 //! cost-of-failure all agree. Corrective = OT types of a corrective EN 13306 nature (failure cost, used
 //! by RAMS cost-based intervals); preventive = every other type.
+//!
+//! Imported maintenance history (`wo_history_records`, L7-30) counts like a closed OT: its end date
+//! is the closing date and its cost is labour + parts + services as imported.
 
 use chrono::Duration;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -11,6 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::AppResult;
 use crate::finance::wo_costing::{decode, round_money};
+
+/// Closed maintenance work of every source, as one derived table to use as `(…) alias`: closed OTs
+/// and imported history records, with `equipment_id`, `type_id`, `closed_at`, `total_cost`,
+/// `labor_cost`, `parts_cost`, `service_cost`. Readers of maintenance cost per asset use it so an
+/// asset's history from the former system is not missing from its cost.
+pub(crate) const CLOSED_MAINTENANCE_SQL: &str = "SELECT equipment_id, type_id, closed_at, total_cost, labor_cost,        parts_cost, service_cost FROM work_orders WHERE closed_at IS NOT NULL      UNION ALL      SELECT equipment_id, type_id, ended_at AS closed_at,        COALESCE(labor_cost, 0.0) + COALESCE(parts_cost, 0.0) + COALESCE(service_cost, 0.0) AS total_cost,        labor_cost, parts_cost, service_cost FROM wo_history_records";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AssetCostFilter {
@@ -39,6 +48,7 @@ pub struct AssetCostRow {
     pub lifetime_parts: f64,
     pub lifetime_services: f64,
     pub cost_12m: f64,
+    /// Closed OTs plus imported history records.
     pub closed_work_orders: i64,
     pub corrective_work_orders: i64,
     pub corrective_cost: f64,
@@ -100,7 +110,7 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
             DbBackend::Sqlite,
             format!(
                 "SELECT e.id, e.asset_id_code AS code, e.name, e.cost_center_code, e.replacement_value,
-                    COUNT(wo.id) AS closed_wos,
+                    COUNT(wo.equipment_id) AS closed_wos,
                     COALESCE(SUM(wo.total_cost), 0.0) AS lifetime_cost,
                     COALESCE(SUM(wo.labor_cost), 0.0) AS lifetime_labor,
                     COALESCE(SUM(wo.parts_cost), 0.0) AS lifetime_parts,
@@ -108,11 +118,11 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
                     COALESCE(SUM(CASE WHEN wo.closed_at >= ?1 THEN wo.total_cost END), 0.0) AS cost_12m,
                     COALESCE(SUM(CASE WHEN {corrective} THEN 1 ELSE 0 END), 0) AS corrective_wos,
                     COALESCE(SUM(CASE WHEN {corrective} THEN wo.total_cost END), 0.0) AS corrective_cost,
-                    COALESCE(SUM(CASE WHEN wo.id IS NOT NULL AND NOT {corrective}
+                    COALESCE(SUM(CASE WHEN wo.equipment_id IS NOT NULL AND NOT {corrective}
                                       THEN wo.total_cost END), 0.0) AS preventive_cost,
                     MAX(wo.closed_at) AS last_closed_at
              FROM equipment e
-             LEFT JOIN work_orders wo ON wo.equipment_id = e.id AND wo.closed_at IS NOT NULL
+             LEFT JOIN ({CLOSED_MAINTENANCE_SQL}) wo ON wo.equipment_id = e.id
              LEFT JOIN reference_values wot ON wot.id = wo.type_id
              WHERE e.deleted_at IS NULL
                AND (?2 IS NULL OR lower(e.asset_id_code || ' ' || e.name) LIKE ?2)
@@ -147,7 +157,7 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
                 DbBackend::Sqlite,
                 format!(
                     "SELECT {year_expr} AS y, COALESCE(SUM(total_cost), 0.0) AS amount
-                     FROM work_orders WHERE equipment_id = ?1 AND closed_at IS NOT NULL AND {year_expr} > ?2
+                     FROM ({CLOSED_MAINTENANCE_SQL}) WHERE equipment_id = ?1 AND {year_expr} > ?2
                      GROUP BY y"
                 ),
                 [equipment_id.into(), (this_year - 5).into(), fiscal_start.into()],
@@ -190,12 +200,14 @@ pub async fn list_asset_cost_history<C: ConnectionTrait>(
     let fleet = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(CASE WHEN e.replacement_value > 0 THEN e.replacement_value END), 0.0) AS rav,
+            format!(
+                "SELECT COALESCE(SUM(CASE WHEN e.replacement_value > 0 THEN e.replacement_value END), 0.0) AS rav,
                     COALESCE(SUM(CASE WHEN COALESCE(e.replacement_value, 0) <= 0 THEN 1 ELSE 0 END), 0) AS without_rav,
-                    (SELECT COALESCE(SUM(wo.total_cost), 0.0) FROM work_orders wo
+                    (SELECT COALESCE(SUM(wo.total_cost), 0.0) FROM ({CLOSED_MAINTENANCE_SQL}) wo
                        JOIN equipment e2 ON e2.id = wo.equipment_id
                       WHERE wo.closed_at >= ? AND e2.replacement_value > 0 AND e2.deleted_at IS NULL) AS cost_12m
-             FROM equipment e WHERE e.deleted_at IS NULL",
+             FROM equipment e WHERE e.deleted_at IS NULL"
+            ),
             [since_12m.into()],
         ))
         .await?;
