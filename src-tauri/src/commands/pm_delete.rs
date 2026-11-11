@@ -156,6 +156,16 @@ pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: Stat
         ]));
     }
 
+    // Plans this draft covered stand alone again (nested plans, migration 292).
+    state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE pm_plans SET covered_by_plan_id = NULL, row_version = row_version + 1 WHERE covered_by_plan_id = ?",
+            [plan_id.into()],
+        ))
+        .await?;
+
     let delete_result = state
         .db
         .execute(Statement::from_sql_and_values(

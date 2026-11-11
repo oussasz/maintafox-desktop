@@ -10,6 +10,7 @@ import {
   listPmPlans,
   setPmPlanCoveredBy,
 } from "@/services/pm-service";
+import { usePmStore } from "@/stores/pm-store";
 
 import { pmUnreportedErrorText } from "./pm-errors";
 
@@ -29,6 +30,7 @@ export function PmPlanCoveragePanel({ plan, canEdit }: PmPlanCoveragePanelProps)
   const [candidates, setCandidates] = useState<PmPlanRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const openPlan = usePmStore((s) => s.openPlan);
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +58,8 @@ export function PmPlanCoveragePanel({ plan, canEdit }: PmPlanCoveragePanelProps)
     setError(null);
     try {
       setCoverage(await setPmPlanCoveredBy(plan.id, value === "" ? null : Number(value)));
+      // The plan's change counter moved: reload it so its other actions are not refused as stale.
+      await openPlan(plan.id);
     } catch (err) {
       setError(pmUnreportedErrorText(err));
     } finally {
