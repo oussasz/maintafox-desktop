@@ -3831,6 +3831,7 @@ async fn a_decision_needs_a_justification_and_is_edited_by_its_proposer() {
     assert_eq!(open, 1, "a refused edit records nothing");
     let total = list_decisions(&f.db, study_id).await.expect("list").len();
     assert_eq!(total, 2, "the replaced decision and its correction only");
+}
 
 /// L2-21: a RAMS failure figure opens the OT list behind it. The list's RAMS filter reuses the
 /// figure's own failure records (period, class, site, unplanned, in service), so it holds exactly
