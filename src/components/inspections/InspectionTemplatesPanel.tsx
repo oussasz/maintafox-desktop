@@ -23,6 +23,7 @@ import {
   DialogTitle,
   FormField,
   Input,
+  Label,
   Select,
   SelectContent,
   SelectItem,
@@ -83,10 +84,18 @@ function nextKey(): number {
   return rowKey;
 }
 
-function emptyRow(): CheckRow {
+/** The next free point code (`P1`, `P2`…), so nobody has to invent one for every point. */
+function nextCode(rows: CheckRow[]): string {
+  const used = new Set(rows.map((r) => r.code.trim().toUpperCase()));
+  let n = rows.length + 1;
+  while (used.has(`P${n}`)) n += 1;
+  return `P${n}`;
+}
+
+function emptyRow(code = ""): CheckRow {
   return {
     key: nextKey(),
-    code: "",
+    code,
     description: "",
     checkType: "pass_fail",
     assetId: null,
@@ -262,7 +271,8 @@ interface TemplateBuilderDialogProps {
   /** `null`: closed; `"new"`: create a checklist; a template: publish its next version. */
   target: InspectionTemplate | "new" | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** `createdTemplateId`: set for a new checklist, so the page can offer to schedule it. */
+  onSaved: (createdTemplateId?: number) => void;
 }
 
 export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuilderDialogProps) {
@@ -280,6 +290,7 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [stopsOpen, setStopsOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
 
   // A new version starts from the current one.
   useEffect(() => {
@@ -295,7 +306,7 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
     );
     setRequiresReview(false);
     if (!template?.current_version_id) {
-      setRows([emptyRow()]);
+      setRows([emptyRow("P1")]);
       setLoading(false);
       return;
     }
@@ -350,6 +361,45 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
       return next;
     });
 
+  // A copy of point `i` goes right under it, with the next free code (L1-18: no 25 blocks by hand).
+  const duplicate = (i: number) =>
+    setRows((rs) => {
+      const source = rs[i];
+      if (!source) return rs;
+      const copy: CheckRow = { ...source, key: nextKey(), code: nextCode(rs) };
+      return [...rs.slice(0, i + 1), copy, ...rs.slice(i + 1)];
+    });
+  // Bulk entry: one point per line, each with its own code; the type and limits are set afterwards.
+  const addBulk = () => {
+    const lines = bulkText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l !== "");
+    if (lines.length === 0) return;
+    setRows((rs) => {
+      // An untouched suggested row (P1 with nothing else) makes way for the pasted points.
+      const untouched = (r: CheckRow) =>
+        /^P\d+$/.test(r.code.trim()) &&
+        r.description.trim() === "" &&
+        r.assetId == null &&
+        r.checkType === "pass_fail" &&
+        r.unitId == null &&
+        r.normalMin === "" &&
+        r.normalMax === "" &&
+        r.warningMin === "" &&
+        r.warningMax === "" &&
+        !r.requiresPhoto &&
+        !r.commentOnException;
+      const base = rs.filter((r) => !untouched(r));
+      const next = [...base];
+      for (const line of lines) {
+        next.push({ ...emptyRow(nextCode(next)), description: line });
+      }
+      return next;
+    });
+    setBulkText("");
+  };
+
   const toDrafts = (): InspectionCheckpointDraft[] =>
     rows.map((r, i) => {
       const numeric = r.checkType === "numeric";
@@ -382,6 +432,7 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
     }
     setBusy(true);
     try {
+      let createdId: number | undefined;
       if (template) {
         await publishInspectionTemplateVersion({
           template_id: template.id,
@@ -390,15 +441,16 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
           checkpoints: toDrafts(),
         });
       } else {
-        await createInspectionTemplate({
+        const [created] = await createInspectionTemplate({
           code: code.trim(),
           name: name.trim(),
           estimated_duration_minutes: duration.trim() === "" ? null : Number(duration),
           is_active: true,
           checkpoints: toDrafts(),
         });
+        createdId = created.id;
       }
-      onSaved();
+      onSaved(createdId);
     } catch {
       // The global IPC toast reports the failure (gate codes are translated); stay open.
     } finally {
@@ -572,6 +624,16 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
                           type="button"
                           variant="ghost"
                           className="h-11 w-11 p-0"
+                          aria-label={t("templates.duplicateRow", { index: i + 1 })}
+                          title={t("templates.duplicateRow", { index: i + 1 })}
+                          onClick={() => duplicate(i)}
+                        >
+                          <Copy className="h-4 w-4" aria-hidden />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-11 w-11 p-0"
                           aria-label={t("templates.removeRow", { index: i + 1 })}
                           onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}
                         >
@@ -670,7 +732,7 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
               type="button"
               variant="outline"
               className="h-11"
-              onClick={() => setRows((rs) => [...rs, emptyRow()])}
+              onClick={() => setRows((rs) => [...rs, emptyRow(nextCode(rs))])}
             >
               <Plus className="mr-2 h-4 w-4" aria-hidden />
               {t("templates.addCheck")}
@@ -683,6 +745,27 @@ export function TemplateBuilderDialog({ target, onClose, onSaved }: TemplateBuil
             >
               <Copy className="mr-2 h-4 w-4" aria-hidden />
               {t("templates.addStop")}
+            </Button>
+          </div>
+          <div className="space-y-2 rounded-md border border-dashed border-surface-border p-3">
+            <Label htmlFor="template-bulk">{t("templates.bulkTitle")}</Label>
+            <p className="text-xs text-text-muted">{t("templates.bulkHint")}</p>
+            <Textarea
+              id="template-bulk"
+              rows={4}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={t("templates.bulkPlaceholder")}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              disabled={bulkText.trim() === ""}
+              onClick={addBulk}
+            >
+              <Plus className="mr-2 h-4 w-4" aria-hidden />
+              {t("templates.bulkAdd")}
             </Button>
           </div>
           <DialogFooter>

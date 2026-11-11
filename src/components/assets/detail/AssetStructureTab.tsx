@@ -1,13 +1,15 @@
 /**
  * Structure tab: the asset's place in the equipment hierarchy (parent and components), each one
- * opening its own record, and a shortcut to register a new component under this asset.
+ * opening its own record, a shortcut to register a new component under this asset, and
+ * "Déplacer le composant" (L2-03) to pose this asset on another parent or remove it to stock.
  */
 
-import { ChevronRight, GitFork, Plus } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowRightLeft, ChevronRight, GitFork, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { AssetMoveComponentDialog } from "@/components/assets/AssetMoveComponentDialog";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { useLoad } from "@/components/assets/detail/use-load";
 import { DetailSectionCard } from "@/components/detail";
@@ -18,9 +20,12 @@ import { useAssetStore } from "@/stores/asset-store";
 import type { Asset, AssetHierarchyRow } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+/** Relation types with at most one active parent (`assets::hierarchy::SINGLE_PARENT_TYPES`). */
+const SINGLE_PARENT_TYPES = ["PARENT_CHILD", "INSTALLED_IN"];
+
 interface StructureData {
-  parent: Asset | null;
-  parentRelation: string | null;
+  /** Every active single-parent relation: one normally, several only from an inconsistent link. */
+  parents: { row: AssetHierarchyRow; asset: Asset }[];
   children: { row: AssetHierarchyRow; asset: Asset }[];
 }
 
@@ -29,17 +34,21 @@ async function loadStructure(assetId: number): Promise<StructureData> {
     listAssetParents(assetId),
     listAssetChildren(assetId),
   ]);
-  const active = parents.filter((r) => r.effective_to == null);
-  const parentRow = active.find((r) => r.relation_type === "PARENT_CHILD") ?? active[0] ?? null;
-  const parent = parentRow ? await getAssetById(parentRow.parent_asset_id) : null;
+  // The parent a component is posed on: an active single-parent relation (PARENT_CHILD or
+  // INSTALLED_IN), the same rule as the server's move; other links (DRIVES, FEEDS) are not parents.
+  const active = parents.filter(
+    (r) => r.effective_to == null && SINGLE_PARENT_TYPES.includes(r.relation_type),
+  );
+  const parentAssets = await Promise.all(
+    active.map(async (row) => ({ row, asset: await getAssetById(row.parent_asset_id) })),
+  );
   const childAssets = await Promise.all(
     children
       .filter((r) => r.effective_to == null)
       .map(async (row) => ({ row, asset: await getAssetById(row.child_asset_id) })),
   );
   return {
-    parent,
-    parentRelation: parentRow?.relation_type ?? null,
+    parents: parentAssets,
     children: childAssets.sort((a, b) => a.asset.asset_code.localeCompare(b.asset.asset_code)),
   };
 }
@@ -47,6 +56,8 @@ async function loadStructure(assetId: number): Promise<StructureData> {
 interface AssetStructureTabProps {
   asset: Asset;
   onOpenAsset: (assetId: number) => void;
+  /** Called after "Déplacer le composant" was recorded (the caller reloads the asset). */
+  onMoved?: () => void | Promise<void>;
 }
 
 function AssetLinkRow({
@@ -78,9 +89,10 @@ function AssetLinkRow({
   );
 }
 
-export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps) {
+export function AssetStructureTab({ asset, onOpenAsset, onMoved }: AssetStructureTabProps) {
   const { t } = useTranslation("equipment");
   const openCreateForm = useAssetStore((s) => s.openCreateForm);
+  const [showMove, setShowMove] = useState(false);
   const load = useMemo(() => () => loadStructure(asset.id), [asset.id]);
   const { data, error, loading, reload } = useLoad(load, `${asset.id}:${asset.row_version}`);
 
@@ -88,20 +100,46 @@ export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps
   if (error || !data) {
     return <ErrorState error={error} onRetry={() => void reload()} retrying={loading} />;
   }
-  const parent = data.parent;
+  // Several parents at once: the server refuses the move (GATE_ASSET_MOVE_SEVERAL_PARENTS), so it
+  // is not offered; every parent is listed with the reason.
+  const severalParents = data.parents.length > 1;
+  const parent = data.parents.length === 1 ? (data.parents[0]?.asset ?? null) : null;
 
   return (
     <div className="space-y-4">
       <DetailSectionCard title={t("structure.parent")} icon={GitFork}>
-        {parent ? (
-          <AssetLinkRow
-            asset={parent}
-            relation={data.parentRelation}
-            onOpen={() => onOpenAsset(parent.id)}
-          />
-        ) : (
+        {data.parents.length === 0 ? (
           <p className="text-sm text-text-muted">{t("structure.noParent")}</p>
+        ) : (
+          <div className="space-y-2">
+            {data.parents.map(({ row, asset: p }) => (
+              <AssetLinkRow
+                key={row.relation_id}
+                asset={p}
+                relation={row.relation_type}
+                onOpen={() => onOpenAsset(p.id)}
+              />
+            ))}
+          </div>
         )}
+        {severalParents ? (
+          <p role="note" className="pt-2 text-sm text-tone-warning-fg">
+            {t("moveComponent.severalParents", { count: data.parents.length })}
+          </p>
+        ) : null}
+        <PermissionGate permission={P.EQ_MANAGE}>
+          <div className="flex justify-end pt-2">
+            <Button
+              variant="outline"
+              className="h-11 gap-1.5"
+              disabled={severalParents}
+              onClick={() => setShowMove(true)}
+            >
+              <ArrowRightLeft className="h-4 w-4" aria-hidden />
+              {t("moveComponent.action")}
+            </Button>
+          </div>
+        </PermissionGate>
       </DetailSectionCard>
 
       <DetailSectionCard
@@ -135,6 +173,18 @@ export function AssetStructureTab({ asset, onOpenAsset }: AssetStructureTabProps
           </div>
         </PermissionGate>
       </DetailSectionCard>
+
+      <AssetMoveComponentDialog
+        open={showMove}
+        asset={asset}
+        currentParent={parent}
+        onClose={() => setShowMove(false)}
+        onMoved={async () => {
+          setShowMove(false);
+          await reload();
+          await onMoved?.();
+        }}
+      />
     </div>
   );
 }

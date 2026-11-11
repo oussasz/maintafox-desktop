@@ -58,7 +58,13 @@
       "unknown": "Statut inconnu"
     },
     "liveTable": "Table en direct",
-    "domainActions": "Actions pour {{domain}}"
+    "domainActions": "Actions pour {{domain}}",
+    "legend": {
+      "title": "Que signifient les étiquettes ?",
+      "operationalDictionary": "Liste de votre entreprise : vous ajoutez, modifiez et désactivez les valeurs librement, sans version ni publication.",
+      "controlledCatalog": "Liste suivie par versions : on modifie un brouillon, puis on le publie ; seule la version publiée est utilisée par les écrans.",
+      "systemCatalog": "Liste fournie par Maintafox, en lecture seule : on ne peut que lui ajouter des alias (libellés propres à votre usine)."
+    }
   },
   "governance": {
     "category": {
@@ -136,7 +142,15 @@
     "systemValue": "Valeur fournie par le produit",
     "activeToggle": "Valeur « {{label}} » active",
     "editValue": "Modifier « {{label}} »",
-    "deactivateValue": "Désactiver « {{label}} »"
+    "deactivateValue": "Désactiver « {{label}} »",
+    "parentMissing": "Choisissez le parent pour pouvoir enregistrer.",
+    "parentChoose": "— Choisir —",
+    "orphanParent": "Sans parent : jamais proposée dans les formulaires",
+    "hierarchy": {
+      "EQUIPMENT_FAMILY": "Classe → famille → sous-famille : chaque famille appartient à une classe (colonne Parent, obligatoire). Le formulaire d'équipement propose d'abord la classe, puis seulement les familles de cette classe : une famille sans classe n'apparaîtrait jamais.",
+      "EQUIPMENT_SUBFAMILY": "Classe → famille → sous-famille : chaque sous-famille appartient à une famille (colonne Parent, obligatoire). Le formulaire d'équipement ne propose que les sous-familles de la famille choisie.",
+      "generic": "Chaque valeur de cette liste dépend d'une valeur de « {{parent}} » (colonne Parent, obligatoire) : sans parent, elle n'est jamais proposée dans les formulaires."
+    }
   },
   "alias": {
     "title": "Alias – {{label}}",
@@ -356,7 +370,7 @@
       "articleFamilies": "Familles d'articles de stock",
       "taxCategories": "Catégories TVA des articles",
       "woStatuses": "Statuts d'ordre de travail",
-      "urgencyScale": "Échelle d'urgence (DI / OT)",
+      "urgencyScale": "Urgence / priorité des DI et OT",
       "notificationRules": "Notifications (destinataires et escalade)",
       "notificationCategories": "Catégories de notification",
       "fmecaScales": "Échelles AMDEC"
@@ -395,7 +409,7 @@
     "PERSONNEL_EMPLOYMENT_TYPES": "Types de contrat",
     "PERSONNEL_HABILITATIONS": "Habilitations",
     "PERSONNEL_POSITION_CATEGORIES": "Catégories de postes",
-    "PERSONNEL_SKILLS": "Compétences techniques",
+    "PERSONNEL_SKILLS": "Corps de métier et compétences techniques",
     "PLANNING_BREAK_IN_REASONS": "Motifs d'insertion urgente",
     "PLANNING_WINDOW_TYPES": "Types de fenêtres de planning",
     "PM_DEFERRAL_REASONS": "Motifs de report de maintenance préventive",
@@ -409,14 +423,15 @@
     "WORK_FAILURE_CAUSES": "Causes de défaillance",
     "WORK_FAILURE_EFFECTS": "Effets de défaillance",
     "WORK_FAILURE_MECHANISMS": "Mécanismes de défaillance",
+    "WORK_FAILURE_REMEDIES": "Remèdes / actions correctives",
     "WORK_FAILURE_MODES": "Modes de défaillance",
     "WORK_MAINTENANCE_NATURES": "Natures de maintenance",
-    "WORK_ORDER_SUBTYPES": "Sous-types d'ordres de travail",
+    "WORK_ORDER_SUBTYPES": "Types de travaux (sous-types d'OT)",
     "WORK_ORDER_TYPES": "Types d'ordres de travail",
     "WORK_PART_UNUSED_REASON": "Motifs de pièce non utilisée",
     "WORK_PRIORITY": "Priorités des ordres de travail",
     "WORK_SYMPTOMS": "Symptômes",
-    "WORK_URGENCY": "Urgence"
+    "WORK_URGENCY": "Urgence / priorité (échelle commune DI et OT)"
   },
   "combobox": {
     "searchPlaceholder": "Rechercher…",
@@ -566,5 +581,18 @@
     "reasonMin": "Écrivez au moins {{min}} caractères.",
     "cancel": "Annuler",
     "save": "Enregistrer"
+  },
+  "groups": {
+    "requests": "Demandes d'intervention",
+    "workOrders": "Ordres de travail",
+    "preventive": "Maintenance préventive et planning",
+    "equipment": "Équipements",
+    "stock": "Stock et achats",
+    "permits": "Permis de travail",
+    "personnel": "Personnel et organisation",
+    "reliability": "Fiabilité (AMDEC)",
+    "finance": "Finance",
+    "measures": "Mesures, documents et notifications",
+    "other": "Autres listes"
   }
 }

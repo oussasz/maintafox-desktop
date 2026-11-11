@@ -70,6 +70,8 @@ struct PlanRow {
     version_id: i64,
     strategy: String,
     effective_from: String,
+    /// The plan that covers this one (nested plans, `pm::coverage`).
+    covered_by: Option<i64>,
 }
 
 /// Assets in service matching a plan scope (see module docs), optionally restricted to one asset.
@@ -372,6 +374,17 @@ async fn emit_occurrence(
         due_meter_value,
     )
     .await?;
+    // Nested plans: a covering plan's occurrence on this asset inside this window replaces it.
+    if !exists && plan.covered_by.is_some() {
+        if let (Some(equipment_id), Some(due)) = (target.equipment_id, due_at.as_deref()) {
+            let from = window.start_at.as_deref().unwrap_or(due);
+            let to = window.end_at.as_deref().unwrap_or(due);
+            if crate::pm::coverage::is_covered_in_window(db, plan.plan_id, equipment_id, from, to).await? {
+                counters.skipped += 1;
+                return Ok(());
+            }
+        }
+    }
     let created = if exists {
         None
     } else {
@@ -836,7 +849,7 @@ pub async fn generate(
 
     let mut sql = String::from(
         "SELECT p.id AS pm_plan_id, p.strategy_type, p.asset_scope_type, p.asset_scope_id,
-                pv.id AS version_id, pv.effective_from, pv.trigger_definition_json
+                pv.id AS version_id, pv.effective_from, pv.trigger_definition_json, p.covered_by_plan_id
          FROM pm_plans p
          JOIN pm_plan_versions pv ON pv.id = p.current_version_id
          WHERE p.is_active = 1
@@ -848,9 +861,30 @@ pub async fn generate(
         sql.push_str(" AND p.id = ?");
         binds.push(plan_id.into());
     }
-    let rows = db
+    let mut rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
+    // Covering plans first: a covered plan checks the occurrences of the plans above it.
+    let covered_by: std::collections::HashMap<i64, i64> = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, covered_by_plan_id FROM pm_plans WHERE covered_by_plan_id IS NOT NULL".to_string(),
+        ))
+        .await?
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r.try_get::<i64>("", "id").ok()?,
+                r.try_get::<i64>("", "covered_by_plan_id").ok()?,
+            ))
+        })
+        .collect();
+    if !covered_by.is_empty() {
+        rows.sort_by_key(|r| {
+            r.try_get::<i64>("", "pm_plan_id")
+                .map_or(0, |id| crate::pm::coverage::depth_of(id, &covered_by))
+        });
+    }
 
     let tx = db.begin().await?;
     // Occurrences are derived by every device from the synchronised plans (each device runs the
@@ -865,6 +899,7 @@ pub async fn generate(
             version_id: row.try_get("", "version_id")?,
             strategy: row.try_get("", "strategy_type")?,
             effective_from: row.try_get("", "effective_from")?,
+            covered_by: row.try_get("", "covered_by_plan_id")?,
         };
         let scope_type: String = row.try_get("", "asset_scope_type")?;
         let scope_id: Option<i64> = row.try_get("", "asset_scope_id")?;

@@ -402,6 +402,13 @@
     "noParts": "Aucune pièce requise.",
     "noSkills": "Aucune compétence au catalogue."
   },
+  "coverage": {
+    "title": "Plan englobant",
+    "hint": "Une révision annuelle peut remplacer le contrôle hebdomadaire du même équipement : tant que le plan englobant a une occurrence dans la période, ce plan n'en génère pas.",
+    "coveredBy": "Couvert par le plan",
+    "none": "Aucun (ce plan est autonome)",
+    "covers": "Ce plan englobe : {{plans}}."
+  },
   "hints": {
     "partNecessityMissing": "Indiquez pour chaque pièce si elle est obligatoire ou optionnelle : {{codes}}.",
     "publishBlockedByLifecycle": "Pour publier, passez le plan en approuvé, actif ou suspendu.",

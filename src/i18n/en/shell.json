@@ -178,6 +178,8 @@
       "WO_COMPLETION_GATE": "A work order completed on another PC fails the completion checks here — check, then keep the correct version",
       "WO_CLOSE_GATE": "A work order closed on another PC fails the close-out checks here",
       "WO_CANCEL_PERMIT_GATE": "A work order cancelled on another PC still has an open permit or a fitted lock here",
+      "WO_EXECUTION_UNAUTHORISED": "A work-order execution action (start, hold, resume, task result, completion, close, cancellation) made on another PC by someone who does not carry out this work order, or no longer holds the right here — not applied; if it was intended, an authorised person makes it again",
+      "WO_EXECUTION_AUTHOR_UNKNOWN": "A work-order execution action received without saying who made it — not applied; an authorised person makes it again",
       "PERMIT_ENDED_BEFORE_START": "A permit closed, cancelled or suspended on another PC before its work order's work started here — applied; stop the work, then dismiss with the reason (or escalate)",
       "PERMIT_ENDED_DURING_WORK": "A permit closed, cancelled or suspended on another PC while its work order's work runs here — applied; stop the work, then dismiss with the reason (or escalate)",
       "WO_DOWNTIME_END_LOCKS_FITTED": "A downtime end received while a lock is still fitted here under the work order's permits — not applied; the downtime ends when the removal of the last lock is verified",
@@ -272,7 +274,7 @@
       "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
       "state": {
         "starting": "Starting…",
-        "idle": "Up to date",
+        "idle": "Synchronised",
         "running": "Syncing…",
         "paused": "Paused",
         "offline": "Offline: retried automatically",
@@ -323,10 +325,10 @@
       }
     },
     "indicator": {
-      "idle": "Up to date",
+      "idle": "Synchronised",
       "scheduled": "Sync starting",
       "running": "Syncing",
-      "degraded": "To check",
+      "degraded": "To review",
       "paused": "Paused",
       "blocked": "Sync stopped",
       "error": "Sync error",
@@ -361,7 +363,7 @@
     "inboxLoading": "Loading conflicts…",
     "versionNumber": "version {{version}}",
     "detectedAt": "detected {{date}}",
-    "recordUnidentified": "(number not available)",
+    "recordUnidentified": "(no number: see \"Technical details\")",
     "technicalDetails": "Technical details",
     "noRemoteVersion": "The server sent no version of this record",
     "resolveNeedsRight": "You can view this conflict. Choosing a version requires the right to resolve synchronisation conflicts.",
@@ -391,7 +393,8 @@
       "renumber_local": "The record on this device gets a new number; the received record keeps its own (\"{{record}}\").",
       "dismiss": "The conflict on \"{{record}}\" is dismissed without applying either version.",
       "retry_later": "The conflict on \"{{record}}\" stays open and is reviewed again later; nothing is applied.",
-      "escalate": "The conflict on \"{{record}}\" is marked for review by a supervisor; nothing is applied."
+      "escalate": "The conflict on \"{{record}}\" is marked \"Escalated\" and stays open with your reason, for someone allowed to resolve conflicts to review; no message is sent and nothing is applied.",
+      "dismissWarning": "Warning: the conflict leaves the list and neither version is applied. The two PCs may stay different on this record."
     },
     "reason": {
       "label": "Reason for this choice",
@@ -447,7 +450,28 @@
     "doubleCount": "{{count}} stock location(s) counted on two PCs without knowing each other: double count to verify (Inventory › Controls).",
     "doublePosting": "{{count}} stock count(s) posted twice (the same count on two PCs, older version): to verify with a new count (Inventory › Controls).",
     "overReserved": "{{count}} stock location(s) with more reserved than in stock (warning).",
-    "openNegativeStock": "Open the stock to reconcile"
+    "openNegativeStock": "Open the stock to reconcile",
+    "compare": {
+      "title": "Values in disagreement",
+      "field": "Field",
+      "local": "This device",
+      "remote": "Server",
+      "empty": "(empty)",
+      "yes": "Yes",
+      "no": "No",
+      "more": "… and {{count}} more field(s) — see \"Technical details\".",
+      "none": "No readable value differs between the two versions: the difference is technical (see \"Technical details\")."
+    },
+    "actionHelp": {
+      "accept_local": "Your version is kept and sent again to the server; the received version is discarded.",
+      "accept_remote": "The server's version replaces this device's; your local changes to this record are lost.",
+      "renumber_local": "Your record gets a new number; the received one keeps its own.",
+      "retry_later": "The conflict stays open and nothing is applied: review it again later.",
+      "escalate": "Marks the conflict as \"Escalated\": it stays open in this list with your reason, for someone allowed to resolve conflicts to handle. No message is sent and nothing is applied.",
+      "dismiss": "Closes the conflict without applying either version. Use only when the matter is already settled."
+    },
+    "actionDisabledRemote": "Unavailable: the server sent no version of this record, so there is nothing to take.",
+    "actionDisabledBusy": "Action in progress…"
   },
   "status": {
     "dbOk": "Database: OK",
@@ -571,14 +595,14 @@
     "lookups": "Reference Data",
     "imports": "Data imports",
     "notifications": "Notifications",
-    "documentation": "Documentation",
+    "documentation": "Document library",
     "activity": "Activity Log",
     "settings": "Settings",
     "users": "Users & Roles",
     "org": "Organization",
     "diagnostics": "Diagnostics",
     "profile": "My Profile",
-    "help": "Help & Documentation",
+    "help": "Help",
     "reports": "Reports",
     "admin": "Administration"
   },
