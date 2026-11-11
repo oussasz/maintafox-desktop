@@ -169,10 +169,9 @@ pub(crate) struct CloseoutEntry {
     /// snapshot of this PC's first join ([`first_join_snapshot_history`]).
     pub judged: bool,
     /// The status changes of this work order held here before the change: the highest local id of
-    /// its transition rows (0: none) and the latest time they record. A transition written by this
-    /// apply, or dated after them, is the one of the received change (`wo::execution_actor_sync`).
+    /// its transition rows (0: none). A transition written by this apply has a higher id and is the
+    /// one of the received change (`wo::execution_actor_sync`).
     pub held_transition_max_id: i64,
-    pub held_transition_last_at: Option<String>,
 }
 
 fn sync_err(e: impl std::fmt::Display) -> AppError {
@@ -236,15 +235,13 @@ pub(crate) async fn closeout_entry(
         _ => CloseoutTarget::Other,
     };
     let judged = local.is_some() || !first_join_snapshot_history(conn, entity_sync_id).await?;
-    let (held_transition_max_id, held_transition_last_at) =
-        crate::wo::execution_actor_sync::held_transitions(conn, entity_sync_id).await?;
+    let held_transition_max_id = crate::wo::execution_actor_sync::held_transition_max_id(conn, entity_sync_id).await?;
     Ok(Ok(Some(CloseoutEntry {
         wo_sync_id: entity_sync_id.to_string(),
         target,
         previous_status,
         judged,
         held_transition_max_id,
-        held_transition_last_at,
     })))
 }
 

@@ -12,11 +12,12 @@
 //!   work order and its group are written ([`judge_received_transition`], after
 //!   `wo::closeout_sync::judge_closeout`): its author is the person of the status-history row of
 //!   the change (`wo_state_transition_log.actor_id`, the transition into the work order's status
-//!   now, written by this apply or dated after the history held here before it). The rule is the
+//!   now among the rows written by this apply, whatever the time it records). The rule is the
 //!   command's: `wo::execution_actor::check_execution_on_wo` (`ot.close` for the close, `ot.edit`
 //!   otherwise), `check_cancel_from` for a cancellation (the creator of a draft cancels it, judged
 //!   on the status it was cancelled from), `wo::access::check_depannage_at` for the start a
-//!   dépannage makes at its creation (`wo::depannage::AUTO_REASON_CODE`). A hold the application
+//!   dépannage makes at its creation (`wo::depannage::AUTO_REASON_CODE`, the work order new here;
+//!   received on a work order held here, that start keeps the actor rule). A hold the application
 //!   makes for a permit (suspended, ended elsewhere, expired: the fixed delay reasons of
 //!   `wo::execution`) stops the work and is not judged. Reopening and planning are outside the rule.
 //! - **a task result** (a result new or changed, `work_order_tasks`), before it is written
@@ -65,27 +66,22 @@ fn sync_err(e: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("execution re-check of a received row: {e}"))
 }
 
-/// The status history of work order `wo_sync` held here: the highest local id of its rows (0: none)
-/// and the latest time they record (read before a received change is written).
-pub(crate) async fn held_transitions(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<(i64, Option<String>)> {
+/// The status history of work order `wo_sync` held here: the highest local id of its rows (0: none;
+/// read before a received change is written, so the rows this apply writes have higher ids).
+pub(crate) async fn held_transition_max_id(conn: &impl ConnectionTrait, wo_sync: &str) -> AppResult<i64> {
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(t.id), 0) AS max_id, \
-                    (SELECT t2.acted_at FROM wo_state_transition_log t2 WHERE t2.wo_id = w.id \
-                      ORDER BY julianday(t2.acted_at) DESC, t2.id DESC LIMIT 1) AS last_at \
-               FROM work_orders w LEFT JOIN wo_state_transition_log t ON t.wo_id = w.id \
-              WHERE w.entity_sync_id = ? GROUP BY w.id",
+            "SELECT COALESCE(MAX(t.id), 0) AS max_id \
+               FROM work_orders w JOIN wo_state_transition_log t ON t.wo_id = w.id \
+              WHERE w.entity_sync_id = ?",
             [wo_sync.into()],
         ))
         .await?;
-    let Some(row) = row else {
-        return Ok((0, None));
-    };
-    Ok((
-        row.try_get("", "max_id").map_err(sync_err)?,
-        row.try_get("", "last_at").map_err(sync_err)?,
-    ))
+    match row {
+        Some(row) => row.try_get("", "max_id").map_err(sync_err),
+        None => Ok(0),
+    }
 }
 
 /// What a status change asks of its author.
@@ -100,9 +96,11 @@ enum Rule {
 }
 
 /// The rule of a status-history row (`None`: not an execution action, or a hold made for a permit).
-fn rule_of(action: &str, reason_code: Option<&str>, is_depannage: bool) -> Option<Rule> {
+/// `new_here`: the work order did not exist here before this apply (the dépannage start made at its
+/// creation comes only with the work order itself).
+fn rule_of(action: &str, reason_code: Option<&str>, is_depannage: bool, new_here: bool) -> Option<Rule> {
     match action {
-        "start" if is_depannage && reason_code == Some(crate::wo::depannage::AUTO_REASON_CODE) => {
+        "start" if new_here && is_depannage && reason_code == Some(crate::wo::depannage::AUTO_REASON_CODE) => {
             Some(Rule::DepannageStart)
         }
         "hold"
@@ -299,26 +297,24 @@ pub(crate) async fn judge_received_transition(
     if entry.previous_status.as_deref() == Some(status.as_str()) && !matches!(status.as_str(), "completed" | "closed") {
         return Ok(None);
     }
-    // The transition into the status now: the latest one, by its time.
+    // The transition into the status now among the rows written by this apply (a row held here
+    // before belongs to an earlier change), the latest by its time: a backdated one is judged too.
     let transition = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, action, from_status, actor_id, reason_code, acted_at, \
-                    COALESCE(? IS NULL OR id > ? OR julianday(acted_at) > julianday(?), 0) AS is_new \
-               FROM wo_state_transition_log WHERE wo_id = ? AND to_status = ? \
+            "SELECT id, action, from_status, actor_id, reason_code, acted_at \
+               FROM wo_state_transition_log WHERE wo_id = ? AND to_status = ? AND id > ? \
               ORDER BY julianday(acted_at) DESC, id DESC LIMIT 1",
             [
-                entry.held_transition_last_at.clone().into(),
-                entry.held_transition_max_id.into(),
-                entry.held_transition_last_at.clone().into(),
                 wo_id.into(),
                 status.as_str().into(),
+                entry.held_transition_max_id.into(),
             ],
         ))
         .await?;
     let transition = match transition {
-        Some(t) if t.try_get::<bool>("", "is_new").map_err(sync_err)? => t,
-        _ => {
+        Some(t) => t,
+        None => {
             // Its history row is not here (see the module rule): applied, recorded.
             record_author_not_received(
                 conn,
@@ -337,7 +333,12 @@ pub(crate) async fn judge_received_transition(
     };
     let action: String = transition.try_get("", "action").map_err(sync_err)?;
     let reason: Option<String> = transition.try_get("", "reason_code").map_err(sync_err)?;
-    let Some(rule) = rule_of(&action, reason.as_deref(), is_depannage != 0) else {
+    let Some(rule) = rule_of(
+        &action,
+        reason.as_deref(),
+        is_depannage != 0,
+        entry.previous_status.is_none(),
+    ) else {
         return Ok(None);
     };
     let from_status: Option<String> = transition.try_get("", "from_status").map_err(sync_err)?;
@@ -434,32 +435,37 @@ mod tests {
 
     #[test]
     fn the_rule_of_each_status_change() {
-        assert_eq!(rule_of("start", None, false), Some(Rule::Execution(OT_EDIT)));
-        assert_eq!(rule_of("resume", None, false), Some(Rule::Execution(OT_EDIT)));
+        assert_eq!(rule_of("start", None, false, false), Some(Rule::Execution(OT_EDIT)));
+        assert_eq!(rule_of("resume", None, false, false), Some(Rule::Execution(OT_EDIT)));
         assert_eq!(
-            rule_of("hold", Some("waiting_parts"), false),
+            rule_of("hold", Some("waiting_parts"), false, false),
             Some(Rule::Execution(OT_EDIT))
         );
-        assert_eq!(rule_of("complete", None, false), Some(Rule::Execution(OT_EDIT)));
-        assert_eq!(rule_of("close", None, false), Some(Rule::Execution(OT_CLOSE)));
-        assert_eq!(rule_of("cancel", None, false), Some(Rule::Cancel));
+        assert_eq!(rule_of("complete", None, false, false), Some(Rule::Execution(OT_EDIT)));
+        assert_eq!(rule_of("close", None, false, false), Some(Rule::Execution(OT_CLOSE)));
+        assert_eq!(rule_of("cancel", None, false, false), Some(Rule::Cancel));
         // The start a dépannage makes at its creation; a later normal start keeps the actor rule.
         assert_eq!(
-            rule_of("start", Some(crate::wo::depannage::AUTO_REASON_CODE), true),
+            rule_of("start", Some(crate::wo::depannage::AUTO_REASON_CODE), true, true),
             Some(Rule::DepannageStart)
         );
-        assert_eq!(rule_of("start", None, true), Some(Rule::Execution(OT_EDIT)));
+        // Received on a work order held here: that start keeps the actor rule.
+        assert_eq!(
+            rule_of("start", Some(crate::wo::depannage::AUTO_REASON_CODE), true, false),
+            Some(Rule::Execution(OT_EDIT))
+        );
+        assert_eq!(rule_of("start", None, true, false), Some(Rule::Execution(OT_EDIT)));
         // A hold the permit made stops the work: not judged.
         for reason in [
             crate::wo::execution::PERMIT_SUSPENDED_DELAY_REASON,
             crate::wo::execution::PERMIT_ENDED_DELAY_REASON,
             crate::wo::execution::PERMIT_EXPIRED_DELAY_REASON,
         ] {
-            assert_eq!(rule_of("hold", Some(reason), false), None);
+            assert_eq!(rule_of("hold", Some(reason), false, false), None);
         }
         // Planning and reopening are outside the rule.
         for action in ["create", "submit", "mark_ready", "reopen", "approve"] {
-            assert_eq!(rule_of(action, None, false), None);
+            assert_eq!(rule_of(action, None, false, false), None);
         }
     }
 }

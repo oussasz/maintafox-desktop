@@ -114,6 +114,18 @@ async fn colleague(db: &DatabaseConnection) -> i64 {
 /// The work order as another PC sends it once put on hold there by `actor` (`None`: the history row
 /// names nobody), with the reason `reason`; its status-history row waits in the inbox with it.
 async fn received_hold(db: &DatabaseConnection, wo_id: i64, n: u32, actor: Option<i64>, reason: &str) -> Payload {
+    received_hold_at(db, wo_id, n, actor, reason, &now()).await
+}
+
+/// [`received_hold`], its history row dated `acted_at` (the sender's clock).
+async fn received_hold_at(
+    db: &DatabaseConnection,
+    wo_id: i64,
+    n: u32,
+    actor: Option<i64>,
+    reason: &str,
+    acted_at: &str,
+) -> Payload {
     let tid = format!("l5-08c-hold-{wo_id}-{n}");
     exec(
         db,
@@ -124,7 +136,7 @@ async fn received_hold(db: &DatabaseConnection, wo_id: i64, n: u32, actor: Optio
             wo_id.into(),
             actor.into(),
             reason.into(),
-            now().into(),
+            acted_at.into(),
         ],
     )
     .await;
@@ -191,6 +203,32 @@ async fn a_hold_received_from_someone_who_does_not_carry_out_the_work_order_is_r
     let outcome = apply(&db, "work_orders", &sync, &payload).await;
     assert!(matches!(outcome, ApplyOutcome::Applied), "{outcome:?}");
     assert_eq!(wo_status(&db, wo_id).await, "on_hold");
+}
+
+/// A received change dated before the status history held here (the sender's clock behind, or a
+/// change made offline long ago) is still the change of this apply: judged against its author, not
+/// taken as a change without its history row. (A hold rather than a resume: a received resume is
+/// first judged by the permit start gate on its time.)
+#[tokio::test]
+async fn a_backdated_change_is_judged_against_its_author() {
+    let db = setup().await;
+    let (wo_id, _) = create_wo_in_progress(&db).await;
+    let sync = wo_sync(&db, wo_id).await;
+    let colleague = colleague(&db).await;
+    let payload = received_hold_at(&db, wo_id, 1, Some(colleague), "waiting_parts", "2026-01-01T08:00:00Z").await;
+    let outcome = apply(&db, "work_orders", &sync, &payload).await;
+    assert_eq!(code(&outcome), Some(codes::UNAUTHORISED), "{outcome:?}");
+    assert_eq!(wo_status(&db, wo_id).await, "in_progress", "nothing written");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM audit_events WHERE action_code = ?",
+            vec![AUTHOR_NOT_RECEIVED.into()],
+        )
+        .await,
+        0,
+        "judged, not taken as a change without its author"
+    );
 }
 
 /// The rights judged are the ones held here now: the assignee without `ot.edit` is refused, and so

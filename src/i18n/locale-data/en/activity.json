@@ -234,6 +234,7 @@
       "wo__downtime_ended_by_lock_removal": "WO downtime ended by lock removal",
       "wo__held_permit_ended_elsewhere": "WO held: permit ended elsewhere",
       "wo__held_permit_expired": "WO held: permit expired",
+      "WO_EXECUTION_AUTHOR_NOT_RECEIVED": "WO execution action received without its author: applied, to check",
       "wo__updated": "Work order updated",
       "wo__planned": "Work order planned",
       "wo__submitted": "Work order submitted",
