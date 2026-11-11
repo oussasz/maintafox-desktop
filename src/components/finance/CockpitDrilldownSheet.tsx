@@ -375,11 +375,18 @@ export function CockpitDrilldownSheet({
         confirmDisabled={reason.trim().length === 0}
         onConfirm={async () => {
           if (!toReverse) return;
-          await reverseBudgetActual({
-            actual_id: toReverse.actual_id,
-            expected_row_version: toReverse.row_version,
-            reason: reason.trim(),
-          });
+          try {
+            await reverseBudgetActual({
+              actual_id: toReverse.actual_id,
+              expected_row_version: toReverse.row_version,
+              reason: reason.trim(),
+            });
+          } catch (err) {
+            // The entry may have changed elsewhere: reload so a retry sends its current version.
+            setToReverse(null);
+            setAttempt((n) => n + 1);
+            throw err;
+          }
           setAttempt((n) => n + 1);
         }}
       >
