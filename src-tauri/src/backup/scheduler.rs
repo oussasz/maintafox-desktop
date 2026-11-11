@@ -4,7 +4,8 @@
 //!   5-field form (`0 2 * * *`) and the `cron` crate's 6/7-field form (seconds first) are accepted.
 //! - A run is due when a scheduled time has passed since the last successful scheduled backup, so
 //!   a backup missed while the app was closed runs at the next tick.
-//! - Output: `<app_data_dir>/backups/maintafox-YYYYMMDD-HHMMSS.db`, recorded with
+//! - Output: `maintafox-YYYYMMDD-HHMMSS.db` in this PC's external backup folder when one is set and
+//!   reachable (`destination`), else in `<app_data_dir>/backups/`, recorded with
 //!   `trigger = 'scheduled'`. A failure is recorded as a `failed` run and retried after
 //!   `RETRY_AFTER_FAILURE`.
 //! - Retention: grandfather-father-son over the `backup.retention_daily/weekly/monthly` settings.
@@ -157,13 +158,17 @@ pub async fn run_due_backup(
         return Ok(false);
     }
 
-    let target = backup_dir.join(format!("maintafox-{}.db", now.format("%Y%m%d-%H%M%S")));
+    let target_dir = super::destination::scheduled_target_dir(db, backup_dir).await;
+    let target = target_dir.join(format!("maintafox-{}.db", now.format("%Y%m%d-%H%M%S")));
     let target_str = target.to_string_lossy().to_string();
     if let Err(err) = super::run_manual_backup(db, &target_str, super::TRIGGER_SCHEDULED, None).await {
         record_failed_run(db, &target_str, &err.to_string()).await;
         return Err(err);
     }
     prune_scheduled_backups(db, backup_dir).await?;
+    if target_dir != backup_dir {
+        prune_scheduled_backups(db, &target_dir).await?;
+    }
     Ok(true)
 }
 

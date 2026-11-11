@@ -193,13 +193,22 @@
       "require_digit": "Require Digit",
       "max_age_days": "Max Age (days)",
       "history_count": "History Count",
-      "schedule_cron": "Schedule (cron)",
+      "schedule_cron": "Automatic backup frequency",
       "retention_days": "Retention (days)",
       "include_photos": "Include Photos",
       "compression_level": "Compression Level"
     },
     "loadError": "The policy could not be loaded.",
-    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support."
+    "unreadable": "The stored policy is unreadable: it cannot be edited here. Contact support.",
+    "schedule": {
+      "none": "No automatic backup",
+      "daily2": "Every night at 02:00",
+      "daily12": "Every day at 12:00",
+      "daily20": "Every evening at 20:00",
+      "every6h": "Every 6 hours",
+      "weeklyMonday": "Every Monday at 02:00",
+      "custom": "Custom ({{expr}})"
+    }
   },
   "permissionDenied": "You do not have permission to access settings",
   "options": {
@@ -271,7 +280,7 @@
   },
   "backupOps": {
     "title": "Backup operations",
-    "description": "Back up, validate or restore the database, and review recent runs. Scheduled backups follow the backup policy and are kept in the application's backups folder.",
+    "description": "Back up, check or restore the database, and see the history. Automatic backups follow the backup policy; they are written to the external folder chosen below, otherwise to the application's “backups” folder on this PC.",
     "loadError": "Failed to load backup history",
     "chooseTarget": "Choose backup destination",
     "chooseBackup": "Choose backup file to validate",
@@ -581,5 +590,31 @@
     "ADMIN_RECOVERY_PASSWORD_MISMATCH": "The two passwords do not match.",
     "ADMIN_RECOVERY_RETRY": "The administrator could not be saved because the database is busy: wait a moment, then retry.",
     "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "This notice is not addressed to you or has already been acknowledged."
+  },
+  "backupDest": {
+    "title": "Copy outside this PC",
+    "description": "If this PC fails or is stolen, only copies kept elsewhere bring the data back. Choose an external disk, a USB key or a network folder: automatic backups are written there. When it cannot be reached (disk unplugged, network down), the backup is made on this PC and the alert below says so.",
+    "loadError": "Could not read the backup status",
+    "outsideNone": "No backup has been copied outside this PC yet. Choose an external folder or run a backup to a USB key.",
+    "outsideOld": "Last copy outside this PC: {{date}}, more than {{days}} days ago. Check that the external folder is plugged in or reachable.",
+    "outsideOk": "Last copy outside this PC: {{date}}.",
+    "folder": "Automatic backup folder:",
+    "folderNone": "none (this PC only)",
+    "unreachable": "Unreachable right now",
+    "choose": "Choose an external folder…",
+    "change": "Change folder…",
+    "clear": "Stop copying outside the PC",
+    "chooseTitle": "Automatic backup folder",
+    "saved": "External folder saved",
+    "cleared": "Automatic backups stay on this PC",
+    "saveError": "Folder refused",
+    "guideTitle": "How to restore a backup",
+    "guideSamePcTitle": "On this PC",
+    "guideSamePc": "Click “Restore a backup…” and choose the file. The current data is backed up first, then Maintafox restarts.",
+    "guideNewPcTitle": "On a new PC (failure, replacement)",
+    "guideNewPc1": "Keep the recovery key outside this PC (“Database encryption” section): without it, no backup can be opened on another PC.",
+    "guideNewPc2": "Install Maintafox on the new PC, without opening it.",
+    "guideNewPc3": "Copy the latest backup (.db file of the external folder) into Maintafox's data folder on the new PC and rename it “maintafox.db”. On this PC, that folder is: {{dataDir}}",
+    "guideNewPc4": "Open Maintafox: it asks for the encryption key. Enter the old PC's recovery key. If Maintafox then asks to activate the workstation, follow the activation screen."
   }
 }

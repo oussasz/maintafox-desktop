@@ -211,6 +211,17 @@ pub const SETTINGS_CATALOG: &[SettingDefinition] = &[
         editor: SettingEditor::Section,
         risk: "low",
     },
+    // A folder outside this PC's disk (USB disk, network share) for scheduled backups (L7-03).
+    // One PC's own folder: never sent to the other PCs. Set by the Backups panel (folder checked).
+    SettingDefinition {
+        key: "backup.external_dir",
+        category: "backup",
+        scope: "device",
+        shipped_value_json: r"null",
+        kind: SettingKind::ModuleManaged,
+        editor: SettingEditor::Dedicated,
+        risk: "high",
+    },
     // ── Printed documents ───────────────────────────────────────────────────────────────────
     SettingDefinition {
         key: super::branding::DOCUMENT_HEADER_SETTING_KEY,

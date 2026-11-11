@@ -193,13 +193,22 @@
       "require_digit": "Chiffre requis",
       "max_age_days": "Âge maximum (jours)",
       "history_count": "Historique des mots de passe",
-      "schedule_cron": "Planification (cron)",
+      "schedule_cron": "Fréquence des sauvegardes automatiques",
       "retention_days": "Rétention (jours)",
       "include_photos": "Inclure les photos",
       "compression_level": "Niveau de compression"
     },
     "loadError": "La politique n'a pas pu être chargée.",
-    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support."
+    "unreadable": "La politique enregistrée est illisible : elle ne peut pas être modifiée ici. Contactez le support.",
+    "schedule": {
+      "none": "Aucune sauvegarde automatique",
+      "daily2": "Chaque nuit à 02:00",
+      "daily12": "Chaque jour à 12:00",
+      "daily20": "Chaque soir à 20:00",
+      "every6h": "Toutes les 6 heures",
+      "weeklyMonday": "Chaque lundi à 02:00",
+      "custom": "Personnalisée ({{expr}})"
+    }
   },
   "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
   "options": {
@@ -271,7 +280,7 @@
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",
-    "description": "Sauvegarder, valider ou restaurer la base de données, et consulter l'historique. Les sauvegardes planifiées suivent la politique de sauvegarde et sont conservées dans le dossier « backups » de l'application.",
+    "description": "Sauvegarder, valider ou restaurer la base de données, et consulter l'historique. Les sauvegardes automatiques suivent la politique de sauvegarde ; elles sont écrites dans le dossier externe choisi ci-dessous, sinon dans le dossier « backups » de l'application sur ce PC.",
     "loadError": "Impossible de charger l'historique des sauvegardes",
     "chooseTarget": "Choisir la destination de sauvegarde",
     "chooseBackup": "Choisir le fichier de sauvegarde à valider",
@@ -581,5 +590,31 @@
     "ADMIN_RECOVERY_PASSWORD_MISMATCH": "Les deux mots de passe ne correspondent pas.",
     "ADMIN_RECOVERY_RETRY": "L'administrateur n'a pas pu être enregistré car la base de données est occupée : patientez un instant, puis réessayez.",
     "ADMIN_RECOVERY_NOTICE_NOT_FOUND": "Cet avis ne vous est pas adressé ou a déjà été pris en compte."
+  },
+  "backupDest": {
+    "title": "Copie hors de ce PC",
+    "description": "Si ce PC tombe en panne ou est volé, seules les copies rangées ailleurs permettent de retrouver les données. Choisissez un disque externe, une clé USB ou un dossier réseau : les sauvegardes automatiques y seront écrites. S'il est inaccessible (disque débranché, réseau coupé), la sauvegarde est faite sur ce PC et l'alerte ci-dessous le signale.",
+    "loadError": "Impossible de lire l'état des sauvegardes",
+    "outsideNone": "Aucune sauvegarde n'a encore été copiée hors de ce PC. Choisissez un dossier externe ou lancez une sauvegarde vers une clé USB.",
+    "outsideOld": "Dernière copie hors de ce PC : {{date}}, il y a plus de {{days}} jours. Vérifiez que le dossier externe est branché ou accessible.",
+    "outsideOk": "Dernière copie hors de ce PC : {{date}}.",
+    "folder": "Dossier des sauvegardes automatiques :",
+    "folderNone": "aucun (sur ce PC seulement)",
+    "unreachable": "Inaccessible pour le moment",
+    "choose": "Choisir un dossier externe…",
+    "change": "Changer de dossier…",
+    "clear": "Ne plus copier hors du PC",
+    "chooseTitle": "Dossier des sauvegardes automatiques",
+    "saved": "Dossier externe enregistré",
+    "cleared": "Les sauvegardes automatiques restent sur ce PC",
+    "saveError": "Dossier refusé",
+    "guideTitle": "Comment restaurer une sauvegarde",
+    "guideSamePcTitle": "Sur ce PC",
+    "guideSamePc": "Cliquez sur « Restaurer une sauvegarde… » et choisissez le fichier. Les données actuelles sont d'abord sauvegardées, puis Maintafox redémarre.",
+    "guideNewPcTitle": "Sur un nouveau PC (panne, remplacement)",
+    "guideNewPc1": "Gardez la clé de récupération hors de ce PC (section « Chiffrement de la base de données ») : sans elle, aucune sauvegarde ne peut être ouverte sur un autre PC.",
+    "guideNewPc2": "Installez Maintafox sur le nouveau PC, sans l'ouvrir.",
+    "guideNewPc3": "Copiez la dernière sauvegarde (fichier .db du dossier externe) dans le dossier de données de Maintafox du nouveau PC et renommez-la « maintafox.db ». Sur ce PC, ce dossier est : {{dataDir}}",
+    "guideNewPc4": "Ouvrez Maintafox : il demande la clé de chiffrement. Saisissez la clé de récupération de l'ancien PC. Si Maintafox demande ensuite l'activation du poste, suivez l'écran d'activation."
   }
 }
