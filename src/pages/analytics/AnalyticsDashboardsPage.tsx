@@ -15,6 +15,7 @@ import { useFleetKpiText } from "@/components/reliability/use-fleet-kpi-text";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/data-state";
+import { DateField } from "@/components/ui/date-field";
 import {
   Dialog,
   DialogContent,
@@ -586,17 +587,17 @@ export function AnalyticsDashboardsPage() {
         }}
       />
       {period === "custom" ? (
-        <label className="flex items-center gap-2 text-sm text-text-secondary">
-          {t("hub.dashboards.filters.customFrom")}
-          <input
-            type="date"
-            className="h-10 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+        <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+          <span>{t("hub.dashboards.filters.customFrom")}</span>
+          <DateField
+            aria-label={t("hub.dashboards.filters.customFrom")}
+            className="w-44"
             value={fromDate}
             max={localIsoDate(new Date())}
-            onChange={(e) => setFromDate(e.target.value)}
+            onChange={setFromDate}
           />
           <span className="text-xs text-text-muted">{t("hub.dashboards.filters.customHint")}</span>
-        </label>
+        </div>
       ) : null}
 
       {error ? (
