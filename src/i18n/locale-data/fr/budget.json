@@ -483,6 +483,21 @@
       "costRavHint": "Indicateur standard de maintenance",
       "withoutRav": "Sans valeur de remplacement",
       "withoutRavHint": "À renseigner sur la fiche équipement"
+    },
+    "lineFilter": "Ligne de production (centre de coût)",
+    "allLines": "Toutes les lignes",
+    "export": {
+      "name": "Désignation",
+      "line": "Ligne / centre de coût",
+      "preventive": "Préventif",
+      "other": "Autres types"
+    },
+    "breakdown": {
+      "title": "Coût par ligne de production et par type de travail",
+      "hint": "Regroupé par centre de coût de l'équipement. Correctif, préventif et autres types (amélioration, inspection…) sur les OT clôturés.",
+      "line": "Ligne / centre de coût",
+      "noLine": "Sans centre de coût",
+      "total": "Total"
     }
   },
   "periods": {

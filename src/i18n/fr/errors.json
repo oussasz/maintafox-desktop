@@ -1027,7 +1027,7 @@
     "GATE_SET_LOGO_TYPE_INVALID": "Logo refusé : type d'image non autorisé. Utilisez png, jpg, jpeg, webp ou gif.",
     "GATE_SET_LOGO_TOO_LARGE": "Logo refusé : le fichier dépasse la limite de {{max_mb}} Mo.",
     "GATE_SET_LOGO_NOT_A_FILE": "Logo refusé : le chemin indiqué n'est pas un fichier.",
-    "GATE_ANA_HORIZON_INVALID": "Période refusée : l'horizon d'analyse doit être de 7, 30 ou 90 jours (reçu : {{value}}).",
+    "GATE_ANA_HORIZON_INVALID": "Période refusée : la période d'analyse doit être comprise entre 1 et 366 jours (reçu : {{value}}).",
     "GATE_ANA_LAYOUT_INVALID": "Disposition du tableau de bord refusée : sa structure n'est pas valide. Rétablissez la disposition par défaut puis réessayez.",
     "GATE_SYNC_RENUMBER_NOT_CLASH": "Renumérotation refusée : elle n'est disponible que pour un conflit de numéro identique.",
     "GATE_SYNC_ENTITY_NO_NUMBER": "Renumérotation refusée : les enregistrements de type « {{entity}} » n'ont pas de numéro généré.",
