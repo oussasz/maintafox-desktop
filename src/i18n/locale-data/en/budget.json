@@ -212,19 +212,20 @@
   },
   "kpi": {
     "budget": "Budget",
-    "budgetHint": "Fiscal year {{year}}",
+    "budgetHint": "Annual budget, fiscal year {{year}}",
     "committed": "Committed",
-    "committedHint": "Open orders",
+    "committedHint": "Open purchase orders and requisitions for work orders",
     "actual": "Actual",
     "actualHint": "Settled work orders and entries",
     "forecast": "Year-end forecast",
-    "forecastHint": "Actual + committed + remaining budget",
-    "variance": "Variance",
-    "overrun": "Forecast overrun",
-    "underrun": "Forecast margin",
+    "forecastHint": "Actual + committed + budget of the remaining months",
+    "forecastHintShare": "Actual + committed + budget of the remaining months: {{pct}} of the annual budget",
+    "variance": "Forecast variance (budget − forecast)",
+    "overrun": "Overrun: the forecast exceeds the budget",
+    "underrun": "Margin: the forecast stays under the budget",
     "consumed": "Consumption",
     "consumedHint": "Actual / budget",
-    "consumedHintMonth": "Actual / annual budget, end of {{month}}"
+    "consumedHintToDate": "Actual / budget from {{from}} to {{to}}; {{annual}} of the annual budget"
   },
   "cockpit": {
     "loading": "Loading the cockpit…",
@@ -269,11 +270,12 @@
     }
   },
   "burn": {
-    "title": "Budget and actual by month",
+    "title": "Budget and actual by month ({{currency}})",
     "budget": "Budget",
     "actual": "Actual",
     "monthAria": "{{month}}: budget {{budget}}, actual {{actual}}",
-    "cumulative": "To date: actual {{actual}} against a budget of {{budget}}."
+    "cumulativeToDate": "From {{from}} to {{to}}: actual {{actual}} against a budget of {{budget}} for these months (annual budget {{annual}}).",
+    "cumulativeYear": "Over the fiscal year: actual {{actual}} against a budget of {{budget}}."
   },
   "drill": {
     "actualsTotal_one": "Total of {{count}} entry: {{amount}}",

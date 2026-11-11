@@ -73,6 +73,16 @@ function money(value: number, currency?: string): string {
   return out;
 }
 
+function pct(value: number): string {
+  let out = "";
+  function Probe() {
+    out = useFormatters().formatPercent(value);
+    return null;
+  }
+  render(<Probe />);
+  return out;
+}
+
 const settlement = (over: Partial<WoCostSettlement> = {}): WoCostSettlement => ({
   id: 5,
   entity_sync_id: "s-5",
@@ -578,6 +588,18 @@ describe("BudgetCockpitView", () => {
     );
     await screen.findByText("CC-MNT-PMP");
     expect(document.body.textContent).toContain(money(4200, "DZD"));
+    // L7-14: consumption against the budget of the months already started (460 / 3 500), the
+    // annual share beside it, and the cumulative sentence naming both budgets.
+    expect(document.body.textContent).toContain(pct((460 / 3500) * 100));
+    expect(document.body.textContent).toContain(
+      `Actual / budget from January to October; ${pct((460 / 4200) * 100)} of the annual budget`,
+    );
+    expect(document.body.textContent).toContain(`${pct((1500 / 4200) * 100)} of the annual budget`);
+    expect(document.body.textContent).toContain(
+      `From January to October: actual ${money(460, "DZD")} against a budget of ${money(3500, "DZD")} for these months (annual budget ${money(4200, "DZD")}).`,
+    );
+    expect(screen.getByText("Budget and actual by month (DZD)")).toBeInTheDocument();
+    expect(screen.getByTestId("burn-axis").children).toHaveLength(3);
     expect(document.body.textContent).toContain("1 closed work order is waiting for settlement");
     fireEvent.click(screen.getByRole("button", { name: "Show pending settlements" }));
     expect(onNavigate).toHaveBeenCalledWith("settlements");

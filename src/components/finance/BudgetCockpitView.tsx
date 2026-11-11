@@ -303,7 +303,17 @@ export function BudgetCockpitView({
   }
 
   const totals = cockpit.totals;
-  const consumed = totals.budget > 0 ? (totals.actual / totals.budget) * 100 : null;
+  const toDate = budgetToDate(cockpit);
+  // During the current year the consumption is read against the budget of the months already
+  // started (an annual percentage looks low all year), with the actual of those same months (the
+  // figures of the chart's sentence); the annual share stays in the hint.
+  const annualConsumed = totals.budget > 0 ? (totals.actual / totals.budget) * 100 : null;
+  const consumed = toDate
+    ? toDate.budget > 0
+      ? (toDate.actual / toDate.budget) * 100
+      : null
+    : annualConsumed;
+  const forecastShare = totals.budget > 0 ? (totals.forecast / totals.budget) * 100 : null;
   const forecastToneValue = forecastTone(totals.budget, totals.forecast);
   const notApproved =
     cockpit.version != null && !["approved", "frozen"].includes(cockpit.version.status);
@@ -360,7 +370,11 @@ export function BudgetCockpitView({
         <KpiTile
           label={t("kpi.forecast")}
           value={money(totals.forecast)}
-          hint={t("kpi.forecastHint")}
+          hint={
+            forecastShare == null
+              ? t("kpi.forecastHint")
+              : t("kpi.forecastHintShare", { pct: formatPercent(forecastShare) })
+          }
           icon={TrendingUp}
           {...(forecastToneValue ? { tone: forecastToneValue } : {})}
         />
@@ -374,11 +388,11 @@ export function BudgetCockpitView({
           label={t("kpi.consumed")}
           value={consumed == null ? "—" : formatPercent(consumed)}
           hint={
-            cockpit.as_of_month
-              ? t("kpi.consumedHintMonth", {
-                  month: t(
-                    `month.${cockpit.months[cockpit.as_of_month - 1]?.calendar_month ?? cockpit.as_of_month}`,
-                  ),
+            toDate
+              ? t("kpi.consumedHintToDate", {
+                  from: t(`month.${toDate.fromMonth}`),
+                  to: t(`month.${toDate.toMonth}`),
+                  annual: annualConsumed == null ? "—" : formatPercent(annualConsumed),
                 })
               : t("kpi.consumedHint")
           }
@@ -427,6 +441,35 @@ export function BudgetCockpitView({
       />
     </div>
   );
+}
+
+/**
+ * The budget of the months already started in the current fiscal year (`as_of_month` included),
+ * or null for a past or future year, where the whole year is the reference.
+ */
+function budgetToDate(
+  cockpit: BudgetCockpit,
+): { budget: number; actual: number; fromMonth: number; toMonth: number } | null {
+  if (cockpit.as_of_month == null) return null;
+  const current = cockpit.months[cockpit.as_of_month - 1];
+  const first = cockpit.months[0];
+  if (!current || !first) return null;
+  return {
+    budget: current.cumulative_budget,
+    actual: current.cumulative_actual,
+    fromMonth: first.calendar_month,
+    toMonth: current.calendar_month,
+  };
+}
+
+/** Three amounts for the chart's scale (top, middle, zero), in a short form ("60 M"). */
+function axisTicks(max: number, formatNumber: (v: number, o?: Intl.NumberFormatOptions) => string) {
+  const short = (v: number) => formatNumber(v, { notation: "compact", maximumFractionDigits: 1 });
+  return [
+    { id: "top", label: short(max) },
+    { id: "middle", label: short(max / 2) },
+    { id: "zero", label: short(0) },
+  ];
 }
 
 function Notice({
@@ -493,7 +536,11 @@ function ConsumptionBar({
 /** Budget vs actual per month (bars) with the cumulative position. */
 function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: number) => string }) {
   const { t } = useTranslation("budget");
+  const { formatNumber, currencyLabel } = useFormatters();
   const max = Math.max(1, ...cockpit.months.map((m) => Math.max(m.budget, m.actual)));
+  const ticks = axisTicks(max, formatNumber);
+  const toDate = budgetToDate(cockpit);
+  const last = cockpit.months[cockpit.months.length - 1];
   // Shown on hover and read by screen readers: the amounts behind the two bars of a month.
   const monthText = (m: BudgetCockpit["months"][number]) =>
     t("burn.monthAria", {
@@ -508,7 +555,7 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
     >
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h3 id="burn-title" className="text-sm font-semibold text-text-primary">
-          {t("burn.title")}
+          {t("burn.title", { currency: cockpit.currency_code ?? currencyLabel })}
         </h3>
         <div className="flex items-center gap-3 text-xs text-text-muted">
           <span className="flex items-center gap-1">
@@ -520,43 +567,69 @@ function MonthlyBurn({ cockpit, money }: { cockpit: BudgetCockpit; money: (v: nu
           </span>
         </div>
       </div>
-      <ol className="grid grid-cols-12 items-end gap-1" style={{ height: 120 }}>
-        {cockpit.months.map((m) => {
-          const over = m.actual > m.budget + 0.005 && m.budget > 0;
-          return (
-            <li
-              key={m.period_month}
-              className="flex h-full flex-col justify-end"
-              title={monthText(m)}
-              aria-label={monthText(m)}
-            >
-              <div className="flex flex-1 items-end justify-center gap-0.5">
-                <div
-                  className="w-2 rounded-t bg-surface-3"
-                  style={{ height: `${(m.budget / max) * 100}%` }}
-                />
-                <div
-                  className={cn("w-2 rounded-t", over ? mfTone.danger.bar : mfTone.progress.bar)}
-                  style={{ height: `${(Math.max(m.actual, 0) / max) * 100}%` }}
-                />
-              </div>
-              <span
-                className={cn(
-                  "mt-1 text-center text-[10px] text-text-muted",
-                  cockpit.as_of_month === m.period_month && "font-semibold text-text-primary",
-                )}
+      <div className="flex gap-2">
+        {/* Scale of the bars: the top line is the largest monthly amount. */}
+        <div
+          className="flex flex-col justify-between pb-4 text-end font-mono text-[10px] tabular-nums text-text-muted"
+          style={{ height: 120 }}
+          aria-hidden
+          data-testid="burn-axis"
+        >
+          {ticks.map((tick) => (
+            <span key={tick.id}>{tick.label}</span>
+          ))}
+        </div>
+        <ol
+          className="grid flex-1 grid-cols-12 items-end gap-1 border-s border-surface-border"
+          style={{ height: 120 }}
+        >
+          {cockpit.months.map((m) => {
+            const over = m.actual > m.budget + 0.005 && m.budget > 0;
+            return (
+              <li
+                key={m.period_month}
+                className="flex h-full flex-col justify-end"
+                title={monthText(m)}
+                aria-label={monthText(m)}
               >
-                {t(`monthShort.${m.calendar_month}`)}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      {cockpit.months.length > 0 ? (
+                <div className="flex flex-1 items-end justify-center gap-0.5">
+                  <div
+                    className="w-2 rounded-t bg-surface-3"
+                    style={{ height: `${(m.budget / max) * 100}%` }}
+                  />
+                  <div
+                    className={cn("w-2 rounded-t", over ? mfTone.danger.bar : mfTone.progress.bar)}
+                    style={{ height: `${(Math.max(m.actual, 0) / max) * 100}%` }}
+                  />
+                </div>
+                <span
+                  className={cn(
+                    "mt-1 text-center text-[10px] text-text-muted",
+                    cockpit.as_of_month === m.period_month && "font-semibold text-text-primary",
+                  )}
+                >
+                  {t(`monthShort.${m.calendar_month}`)}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+      {toDate ? (
         <p className="mt-2 text-xs text-text-muted">
-          {t("burn.cumulative", {
-            actual: money(cockpit.months[(cockpit.as_of_month ?? 12) - 1]?.cumulative_actual ?? 0),
-            budget: money(cockpit.months[(cockpit.as_of_month ?? 12) - 1]?.cumulative_budget ?? 0),
+          {t("burn.cumulativeToDate", {
+            from: t(`month.${toDate.fromMonth}`),
+            to: t(`month.${toDate.toMonth}`),
+            actual: money(toDate.actual),
+            budget: money(toDate.budget),
+            annual: money(last?.cumulative_budget ?? 0),
+          })}
+        </p>
+      ) : last ? (
+        <p className="mt-2 text-xs text-text-muted">
+          {t("burn.cumulativeYear", {
+            actual: money(last.cumulative_actual),
+            budget: money(last.cumulative_budget),
           })}
         </p>
       ) : null}
