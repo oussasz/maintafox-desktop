@@ -92,6 +92,9 @@ pub struct RcmWorksheet {
     pub time_basis: String,
     /// FMECA rows still to review (ratings nobody chose): not offered for an RCM decision.
     pub rows_to_review: i64,
+    /// The plant's critical RPN (setting `ram.fmeca_rpn_critical_threshold`): a row at or above it
+    /// is never left to run to failure ([`run_to_failure_refused`]).
+    pub rpn_threshold: i64,
     /// Set while the plant's FMECA grids must be reviewed (`scales::RatingScales::review`): the
     /// consequences and ratings read here come from the Maintafox grids standing in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,6 +112,16 @@ pub struct SaveRcmInput {
     pub justification: Option<String>,
     #[serde(default)]
     pub pf_interval_hours: Option<f64>,
+}
+
+/// Tactic of the RCM logic that leaves the failure happen.
+pub const TACTIC_RUN_TO_FAILURE: &str = "run_to_failure";
+
+/// Running to failure is refused for a critical row: its RPN is at or above the plant's critical
+/// RPN (the threshold the FMECA step and the work-order close use). L2-15.
+#[must_use]
+pub fn run_to_failure_refused(tactic: &str, rpn: i64, rpn_threshold: i64) -> bool {
+    tactic == TACTIC_RUN_TO_FAILURE && rpn >= rpn_threshold
 }
 
 /// Pre-filled answers for an FMECA row (pure).
@@ -320,6 +333,7 @@ pub async fn get_worksheet(db: &DatabaseConnection, study_id: i64) -> AppResult<
         editable: study.status == STUDY_ACTIVE,
         time_basis,
         rows_to_review,
+        rpn_threshold: rams_queries::fmeca_rpn_critical_threshold_i64(db).await?,
         grids_review: scales.review.clone(),
     })
 }
@@ -359,7 +373,7 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
     let item = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT component_label, functional_failure, failure_mode_id, review_required FROM fmeca_items              WHERE id = ? AND analysis_id = ?",
+            "SELECT component_label, functional_failure, failure_mode_id, review_required, COALESCE(rpn, severity * occurrence * detectability) AS rpn FROM fmeca_items WHERE id = ? AND analysis_id = ?",
             [input.fmeca_item_id.into(), analysis.into()],
         ))
         .await?
@@ -372,6 +386,20 @@ pub async fn save_decision(db: &DatabaseConnection, input: SaveRcmInput, actor_i
         if !(pf.is_finite() && pf > 0.0) {
             return Err(invalid("RCM_PF_INTERVAL_INVALID"));
         }
+    }
+    // A critical mode is never left to run to failure, whether the logic recommends it or the
+    // analyst picks it (L2-15).
+    let tactic = input
+        .selected_tactic
+        .clone()
+        .unwrap_or_else(|| recommend_tactic(&input.answers).recommended_tactic);
+    let rpn: i64 = get::<Option<i64>>(&item, "rpn")?.unwrap_or(0);
+    let threshold = rams_queries::fmeca_rpn_critical_threshold_i64(db).await?;
+    if run_to_failure_refused(&tactic, rpn, threshold) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_REL_RCM_RUN_TO_FAILURE_CRITICAL: RPN {rpn} is at or above the critical RPN {threshold}: running \
+             to failure is not accepted for this mode. Choose a task or a modification."
+        )]));
     }
     let rcm_study = ensure_rcm_study(db, &study, actor_id).await?;
     let existing = db
@@ -459,6 +487,17 @@ mod tests {
         let (a, b) = prefill_answers(&s, 8, 5, Some((1.0, "random")), None);
         assert_eq!(recommend_tactic(&a).recommended_tactic, "run_to_failure");
         assert!(b.iter().any(|x| x.basis == "weibull_no_wear_out"));
+    }
+
+    /// L2-15: a critical row (RPN at or above the plant threshold) is never run to failure; other
+    /// tactics, and run-to-failure below the threshold, stay allowed.
+    #[test]
+    fn run_to_failure_is_refused_for_a_critical_row() {
+        assert!(run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 392, 150));
+        assert!(run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 150, 150));
+        assert!(!run_to_failure_refused(TACTIC_RUN_TO_FAILURE, 149, 150));
+        assert!(!run_to_failure_refused("condition_based", 392, 150));
+        assert!(!run_to_failure_refused("redesign", 392, 150));
     }
 
     #[test]

@@ -2,7 +2,15 @@
  * Reliability (RAMS) module — fleet view ("Parc"): KPIs of the filtered fleet over a period and
  * the equipment ranked by downtime; select equipment of one kind and open a study.
  */
-import { Activity, Archive, ArrowRight, FolderOpen, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  Archive,
+  ArrowRight,
+  FolderOpen,
+  Pencil,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -11,6 +19,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { RefreshButton } from "@/components/layout/ModuleHeaderControls";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { KpiTile } from "@/components/metrics/KpiTile";
+import { StudyNameDialog } from "@/components/reliability/study/StudyNameDialog";
 import {
   RAMS_DEFAULT_MONTHS,
   RAMS_FILTER_LABEL,
@@ -29,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorState, LoadingState, TruncationNotice } from "@/components/ui/data-state";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import { StatusChip } from "@/components/ui/status-chip";
 import { mfLayout } from "@/design-system/tokens";
 import { RELIABILITY_DATA_QUALITY_TONE, toneOf } from "@/design-system/tone";
@@ -119,7 +129,12 @@ export function RamsFleetPage() {
   }, [handedId]);
   const [studies, setStudies] = useState<ReliabilityStudy[]>([]);
   const [creating, setCreating] = useState(false);
+  /** The naming dialog of a new study is open, with the step the analysis opens on. */
+  const [createFor, setCreateFor] = useState<{ step: AnalysisStep | undefined } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<ReliabilityStudy | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ReliabilityStudy | null>(null);
+  /** Search in the saved studies: name, equipment codes or failure mode. */
+  const [query, setQuery] = useState("");
 
   const period = useMemo(() => periodFromMonths(months), [months]);
 
@@ -178,26 +193,48 @@ export function RamsFleetPage() {
   const selectedRows = rows.filter((r) => selected.includes(r.equipment_id));
   const classes = new Set(selectedRows.map((r) => r.class_id ?? -1));
   const mixedClasses = classes.size > 1;
+  const mixedClassNames = mixedClasses
+    ? [...new Set(selectedRows.map((r) => r.class_name ?? t("rams.studyName.noClass")))]
+    : [];
+  const needle = query.trim().toLocaleLowerCase();
+  const shownStudies =
+    needle === ""
+      ? studies
+      : studies.filter((s) =>
+          [
+            s.title,
+            s.failure_mode_label ?? "",
+            s.failure_mode_code ?? "",
+            ...s.assets.map((a) => a.asset_code),
+          ].some((v) => v.toLocaleLowerCase().includes(needle)),
+        );
   const periodLabel = t("rams.fleet.periodMonths", { count: months });
 
   const toggle = (id: number) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  const startStudy = async (step?: AnalysisStep) => {
+  /** "Étudier": the study is named (or named automatically) before it is created (L2-13). */
+  const startStudy = (step?: AnalysisStep) => {
     if (selected.length === 0) {
       setNeedSelection(true);
       return;
     }
+    setCreateFor({ step });
+  };
+
+  /** Throws on a refusal (reported by the global IPC toast): the dialog stays open. */
+  const createStudy = async (name: string, acceptMixed: boolean) => {
     setCreating(true);
     try {
       const study = await createReliabilityStudy({
+        title: name || null,
         equipment_ids: selected,
         period_start: period.start,
         period_end: period.end,
+        accept_mixed_classes: acceptMixed,
       });
+      const step = createFor?.step;
       navigate(`/reliability/studies/${study.id}${step ? `?step=${step}` : ""}`);
-    } catch {
-      // The global IPC toast reports the failure.
     } finally {
       setCreating(false);
     }
@@ -223,7 +260,7 @@ export function RamsFleetPage() {
             <Button
               className={mfLayout.primaryAction}
               disabled={selected.length === 0 || creating}
-              onClick={() => void startStudy()}
+              onClick={() => startStudy()}
               aria-describedby={selected.length === 0 ? "rams-study-reason" : undefined}
             >
               <ArrowRight className="h-4 w-4" aria-hidden />
@@ -334,7 +371,7 @@ export function RamsFleetPage() {
                       variant="outline"
                       className="h-10 justify-start"
                       disabled={creating}
-                      onClick={() => void startStudy(m.step)}
+                      onClick={() => startStudy(m.step)}
                     >
                       <ArrowRight className="h-4 w-4" aria-hidden />
                       {selected.length === 0
@@ -528,11 +565,28 @@ export function RamsFleetPage() {
             subtitle={t("rams.studies.hint")}
             headingId="rams-studies"
           >
+            {studies.length > 0 ? (
+              <label className="mb-3 flex max-w-sm items-center gap-2">
+                <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+                <Input
+                  className="h-10"
+                  type="search"
+                  value={query}
+                  placeholder={t("rams.studies.searchPlaceholder")}
+                  aria-label={t("rams.studies.search")}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </label>
+            ) : null}
             {studies.length === 0 ? (
               <p className="text-sm text-text-muted">{t("rams.studies.empty")}</p>
+            ) : shownStudies.length === 0 ? (
+              <p className="text-sm text-text-muted" role="status">
+                {t("rams.studies.noMatch", { query: query.trim() })}
+              </p>
             ) : (
               <ul className="divide-y divide-surface-border rounded-md border border-surface-border">
-                {studies.map((s) => (
+                {shownStudies.map((s) => (
                   <li
                     key={s.id}
                     className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
@@ -562,6 +616,17 @@ export function RamsFleetPage() {
                         <Button
                           variant="ghost"
                           className="h-10"
+                          onClick={() => setRenameTarget(s)}
+                          aria-label={t("rams.studies.renameNamed", { title: s.title })}
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden />
+                          {t("rams.studies.rename")}
+                        </Button>
+                      </PermissionGate>
+                      <PermissionGate permission={P.RAM_ANALYZE}>
+                        <Button
+                          variant="ghost"
+                          className="h-10"
                           onClick={() => setArchiveTarget(s)}
                           aria-label={t("rams.studies.archiveNamed", { title: s.title })}
                         >
@@ -577,6 +642,32 @@ export function RamsFleetPage() {
           </RamsCard>
         </div>
       )}
+      <StudyNameDialog
+        open={createFor != null}
+        onOpenChange={(o) => {
+          if (!o) setCreateFor(null);
+        }}
+        mode="create"
+        mixedClasses={mixedClassNames}
+        onSubmit={createStudy}
+      />
+      <StudyNameDialog
+        open={renameTarget != null}
+        onOpenChange={(o) => {
+          if (!o) setRenameTarget(null);
+        }}
+        mode="rename"
+        initialName={renameTarget?.title ?? ""}
+        onSubmit={async (name) => {
+          if (!renameTarget) return;
+          await updateReliabilityStudy({
+            id: renameTarget.id,
+            expected_row_version: renameTarget.row_version,
+            title: name,
+          });
+          await load();
+        }}
+      />
       <ConfirmDialog
         open={archiveTarget != null}
         onOpenChange={(o) => {
