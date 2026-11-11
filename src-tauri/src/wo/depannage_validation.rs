@@ -20,7 +20,7 @@
 //!
 //! The times of a dépannage (EN 13306, decision of 2026-11-04) are [`depannage_times`].
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -276,7 +276,9 @@ pub async fn depannage_times(conn: &impl ConnectionTrait, wo_id: i64) -> AppResu
 // Synchronisation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn payload_flag(p: &crate::permit::sync_check::Payload, key: &str) -> bool {
+type Payload = crate::permit::sync_check::Payload;
+
+fn payload_flag(p: &Payload, key: &str) -> bool {
     match p.get(key) {
         Some(serde_json::Value::Bool(b)) => *b,
         Some(serde_json::Value::Number(n)) => n.as_i64().is_some_and(|v| v != 0),
@@ -284,61 +286,172 @@ fn payload_flag(p: &crate::permit::sync_check::Payload, key: &str) -> bool {
     }
 }
 
-fn payload_text(p: &crate::permit::sync_check::Payload, key: &str) -> Option<String> {
+fn payload_text(p: &Payload, key: &str) -> Option<String> {
     crate::permit::sync_check::field(p, key).map(str::to_string)
+}
+
+/// The work order's org node here (`entity_id`, sent as `entity_sync_id`): `Ok(None)` when it has
+/// none (plant-wide holders only), `Err(verdict)` while the node is not applied here.
+async fn payload_node(
+    conn: &impl ConnectionTrait,
+    code: &str,
+    wo: &Payload,
+) -> AppResult<Result<Option<i64>, InboundVerdict>> {
+    let Some(node_sync) = payload_text(wo, "entity_sync_id") else {
+        return Ok(Ok(None));
+    };
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes WHERE entity_sync_id = ?",
+            [node_sync.clone().into()],
+        ))
+        .await?;
+    match row {
+        None => Ok(Err(InboundVerdict::Defer(format!(
+            "dépannage {code}: its site {node_sync} is not applied here yet"
+        )))),
+        Some(r) => {
+            let id = r
+                .try_get::<i64>("", "id")
+                .map_err(|e| AppError::SyncError(format!("dépannage validation re-check: {e}")))?;
+            Ok(Ok(Some(id)))
+        }
+    }
+}
+
+/// The status code of the received work order: `Err(verdict)` while its status is not here.
+async fn payload_status(
+    conn: &impl ConnectionTrait,
+    code: &str,
+    wo: &Payload,
+) -> AppResult<Result<Option<String>, InboundVerdict>> {
+    let Some(status_sync) = payload_text(wo, "status_sync_id") else {
+        return Ok(Ok(None));
+    };
+    match crate::permit::sync_check::status_code(conn, &status_sync).await? {
+        None => Ok(Err(InboundVerdict::Defer(format!(
+            "dépannage {code}: its status {status_sync} is not applied here yet"
+        )))),
+        Some(s) => Ok(Ok(Some(s))),
+    }
 }
 
 /// Re-check of the validation of a received dépannage (see the module documentation). Called by
 /// `wo::depannage::inbound_depannage_check` once the row is known to be a dépannage; `wo` is the
 /// received row completed by the local one.
+/// - Its starter (`requester_id`) never changes once here: the four-eyes rule is judged against
+///   the starter recorded here, never one named by the received row.
+/// - A validation or automatic approval recorded here is never removed or rewritten.
+/// - A new validation names a person here, not its starter, holding `ot.approve` at the work
+///   order's node, at a readable time not in the future and not after its close. The right is
+///   judged as held here now (as the permit re-checks do): while the validator's plant-wide rights
+///   are still arriving it waits; a site-scoped right still in the inbox is a conflict for a person
+///   to decide.
+/// - A new automatic approval holds only on a closed work order, with no validator, at a site that
+///   opted out here.
+/// - A closed dépannage is validated or approved automatically.
 pub(crate) async fn inbound_validation_check(
     conn: &impl ConnectionTrait,
     code: &str,
-    local: Option<&crate::permit::sync_check::Payload>,
-    wo: &crate::permit::sync_check::Payload,
+    local: Option<&Payload>,
+    wo: &Payload,
 ) -> AppResult<Option<InboundVerdict>> {
     use crate::permit::sync_check::{conflict, field, wait};
 
+    // The starter recorded here stays (`requester_id` is written once, at creation).
+    if let Some(l) = local {
+        if payload_text(l, "requester_sync_id") != payload_text(wo, "requester_sync_id") {
+            return conflict(
+                CODE_SYNC_VALIDATION_INVALID,
+                format!("dépannage {code}: the person who started it cannot be changed"),
+            );
+        }
+    }
+    let starter = match local {
+        Some(l) => payload_text(l, "requester_sync_id"),
+        None => payload_text(wo, "requester_sync_id"),
+    };
+
+    let local_validator = local.and_then(|l| payload_text(l, "validated_by_sync_id"));
+    let local_auto = local.is_some_and(|l| payload_flag(l, "validation_auto_approved"));
+    let validator = payload_text(wo, "validated_by_sync_id");
+    let auto = payload_flag(wo, "validation_auto_approved");
+
     // What is recorded here stays.
     if let Some(l) = local {
-        let recorded = payload_text(l, "validated_by_sync_id");
-        if recorded.is_some()
-            && (recorded != payload_text(wo, "validated_by_sync_id")
-                || payload_text(l, "validated_at") != payload_text(wo, "validated_at"))
+        if local_validator.is_some()
+            && (local_validator != validator || payload_text(l, "validated_at") != payload_text(wo, "validated_at"))
         {
             return conflict(
                 CODE_SYNC_VALIDATION_INVALID,
                 format!("dépannage {code}: the validation recorded here cannot be removed or rewritten"),
             );
         }
-        if payload_flag(l, "validation_auto_approved") && !payload_flag(wo, "validation_auto_approved") {
+        if local_auto && !auto {
             return conflict(
                 CODE_SYNC_VALIDATION_INVALID,
                 format!("dépannage {code}: the automatic approval recorded here cannot be removed"),
             );
         }
-        if recorded.is_some() {
-            return Ok(None);
-        }
     }
-
-    let Some(validator_sync) = payload_text(wo, "validated_by_sync_id") else {
-        if field(wo, "validated_at").is_some() {
-            return conflict(
-                CODE_SYNC_VALIDATION_INVALID,
-                format!("dépannage {code}: a validation time was received without the person who validated it"),
-            );
-        }
-        // An automatic approval is judged with the close it belongs to (`wo::closeout_sync`).
-        return Ok(None);
-    };
-    if payload_flag(wo, "validation_auto_approved") {
+    if validator.is_some() && auto {
         return conflict(
             CODE_SYNC_VALIDATION_INVALID,
             format!("dépannage {code}: received both validated by a person and approved automatically"),
         );
     }
-    if payload_text(wo, "requester_sync_id").as_deref() == Some(validator_sync.as_str()) {
+    if validator.is_none() && field(wo, "validated_at").is_some() {
+        return conflict(
+            CODE_SYNC_VALIDATION_INVALID,
+            format!("dépannage {code}: a validation time was received without the person who validated it"),
+        );
+    }
+
+    let status = match payload_status(conn, code, wo).await? {
+        Ok(s) => s,
+        Err(v) => return Ok(Some(v)),
+    };
+    let closed = status.as_deref() == Some("closed");
+    if closed && validator.is_none() && !auto {
+        return conflict(
+            CODE_SYNC_VALIDATION_INVALID,
+            format!("dépannage {code}: received closed without its validation or its automatic approval"),
+        );
+    }
+
+    // A new automatic approval: closed, at a site that opted out here.
+    if auto && !local_auto {
+        if !closed {
+            return conflict(
+                CODE_SYNC_VALIDATION_INVALID,
+                format!("dépannage {code}: approved automatically while it is not closed"),
+            );
+        }
+        let node = match payload_node(conn, code, wo).await? {
+            Ok(n) => n,
+            Err(v) => return Ok(Some(v)),
+        };
+        if !auto_validation_at_node(conn, node).await? {
+            return conflict(
+                CODE_SYNC_VALIDATION_INVALID,
+                format!("dépannage {code}: approved automatically at a site that requires its validation here"),
+            );
+        }
+        return Ok(None);
+    }
+
+    // A new validation by a person.
+    let Some(validator_sync) = validator.filter(|_| local_validator.is_none()) else {
+        return Ok(None);
+    };
+    if starter.is_none() {
+        return conflict(
+            CODE_SYNC_VALIDATION_INVALID,
+            format!("dépannage {code}: validated while the person who started it is unknown"),
+        );
+    }
+    if starter.as_deref() == Some(validator_sync.as_str()) {
         return conflict(
             CODE_SYNC_VALIDATION_INVALID,
             format!("dépannage {code}: validated by the person who started it (four-eyes)"),
@@ -350,14 +463,23 @@ pub(crate) async fn inbound_validation_check(
             format!("dépannage {code}: its validation has no readable time"),
         );
     };
-    if at > future_bound() {
+    let skew = Duration::minutes(MAX_CLOCK_SKEW_MINUTES);
+    if at > crate::clock::now() + skew {
         return conflict(
             CODE_SYNC_VALIDATION_INVALID,
             format!("dépannage {code}: its validation is dated in the future ({at})"),
         );
     }
+    if let Some(closed_at) = field(wo, "closed_at").and_then(crate::settings::site::instant) {
+        if at > closed_at + skew {
+            return conflict(
+                CODE_SYNC_VALIDATION_INVALID,
+                format!("dépannage {code}: validated ({at}) after its close ({closed_at})"),
+            );
+        }
+    }
     let read = |e: sea_orm::DbErr| AppError::SyncError(format!("dépannage validation re-check: {e}"));
-    let Some(validator) = conn
+    let Some(row) = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM user_accounts WHERE entity_sync_id = ?",
@@ -369,25 +491,10 @@ pub(crate) async fn inbound_validation_check(
             "dépannage {code}: the person who validated it ({validator_sync}) is not applied here yet"
         ));
     };
-    let validator_id: i64 = validator.try_get("", "id").map_err(read)?;
-    // The work order's node (`entity_id`, sent as `entity_sync_id`); none: plant-wide holders only.
-    let node = match field(wo, "entity_sync_id") {
-        None => None,
-        Some(node_sync) => {
-            let Some(r) = conn
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT id FROM org_nodes WHERE entity_sync_id = ?",
-                    [node_sync.into()],
-                ))
-                .await?
-            else {
-                return wait(format!(
-                    "dépannage {code}: its site {node_sync} is not applied here yet"
-                ));
-            };
-            Some(r.try_get::<i64>("", "id").map_err(read)?)
-        }
+    let validator_id: i64 = row.try_get("", "id").map_err(read)?;
+    let node = match payload_node(conn, code, wo).await? {
+        Ok(n) => n,
+        Err(v) => return Ok(Some(v)),
     };
     let holders =
         crate::notifications::router::permission_holder_user_ids(conn, crate::rbac::permissions::OT_APPROVE, node)
@@ -406,8 +513,4 @@ pub(crate) async fn inbound_validation_check(
         CODE_SYNC_VALIDATION_INVALID,
         format!("dépannage {code}: validated by a person who does not hold the approval right at its site here"),
     )
-}
-
-fn future_bound() -> DateTime<Utc> {
-    crate::clock::now() + Duration::minutes(MAX_CLOCK_SKEW_MINUTES)
 }

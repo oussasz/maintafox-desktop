@@ -333,3 +333,122 @@ async fn a_received_validation_holds_only_for_an_approver_of_the_site_who_did_no
         "a validation here is never removed, got {removed:?}"
     );
 }
+
+/// The sync id of the "closed" work-order status (the payload names a status by it).
+async fn closed_status_sync(db: &DatabaseConnection) -> String {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    db.query_one(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT entity_sync_id FROM work_order_statuses WHERE code = 'closed'".to_string(),
+    ))
+    .await
+    .expect("query")
+    .expect("closed status")
+    .try_get::<String>("", "entity_sync_id")
+    .expect("sync id")
+}
+
+#[tokio::test]
+async fn a_received_row_never_changes_the_starter_the_four_eyes_rule_is_judged_against() {
+    let f = fixture().await;
+    let local = payload(&[
+        ("requester_sync_id", json!("scope-user-val_approver")),
+        ("entity_sync_id", json!("scope-A")),
+    ]);
+    // Swaps the starter to validate as the real one.
+    let received = payload(&[
+        ("requester_sync_id", json!("scope-user-val_tech")),
+        ("entity_sync_id", json!("scope-A")),
+        ("validated_by_sync_id", json!("scope-user-val_approver")),
+        ("validated_at", json!(before(Duration::minutes(5)))),
+    ]);
+    let swapped = validation::inbound_validation_check(&f.db, "OT-1", Some(&local), &received)
+        .await
+        .expect("check");
+    assert!(
+        is_conflict(&swapped),
+        "the starter recorded here stays, got {swapped:?}"
+    );
+
+    let mut dropped = received.clone();
+    dropped.insert("requester_sync_id".into(), Value::Null);
+    let dropped = validation::inbound_validation_check(&f.db, "OT-1", Some(&local), &dropped)
+        .await
+        .expect("check");
+    assert!(is_conflict(&dropped), "the starter is never removed, got {dropped:?}");
+}
+
+#[tokio::test]
+async fn a_received_automatic_approval_holds_only_on_a_closed_depannage_of_an_opted_out_site() {
+    let f = fixture().await;
+    let closed = closed_status_sync(&f.db).await;
+    let row = |status: Option<&str>, auto: bool| {
+        let mut p = payload(&[
+            ("requester_sync_id", json!("scope-user-val_tech")),
+            ("entity_sync_id", json!("scope-A")),
+        ]);
+        if let Some(s) = status {
+            p.insert("status_sync_id".into(), json!(s));
+        }
+        if auto {
+            p.insert("validation_auto_approved".into(), json!(1));
+        }
+        p
+    };
+
+    let open = validation::inbound_validation_check(&f.db, "OT-1", None, &row(None, true))
+        .await
+        .expect("check");
+    assert!(
+        is_conflict(&open),
+        "approved automatically while not closed, got {open:?}"
+    );
+
+    let not_opted_out = validation::inbound_validation_check(&f.db, "OT-1", None, &row(Some(&closed), true))
+        .await
+        .expect("check");
+    assert!(
+        is_conflict(&not_opted_out),
+        "the site requires the validation here, got {not_opted_out:?}"
+    );
+
+    let neither = validation::inbound_validation_check(&f.db, "OT-1", None, &row(Some(&closed), false))
+        .await
+        .expect("check");
+    assert!(
+        is_conflict(&neither),
+        "closed with neither validation nor automatic approval, got {neither:?}"
+    );
+
+    exec(
+        &f.db,
+        &format!(
+            "INSERT INTO site_settings (entity_sync_id, site_node_id, setting_key, value_json)              VALUES ('val-site-setting-sync', {}, '{AUTO_VALIDATION_SETTING}', 'true')",
+            f.t.site_a
+        ),
+    )
+    .await;
+    let opted_out = validation::inbound_validation_check(&f.db, "OT-1", None, &row(Some(&closed), true))
+        .await
+        .expect("check");
+    assert!(
+        opted_out.is_none(),
+        "closed at an opted-out site: accepted, got {opted_out:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_received_validation_is_never_later_than_the_close() {
+    let f = fixture().await;
+    let received = payload(&[
+        ("requester_sync_id", json!("scope-user-val_tech")),
+        ("entity_sync_id", json!("scope-A")),
+        ("validated_by_sync_id", json!("scope-user-val_approver")),
+        ("validated_at", json!(before(Duration::minutes(5)))),
+        ("closed_at", json!(before(Duration::hours(2)))),
+    ]);
+    let late = validation::inbound_validation_check(&f.db, "OT-1", None, &received)
+        .await
+        .expect("check");
+    assert!(is_conflict(&late), "validated after its close, got {late:?}");
+}
