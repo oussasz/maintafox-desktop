@@ -321,7 +321,12 @@ export function WoDepannageForm({ onClose, onOpenWo, onCreated }: FormProps) {
               : undefined
           }
         >
-          <div className="flex gap-2" role="group" aria-label={t("depannage.machineStopped.label")}>
+          <div
+            id="depannage-machine-stopped"
+            className="flex gap-2"
+            role="group"
+            aria-label={t("depannage.machineStopped.label")}
+          >
             <Button
               type="button"
               size="sm"
