@@ -90,6 +90,11 @@
 //!   completion or close here, a task result outside execution and a mandatory task removed past
 //!   planning refused, and a verification keeps the self-verification rules
 //!   (`wo::closeout_sync`); snapshot history is applied, not judged;
+//! - `work_orders` (a start, hold, resume, "Terminé", close or cancellation) / `work_order_tasks` (a
+//!   task result): after those gates, the author of the change (its status-history row, the task's
+//!   `completed_by`) must hold the action's right at the work order's site here now and carry the
+//!   work order out (assignee, team, planner, approver; `wo::execution_actor`), otherwise a
+//!   `WO_EXECUTION_UNAUTHORISED` conflict (`wo::execution_actor_sync`, L5-08c);
 //! - `permit_types`: a change of the three-person lock-removal setting, or a switch-off of the
 //!   energy-isolation rule, names who changed it (holding the settings and permit-issue rights
 //!   here), when and why; the shipped LOTO type's isolation rule is never switched off
@@ -358,13 +363,20 @@ pub(crate) async fn before_upsert_checked(
         | "work_order_interveners"
         | "work_order_tools"
         | "work_order_verifications" => Some(
-            crate::wo::closeout_sync::inbound_closeout_child_check(
+            match crate::wo::closeout_sync::inbound_closeout_child_check(
                 conn,
                 layout.def.entity_type,
                 entity_sync_id,
                 payload,
             )
-            .await?,
+            .await?
+            {
+                // A task result: its author, with the rights held here now (L5-08c).
+                None if layout.def.entity_type == "work_order_tasks" => {
+                    crate::wo::execution_actor_sync::inbound_task_result_check(conn, entity_sync_id, payload).await?
+                }
+                verdict => verdict,
+            },
         ),
         crate::auth::recovery_code::NOTICE_ENTITY => {
             Some(crate::auth::recovery_code::inbound_notice_check(conn, entity_sync_id, payload).await?)
@@ -570,10 +582,15 @@ pub(crate) async fn after_upsert_group(
     if let Some(outcome) = crate::permit::sync_check::apply_group(conn, group).await? {
         return Ok(Some(outcome));
     }
-    match closeout {
-        Some(entry) => crate::wo::closeout_sync::judge_closeout(conn, &entry).await,
-        None => Ok(None),
+    let Some(entry) = closeout else {
+        return Ok(None);
+    };
+    if let Some(outcome) = crate::wo::closeout_sync::judge_closeout(conn, &entry).await? {
+        return Ok(Some(outcome));
     }
+    // Who made the execution change (start, hold, resume, completion, close, cancellation), with
+    // the rights they hold here now (L5-08c, `wo::execution_actor_sync`).
+    crate::wo::execution_actor_sync::judge_received_transition(conn, &entry).await
 }
 
 /// Checks of an inbound delete before it is applied; `Some` stops it with that outcome. A permit

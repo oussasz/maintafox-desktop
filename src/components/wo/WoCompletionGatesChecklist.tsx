@@ -34,8 +34,15 @@ export function WoCompletionGatesChecklist({
             ) : (
               <X className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
             )}
-            <span className={gate.passed ? "text-foreground" : "text-destructive"}>
-              {t(`completion.gates.${gate.code}`, { defaultValue: gate.code })}
+            <span className="min-w-0">
+              <span className={gate.passed ? "text-foreground" : "text-destructive"}>
+                {t(`completion.gates.${gate.code}`, { defaultValue: gate.code })}
+              </span>
+              {gate.passed ? null : (
+                <span className="block text-xs text-muted-foreground">
+                  {t(`completion.gates.fix.${gate.code}`, { defaultValue: "" })}
+                </span>
+              )}
             </span>
           </li>
         ))}

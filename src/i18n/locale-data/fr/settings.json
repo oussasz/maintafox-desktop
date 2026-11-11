@@ -538,6 +538,14 @@
     "history": "Historique",
     "historyError": "L'historique n'a pas pu être chargé",
     "noHistory": "Aucun changement sur ce site.",
+    "depannageValidation": {
+      "title": "Validation des dépannages",
+      "label": "Approuver automatiquement les dépannages à leur clôture",
+      "help": "Désactivé (recommandé) : chaque dépannage est validé après coup par un approbateur du site, autre que la personne qui l'a lancé, avant sa clôture. À activer seulement pour un site sans second approbateur : le dépannage est alors marqué « approuvé automatiquement (règle du site) », sans validateur.",
+      "active": "Dépannages approuvés automatiquement sur ce site",
+      "confirmOnBody": "À {{site}}, les dépannages non validés seront approuvés automatiquement à leur clôture, sans validateur. Les autres sites gardent la validation.",
+      "confirmOffBody": "À {{site}}, chaque dépannage devra de nouveau être validé par un approbateur du site avant sa clôture."
+    },
     "selfApproval": {
       "label": "Autoriser l'auto-approbation des décisions de fiabilité et des permis de travail",
       "help": "Désactivé (recommandé) : une deuxième personne approuve chaque décision de fiabilité et chaque permis de travail de ce site (quatre yeux : pas la personne qui a rédigé ou soumis le permis). À activer seulement pour un site où la même personne prépare et approuve ; ces approbations sont signalées « auto-approbation (site sans 4 yeux) » sur le permis et « Auto-approuvée » sur la décision.",

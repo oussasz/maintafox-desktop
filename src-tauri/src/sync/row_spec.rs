@@ -403,18 +403,25 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
     ),
-    spec(
-        "equipment_lifecycle_events",
-        &[
-            hist("equipment_id", "equipment"),
-            hist("performed_by_id", USER),
-            hist("from_node_id", "org_nodes"),
-            hist("to_node_id", "org_nodes"),
-            hist("related_work_order_id", "work_orders"),
-            hist("related_asset_id", "equipment"),
-            hist("approved_by_id", USER),
+    RowSpec {
+        // The parents of a component move (`assets::lifecycle::record_parent_change_in`).
+        json_refs: &[
+            json_ref_hist("details_json", "$.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.to_parent_asset_id", "equipment"),
         ],
-    ),
+        ..spec(
+            "equipment_lifecycle_events",
+            &[
+                hist("equipment_id", "equipment"),
+                hist("performed_by_id", USER),
+                hist("from_node_id", "org_nodes"),
+                hist("to_node_id", "org_nodes"),
+                hist("related_work_order_id", "work_orders"),
+                hist("related_asset_id", "equipment"),
+                hist("approved_by_id", USER),
+            ],
+        )
+    },
     spec(
         "asset_document_links",
         &[r("asset_id", "equipment"), r("created_by_id", USER)],
@@ -618,6 +625,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("assigned_team_id", "teams"),
             // A plan points to its current version, which points back to the plan.
             soft("current_version_id", "pm_plan_versions"),
+            // The plan whose work includes this plan's (nested plans, `pm::coverage`); back edge of the chain.
+            soft("covered_by_plan_id", "pm_plans"),
         ],
     ),
     RowSpec {
@@ -994,6 +1003,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
             // The location before and after an equipment move (`assets::lifecycle` `asset.moved`).
             json_ref_hist("details_json", "$.detail.from_org_node_id", "org_nodes"),
             json_ref_hist("details_json", "$.detail.to_org_node_id", "org_nodes"),
+            // The parents of a component move (`assets::lifecycle` `asset.parent_changed`).
+            json_ref_hist("details_json", "$.detail.from_parent_asset_id", "equipment"),
+            json_ref_hist("details_json", "$.detail.to_parent_asset_id", "equipment"),
             // The work order of a qualification requirement before and after its change
             // (`qualification::requirements::audit_view`).
             json_ref_hist("details_json", "$.before.work_order_id", "work_orders"),
@@ -1052,6 +1064,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
                         ("user_account", USER),
                         ("user_scope_assignment", "user_scope_assignments"),
                         ("work_order", "work_orders"),
+                        // A received execution change applied without its author here (`wo::execution_actor_sync`):
+                        // the target is the work order or one of its tasks.
+                        ("work_order_task", "work_order_tasks"),
                         // A site given to an old record without one (`org::site_assignment`).
                         ("intervention_request", "intervention_requests"),
                         ("planning_window", "planning_windows"),

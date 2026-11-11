@@ -231,6 +231,10 @@
       "title": "OT {{code}} affecté",
       "body": "{{title}} · responsable : {{assignee}}"
     },
+    "wo_joined": {
+      "title": "{{who}} a rejoint l'OT {{code}}",
+      "body": "{{title}} · sa main-d'œuvre a démarré"
+    },
     "wo_depannage_started": {
       "title": "OT dépannage démarré — {{code}}",
       "body": "{{title}} · équipement {{asset}} · panne constatée {{breakdown_at}}"

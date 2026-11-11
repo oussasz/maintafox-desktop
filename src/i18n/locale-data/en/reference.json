@@ -58,7 +58,13 @@
       "unknown": "Unknown status"
     },
     "liveTable": "Live table",
-    "domainActions": "Actions for {{domain}}"
+    "domainActions": "Actions for {{domain}}",
+    "legend": {
+      "title": "What do the labels mean?",
+      "operationalDictionary": "Your company's own list: add, edit and deactivate values freely, with no version or publication.",
+      "controlledCatalog": "Versioned list: you edit a draft, then publish it; screens only use the published version.",
+      "systemCatalog": "List provided by Maintafox, read-only: you can only add aliases (labels of your own plant)."
+    }
   },
   "governance": {
     "category": {
@@ -136,7 +142,15 @@
     "systemValue": "Value provided by the product",
     "activeToggle": "Value \"{{label}}\" active",
     "editValue": "Edit \"{{label}}\"",
-    "deactivateValue": "Deactivate \"{{label}}\""
+    "deactivateValue": "Deactivate \"{{label}}\"",
+    "parentMissing": "Choose the parent to be able to save.",
+    "parentChoose": "— Choose —",
+    "orphanParent": "No parent: never offered in forms",
+    "hierarchy": {
+      "EQUIPMENT_FAMILY": "Class → family → sub-family: each family belongs to a class (Parent column, required). The equipment form asks for the class first, then offers only that class's families: a family without a class would never appear.",
+      "EQUIPMENT_SUBFAMILY": "Class → family → sub-family: each sub-family belongs to a family (Parent column, required). The equipment form only offers the sub-families of the chosen family.",
+      "generic": "Each value of this list depends on a value of \"{{parent}}\" (Parent column, required): without a parent it is never offered in forms."
+    }
   },
   "alias": {
     "title": "Aliases – {{label}}",
@@ -356,7 +370,7 @@
       "articleFamilies": "Stock article families",
       "taxCategories": "Article VAT categories",
       "woStatuses": "Work-order statuses",
-      "urgencyScale": "Urgency scale (requests / work orders)",
+      "urgencyScale": "Urgency / priority of requests and work orders",
       "notificationRules": "Notifications (recipients and escalation)",
       "notificationCategories": "Notification categories",
       "fmecaScales": "FMECA rating scales"
@@ -395,7 +409,7 @@
     "PERSONNEL_EMPLOYMENT_TYPES": "Employment types",
     "PERSONNEL_HABILITATIONS": "Authorisations",
     "PERSONNEL_POSITION_CATEGORIES": "Position categories",
-    "PERSONNEL_SKILLS": "Technical skills",
+    "PERSONNEL_SKILLS": "Trades and technical skills",
     "PLANNING_BREAK_IN_REASONS": "Break-in reasons",
     "PLANNING_WINDOW_TYPES": "Planning window types",
     "PM_DEFERRAL_REASONS": "Preventive maintenance deferral reasons",
@@ -409,14 +423,15 @@
     "WORK_FAILURE_CAUSES": "Failure causes",
     "WORK_FAILURE_EFFECTS": "Failure effects",
     "WORK_FAILURE_MECHANISMS": "Failure mechanisms",
+    "WORK_FAILURE_REMEDIES": "Remedies / corrective actions",
     "WORK_FAILURE_MODES": "Failure modes",
     "WORK_MAINTENANCE_NATURES": "Maintenance natures",
-    "WORK_ORDER_SUBTYPES": "Work order subtypes",
+    "WORK_ORDER_SUBTYPES": "Types of work (work-order sub-types)",
     "WORK_ORDER_TYPES": "Work order types",
     "WORK_PART_UNUSED_REASON": "Unused part reasons",
     "WORK_PRIORITY": "Work order priorities",
     "WORK_SYMPTOMS": "Symptoms",
-    "WORK_URGENCY": "Urgency"
+    "WORK_URGENCY": "Urgency / priority (shared request and work-order scale)"
   },
   "combobox": {
     "searchPlaceholder": "Search…",
@@ -566,5 +581,18 @@
     "reasonMin": "Write at least {{min}} characters.",
     "cancel": "Cancel",
     "save": "Save"
+  },
+  "groups": {
+    "requests": "Intervention requests",
+    "workOrders": "Work orders",
+    "preventive": "Preventive maintenance and planning",
+    "equipment": "Equipment",
+    "stock": "Stock and purchasing",
+    "permits": "Work permits",
+    "personnel": "Personnel and organisation",
+    "reliability": "Reliability (FMECA)",
+    "finance": "Finance",
+    "measures": "Measures, documents and notifications",
+    "other": "Other lists"
   }
 }

@@ -6,6 +6,7 @@ import { ASSET_STATUS_LABEL_KEY } from "@/components/assets/asset-tones";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry } from "@/components/timeline";
+import { useFormatters } from "@/hooks/use-formatters";
 import { statusToI18nKey } from "@/utils/wo-status";
 import type { AssetHistoryEvent } from "@shared/ipc-types";
 
@@ -35,7 +36,47 @@ const TRANSLATED_TITLES = new Set([
   "history_imported",
 ]);
 
-function eventTitle(event: AssetHistoryEvent, t: TranslateFn): string {
+/** "CODE — Name" of the other asset of a component move, from the event's metadata. */
+function movedAssetLabel(event: AssetHistoryEvent, key: "parent" | "component"): string {
+  const code = event.metadata?.[`${key}_code`];
+  const name = event.metadata?.[`${key}_name`];
+  return [code, name].filter((v): v is string => typeof v === "string" && v !== "").join(" — ");
+}
+
+/**
+ * A component move (L2-03): "Posé le … sur …" / "Déposé le … de …" on the component, "Composant …
+ * posé / déposé le …" on the parent. Null for any other event.
+ */
+function movementTitle(
+  event: AssetHistoryEvent,
+  t: TranslateFn,
+  formatDate: (value: string) => string,
+): string | null {
+  const movement = event.metadata?.["movement"];
+  if (movement !== "installed" && movement !== "removed") return null;
+  const date = formatDate(event.occurred_at);
+  if (event.event_type === "parent_changed") {
+    return t(`history.titles.component_${movement}`, {
+      date,
+      parent: movedAssetLabel(event, "parent"),
+    });
+  }
+  if (event.event_type === "child_changed") {
+    return t(`history.titles.child_${movement}`, {
+      date,
+      component: movedAssetLabel(event, "component"),
+    });
+  }
+  return null;
+}
+
+function eventTitle(
+  event: AssetHistoryEvent,
+  t: TranslateFn,
+  formatDate: (value: string) => string,
+): string {
+  const movement = movementTitle(event, t, formatDate);
+  if (movement) return movement;
   if (!TRANSLATED_TITLES.has(event.event_type)) return event.title;
   return t(`history.titles.${event.event_type}`, {
     code: event.ref?.entity_code ?? "",
@@ -74,6 +115,7 @@ export function AssetTimelineList({
   canOpenRef?: (ev: AssetHistoryEvent) => boolean;
 }) {
   const { t, i18n } = useTranslation(["equipment", "ot", "di", "pm"]);
+  const { formatDate } = useFormatters();
   const tr = t as unknown as TranslateFn;
 
   const entries: TimelineEntry[] = useMemo(
@@ -113,7 +155,7 @@ export function AssetTimelineList({
 
         return {
           id: event.id,
-          title: eventTitle(event, tr),
+          title: eventTitle(event, tr, formatDate),
           description:
             event.description ??
             (typeof event.metadata?.["source_type"] === "string"
@@ -133,7 +175,7 @@ export function AssetTimelineList({
             : undefined,
         };
       }),
-    [events, onOpenRef, canOpenRef, t, tr],
+    [events, onOpenRef, canOpenRef, t, tr, formatDate],
   );
 
   return (

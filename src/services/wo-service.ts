@@ -16,6 +16,8 @@ import type {
   WoBacklogHeatmap,
   WoBacklogHeatmapInput,
   WoBreakdownAtInput,
+  WoDepannageValidateInput,
+  DepannageTimes,
   WoCancelInput,
   WoCompletionGate,
   WoCostSummary,
@@ -670,6 +672,32 @@ export async function setWoBreakdownAt(input: WoBreakdownAtInput): Promise<WoDep
   } catch (err) {
     rethrowIfVersionConflict(err);
   }
+}
+
+/** Validates a dépannage after the fact (ot.approve at its site, never by its starter). */
+export async function validateDepannageWo(input: WoDepannageValidateInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("validate_depannage_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+const DepannageTimesSchema = z.object({
+  breakdown_at: z.string().nullable(),
+  downtime_start: z.string().nullable(),
+  restored_at: z.string().nullable(),
+  response_hours: z.number().nullable(),
+  active_repair_hours: z.number().nullable(),
+  restore_hours: z.number().nullable(),
+  stopped_hours: z.number().nullable(),
+});
+
+/** The times of a dépannage (response, active repair, time to restore); null: not a dépannage. */
+export async function getDepannageTimes(woId: number): Promise<DepannageTimes | null> {
+  const raw = await invoke<unknown>("get_depannage_times", { woId });
+  return DepannageTimesSchema.nullable().parse(raw) as DepannageTimes | null;
 }
 
 export async function startWo(input: WoStartInput): Promise<WorkOrder> {

@@ -576,6 +576,19 @@ pub(crate) async fn seed_system_data_for(
             true,
         )
         .await?;
+        // A component posed on / removed from a parent asset (L2-03 component move).
+        seed_value(
+            db,
+            d,
+            "PARENT_CHANGED",
+            "Changement de parent",
+            "Changement de parent",
+            "Parent changed",
+            None,
+            8,
+            true,
+        )
+        .await?;
     }
 
     // equipment.meter_type

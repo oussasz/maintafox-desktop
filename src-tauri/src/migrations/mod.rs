@@ -264,6 +264,7 @@ mod m20261110_000286_wo_history_records;
 mod m20261111_000287_library_document_control;
 mod m20261111_000288_library_document_versions;
 mod m20261111_000291_non_stock_wo_purchase;
+mod m20261111_000292_pm_plan_coverage;
 mod m20261201_000037_observability_permissions;
 mod m_test;
 
@@ -531,6 +532,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261106_000283_permit_isolation_zero_energy::Migration),
             Box::new(m20261111_000287_library_document_control::Migration),
             Box::new(m20261111_000288_library_document_versions::Migration),
+            Box::new(m20261111_000292_pm_plan_coverage::Migration),
             Box::new(m20261104_000277_wo_depannage::Migration),
             Box::new(m20261110_000286_wo_history_records::Migration),
             Box::new(m20261111_000291_non_stock_wo_purchase::Migration),
