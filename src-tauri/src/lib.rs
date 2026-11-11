@@ -1192,6 +1192,7 @@ pub fn run() {
         commands::inspection::publish_inspection_template_version,
         commands::inspection::schedule_inspection_round,
         commands::inspection::list_inspection_results,
+        commands::inspection::list_inspection_point_trend,
         commands::inspection::list_inspection_evidence,
         commands::inspection::list_inspection_anomalies,
         commands::inspection::record_inspection_result,
