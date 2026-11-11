@@ -53,6 +53,7 @@ import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
 import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
 import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
+import { WoDepannageFacts } from "@/components/wo/WoDepannageFacts";
 import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
@@ -118,6 +119,7 @@ export function WoDetailDialog({
   // The actions offered are the user's rights at this work order's site (its org node), not
   // anywhere in the plant; the backend checks the same and stays the authority.
   const { can } = useWoAccess(wo);
+  const reopenWo = useWoStore((s) => s.openWo);
   // "Terminé" and "Annuler l'OT" are execution actions (L5-08): greyed with who it is assigned to.
   const execution = useWoExecutionStanding(wo);
   // The reason under the footer: the execution steps (start … complete) where they are offered,
@@ -340,6 +342,11 @@ export function WoDetailDialog({
 
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+                <WoDepannageFacts
+                  wo={wo}
+                  canEdit={can(P.OT_EDIT)}
+                  onChanged={(updated) => void reopenWo(updated.id)}
+                />
                 <InfoRow
                   label={t("detail.fields.type")}
                   value={typeLabel(wo.type_code, wo.type_label) || "—"}

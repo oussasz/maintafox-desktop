@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   Plus,
   Shield,
+  Siren,
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -43,6 +44,7 @@ import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoContextMenu } from "@/components/wo/WoContextMenu";
 import { WoDashboardView } from "@/components/wo/WoDashboardView";
 import { WoDeisolationBadge } from "@/components/wo/WoDeisolationBadge";
+import { WoDepannageDialog } from "@/components/wo/WoDepannageDialog";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
@@ -127,6 +129,9 @@ export function WorkOrdersPage() {
     () => localStorage.getItem("wo-show-filters") !== "0",
   );
   const [cancelTarget, setCancelTarget] = useState<WorkOrder | null>(null);
+  // Dépannage: create + start a corrective OT in one step (ot.create + ot.edit, like the backend).
+  const [depannageOpen, setDepannageOpen] = useState(false);
+  const mayDepannage = can(P.OT_CREATE) && can(P.OT_EDIT);
   const woTypes = useWorkOrderTypesCatalog((s) => s.types);
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
   const { levels: urgencyLevels, labelOf: urgencyLabelOf } = useUrgencyScale();
@@ -762,6 +767,16 @@ export function WorkOrdersPage() {
       bodyClassName={null}
       actions={
         <>
+          {mayDepannage ? (
+            <Button
+              variant="destructive"
+              onClick={() => setDepannageOpen(true)}
+              data-testid="wo-depannage-open"
+            >
+              <Siren className="h-4 w-4" aria-hidden />
+              {t("depannage.action")}
+            </Button>
+          ) : null}
           <PermissionGate permission={P.OT_CREATE}>
             <Button onClick={() => openCreateForm()} className={mfLayout.primaryAction}>
               <Plus className="h-4 w-4" aria-hidden />
@@ -881,6 +896,17 @@ export function WorkOrdersPage() {
 
       {/* ── Form dialog ──────────────────────────────────────────────── */}
       <WoFormDialog />
+
+      {/* ── Dépannage dialog ─────────────────────────────────────────── */}
+      <WoDepannageDialog
+        open={depannageOpen}
+        onClose={() => setDepannageOpen(false)}
+        onOpenWo={(id) => {
+          setDepannageOpen(false);
+          void openWo(id);
+        }}
+        onCreated={() => void loadWos()}
+      />
 
       {/* ── Detail dialog ────────────────────────────────────────────── */}
       <WoDetailDialog
