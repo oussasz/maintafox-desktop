@@ -20,6 +20,9 @@ import { useAssetStore } from "@/stores/asset-store";
 import type { Asset, AssetHierarchyRow } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
+/** Relation types with at most one active parent (`assets::hierarchy::SINGLE_PARENT_TYPES`). */
+const SINGLE_PARENT_TYPES = ["PARENT_CHILD", "INSTALLED_IN"];
+
 interface StructureData {
   parent: Asset | null;
   parentRelation: string | null;
@@ -31,8 +34,12 @@ async function loadStructure(assetId: number): Promise<StructureData> {
     listAssetParents(assetId),
     listAssetChildren(assetId),
   ]);
-  const active = parents.filter((r) => r.effective_to == null);
-  const parentRow = active.find((r) => r.relation_type === "PARENT_CHILD") ?? active[0] ?? null;
+  // The parent a component is posed on: an active single-parent relation (PARENT_CHILD or
+  // INSTALLED_IN), the same rule as the server's move; other links (DRIVES, FEEDS) are not parents.
+  const active = parents.filter(
+    (r) => r.effective_to == null && SINGLE_PARENT_TYPES.includes(r.relation_type),
+  );
+  const parentRow = active[0] ?? null;
   const parent = parentRow ? await getAssetById(parentRow.parent_asset_id) : null;
   const childAssets = await Promise.all(
     children

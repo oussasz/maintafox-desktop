@@ -1284,4 +1284,172 @@ mod tests {
         .expect_err("refused");
         assert!(gate_text(err).contains("GATE_ASSET_PARENT_CHANGE_THROUGH_MOVE"));
     }
+
+    /// The coded refusal of a site check (`auth::scope::check_anchor`).
+    fn scope_code(err: AppError) -> String {
+        match err {
+            AppError::OrgValidationFailed(issues) => issues.first().map(|i| i.code.clone()).unwrap_or_default(),
+            other => panic!("expected a site refusal, got: {other:?}"),
+        }
+    }
+
+    /// Moves `component` (at its current version) with the person's `scope`.
+    async fn move_component_in_scope(
+        db: &sea_orm::DatabaseConnection,
+        component: i64,
+        new_parent: Option<i64>,
+        scope: &AccessScope,
+    ) -> crate::errors::AppResult<MoveAssetComponentResult> {
+        let version = identity::get_asset_by_id(db, component)
+            .await
+            .expect("component")
+            .row_version;
+        hierarchy::move_asset_component(
+            db,
+            MoveAssetComponentPayload {
+                asset_id: component,
+                new_parent_asset_id: new_parent,
+                effective_date: None,
+                notes: None,
+                expected_row_version: version,
+            },
+            scope,
+            1,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn l2_03_component_outside_the_persons_sites_refused() {
+        let db = setup().await;
+        let (_, motor, a, _) = motor_and_machines(&db, "L23O").await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        let only_second_site = AccessScope::Subtrees([node_id_2].into_iter().collect());
+
+        let err = move_component_in_scope(&db, motor, Some(a), &only_second_site)
+            .await
+            .expect_err("component on another site");
+        assert_eq!(scope_code(err), "SCOPE_OUTSIDE_SITE");
+        assert!(hierarchy_rows(&db, motor).await.is_empty(), "nothing written");
+    }
+
+    #[tokio::test]
+    async fn l2_03_removal_from_a_parent_outside_the_persons_sites_refused() {
+        let db = setup().await;
+        let (node_id, motor, _, _) = motor_and_machines(&db, "L23R").await;
+        let node_id_2 = setup_second_org_node(&db).await;
+        let far_machine = create_test_asset(&db, "L23R-X", node_id_2).await;
+        move_component(&db, motor, Some(far_machine.id), None, None)
+            .await
+            .expect("installed on the other site's machine");
+        let only_first_site = AccessScope::Subtrees([node_id].into_iter().collect());
+
+        let err = move_component_in_scope(&db, motor, None, &only_first_site)
+            .await
+            .expect_err("current parent on another site");
+        assert_eq!(scope_code(err), "SCOPE_OUTSIDE_SITE");
+        let rows = hierarchy_rows(&db, motor).await;
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].2.is_none(), "the relation stays active");
+    }
+
+    #[tokio::test]
+    async fn l2_03_component_without_site_refused_to_a_site_user() {
+        let db = setup().await;
+        let (node_id, motor, a, _) = motor_and_machines(&db, "L23W").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = NULL WHERE id = ?",
+            [motor.into()],
+        ))
+        .await
+        .expect("no site");
+        let only_first_site = AccessScope::Subtrees([node_id].into_iter().collect());
+
+        let err = move_component_in_scope(&db, motor, Some(a), &only_first_site)
+            .await
+            .expect_err("component without site");
+        assert_eq!(scope_code(err), "SCOPE_RECORD_WITHOUT_SITE");
+    }
+
+    #[tokio::test]
+    async fn l2_03_retired_component_refused() {
+        let db = setup().await;
+        let (_, motor, a, _) = motor_and_machines(&db, "L23T").await;
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&db)
+            .await
+            .expect("status tags");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED' WHERE id = ?",
+            [motor.into()],
+        ))
+        .await
+        .expect("retire motor");
+
+        let err = move_component(&db, motor, Some(a), None, None)
+            .await
+            .expect_err("retired component");
+        assert!(gate_text(err).contains("GATE_ASSET_MOVE_RETIRED"));
+    }
+
+    #[tokio::test]
+    async fn l2_03_component_with_two_active_parents_refused() {
+        let db = setup().await;
+        let (node_id, motor, a, b) = motor_and_machines(&db, "L23K").await;
+        let c = create_test_asset(&db, "L23K-C", node_id).await;
+        for (parent, relation_type) in [(a, "PARENT_CHILD"), (c.id, "INSTALLED_IN")] {
+            hierarchy::link_asset_hierarchy(
+                &db,
+                LinkAssetPayload {
+                    parent_asset_id: parent,
+                    child_asset_id: motor,
+                    relation_type: relation_type.into(),
+                    effective_from: None,
+                },
+                1,
+            )
+            .await
+            .expect("link");
+        }
+
+        let err = move_component(&db, motor, Some(b), None, None)
+            .await
+            .expect_err("two parents");
+        let text = gate_text(err);
+        assert!(text.contains("GATE_ASSET_MOVE_SEVERAL_PARENTS:count=2"), "{text}");
+        let rows = hierarchy_rows(&db, motor).await;
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.2.is_none()), "both relations stay active");
+    }
+
+    #[tokio::test]
+    async fn l2_03_reinstall_before_the_last_removal_refused() {
+        let db = setup().await;
+        let (_, motor, a, b) = motor_and_machines(&db, "L23B").await;
+        move_component(&db, motor, Some(a), Some(days_ago(10)), None)
+            .await
+            .expect("install");
+        move_component(&db, motor, None, Some(days_ago(3)), None)
+            .await
+            .expect("removal");
+
+        let err = move_component(&db, motor, Some(b), Some(days_ago(5)), None)
+            .await
+            .expect_err("reinstall before the removal");
+        let text = gate_text(err);
+        assert!(text.contains("GATE_ASSET_MOVE_DATE_BEFORE_REMOVAL"), "{text}");
+        assert!(text.contains(&format!("removed_on={}", days_ago(3))), "{text}");
+
+        // The removal day itself is accepted, not stamped before the removal.
+        let reinstalled = move_component(&db, motor, Some(b), Some(days_ago(3)), None)
+            .await
+            .expect("reinstall on the removal day");
+        let rows = hierarchy_rows(&db, motor).await;
+        assert_eq!(
+            reinstalled.new_relation.and_then(|r| r.effective_from),
+            rows[0].2,
+            "starts when the last relation ended"
+        );
+    }
 }

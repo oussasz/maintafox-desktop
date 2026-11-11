@@ -542,17 +542,28 @@ async fn move_asset_component_in(
         .map(|t| format!("'{t}'"))
         .collect::<Vec<_>>()
         .join(", ");
-    let current = txn
-        .query_one(Statement::from_sql_and_values(
+    let active = txn
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
-                "SELECT id, parent_equipment_id, child_equipment_id, relationship_type, effective_from, effective_to FROM equipment_hierarchy WHERE child_equipment_id = ? AND effective_to IS NULL AND relationship_type IN ({types_sql}) ORDER BY id LIMIT 1"
+                "SELECT id, parent_equipment_id, child_equipment_id, relationship_type, effective_from, effective_to FROM equipment_hierarchy WHERE child_equipment_id = ? AND effective_to IS NULL AND relationship_type IN ({types_sql}) ORDER BY id"
             ),
             [asset_id.into()],
         ))
         .await?
-        .map(|row| map_hierarchy_row(&row))
-        .transpose()?;
+        .iter()
+        .map(map_hierarchy_row)
+        .collect::<AppResult<Vec<_>>>()?;
+    // One parent per type is allowed by a link, so a component can be under two parents at once
+    // (one per single-parent type): which one it leaves is then not known, the move is refused.
+    if active.len() > 1 {
+        let count = active.len();
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_ASSET_MOVE_SEVERAL_PARENTS:count={count}: Le composant a {count} parents actifs ; \
+             dissociez-en d'abord un dans la structure."
+        )]));
+    }
+    let current = active.into_iter().next();
     let from_parent = current.as_ref().map(|r| r.parent_asset_id);
 
     if from_parent == payload.new_parent_asset_id {
@@ -567,6 +578,37 @@ async fn move_asset_component_in(
     } else {
         date.and_hms_opt(0, 0, 0).expect("midnight exists").and_utc()
     };
+    // Not before the component's last removal: its history of parents never overlaps.
+    let last_removal: Option<String> = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT MAX(effective_to) AS last_to FROM equipment_hierarchy WHERE child_equipment_id = ? AND effective_to IS NOT NULL AND relationship_type IN ({types_sql})"
+            ),
+            [asset_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<Option<String>>("", "last_to"))
+        .transpose()
+        .map_err(|e| decode_err("last_to", e))?
+        .flatten();
+    if let Some(removed_at) = last_removal.as_deref() {
+        let removed_on = removed_at.get(..10).unwrap_or(removed_at);
+        if let Ok(removed_date) = chrono::NaiveDate::parse_from_str(removed_on, "%Y-%m-%d") {
+            if date < removed_date {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "GATE_ASSET_MOVE_DATE_BEFORE_REMOVAL:removed_on={removed_date}: La date d'effet {date} \
+                     précède la dernière dépose du composant, le {removed_date}."
+                )]));
+            }
+        }
+        // Same day as the last removal: the new installation is not stamped before it.
+        if let Some(removed) = parse_rfc3339_utc(removed_at) {
+            if effective_at < removed {
+                effective_at = removed;
+            }
+        }
+    }
     if let Some(cur) = &current {
         let parent = move_asset_state(txn, cur.parent_asset_id).await?;
         check_anchor(txn, scope, permission, Anchor::of(parent.node_id)).await?;
