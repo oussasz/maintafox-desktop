@@ -5859,6 +5859,11 @@ export interface WoDepannageResult {
 }
 
 /** Changes the "Panne constatée à" of a dépannage until it is closed (audited). */
+/** "Rejoindre" a work order in progress or on hold (`join_wo`): one's own labour starts now. */
+export interface WoJoinInput {
+  wo_id: number;
+}
+
 export interface WoBreakdownAtInput {
   wo_id: number;
   expected_row_version: number;

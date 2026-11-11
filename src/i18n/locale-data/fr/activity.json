@@ -243,6 +243,7 @@
       "wo__emergency_reassigned": "OT réaffecté en urgence",
       "wo__depannage_started": "OT dépannage créé et démarré",
       "wo__depannage_waiting_permit": "OT dépannage créé, en attente de permis",
+      "wo__joined": "OT rejoint (main-d'œuvre démarrée)",
       "wo__breakdown_at_changed": "Date de constat de la panne modifiée",
       "wo__started": "Travaux de l'OT démarrés",
       "wo__paused": "OT mis en pause",

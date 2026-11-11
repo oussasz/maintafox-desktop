@@ -925,6 +925,7 @@ pub fn run() {
         commands::wo::emergency_reassign_wo,
         commands::wo::start_depannage_wo,
         commands::wo::set_wo_breakdown_at,
+        commands::wo::join_wo,
         commands::wo::start_wo,
         commands::wo::pause_wo,
         commands::wo::resume_wo,

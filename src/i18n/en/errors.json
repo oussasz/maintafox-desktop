@@ -280,6 +280,7 @@
     "GATE_WO_DEPANNAGE_TYPE_NOT_CORRECTIVE": "Breakdown work order refused: work order type \"{{type}}\" is not corrective. A breakdown is a corrective work order: choose a type of corrective nature.",
     "GATE_WO_DEPANNAGE_ASSIGNEE_UNKNOWN": "Breakdown work order refused: the person chosen to do the work has no active account. Choose another technician.",
     "GATE_WO_DEPANNAGE_NOT_A_DEPANNAGE": "Change refused: this work order is not a breakdown, it has no breakdown time.",
+    "GATE_WO_JOIN_ALREADY_ON_IT": "You already have labour running on this work order: close it before joining again.",
     "GATE_WO_DEPANNAGE_CLOSED": "Change refused: the breakdown time can no longer be changed when the work order is \"$t(ot:status.{{status}})\".",
     "GATE_RECORD_CHANGED_ELSEWHERE": "This record was changed in the meantime by someone else or on another PC. Reload it, then make your change again.",
     "GATE_FIN_CC_OWN_PARENT": "A cost centre cannot be its own parent.",

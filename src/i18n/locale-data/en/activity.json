@@ -243,6 +243,7 @@
       "wo__emergency_reassigned": "Work order emergency reassigned",
       "wo__depannage_started": "Breakdown work order created and started",
       "wo__depannage_waiting_permit": "Breakdown work order created, waiting for its permit",
+      "wo__joined": "Work order joined (own labour started)",
       "wo__breakdown_at_changed": "Breakdown time changed",
       "wo__started": "Work order started",
       "wo__paused": "Work order paused",
