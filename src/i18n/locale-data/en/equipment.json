@@ -838,7 +838,9 @@
     "categoryRequired": "Choose the category the document goes under.",
     "file": "File",
     "tooBig": "The file is larger than {{mb}} MB.",
-    "docTitle": "Title"
+    "docTitle": "Title",
+    "onWoTitle": "Equipment documents — {{asset}}",
+    "onWoHint": "Manuals, procedures and certificates of this equipment, from the document library. To add one, open the equipment, Documents tab."
   },
   "critMethod": {
     "title": "Criticality assessment",
