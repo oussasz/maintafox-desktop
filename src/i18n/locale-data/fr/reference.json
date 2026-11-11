@@ -423,6 +423,7 @@
     "WORK_FAILURE_CAUSES": "Causes de défaillance",
     "WORK_FAILURE_EFFECTS": "Effets de défaillance",
     "WORK_FAILURE_MECHANISMS": "Mécanismes de défaillance",
+    "WORK_FAILURE_REMEDIES": "Remèdes / actions correctives",
     "WORK_FAILURE_MODES": "Modes de défaillance",
     "WORK_MAINTENANCE_NATURES": "Natures de maintenance",
     "WORK_ORDER_SUBTYPES": "Types de travaux (sous-types d'OT)",

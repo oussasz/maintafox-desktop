@@ -423,6 +423,7 @@
     "WORK_FAILURE_CAUSES": "Failure causes",
     "WORK_FAILURE_EFFECTS": "Failure effects",
     "WORK_FAILURE_MECHANISMS": "Failure mechanisms",
+    "WORK_FAILURE_REMEDIES": "Remedies / corrective actions",
     "WORK_FAILURE_MODES": "Failure modes",
     "WORK_MAINTENANCE_NATURES": "Maintenance natures",
     "WORK_ORDER_SUBTYPES": "Types of work (work-order sub-types)",
