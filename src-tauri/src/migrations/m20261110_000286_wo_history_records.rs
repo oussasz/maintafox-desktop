@@ -27,7 +27,7 @@ impl MigrationTrait for Migration {
             "CREATE TABLE IF NOT EXISTS wo_history_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                 entity_sync_id TEXT NOT NULL UNIQUE,
-                import_ref TEXT NOT NULL UNIQUE,
+                import_ref TEXT NOT NULL,
                 equipment_id INTEGER NOT NULL REFERENCES equipment(id),
                 type_id INTEGER NOT NULL REFERENCES reference_values(id),
                 is_failure INTEGER NOT NULL DEFAULT 0 CHECK (is_failure IN (0, 1)),
@@ -54,7 +54,8 @@ impl MigrationTrait for Migration {
                 coded_at TEXT NULL,
                 row_version INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                UNIQUE (import_ref, equipment_id)
             )",
         )
         .await?;
@@ -108,6 +109,37 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .get_connection()
+            .execute_unprepared("DROP VIEW IF EXISTS v_cost_of_failure")
+            .await?;
+        // The view as migration 82 created it (work orders only).
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "CREATE VIEW v_cost_of_failure AS
+             SELECT
+               fe.equipment_id AS equipment_id,
+               strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at)) AS period,
+               SUM(
+                 COALESCE(wo.downtime_hours, fe.downtime_duration_hours, 0) * (
+                   CASE WHEN COALESCE(wo.actual_duration_hours, 0) > 0
+                     THEN wo.labor_cost / wo.actual_duration_hours
+                     ELSE 0 END
+                 )
+               ) AS total_downtime_cost,
+               SUM(COALESCE(wo.total_cost, 0)) AS total_corrective_cost,
+               COALESCE(
+                 (SELECT bv.currency_code FROM budget_versions bv ORDER BY bv.id DESC LIMIT 1),
+                 'USD'
+               ) AS currency_code
+             FROM failure_events fe
+             LEFT JOIN work_orders wo ON fe.source_type = 'work_order' AND fe.source_id = wo.id
+             WHERE fe.equipment_id IS NOT NULL
+               AND strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at)) IS NOT NULL
+             GROUP BY fe.equipment_id, strftime('%Y-%m', COALESCE(fe.failed_at, fe.detected_at, wo.closed_at))",
+            )
+            .await?;
         manager
             .get_connection()
             .execute_unprepared("DROP TABLE IF EXISTS wo_history_records")

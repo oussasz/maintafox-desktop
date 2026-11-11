@@ -236,7 +236,7 @@ pub async fn get_asset_maintenance_profile(
             format!(
                 "SELECT t.semantic_tag AS nature_code, h.is_failure, \
                     COALESCE(h.downtime_hours, 0.0) AS downtime_hours, \
-                    COALESCE(h.detected_at, h.stopped_at, h.started_at) AS failure_at, \
+                    COALESCE(h.stopped_at, h.detected_at, h.started_at) AS failure_at, \
                     h.ended_at AS cost_at, \
                     COALESCE(h.labor_cost, 0.0) AS labor_cost, COALESCE(h.parts_cost, 0.0) AS parts_cost, \
                     COALESCE(h.service_cost, 0.0) AS service_cost \

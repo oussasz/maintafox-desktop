@@ -248,6 +248,48 @@ mod tests {
             .expect("id")
     }
 
+    #[tokio::test]
+    async fn two_sites_may_reuse_a_number_and_a_line_has_one_identity_everywhere() {
+        let (db, _, n) = setup().await;
+        let file = format!(
+            "{HEADER}\n\
+             OT-1001;EQ-A;{n};non;01/01/2025;01/01/2025;;;;;;;;;;;;;;;;\n\
+             OT-1001;EQ-B;{n};non;02/01/2025;02/01/2025;;;;;;;;;;;;;;;;\n"
+        );
+        let (rows, res) = run(&db, &file, 1).await;
+        assert_eq!(rows, vec![("create".to_string(), vec![]), ("create".to_string(), vec![])]);
+        assert_eq!((res.created, res.failed), (2, 0));
+        // Imported again: both are there already.
+        let (rows, _) = run(&db, &file, 1).await;
+        assert!(rows.iter().all(|(a, m)| a == "skip" && m == &["HISTORY_IMPORT_EXISTS".to_string()]));
+        // Its sync id derives from the equipment and the n°: another PC importing the same line
+        // makes the same row.
+        let expected = {
+            let eq: String = db
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT entity_sync_id FROM equipment WHERE asset_id_code = 'EQ-A'".to_string(),
+                ))
+                .await
+                .expect("query")
+                .expect("row")
+                .try_get("", "entity_sync_id")
+                .expect("id");
+            crate::sync::identity::derived_entity_sync_id("wo_history_records", &format!("{eq}|OT-1001"))
+        };
+        assert_eq!(
+            count(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) AS n FROM wo_history_records h JOIN equipment e ON e.id = h.equipment_id \
+                     WHERE e.asset_id_code = 'EQ-A' AND h.entity_sync_id = '{expected}'"
+                ),
+            )
+            .await,
+            1
+        );
+    }
+
     async fn access(db: &DatabaseConnection, user_id: i32) -> crate::auth::scope::AccessMap {
         let cache = tokio::sync::RwLock::new(crate::rbac::cache::PermissionCache::default());
         crate::auth::scope::access_map_cached(db, &cache, user_id)

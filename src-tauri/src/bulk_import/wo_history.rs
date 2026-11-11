@@ -6,7 +6,8 @@
 //! it with the live work orders.
 //!
 //! Rules (Advisor rulings Q1–Q6):
-//! - the n° OT d'origine is the key: one already loaded is skipped, never changed;
+//! - the n° OT d'origine on its equipment is the key (two sites may reuse a number): one already
+//!   loaded is skipped, never changed;
 //! - début and fin des travaux are required, fin not before début, no date in the future;
 //! - an unknown nature or failure code is an error (reference data rule); an unknown intervener
 //!   matricule is kept as text with a warning (leavers);
@@ -144,17 +145,20 @@ async fn lists(db: &DatabaseConnection) -> AppResult<Lists> {
     })
 }
 
-/// History n° already loaded (upper case).
-async fn loaded_refs(db: &impl ConnectionTrait) -> AppResult<HashSet<String>> {
+/// History n° already loaded (upper case), with their equipment.
+async fn loaded_refs(db: &impl ConnectionTrait) -> AppResult<HashSet<(String, i64)>> {
     let mut out = HashSet::new();
     for r in db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT import_ref FROM wo_history_records".to_string(),
+            "SELECT import_ref, equipment_id FROM wo_history_records".to_string(),
         ))
         .await?
     {
-        out.insert(r.try_get::<String>("", "import_ref")?);
+        out.insert((
+            r.try_get::<String>("", "import_ref")?,
+            r.try_get::<i64>("", "equipment_id")?,
+        ));
     }
     Ok(out)
 }
@@ -531,24 +535,27 @@ pub async fn validate(
     let loaded = loaded_refs(db).await?;
     let now = now();
     let mut right_of: HashMap<i64, bool> = HashMap::new();
-    let mut first_row_of: HashMap<String, usize> = HashMap::new();
+    let mut first_row_of: HashMap<(String, String), usize> = HashMap::new();
     let mut out = Vec::new();
     for (i, raw) in rows.iter().enumerate() {
         let mut messages = Vec::new();
         let import_ref = normalize_ref(&cell(raw, "import_ref"));
+        let equipment_key = key(&cell(raw, "equipment_code"));
         if !import_ref.is_empty() {
-            if let Some(f) = first_row_of.get(&import_ref) {
+            let line_key = (import_ref.clone(), equipment_key.clone());
+            let equipment_id = l.equipment.0.get(&equipment_key).copied();
+            if let Some(f) = first_row_of.get(&line_key) {
                 err(
                     &mut messages,
                     "HISTORY_IMPORT_DUPLICATE",
                     format!(
-                        "L'intervention « {import_ref} » apparaît déjà à la ligne {} du fichier.",
+                        "L'intervention « {import_ref} » de cet équipement apparaît déjà à la ligne {} du fichier.",
                         f + 2
                     ),
                 );
             } else {
-                first_row_of.insert(import_ref.clone(), i);
-                if loaded.contains(&import_ref) {
+                first_row_of.insert(line_key, i);
+                if equipment_id.is_some_and(|id| loaded.contains(&(import_ref.clone(), id))) {
                     messages.push(RowMessage::warning(
                         "HISTORY_IMPORT_EXISTS",
                         format!("L'intervention « {import_ref} » est déjà importée : elle n'est pas modifiée."),
@@ -602,6 +609,21 @@ fn fail(row: &StagedRow, message: impl Into<String>) -> RowApplied {
 async fn store(db: &DatabaseConnection, r: &Record, user_id: i32) -> AppResult<()> {
     let ts = crate::clock::now().to_rfc3339();
     let tx = db.begin().await?;
+    // The same line imported on two PCs before they sync is one record (and one failure event),
+    // never a clash: both ids derive from the equipment and the n° OT d'origine.
+    let equipment_sync_id: String = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_sync_id FROM equipment WHERE id = ?",
+            [r.equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("history record equipment missing")))?
+        .try_get("", "entity_sync_id")?;
+    let record_sync_id = crate::sync::identity::derived_entity_sync_id(
+        "wo_history_records",
+        &format!("{equipment_sync_id}|{}", r.import_ref),
+    );
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO wo_history_records (entity_sync_id, import_ref, equipment_id, type_id, is_failure, \
@@ -611,7 +633,7 @@ async fn store(db: &DatabaseConnection, r: &Record, user_id: i32) -> AppResult<(
          created_at, updated_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
-            crate::sync::identity::new_entity_sync_id().into(),
+            record_sync_id.clone().into(),
             r.import_ref.clone().into(),
             r.equipment_id.into(),
             r.type_id.into(),
@@ -644,8 +666,8 @@ async fn store(db: &DatabaseConnection, r: &Record, user_id: i32) -> AppResult<(
         let id: i64 = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id FROM wo_history_records WHERE import_ref = ?",
-                [r.import_ref.clone().into()],
+                "SELECT id FROM wo_history_records WHERE entity_sync_id = ?",
+                [record_sync_id.clone().into()],
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("history record missing after insert")))?
@@ -666,7 +688,8 @@ async fn store(db: &DatabaseConnection, r: &Record, user_id: i32) -> AppResult<(
              VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, NULL, 0, NULL, NULL, ?, \
              'recorded', '{}', 1, ?, ?)",
             [
-                format!("failure_event:{}", uuid::Uuid::new_v4()).into(),
+                crate::sync::identity::derived_entity_sync_id("failure_events", &format!("history:{record_sync_id}"))
+                    .into(),
                 HISTORY_FAILURE_SOURCE.into(),
                 id.into(),
                 r.equipment_id.into(),
@@ -737,7 +760,8 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
                 continue;
             }
         }
-        if loaded.contains(&record.import_ref) {
+        let loaded_key = (record.import_ref.clone(), record.equipment_id);
+        if loaded.contains(&loaded_key) {
             out.push(fail(
                 row,
                 format!("L'intervention « {} » a été importée entre-temps.", record.import_ref),
@@ -746,7 +770,7 @@ pub async fn apply(db: &DatabaseConnection, rows: &[StagedRow], user_id: i32) ->
         }
         match store(db, &record, user_id).await {
             Ok(()) => {
-                loaded.insert(record.import_ref.clone());
+                loaded.insert(loaded_key);
                 out.push(RowApplied {
                     row_id: row.id,
                     status: "created",
@@ -963,8 +987,11 @@ pub async fn save_coding(
         ),
     ];
     let mut errors = Vec::new();
+    // The coding replaced, kept in the audit event (also what its failure event carried).
+    let mut before = serde_json::Map::new();
     for (domain, value, column, label) in checks {
         let current: Option<i64> = row.try_get("", column)?;
+        before.insert(column.to_string(), json!(current));
         if !coding_value_ok(&tx, domain, value, current).await? {
             errors.push(format!("{label} : valeur absente de la liste active « {domain} »."));
         }
@@ -1018,6 +1045,7 @@ pub async fn save_coding(
         "failure_mechanism_id": input.failure_mechanism_id,
         "detection_method_id": input.detection_method_id,
         "failure_effect_id": input.failure_effect_id,
+        "before": before,
     })
     .to_string();
     crate::audit::emit_in(
