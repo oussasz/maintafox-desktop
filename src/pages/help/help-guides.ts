@@ -1,3 +1,5 @@
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
+
 /**
  * Registry of the in-app module guides. Texts live in the `help` i18n namespace
  * (`modules.<id>.title|purpose|step1..stepN`).
@@ -12,6 +14,8 @@ export interface HelpGuide {
   navKey?: string;
   /** Where "Ouvrir le module" goes; defaults to the nav entry path. */
   path?: string;
+  /** Extra right needed on top of the nav entry (the target screen part is gated by it). */
+  requiredPermission?: PermissionName;
   /** Number of `stepN` texts in the locale file. */
   steps: number;
 }
@@ -31,7 +35,13 @@ export const HELP_GUIDES: HelpGuide[] = [
   { id: "analytics", navKey: "analytics", steps: 3 },
   { id: "admin", navKey: "admin", steps: 3 },
   { id: "lookups", navKey: "lookups", steps: 3 },
-  // Sync status lives in Settings, which every signed-in user can open.
-  { id: "sync", navKey: "settings", path: "/settings?tab=integrations", steps: 3 },
+  // The Settings tab "Système & Sync" only shows with the settings right.
+  {
+    id: "sync",
+    navKey: "settings",
+    path: "/settings?tab=integrations",
+    requiredPermission: P.ADM_SETTINGS,
+    steps: 3,
+  },
   { id: "documentation", navKey: "documentation", steps: 4 },
 ];

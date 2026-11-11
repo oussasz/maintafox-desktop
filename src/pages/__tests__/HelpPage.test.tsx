@@ -61,8 +61,14 @@ describe("HelpPage", () => {
     expect(screen.queryByTestId("help-guide-admin")).not.toBeInTheDocument();
     expect(screen.queryByTestId("help-guide-documentation")).not.toBeInTheDocument();
     expect(document.querySelector('a[href="/work-orders"]')).toBeNull();
+    expect(screen.queryByTestId("help-guide-sync")).not.toBeInTheDocument();
     // Always-open guides stay.
     expect(screen.getByTestId("help-guide-dashboard")).toBeInTheDocument();
+  });
+
+  it("lists the sync guide only with the settings right", () => {
+    mockCan.mockImplementation((p) => p === P.ADM_SETTINGS);
+    renderPage();
     expect(screen.getByTestId("help-guide-sync")).toBeInTheDocument();
   });
 

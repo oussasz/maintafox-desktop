@@ -5,7 +5,7 @@
     "searchLabel": "Rechercher dans l'aide",
     "searchPlaceholder": "Rechercher un module ou une étape…",
     "noResults": "Aucun guide ne correspond à votre recherche.",
-    "purposeLabel": "À quoi ça sert",
+    "purposeLabel": "À quoi ça sert :",
     "stepsLabel": "Premiers pas",
     "open": "Ouvrir le module",
     "modulesTitle": "Guides par module",
@@ -24,7 +24,7 @@
     "rolesTitle": "Rôles et droits",
     "roles": "Ce que vous voyez dépend de votre rôle. Un module absent du menu n'est pas accessible avec votre rôle : demandez à un administrateur de l'ajouter si vous en avez besoin.",
     "syncTitle": "Synchronisation",
-    "sync": "Maintafox fonctionne aussi sans connexion : vos saisies sont enregistrées sur l'appareil, puis envoyées dès que la connexion revient. L'état de la synchronisation s'affiche dans la barre du haut et dans Paramètres › Système & Sync.",
+    "sync": "Maintafox fonctionne aussi sans connexion : vos saisies sont enregistrées sur l'appareil, puis envoyées dès que la connexion revient. L'indicateur de synchronisation de la barre du haut est visible par tous ; le détail se trouve dans Paramètres › Système & Sync, réservé aux administrateurs.",
     "docsTitle": "Où se trouvent les documents",
     "docs": "Les plans, procédures et manuels de l'usine sont dans la Bibliothèque documentaire, classés par catégorie. Un document peut aussi être lié à un équipement et apparaître sur sa fiche."
   },

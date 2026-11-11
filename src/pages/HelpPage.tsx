@@ -31,6 +31,7 @@ export function HelpPage() {
   const visibleGuides = useMemo(
     () =>
       HELP_GUIDES.filter((guide) => {
+        if (guide.requiredPermission && !can(guide.requiredPermission)) return false;
         const item = guide.navKey ? defaultNavItems.find((i) => i.key === guide.navKey) : undefined;
         if (guide.navKey && !item) return false;
         if (!item) return true;
@@ -102,7 +103,9 @@ export function HelpPage() {
             <p className="text-sm text-text-muted">{t("page.modulesHint")}</p>
           </div>
           {guides.length === 0 ? (
-            <p className="text-sm text-text-muted">{t("page.noResults")}</p>
+            <p role="status" className="text-sm text-text-muted">
+              {t("page.noResults")}
+            </p>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               {guides.map((guide) => {
@@ -121,7 +124,7 @@ export function HelpPage() {
                       {t(`modules.${guide.id}.title` as never)}
                     </h3>
                     <p className="text-sm text-text-secondary">
-                      <span className="font-medium">{t("page.purposeLabel")} : </span>
+                      <span className="font-medium">{t("page.purposeLabel")} </span>
                       {t(`modules.${guide.id}.purpose` as never)}
                     </p>
                     <div>

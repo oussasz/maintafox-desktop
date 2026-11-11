@@ -5,7 +5,7 @@
     "searchLabel": "Search help",
     "searchPlaceholder": "Search for a module or a step…",
     "noResults": "No guide matches your search.",
-    "purposeLabel": "What it is for",
+    "purposeLabel": "What it is for:",
     "stepsLabel": "First steps",
     "open": "Open module",
     "modulesTitle": "Guides by module",
@@ -24,7 +24,7 @@
     "rolesTitle": "Roles and rights",
     "roles": "What you see depends on your role. A module missing from the menu is not available with your role: ask an administrator to add it if you need it.",
     "syncTitle": "Synchronisation",
-    "sync": "Maintafox also works offline: your entries are saved on the device, then sent as soon as the connection is back. Sync status is shown in the top bar and in Settings › System & Sync.",
+    "sync": "Maintafox also works offline: your entries are saved on the device, then sent as soon as the connection is back. The sync indicator in the top bar is visible to everyone; the details are in Settings › System & Sync, reserved for administrators.",
     "docsTitle": "Where documents live",
     "docs": "The plant's drawings, procedures and manuals are in the Document library, sorted by category. A document can also be linked to an asset and appear on its record."
   },
