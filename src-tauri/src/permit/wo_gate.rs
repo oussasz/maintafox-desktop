@@ -39,10 +39,11 @@ pub async fn assert_in_progress_permit_gate_with(
     remaining_hours: Option<f64>,
     at: DateTime<Utc>,
 ) -> AppResult<()> {
+    let requirement = permit_requirement(db, wo_id).await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT requires_permit, planned_end, \
+            "SELECT planned_end, \
              CASE WHEN typeof(expected_duration_hours) IN ('real', 'integer') THEN expected_duration_hours END AS hours_number, \
              CASE typeof(expected_duration_hours) WHEN 'text' THEN expected_duration_hours \
                   WHEN 'blob' THEN 'blob' END AS hours_text \
@@ -54,9 +55,6 @@ pub async fn assert_in_progress_permit_gate_with(
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
-    let requires: i64 = row
-        .try_get("", "requires_permit")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
     let planned_end: Option<String> = row
         .try_get("", "planned_end")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("planned_end decode: {e}")))?;
@@ -72,19 +70,60 @@ pub async fn assert_in_progress_permit_gate_with(
         Some(h) => Hours::Value(h),
         None => Hours::from_text(hours_text.as_deref()),
     };
+    // The work starts or resumes at `at`: the end it must be covered until.
+    let end = work_end(planned_end.as_deref(), &expected, remaining_hours, at);
+    assert_live_permits_ready(db, wo_id, requirement.required, &requirement.permit_types, &end).await
+}
+
+/// What the start gate asks of a work order's permits, read once for the gate and for the paths that
+/// must know beforehand whether a start would wait for a permit (the dépannage, `wo::depannage`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PermitRequirement {
+    /// The work order requires a permit (its flag: set by hand, by a plant rule or by a safety
+    /// request): at least one live permit before it starts.
+    pub required: bool,
+    /// Every permit type it needs a live permit of: the types of its required set
+    /// (`permit::required_set`) not cleared — from its legacy columns alone (a row written before
+    /// migration 279) only while it requires a permit; from its stored set, always. Sorted; empty
+    /// when no rule names a type.
+    pub permit_types: Vec<String>,
+}
+
+impl PermitRequirement {
+    /// A start would be refused until a permit is live: the work order requires one.
+    pub fn needs_permit(&self) -> bool {
+        self.required || !self.permit_types.is_empty()
+    }
+}
+
+/// The [`PermitRequirement`] of work order `wo_id` as stored here (not found when it does not exist).
+pub async fn permit_requirement(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<PermitRequirement> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT requires_permit FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let requires: i64 = row
+        .try_get("", "requires_permit")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
     let required = requires == 1;
     // Every permit type the plant's rules require of it and not cleared. Read from its legacy
     // columns alone (a row written before migration 279), only while it requires a permit, as
-    // before; from its set, always (a set with a type not cleared keeps the permit required).
+    // before; from its set, always (a set with a type not cleared keeps the permit required). A
+    // stored set that does not read is refused (fail-closed, `required_set::read`).
     let set = super::required_set::read(db, wo_id).await?.unwrap_or_default();
-    let required_types = if required || set.stored() {
+    let permit_types = if required || set.stored() {
         set.uncleared_types()
     } else {
         Vec::new()
     };
-    // The work starts or resumes at `at`: the end it must be covered until.
-    let end = work_end(planned_end.as_deref(), &expected, remaining_hours, at);
-    assert_live_permits_ready(db, wo_id, required, &required_types, &end).await
+    Ok(PermitRequirement { required, permit_types })
 }
 
 /// Stable code: a live permit of the work order expires before its planned end.

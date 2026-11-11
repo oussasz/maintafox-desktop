@@ -222,12 +222,26 @@
     "stock_count_second_approval": "Stock count held for a second approval",
     "retired_equipment_work": "Work order on retired equipment",
     "retired_equipment_request": "Request on retired equipment",
-    "wo_part_to_issue": "Work-order part to issue from the store"
+    "wo_part_to_issue": "Work-order part to issue from the store",
+    "wo_depannage_started": "Breakdown work order started or waiting for its permit",
+    "wo_depannage_permit_needed": "Permit to issue — breakdown"
   },
   "messages": {
     "wo_assigned": {
       "title": "Work order {{code}} assigned",
       "body": "{{title}} · responsible: {{assignee}}"
+    },
+    "wo_depannage_started": {
+      "title": "Breakdown work order started — {{code}}",
+      "body": "{{title}} · equipment {{asset}} · breakdown found {{breakdown_at}}"
+    },
+    "wo_depannage_waiting_permit": {
+      "title": "Breakdown work order waiting for its permit — {{code}}",
+      "body": "{{title}} · equipment {{asset}} · breakdown found {{breakdown_at}} · permit: {{permit_types}}"
+    },
+    "wo_depannage_permit_needed": {
+      "title": "Permit to issue — breakdown {{code}}",
+      "body": "{{title}} · equipment {{asset}} · permit: {{permit_types}} · draft: {{drafts}}. Create the permit so the work can start."
     },
     "wo_overdue": {
       "title": "Work order {{code}} overdue",
@@ -525,7 +539,8 @@
       "di_safety_alert": "Always the holders of the request review right (di.review) and of the permit-issue right (ptw.issue) at the request’s site (and plant-wide); when nobody holds them, the responsibles of the request’s node.",
       "insp_anomaly_origin_cancelled": "Always the responsible of the work order raised from the anomaly (or from its request); when there is none, the work order’s planner and the request’s reviewer (else the responsibles of its node).",
       "rel_decision_refused_wo_kept": "Always the planner of the work order created from the decision (else its responsible), or the holders of the PM planning right (pm.edit) for a published plan version, and the person who proposed the decision; when nobody is active here, the holders of the right to approve reliability decisions (ram.manage).",
-      "mobile_phone_enrolled": "Always the holders of the right to manage users (adm.users)."
+      "mobile_phone_enrolled": "Always the holders of the right to manage users (adm.users).",
+      "wo_depannage_permit_needed": "Always the people holding the permit issue right at the work order’s site (and plant-wide); when nobody holds it, the settings administrators."
     },
     "minutes": "min",
     "minutesAfterAlert": "min after the alert",

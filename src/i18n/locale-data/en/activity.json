@@ -240,6 +240,9 @@
       "wo__returned_to_planning": "Work order returned to planning",
       "wo__planning_approved": "Work order planning approved",
       "wo__emergency_reassigned": "Work order emergency reassigned",
+      "wo__depannage_started": "Breakdown work order created and started",
+      "wo__depannage_waiting_permit": "Breakdown work order created, waiting for its permit",
+      "wo__breakdown_at_changed": "Breakdown time changed",
       "wo__started": "Work order started",
       "wo__paused": "Work order paused",
       "wo__resumed": "Work order resumed",
@@ -373,7 +376,9 @@
       "requires_shutdown": "Needs a shutdown",
       "requires_permit": "Permit required",
       "service_cost": "Service cost",
-      "cancel_reason": "Cancellation reason"
+      "cancel_reason": "Cancellation reason",
+      "breakdown_at": "Breakdown found at",
+      "machine_stopped": "Machine stopped"
     },
     "detailKey": {
       "summary": "Summary",

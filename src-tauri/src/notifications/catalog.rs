@@ -157,6 +157,7 @@ pub const FIXED_ROUTING_CATEGORIES: &[&str] = &[
     "insp_anomaly_origin_cancelled",
     "rel_decision_refused_wo_kept",
     "di_safety_alert",
+    "wo_depannage_permit_needed",
 ];
 
 /// Categories that can be neither muted nor re-routed, locally or by synchronisation: always sent
@@ -202,6 +203,9 @@ pub const ALWAYS_DELIVERED: &[(&str, &str)] = &[
     // ptw.hse_approve is planned in L4-03; when it lands it is added to these recipients.
     ("di_safety_alert", "permission:di.review"),
     ("di_safety_alert", "permission:ptw.issue"),
+    // A dépannage waiting for its permit (CMMS Advisor 2026-11-05, `wo::depannage`): the
+    // permit-issue right holders of the work order's site (plant-wide ones included).
+    ("wo_depannage_permit_needed", "permission:ptw.issue"),
 ];
 
 /// The audience of an [`ALWAYS_DELIVERED`] category when its fixed audiences reach nobody here: a
@@ -221,6 +225,8 @@ pub const ALWAYS_DELIVERED_FALLBACK: &[(&str, &str)] = &[
     ("rel_decision_refused_wo_kept", "permission:ram.manage"),
     // Nobody holds either right at the request's site here: the responsibles of its node.
     ("di_safety_alert", "entity_manager"),
+    // Nobody holds the permit-issue right at the dépannage's site: the settings administrators.
+    ("wo_depannage_permit_needed", "permission:adm.settings"),
 ];
 
 /// The fallback audiences of an [`ALWAYS_DELIVERED`] category ([`ALWAYS_DELIVERED_FALLBACK`]).

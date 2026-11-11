@@ -15,10 +15,14 @@ import type {
   WoAssignInput,
   WoBacklogHeatmap,
   WoBacklogHeatmapInput,
+  WoBreakdownAtInput,
   WoCancelInput,
   WoCompletionGate,
   WoCostSummary,
   WoCreateInput,
+  WoDepannageInput,
+  WoDepannageResult,
+  WoDepannageStartResult,
   WoDraftUpdateInput,
   WoEmergencyReassignInput,
   WoEvaluateReadinessInput,
@@ -127,6 +131,12 @@ export const WorkOrderSchema = z.object({
   permit_rule_cleared_at: z.string().nullable(),
   permit_rule_clear_reason: z.string().nullable(),
   permit_from_safety_di: z.boolean().optional(),
+  is_depannage: z.boolean().optional(),
+  breakdown_at: z.string().nullable().optional(),
+  machine_stopped: z.boolean().nullable().optional(),
+  validated_by_id: z.number().nullable().optional(),
+  validated_at: z.string().nullable().optional(),
+  validation_auto_approved: z.boolean().nullable().optional(),
   entity_sync_id: z.string().nullable().optional(),
   closeout_validation_profile_id: z.number().nullable().optional(),
   closeout_validation_passed: z.boolean().optional(),
@@ -200,6 +210,17 @@ export const WorkOrderSchema = z.object({
   source_pm_plan_code: z.string().nullable().optional(),
   source_pm_plan_title: z.string().nullable().optional(),
   source_pm_occurrence_id: z.number().nullable().optional(),
+});
+
+export const WoDepannageResultSchema = z.object({
+  wo: WorkOrderSchema,
+  breakdown_old_warning: z.boolean(),
+});
+
+export const WoDepannageStartResultSchema = WoDepannageResultSchema.extend({
+  outcome: z.enum(["started", "waiting_for_permit"]),
+  required_permit_types: z.array(z.string()),
+  permit_draft_ids: z.array(z.number()),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -631,6 +652,25 @@ export async function approvePlanning(input: WoApprovePlanningInput): Promise<Wo
 }
 
 // â”€â”€ Execution lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/**
+ * Dépannage: creates a corrective work order and starts it at once (draft → in progress), or, when a
+ * permit is needed, leaves it ready and waiting for it (with permit drafts when the user may issue).
+ */
+export async function startDepannageWo(input: WoDepannageInput): Promise<WoDepannageStartResult> {
+  const raw = await invoke<unknown>("start_depannage_wo", { input });
+  return WoDepannageStartResultSchema.parse(raw) as WoDepannageStartResult;
+}
+
+/** Changes the "Panne constatée à" of a dépannage until it is closed. */
+export async function setWoBreakdownAt(input: WoBreakdownAtInput): Promise<WoDepannageResult> {
+  try {
+    const raw = await invoke<unknown>("set_wo_breakdown_at", { input });
+    return WoDepannageResultSchema.parse(raw) as WoDepannageResult;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
 
 export async function startWo(input: WoStartInput): Promise<WorkOrder> {
   try {

@@ -517,6 +517,14 @@ const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     ("work_orders", "site_assigned_by_id", "NULL"),
     ("work_orders", "site_assigned_at", "NULL"),
     ("work_orders", "site_assign_reason", "NULL"),
+    // A generic work order is not a dépannage (its facts are judged on arrival,
+    // `wo::depannage::inbound_depannage_check`) and was never validated after the fact.
+    ("work_orders", "is_depannage", "0"),
+    ("work_orders", "breakdown_at", "NULL"),
+    ("work_orders", "machine_stopped", "NULL"),
+    ("work_orders", "validated_by_id", "NULL"),
+    ("work_orders", "validated_at", "NULL"),
+    ("work_orders", "validation_auto_approved", "NULL"),
     // A generic request is not flagged "sécurité": its generic work order carries no safety origin
     // (migration 255, judged on arrival).
     ("intervention_requests", "safety_flag", "0"),

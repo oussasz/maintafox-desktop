@@ -20,7 +20,7 @@ use tokio::sync::RwLock;
 use crate::auth::scope::{self, AccessMap, AccessScope, Anchor};
 use crate::errors::{AppError, AppResult};
 use crate::rbac::cache::PermissionCache;
-use crate::rbac::permissions::OT_CREATE;
+use crate::rbac::permissions::{OT_CREATE, OT_EDIT, OT_EMERGENCY_ASSIGN};
 
 /// The anchor column of a work order (alias `wo`).
 pub const WO_ANCHOR_SQL: &str = "wo.entity_id";
@@ -305,6 +305,37 @@ pub async fn check_create_at(
     Ok(())
 }
 
+/// The dépannage (`wo::depannage`, CMMS Advisor decision 2026-11-04) creates a work order and starts
+/// it: `ot.create` as [`check_create_at`] and `ot.edit` at the same node (the new work order's, and
+/// its equipment's when that is another one). Assigning it to someone else than the user also needs
+/// `ot.emergency_assign` there; assigned to themself, it does not.
+pub async fn check_depannage_at(
+    db: &impl ConnectionTrait,
+    map: &AccessMap,
+    entity_id: Option<i64>,
+    equipment_id: Option<i64>,
+    assigned_to_other: bool,
+) -> AppResult<()> {
+    check_create_at(db, map, entity_id, equipment_id).await?;
+    let node = new_wo_node(db, entity_id, equipment_id).await?;
+    let eq_node = match equipment_id.filter(|&e| e > 0) {
+        Some(eq) => equipment_node(db, eq).await?,
+        None => None,
+    };
+    let mut permissions = vec![OT_EDIT];
+    if assigned_to_other {
+        permissions.push(OT_EMERGENCY_ASSIGN);
+    }
+    for permission in permissions {
+        let scope = check_anywhere(map, permission)?;
+        scope::check_anchor(db, &scope, permission, Anchor::of(node)).await?;
+        if eq_node.is_some() && eq_node != node {
+            scope::check_anchor(db, &scope, permission, Anchor::of(eq_node)).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Rule §2.7: `permission` on the work order, and — when the equipment changes — at the new
 /// equipment's installed node too (equipment not installed anywhere: plant-wide users only).
 pub async fn check_equipment_change(
@@ -409,6 +440,31 @@ pub async fn require_create_at(
 ) -> AppResult<()> {
     check_create_at(db, &access_map(db, cache, user_id).await?, entity_id, equipment_id).await?;
     enforce(db, user_id, OT_CREATE).await
+}
+
+/// [`check_depannage_at`], then entitlement and licence for each right it needs.
+pub async fn require_depannage_at(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    entity_id: Option<i64>,
+    equipment_id: Option<i64>,
+    assigned_to_other: bool,
+) -> AppResult<()> {
+    check_depannage_at(
+        db,
+        &access_map(db, cache, user_id).await?,
+        entity_id,
+        equipment_id,
+        assigned_to_other,
+    )
+    .await?;
+    enforce(db, user_id, OT_CREATE).await?;
+    enforce(db, user_id, OT_EDIT).await?;
+    if assigned_to_other {
+        enforce(db, user_id, OT_EMERGENCY_ASSIGN).await?;
+    }
+    Ok(())
 }
 
 /// [`check_equipment_change`], then entitlement and licence.

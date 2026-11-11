@@ -193,6 +193,24 @@ pub struct WorkOrder {
     /// (migration 255): cleared like a rule flag, never by the general edit.
     #[serde(default)]
     pub permit_from_safety_di: bool,
+    /// Created and started by the dépannage path (`wo::depannage`, migration 277): unscheduled,
+    /// planning validated after the fact.
+    #[serde(default)]
+    pub is_depannage: bool,
+    /// "Panne constatée à" (UTC): when the breakdown was found; set on a dépannage.
+    #[serde(default)]
+    pub breakdown_at: Option<String>,
+    /// "Machine arrêtée": set on a dépannage (no default).
+    #[serde(default)]
+    pub machine_stopped: Option<bool>,
+    /// After-the-fact validation of a dépannage: who validated it and when, or that it was
+    /// approved automatically. Empty until validated.
+    #[serde(default)]
+    pub validated_by_id: Option<i64>,
+    #[serde(default)]
+    pub validated_at: Option<String>,
+    #[serde(default)]
+    pub validation_auto_approved: Option<bool>,
     pub entity_sync_id: Option<String>,
     pub closeout_validation_profile_id: Option<i64>,
     pub closeout_validation_passed: bool,
@@ -593,6 +611,27 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "permit_from_safety_di")
             .map_err(|e| decode_err("permit_from_safety_di", e))?
             != 0,
+        is_depannage: row
+            .try_get::<i64>("", "is_depannage")
+            .map_err(|e| decode_err("is_depannage", e))?
+            != 0,
+        breakdown_at: row
+            .try_get::<Option<String>>("", "breakdown_at")
+            .map_err(|e| decode_err("breakdown_at", e))?,
+        machine_stopped: row
+            .try_get::<Option<i64>>("", "machine_stopped")
+            .map_err(|e| decode_err("machine_stopped", e))?
+            .map(|v| v != 0),
+        validated_by_id: row
+            .try_get::<Option<i64>>("", "validated_by_id")
+            .map_err(|e| decode_err("validated_by_id", e))?,
+        validated_at: row
+            .try_get::<Option<String>>("", "validated_at")
+            .map_err(|e| decode_err("validated_at", e))?,
+        validation_auto_approved: row
+            .try_get::<Option<i64>>("", "validation_auto_approved")
+            .map_err(|e| decode_err("validation_auto_approved", e))?
+            .map(|v| v != 0),
         entity_sync_id: row
             .try_get::<Option<String>>("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,

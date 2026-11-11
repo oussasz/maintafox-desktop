@@ -862,6 +862,7 @@
     "title": "Work order history",
     "permitRequired": "Permit / lockout now required",
     "permitNotRequired": "Permit / lockout no longer required",
+    "originDepannage": "Origin: breakdown",
     "actions": {
       "task_reopened": "Task reopened",
       "labor_closed_by_cancellation": "Open labour closed by the cancellation",

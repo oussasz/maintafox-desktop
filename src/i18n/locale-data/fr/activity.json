@@ -240,6 +240,9 @@
       "wo__returned_to_planning": "OT renvoyé en planification",
       "wo__planning_approved": "Planification de l'OT approuvée",
       "wo__emergency_reassigned": "OT réaffecté en urgence",
+      "wo__depannage_started": "OT dépannage créé et démarré",
+      "wo__depannage_waiting_permit": "OT dépannage créé, en attente de permis",
+      "wo__breakdown_at_changed": "Date de constat de la panne modifiée",
       "wo__started": "Travaux de l'OT démarrés",
       "wo__paused": "OT mis en pause",
       "wo__resumed": "OT repris",
@@ -373,7 +376,9 @@
       "requires_shutdown": "Nécessite un arrêt",
       "requires_permit": "Permis exigé",
       "service_cost": "Coût de prestation",
-      "cancel_reason": "Motif d'annulation"
+      "cancel_reason": "Motif d'annulation",
+      "breakdown_at": "Panne constatée à",
+      "machine_stopped": "Machine arrêtée"
     },
     "detailKey": {
       "summary": "Résumé",
