@@ -1499,6 +1499,18 @@ export interface SupportBundle {
 
 // â”€â”€â”€ Backup & Restore â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Where scheduled backups go and the last copy outside this PC (L7-03). */
+export interface BackupOverview {
+  external_dir: string | null;
+  external_reachable: boolean;
+  app_backup_dir: string;
+  last_success_at: string | null;
+  last_outside_at: string | null;
+  last_outside_path: string | null;
+  outside_copy_missing_or_old: boolean;
+  outside_copy_max_age_days: number;
+}
+
 export interface BackupRunRecord {
   id: number;
   trigger: string;

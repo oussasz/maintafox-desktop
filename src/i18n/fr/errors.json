@@ -80,6 +80,11 @@
   },
   "gateError": {
     "GATE_WO_HISTORY_CODING_VALUE": "Codification refusée : une valeur choisie n'est plus dans sa liste active (Données de référence). Rechargez la fiche et choisissez une valeur de la liste.",
+    "GATE_BACKUP_DIR_NOT_ABSOLUTE": "Dossier refus\u00e9 : choisissez un dossier complet, avec son lecteur ou son partage r\u00e9seau.",
+    "GATE_BACKUP_DIR_UNREACHABLE": "Dossier refus\u00e9 : il est introuvable ou inaccessible (disque d\u00e9branch\u00e9, r\u00e9seau coup\u00e9 ?).",
+    "GATE_BACKUP_DIR_NOT_FOLDER": "Dossier refus\u00e9 : ce chemin n'est pas un dossier.",
+    "GATE_BACKUP_DIR_SAME_DISK": "Dossier refus\u00e9 : il est sur le disque de l'application et dispara\u00eetrait avec le PC. Choisissez un autre disque physique (pas une autre partition du m\u00eame disque), une cl\u00e9 USB ou un dossier r\u00e9seau.",
+    "GATE_BACKUP_DIR_NOT_WRITABLE": "Dossier refus\u00e9 : Maintafox ne peut pas y \u00e9crire. V\u00e9rifiez les droits sur ce dossier.",
     "GATE_INV_LOOKUP": "Valeur refusée : une valeur de référence de l'article (unité, criticité, type de stockage ou catégorie fiscale) n'est pas acceptée. Vérifiez-la dans les Données de référence.",
     "GATE_UNIT": "Unité refusée : vérifiez-la dans les Données de référence.",
     "GATE_NOTIFICATION_ACK_REQUIRED": "Prenez connaissance de cet avis de sécurité avant de le masquer.",
