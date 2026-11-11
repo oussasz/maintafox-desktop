@@ -1101,6 +1101,8 @@
     "GATE_LIB_DOC_EMPTY": "Document refusé : le fichier est vide. Choisissez un fichier qui contient des données.",
     "GATE_LIB_DOC_TOO_LARGE": "Document refusé : le fichier dépasse la limite de {{max_mb}} Mo. Réduisez-le ou choisissez un fichier plus léger.",
     "GATE_LIB_DOC_NAME_INVALID": "Document refusé : le nom du fichier n'est pas valide. Renommez le fichier, puis ajoutez-le de nouveau.",
+    "GATE_LIB_DOC_VALID_UNTIL_INVALID": "Document refusé : la date de validité n'est pas une date valide. Choisissez une date dans le calendrier.",
+    "GATE_LIB_DOC_NUMBER_TAKEN": "Document refusé : ce numéro est déjà utilisé par un autre document de la bibliothèque. Saisissez un autre numéro.",
     "GATE_LOCALE_UNSUPPORTED": "Langue refusée : cette langue n'est pas prise en charge. Choisissez le français ou l'anglais.",
     "GATE_REF_LOOKUP_CODE_LENGTH": "Le code de la valeur doit comporter entre 1 et 64 caractères.",
     "GATE_REF_LOOKUP_CODE_CHARS": "Le code de la valeur ne peut contenir que des majuscules, des chiffres et des tirets bas (exemples : CORRECTIVE, TYPE_A).",

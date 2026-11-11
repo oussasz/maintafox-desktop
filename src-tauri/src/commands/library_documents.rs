@@ -35,6 +35,9 @@ pub async fn upload_library_document(
     file_bytes: Vec<u8>,
     mime_type: String,
     notes: Option<String>,
+    document_number: Option<String>,
+    revision: Option<String>,
+    valid_until: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<LibraryDocumentRow> {
     let user = require_session!(state);
@@ -59,6 +62,9 @@ pub async fn upload_library_document(
         mime_type,
         notes,
         uploaded_by_id: i64::from(user.user_id),
+        document_number,
+        revision,
+        valid_until,
     };
 
     library_documents::save_library_document(&state.db, &app_data_dir, input).await

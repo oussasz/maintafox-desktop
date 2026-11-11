@@ -30,6 +30,10 @@ export async function uploadLibraryDocument(input: {
   fileBytes: number[];
   mimeType: string;
   notes: string | null;
+  documentNumber: string | null;
+  revision: string | null;
+  /** `YYYY-MM-DD`, or null when the document never expires. */
+  validUntil: string | null;
 }): Promise<LibraryDocument> {
   return invoke<LibraryDocument>("upload_library_document", {
     category: input.category,
@@ -39,6 +43,9 @@ export async function uploadLibraryDocument(input: {
     fileBytes: input.fileBytes,
     mimeType: input.mimeType,
     notes: input.notes,
+    documentNumber: input.documentNumber,
+    revision: input.revision,
+    validUntil: input.validUntil,
   });
 }
 

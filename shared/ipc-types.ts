@@ -2473,6 +2473,12 @@ export interface LibraryDocument {
   uploadedById: number | null;
   uploadedAt: string;
   notes: string | null;
+  /** The plant's reference of the document (e.g. "PR-ELEC-012"). */
+  documentNumber: string | null;
+  /** Revision label as printed on the document. */
+  revision: string | null;
+  /** Last valid day `YYYY-MM-DD`; null when it never expires. */
+  validUntil: string | null;
 }
 
 export interface UpdateLibraryDocumentPayload {
@@ -2480,6 +2486,12 @@ export interface UpdateLibraryDocumentPayload {
   title?: string | null;
   equipmentId?: number | null;
   clearEquipmentLink: boolean;
+  /** New category code; omitted keeps it. */
+  category?: string | null;
+  /** Control fields: omitted keeps the stored value, an empty text clears it. */
+  documentNumber?: string | null;
+  revision?: string | null;
+  validUntil?: string | null;
 }
 
 export interface DomainBindingEntry {
