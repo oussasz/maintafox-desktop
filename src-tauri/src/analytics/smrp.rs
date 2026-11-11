@@ -430,13 +430,18 @@ pub async fn backlog(
 // ── Cost / replacement asset value ─────────────────────────────────────────────────────────
 
 async fn cost_on_valued_assets(db: &DatabaseConnection, window: SmrpWindow, org: Option<i64>) -> AppResult<f64> {
-    let row = one_row(
-        db,
-        "SELECT COALESCE(SUM(wo.total_cost), 0) AS total FROM work_orders wo \
+    // Closed OTs and imported history records (L7-30), like the cost per asset.
+    let sql = format!(
+        "SELECT COALESCE(SUM(wo.total_cost), 0) AS total FROM ({}) wo \
          JOIN equipment e ON e.id = wo.equipment_id \
-         WHERE wo.closed_at IS NOT NULL AND e.replacement_value > 0 AND e.deleted_at IS NULL \
+         WHERE e.replacement_value > 0 AND e.deleted_at IS NULL \
            AND datetime(wo.closed_at) >= datetime(?) AND datetime(wo.closed_at) < datetime(?) \
            AND (? IS NULL OR e.installed_at_node_id IN (SELECT d.id FROM org_nodes d JOIN org_nodes a ON d.ancestor_path LIKE a.ancestor_path || '%' WHERE a.id = ?))",
+        crate::finance::asset_costs::CLOSED_MAINTENANCE_SQL
+    );
+    let row = one_row(
+        db,
+        &sql,
         vec![
             instant(window.from).into(),
             instant(window.to).into(),

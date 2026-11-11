@@ -1,10 +1,25 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import type { AssetHistoryEvent, AssetHistoryQuery, AssetHistorySummary } from "@shared/ipc-types";
+import type {
+  AssetHistoryEvent,
+  AssetHistoryQuery,
+  AssetHistorySummary,
+  WoHistoryCodingInput,
+  WoHistoryCodingSaved,
+} from "@shared/ipc-types";
 
 const AssetHistoryEventRefSchema = z.object({
-  entity_type: z.enum(["asset", "wo", "di", "pm", "inspection", "document", "photo"]),
+  entity_type: z.enum([
+    "asset",
+    "wo",
+    "di",
+    "pm",
+    "inspection",
+    "document",
+    "photo",
+    "history_record",
+  ]),
   entity_id: z.number().nullable(),
   entity_code: z.string().nullable(),
   route_hint: z.string().nullable(),
@@ -45,4 +60,11 @@ export async function listAssetHistoryEvents(
 export async function getAssetHistorySummary(assetId: number): Promise<AssetHistorySummary> {
   const raw = await invoke<unknown>("get_asset_history_summary", { assetId });
   return AssetHistorySummarySchema.parse(raw) as AssetHistorySummary;
+}
+
+/** Failure coding of an imported history record (`ot.edit` at the equipment's site). */
+export async function saveWoHistoryCoding(
+  input: WoHistoryCodingInput,
+): Promise<WoHistoryCodingSaved> {
+  return invoke<WoHistoryCodingSaved>("save_wo_history_coding", { input });
 }

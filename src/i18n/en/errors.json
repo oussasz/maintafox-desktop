@@ -79,6 +79,7 @@
     "INTERNAL_ERROR": "An internal error occurred."
   },
   "gateError": {
+    "GATE_WO_HISTORY_CODING_VALUE": "Coding refused: a chosen value is no longer in its active list (Reference data). Reload the record and choose a value from the list.",
     "GATE_BACKUP_DIR_NOT_ABSOLUTE": "Folder refused: choose a full folder, with its drive or network share.",
     "GATE_BACKUP_DIR_UNREACHABLE": "Folder refused: it cannot be found or reached (disk unplugged, network down?).",
     "GATE_BACKUP_DIR_NOT_FOLDER": "Folder refused: this path is not a folder.",

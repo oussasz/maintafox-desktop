@@ -79,6 +79,7 @@
     "INTERNAL_ERROR": "Une erreur interne s'est produite."
   },
   "gateError": {
+    "GATE_WO_HISTORY_CODING_VALUE": "Codification refusée : une valeur choisie n'est plus dans sa liste active (Données de référence). Rechargez la fiche et choisissez une valeur de la liste.",
     "GATE_BACKUP_DIR_NOT_ABSOLUTE": "Dossier refus\u00e9 : choisissez un dossier complet, avec son lecteur ou son partage r\u00e9seau.",
     "GATE_BACKUP_DIR_UNREACHABLE": "Dossier refus\u00e9 : il est introuvable ou inaccessible (disque d\u00e9branch\u00e9, r\u00e9seau coup\u00e9 ?).",
     "GATE_BACKUP_DIR_NOT_FOLDER": "Dossier refus\u00e9 : ce chemin n'est pas un dossier.",

@@ -518,6 +518,7 @@ pub fn run() {
         commands::bulk_import::apply_bulk_import_batch,
         commands::bulk_import::get_bulk_import_template,
         commands::bulk_import::export_bulk_import_data,
+        commands::bulk_import::save_wo_history_coding,
         commands::personnel::create_personnel_import_batch,
         commands::personnel::get_personnel_import_preview,
         commands::personnel::apply_personnel_import_batch,

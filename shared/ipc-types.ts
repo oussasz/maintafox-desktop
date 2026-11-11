@@ -2619,10 +2619,19 @@ export type AssetHistoryEventType =
   | "failure_recorded"
   | "meter_reading"
   | "document_linked"
-  | "photo_added";
+  | "photo_added"
+  | "history_imported";
 
 export interface AssetHistoryEventRef {
-  entity_type: "asset" | "wo" | "di" | "pm" | "inspection" | "document" | "photo";
+  entity_type:
+    | "asset"
+    | "wo"
+    | "di"
+    | "pm"
+    | "inspection"
+    | "document"
+    | "photo"
+    | "history_record";
   entity_id: number | null;
   entity_code: string | null;
   route_hint: string | null;
@@ -2640,6 +2649,22 @@ export interface AssetHistoryEvent {
   status_label: string | null;
   metadata: Record<string, string | number | boolean | null>;
   ref: AssetHistoryEventRef | null;
+}
+
+/** Failure coding of an imported maintenance history record (L7-30). */
+export interface WoHistoryCodingInput {
+  record_id: number;
+  expected_row_version: number;
+  failure_mode_id: number | null;
+  failure_cause_id: number | null;
+  failure_mechanism_id: number | null;
+  detection_method_id: number | null;
+  failure_effect_id: number | null;
+}
+
+export interface WoHistoryCodingSaved {
+  record_id: number;
+  row_version: number;
 }
 
 export interface AssetHistorySummary {

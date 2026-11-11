@@ -183,7 +183,8 @@
       "failure_recorded": "Failure",
       "meter_reading": "Meter",
       "document_linked": "Document",
-      "photo_added": "Photo"
+      "photo_added": "Photo",
+      "history_imported": "Imported history"
     },
     "filters": {
       "types": {
@@ -193,7 +194,8 @@
         "pm": "PM",
         "inspection": "Inspection",
         "documents": "Documents",
-        "failures": "Failures"
+        "failures": "Failures",
+        "history": "Imported history"
       },
       "periods": {
         "today": "Today",
@@ -222,7 +224,8 @@
       "failure_recorded": "Failure recorded",
       "meter_reading": "Meter reading",
       "document_linked": "Document linked",
-      "photo_added": "Photo added"
+      "photo_added": "Photo added",
+      "history_imported": "Imported history {{code}}"
     },
     "quality": {
       "accepted": "Accepted",
@@ -244,9 +247,34 @@
     "failureSource": {
       "work_order": "From a work order",
       "inspection": "From an inspection",
-      "manual": "Entered manually"
+      "manual": "Entered manually",
+      "history_record": "Imported history"
     },
-    "title": "Asset history"
+    "title": "Asset history",
+    "record": {
+      "readOnly": "Work carried over from the former system: only its failure coding can be changed.",
+      "nature": "Nature",
+      "started": "Start",
+      "ended": "End",
+      "failure": "Failure",
+      "yes": "Yes",
+      "no": "No",
+      "downtime": "Downtime",
+      "cost": "Cost",
+      "description": "Description",
+      "workDone": "Work done",
+      "interveners": "Technicians",
+      "coding": "Failure coding",
+      "failureMode": "Failure mode",
+      "failureCause": "Cause",
+      "mechanism": "Mechanism",
+      "detection": "Detection method",
+      "failureEffect": "Effect",
+      "noRight": "Changing the coding requires the right to edit work orders at the equipment's site.",
+      "close": "Close",
+      "save": "Save coding",
+      "saving": "Saving…"
+    }
   },
   "empty": {
     "list": "No equipment found.",
