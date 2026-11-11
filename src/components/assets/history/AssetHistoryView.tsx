@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { useAssetRamFigures } from "@/components/assets/detail/use-asset-ram-figures";
 import { AssetLifeSummaryStrip } from "@/components/assets/history/AssetLifeSummaryStrip";
 import { AssetTimelineFilters } from "@/components/assets/history/AssetTimelineFilters";
 import { AssetTimelineList } from "@/components/assets/history/AssetTimelineList";
@@ -45,6 +46,7 @@ function mapTypeFilterToEventTypes(typeFilter: string): AssetHistoryEventType[] 
 
 export function AssetHistoryView({ assetId }: { assetId: number }) {
   const { t } = useTranslation("equipment");
+  const ram = useAssetRamFigures(assetId);
   const navigate = useNavigate();
   const { can } = usePermissions();
   const [summary, setSummary] = useState<AssetHistorySummary | null>(null);
@@ -145,7 +147,10 @@ export function AssetHistoryView({ assetId }: { assetId: number }) {
 
   return (
     <div className="space-y-3">
-      <AssetLifeSummaryStrip summary={summary} />
+      <AssetLifeSummaryStrip
+        summary={summary}
+        failures={ram.allowed ? { count: ram.data?.failures ?? null, months: ram.months } : null}
+      />
       <AssetTimelineFilters
         typeFilter={typeFilter}
         period={period}

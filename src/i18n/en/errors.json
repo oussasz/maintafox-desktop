@@ -982,6 +982,7 @@
     "GATE_REL_MARKOV_GRAPH_INVALID": "Markov model refused: the state description is not valid. Correct it and try again.",
     "GATE_REL_MARKOV_STATES_LIMIT": "Calculation refused: {{states}} states exceed the allowed limit of {{max}}. Reduce the number of states.",
     "GATE_REL_PARETO_METRIC_INVALID": "Pareto refused: the chosen metric is not recognised. Choose one of the proposed metrics.",
+    "GATE_REL_FLEET_SORT_INVALID": "Ranking refused: the sort column is not recognised. Choose one of the proposed columns.",
     "GATE_REL_TITLE_REQUIRED": "Review refused: enter a title.",
     "GATE_REL_EFFECT_PROBABILITY_RANGE": "Criticality refused: the effect probability β must be between 0 and 1.",
     "GATE_REL_MODE_RATIO_RANGE": "Criticality refused: the failure mode ratio α must be between 0 and 1.",

@@ -998,7 +998,8 @@
       "sourceDi": "DI source",
       "sourceRca": "RCA source",
       "sourceRcaDiagram": "Diagramme Ishikawa n°{{id}}",
-      "sourceRcaCause": "Cause"
+      "sourceRcaCause": "Cause",
+      "sourceRcaOpen": "Ouvrir l'analyse des causes (RAMS)"
     }
   },
   "footer": {

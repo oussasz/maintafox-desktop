@@ -24,6 +24,12 @@ pub struct FleetViewFilter {
     /// Rows skipped (next page of the ranking); default 0.
     #[serde(default)]
     pub offset: Option<i64>,
+    /// Ranking column: `failures` | `downtime` | `mtbf` | `cost`; default `downtime`.
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    /// Descending order (default true; MTBF alone defaults to ascending: the shortest first).
+    #[serde(default)]
+    pub sort_desc: Option<bool>,
 }
 
 /// Fleet reliability figures of a scope (period, class, org node). Definitions:
@@ -93,6 +99,9 @@ pub struct FleetAssetRow {
     pub mtbf_hours: Option<f64>,
     /// Mean time to restore of the equipment (same definition as the fleet figure).
     pub mttr_hours: Option<f64>,
+    /// Cost of the work behind the failure records of the period (work-order total cost, imported
+    /// history cost); `None` when no cost is recorded.
+    pub failure_cost: Option<f64>,
     /// `run_hours_meter` | `runtime_logs` | `operating_schedule` | `calendar`.
     pub time_basis: String,
     /// `complete` | `to_check` | `no_operating_hours`.
@@ -101,6 +110,20 @@ pub struct FleetAssetRow {
     pub last_study_id: Option<i64>,
     pub last_study_title: Option<String>,
     pub last_study_updated_at: Option<String>,
+}
+
+/// Failure figures of one equipment over a period: the same calculation as the fleet view row.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssetReliabilityFigures {
+    pub equipment_id: i64,
+    pub period_start: String,
+    pub period_end: String,
+    /// Window under the minimum for rates: MTBF and MTTR are not given.
+    pub window_too_short: bool,
+    pub failures: i64,
+    pub downtime_hours: f64,
+    pub mtbf_hours: Option<f64>,
+    pub mttr_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

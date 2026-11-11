@@ -48,6 +48,18 @@ export function AppToastHost() {
           {item.description ? (
             <p className="mt-1 text-xs text-text-secondary">{item.description}</p>
           ) : null}
+          {item.action ? (
+            <button
+              type="button"
+              className="mt-1 text-xs font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                item.action?.onClick();
+                dismiss(item.id);
+              }}
+            >
+              {item.action.label}
+            </button>
+          ) : null}
         </div>
       ))}
     </div>

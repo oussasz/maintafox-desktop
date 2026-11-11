@@ -67,6 +67,8 @@ const FleetAssetRowSchema = z.object({
   downtime_share: num,
   mtbf_hours: optNum,
   mttr_hours: optNum,
+  /** Cost of the work behind the period's failures; null when none is recorded. */
+  failure_cost: optNum,
   time_basis: z.string(),
   data_quality: z.string(),
   records_to_check: num,
@@ -90,6 +92,8 @@ export type FleetKpis = z.infer<typeof FleetKpisSchema>;
 export type FleetAssetRow = z.infer<typeof FleetAssetRowSchema>;
 export type FilterOption = z.infer<typeof FilterOptionSchema>;
 
+export type FleetSortKey = "failures" | "downtime" | "mtbf" | "cost";
+
 export interface FleetViewFilter {
   period_start: string;
   period_end: string;
@@ -98,6 +102,38 @@ export interface FleetViewFilter {
   limit?: number | null;
   /** Rows skipped (next page of the ranking). */
   offset?: number | null;
+  /** Ranking column; null keeps the default (downtime). */
+  sort_by?: FleetSortKey | null;
+  /** Descending order; null = the column's default (MTBF ascending, the others descending). */
+  sort_desc?: boolean | null;
+}
+
+const AssetFiguresSchema = z.object({
+  equipment_id: num,
+  period_start: z.string(),
+  period_end: z.string(),
+  /** Window under the minimum for rates: MTBF and MTTR are not given. */
+  window_too_short: z.boolean(),
+  failures: num,
+  downtime_hours: num,
+  mtbf_hours: optNum,
+  mttr_hours: optNum,
+});
+
+export type AssetReliabilityFigures = z.infer<typeof AssetFiguresSchema>;
+
+/** Failure figures of one equipment over a period: the RAMS calculation (same as the fleet row). */
+export async function getReliabilityAssetFigures(
+  equipmentId: number,
+  periodStart: string,
+  periodEnd: string,
+): Promise<AssetReliabilityFigures> {
+  const raw = await invoke<unknown>("get_reliability_asset_figures", {
+    equipmentId,
+    periodStart,
+    periodEnd,
+  });
+  return AssetFiguresSchema.parse(raw);
 }
 
 export async function getReliabilityFleetView(filter: FleetViewFilter): Promise<FleetView> {

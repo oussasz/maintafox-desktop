@@ -13,7 +13,7 @@ use crate::reliability::study::domain::{
     CreateDecisionInput, CreateStudyInput, DecideDecisionInput, FleetViewFilter, LifeAnalysisRequest,
     SaveStudyCostsInput, SetStudyRecordInput, UpdateStudyInput,
 };
-use crate::reliability::study::fleet_view::fleet_view;
+use crate::reliability::study::fleet_view::{asset_figures, fleet_view};
 use crate::reliability::study::life::{analyse_life, LifeInputs};
 use crate::reliability::study::records::build_dataset;
 use crate::reliability::study::store::{
@@ -1467,6 +1467,7 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
             equipment_class_id: Some(f.class_id),
             limit: None,
             offset: None,
+            ..FleetViewFilter::default()
         },
     )
     .await
@@ -1524,6 +1525,7 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
             equipment_class_id: Some(f.class_id),
             limit: Some(1),
             offset: Some(1),
+            ..FleetViewFilter::default()
         },
     )
     .await
@@ -1544,6 +1546,45 @@ async fn fleet_view_ranks_equipment_by_downtime_with_pooled_kpis() {
     .expect("empty period");
     assert_eq!(other.kpis.failure_count, 0);
     assert!(other.rows.is_empty() && other.kpis.data_quality.is_none());
+}
+
+/// L2-17 / L2-22: the ranking can be ordered by a column before it is paged, an unknown column is
+/// refused with its GATE_ code, and one equipment's figures are the fleet row's.
+#[tokio::test]
+async fn fleet_view_sorts_by_column_and_asset_figures_match_the_row() {
+    let f = setup().await;
+    scenario(&f).await;
+    let filter = |sort_by: &str, sort_desc: Option<bool>| FleetViewFilter {
+        period_start: "2025-02-01T00:00:00Z".into(),
+        period_end: "2025-12-31T00:00:00Z".into(),
+        org_node_id: Some(1),
+        equipment_class_id: Some(f.class_id),
+        sort_by: Some(sort_by.into()),
+        sort_desc,
+        ..FleetViewFilter::default()
+    };
+    // P-101: 2 failures, 16 h; P-102: 3 failures, 10 h.
+    let by_failures = fleet_view(&f.db, filter("failures", None)).await.expect("failures");
+    assert_eq!(by_failures.rows[0].asset_code, "P-102");
+    let ascending = fleet_view(&f.db, filter("failures", Some(false)))
+        .await
+        .expect("failures asc");
+    assert_eq!(ascending.rows[0].asset_code, "P-101");
+    let refused = fleet_view(&f.db, filter("colour", None)).await;
+    match refused {
+        Err(AppError::ValidationFailed(m)) => assert!(m[0].starts_with("GATE_REL_FLEET_SORT_INVALID")),
+        _ => panic!("an unknown sort column must be refused"),
+    }
+    let figures = asset_figures(
+        &f.db,
+        by_failures.rows[0].equipment_id,
+        "2025-02-01T00:00:00Z",
+        "2025-12-31T00:00:00Z",
+    )
+    .await
+    .expect("asset figures");
+    assert_eq!(figures.failures, by_failures.rows[0].failures);
+    close(figures.downtime_hours, by_failures.rows[0].downtime_hours, 1e-9);
 }
 
 /// Sets cause "not determined" and a mechanism on the failure record `tag` (complete coding).
@@ -1595,6 +1636,7 @@ fn fleet_filter(class: Option<i64>, org: Option<i64>) -> FleetViewFilter {
         equipment_class_id: class,
         limit: None,
         offset: None,
+        ..FleetViewFilter::default()
     }
 }
 

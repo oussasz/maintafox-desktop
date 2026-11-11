@@ -149,7 +149,7 @@ export function WorkOrdersPage() {
   const [openedFromLink, setOpenedFromLink] = useState(false);
 
   useEffect(() => {
-    const raw = searchParams.get("openWo");
+    const raw = searchParams.get(LIST_PARAM.openWo);
     if (!raw) return;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return;
@@ -160,7 +160,7 @@ export function WorkOrdersPage() {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        next.delete("openWo");
+        next.delete(LIST_PARAM.openWo);
         return next;
       },
       { replace: true },

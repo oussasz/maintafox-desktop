@@ -59,6 +59,8 @@ export const LIST_PARAM = {
   completedTo: "completedTo",
   waiting: "waiting",
   catalog: "catalog",
+  /** Opens one work order's sheet over the list. */
+  openWo: "openWo",
 } as const;
 
 function query(entries: Array<[string, string | number | undefined]>): string {
@@ -82,6 +84,12 @@ export const listLinks = {
       [LIST_PARAM.completedFrom, f.completedFrom],
       [LIST_PARAM.completedTo, f.completedTo],
     ])}`,
+  /** One work order's sheet (the work-orders page opens it from the address). */
+  workOrder: (id: number) => `/work-orders${query([[LIST_PARAM.openWo, id]])}`,
+  /** One equipment's record (the equipment page opens it from the address). */
+  asset: (id: number) => `/equipment${query([["assetId", id]])}`,
+  /** The reliability (RAMS) fleet page with one equipment handed over (selected, named). */
+  ramsAsset: (equipmentId: number) => `/reliability${query([[LIST_PARAM.equipment, equipmentId]])}`,
   requests: (f: DiListLinkFilter = {}) =>
     `/requests${query([
       [LIST_PARAM.queue, f.queue],

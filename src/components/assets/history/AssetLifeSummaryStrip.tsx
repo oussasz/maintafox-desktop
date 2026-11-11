@@ -22,7 +22,14 @@ function humanizeAge(days: number | null, t: Translator) {
  * reliability analysis of the asset (RAMS), with the date it covers; without one it reads "—"
  * and says why. No figure is estimated here, and no count reads 0 before the summary is loaded.
  */
-export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummary | null }) {
+export function AssetLifeSummaryStrip({
+  summary,
+  failures,
+}: {
+  summary: AssetHistorySummary | null;
+  /** Failure count of the RAMS calculation (one source); null = the summary's own count. */
+  failures?: { count: number | null; months: number } | null;
+}) {
   const { t } = useTranslation("equipment");
   const { formatDate, formatNumber, formatPercent } = useFormatters();
 
@@ -41,7 +48,17 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
       },
       { label: t("history.summary.wo"), value: count(summary?.wo_count), hint: null },
       { label: t("history.summary.pm"), value: count(summary?.pm_count), hint: null },
-      { label: t("history.summary.failures"), value: count(summary?.failure_count), hint: null },
+      failures
+        ? {
+            label: t("history.summary.failures"),
+            value: failures.count == null ? "—" : formatNumber(failures.count),
+            hint: t("history.summary.failuresRams", { months: failures.months }),
+          }
+        : {
+            label: t("history.summary.failures"),
+            value: count(summary?.failure_count),
+            hint: null,
+          },
       {
         label: t("history.summary.availability"),
         value:
@@ -56,7 +73,7 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
               : null,
       },
     ];
-  }, [summary, t, formatDate, formatNumber, formatPercent]);
+  }, [summary, failures, t, formatDate, formatNumber, formatPercent]);
 
   return (
     <section aria-label={t("history.summary.title")} className="space-y-2">
