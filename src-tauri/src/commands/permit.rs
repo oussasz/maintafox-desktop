@@ -21,6 +21,8 @@ use crate::permit::domain::{
     WorkPermitCreateInput, WorkPermitListFilter, WorkPermitListPage, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 use crate::permit::queries;
+use crate::permit::safety_content;
+use crate::permit::workers;
 use crate::rbac::permissions::{PTW_CLOSE, PTW_ISSUE, PTW_VIEW};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -501,4 +503,221 @@ pub async fn permit_compliance_kpi_30d(state: State<'_, AppState>) -> AppResult<
     // Rule §2.8: the figure of the user's sites only (never plant-wide for a site-only user).
     let scope = require_anywhere(&state, user.user_id, PTW_VIEW).await?;
     queries::permit_compliance_kpi_30d_in_scope(&state.db, &scope).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Content, HSE approval and gas tests (L4-03 / L4-04), proposed isolation points (L4-12)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// What the permit says (work, risks, preventive measures, PPE), its HSE approval, its gas tests
+/// with the limits of the settings, and what still blocks its issue. Read with the permit view
+/// right at its site.
+#[tauri::command]
+pub async fn get_permit_safety_content(
+    permit_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id).await?;
+    safety_content::get_permit_safety_content(&state.db, permit_id).await
+}
+
+/// Writes the permit's content (draft or waiting for review), with the right that writes and
+/// issues permits at its site.
+#[tauri::command]
+pub async fn save_permit_safety_content(
+    input: safety_content::PermitSafetyContentInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    safety_content::save_permit_safety_content(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records the session user as the permit's HSE approver (the HSE approval right at its site,
+/// CMMS Advisor 2026-11-11; the approver is neither the author nor the submitter).
+#[tauri::command]
+pub async fn record_permit_hse_approval(
+    input: safety_content::PermitHseApprovalInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::PTW_HSE_APPROVE,
+        input.permit_id,
+    )
+    .await?;
+    safety_content::record_permit_hse_approval(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records a gas test measured by the session user (the issue right at the permit's site).
+#[tauri::command]
+pub async fn record_permit_gas_test(
+    input: safety_content::PermitGasTestInput,
+    state: State<'_, AppState>,
+) -> AppResult<safety_content::PermitSafetyContent> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    safety_content::record_permit_gas_test(&state.db, input, i64::from(user.user_id)).await
+}
+
+// ── Workers and personal padlocks (L4-05, L4-06, L4-18, migration 294) ────────────────────────────
+
+/// The workers of a permit and the padlocks on its group lock box: read with the permit view right
+/// at its site, or with the narrow padlock right there (a worker without other permit rights sees
+/// the permit's workers to place their own padlock).
+#[tauri::command]
+pub async fn list_permit_workers(permit_id: i64, state: State<'_, AppState>) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    if require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id)
+        .await
+        .is_err()
+    {
+        require_on_permit(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN, permit_id).await?;
+    }
+    workers::list_permit_workers(&state.db, permit_id, i64::from(user.user_id)).await
+}
+
+/// Adds a worker (the right that writes and issues permits at its site); refused when they lack a
+/// qualification the permit's type requires.
+#[tauri::command]
+pub async fn add_permit_worker(
+    input: workers::PermitWorkerAddInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    require_on_permit(&state, user.user_id, PTW_ISSUE, input.permit_id).await?;
+    workers::add_permit_worker(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Records the induction of an external worker, given by the session user.
+#[tauri::command]
+pub async fn record_permit_worker_induction(
+    input: workers::PermitWorkerInductionInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::worker_permit_id(&state.db, input.worker_id).await?;
+    require_on_permit(&state, user.user_id, PTW_ISSUE, permit_id).await?;
+    workers::record_permit_worker_induction(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Withdraws a worker from the permit (not while their padlock is on the box).
+#[tauri::command]
+pub async fn withdraw_permit_worker(
+    input: workers::PermitWorkerWithdrawInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::worker_permit_id(&state.db, input.worker_id).await?;
+    require_on_permit(&state, user.user_id, PTW_ISSUE, permit_id).await?;
+    workers::withdraw_permit_worker(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "Je pose mon cadenas" (L4-18): the narrow padlock right at the permit's site; the server checks
+/// that the session user is a worker of the permit and places only their own padlock.
+#[tauri::command]
+pub async fn place_my_permit_lock(
+    input: workers::PersonalLockPlaceInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    require_on_permit(
+        &state,
+        user.user_id,
+        crate::rbac::permissions::PTW_LOCK_OWN,
+        input.permit_id,
+    )
+    .await?;
+    workers::place_my_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "J'ai retiré mon cadenas" (L4-18): the narrow padlock right at the permit's site; only the
+/// padlock's owner removes it.
+#[tauri::command]
+pub async fn remove_my_permit_lock(
+    input: workers::PersonalLockRemoveInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN, permit_id).await?;
+    workers::remove_my_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// A padlock whose owner is absent, removed by force: the close right at the permit's site, after
+/// a step-up, with a reason and the attestation that the worker is not on site.
+#[tauri::command]
+pub async fn force_remove_permit_lock(
+    input: workers::PersonalLockForceRemoveInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    crate::require_step_up!(state);
+    workers::force_remove_personal_lock(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Who may be named to take off an absent worker's padlock (active accounts other than the person
+/// asking and the padlock's owner): the close right at the permit's site.
+#[tauri::command]
+pub async fn list_permit_padlock_removers(
+    lock_id: i64,
+    search: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+    state: State<'_, AppState>,
+) -> AppResult<queries::HandoverReceiverPage> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    workers::list_padlock_removers(&state.db, i64::from(user.user_id), lock_id, search, limit, offset).await
+}
+
+/// The owner of a padlock removed by force acknowledges it (the session only: the save refuses
+/// anyone but the padlock's owner), as for an isolation lock.
+#[tauri::command]
+pub async fn acknowledge_forced_padlock_removal(
+    lock_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    workers::acknowledge_forced_padlock_removal(&state.db, lock_id, i64::from(user.user_id)).await
+}
+
+/// The owner of a padlock removed by force was told, recorded by the session user (the close right
+/// at the permit's site).
+#[tauri::command]
+pub async fn record_padlock_worker_informed(
+    input: workers::PersonalLockInformedInput,
+    state: State<'_, AppState>,
+) -> AppResult<workers::PermitWorkersView> {
+    let user = require_session!(state);
+    let permit_id = workers::lock_permit_id(&state.db, input.lock_id).await?;
+    require_on_permit(&state, user.user_id, PTW_CLOSE, permit_id).await?;
+    workers::record_padlock_worker_informed(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// "Mes cadenas" (L4-18): the permits, at the sites where the session user holds the narrow padlock
+/// right, on which they are a listed worker, with their workers and padlocks.
+#[tauri::command]
+pub async fn list_my_padlock_permits(state: State<'_, AppState>) -> AppResult<Vec<workers::MyPadlockPermit>> {
+    let user = require_session!(state);
+    let scope = require_anywhere(&state, user.user_id, crate::rbac::permissions::PTW_LOCK_OWN).await?;
+    workers::list_my_padlock_permits(&state.db, &scope, i64::from(user.user_id)).await
+}
+
+/// The isolation points of the permit's equipment, proposed on its isolation form (read with the
+/// permit view right at its site: no equipment right needed to use them).
+#[tauri::command]
+pub async fn list_permit_proposed_isolation_points(
+    permit_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::assets::isolation_points::ProposedIsolationPoint>> {
+    let user = require_session!(state);
+    require_on_permit_records(&state, user.user_id, PTW_VIEW, permit_id).await?;
+    crate::assets::isolation_points::list_proposed_isolation_points(&state.db, permit_id).await
 }

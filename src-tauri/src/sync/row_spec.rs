@@ -399,6 +399,15 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
     ),
     spec("equipment_meters", &[r("equipment_id", "equipment")]),
+    // Isolation points kept on the equipment, proposed on its permits (L4-12, migration 290).
+    spec(
+        "equipment_isolation_points",
+        &[
+            r("equipment_id", "equipment"),
+            r("energy_type_id", "reference_values"),
+            r("isolation_method_id", "reference_values"),
+        ],
+    ),
     spec(
         "asset_meter_readings",
         &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
@@ -827,9 +836,39 @@ pub const ROW_SPECS: &[RowSpec] = &[
             r("approved_by_id", USER),
             // Who cancelled it (L4-15, migration 272).
             r("cancelled_by_id", USER),
+            // Who recorded its HSE approval (L4-03, migration 290).
+            r("hse_approved_by_id", USER),
         ],
     ),
     spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
+    // Gas tests of a permit (L4-04, migration 290): append-only measurements.
+    spec(
+        "permit_gas_tests",
+        &[r("permit_id", "work_permits"), r("measured_by_id", USER)],
+    ),
+    // Workers of a permit and their padlocks on its group lock box (L4-05 / L4-18, migration 294).
+    spec(
+        "permit_workers",
+        &[
+            r("permit_id", "work_permits"),
+            r("personnel_id", "personnel"),
+            r("external_company_id", "external_companies"),
+            r("induction_by_id", USER),
+            r("added_by_id", USER),
+            r("withdrawn_by_id", USER),
+        ],
+    ),
+    spec(
+        "permit_personal_locks",
+        &[
+            r("permit_id", "work_permits"),
+            r("worker_id", "permit_workers"),
+            r("placed_by_id", USER),
+            r("removed_by_id", USER),
+            r("forced_authorized_by_id", USER),
+            r("informed_by_id", USER),
+        ],
+    ),
     spec(
         "permit_isolations",
         &[

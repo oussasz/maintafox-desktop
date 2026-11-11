@@ -698,6 +698,24 @@
       "aliases": ["ptw.cancel"]
     },
     {
+      "name": "ptw.hse_approve",
+      "description": "Record the HSE approval of work permits",
+      "category": "ptw",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ptw.lock_own",
+      "description": "Place and remove one's own personal padlock on the group lock box of a work permit one is listed on",
+      "category": "ptw",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
       "name": "fin.view",
       "description": "View budgets and cost data",
       "category": "fin",
@@ -1046,6 +1064,8 @@
     { "permission": "inv.manage", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.procure", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.approve", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "ptw.hse_approve", "requires": "ptw.view", "dep_type": "hard" },
+    { "permission": "ptw.lock_own", "requires": "ptw.view", "dep_type": "warn" },
     { "permission": "inv.approve", "requires": "inv.procure", "dep_type": "hard" },
     { "permission": "inv.receive", "requires": "inv.view", "dep_type": "hard" },
     { "permission": "inv.count", "requires": "inv.view", "dep_type": "hard" },
@@ -1129,6 +1149,7 @@
       "erp.view",
       "ptw.view",
       "ptw.issue",
+      "ptw.lock_own",
       "fin.view",
       "fin.report",
       "ins.view",
@@ -1226,6 +1247,7 @@
       "ins.view",
       "ins.execute",
       "ptw.view",
+      "ptw.lock_own",
       "doc.view",
       "trn.view"
     ],
@@ -1287,6 +1309,8 @@
       "ptw.view",
       "ptw.issue",
       "ptw.close",
+      "ptw.hse_approve",
+      "ptw.lock_own",
       "ot.view",
       "di.view",
       "di.create",

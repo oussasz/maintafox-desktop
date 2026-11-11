@@ -390,6 +390,9 @@ async fn make_live(db: &DatabaseConnection, permit_id: i64, approver: i32) {
         ("issued", admin),
         ("active", admin),
     ] {
+        if status == "issued" {
+            crate::permit::safety_content::fill_issue_requirements_for_tests(db, permit_id).await;
+        }
         let wp = crate::permit::queries::get_work_permit(db, permit_id)
             .await
             .expect("get")

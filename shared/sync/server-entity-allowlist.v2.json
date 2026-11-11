@@ -128,6 +128,18 @@
       "scope": "tenant"
     },
     {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant"
+    },
+    {
       "entity_type": "permit_handover_logs",
       "scope": "tenant"
     },
@@ -301,6 +313,10 @@
     },
     {
       "entity_type": "equipment_hierarchy",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_isolation_points",
       "scope": "tenant"
     },
     {

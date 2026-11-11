@@ -503,6 +503,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "equipment_isolation_points",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "reference_values"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "equipment_lifecycle_events",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -1240,6 +1251,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant",
+      "conflict_policy": "append_only",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "permit_handover_logs",
       "scope": "tenant",
       "conflict_policy": "append_only",
@@ -1263,6 +1285,18 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 14,
+      "parents": [
+        "work_permits",
+        "permit_workers",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "permit_suspensions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -1279,6 +1313,19 @@
       "conflict_policy": "operator_review",
       "apply_priority": 1,
       "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 13,
+      "parents": [
+        "work_permits",
+        "personnel",
+        "external_companies",
         "user_accounts"
       ],
       "sync_status": "synced"

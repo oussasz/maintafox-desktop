@@ -777,6 +777,14 @@
         "label": "Clôturer ou annuler des permis de travail",
         "description": "Clôturer et annuler des permis de travail. Action sensible : confirmation du mot de passe requise."
       },
+      "ptw_hse_approve": {
+        "label": "Approuver les permis côté HSE",
+        "description": "Enregistrer l'approbation HSE d'un permis de travail dont le type l'exige, sur un permis que l'on n'a ni rédigé ni soumis. Action sensible."
+      },
+      "ptw_lock_own": {
+        "label": "Poser / retirer mon cadenas",
+        "description": "Poser et retirer uniquement son propre cadenas personnel sur la boîte de consignation collective d'un permis où l'on figure comme intervenant. Ne donne aucun autre droit sur le permis."
+      },
       "fin_view": {
         "label": "Voir les budgets et coûts",
         "description": "Consulter les budgets et les données de coûts."

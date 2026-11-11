@@ -124,6 +124,7 @@
       "documents": "Documents & photos",
       "criticality": "Criticality",
       "history": "History",
+      "isolation": "Isolation points",
       "repeatFailures": "Repeat failures"
     }
   },
@@ -1009,6 +1010,30 @@
     "ASSET_RECOMMISSION_REASON_REQUIRED": "Give the reason for returning the asset to service.",
     "ASSET_RECOMMISSION_TARGET_RETIRED": "Choose a status in service: a retired status is not a return to service.",
     "ASSET_RECOMMISSION_VERSION_REQUIRED": "Reload the asset before returning it to service."
+  },
+  "isolationPoints": {
+    "title": "Isolation points",
+    "description": "Where the energies of this equipment are isolated. They are proposed on every work permit raised for the equipment.",
+    "empty": "No isolation point defined.",
+    "add": "Add a point",
+    "edit": "Edit",
+    "deactivate": "Deactivate",
+    "reactivate": "Reactivate",
+    "inactive": "Deactivated",
+    "showInactive": "Show deactivated points",
+    "code": "Code",
+    "label": "Label",
+    "energy": "Energy type",
+    "method": "Isolation method / device",
+    "normalState": "Normal state",
+    "normalStatePlaceholder": "e.g. closed, energised",
+    "listsHint": "Energy types and methods: Reference data (permit lists).",
+    "save": "Save",
+    "cancel": "Cancel",
+    "dialogTitleNew": "New isolation point",
+    "dialogTitleEdit": "Edit the isolation point",
+    "required": "This field is required.",
+    "optionsError": "The energy type and method lists could not be read."
   },
   "characteristics": {
     "title": "Technical characteristics",
