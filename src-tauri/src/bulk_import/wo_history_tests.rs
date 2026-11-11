@@ -197,7 +197,7 @@ mod tests {
              H6;EQ-A;{n};oui;01/01/2025;01/01/2025;;;;;XX;;;;;;;;;;;\n\
              H7;EQ-A;{n};oui;01/01/2025 08:00;01/01/2025 10:00;;01/01/2025 08:00;01/01/2025 10:00;5;BRG;;;;;;;;;;;\n\
              H8;EQ-A;{n};oui;01/01/2025;01/01/2025;;;;;;;;;;;;-3;;;;\n\
-             h1;EQ-A;{n};non;01/01/2025;01/01/2025;;;;;;;;;;;;;;;;\n"
+             h7;EQ-A;{n};non;01/01/2025;01/01/2025;;;;;;;;;;;;;;;;\n"
         );
         let (rows, res) = run(&db, &file, 1).await;
         let codes: Vec<Vec<String>> = rows.into_iter().map(|(_, m)| m).collect();
@@ -412,9 +412,15 @@ mod tests {
         let edit_role = role(&db, "History coding", &[OT_VIEW, OT_EDIT]).await;
         let site_b = user(&db, "history_coder_b").await;
         assign(&db, site_b, edit_role, "org_node", Some(t.site_b)).await;
+        // Refused with the site-scope code, naming the record's site (A).
         let denied = check_coding_right(&db, &access(&db, site_b).await, record).await;
         assert!(
-            matches!(denied, Err(crate::errors::AppError::PermissionDenied(_))),
+            matches!(
+                &denied,
+                Err(crate::errors::AppError::OrgValidationFailed(issues))
+                    if issues.iter().any(|i| i.code == "SCOPE_OUTSIDE_SITE"
+                        && i.params.get("org_node_id") == Some(&t.site_a.to_string()))
+            ),
             "{denied:?}"
         );
         // No edit right anywhere: refused.
