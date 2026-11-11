@@ -163,6 +163,7 @@
       "mix": "Work mix",
       "completed": "Completed in the period",
       "completedValue": "{{from}} to {{to}}",
+      "ramsFailures": "Failures counted by RAMS",
       "mixValue": {
         "planned": "Planned (preventive and improvement)",
         "reactive": "Reactive (corrective)",

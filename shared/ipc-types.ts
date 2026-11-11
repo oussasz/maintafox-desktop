@@ -5689,8 +5689,18 @@ export interface WoListFilter {
   /** Only work completed in `[completed_from, completed_to)` (ISO instants): the SMRP work-mix population. */
   completed_from?: string | null;
   completed_to?: string | null;
+  /** Only the work orders behind the failures a RAMS figure counts (same period, class, site). */
+  rams_failures?: WoRamsFailureScope | null;
   limit: number;
   offset: number;
+}
+
+/** Scope of a RAMS failure figure (`wo::queries::WoRamsFailureScope`). */
+export interface WoRamsFailureScope {
+  period_start: string;
+  period_end: string;
+  equipment_class_id?: number | null;
+  org_node_id?: number | null;
 }
 
 export interface WoListPage {
