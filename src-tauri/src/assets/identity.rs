@@ -1043,6 +1043,10 @@ pub(crate) async fn retired_equipment_code<C: ConnectionTrait>(db: &C, equipment
 
 /// Whether `code` is a retired status (tag `retired` in the published `EQUIPMENT.STATUS` list).
 pub(crate) async fn is_retired_status_code<C: ConnectionTrait>(db: &C, code: &str) -> AppResult<bool> {
+    // The statuses decommissioning writes are retired whatever the reference list's tags say.
+    if crate::assets::decommission::TERMINAL_STATUSES.contains(&code) {
+        return Ok(true);
+    }
     Ok(db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
