@@ -815,6 +815,7 @@
       "colData": "Data",
       "noStudy": "None",
       "selectAsset": "Select {{code}}",
+      "openFailures": "Show the work orders of the failures of {{code}}",
       "shareLabel": "{{share}} of fleet downtime",
       "openAsset": "Open the record of {{code}}",
       "handedError": "The equipment handed over could not be loaded",

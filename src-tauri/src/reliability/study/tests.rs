@@ -3585,5 +3585,86 @@ async fn a_pm_version_from_a_decision_is_published_only_once_the_decision_is_app
     assert_eq!(published.status, "published");
 }
 
+/// L2-21: a RAMS failure figure opens the OT list behind it. The list's RAMS filter reuses the
+/// figure's own failure records (period, class, site, unplanned, in service), so it holds exactly
+/// the work orders the figure counts; a ranking row adds its equipment.
+#[tokio::test]
+async fn rams_failure_figure_lists_the_work_orders_it_counts() {
+    use crate::reliability::study::fleet_kpis::{fleet_kpis, FleetScope};
+    use crate::wo::queries::{list_work_orders, WoListFilter, WoRamsFailureScope};
+
+    let f = setup().await;
+    let m = Some(f.mode_id);
+    let w1 = wo_from_di(&f, "OT-R1", f.p101, "2025-03-01T00:00:00Z").await;
+    let w2 = wo_from_di(&f, "OT-R2", f.p102, "2025-04-01T00:00:00Z").await;
+    let w_old = wo_from_di(&f, "OT-R3", f.p101, "2024-01-01T00:00:00Z").await;
+    let w_planned = wo_from_di(&f, "OT-R4", f.p101, "2025-05-01T00:00:00Z").await;
+    failure(&f.db, "r1", f.p101, "2025-03-01T02:00:00Z", None, m, Some(w1), 1.0).await;
+    failure(&f.db, "r2", f.p102, "2025-04-01T02:00:00Z", None, m, Some(w2), 1.0).await;
+    failure(&f.db, "r3", f.p101, "2024-01-01T02:00:00Z", None, m, Some(w_old), 1.0).await;
+    failure(
+        &f.db,
+        "r4",
+        f.p101,
+        "2025-05-01T02:00:00Z",
+        None,
+        m,
+        Some(w_planned),
+        1.0,
+    )
+    .await;
+    exec(
+        &f.db,
+        "UPDATE failure_events SET is_planned = 1 WHERE entity_sync_id = 'st-fe-r4'",
+    )
+    .await;
+    // A failure recorded without a work order counts in the figure but has no OT to list.
+    failure(&f.db, "r5", f.p102, "2025-06-01T02:00:00Z", None, m, None, 1.0).await;
+
+    let (start, end) = ("2025-02-01T00:00:00Z", "2025-12-31T00:00:00Z");
+    let scope = FleetScope::new(start, end, Some(f.class_id), None).expect("scope");
+    assert_eq!(fleet_kpis(&f.db, &scope).await.expect("kpis").failure_count, 3);
+
+    let rams = WoRamsFailureScope {
+        period_start: start.into(),
+        period_end: end.into(),
+        equipment_class_id: Some(f.class_id),
+        org_node_id: None,
+    };
+    let listed = |equipment_id: Option<i64>| {
+        let rams = rams.clone();
+        let db = f.db.clone();
+        async move {
+            let page = list_work_orders(
+                &db,
+                WoListFilter {
+                    rams_failures: Some(rams),
+                    equipment_id,
+                    limit: 50,
+                    offset: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("list");
+            let mut ids: Vec<i64> = page.items.iter().map(|w| w.id).collect();
+            ids.sort_unstable();
+            (page.total, ids)
+        }
+    };
+    let mut both = vec![w1, w2];
+    both.sort_unstable();
+    assert_eq!(
+        listed(None).await,
+        (2, both),
+        "outside the period and planned stops are left out"
+    );
+    assert_eq!(
+        listed(Some(f.p101)).await,
+        (1, vec![w1]),
+        "a ranking row adds its equipment"
+    );
+}
+
 #[path = "decision_sync_tests.rs"]
 mod decision_sync_tests;

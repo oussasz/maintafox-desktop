@@ -227,7 +227,11 @@
       "meter_reading": "Meter reading",
       "document_linked": "Document linked",
       "photo_added": "Photo added",
-      "history_imported": "Imported history {{code}}"
+      "history_imported": "Imported history {{code}}",
+      "component_installed": "Installed on {{date}} on {{parent}}",
+      "component_removed": "Removed on {{date}} from {{parent}}",
+      "child_installed": "Component {{component}} installed on {{date}}",
+      "child_removed": "Component {{component}} removed on {{date}}"
     },
     "quality": {
       "accepted": "Accepted",
@@ -710,6 +714,24 @@
     "noMtbf": "No failure in the period: no MTBF.",
     "open": "Open in RAMS",
     "hint": "Used by RAMS to convert calendar time into operating time."
+  },
+  "moveComponent": {
+    "action": "Move component",
+    "title": "Move component",
+    "descriptionInstalled": "{{code}} is currently installed on {{parent}}. It keeps its record and serial number.",
+    "descriptionStock": "{{code}} is not installed on any equipment (in stock). It keeps its record and serial number.",
+    "target": "New parent equipment",
+    "targetHint": "Leave empty to remove the component to stock (no parent).",
+    "sameParent": "The component is already installed on this equipment.",
+    "alreadyInStock": "The component is already in stock: choose the equipment to install it on.",
+    "date": "Effective date",
+    "dateRequired": "Enter a valid date (today or earlier).",
+    "notes": "Reason / note",
+    "cancel": "Cancel",
+    "confirm": "Move",
+    "confirmRemove": "Remove to stock",
+    "done": "Move of {{code}} recorded.",
+    "severalParents": "This component is attached to {{count}} parent equipment at once; correct the structure before moving it."
   },
   "structure": {
     "parent": "Parent equipment",

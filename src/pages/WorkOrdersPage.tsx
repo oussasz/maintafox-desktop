@@ -63,6 +63,7 @@ import { describeAppError } from "@/lib/app-error";
 import {
   LIST_PARAM,
   type ListScope,
+  type RamsFailureLink,
   type WorkMix,
   idParam,
   instantParam,
@@ -211,6 +212,8 @@ export function WorkOrdersPage() {
   const [mixFilter, setMixFilter] = useState<WorkMix | null>(null);
   /** With a work-mix link: the period the indicator counted (completed in it); chip, clearable. */
   const [completedWindow, setCompletedWindow] = useState<{ from: string; to: string } | null>(null);
+  /** From a RAMS failure figure: the OTs behind the failures it counts (chip, clearable). */
+  const [ramsFailures, setRamsFailures] = useState<RamsFailureLink | null>(null);
   /** From an equipment link: one asset (chip shows its code). */
   const [equipmentFilter, setEquipmentFilter] = useState<{ id: number; label: string } | null>(
     null,
@@ -276,6 +279,7 @@ export function WorkOrdersPage() {
     setEquipmentFilter(null);
     setMixFilter(null);
     setCompletedWindow(null);
+    setRamsFailures(null);
     setFilter({
       search: null,
       status_codes: null,
@@ -287,6 +291,9 @@ export function WorkOrdersPage() {
       not_closed_only: null,
       overdue_only: null,
       planner_unassigned: null,
+      completed_from: null,
+      completed_to: null,
+      rams_failures: null,
     });
     void loadWos();
   }, [setFilter, loadWos]);
@@ -335,6 +342,16 @@ export function WorkOrdersPage() {
     [setFilter, loadWos],
   );
 
+  const handleRamsFilter = useCallback(
+    (val: string | null) => {
+      if (val) return; // only clearing is offered: the scope comes from the RAMS figure
+      setRamsFailures(null);
+      setFilter({ rams_failures: null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
   const handleEquipmentFilter = useCallback(
     (val: string | null) => {
       if (val) return; // only clearing is offered: the asset comes from the link
@@ -359,7 +376,18 @@ export function WorkOrdersPage() {
     const completedTo = instantParam(searchParams.get(LIST_PARAM.completedTo));
     const completed =
       mix && completedFrom && completedTo ? { from: completedFrom, to: completedTo } : null;
-    if (!scope && !status && !urgency && equipmentId == null && !type && !mix) return;
+    const ramsFrom = instantParam(searchParams.get(LIST_PARAM.ramsFrom));
+    const ramsTo = instantParam(searchParams.get(LIST_PARAM.ramsTo));
+    const rams: RamsFailureLink | null =
+      ramsFrom && ramsTo
+        ? {
+            from: ramsFrom,
+            to: ramsTo,
+            classId: idParam(searchParams.get(LIST_PARAM.ramsClass)),
+            orgNodeId: idParam(searchParams.get(LIST_PARAM.ramsSite)),
+          }
+        : null;
+    if (!scope && !status && !urgency && equipmentId == null && !type && !mix && !rams) return;
     // The mix is resolved through the type catalogue: wait for it before applying the link.
     if (mix && woTypes.length === 0) return;
     const mixCodes = mix
@@ -371,6 +399,7 @@ export function WorkOrdersPage() {
     setTypeFilter(mix ? null : type);
     setMixFilter(mix);
     setCompletedWindow(completed);
+    setRamsFailures(rams);
     setPriorityFilter(urgency);
     setScopeFilter(scope);
     setEquipmentFilter(equipmentId != null ? { id: equipmentId, label: `#${equipmentId}` } : null);
@@ -388,6 +417,14 @@ export function WorkOrdersPage() {
       equipment_id: equipmentId,
       completed_from: completed?.from ?? null,
       completed_to: completed?.to ?? null,
+      rams_failures: rams
+        ? {
+            period_start: rams.from,
+            period_end: rams.to,
+            equipment_class_id: rams.classId ?? null,
+            org_node_id: rams.orgNodeId ?? null,
+          }
+        : null,
     });
     void loadWos();
     if (equipmentId != null) {
@@ -411,6 +448,10 @@ export function WorkOrdersPage() {
         LIST_PARAM.mix,
         LIST_PARAM.completedFrom,
         LIST_PARAM.completedTo,
+        LIST_PARAM.ramsFrom,
+        LIST_PARAM.ramsTo,
+        LIST_PARAM.ramsClass,
+        LIST_PARAM.ramsSite,
       ),
       { replace: true },
     );
@@ -516,6 +557,26 @@ export function WorkOrdersPage() {
             },
           ]
         : []),
+      ...(ramsFailures
+        ? [
+            {
+              id: "ramsFailures",
+              kind: "select" as const,
+              label: t("list.filters.ramsFailures"),
+              options: [
+                {
+                  value: "rams",
+                  label: t("list.filters.completedValue", {
+                    from: formatDate(ramsFailures.from, i18n.language),
+                    to: formatDate(ramsFailures.to, i18n.language),
+                  }),
+                },
+              ],
+              value: "rams",
+              onChange: handleRamsFilter,
+            },
+          ]
+        : []),
       ...(equipmentFilter
         ? [
             {
@@ -547,6 +608,8 @@ export function WorkOrdersPage() {
       equipmentFilter,
       mixFilter,
       completedWindow,
+      ramsFailures,
+      handleRamsFilter,
       i18n.language,
       handleCompletedFilter,
       handleScopeFilter,
@@ -570,10 +633,19 @@ export function WorkOrdersPage() {
       LIST_PARAM.equipment,
       LIST_PARAM.type,
       LIST_PARAM.mix,
+      LIST_PARAM.ramsFrom,
     ];
     if (linked.some((k) => p.has(k))) return;
+    // Link-only filters (chips that exist only while their link is followed) do not outlive the
+    // visit: without a link, a later visit never lists through a filter it shows no chip for.
+    setFilter({
+      equipment_id: null,
+      completed_from: null,
+      completed_to: null,
+      rams_failures: null,
+    });
     void loadWos();
-  }, [loadWos]);
+  }, [loadWos, setFilter]);
 
   useEffect(() => {
     void loadWoTypes();

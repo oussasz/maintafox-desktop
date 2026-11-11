@@ -194,6 +194,14 @@ export function RamsFleetPage() {
   const period = useMemo(() => periodFromMonths(months), [months]);
   /** When the figures on screen were last calculated (each load recalculates them live). */
   const [calculatedAt, setCalculatedAt] = useState<string | null>(null);
+  // A failure figure opens the OTs behind it: the same failure records (period, class, site), so
+  // the list holds what the figure counts (L2-21). Only for those who may read work orders.
+  const canOpenOts = can(P.OT_VIEW);
+  const failureOtsHref = (equipmentId?: number) =>
+    listLinks.workOrders({
+      ...(equipmentId != null ? { equipmentId } : {}),
+      ramsFailures: { from: period.start, to: period.end, classId, orgNodeId },
+    });
 
   const load = useCallback(async (): Promise<boolean> => {
     setLoading(true);
@@ -533,6 +541,9 @@ export function RamsFleetPage() {
                 period: periodLabel,
                 hours: formatNumber(Math.round(k?.downtime_hours ?? 0)),
               })}
+              {...(canOpenOts && (k?.failure_count ?? 0) > 0
+                ? { onOpen: () => navigate(failureOtsHref()) }
+                : {})}
             />
             <KpiTile
               label={t("rams.kpi.dataQuality")}
@@ -670,6 +681,9 @@ export function RamsFleetPage() {
                           onToggle={() => toggle(r.equipment_id)}
                           onOpenStudy={(id) => navigate(`/reliability/studies/${id}`)}
                           onOpenAsset={(id) => navigate(listLinks.asset(id))}
+                          {...(canOpenOts
+                            ? { onOpenFailures: () => navigate(failureOtsHref(r.equipment_id)) }
+                            : {})}
                           formatNumber={formatNumber}
                           formatDecimal={formatDecimal}
                           formatPercent={formatPercent}
@@ -775,6 +789,7 @@ function FleetRow({
   onToggle,
   onOpenStudy,
   onOpenAsset,
+  onOpenFailures,
   formatNumber,
   formatDecimal,
   formatPercent,
@@ -787,6 +802,8 @@ function FleetRow({
   onToggle: () => void;
   onOpenStudy: (id: number) => void;
   onOpenAsset: (id: number) => void;
+  /** Opens the OTs behind this row's failures (absent without the right to read OTs). */
+  onOpenFailures?: () => void;
   formatNumber: (v: number) => string;
   formatDecimal: (v: number, dp?: number) => string;
   formatPercent: (v: number) => string;
@@ -842,7 +859,24 @@ function FleetRow({
         </span>
       </td>
       <td className="px-3 text-text-secondary">{row.class_name ?? "—"}</td>
-      <td className="px-3 text-end font-mono tabular-nums">{formatNumber(row.failures)}</td>
+      <td className="px-3 text-end font-mono tabular-nums">
+        {onOpenFailures && row.failures > 0 ? (
+          <button
+            type="button"
+            className="rounded px-1 text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={t("rams.fleet.openFailures", { code: row.asset_code })}
+            aria-label={t("rams.fleet.openFailures", { code: row.asset_code })}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenFailures();
+            }}
+          >
+            {formatNumber(row.failures)}
+          </button>
+        ) : (
+          formatNumber(row.failures)
+        )}
+      </td>
       <td className="px-3 text-end font-mono tabular-nums">
         {formatNumber(Math.round(row.downtime_hours))}
       </td>
