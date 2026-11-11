@@ -49,6 +49,33 @@ export async function uploadLibraryDocument(input: {
   });
 }
 
+/** A new version of a document: a new file with its revision label (L7-17). */
+export async function uploadLibraryDocumentVersion(input: {
+  id: number;
+  fileName: string;
+  fileBytes: number[];
+  mimeType: string;
+  notes: string | null;
+  revision: string;
+  /** `YYYY-MM-DD`, or null when the new version never expires. */
+  validUntil: string | null;
+}): Promise<LibraryDocument> {
+  return invoke<LibraryDocument>("upload_library_document_version", {
+    id: input.id,
+    fileName: input.fileName,
+    fileBytes: input.fileBytes,
+    mimeType: input.mimeType,
+    notes: input.notes,
+    revision: input.revision,
+    validUntil: input.validUntil,
+  });
+}
+
+/** The versions of a document, newest first. */
+export async function listLibraryDocumentVersions(id: number): Promise<LibraryDocument[]> {
+  return invoke<LibraryDocument[]>("list_library_document_versions", { id });
+}
+
 export async function getLibraryDocumentFile(id: number): Promise<Uint8Array> {
   const bytes = await invoke<number[]>("get_library_document_file", { id });
   return new Uint8Array(bytes);
