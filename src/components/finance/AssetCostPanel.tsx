@@ -34,7 +34,12 @@ export interface AssetCostPanelProps {
 
 export function AssetCostPanel({ reloadToken = 0 }: AssetCostPanelProps) {
   const { t } = useTranslation("budget");
-  const { formatCurrency, formatPercent, formatDate } = useFormatters();
+  const { formatCurrency, formatPercent: percent, formatDate } = useFormatters();
+  // A ratio rounded to one decimal would read "0 %" for a real cost: say it is under 0,1 %.
+  const formatPercent = useCallback(
+    (v: number) => (v > 0 && v < 0.05 ? `< ${percent(0.1)}` : percent(v)),
+    [percent],
+  );
   const { categoryLabel } = useFinanceCatalogs();
   const [search, setSearch] = useState("");
   const debounced = useDebouncedValue(search, 300);

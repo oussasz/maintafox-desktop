@@ -212,19 +212,20 @@
   },
   "kpi": {
     "budget": "Budget",
-    "budgetHint": "Exercice {{year}}",
+    "budgetHint": "Budget annuel, exercice {{year}}",
     "committed": "Engagé",
-    "committedHint": "Commandes ouvertes",
+    "committedHint": "Commandes et demandes d'achat ouvertes liées aux OT",
     "actual": "Réel",
     "actualHint": "OT imputés et saisies",
     "forecast": "Prévision fin d'exercice",
-    "forecastHint": "Réel + engagé + budget restant",
-    "variance": "Écart",
-    "overrun": "Dépassement prévu",
-    "underrun": "Marge prévue",
+    "forecastHint": "Réel + engagé + budget des mois restants",
+    "forecastHintShare": "Réel + engagé + budget des mois restants : {{pct}} du budget annuel",
+    "variance": "Écart prévu (budget − prévision)",
+    "overrun": "Dépassement : la prévision dépasse le budget",
+    "underrun": "Marge : la prévision reste sous le budget",
     "consumed": "Consommation",
     "consumedHint": "Réel / budget",
-    "consumedHintMonth": "Réel / budget annuel, fin {{month}}"
+    "consumedHintToDate": "Réel / budget de {{from}} à {{to}} ; {{annual}} du budget annuel"
   },
   "cockpit": {
     "loading": "Chargement du pilotage…",
@@ -269,11 +270,12 @@
     }
   },
   "burn": {
-    "title": "Budget et réel par mois",
+    "title": "Budget et réel par mois ({{currency}})",
     "budget": "Budget",
     "actual": "Réel",
     "monthAria": "{{month}} : budget {{budget}}, réel {{actual}}",
-    "cumulative": "Cumul à date : réel {{actual}} pour un budget de {{budget}}."
+    "cumulativeToDate": "De {{from}} à {{to}} : réel {{actual}} pour un budget de {{budget}} sur ces mois (budget annuel {{annual}}).",
+    "cumulativeYear": "Sur l'exercice : réel {{actual}} pour un budget de {{budget}}."
   },
   "drill": {
     "actualsTotal_one": "Total de {{count}} écriture : {{amount}}",
