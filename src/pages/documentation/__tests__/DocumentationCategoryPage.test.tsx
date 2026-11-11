@@ -11,6 +11,7 @@ const mockList = vi.fn();
 const mockUpload = vi.fn();
 const mockDelete = vi.fn();
 const mockCategories = vi.fn();
+const mockUpdate = vi.fn();
 
 vi.mock("@/services/documentation-service", () => ({
   MAX_LIBRARY_DOCUMENT_BYTES: 25 * 1024 * 1024,
@@ -18,7 +19,7 @@ vi.mock("@/services/documentation-service", () => ({
   uploadLibraryDocument: (...a: unknown[]) => mockUpload(...a),
   deleteLibraryDocument: (...a: unknown[]) => mockDelete(...a),
   listDocumentCategories: () => mockCategories(),
-  updateLibraryDocument: vi.fn(),
+  updateLibraryDocument: (...a: unknown[]) => mockUpdate(...a),
   getLibraryDocumentFile: vi.fn(),
   fileToNumberArray: vi.fn().mockResolvedValue([1, 2, 3]),
 }));
@@ -197,6 +198,53 @@ describe("DocumentationCategoryPage", () => {
     expect(screen.getByText("list.validity.expired")).toBeInTheDocument();
     expect(screen.getByText("list.validity.none")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("expiry.expired");
+  });
+
+  it("edits number, revision and validity; an empty date clears it", async () => {
+    mockList.mockResolvedValue([
+      { ...doc, documentNumber: "PR-1", revision: "B", validUntil: "2030-01-31" },
+    ]);
+    mockUpdate.mockResolvedValueOnce(doc);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "list.editNamed" }));
+    expect(screen.getByLabelText("upload.fields.documentNumber")).toHaveValue("PR-1");
+    expect(screen.getByLabelText(/upload\.fields\.category/)).toHaveTextContent(
+      "Modes opératoires",
+    );
+    fireEvent.change(screen.getByLabelText("upload.fields.revision"), {
+      target: { value: "C" },
+    });
+    fireEvent.change(screen.getByLabelText("upload.fields.validUntil"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "edit.save" }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 7,
+          category: "sops",
+          documentNumber: "PR-1",
+          revision: "C",
+          validUntil: "",
+        }),
+      ),
+    );
+  });
+
+  it("refuses to upload an unfinished validity date instead of storing no date", async () => {
+    mockList.mockResolvedValue([]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "upload.open" }));
+    const file = new File(["abc"], "loto.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("upload.fields.file"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("upload.fields.validUntil"), {
+      target: { value: "31/02/2027" },
+    });
+    expect(await screen.findByText("upload.fields.validUntilInvalid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "upload.submit" })).toBeDisabled();
+    expect(mockUpload).not.toHaveBeenCalled();
   });
 
   it("asks before deleting a document", async () => {

@@ -164,3 +164,34 @@ async fn an_edit_changes_category_and_control_fields_and_keeps_what_is_not_sent(
     assert_eq!(unchanged[0].title, "Consignation électrique");
     assert_eq!(unchanged[0].document_number.as_deref(), Some("PR-2"));
 }
+
+/// Two devices may file the same number offline (sync does not enforce the uniqueness): each
+/// document stays editable as long as its number is not changed.
+#[tokio::test]
+async fn a_number_duplicated_by_sync_does_not_block_other_edits() {
+    let db = crate::db::test_db::seeded().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let user = seeded_user(&db).await;
+    let mine = save_library_document(&db, dir.path(), upload(Some("PR-9"), None, user))
+        .await
+        .expect("mine");
+    // The other device's row, as sync writes it (no check).
+    db.execute_unprepared(
+        "INSERT INTO library_documents (category, title, file_name, relative_path, entity_sync_id, \
+         document_number) VALUES ('sops', 'Theirs', 't.pdf', 'library_documents/sops/u-t.pdf', 'ld-theirs', 'pr-9 ')",
+    )
+    .await
+    .expect("synced duplicate");
+
+    let renamed = update_library_document_metadata(
+        &db,
+        UpdateLibraryDocumentInput {
+            title: Some("Renamed".to_string()),
+            document_number: Some("PR-9".to_string()),
+            ..edit(mine.id)
+        },
+    )
+    .await
+    .expect("own number kept");
+    assert_eq!(renamed.title, "Renamed");
+}

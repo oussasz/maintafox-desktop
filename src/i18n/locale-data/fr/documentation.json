@@ -27,7 +27,8 @@
       "revision": "Révision",
       "revisionPlaceholder": "Ex. B ou 3",
       "validUntil": "Valide jusqu'au",
-      "validUntilHint": "Facultatif — un document expiré, ou qui expire dans les {{days}} jours, est signalé dans la liste."
+      "validUntilHint": "Facultatif — un document expiré, ou qui expire dans les {{days}} jours, est signalé dans la liste.",
+      "validUntilInvalid": "Date incomplète ou impossible : saisissez une date valide, ou videz le champ si le document n'expire pas."
     },
     "open": "Ajouter un document",
     "submit": "Téléverser",

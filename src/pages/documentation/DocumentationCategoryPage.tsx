@@ -102,7 +102,16 @@ interface ControlValues {
   documentNumber: string;
   revision: string;
   validUntil: string;
+  /** The typed validity text is not a date yet: saving is refused, never stored as "no date". */
+  validUntilInvalid: boolean;
 }
+
+const EMPTY_CONTROL = {
+  documentNumber: "",
+  revision: "",
+  validUntil: "",
+  validUntilInvalid: false,
+};
 
 interface ControlFieldsProps {
   idPrefix: string;
@@ -138,7 +147,7 @@ function DocumentControlFields({
             <SelectValue>{categories.text(values.category)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {!listed ? (
+            {!listed && values.category ? (
               <SelectItem value={values.category}>{categories.text(values.category)}</SelectItem>
             ) : null}
             {categories.values.map((c) => (
@@ -179,12 +188,26 @@ function DocumentControlFields({
           id={`${idPrefix}-valid-until`}
           value={values.validUntil}
           onChange={(v) => set({ validUntil: v })}
+          onInvalidChange={(invalid) => {
+            if (invalid !== values.validUntilInvalid) set({ validUntilInvalid: invalid });
+          }}
           disabled={disabled}
+          aria-invalid={values.validUntilInvalid || undefined}
           aria-describedby={`${idPrefix}-valid-until-hint`}
         />
-        <p id={`${idPrefix}-valid-until-hint`} className="text-xs text-text-muted">
-          {t("upload.fields.validUntilHint", { days: EXPIRY_WARNING_DAYS })}
-        </p>
+        {values.validUntilInvalid ? (
+          <p
+            id={`${idPrefix}-valid-until-hint`}
+            role="alert"
+            className="text-xs text-tone-danger-fg"
+          >
+            {t("upload.fields.validUntilInvalid")}
+          </p>
+        ) : (
+          <p id={`${idPrefix}-valid-until-hint`} className="text-xs text-text-muted">
+            {t("upload.fields.validUntilHint", { days: EXPIRY_WARNING_DAYS })}
+          </p>
+        )}
       </div>
     </>
   );
@@ -214,12 +237,7 @@ function DocumentUploadDialog({
   onUploaded,
 }: UploadDialogProps) {
   const { t } = useTranslation("documentation");
-  const [control, setControl] = useState<ControlValues>({
-    category,
-    documentNumber: "",
-    revision: "",
-    validUntil: "",
-  });
+  const [control, setControl] = useState<ControlValues>({ category, ...EMPTY_CONTROL });
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -237,7 +255,7 @@ function DocumentUploadDialog({
     setFileError(null);
     setFileInputKey((k) => k + 1);
     // The category of the open tab is proposed, shown and changeable.
-    setControl({ category, documentNumber: "", revision: "", validUntil: "" });
+    setControl({ category, ...EMPTY_CONTROL });
   }, [open, category]);
 
   const pickFile = (files: FileList | null) => {
@@ -253,10 +271,11 @@ function DocumentUploadDialog({
     if (picked && !title.trim()) setTitle(baseName(picked.name));
   };
 
-  const canUpload = file != null && title.trim().length > 0 && !uploading;
+  const canUpload =
+    file != null && title.trim().length > 0 && !control.validUntilInvalid && !uploading;
 
   const upload = async () => {
-    if (!file || !title.trim()) return;
+    if (!file || !title.trim() || control.validUntilInvalid) return;
     setUploading(true);
     try {
       await uploadLibraryDocument({
@@ -387,12 +406,7 @@ interface EditDialogProps {
 function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDialogProps) {
   const { t } = useTranslation("documentation");
   const [title, setTitle] = useState("");
-  const [control, setControl] = useState<ControlValues>({
-    category: "",
-    documentNumber: "",
-    revision: "",
-    validUntil: "",
-  });
+  const [control, setControl] = useState<ControlValues>({ category: "", ...EMPTY_CONTROL });
   const [asset, setAsset] = useState<AssetSearchResult | null>(null);
   const [assetLoading, setAssetLoading] = useState(false);
   const [assetMissing, setAssetMissing] = useState(false);
@@ -407,6 +421,7 @@ function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDial
       documentNumber: doc.documentNumber ?? "",
       revision: doc.revision ?? "",
       validUntil: doc.validUntil ?? "",
+      validUntilInvalid: false,
     });
     setAsset(null);
     setAssetMissing(false);
@@ -433,7 +448,7 @@ function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDial
   }, [doc]);
 
   const save = async () => {
-    if (!doc || !title.trim()) return;
+    if (!doc || !title.trim() || control.validUntilInvalid) return;
     setSaving(true);
     try {
       // When the current link could not be read, keep it unless the user picked another one.
@@ -528,7 +543,7 @@ function DocumentEditDialog({ doc, categories, onOpenChange, onSaved }: EditDial
           <Button
             className="h-11"
             onClick={() => void save()}
-            disabled={saving || assetLoading || !title.trim()}
+            disabled={saving || assetLoading || !title.trim() || control.validUntilInvalid}
           >
             {saving ? t("edit.saving") : t("edit.save")}
           </Button>

@@ -578,23 +578,26 @@ pub struct UpdateLibraryDocumentInput {
 }
 
 pub async fn update_library_document_metadata(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     input: UpdateLibraryDocumentInput,
 ) -> AppResult<LibraryDocumentRow> {
-    let exists = db
+    // The checks and the write commit together (no other edit between the number check and it).
+    let txn = db.begin().await?;
+    let db = &txn;
+    let stored = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM library_documents WHERE id = ?",
+            "SELECT document_number FROM library_documents WHERE id = ?",
             [input.id.into()],
         ))
         .await?
-        .is_some();
-    if !exists {
-        return Err(AppError::NotFound {
+        .ok_or_else(|| AppError::NotFound {
             entity: "LibraryDocument".into(),
             id: input.id.to_string(),
-        });
-    }
+        })?;
+    let stored_number: Option<String> = stored
+        .try_get("", "document_number")
+        .map_err(|e| decode_err("document_number", e))?;
 
     if !input.clear_equipment_link {
         if let Some(eid) = input.equipment_id {
@@ -634,7 +637,16 @@ pub async fn update_library_document_metadata(
     }
     if input.document_number.is_some() {
         let number = cleaned_reference(input.document_number);
-        ensure_number_free(db, number.as_deref(), Some(input.id)).await?;
+        // Keeping its own number is never refused, even when another device filed the same one
+        // (sync does not enforce the uniqueness): only a changed number is checked.
+        let unchanged = match (number.as_deref(), cleaned(stored_number).as_deref()) {
+            (Some(new), Some(old)) => new.eq_ignore_ascii_case(old),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            ensure_number_free(db, number.as_deref(), Some(input.id)).await?;
+        }
         sets.push("document_number = ?");
         values.push(number.into());
     }
@@ -664,8 +676,9 @@ pub async fn update_library_document_metadata(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("library document row missing after update")))?;
-
-    map_row(&row)
+    let document = map_row(&row)?;
+    txn.commit().await?;
+    Ok(document)
 }
 
 #[cfg(test)]

@@ -27,7 +27,8 @@
       "revision": "Revision",
       "revisionPlaceholder": "E.g. B or 3",
       "validUntil": "Valid until",
-      "validUntilHint": "Optional — a document that has expired, or expires within {{days}} days, is flagged in the list."
+      "validUntilHint": "Optional — a document that has expired, or expires within {{days}} days, is flagged in the list.",
+      "validUntilInvalid": "Incomplete or impossible date: enter a valid date, or clear the field if the document never expires."
     },
     "open": "Add document",
     "submit": "Upload",
