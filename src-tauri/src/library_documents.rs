@@ -398,7 +398,7 @@ async fn current_version(db: &impl ConnectionTrait, id: i64) -> AppResult<QueryR
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{SELECT_DOCUMENT} WHERE ld.id = ?"),
+            format!("{SELECT_DOCUMENT} WHERE ld.id = ?"),
             [id.into()],
         ))
         .await?
@@ -420,9 +420,9 @@ async fn current_version(db: &impl ConnectionTrait, id: i64) -> AppResult<QueryR
         .await?
         .is_some();
     if superseded.is_some() || replaced {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{GATE_NOT_CURRENT}: This is an earlier version of the document; it is kept as it is."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_NOT_CURRENT: This is an earlier version of the document; it is kept as it is.".to_string(),
+        ]));
     }
     Ok(row)
 }
@@ -609,9 +609,9 @@ pub async fn save_library_document_version(
 ) -> AppResult<LibraryDocumentRow> {
     let current = map_row(&current_version(db, input.id).await?)?;
     let Some(revision) = cleaned_reference(input.revision) else {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{GATE_REVISION_REQUIRED}: Enter the revision label of the new version."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_REVISION_REQUIRED: Enter the revision label of the new version.".to_string(),
+        ]));
     };
     // Not the label of the current version, nor of an earlier one.
     let history = list_library_document_versions(db, input.id).await?;
@@ -620,9 +620,10 @@ pub async fn save_library_document_version(
             .as_deref()
             .is_some_and(|old| old.trim().eq_ignore_ascii_case(&revision))
     }) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{GATE_REVISION_UNCHANGED}: The new version needs a revision label not used by this document yet."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_LIB_DOC_REVISION_UNCHANGED: The new version needs a revision label not used by this document yet."
+                .to_string(),
+        ]));
     }
     store_document(
         db,
@@ -650,7 +651,7 @@ pub async fn list_library_document_versions(db: &impl ConnectionTrait, id: i64) 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "WITH RECURSIVE chain(id, depth) AS ( \
                     SELECT id, 0 FROM library_documents WHERE id = ? \
                     UNION ALL \
