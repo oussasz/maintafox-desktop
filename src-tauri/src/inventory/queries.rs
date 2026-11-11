@@ -1392,10 +1392,9 @@ pub async fn update_article(
         .await?
         .is_some();
     if was_non_stock != becomes_non_stock {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{}: The hors-stock status of an item is not changed here.",
-            crate::inventory::non_stock::codes::TYPE_LOCKED
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_INV_NON_STOCK_TYPE_LOCKED: The hors-stock status of an item is not changed here.".to_string(),
+        ]));
     }
     ensure_lookup_value_in_domain(
         db,
